@@ -1,0 +1,16 @@
+{
+    "id": "",
+    "name": "Workflow",
+    "description": "",
+    "condition": {"??": true},
+    "tasks": [
+      {
+        "id": "",
+        "name": "",
+        "description": "",
+        "condition": null,
+        "function": "fetch",
+        "input": {}
+      }
+    ]
+  }

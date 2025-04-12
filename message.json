@@ -1,0 +1,19 @@
+{
+    "id": "",
+    "data": {},
+    "payload": {},
+    "metadata": {},
+    "temp_data": {},
+    "audit_trail": [
+        {
+            "workflow_id": "",
+            "task_id": "",
+            "timestamp": "",
+            "changes": {
+                "field": "",
+                "old_value": "",
+                "new_value": ""
+            }
+        }
+    ]
+}
