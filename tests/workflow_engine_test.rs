@@ -1,5 +1,5 @@
+use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::{Engine, FunctionHandler, Task, Workflow};
-use dataflow_rs::engine::message::{Message, Change};
 use datalogic_rs::arena::DataArena;
 use datalogic_rs::{DataLogic, DataValue};
 
@@ -7,7 +7,12 @@ use datalogic_rs::{DataLogic, DataValue};
 struct LoggingTask;
 
 impl FunctionHandler for LoggingTask {
-    fn execute<'a>(&self, message: &mut Message<'a>, _input: &DataValue, _arena: &'a DataArena) -> Result<Vec<Change<'a>>, String> {
+    fn execute<'a>(
+        &self,
+        message: &mut Message<'a>,
+        _input: &DataValue,
+        _arena: &'a DataArena,
+    ) -> Result<Vec<Change<'a>>, String> {
         println!("Executed task for message: {}", &message.id);
         Ok(vec![])
     }
@@ -17,7 +22,7 @@ impl FunctionHandler for LoggingTask {
 fn test_task_execution() {
     // This test only tests the task implementation
     let task = LoggingTask;
-    
+
     // Create a dummy message
     let mut message = Message {
         id: "test123".to_string(),
@@ -27,15 +32,15 @@ fn test_task_execution() {
         temp_data: DataValue::Null,
         audit_trail: Vec::new(),
     };
-    
+
     // Execute the task directly
     let input = DataValue::Null;
     let arena = DataArena::new();
     let result = task.execute(&mut message, &input, &arena);
-    
+
     // Verify the execution was successful
     assert!(result.is_ok(), "Task execution should succeed");
-} 
+}
 
 #[test]
 fn test_workflow_execution() {
@@ -79,6 +84,13 @@ fn test_workflow_execution() {
 
     println!("Message: {:?}", message);
     // Verify the message was processed correctly
-    assert_eq!(message.audit_trail.len(), 1, "Message should have one audit trail entry");
-    assert_eq!(message.audit_trail[0].task_id, "log_task", "Audit trail should contain the executed task");
+    assert_eq!(
+        message.audit_trail.len(),
+        1,
+        "Message should have one audit trail entry"
+    );
+    assert_eq!(
+        message.audit_trail[0].task_id, "log_task",
+        "Audit trail should contain the executed task"
+    );
 }

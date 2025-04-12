@@ -1,7 +1,7 @@
+use crate::engine::message::Message;
+use datalogic_rs::{arena::DataArena, DataValue};
 use serde::Deserialize;
 use serde_json::Value;
-use datalogic_rs::{arena::DataArena, DataValue};
-use crate::engine::message::Message;
 
 use super::message::Change;
 // Task configuration struct - represents task definition in workflow configuration
@@ -29,6 +29,12 @@ pub struct TaskBuilder {
     condition: Option<Value>,
     function: Option<String>,
     input: Value,
+}
+
+impl Default for TaskBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TaskBuilder {
@@ -87,5 +93,10 @@ impl TaskBuilder {
 
 // Task trait for implementing custom task behaviors
 pub trait FunctionHandler {
-    fn execute<'a>(&self, message: &mut Message<'a>, input: &DataValue, arena: &'a DataArena) -> Result<Vec<Change<'a>>, String>;
+    fn execute<'a>(
+        &self,
+        message: &mut Message<'a>,
+        input: &DataValue,
+        arena: &'a DataArena,
+    ) -> Result<Vec<Change<'a>>, String>;
 }

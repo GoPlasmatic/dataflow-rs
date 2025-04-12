@@ -1,7 +1,7 @@
+use crate::engine::task::Task;
 use datalogic_rs::{DataLogic, Logic};
 use serde::Deserialize;
 use serde_json::Value;
-use crate::engine::task::Task;
 use std::fs;
 use std::path::Path;
 
@@ -15,6 +15,12 @@ pub struct Workflow {
 
     #[serde(skip)]
     pub task_logics: Vec<(Logic<'static>, Task)>,
+}
+
+impl Default for Workflow {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Workflow {
@@ -50,20 +56,20 @@ impl Workflow {
     }
 }
 
-    // pub fn build(self, data_logic: &'static DataLogic) -> Workflow {
-    //     let mut task_logics = Vec::new();
-    //     for task in &self.tasks {
-    //         let condition = task.condition.clone().unwrap();
-    //         let logic = data_logic.parse_logic_json(&condition, None).unwrap();
-    //         task_logics.push((logic, task.clone()));
-    //     }
-        
-    //     Workflow {
-    //         id: self.id.expect("Workflow ID is required"),
-    //         name: self.name.expect("Workflow name is required"),
-    //         description: self.description,
-    //         condition: self.condition,
-    //         tasks: self.tasks,
-    //         task_logics,
-    //     }
-    // }
+// pub fn build(self, data_logic: &'static DataLogic) -> Workflow {
+//     let mut task_logics = Vec::new();
+//     for task in &self.tasks {
+//         let condition = task.condition.clone().unwrap();
+//         let logic = data_logic.parse_logic_json(&condition, None).unwrap();
+//         task_logics.push((logic, task.clone()));
+//     }
+
+//     Workflow {
+//         id: self.id.expect("Workflow ID is required"),
+//         name: self.name.expect("Workflow name is required"),
+//         description: self.description,
+//         condition: self.condition,
+//         tasks: self.tasks,
+//         task_logics,
+//     }
+// }

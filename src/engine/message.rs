@@ -1,5 +1,5 @@
-use datalogic_rs::DataValue;
 use chrono::{DateTime, Utc};
+use datalogic_rs::DataValue;
 
 #[derive(Debug, Clone)]
 pub struct Message<'a> {
