@@ -1,6 +1,6 @@
 # Dataflow-rs
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/yourusername/dataflow-rs.yml?branch=main)](https://github.com/yourusername/dataflow-rs/actions)
+[![Release Crates](https://github.com/codetiger/dataflow-rs/actions/workflows/crate-publish.yml/badge.svg)](https://github.com/codetiger/dataflow-rs/actions/workflows/crate-publish.yml)
 [![Crates.io Version](https://img.shields.io/crates/v/dataflow-rs)](https://crates.io/crates/dataflow-rs)
 [![License](https://img.shields.io/crates/l/dataflow-rs)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.60+-blue)](https://www.rust-lang.org)
