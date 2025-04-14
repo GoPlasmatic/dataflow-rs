@@ -1,10 +1,13 @@
+pub mod functions;
 pub mod message;
 pub mod task;
 pub mod workflow;
 
 // Re-export key types for easier access
+pub use functions::source::SourceFunctionHandler;
+pub use functions::task::TaskFunctionHandler;
 pub use message::Message;
-pub use task::{FunctionHandler, Task};
+pub use task::Task;
 pub use workflow::Workflow;
 
 use message::AuditTrail;
@@ -14,7 +17,8 @@ use datalogic_rs::{DataLogic, DataValue, FromJson, Logic};
 use std::collections::HashMap;
 // Main engine that processes messages through workflows
 pub struct Engine<'a> {
-    functions: HashMap<String, Box<dyn FunctionHandler>>,
+    task_functions: HashMap<String, Box<dyn TaskFunctionHandler>>,
+    source_functions: HashMap<String, Box<dyn SourceFunctionHandler>>,
     workflows: Vec<(Logic<'a>, Workflow)>,
     data_logic: &'a DataLogic,
 }
@@ -22,7 +26,8 @@ pub struct Engine<'a> {
 impl<'a> Engine<'a> {
     pub fn new(data_logic: &'a DataLogic) -> Self {
         Self {
-            functions: HashMap::new(),
+            task_functions: HashMap::new(),
+            source_functions: HashMap::new(),
             workflows: Vec::new(),
             data_logic,
         }
@@ -37,14 +42,19 @@ impl<'a> Engine<'a> {
         self.workflows.push((condition_logic, workflow.clone()));
     }
 
-    pub fn register_function(&mut self, id: String, handler: Box<dyn FunctionHandler>) {
-        self.functions.insert(id, handler);
+    pub fn register_task_function(&mut self, id: String, handler: Box<dyn TaskFunctionHandler>) {
+        self.task_functions.insert(id, handler);
     }
 
-    pub fn process_message<'m>(&'m self, message: &mut Message<'m>)
-    where
-        'a: 'm,
-    {
+    pub fn register_source_function(
+        &mut self,
+        id: String,
+        handler: Box<dyn SourceFunctionHandler>,
+    ) {
+        self.source_functions.insert(id, handler);
+    }
+
+    pub fn process_message(&'a self, message: &mut Message<'a>) {
         for (condition_logic, workflow) in &self.workflows {
             let result = self.data_logic.evaluate(condition_logic, &message.metadata);
             match result {
@@ -77,11 +87,8 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn execute_task<'m>(&'m self, message: &mut Message<'m>, task: &Task)
-    where
-        'a: 'm,
-    {
-        if let Some(function) = self.functions.get(&task.function) {
+    fn execute_task(&'a self, message: &mut Message<'a>, task: &Task) {
+        if let Some(function) = self.task_functions.get(&task.function.name) {
             let arena = self.data_logic.arena();
             let input_value = DataValue::from_json(&task.input, arena);
 
@@ -101,7 +108,13 @@ impl<'a> Engine<'a> {
                 }
             }
         } else {
-            println!("Function not found: {}", task.function);
+            println!("Function not found: {}", task.function.name);
         }
+    }
+
+    // This is a non-functional placeholder - see example for proper implementation
+    pub fn start(&self) {
+        println!("To start source functions, create per-thread processors as in the example");
+        println!("The Engine is not thread-safe so it needs thread-local instances");
     }
 }

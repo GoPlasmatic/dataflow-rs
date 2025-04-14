@@ -25,3 +25,16 @@ pub struct Change<'a> {
     pub old_value: DataValue<'a>,
     pub new_value: DataValue<'a>,
 }
+
+impl<'a> Message<'a> {
+    pub fn new(input: &'a DataValue) -> Self {
+        Self {
+            id: input.get("id").unwrap().to_string(),
+            data: input.get("data").unwrap().clone(),
+            payload: input.get("payload").unwrap().clone(),
+            metadata: input.get("metadata").unwrap().clone(),
+            temp_data: input.get("temp_data").unwrap().clone(),
+            audit_trail: vec![],
+        }
+    }
+}

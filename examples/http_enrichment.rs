@@ -1,6 +1,6 @@
 use dataflow_rs::{
     engine::message::{Change, Message},
-    Engine, FunctionHandler, Workflow,
+    Engine, TaskFunctionHandler, Workflow,
 };
 use datalogic_rs::{arena::DataArena, DataLogic, DataValue, FromJson};
 use reqwest::Client;
@@ -19,7 +19,7 @@ impl CatFactTask {
     }
 }
 
-impl FunctionHandler for CatFactTask {
+impl TaskFunctionHandler for CatFactTask {
     fn execute<'a>(
         &self,
         message: &mut Message<'a>,
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = Engine::new(data_logic);
 
     // Register the cat fact task
-    engine.register_function("cat_fact".to_string(), Box::new(CatFactTask::new()));
+    engine.register_task_function("cat_fact".to_string(), Box::new(CatFactTask::new()));
 
     // Define a simple workflow for fetching cat facts
     let workflow_json = r#"
@@ -94,7 +94,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 "id": "get_cat_fact",
                 "name": "Get Cat Fact",
-                "function": "cat_fact",
+                "function": {
+                    "name": "cat_fact",
+                    "input": {}
+                },
                 "condition": { "==": [true, true] },
                 "input": {}
             }

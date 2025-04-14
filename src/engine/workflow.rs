@@ -55,21 +55,3 @@ impl Workflow {
         }
     }
 }
-
-// pub fn build(self, data_logic: &'static DataLogic) -> Workflow {
-//     let mut task_logics = Vec::new();
-//     for task in &self.tasks {
-//         let condition = task.condition.clone().unwrap();
-//         let logic = data_logic.parse_logic_json(&condition, None).unwrap();
-//         task_logics.push((logic, task.clone()));
-//     }
-
-//     Workflow {
-//         id: self.id.expect("Workflow ID is required"),
-//         name: self.name.expect("Workflow name is required"),
-//         description: self.description,
-//         condition: self.condition,
-//         tasks: self.tasks,
-//         task_logics,
-//     }
-// }
