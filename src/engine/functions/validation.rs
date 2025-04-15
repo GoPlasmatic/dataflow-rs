@@ -1,3 +1,4 @@
+use crate::engine::error::{DataflowError, Result};
 use crate::engine::message::{Change, Message};
 use crate::engine::FunctionHandler;
 use datalogic_rs::DataLogic;
@@ -27,23 +28,25 @@ impl ValidationFunction {
 }
 
 impl FunctionHandler for ValidationFunction {
-    fn execute(
-        &self,
-        message: &mut Message,
-        input: &Value,
-    ) -> Result<(usize, Vec<Change>), String> {
+    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
         // Extract validation configuration from the input
         let rule_value = match input.get("rule") {
             Some(rule) => rule,
-            None => return Err("Validation rule not provided".to_string()),
+            None => {
+                return Err(DataflowError::Validation(
+                    "Validation rule not provided".to_string(),
+                ))
+            }
         };
 
         let rule_result = self
             .data_logic
             .lock()
-            .unwrap()
+            .map_err(|_| DataflowError::Unknown("Failed to acquire data_logic lock".to_string()))?
             .evaluate_json(rule_value, &message.data, None)
-            .map_err(|e| format!("Failed to evaluate rule: {}", e))?;
+            .map_err(|e| {
+                DataflowError::LogicEvaluation(format!("Failed to evaluate rule: {}", e))
+            })?;
 
         // Convert result to boolean
         let is_valid = rule_result.as_bool().unwrap_or(false);

@@ -77,9 +77,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut message = Message::new(&json!({}));
 
     // Process the message through the workflow
-    engine.process_message(&mut message);
+    match engine.process_message(&mut message) {
+        Ok(_) => {
+            println!("Processed result: {}", message.data["result"]);
+        }
+        Err(e) => {
+            println!("Error in workflow: {:?}", e);
+        }
+    }
 
-    println!("Processed result: {}", message.data["result"]);
+    Ok(())
+}
+```
+
+## Error Handling
+
+The library provides a comprehensive error handling system:
+
+```rust
+use dataflow_rs::{Engine, Result, DataflowError};
+use dataflow_rs::engine::message::Message;
+use serde_json::json;
+
+fn main() -> Result<()> {
+    let mut engine = Engine::new();
+    // ... setup workflows ...
+
+    let mut message = Message::new(&json!({}));
+
+    // Process the message, errors will be collected but not halt execution
+    engine.process_message(&mut message)?;
+
+    // Check if there were any errors during processing
+    if message.has_errors() {
+        for error in &message.errors {
+            println!("Error in workflow: {:?}, task: {:?}: {:?}",
+                     error.workflow_id, error.task_id, error.error);
+        }
+    }
 
     Ok(())
 }
@@ -90,15 +125,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 You can extend the engine with your own custom function handlers:
 
 ```rust
-use dataflow_rs::{Engine, FunctionHandler, Workflow};
+use dataflow_rs::{Engine, FunctionHandler, Result, Workflow};
 use dataflow_rs::engine::message::{Change, Message};
+use dataflow_rs::engine::error::DataflowError;
 use serde_json::{json, Value};
 
 struct CustomFunction;
 
 impl FunctionHandler for CustomFunction {
-    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>), String> {
+    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
         // Implement your custom logic here
+
+        // Validate input
+        let required_field = input.get("field")
+            .ok_or_else(|| DataflowError::Validation("Missing required field".to_string()))?
+            .as_str()
+            .ok_or_else(|| DataflowError::Validation("Field must be a string".to_string()))?;
 
         // Record changes for audit trail
         let changes = vec![
@@ -114,13 +156,14 @@ impl FunctionHandler for CustomFunction {
     }
 }
 
-fn main() {
+fn main() -> Result<()> {
     let mut engine = Engine::new();
 
     // Register your custom function
     engine.register_task_function("custom".to_string(), Box::new(CustomFunction));
 
     // Now it can be used in workflows...
+    Ok(())
 }
 ```
 */
@@ -128,4 +171,6 @@ fn main() {
 pub mod engine;
 
 // Re-export all public APIs for easier access
+pub use engine::error::{DataflowError, ErrorInfo, Result};
+pub use engine::RetryConfig;
 pub use engine::{Engine, FunctionHandler, Task, Workflow};

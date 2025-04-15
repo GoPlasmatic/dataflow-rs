@@ -1,3 +1,4 @@
+use crate::engine::error::{DataflowError, Result};
 use crate::engine::message::{Change, Message};
 use crate::engine::FunctionHandler;
 use reqwest::{
@@ -29,18 +30,18 @@ impl HttpFunction {
         Self { client }
     }
 
-    fn build_request(&self, input: &Value) -> Result<RequestBuilder, String> {
+    fn build_request(&self, input: &Value) -> Result<RequestBuilder> {
         // Extract URL
         let url = input
             .get("url")
             .and_then(Value::as_str)
-            .ok_or_else(|| "URL is required".to_string())?;
+            .ok_or_else(|| DataflowError::Validation("URL is required".to_string()))?;
 
         // Extract method (default to GET)
         let method_str = input.get("method").and_then(Value::as_str).unwrap_or("GET");
 
-        let method =
-            Method::from_str(method_str).map_err(|e| format!("Invalid HTTP method: {}", e))?;
+        let method = Method::from_str(method_str)
+            .map_err(|e| DataflowError::Validation(format!("Invalid HTTP method: {}", e)))?;
 
         // Determine whether this method supports a body
         let supports_body = method != Method::GET && method != Method::HEAD;
@@ -54,11 +55,16 @@ impl HttpFunction {
 
             for (key, value) in headers {
                 if let Some(value_str) = value.as_str() {
-                    let header_name = HeaderName::try_from(key)
-                        .map_err(|e| format!("Invalid header name '{}': {}", key, e))?;
+                    let header_name = HeaderName::try_from(key).map_err(|e| {
+                        DataflowError::Validation(format!("Invalid header name '{}': {}", key, e))
+                    })?;
 
-                    let header_value = HeaderValue::try_from(value_str)
-                        .map_err(|e| format!("Invalid header value '{}': {}", value_str, e))?;
+                    let header_value = HeaderValue::try_from(value_str).map_err(|e| {
+                        DataflowError::Validation(format!(
+                            "Invalid header value '{}': {}",
+                            value_str, e
+                        ))
+                    })?;
 
                     header_map.insert(header_name, header_value);
                 }
@@ -79,27 +85,36 @@ impl HttpFunction {
 }
 
 impl FunctionHandler for HttpFunction {
-    fn execute(
-        &self,
-        message: &mut Message,
-        input: &Value,
-    ) -> Result<(usize, Vec<Change>), String> {
+    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
         // Build the request
         let request = self.build_request(input)?;
 
         // Make the request
-        let response = request
-            .send()
-            .map_err(|e| format!("HTTP request failed: {}", e))?;
+        let response = request.send().map_err(|e| {
+            if e.is_timeout() {
+                DataflowError::Timeout(format!("HTTP request timed out: {}", e))
+            } else if e.is_connect() {
+                DataflowError::Http {
+                    status: 0,
+                    message: format!("Connection error: {}", e),
+                }
+            } else {
+                DataflowError::Http {
+                    status: e.status().map_or(0, |s| s.as_u16()),
+                    message: format!("HTTP request failed: {}", e),
+                }
+            }
+        })?;
 
         // Get status code
         let status = response.status();
         let status_code = status.as_u16() as usize;
 
         // Parse the response
-        let response_body = response
-            .text()
-            .map_err(|e| format!("Failed to read response body: {}", e))?;
+        let response_body = response.text().map_err(|e| DataflowError::Http {
+            status: status.as_u16(),
+            message: format!("Failed to read response body: {}", e),
+        })?;
 
         // Try to parse as JSON, but fall back to string if it's not valid JSON
         let response_value =

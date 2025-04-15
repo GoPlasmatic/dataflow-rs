@@ -1,5 +1,7 @@
+use crate::engine::error::Result;
 use crate::engine::message::{Change, Message};
 use serde_json::Value;
+use std::sync::{Arc, Mutex};
 
 pub mod validation;
 pub use validation::ValidationFunction;
@@ -15,7 +17,6 @@ pub mod builtins {
     use super::*;
     use datalogic_rs::DataLogic;
     use once_cell::sync::Lazy;
-    use std::sync::{Arc, Mutex};
 
     // Create a global thread-safe DataLogic instance
     pub static DATA_LOGIC: Lazy<Arc<Mutex<DataLogic>>> =
@@ -27,7 +28,7 @@ pub mod builtins {
     pub const HTTP_FUNCTION: &str = "http";
 
     // Get all built-in functions with their standard names
-    pub fn get_all_functions() -> Vec<(String, Box<dyn FunctionHandler>)> {
+    pub fn get_all_functions() -> Vec<(String, Box<dyn FunctionHandler + Send + Sync>)> {
         vec![
             // Create validation function
             (
@@ -62,7 +63,6 @@ pub trait FunctionHandler: Send + Sync {
     ///
     /// # Returns
     ///
-    /// * `Result<(usize, Vec<Change>), String>` - Result containing status code and changes, or error
-    fn execute(&self, message: &mut Message, input: &Value)
-        -> Result<(usize, Vec<Change>), String>;
+    /// * `Result<(usize, Vec<Change>)>` - Result containing status code and changes, or error
+    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)>;
 }

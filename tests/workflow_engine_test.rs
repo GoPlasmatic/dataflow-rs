@@ -1,18 +1,14 @@
 use dataflow_rs::engine::functions::FunctionHandler;
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::engine::task::Function;
-use dataflow_rs::{Engine, Task, Workflow};
+use dataflow_rs::{Engine, Result, Task, Workflow};
 use serde_json::Value;
 
 // A simple task implementation
 struct LoggingTask;
 
 impl FunctionHandler for LoggingTask {
-    fn execute(
-        &self,
-        message: &mut Message,
-        _input: &Value,
-    ) -> Result<(usize, Vec<Change>), String> {
+    fn execute(&self, message: &mut Message, _input: &Value) -> Result<(usize, Vec<Change>)> {
         println!("Executed task for message: {}", &message.id);
         Ok((200, vec![]))
     }
@@ -63,8 +59,9 @@ fn test_workflow_execution() {
     engine.add_workflow(&workflow);
 
     // Process the message
-    engine.process_message(&mut message);
+    let result = engine.process_message(&mut message);
 
+    assert!(result.is_ok(), "Workflow execution should succeed");
     println!("Message: {:?}", message);
     // Verify the message was processed correctly
     assert_eq!(

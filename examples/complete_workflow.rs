@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Process the message through the workflow
     println!("Processing message through workflow...");
-    engine.process_message(&mut message);
+    let _ = engine.process_message(&mut message);
 
     println!(
         "\nFull message structure:\n{}",
