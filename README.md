@@ -3,7 +3,6 @@
 [![Release Crates](https://github.com/codetiger/dataflow-rs/actions/workflows/crate-publish.yml/badge.svg)](https://github.com/codetiger/dataflow-rs/actions/workflows/crate-publish.yml)
 [![Crates.io Version](https://img.shields.io/crates/v/dataflow-rs)](https://crates.io/crates/dataflow-rs)
 [![License](https://img.shields.io/crates/l/dataflow-rs)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.60+-blue)](https://www.rust-lang.org)
 
 Dataflow-rs is a lightweight, rule-driven workflow engine designed for building powerful data processing pipelines and nanoservices in Rust. Extend it with your custom tasks to create robust, maintainable services.
 
@@ -12,9 +11,11 @@ Dataflow-rs is a lightweight, rule-driven workflow engine designed for building 
 - **Rule-Based Workflow Selection:** Dynamically select workflows using JSONLogic expressions.
 - **Task Orchestration:** Compose sequences of tasks for complex data processing.
 - **Message Transformation:** Seamlessly modify message data via specialized tasks.
+- **Comprehensive Error Handling:** Detailed error types and recovery mechanisms.
+- **Retry Capabilities:** Configurable retry policies for transient failures.
 - **Audit Trails:** Automatically record changes for debugging and monitoring.
 - **Pluggable Architecture:** Easily extend the framework by registering custom tasks.
-- **Async Support:** Efficiently handle asynchronous tasks and HTTP requests.
+- **Thread-Safety:** Properly handles concurrent execution with thread-safe patterns.
 
 ## Table of Contents
 
@@ -22,6 +23,7 @@ Dataflow-rs is a lightweight, rule-driven workflow engine designed for building 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Advanced Examples](#advanced-examples)
+- [Error Handling](#error-handling)
 - [Extending the Framework](#extending-the-framework)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
@@ -29,7 +31,7 @@ Dataflow-rs is a lightweight, rule-driven workflow engine designed for building 
 
 ## Overview
 
-Dataflow-rs empowers developers to build scalable nanoservices and data pipelines with ease. Its core design focuses on flexibility and extensibility, allowing you to integrate your custom business logic into robust workflows.
+Dataflow-rs empowers developers to build scalable nanoservices and data pipelines with ease. Its core design focuses on flexibility, extensibility, and resilience, allowing you to integrate your custom business logic into robust workflows with proper error handling.
 
 ## Installation
 
@@ -37,180 +39,194 @@ To incorporate Dataflow-rs into your project, add the following to your `Cargo.t
 
 ```toml
 [dependencies]
-dataflow-rs = "0.1.0"
+dataflow-rs = "0.1.4"
 ```
 
 ## Quick Start
 
-Below is a simple example demonstrating how to set up a workflow that generates a greeting message:
+Below is a simple example demonstrating how to set up a workflow that processes data:
 
 ```rust
-use dataflow_rs::{Engine, Workflow, FunctionHandler, DataLogic};
-use dataflow_rs::engine::message::{Message, Change};
-use datalogic_rs::{DataValue, arena::DataArena, FromJson};
+use dataflow_rs::{Engine, Workflow, Result};
+use dataflow_rs::engine::message::Message;
 use serde_json::json;
 
-struct GreetingTask;
+fn main() -> Result<()> {
+    // Create the workflow engine (built-in functions are auto-registered)
+    let mut engine = Engine::new();
 
-impl FunctionHandler for GreetingTask {
-    fn execute<'a>(
-        &self,
-        message: &mut Message<'a>,
-        _input: &DataValue,
-        arena: &'a DataArena
-    ) -> Result<Vec<Change<'a>>, String> {
-        let name = message.payload.get("name").and_then(|v| v.as_str()).unwrap_or("Guest");
-        let greeting = format!("Hello, {}!", name);
-        let data_object = json!({"greeting": greeting});
-        message.data = DataValue::from_json(&data_object, arena);
-        let changes = vec![
-            Change {
-                path: "data.greeting".to_string(),
-                old_value: DataValue::null(),
-                new_value: DataValue::from_json(&json!(greeting), arena),
-            }
-        ];
-        Ok(changes)
-    }
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let data_logic = Box::leak(Box::new(DataLogic::default()));
-    let mut engine = Engine::new(data_logic);
-    engine.register_function("greet".to_string(), Box::new(GreetingTask));
-
+    // Define a workflow in JSON
     let workflow_json = r#"
     {
-        "id": "greeting_workflow",
-        "name": "Greeting Generator",
-        "description": "Generates a greeting based on the payload name",
-        "condition": { "==": [true, true] },
+        "id": "data_processor",
+        "name": "Data Processor",
         "tasks": [
             {
-                "id": "generate_greeting",
-                "name": "Generate Greeting",
-                "function": "greet",
-                "condition": { "==": [true, true] },
-                "input": {}
+                "id": "fetch_data",
+                "name": "Fetch Data",
+                "function": {
+                    "name": "http",
+                    "input": { "url": "https://api.example.com/data" }
+                }
+            },
+            {
+                "id": "transform_data",
+                "name": "Transform Data",
+                "function": {
+                    "name": "map",
+                    "input": {
+                        "mappings": [
+                            {
+                                "path": "data.result",
+                                "logic": { "var": "temp_data.body.value" }
+                            }
+                        ]
+                    }
+                }
             }
         ]
     }
     "#;
 
-    let mut workflow = Workflow::from_json(workflow_json)?;
-    workflow.prepare(data_logic);
+    // Parse and add the workflow to the engine
+    let workflow = Workflow::from_json(workflow_json)?;
     engine.add_workflow(&workflow);
 
-    let mut message = Message {
-        id: "msg_001".to_string(),
-        data: DataValue::from_json(&json!({}), data_logic.arena()),
-        payload: DataValue::from_json(&json!({"name": "Alice"}), data_logic.arena()),
-        metadata: DataValue::from_json(&json!({}), data_logic.arena()),
-        temp_data: DataValue::from_json(&json!({}), data_logic.arena()),
-        audit_trail: Vec::new(),
-    };
+    // Create a message to process
+    let mut message = Message::new(&json!({}));
 
-    engine.process_message(&mut message);
-    println!("Message processed: {:?}", message);
+    // Process the message through the workflow
+    engine.process_message(&mut message)?;
+
+    println!("Processed result: {}", message.data["result"]);
+
     Ok(())
 }
 ```
 
 ## Advanced Examples
 
-Dataflow-rs can also integrate with external APIs. For instance, the following example shows how to fetch data from a cat fact API:
+### Custom Function Handler
+
+Extend the engine with your own custom function handlers:
 
 ```rust
-use dataflow_rs::{Engine, Workflow, FunctionHandler};
-use dataflow_rs::engine::message::{Message, Change};
-use datalogic_rs::{arena::DataArena, DataLogic, DataValue, FromJson};
-use reqwest::Client;
-use tokio;
+use dataflow_rs::{Engine, FunctionHandler, Result, Workflow};
+use dataflow_rs::engine::message::{Change, Message};
+use dataflow_rs::engine::error::DataflowError;
 use serde_json::{json, Value};
 
-struct CatFactTask {
-    client: Client,
-}
+struct CustomFunction;
 
-impl CatFactTask {
-    fn new() -> Self {
-        Self { client: Client::new() }
-    }
-}
+impl FunctionHandler for CustomFunction {
+    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
+        // Validate input
+        let required_field = input.get("field")
+            .ok_or_else(|| DataflowError::Validation("Missing required field".to_string()))?
+            .as_str()
+            .ok_or_else(|| DataflowError::Validation("Field must be a string".to_string()))?;
 
-impl FunctionHandler for CatFactTask {
-    fn execute<'a>(
-        &self,
-        message: &mut Message<'a>,
-        _input: &DataValue,
-        arena: &'a DataArena
-    ) -> Result<Vec<Change<'a>>, String> {
-        let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("Runtime error: {}", e))?;
-        let url = "https://catfact.ninja/fact";
-        let response_data = runtime.block_on(async {
-            let response = self.client.get(url)
-                .send()
-                .await
-                .map_err(|e| format!("HTTP request failed: {}", e))?;
-            let json = response.json::<Value>()
-                .await
-                .map_err(|e| format!("JSON parse error: {}", e))?;
-            Ok::<Value, String>(json)
-        }).map_err(|e| e.to_string())?;
+        // Implement your custom logic here
+        println!("Processing with field: {}", required_field);
 
-        let mut data_object = json!({});
-        data_object["cat_fact"] = response_data.clone();
-        message.data = DataValue::from_json(&data_object, arena);
+        // Record changes for audit trail
         let changes = vec![
             Change {
-                path: "data.cat_fact".to_string(),
-                old_value: DataValue::null(),
-                new_value: DataValue::from_json(&response_data, arena),
+                path: "data.custom_field".to_string(),
+                old_value: Value::Null,
+                new_value: json!("custom value"),
             }
         ];
-        Ok(changes)
+
+        // Return success code (200) and changes
+        Ok((200, changes))
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let data_logic = Box::leak(Box::new(DataLogic::default()));
-    let mut engine = Engine::new(data_logic);
-    engine.register_function("cat_fact".to_string(), Box::new(CatFactTask::new()));
+fn main() -> Result<()> {
+    let mut engine = Engine::new();
 
+    // Register your custom function
+    engine.register_task_function("custom".to_string(), Box::new(CustomFunction));
+
+    // Use it in a workflow
     let workflow_json = r#"
     {
-        "id": "cat_fact_workflow",
-        "name": "Cat Fact Fetcher",
-        "description": "Fetches random cat facts and enhances your data",
-        "condition": { "==": [true, true] },
+        "id": "custom_workflow",
+        "name": "Custom Workflow",
         "tasks": [
             {
-                "id": "get_cat_fact",
-                "name": "Get Cat Fact",
-                "function": "cat_fact",
-                "condition": { "==": [true, true] },
-                "input": {}
+                "id": "custom_task",
+                "name": "Custom Task",
+                "function": {
+                    "name": "custom",
+                    "input": { "field": "example_value" }
+                }
             }
         ]
     }
     "#;
 
-    let mut workflow = Workflow::from_json(workflow_json)?;
-    workflow.prepare(data_logic);
+    let workflow = Workflow::from_json(workflow_json)?;
     engine.add_workflow(&workflow);
-
-    let mut message = Message {
-        id: "msg_001".to_string(),
-        data: DataValue::from_json(&json!({}), data_logic.arena()),
-        payload: DataValue::from_json(&json!({}), data_logic.arena()),
-        metadata: DataValue::from_json(&json!({}), data_logic.arena()),
-        temp_data: DataValue::from_json(&json!({}), data_logic.arena()),
-        audit_trail: Vec::new(),
-    };
-
-    engine.process_message(&mut message);
-    println!("Message processed: {:?}", message);
+    
+    let mut message = Message::new(&json!({}));
+    engine.process_message(&mut message)?;
+    
     Ok(())
+}
+```
+
+## Error Handling
+
+Dataflow-rs provides comprehensive error handling with dedicated error types:
+
+```rust
+use dataflow_rs::{Engine, Result, DataflowError};
+use dataflow_rs::engine::message::Message;
+use serde_json::json;
+
+fn main() -> Result<()> {
+    let mut engine = Engine::new();
+    // ... setup workflows ...
+    
+    let mut message = Message::new(&json!({}));
+    
+    // Configure message to continue processing despite errors
+    message.set_continue_on_error(true);
+    
+    // Process the message, errors will be collected but not halt execution
+    engine.process_message(&mut message)?;
+    
+    // Check if there were any errors during processing
+    if message.has_errors() {
+        for error in &message.errors {
+            println!("Error in workflow: {:?}, task: {:?}: {:?}", 
+                     error.workflow_id, error.task_id, error.error);
+        }
+    }
+    
+    Ok(())
+}
+```
+
+### Retry Configuration
+
+Configure retry behavior for transient failures:
+
+```rust
+use dataflow_rs::{Engine, RetryConfig};
+
+fn main() {
+    // Create an engine with custom retry configuration
+    let engine = Engine::new()
+        .with_retry_config(RetryConfig {
+            max_retries: 5,
+            retry_delay_ms: 500,
+            use_backoff: true,
+        });
+    
+    // Now any transient failures will be retried according to this configuration
 }
 ```
 
@@ -219,8 +235,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Dataflow-rs is highly extensible. You can:
 
 - Implement custom tasks by creating structs that implement the `FunctionHandler` trait.
+- Create your own error types by extending from the base `DataflowError`.
 - Build nanoservices by integrating multiple workflows.
-- Leverage asynchronous and external API integrations for enriched data processing.
+- Leverage the built-in HTTP, validation, and mapping functions.
+
+## Built-in Functions
+
+The engine comes with several pre-registered functions:
+
+- **http**: Fetches data from external HTTP APIs
+- **map**: Maps and transforms data between different parts of a message
+- **validate**: Validates message data against rules using JSONLogic expressions
 
 ## Documentation
 
