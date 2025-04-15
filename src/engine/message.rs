@@ -1,40 +1,41 @@
-use chrono::{DateTime, Utc};
-use datalogic_rs::DataValue;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
 
-#[derive(Debug, Clone)]
-pub struct Message<'a> {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Message {
     pub id: String,
-    pub data: DataValue<'a>,
-    pub payload: DataValue<'a>,
-    pub metadata: DataValue<'a>,
-    pub temp_data: DataValue<'a>,
-    pub audit_trail: Vec<AuditTrail<'a>>,
+    pub data: Value,
+    pub payload: Value,
+    pub metadata: Value,
+    pub temp_data: Value,
+    pub audit_trail: Vec<AuditTrail>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AuditTrail<'a> {
-    pub workflow_id: String,
-    pub task_id: String,
-    pub timestamp: DateTime<Utc>,
-    pub changes: Vec<Change<'a>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Change<'a> {
-    pub path: String,
-    pub old_value: DataValue<'a>,
-    pub new_value: DataValue<'a>,
-}
-
-impl<'a> Message<'a> {
-    pub fn new(input: &'a DataValue) -> Self {
+impl Message {
+    pub fn new(payload: &Value) -> Self {
         Self {
-            id: input.get("id").unwrap().to_string(),
-            data: input.get("data").unwrap().clone(),
-            payload: input.get("payload").unwrap().clone(),
-            metadata: input.get("metadata").unwrap().clone(),
-            temp_data: input.get("temp_data").unwrap().clone(),
+            id: Uuid::new_v4().to_string(),
+            data: Value::Null,
+            payload: payload.clone(),
+            metadata: Value::Null,
+            temp_data: Value::Null,
             audit_trail: vec![],
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AuditTrail {
+    pub workflow_id: String,
+    pub task_id: String,
+    pub timestamp: String,
+    pub changes: Vec<Change>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Change {
+    pub path: String,
+    pub old_value: Value,
+    pub new_value: Value,
 }

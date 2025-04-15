@@ -1,5 +1,4 @@
 use crate::engine::task::Task;
-use datalogic_rs::{DataLogic, Logic};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
@@ -12,9 +11,6 @@ pub struct Workflow {
     pub description: Option<String>,
     pub condition: Option<Value>,
     pub tasks: Vec<Task>,
-
-    #[serde(skip)]
-    pub task_logics: Vec<(Logic<'static>, Task)>,
 }
 
 impl Default for Workflow {
@@ -31,7 +27,6 @@ impl Workflow {
             description: None,
             condition: None,
             tasks: Vec::new(),
-            task_logics: Vec::new(),
         }
     }
 
@@ -45,13 +40,5 @@ impl Workflow {
         let json_str = fs::read_to_string(path)?;
         let workflow = Self::from_json(&json_str)?;
         Ok(workflow)
-    }
-
-    pub fn prepare(&mut self, data_logic: &'static DataLogic) {
-        for task in &self.tasks {
-            let condition = task.condition.clone().unwrap();
-            let logic = data_logic.parse_logic_json(&condition, None).unwrap();
-            self.task_logics.push((logic, task.clone()));
-        }
     }
 }

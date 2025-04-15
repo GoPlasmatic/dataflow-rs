@@ -1,0 +1,125 @@
+use crate::engine::message::{Change, Message};
+use crate::engine::FunctionHandler;
+use reqwest::{
+    blocking::{Client, RequestBuilder},
+    header::{HeaderMap, HeaderName, HeaderValue},
+    Method,
+};
+use serde_json::{json, Value};
+use std::convert::TryFrom;
+use std::str::FromStr;
+use std::time::Duration;
+
+/// An HTTP task function for making API requests.
+///
+/// This task allows workflows to make HTTP requests to external APIs.
+/// It supports different HTTP methods, headers, and parsing responses
+/// into the message payload.
+pub struct HttpFunction {
+    client: Client,
+}
+
+impl HttpFunction {
+    pub fn new(timeout_secs: u64) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(timeout_secs))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        Self { client }
+    }
+
+    fn build_request(&self, input: &Value) -> Result<RequestBuilder, String> {
+        // Extract URL
+        let url = input
+            .get("url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "URL is required".to_string())?;
+
+        // Extract method (default to GET)
+        let method_str = input.get("method").and_then(Value::as_str).unwrap_or("GET");
+
+        let method =
+            Method::from_str(method_str).map_err(|e| format!("Invalid HTTP method: {}", e))?;
+
+        // Determine whether this method supports a body
+        let supports_body = method != Method::GET && method != Method::HEAD;
+
+        // Build the request
+        let mut request = self.client.request(method, url);
+
+        // Add headers if present
+        if let Some(headers) = input.get("headers").and_then(Value::as_object) {
+            let mut header_map = HeaderMap::new();
+
+            for (key, value) in headers {
+                if let Some(value_str) = value.as_str() {
+                    let header_name = HeaderName::try_from(key)
+                        .map_err(|e| format!("Invalid header name '{}': {}", key, e))?;
+
+                    let header_value = HeaderValue::try_from(value_str)
+                        .map_err(|e| format!("Invalid header value '{}': {}", value_str, e))?;
+
+                    header_map.insert(header_name, header_value);
+                }
+            }
+
+            request = request.headers(header_map);
+        }
+
+        // Add body if present for methods that support it
+        if let Some(body) = input.get("body") {
+            if supports_body {
+                request = request.json(body);
+            }
+        }
+
+        Ok(request)
+    }
+}
+
+impl FunctionHandler for HttpFunction {
+    fn execute(
+        &self,
+        message: &mut Message,
+        input: &Value,
+    ) -> Result<(usize, Vec<Change>), String> {
+        // Build the request
+        let request = self.build_request(input)?;
+
+        // Make the request
+        let response = request
+            .send()
+            .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+        // Get status code
+        let status = response.status();
+        let status_code = status.as_u16() as usize;
+
+        // Parse the response
+        let response_body = response
+            .text()
+            .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+        // Try to parse as JSON, but fall back to string if it's not valid JSON
+        let response_value =
+            serde_json::from_str::<Value>(&response_body).unwrap_or_else(|_| json!(response_body));
+
+        // Store response in message temp data
+        message.temp_data = json!({
+            "status": status_code,
+            "body": response_value,
+            "success": status.is_success(),
+        });
+
+        // Return changes
+        Ok((
+            status_code,
+            vec![Change {
+                path: "temp_data".to_string(),
+                old_value: Value::Null,
+                new_value: message.temp_data.clone(),
+            }],
+        ))
+    }
+}

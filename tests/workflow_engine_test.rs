@@ -1,22 +1,20 @@
-use dataflow_rs::engine::functions::task::TaskFunctionHandler;
-use dataflow_rs::engine::functions::Function;
+use dataflow_rs::engine::functions::FunctionHandler;
 use dataflow_rs::engine::message::{Change, Message};
+use dataflow_rs::engine::task::Function;
 use dataflow_rs::{Engine, Task, Workflow};
-use datalogic_rs::arena::DataArena;
-use datalogic_rs::{DataLogic, DataValue};
+use serde_json::Value;
 
 // A simple task implementation
 struct LoggingTask;
 
-impl TaskFunctionHandler for LoggingTask {
-    fn execute<'a>(
+impl FunctionHandler for LoggingTask {
+    fn execute(
         &self,
-        message: &mut Message<'a>,
-        _input: &DataValue,
-        _arena: &'a DataArena,
-    ) -> Result<Vec<Change<'a>>, String> {
+        message: &mut Message,
+        _input: &Value,
+    ) -> Result<(usize, Vec<Change>), String> {
         println!("Executed task for message: {}", &message.id);
-        Ok(vec![])
+        Ok((200, vec![]))
     }
 }
 
@@ -26,19 +24,11 @@ fn test_task_execution() {
     let task = LoggingTask;
 
     // Create a dummy message
-    let mut message = Message {
-        id: "test123".to_string(),
-        data: DataValue::Null,
-        payload: DataValue::Null,
-        metadata: DataValue::Null,
-        temp_data: DataValue::Null,
-        audit_trail: Vec::new(),
-    };
+    let mut message = Message::new(&serde_json::Value::Null);
 
     // Execute the task directly
-    let input = DataValue::Null;
-    let arena = DataArena::new();
-    let result = task.execute(&mut message, &input, &arena);
+    let input = serde_json::Value::Null;
+    let result = task.execute(&mut message, &input);
 
     // Verify the execution was successful
     assert!(result.is_ok(), "Task execution should succeed");
@@ -46,38 +36,30 @@ fn test_task_execution() {
 
 #[test]
 fn test_workflow_execution() {
-    let data_logic: &'static DataLogic = Box::leak(Box::new(DataLogic::new()));
-    let mut engine = Engine::new(data_logic);
+    let mut engine = Engine::new();
 
     engine.register_task_function("log".to_string(), Box::new(LoggingTask));
 
     // Create a dummy message
-    let mut message = Message {
-        id: "test123".to_string(),
-        data: DataValue::Null,
-        payload: DataValue::Null,
-        metadata: DataValue::Null,
-        temp_data: DataValue::Null,
-        audit_trail: Vec::new(),
-    };
+    let mut message = Message::new(&serde_json::Value::Null);
 
     // Add a workflow to the engine
-    let mut workflow = Workflow {
+    let workflow = Workflow {
         id: "test_workflow".to_string(),
         name: "Test Workflow".to_string(),
         description: Some("A test workflow".to_string()),
-        task_logics: vec![],
         tasks: vec![Task {
             id: "log_task".to_string(),
             name: "Log Task".to_string(),
             description: Some("A test task".to_string()),
             condition: Some(serde_json::Value::Bool(true)),
-            function: Function::new("log".to_string(), serde_json::Value::Null),
-            input: serde_json::Value::Null,
+            function: Function {
+                name: "log".to_string(),
+                input: serde_json::Value::Null,
+            },
         }],
         condition: Some(serde_json::Value::Bool(true)),
     };
-    workflow.prepare(data_logic);
     engine.add_workflow(&workflow);
 
     // Process the message

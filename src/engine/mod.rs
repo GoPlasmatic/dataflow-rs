@@ -1,120 +1,270 @@
+/*!
+# Engine Module
+
+This module implements the core workflow engine for dataflow-rs. The engine processes
+messages through workflows composed of tasks, providing a flexible and extensible
+data processing pipeline.
+
+## Key Components
+
+- **Engine**: The main engine that processes messages through workflows
+- **Workflow**: A collection of tasks with conditions that determine when they should be applied
+- **Task**: An individual processing unit that performs a specific function on a message
+- **FunctionHandler**: A trait implemented by task handlers to define custom processing logic
+- **Message**: The data structure that flows through the engine, with data, metadata, and processing results
+*/
+
 pub mod functions;
 pub mod message;
 pub mod task;
 pub mod workflow;
 
 // Re-export key types for easier access
-pub use functions::source::SourceFunctionHandler;
-pub use functions::task::TaskFunctionHandler;
+pub use functions::FunctionHandler;
 pub use message::Message;
 pub use task::Task;
 pub use workflow::Workflow;
 
+// Re-export the jsonlogic library under our namespace
+pub use datalogic_rs as jsonlogic;
+
 use message::AuditTrail;
 
 use chrono::Utc;
-use datalogic_rs::{DataLogic, DataValue, FromJson, Logic};
+use datalogic_rs::DataLogic;
+use serde_json::{json, Map, Number, Value};
 use std::collections::HashMap;
-// Main engine that processes messages through workflows
-pub struct Engine<'a> {
-    task_functions: HashMap<String, Box<dyn TaskFunctionHandler>>,
-    source_functions: HashMap<String, Box<dyn SourceFunctionHandler>>,
-    workflows: Vec<(Logic<'a>, Workflow)>,
-    data_logic: &'a DataLogic,
+
+/// Main engine that processes messages through workflows
+pub struct Engine {
+    /// Registry of available workflows
+    workflows: HashMap<String, Workflow>,
+    /// Registry of function handlers that can be executed by tasks
+    task_functions: HashMap<String, Box<dyn FunctionHandler + Send + Sync>>,
 }
 
-impl<'a> Engine<'a> {
-    pub fn new(data_logic: &'a DataLogic) -> Self {
+impl Default for Engine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Engine {
+    /// Creates a new Engine instance with built-in function handlers pre-registered.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dataflow_rs::Engine;
+    ///
+    /// let engine = Engine::new();
+    /// ```
+    pub fn new() -> Self {
+        let mut engine = Self {
+            workflows: HashMap::new(),
+            task_functions: HashMap::new(),
+        };
+
+        // Register built-in function handlers
+        for (name, handler) in functions::builtins::get_all_functions() {
+            engine.register_task_function(name, handler);
+        }
+
+        engine
+    }
+
+    /// Create a new engine instance without any pre-registered functions
+    pub fn new_empty() -> Self {
         Self {
             task_functions: HashMap::new(),
-            source_functions: HashMap::new(),
-            workflows: Vec::new(),
-            data_logic,
+            workflows: HashMap::new(),
         }
     }
 
+    /// Adds a workflow to the engine.
+    ///
+    /// # Arguments
+    ///
+    /// * `workflow` - The workflow to add
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dataflow_rs::{Engine, Workflow};
+    /// use serde_json::json;
+    ///
+    /// let mut engine = Engine::new();
+    /// 
+    /// // Example JSON string for a workflow
+    /// let workflow_json_str = r#"
+    /// {
+    ///     "id": "example_workflow",
+    ///     "name": "Example Workflow",
+    ///     "tasks": []
+    /// }
+    /// "#;
+    /// 
+    /// let workflow = Workflow::from_json(workflow_json_str).unwrap();
+    /// engine.add_workflow(&workflow);
+    /// ```
     pub fn add_workflow(&mut self, workflow: &Workflow) {
-        let condition = workflow.condition.clone();
-        let condition_logic = self
-            .data_logic
-            .parse_logic_json(&condition.unwrap(), None)
-            .unwrap();
-        self.workflows.push((condition_logic, workflow.clone()));
+        self.workflows.insert(workflow.id.clone(), workflow.clone());
     }
 
-    pub fn register_task_function(&mut self, id: String, handler: Box<dyn TaskFunctionHandler>) {
-        self.task_functions.insert(id, handler);
-    }
-
-    pub fn register_source_function(
+    /// Registers a custom function handler with the engine.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the function handler
+    /// * `handler` - The function handler implementation
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dataflow_rs::{Engine, FunctionHandler};
+    /// use dataflow_rs::engine::message::{Change, Message};
+    /// use serde_json::Value;
+    /// 
+    /// // Example custom function implementation
+    /// struct CustomFunction;
+    /// 
+    /// impl FunctionHandler for CustomFunction {
+    ///     fn execute(
+    ///         &self,
+    ///         message: &mut Message,
+    ///         _input: &Value,
+    ///     ) -> Result<(usize, Vec<Change>), String> {
+    ///         // Implementation would go here
+    ///         Ok((200, vec![]))
+    ///     }
+    /// }
+    /// 
+    /// let mut engine = Engine::new();
+    /// engine.register_task_function("custom".to_string(), Box::new(CustomFunction));
+    /// ```
+    pub fn register_task_function(
         &mut self,
-        id: String,
-        handler: Box<dyn SourceFunctionHandler>,
+        name: String,
+        handler: Box<dyn FunctionHandler + Send + Sync>,
     ) {
-        self.source_functions.insert(id, handler);
+        self.task_functions.insert(name, handler);
     }
 
-    pub fn process_message(&'a self, message: &mut Message<'a>) {
-        for (condition_logic, workflow) in &self.workflows {
-            let result = self.data_logic.evaluate(condition_logic, &message.metadata);
-            match result {
-                Ok(result) => {
-                    if let Some(result) = result.as_bool() {
-                        if result {
-                            for (condition_logic, task) in &workflow.task_logics {
-                                let task_result =
-                                    self.data_logic.evaluate(condition_logic, &message.metadata);
-                                match task_result {
-                                    Ok(result) => {
-                                        if let Some(result) = result.as_bool() {
-                                            if result {
-                                                self.execute_task(message, task);
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        println!("Error evaluating task: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
+    /// Check if a function with the given name is registered
+    pub fn has_function(&self, name: &str) -> bool {
+        self.task_functions.contains_key(name)
+    }
+
+    /// Processes a message through workflows that match their conditions.
+    ///
+    /// This method:
+    /// 1. Evaluates conditions for each workflow
+    /// 2. For matching workflows, executes each task in sequence
+    /// 3. Updates the message with processing results and audit trail
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The message to process
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use dataflow_rs::Engine;
+    /// use dataflow_rs::engine::Message;
+    /// use serde_json::json;
+    ///
+    /// let mut engine = Engine::new();
+    /// // ... add workflows ...
+    /// let mut message = Message::new(&json!({"some": "data"}));
+    /// engine.process_message(&mut message);
+    /// ```
+    pub fn process_message(&self, message: &mut Message) {
+        let data_logic = DataLogic::new();
+        // Process each workflow
+        for workflow in self.workflows.values() {
+            // Check if workflow should process this message based on condition
+            let condition = workflow.condition.clone().unwrap_or(Value::Bool(true));
+            let should_process = eval_condition(&data_logic, &condition, &message.metadata);
+
+            if !should_process {
+                continue;
+            }
+
+            // Process each task in the workflow
+            for task in &workflow.tasks {
+                let task_condition = task.condition.clone().unwrap_or(Value::Bool(true));
+                let should_execute =
+                    eval_condition(&data_logic, &task_condition, &message.metadata);
+
+                if !should_execute {
+                    continue;
                 }
-                Err(e) => {
-                    println!("Error evaluating condition: {}", e);
+
+                // Execute task if we have a handler
+                if let Some(function) = self.task_functions.get(&task.function.name) {
+                    // Execute the task with fresh arena data
+                    execute_task(
+                        task.id.clone(),
+                        workflow.id.clone(),
+                        message,
+                        &task.function.input,
+                        &**function,
+                    );
                 }
             }
         }
     }
+}
 
-    fn execute_task(&'a self, message: &mut Message<'a>, task: &Task) {
-        if let Some(function) = self.task_functions.get(&task.function.name) {
-            let arena = self.data_logic.arena();
-            let input_value = DataValue::from_json(&task.input, arena);
-
-            match function.execute(message, &input_value, arena) {
-                Ok(changes) => {
-                    let audit_trail = AuditTrail {
-                        workflow_id: message.id.clone(),
-                        task_id: task.id.clone(),
-                        timestamp: Utc::now(),
-                        changes,
-                    };
-
-                    message.audit_trail.push(audit_trail);
-                }
-                Err(e) => {
-                    println!("Error executing task: {}", e);
-                }
-            }
-        } else {
-            println!("Function not found: {}", task.function.name);
+/// Helper function to evaluate a condition using DataLogic
+fn eval_condition(data_logic: &DataLogic, condition: &Value, data: &Value) -> bool {
+    match data_logic.evaluate_json(condition, data, None) {
+        Ok(result) => result.as_bool().unwrap_or(false),
+        Err(e) => {
+            println!("Error evaluating condition: {}", e);
+            false
         }
     }
+}
 
-    // This is a non-functional placeholder - see example for proper implementation
-    pub fn start(&self) {
-        println!("To start source functions, create per-thread processors as in the example");
-        println!("The Engine is not thread-safe so it needs thread-local instances");
+/// Execute a task with a fresh data arena
+///
+/// This creates a new temporary message to isolate the task execution,
+/// then copies relevant changes back to the original message.
+fn execute_task(
+    task_id: String,
+    workflow_id: String,
+    message: &mut Message,
+    input_json: &Value,
+    function: &dyn FunctionHandler,
+) {
+    println!("Executing task {}", task_id);
+    // Execute the function with a fresh arena
+    if let Ok((response_code, changes)) = function.execute(message, input_json) {
+        let mut progress = Map::new();
+        progress.insert("task_id".to_string(), Value::String(task_id.clone()));
+        progress.insert(
+            "workflow_id".to_string(),
+            Value::String(workflow_id.clone()),
+        );
+        progress.insert(
+            "response_code".to_string(),
+            Value::Number(Number::from(response_code)),
+        );
+        progress.insert(
+            "timestamp".to_string(),
+            Value::String(chrono::Utc::now().to_rfc3339()),
+        );
+        message.metadata["progress"] = json!(progress);
+
+        // Create a new audit trail entry
+        message.audit_trail.push(AuditTrail {
+            workflow_id,
+            task_id,
+            timestamp: Utc::now().to_rfc3339(),
+            changes,
+        });
+    } else {
+        println!("Error executing task {}", task_id);
     }
 }
