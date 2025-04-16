@@ -215,29 +215,12 @@ fn log_benchmark_results(
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
 
-    // Add the new entry under the current version
+    // Add the new entry under the current version - always replacing previous results
     let version_key = VERSION.to_string();
 
     if let Some(obj) = benchmark_data.as_object_mut() {
-        // If this version already exists, treat it as an array of benchmark runs
-        match obj.get_mut(&version_key) {
-            Some(Value::Array(arr)) => {
-                // Version exists and is an array, add new entry
-                arr.push(benchmark_entry);
-            }
-            Some(existing) => {
-                // Version exists but is not an array, convert to array with old and new value
-                let old_value = existing.clone();
-                let mut new_arr = Vec::new();
-                new_arr.push(old_value);
-                new_arr.push(benchmark_entry);
-                obj.insert(version_key, Value::Array(new_arr));
-            }
-            None => {
-                // First entry for this version, start with a single entry (not array)
-                obj.insert(version_key, benchmark_entry);
-            }
-        }
+        // Simply replace any existing entry with the new one
+        obj.insert(version_key, benchmark_entry);
     }
 
     // Write the updated data back to the file

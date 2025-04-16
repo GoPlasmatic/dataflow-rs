@@ -1,12 +1,12 @@
 {
   "0.1.5": {
-    "avg_time_ns": 47843,
+    "avg_time_ns": 47258,
     "iterations": 10000,
-    "max_time_ns": 1763125,
-    "min_time_ns": 42042,
-    "p95_ns": 63041,
-    "p99_ns": 88458,
-    "timestamp": "2025-04-16T03:05:17.297627+00:00",
-    "total_time_ns": 478435907
+    "max_time_ns": 1925542,
+    "min_time_ns": 42000,
+    "p95_ns": 60583,
+    "p99_ns": 81500,
+    "timestamp": "2025-04-16T04:00:37.460643+00:00",
+    "total_time_ns": 472582744
   }
 }

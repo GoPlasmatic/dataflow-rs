@@ -147,7 +147,11 @@ impl Engine {
     /// engine.add_workflow(&workflow);
     /// ```
     pub fn add_workflow(&mut self, workflow: &Workflow) {
-        self.workflows.insert(workflow.id.clone(), workflow.clone());
+        if workflow.validate().is_ok() {
+            self.workflows.insert(workflow.id.clone(), workflow.clone());
+        } else {
+            error!("Invalid workflow: {}", workflow.id);
+        }
     }
 
     /// Registers a custom function handler with the engine.
