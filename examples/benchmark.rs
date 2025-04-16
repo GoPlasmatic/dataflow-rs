@@ -165,7 +165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Calculate and print benchmark results
     let avg_duration = total_duration / num_iterations as u32;
-    
+
     println!("\nBenchmark Results (v{}):", VERSION);
     println!("  Iterations: {}", num_iterations);
     println!("  Min time: {:?}", min_duration);
@@ -202,7 +202,7 @@ fn log_benchmark_results(
 ) -> io::Result<()> {
     // Read existing benchmark data or create new if file doesn't exist
     let mut benchmark_data = read_benchmark_file().unwrap_or_else(|_| json!({}));
-    
+
     // Create a new benchmark entry
     let benchmark_entry = json!({
         "iterations": iterations,
@@ -214,10 +214,10 @@ fn log_benchmark_results(
         "total_time_ns": total_time.as_nanos(),
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
-    
+
     // Add the new entry under the current version
     let version_key = VERSION.to_string();
-    
+
     if let Some(obj) = benchmark_data.as_object_mut() {
         // If this version already exists, treat it as an array of benchmark runs
         match obj.get_mut(&version_key) {
@@ -239,16 +239,16 @@ fn log_benchmark_results(
             }
         }
     }
-    
+
     // Write the updated data back to the file
     let file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(BENCHMARK_LOG_FILE)?;
-    
+
     serde_json::to_writer_pretty(file, &benchmark_data)?;
-    
+
     Ok(())
 }
 
@@ -256,11 +256,11 @@ fn read_benchmark_file() -> io::Result<Value> {
     if !Path::new(BENCHMARK_LOG_FILE).exists() {
         return Ok(json!({}));
     }
-    
+
     let mut file = File::open(BENCHMARK_LOG_FILE)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
-    
+
     match serde_json::from_str(&contents) {
         Ok(value) => Ok(value),
         Err(e) => {
@@ -268,4 +268,4 @@ fn read_benchmark_file() -> io::Result<Value> {
             Ok(json!({}))
         }
     }
-} 
+}

@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 pub mod validation;
 pub use validation::ValidationFunction;
 
-pub mod fetch;
-pub use fetch::*;
+pub mod http;
+pub use http::*;
 
-pub mod enrich;
-pub use enrich::MapFunction;
+pub mod map;
+pub use map::MapFunction;
 
 // Re-export all built-in functions for easier access
 pub mod builtins {
@@ -43,7 +43,7 @@ pub mod builtins {
             // Create HTTP function with 30-second timeout
             (
                 HTTP_FUNCTION.to_string(),
-                Box::new(fetch::HttpFunction::new(30)),
+                Box::new(http::HttpFunction::new(30)),
             ),
         ]
     }
