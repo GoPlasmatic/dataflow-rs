@@ -1,7 +1,7 @@
 use crate::engine::error::{DataflowError, Result};
+use crate::engine::functions::FUNCTION_DATA_LOGIC;
 use crate::engine::message::{Change, Message};
 use crate::engine::AsyncFunctionHandler;
-use crate::engine::functions::FUNCTION_DATA_LOGIC;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::vec;
@@ -20,6 +20,12 @@ pub struct ValidationFunction {
 unsafe impl Send for ValidationFunction {}
 unsafe impl Sync for ValidationFunction {}
 
+impl Default for ValidationFunction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ValidationFunction {
     pub fn new() -> Self {
         Self { /* no fields */ }
@@ -37,7 +43,7 @@ impl AsyncFunctionHandler for ValidationFunction {
         // Use thread-local DataLogic
         let validation_result = FUNCTION_DATA_LOGIC.with(|data_logic_cell| {
             let data_logic = data_logic_cell.borrow_mut();
-            
+
             if let Some(rules_arr) = rules.as_array() {
                 for rule in rules_arr {
                     // Extract rule components

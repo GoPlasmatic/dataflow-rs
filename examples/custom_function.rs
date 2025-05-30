@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use dataflow_rs::{
     engine::{
         error::{DataflowError, Result},
@@ -6,7 +7,6 @@ use dataflow_rs::{
     },
     Engine, Workflow,
 };
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -52,6 +52,12 @@ impl AsyncFunctionHandler for StatisticsFunction {
                 new_value: stats,
             }],
         ))
+    }
+}
+
+impl Default for StatisticsFunction {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -115,10 +121,7 @@ impl StatisticsFunction {
             sorted[count / 2]
         };
 
-        let variance: f64 = numbers
-            .iter()
-            .map(|x| (x - mean).powi(2))
-            .sum::<f64>() / count as f64;
+        let variance: f64 = numbers.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / count as f64;
         let std_dev = variance.sqrt();
 
         json!({
@@ -226,10 +229,16 @@ impl AsyncFunctionHandler for DataEnrichmentFunction {
     }
 }
 
+impl Default for DataEnrichmentFunction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataEnrichmentFunction {
     pub fn new() -> Self {
         let mut enrichment_data = HashMap::new();
-        
+
         // Sample enrichment data
         enrichment_data.insert(
             "user_123".to_string(),
@@ -241,7 +250,7 @@ impl DataEnrichmentFunction {
                 "security_clearance": "Level 2"
             }),
         );
-        
+
         enrichment_data.insert(
             "user_456".to_string(),
             json!({
@@ -306,7 +315,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "statistics".to_string(),
         Box::new(StatisticsFunction::new()),
     );
-    
+
     engine.register_task_function(
         "enrich_data".to_string(),
         Box::new(DataEnrichmentFunction::new()),
@@ -397,24 +406,30 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     match engine.process_message(&mut message).await {
         Ok(_) => {
             println!("✅ Message processed successfully!\n");
-            
+
             println!("📊 Final Results:");
             println!("{}\n", serde_json::to_string_pretty(&message.data)?);
-            
+
             println!("📋 Audit Trail:");
             for (i, audit) in message.audit_trail.iter().enumerate() {
-                println!("{}. Task: {} (Status: {})", 
-                    i + 1, audit.task_id, audit.status_code);
+                println!(
+                    "{}. Task: {} (Status: {})",
+                    i + 1,
+                    audit.task_id,
+                    audit.status_code
+                );
                 println!("   Timestamp: {}", audit.timestamp);
                 println!("   Changes: {} field(s) modified", audit.changes.len());
             }
-            
+
             if message.has_errors() {
                 println!("\n⚠️  Errors encountered:");
                 for error in &message.errors {
-                    println!("   - {}: {:?}", 
-                        error.task_id.as_ref().unwrap_or(&"unknown".to_string()), 
-                        error.error);
+                    println!(
+                        "   - {}: {:?}",
+                        error.task_id.as_ref().unwrap_or(&"unknown".to_string()),
+                        error.error
+                    );
                 }
             }
         }
@@ -505,6 +520,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n🎉 Custom function examples completed!");
-    
+
     Ok(())
-} 
+}

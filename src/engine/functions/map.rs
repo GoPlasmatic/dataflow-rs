@@ -1,7 +1,7 @@
 use crate::engine::error::{DataflowError, Result};
+use crate::engine::functions::FUNCTION_DATA_LOGIC;
 use crate::engine::message::{Change, Message};
 use crate::engine::AsyncFunctionHandler;
-use crate::engine::functions::FUNCTION_DATA_LOGIC;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 

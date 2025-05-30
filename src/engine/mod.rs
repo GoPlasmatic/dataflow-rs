@@ -36,10 +36,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use log::{debug, error, info, warn};
 use message::AuditTrail;
 use serde_json::{json, Map, Number, Value};
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-};
+use std::{cell::RefCell, collections::HashMap};
 use tokio::time::sleep;
 
 // Thread-local DataLogic instance to avoid mutex contention
@@ -188,10 +185,10 @@ impl Engine {
 
         // Create a FuturesUnordered to track concurrent workflow execution
         let mut workflow_futures = FuturesUnordered::new();
-        
+
         // First filter workflows that should be executed and prepare them for concurrent processing
         let mut workflows_to_process = Vec::new();
-        
+
         for workflow in self.workflows.values() {
             // Check workflow condition
             let condition = workflow.condition.clone().unwrap_or(Value::Bool(true));
@@ -205,26 +202,25 @@ impl Engine {
             info!("Preparing to process workflow {}", workflow.id);
             workflows_to_process.push(workflow.clone());
         }
-        
+
         // Start processing workflows up to max_concurrency at a time
         let engine_task_functions = &self.task_functions;
-        
+
         // Start initial batch of workflows
         let initial_count = self.max_concurrency.min(workflows_to_process.len());
-        for i in 0..initial_count {
-            let workflow = workflows_to_process[i].clone();
+        for workflow in workflows_to_process.iter().take(initial_count) {
             let message_clone = message.clone();
-            
+
             workflow_futures.push(Self::process_workflow(
-                workflow,
+                workflow.clone(),
                 message_clone,
                 engine_task_functions,
             ));
         }
-        
+
         // Process remaining workflows as current ones complete
         let mut next_workflow_index = initial_count;
-        
+
         // As workflows complete, process the results and start more workflows if needed
         while let Some((workflow_id, workflow_message)) = workflow_futures.next().await {
             // Merge this workflow's results back into the original message
@@ -233,16 +229,16 @@ impl Engine {
             message.temp_data = workflow_message.temp_data;
             message.audit_trail.extend(workflow_message.audit_trail);
             message.errors.extend(workflow_message.errors);
-            
+
             info!("Completed processing workflow {}", workflow_id);
-            
+
             // Start a new workflow if there are more
             if next_workflow_index < workflows_to_process.len() {
                 let workflow = workflows_to_process[next_workflow_index].clone();
                 next_workflow_index += 1;
-                
+
                 let message_clone = message.clone();
-                
+
                 workflow_futures.push(Self::process_workflow(
                     workflow,
                     message_clone,
@@ -253,7 +249,7 @@ impl Engine {
 
         Ok(())
     }
-    
+
     /// Process a single workflow with sequential task execution
     async fn process_workflow(
         workflow: Workflow,
@@ -262,13 +258,13 @@ impl Engine {
     ) -> (String, Message) {
         let workflow_id = workflow.id.clone();
         let mut workflow_errors = Vec::new();
-        
+
         // Process tasks SEQUENTIALLY within this workflow
         // IMPORTANT: Task order matters! Results from previous tasks are used by subsequent tasks.
         // We intentionally process tasks one after another rather than concurrently.
         for task in &workflow.tasks {
             let task_condition = task.condition.clone().unwrap_or(Value::Bool(true));
-            
+
             // Evaluate task condition using thread-local DataLogic
             let should_execute = THREAD_LOCAL_DATA_LOGIC.with(|data_logic_cell| {
                 let data_logic = data_logic_cell.borrow_mut();
@@ -279,7 +275,7 @@ impl Engine {
                     })
                     .map(|result| result.as_bool().unwrap_or(false))
             });
-            
+
             // Handle condition evaluation result
             let should_execute = match should_execute {
                 Ok(result) => result,
@@ -287,22 +283,22 @@ impl Engine {
                     workflow_errors.push(ErrorInfo::new(
                         Some(workflow_id.clone()),
                         Some(task.id.clone()),
-                        e.clone()
+                        e.clone(),
                     ));
                     false
                 }
             };
-            
+
             if !should_execute {
                 debug!("Task {} skipped - condition not met", task.id);
                 continue;
             }
-            
+
             // Execute task if we have a handler
             if let Some(function) = task_functions.get(&task.function.name) {
                 let task_id = task.id.clone();
                 let function_input = task.function.input.clone();
-                
+
                 // Execute this task (with retries)
                 match Self::execute_task_static(
                     &task_id,
@@ -310,41 +306,41 @@ impl Engine {
                     &mut message,
                     &function_input,
                     function.as_ref(),
-                ).await {
+                )
+                .await
+                {
                     Ok(_) => {
                         debug!("Task {} completed successfully", task_id);
-                    },
+                    }
                     Err(error) => {
                         workflow_errors.push(ErrorInfo::new(
                             Some(workflow_id.clone()),
                             Some(task_id.clone()),
-                            error.clone()
+                            error.clone(),
                         ));
-                        
+
                         // Break the task sequence if a task fails
                         break;
                     }
                 }
             } else {
-                let error = DataflowError::Workflow(format!(
-                    "Function '{}' not found",
-                    task.function.name
-                ));
-                
+                let error =
+                    DataflowError::Workflow(format!("Function '{}' not found", task.function.name));
+
                 workflow_errors.push(ErrorInfo::new(
                     Some(workflow_id.clone()),
                     Some(task.id.clone()),
-                    error
+                    error,
                 ));
-                
+
                 // Break the task sequence if a function is not found
                 break;
             }
         }
-        
+
         // Add any errors encountered to the message
         message.errors.extend(workflow_errors);
-        
+
         // Return the processed message for this workflow
         (workflow_id, message)
     }

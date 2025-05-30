@@ -3,12 +3,12 @@ name = "dataflow-rs"
 version = "0.1.6"
 edition = "2021"
 exclude = [".DS_Store", "/target", ".vscode"]
-authors = ["Harishankar Narayanan <nharishankar@gmail.com>"]
+authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
 license = "Apache-2.0"
 description = "A lightweight, rule-driven workflow engine for building powerful data processing pipelines and nanoservices in Rust. Extend it with your custom tasks to create robust, maintainable services."
 readme = "README.md"
-homepage = "https://github.com/codetiger/dataflow-rs"
-repository = "https://github.com/codetiger/dataflow-rs"
+homepage = "https://github.com/GoPlasmatic/dataflow-rs"
+repository = "https://github.com/GoPlasmatic/dataflow-rs"
 keywords = ["workflow", "engine", "rule-engine", "orchestration", "nanoservice"]
 categories = ["data-structures", "development-tools", "parsing"]
 

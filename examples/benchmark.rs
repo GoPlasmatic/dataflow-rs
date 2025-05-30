@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run async benchmark
     println!("=== ASYNC BENCHMARK ===");
     let async_results = run_async_benchmark(&engine, &sample_user_data, 1000).await?;
-    
+
     // Run sync benchmark for comparison (using blocking approach)
     println!("\n=== SYNC BENCHMARK (for comparison) ===");
     let sync_results = run_sync_benchmark(&engine, &sample_user_data, 1000).await?;
@@ -113,13 +113,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== COMPARISON ===");
     println!("Async avg: {:?}", async_results.avg_time);
     println!("Sync avg:  {:?}", sync_results.avg_time);
-    println!("Async is {:.2}x {} than sync", 
+    println!(
+        "Async is {:.2}x {} than sync",
         if async_results.avg_time < sync_results.avg_time {
             sync_results.avg_time.as_nanos() as f64 / async_results.avg_time.as_nanos() as f64
         } else {
             async_results.avg_time.as_nanos() as f64 / sync_results.avg_time.as_nanos() as f64
         },
-        if async_results.avg_time < sync_results.avg_time { "faster" } else { "slower" }
+        if async_results.avg_time < sync_results.avg_time {
+            "faster"
+        } else {
+            "slower"
+        }
     );
 
     // Log results to file
@@ -172,7 +177,10 @@ async fn run_async_benchmark(
     let mut all_durations = Vec::with_capacity(num_iterations);
     let mut error_count = 0;
 
-    println!("Starting async benchmark with {} iterations...", num_iterations);
+    println!(
+        "Starting async benchmark with {} iterations...",
+        num_iterations
+    );
 
     for i in 0..num_iterations {
         let mut message = Message::new(&json!({}));
@@ -191,11 +199,12 @@ async fn run_async_benchmark(
                 total_duration += duration;
                 min_duration = min_duration.min(duration);
                 max_duration = max_duration.max(duration);
-                
+
                 // Check for processing errors
                 if message.has_errors() {
                     error_count += 1;
-                    if error_count <= 5 { // Only print first 5 errors
+                    if error_count <= 5 {
+                        // Only print first 5 errors
                         println!("Processing errors in iteration {}: {:?}", i, message.errors);
                     }
                 }
@@ -264,7 +273,10 @@ async fn run_sync_benchmark(
     let mut all_durations = Vec::with_capacity(num_iterations);
     let mut error_count = 0;
 
-    println!("Starting sync-style benchmark with {} iterations...", num_iterations);
+    println!(
+        "Starting sync-style benchmark with {} iterations...",
+        num_iterations
+    );
 
     for i in 0..num_iterations {
         let mut message = Message::new(&json!({}));
@@ -280,7 +292,7 @@ async fn run_sync_benchmark(
         let result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(engine.process_message(&mut message))
         });
-        
+
         match result {
             Ok(_) => {
                 let duration = start.elapsed();
@@ -288,7 +300,7 @@ async fn run_sync_benchmark(
                 total_duration += duration;
                 min_duration = min_duration.min(duration);
                 max_duration = max_duration.max(duration);
-                
+
                 if message.has_errors() {
                     error_count += 1;
                 }

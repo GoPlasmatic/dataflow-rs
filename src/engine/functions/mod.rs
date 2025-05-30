@@ -15,7 +15,7 @@ pub use map::MapFunction;
 
 // Thread-local DataLogic instance to avoid mutex contention
 thread_local! {
-    pub static FUNCTION_DATA_LOGIC: RefCell<datalogic_rs::DataLogic> = 
+    pub static FUNCTION_DATA_LOGIC: RefCell<datalogic_rs::DataLogic> =
         RefCell::new(datalogic_rs::DataLogic::new());
 }
 
@@ -37,10 +37,7 @@ pub mod builtins {
                 Box::new(ValidationFunction::new()),
             ),
             // Create map function with thread-local DataLogic
-            (
-                MAP_FUNCTION.to_string(),
-                Box::new(MapFunction::new()),
-            ),
+            (MAP_FUNCTION.to_string(), Box::new(MapFunction::new())),
             // Create HTTP function with 30-second timeout
             (HTTP_FUNCTION.to_string(), Box::new(HttpFunction::new(30))),
         ]
