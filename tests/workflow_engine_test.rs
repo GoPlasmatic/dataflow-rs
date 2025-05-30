@@ -1,43 +1,46 @@
-use dataflow_rs::engine::functions::FunctionHandler;
+use async_trait::async_trait;
+use dataflow_rs::engine::functions::AsyncFunctionHandler;
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::engine::task::Function;
 use dataflow_rs::{Engine, Result, Task, Workflow};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 // A simple task implementation
+#[derive(Debug)]
 struct LoggingTask;
 
-impl FunctionHandler for LoggingTask {
-    fn execute(&self, message: &mut Message, _input: &Value) -> Result<(usize, Vec<Change>)> {
+#[async_trait]
+impl AsyncFunctionHandler for LoggingTask {
+    async fn execute(&self, message: &mut Message, _input: &Value) -> Result<(usize, Vec<Change>)> {
         println!("Executed task for message: {}", &message.id);
         Ok((200, vec![]))
     }
 }
 
-#[test]
-fn test_task_execution() {
+#[tokio::test]
+async fn test_task_execution() {
     // This test only tests the task implementation
     let task = LoggingTask;
 
     // Create a dummy message
-    let mut message = Message::new(&serde_json::Value::Null);
+    let mut message = Message::new(&json!({}));
 
     // Execute the task directly
-    let input = serde_json::Value::Null;
-    let result = task.execute(&mut message, &input);
+    let input = json!({});
+    let result = task.execute(&mut message, &input).await;
 
     // Verify the execution was successful
     assert!(result.is_ok(), "Task execution should succeed");
 }
 
-#[test]
-fn test_workflow_execution() {
+#[tokio::test]
+async fn test_workflow_execution() {
     let mut engine = Engine::new();
 
     engine.register_task_function("log".to_string(), Box::new(LoggingTask));
 
     // Create a dummy message
-    let mut message = Message::new(&serde_json::Value::Null);
+    let mut message = Message::new(&json!({}));
 
     // Add a workflow to the engine
     let workflow = Workflow {
@@ -48,21 +51,26 @@ fn test_workflow_execution() {
             id: "log_task".to_string(),
             name: "Log Task".to_string(),
             description: Some("A test task".to_string()),
-            condition: Some(serde_json::Value::Bool(true)),
+            condition: Some(json!(true)),
             function: Function {
                 name: "log".to_string(),
-                input: serde_json::Value::Null,
+                input: json!({}),
             },
         }],
-        condition: Some(serde_json::Value::Bool(true)),
+        condition: Some(json!(true)),
     };
     engine.add_workflow(&workflow);
 
     // Process the message
-    let result = engine.process_message(&mut message);
+    let result = engine.process_message(&mut message).await;
+
+    match &result {
+        Ok(_) => println!("Workflow executed successfully"),
+        Err(e) => println!("Workflow execution failed: {:?}", e),
+    }
 
     assert!(result.is_ok(), "Workflow execution should succeed");
-    println!("Message: {:?}", message);
+
     // Verify the message was processed correctly
     assert_eq!(
         message.audit_trail.len(),

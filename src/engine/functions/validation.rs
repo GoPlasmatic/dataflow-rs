@@ -1,17 +1,16 @@
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::message::{Change, Message};
-use crate::engine::FunctionHandler;
-use datalogic_rs::DataLogic;
-use serde_json::Value;
-use std::sync::{Arc, Mutex};
-/// A validation task that evaluates JSONLogic rules against message content.
+use crate::engine::AsyncFunctionHandler;
+use crate::engine::functions::FUNCTION_DATA_LOGIC;
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use std::vec;
+/// A validation task function that uses JsonLogic expressions to validate message data.
 ///
-/// This task allows validating message structure and content against business rules
-/// expressed using JSONLogic expressions. It returns validation results that can be
-/// used for conditional processing and routing logic.
+/// This function executes validation rules defined in JsonLogic against data in the message,
+/// and reports validation failures by adding errors to the message's errors array.
 pub struct ValidationFunction {
-    /// Reference to DataLogic instance for parsing rules
-    data_logic: Arc<Mutex<DataLogic>>,
+    // No longer needs data_logic field
 }
 
 // SAFETY: These implementations are technically unsound because DataLogic contains
@@ -22,35 +21,74 @@ unsafe impl Send for ValidationFunction {}
 unsafe impl Sync for ValidationFunction {}
 
 impl ValidationFunction {
-    pub fn new(data_logic: Arc<Mutex<DataLogic>>) -> Self {
-        Self { data_logic }
+    pub fn new() -> Self {
+        Self { /* no fields */ }
     }
 }
 
-impl FunctionHandler for ValidationFunction {
-    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
-        // Extract validation configuration from the input
-        let rule_value = match input.get("rule") {
-            Some(rule) => rule,
-            None => {
-                return Err(DataflowError::Validation(
-                    "Validation rule not provided".to_string(),
-                ))
+#[async_trait]
+impl AsyncFunctionHandler for ValidationFunction {
+    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
+        // Extract rules from input
+        let rules = input
+            .get("rules")
+            .ok_or_else(|| DataflowError::Validation("Missing rules array".to_string()))?;
+
+        // Use thread-local DataLogic
+        let validation_result = FUNCTION_DATA_LOGIC.with(|data_logic_cell| {
+            let data_logic = data_logic_cell.borrow_mut();
+            
+            if let Some(rules_arr) = rules.as_array() {
+                for rule in rules_arr {
+                    // Extract rule components
+                    let rule_logic = rule.get("logic").ok_or_else(|| {
+                        DataflowError::Validation("Missing logic in rule".to_string())
+                    })?;
+
+                    let rule_path = rule.get("path").and_then(Value::as_str).unwrap_or("data");
+
+                    let data_to_validate = if rule_path == "data" {
+                        &json!({rule_path: message.data})
+                    } else if rule_path == "metadata" {
+                        &json!({rule_path: message.metadata})
+                    } else {
+                        &json!({rule_path: message.data})
+                    };
+
+                    // Evaluate the rule
+                    match data_logic.evaluate_json(rule_logic, data_to_validate, None) {
+                        Ok(v) => {
+                            if !v.as_bool().unwrap_or(false) {
+                                let message_key = rule
+                                    .get("message")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("Validation failed")
+                                    .to_string();
+
+                                println!("Validation failed: {}", message_key);
+                                return Ok((400, vec![]));
+                            }
+                        }
+                        Err(e) => {
+                            println!("Error evaluating rule: {}", e);
+                            return Err(DataflowError::LogicEvaluation(format!(
+                                "Error evaluating rule: {}",
+                                e
+                            )));
+                        }
+                    }
+                }
             }
-        };
 
-        let rule_result = self
-            .data_logic
-            .lock()
-            .map_err(|_| DataflowError::Unknown("Failed to acquire data_logic lock".to_string()))?
-            .evaluate_json(rule_value, &message.data, None)
-            .map_err(|e| {
-                DataflowError::LogicEvaluation(format!("Failed to evaluate rule: {}", e))
-            })?;
+            let changes = vec![Change {
+                path: "temp_data.validation".to_string(),
+                old_value: Value::Null,
+                new_value: message.temp_data["validation"].clone(),
+            }];
 
-        // Convert result to boolean
-        let is_valid = rule_result.as_bool().unwrap_or(false);
+            Ok((200, changes))
+        });
 
-        Ok((if is_valid { 200 } else { 400 }, vec![]))
+        validation_result
     }
 }

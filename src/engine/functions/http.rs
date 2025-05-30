@@ -1,19 +1,19 @@
 use crate::engine::error::{DataflowError, Result};
+use crate::engine::functions::AsyncFunctionHandler;
 use crate::engine::message::{Change, Message};
-use crate::engine::FunctionHandler;
+use async_trait::async_trait;
 use reqwest::{
-    blocking::{Client, RequestBuilder},
     header::{HeaderMap, HeaderName, HeaderValue},
-    Method,
+    Client, Method,
 };
 use serde_json::{json, Value};
 use std::convert::TryFrom;
 use std::str::FromStr;
 use std::time::Duration;
 
-/// An HTTP task function for making API requests.
+/// An HTTP task function for making API requests asynchronously.
 ///
-/// This task allows workflows to make HTTP requests to external APIs.
+/// This implementation uses the async reqwest client for efficient non-blocking HTTP requests.
 /// It supports different HTTP methods, headers, and parsing responses
 /// into the message payload.
 pub struct HttpFunction {
@@ -29,8 +29,11 @@ impl HttpFunction {
 
         Self { client }
     }
+}
 
-    fn build_request(&self, input: &Value) -> Result<RequestBuilder> {
+#[async_trait]
+impl AsyncFunctionHandler for HttpFunction {
+    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
         // Extract URL
         let url = input
             .get("url")
@@ -80,17 +83,8 @@ impl HttpFunction {
             }
         }
 
-        Ok(request)
-    }
-}
-
-impl FunctionHandler for HttpFunction {
-    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
-        // Build the request
-        let request = self.build_request(input)?;
-
-        // Make the request
-        let response = request.send().map_err(|e| {
+        // Make the request asynchronously
+        let response = request.send().await.map_err(|e| {
             if e.is_timeout() {
                 DataflowError::Timeout(format!("HTTP request timed out: {}", e))
             } else if e.is_connect() {
@@ -110,8 +104,8 @@ impl FunctionHandler for HttpFunction {
         let status = response.status();
         let status_code = status.as_u16() as usize;
 
-        // Parse the response
-        let response_body = response.text().map_err(|e| DataflowError::Http {
+        // Parse the response asynchronously
+        let response_body = response.text().await.map_err(|e| DataflowError::Http {
             status: status.as_u16(),
             message: format!("Failed to read response body: {}", e),
         })?;

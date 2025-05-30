@@ -1,7 +1,8 @@
 use dataflow_rs::{engine::message::Message, Engine, Workflow};
 use serde_json::json;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the workflow engine (built-in functions are auto-registered)
     let mut engine = Engine::new();
 
@@ -28,6 +29,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "headers": {
                             "Accept": "application/json"
                         }
+                    }
+                }
+            },
+            {
+                "id": "initialize_user",
+                "name": "Initialize User Structure",
+                "description": "Create empty user object in data",
+                "function": {
+                    "name": "map",
+                    "input": {
+                        "mappings": [
+                            {
+                                "path": "data",
+                                "logic": { "preserve": {"user": {}} }
+                            }
+                        ]
                     }
                 }
             },
@@ -76,19 +93,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "function": {
                     "name": "validate",
                     "input": {
-                        "rule": {
-                            "and": [
-                                { "!": { "var": "data.user.id" } },
-                                { "!": { "var": "data.user.name" } },
-                                { "!": { "var": "data.user.email" } },
-                                {
+                        "rules": [
+                            {
+                                "path": "data",
+                                "logic": { "!!": { "var": "data.user.id" } },
+                                "message": "User ID is required"
+                            },
+                            {
+                                "path": "data",
+                                "logic": { "!!": { "var": "data.user.name" } },
+                                "message": "User name is required"
+                            },
+                            {
+                                "path": "data",
+                                "logic": { "!!": { "var": "data.user.email" } },
+                                "message": "User email is required"
+                            },
+                            {
+                                "path": "data",
+                                "logic": {
                                     "in": [
                                         "@",
                                         { "var": "data.user.email" }
                                     ]
-                                }
-                            ]
-                        }
+                                },
+                                "message": "Email must be valid format"
+                            }
+                        ]
                     }
                 }
             }
@@ -100,12 +131,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow = Workflow::from_json(workflow_json)?;
     engine.add_workflow(&workflow);
 
-    // Create a message to process
+    // Create a message to process with properly initialized data structure
     let mut message = Message::new(&json!({}));
 
-    // Process the message through the workflow
+    // Process the message through the workflow asynchronously
     println!("Processing message through workflow...");
-    let _ = engine.process_message(&mut message);
+
+    match engine.process_message(&mut message).await {
+        Ok(_) => {
+            println!("Workflow completed successfully!");
+        }
+        Err(e) => {
+            eprintln!("Error executing workflow: {:?}", e);
+            if !message.errors.is_empty() {
+                println!("\nErrors recorded in message:");
+                for err in &message.errors {
+                    println!(
+                        "- Workflow: {:?}, Task: {:?}, Error: {:?}",
+                        err.workflow_id, err.task_id, err.error
+                    );
+                }
+            }
+        }
+    }
 
     println!(
         "\nFull message structure:\n{}",

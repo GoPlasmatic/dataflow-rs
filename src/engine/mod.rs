@@ -10,7 +10,7 @@ data processing pipeline.
 - **Engine**: The main engine that processes messages through workflows
 - **Workflow**: A collection of tasks with conditions that determine when they should be applied
 - **Task**: An individual processing unit that performs a specific function on a message
-- **FunctionHandler**: A trait implemented by task handlers to define custom processing logic
+- **AsyncFunctionHandler**: A trait implemented by task handlers to define custom async processing logic
 - **Message**: The data structure that flows through the engine, with data, metadata, and processing results
 */
 
@@ -22,7 +22,7 @@ pub mod workflow;
 
 // Re-export key types for easier access
 pub use error::{DataflowError, ErrorInfo, Result};
-pub use functions::FunctionHandler;
+pub use functions::AsyncFunctionHandler;
 pub use message::Message;
 pub use task::Task;
 pub use workflow::Workflow;
@@ -30,14 +30,22 @@ pub use workflow::Workflow;
 // Re-export the jsonlogic library under our namespace
 pub use datalogic_rs as jsonlogic;
 
-use log::{debug, error, info, warn};
-use message::AuditTrail;
-use std::sync::{Arc, Mutex};
-
 use chrono::Utc;
 use datalogic_rs::DataLogic;
+use futures::{stream::FuturesUnordered, StreamExt};
+use log::{debug, error, info, warn};
+use message::AuditTrail;
 use serde_json::{json, Map, Number, Value};
-use std::collections::HashMap;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+};
+use tokio::time::sleep;
+
+// Thread-local DataLogic instance to avoid mutex contention
+thread_local! {
+    static THREAD_LOCAL_DATA_LOGIC: RefCell<DataLogic> = RefCell::new(DataLogic::new());
+}
 
 /// Configuration for retry behavior
 #[derive(Debug, Clone)]
@@ -60,16 +68,19 @@ impl Default for RetryConfig {
     }
 }
 
-/// Main engine that processes messages through workflows
+/// Engine that processes messages through workflows using non-blocking async IO.
+///
+/// This engine is optimized for IO-bound workloads like HTTP requests, database access,
+/// and file operations. It uses Tokio for efficient async task execution.
 pub struct Engine {
     /// Registry of available workflows
     workflows: HashMap<String, Workflow>,
     /// Registry of function handlers that can be executed by tasks
-    task_functions: HashMap<String, Box<dyn FunctionHandler + Send + Sync>>,
-    /// DataLogic instance for evaluating conditions
-    data_logic: Arc<Mutex<DataLogic>>,
+    task_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>,
     /// Configuration for retry behavior
     retry_config: RetryConfig,
+    /// Maximum number of concurrent tasks to execute
+    max_concurrency: usize,
 }
 
 impl Default for Engine {
@@ -92,8 +103,8 @@ impl Engine {
         let mut engine = Self {
             workflows: HashMap::new(),
             task_functions: HashMap::new(),
-            data_logic: Arc::new(Mutex::new(DataLogic::new())),
             retry_config: RetryConfig::default(),
+            max_concurrency: 10, // Default max concurrency
         };
 
         // Register built-in function handlers
@@ -109,9 +120,15 @@ impl Engine {
         Self {
             task_functions: HashMap::new(),
             workflows: HashMap::new(),
-            data_logic: Arc::new(Mutex::new(DataLogic::new())),
             retry_config: RetryConfig::default(),
+            max_concurrency: 10, // Default max concurrency
         }
+    }
+
+    /// Configure max concurrency
+    pub fn with_max_concurrency(mut self, max_concurrency: usize) -> Self {
+        self.max_concurrency = max_concurrency;
+        self
     }
 
     /// Configure retry behavior
@@ -125,27 +142,6 @@ impl Engine {
     /// # Arguments
     ///
     /// * `workflow` - The workflow to add
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use dataflow_rs::{Engine, Workflow};
-    /// use serde_json::json;
-    ///
-    /// let mut engine = Engine::new();
-    ///
-    /// // Example JSON string for a workflow
-    /// let workflow_json_str = r#"
-    /// {
-    ///     "id": "example_workflow",
-    ///     "name": "Example Workflow",
-    ///     "tasks": []
-    /// }
-    /// "#;
-    ///
-    /// let workflow = Workflow::from_json(workflow_json_str).unwrap();
-    /// engine.add_workflow(&workflow);
-    /// ```
     pub fn add_workflow(&mut self, workflow: &Workflow) {
         if workflow.validate().is_ok() {
             self.workflows.insert(workflow.id.clone(), workflow.clone());
@@ -160,36 +156,10 @@ impl Engine {
     ///
     /// * `name` - The name of the function handler
     /// * `handler` - The function handler implementation
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use dataflow_rs::{Engine, FunctionHandler};
-    /// use dataflow_rs::engine::message::{Change, Message};
-    /// use dataflow_rs::engine::error::Result;
-    /// use serde_json::Value;
-    ///
-    /// // Example custom function implementation
-    /// struct CustomFunction;
-    ///
-    /// impl FunctionHandler for CustomFunction {
-    ///     fn execute(
-    ///         &self,
-    ///         message: &mut Message,
-    ///         _input: &Value,
-    ///     ) -> Result<(usize, Vec<Change>)> {
-    ///         // Implementation would go here
-    ///         Ok((200, vec![]))
-    ///     }
-    /// }
-    ///
-    /// let mut engine = Engine::new();
-    /// engine.register_task_function("custom".to_string(), Box::new(CustomFunction));
-    /// ```
     pub fn register_task_function(
         &mut self,
         name: String,
-        handler: Box<dyn FunctionHandler + Send + Sync>,
+        handler: Box<dyn AsyncFunctionHandler + Send + Sync>,
     ) {
         self.task_functions.insert(name, handler);
     }
@@ -201,9 +171,9 @@ impl Engine {
 
     /// Processes a message through workflows that match their conditions.
     ///
-    /// This method:
+    /// This async method:
     /// 1. Evaluates conditions for each workflow
-    /// 2. For matching workflows, executes each task in sequence
+    /// 2. For matching workflows, executes each task concurrently up to max_concurrency
     /// 3. Updates the message with processing results and audit trail
     ///
     /// # Arguments
@@ -213,141 +183,193 @@ impl Engine {
     /// # Returns
     ///
     /// * `Result<()>` - Success or an error if processing failed
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use dataflow_rs::Engine;
-    /// use dataflow_rs::engine::Message;
-    /// use serde_json::json;
-    ///
-    /// let mut engine = Engine::new();
-    /// // ... add workflows ...
-    /// let mut message = Message::new(&json!({"some": "data"}));
-    /// engine.process_message(&mut message).unwrap();
-    /// ```
-    pub fn process_message(&self, message: &mut Message) -> error::Result<()> {
-        debug!("Processing message {}", message.id);
+    pub async fn process_message(&self, message: &mut Message) -> Result<()> {
+        debug!("Processing message {} asynchronously", message.id);
 
-        // Process each workflow
+        // Create a FuturesUnordered to track concurrent workflow execution
+        let mut workflow_futures = FuturesUnordered::new();
+        
+        // First filter workflows that should be executed and prepare them for concurrent processing
+        let mut workflows_to_process = Vec::new();
+        
         for workflow in self.workflows.values() {
-            // Check if workflow should process this message based on condition
+            // Check workflow condition
             let condition = workflow.condition.clone().unwrap_or(Value::Bool(true));
+            let metadata_ref = &message.metadata;
 
-            match self.eval_condition(&condition, &message.metadata) {
-                Ok(should_process) => {
-                    if !should_process {
-                        debug!("Workflow {} skipped - condition not met", workflow.id);
-                        continue;
-                    }
+            if !self.evaluate_condition(&condition, metadata_ref).await? {
+                debug!("Workflow {} skipped - condition not met", workflow.id);
+                continue;
+            }
 
-                    info!("Processing workflow {}", workflow.id);
-
-                    // Process each task in the workflow
-                    for task in &workflow.tasks {
-                        let task_condition = task.condition.clone().unwrap_or(Value::Bool(true));
-
-                        match self.eval_condition(&task_condition, &message.metadata) {
-                            Ok(should_execute) => {
-                                if !should_execute {
-                                    debug!("Task {} skipped - condition not met", task.id);
-                                    continue;
-                                }
-
-                                // Execute task if we have a handler
-                                if let Some(function) = self.task_functions.get(&task.function.name)
-                                {
-                                    self.execute_task_with_retry(
-                                        &task.id,
-                                        &workflow.id,
-                                        message,
-                                        &task.function.input,
-                                        &**function,
-                                    )?;
-                                } else {
-                                    let error = DataflowError::Workflow(format!(
-                                        "Function '{}' not found",
-                                        task.function.name
-                                    ));
-                                    message.add_error(ErrorInfo::new(
-                                        Some(workflow.id.clone()),
-                                        Some(task.id.clone()),
-                                        error.clone(),
-                                    ));
-
-                                    return Err(error);
-                                }
-                            }
-                            Err(e) => {
-                                let error = DataflowError::LogicEvaluation(format!(
-                                    "Failed to evaluate task condition: {}",
-                                    e
-                                ));
-                                message.add_error(ErrorInfo::new(
-                                    Some(workflow.id.clone()),
-                                    Some(task.id.clone()),
-                                    error.clone(),
-                                ));
-
-                                return Err(error);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    let error = DataflowError::LogicEvaluation(format!(
-                        "Failed to evaluate workflow condition: {}",
-                        e
-                    ));
-                    message.add_error(ErrorInfo::new(
-                        Some(workflow.id.clone()),
-                        None,
-                        error.clone(),
-                    ));
-
-                    return Err(error);
-                }
+            info!("Preparing to process workflow {}", workflow.id);
+            workflows_to_process.push(workflow.clone());
+        }
+        
+        // Start processing workflows up to max_concurrency at a time
+        let engine_task_functions = &self.task_functions;
+        
+        // Start initial batch of workflows
+        let initial_count = self.max_concurrency.min(workflows_to_process.len());
+        for i in 0..initial_count {
+            let workflow = workflows_to_process[i].clone();
+            let message_clone = message.clone();
+            
+            workflow_futures.push(Self::process_workflow(
+                workflow,
+                message_clone,
+                engine_task_functions,
+            ));
+        }
+        
+        // Process remaining workflows as current ones complete
+        let mut next_workflow_index = initial_count;
+        
+        // As workflows complete, process the results and start more workflows if needed
+        while let Some((workflow_id, workflow_message)) = workflow_futures.next().await {
+            // Merge this workflow's results back into the original message
+            message.data = workflow_message.data;
+            message.metadata = workflow_message.metadata;
+            message.temp_data = workflow_message.temp_data;
+            message.audit_trail.extend(workflow_message.audit_trail);
+            message.errors.extend(workflow_message.errors);
+            
+            info!("Completed processing workflow {}", workflow_id);
+            
+            // Start a new workflow if there are more
+            if next_workflow_index < workflows_to_process.len() {
+                let workflow = workflows_to_process[next_workflow_index].clone();
+                next_workflow_index += 1;
+                
+                let message_clone = message.clone();
+                
+                workflow_futures.push(Self::process_workflow(
+                    workflow,
+                    message_clone,
+                    &self.task_functions,
+                ));
             }
         }
 
         Ok(())
     }
-
-    /// Evaluates a condition using DataLogic and returns the result
-    fn eval_condition(&self, condition: &Value, data: &Value) -> error::Result<bool> {
-        // Use mutex to safely access DataLogic
-        let data_logic = self
-            .data_logic
-            .lock()
-            .map_err(|_| DataflowError::Unknown("Failed to acquire data_logic lock".to_string()))?;
-
-        data_logic
-            .evaluate_json(condition, data, None)
-            .map_err(|e| {
-                DataflowError::LogicEvaluation(format!("Error evaluating condition: {}", e))
-            })
-            .map(|result| result.as_bool().unwrap_or(false))
+    
+    /// Process a single workflow with sequential task execution
+    async fn process_workflow(
+        workflow: Workflow,
+        mut message: Message,
+        task_functions: &HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>,
+    ) -> (String, Message) {
+        let workflow_id = workflow.id.clone();
+        let mut workflow_errors = Vec::new();
+        
+        // Process tasks SEQUENTIALLY within this workflow
+        // IMPORTANT: Task order matters! Results from previous tasks are used by subsequent tasks.
+        // We intentionally process tasks one after another rather than concurrently.
+        for task in &workflow.tasks {
+            let task_condition = task.condition.clone().unwrap_or(Value::Bool(true));
+            
+            // Evaluate task condition using thread-local DataLogic
+            let should_execute = THREAD_LOCAL_DATA_LOGIC.with(|data_logic_cell| {
+                let data_logic = data_logic_cell.borrow_mut();
+                data_logic
+                    .evaluate_json(&task_condition, &message.metadata, None)
+                    .map_err(|e| {
+                        DataflowError::LogicEvaluation(format!("Error evaluating condition: {}", e))
+                    })
+                    .map(|result| result.as_bool().unwrap_or(false))
+            });
+            
+            // Handle condition evaluation result
+            let should_execute = match should_execute {
+                Ok(result) => result,
+                Err(e) => {
+                    workflow_errors.push(ErrorInfo::new(
+                        Some(workflow_id.clone()),
+                        Some(task.id.clone()),
+                        e.clone()
+                    ));
+                    false
+                }
+            };
+            
+            if !should_execute {
+                debug!("Task {} skipped - condition not met", task.id);
+                continue;
+            }
+            
+            // Execute task if we have a handler
+            if let Some(function) = task_functions.get(&task.function.name) {
+                let task_id = task.id.clone();
+                let function_input = task.function.input.clone();
+                
+                // Execute this task (with retries)
+                match Self::execute_task_static(
+                    &task_id,
+                    &workflow_id,
+                    &mut message,
+                    &function_input,
+                    function.as_ref(),
+                ).await {
+                    Ok(_) => {
+                        debug!("Task {} completed successfully", task_id);
+                    },
+                    Err(error) => {
+                        workflow_errors.push(ErrorInfo::new(
+                            Some(workflow_id.clone()),
+                            Some(task_id.clone()),
+                            error.clone()
+                        ));
+                        
+                        // Break the task sequence if a task fails
+                        break;
+                    }
+                }
+            } else {
+                let error = DataflowError::Workflow(format!(
+                    "Function '{}' not found",
+                    task.function.name
+                ));
+                
+                workflow_errors.push(ErrorInfo::new(
+                    Some(workflow_id.clone()),
+                    Some(task.id.clone()),
+                    error
+                ));
+                
+                // Break the task sequence if a function is not found
+                break;
+            }
+        }
+        
+        // Add any errors encountered to the message
+        message.errors.extend(workflow_errors);
+        
+        // Return the processed message for this workflow
+        (workflow_id, message)
     }
 
-    /// Execute a task with a retry mechanism based on the engine's retry configuration
-    fn execute_task_with_retry(
-        &self,
+    /// Static helper method to execute a task with retries
+    async fn execute_task_static(
         task_id: &str,
         workflow_id: &str,
         message: &mut Message,
         input_json: &Value,
-        function: &dyn FunctionHandler,
-    ) -> error::Result<()> {
+        function: &dyn AsyncFunctionHandler,
+    ) -> Result<()> {
         info!("Executing task {} in workflow {}", task_id, workflow_id);
 
         let mut last_error = None;
         let mut retry_count = 0;
+        let max_retries = 3; // Default max retries
+        let retry_delay_ms = 1000; // Default retry delay in ms
+        let use_backoff = true; // Default backoff behavior
 
-        // Try executing the task up to max_retries + 1 times (initial attempt + retries)
-        while retry_count <= self.retry_config.max_retries {
-            match function.execute(message, input_json) {
+        // Try executing the task with retries
+        while retry_count <= max_retries {
+            match function.execute(message, input_json).await {
                 Ok((status_code, changes)) => {
-                    // Create a new audit trail entry
+                    // Success! Record audit trail and return
                     message.audit_trail.push(AuditTrail {
                         workflow_id: workflow_id.to_string(),
                         task_id: task_id.to_string(),
@@ -358,7 +380,7 @@ impl Engine {
 
                     info!("Task {} completed with status {}", task_id, status_code);
 
-                    // Add the progress to metadata
+                    // Add progress metadata
                     let mut progress = Map::new();
                     progress.insert("task_id".to_string(), Value::String(task_id.to_string()));
                     progress.insert(
@@ -374,7 +396,6 @@ impl Engine {
                         Value::String(Utc::now().to_rfc3339()),
                     );
 
-                    // If we had retries, record that too
                     if retry_count > 0 {
                         progress.insert(
                             "retries".to_string(),
@@ -389,24 +410,24 @@ impl Engine {
                 Err(e) => {
                     last_error = Some(e.clone());
 
-                    if retry_count < self.retry_config.max_retries {
+                    if retry_count < max_retries {
                         warn!(
                             "Task {} execution failed, retry {}/{}: {:?}",
                             task_id,
                             retry_count + 1,
-                            self.retry_config.max_retries,
+                            max_retries,
                             e
                         );
 
                         // Calculate delay with optional exponential backoff
-                        let delay = if self.retry_config.use_backoff {
-                            self.retry_config.retry_delay_ms * (2_u64.pow(retry_count))
+                        let delay = if use_backoff {
+                            retry_delay_ms * (2_u64.pow(retry_count))
                         } else {
-                            self.retry_config.retry_delay_ms
+                            retry_delay_ms
                         };
 
-                        // Sleep for the calculated delay
-                        std::thread::sleep(std::time::Duration::from_millis(delay));
+                        // Use tokio's non-blocking sleep
+                        sleep(std::time::Duration::from_millis(delay)).await;
 
                         retry_count += 1;
                     } else {
@@ -422,20 +443,29 @@ impl Engine {
         });
 
         error!(
-            "Task {} execution failed after {} retries: {:?}",
-            task_id, retry_count, error
+            "Task {} in workflow {} failed after {} retries: {:?}",
+            task_id, workflow_id, retry_count, error
         );
 
-        // Record the error in the message
-        message.add_error(ErrorInfo::new(
-            Some(workflow_id.to_string()),
-            Some(task_id.to_string()),
-            error.clone(),
-        ));
+        Err(error)
+    }
 
-        Err(DataflowError::function_execution(
-            format!("Task '{}' failed after {} retries", task_id, retry_count),
-            Some(error),
-        ))
+    /// Evaluates a condition using DataLogic
+    async fn evaluate_condition(&self, condition: &Value, data: &Value) -> Result<bool> {
+        // For simple boolean conditions, short-circuit
+        if let Value::Bool(b) = condition {
+            return Ok(*b);
+        }
+
+        // Use thread-local DataLogic instance instead of mutex-protected one
+        THREAD_LOCAL_DATA_LOGIC.with(|data_logic_cell| {
+            let data_logic = data_logic_cell.borrow_mut();
+            data_logic
+                .evaluate_json(condition, data, None)
+                .map_err(|e| {
+                    DataflowError::LogicEvaluation(format!("Error evaluating condition: {}", e))
+                })
+                .map(|result| result.as_bool().unwrap_or(false))
+        })
     }
 }

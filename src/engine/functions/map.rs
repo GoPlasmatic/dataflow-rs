@@ -1,17 +1,16 @@
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::message::{Change, Message};
-use crate::engine::FunctionHandler;
-use datalogic_rs::DataLogic;
+use crate::engine::AsyncFunctionHandler;
+use crate::engine::functions::FUNCTION_DATA_LOGIC;
+use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
 
-/// A function that maps data between different parts of a message
+/// A mapping function that transforms data using JSONLogic expressions.
 ///
-/// This function allows transforming data from one location in the message to another,
-/// using JSONLogic expressions to perform the transformations.
+/// This function allows mapping data from one location to another within
+/// a message, applying transformations using JSONLogic expressions.
 pub struct MapFunction {
-    /// Reference to DataLogic instance for evaluating expressions
-    data_logic: Arc<Mutex<DataLogic>>,
+    // No longer needs data_logic field
 }
 
 impl Default for MapFunction {
@@ -21,144 +20,175 @@ impl Default for MapFunction {
 }
 
 impl MapFunction {
-    /// Create a new MapFunction with a provided DataLogic mutex
-    pub fn new_with_mutex(data_logic: Arc<Mutex<DataLogic>>) -> Self {
-        Self { data_logic }
+    /// Create a new MapFunction
+    pub fn new() -> Self {
+        Self {}
     }
 
-    /// Create a new MapFunction with a fresh DataLogic instance
-    pub fn new() -> Self {
-        Self {
-            data_logic: Arc::new(Mutex::new(DataLogic::new())),
+    /// Set a value at the specified path within the target object
+    fn set_value_at_path(&self, target: &mut Value, path: &str, value: Value) -> Result<Value> {
+        let mut current = target;
+        let mut old_value = Value::Null;
+        let path_parts: Vec<&str> = path.split('.').collect();
+
+        // Navigate to the parent of the target location
+        for (i, part) in path_parts.iter().enumerate() {
+            if i == path_parts.len() - 1 {
+                // We're at the last part, so set the value
+                if current.is_object() {
+                    if let Value::Object(map) = current {
+                        // Save the old value before replacing
+                        old_value = map.get(*part).cloned().unwrap_or(Value::Null);
+                        map.insert(part.to_string(), value.clone());
+                    }
+                } else if current.is_array() {
+                    // Handle array indices with special care
+                    if let Ok(index) = part.parse::<usize>() {
+                        if let Value::Array(arr) = current {
+                            // Extend array if needed
+                            while arr.len() <= index {
+                                arr.push(Value::Null);
+                            }
+                            // Save old value
+                            old_value = arr[index].clone();
+                            arr[index] = value.clone();
+                        }
+                    } else {
+                        return Err(DataflowError::Validation(format!(
+                            "Invalid array index: {}",
+                            part
+                        )));
+                    }
+                } else {
+                    return Err(DataflowError::Validation(format!(
+                        "Cannot set property '{}' on non-object value",
+                        part
+                    )));
+                }
+            } else {
+                // We need to navigate deeper
+                match current {
+                    Value::Object(map) => {
+                        if !map.contains_key(*part) {
+                            map.insert(part.to_string(), json!({}));
+                        }
+                        current = map.get_mut(*part).unwrap();
+                    }
+                    Value::Array(arr) => {
+                        if let Ok(index) = part.parse::<usize>() {
+                            // Extend array if needed
+                            while arr.len() <= index {
+                                arr.push(json!({}));
+                            }
+                            current = &mut arr[index];
+                        } else {
+                            return Err(DataflowError::Validation(format!(
+                                "Invalid array index: {}",
+                                part
+                            )));
+                        }
+                    }
+                    _ => {
+                        return Err(DataflowError::Validation(format!(
+                            "Cannot navigate path '{}' on non-object value",
+                            part
+                        )));
+                    }
+                }
+            }
         }
+
+        Ok(old_value)
     }
 }
 
-impl FunctionHandler for MapFunction {
-    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
-        // Extract mappings from input
-        let mappings = input
-            .get("mappings")
-            .ok_or_else(|| DataflowError::Validation("No mappings provided".to_string()))?
+#[async_trait]
+impl AsyncFunctionHandler for MapFunction {
+    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
+        // Extract mappings array from input
+        let mappings = input.get("mappings").ok_or_else(|| {
+            DataflowError::Validation("Missing 'mappings' array in input".to_string())
+        })?;
+
+        let mappings_arr = mappings
             .as_array()
-            .ok_or_else(|| DataflowError::Validation("Mappings must be an array".to_string()))?;
+            .ok_or_else(|| DataflowError::Validation("'mappings' must be an array".to_string()))?;
 
-        if mappings.is_empty() {
-            return Err(DataflowError::Validation(
-                "Mappings array is empty".to_string(),
-            ));
-        }
-
-        let mut changes = Vec::with_capacity(mappings.len());
+        let mut changes = Vec::new();
 
         // Process each mapping
-        for (i, mapping) in mappings.iter().enumerate() {
-            // Get the target path
-            let path = mapping
-                .get("path")
-                .ok_or_else(|| {
-                    DataflowError::Validation(format!(
-                        "Mapping at index {} does not have a 'path' field",
-                        i
-                    ))
-                })?
-                .as_str()
-                .ok_or_else(|| {
-                    DataflowError::Validation(format!("Path at index {} must be a string", i))
-                })?;
-
-            // Get the logic to apply
-            let logic = mapping.get("logic").ok_or_else(|| {
-                DataflowError::Validation(format!(
-                    "Mapping at index {} does not have a 'logic' field",
-                    i
-                ))
+        for mapping in mappings_arr {
+            // Get path where to store the result
+            let target_path = mapping.get("path").and_then(Value::as_str).ok_or_else(|| {
+                DataflowError::Validation("Missing 'path' in mapping".to_string())
             })?;
 
-            // Create a context with all message data
-            let context = json!({
-                "data": message.data,
-                "payload": message.payload,
-                "metadata": message.metadata,
-                "temp_data": message.temp_data
+            // Get the logic to evaluate
+            let logic = mapping.get("logic").ok_or_else(|| {
+                DataflowError::Validation("Missing 'logic' in mapping".to_string())
+            })?;
+
+            // Clone message data for evaluation context
+            let data_clone = message.data.clone();
+            let metadata_clone = message.metadata.clone();
+            let temp_data_clone = message.temp_data.clone();
+
+            // Create a combined data object with message fields for evaluation
+            let data_for_eval = json!({
+                "data": data_clone,
+                "metadata": metadata_clone,
+                "temp_data": temp_data_clone,
             });
 
-            // Evaluate the logic
-            let result = self
-                .data_logic
-                .lock()
-                .map_err(|_| {
-                    DataflowError::Unknown("Failed to acquire data_logic lock".to_string())
-                })?
-                .evaluate_json(logic, &context, None)
-                .map_err(|e| {
-                    DataflowError::LogicEvaluation(format!(
-                        "Failed to evaluate logic at mapping index {}: {}",
-                        i, e
-                    ))
-                })?;
+            // Determine target object based on path prefix
+            let (target_object, adjusted_path) =
+                if let Some(path) = target_path.strip_prefix("data.") {
+                    (&mut message.data, path)
+                } else if let Some(path) = target_path.strip_prefix("metadata.") {
+                    (&mut message.metadata, path)
+                } else if let Some(path) = target_path.strip_prefix("temp_data.") {
+                    (&mut message.temp_data, path)
+                } else if target_path == "data" {
+                    (&mut message.data, "")
+                } else if target_path == "metadata" {
+                    (&mut message.metadata, "")
+                } else if target_path == "temp_data" {
+                    (&mut message.temp_data, "")
+                } else {
+                    // Default to data
+                    (&mut message.data, target_path)
+                };
 
-            // Set the value in the message
-            let path_parts: Vec<&str> = path.split('.').collect();
+            // Evaluate the logic using thread-local DataLogic
+            let result = FUNCTION_DATA_LOGIC.with(|data_logic_cell| {
+                let data_logic = data_logic_cell.borrow_mut();
 
-            if path_parts.is_empty() {
-                return Err(DataflowError::Validation(format!(
-                    "Path at index {} is empty",
-                    i
-                )));
-            }
+                data_logic
+                    .evaluate_json(logic, &data_for_eval, None)
+                    .map_err(|e| {
+                        DataflowError::LogicEvaluation(format!("Failed to evaluate logic: {}", e))
+                    })
+            })?;
 
-            let target_container = match path_parts[0] {
-                "data" => &mut message.data,
-                "payload" => &mut message.payload,
-                "metadata" => &mut message.metadata,
-                "temp_data" => &mut message.temp_data,
-                _ => return Err(DataflowError::Validation(
-                    format!("Invalid container '{}' at index {}. Must be one of: data, payload, metadata, temp_data", 
-                            path_parts[0], i)
-                )),
-            };
-
-            // Navigate to the target location
-            let mut current = target_container;
-            let mut old_value = Value::Null;
-
-            for part in path_parts.iter().take(path_parts.len() - 1).skip(1) {
-                if !current.is_object() {
-                    *current = json!({});
-                }
-
-                if current.get(part).is_none() {
-                    current[part] = json!({});
-                }
-
-                current = &mut current[part];
-            }
-
-            if path_parts.len() > 1 {
-                let last_part = path_parts[path_parts.len() - 1];
-
-                if !current.is_object() {
-                    *current = json!({});
-                }
-
-                if current.get(last_part).is_some() {
-                    old_value = current[last_part].clone();
-                }
-
-                current[last_part] = result.clone();
+            // Set the result at the target path
+            if adjusted_path.is_empty() {
+                // Replace the entire object
+                let old_value = std::mem::replace(target_object, result.clone());
+                changes.push(Change {
+                    path: target_path.to_string(),
+                    old_value,
+                    new_value: result,
+                });
             } else {
-                // If the path is just a single part, we're replacing the whole container
-                old_value = current.clone();
-                *current = result.clone();
+                // Set a specific path
+                let old_value =
+                    self.set_value_at_path(target_object, adjusted_path, result.clone())?;
+                changes.push(Change {
+                    path: target_path.to_string(),
+                    old_value,
+                    new_value: result,
+                });
             }
-
-            // Record the change
-            changes.push(Change {
-                path: path.to_string(),
-                old_value,
-                new_value: result,
-            });
         }
 
         Ok((200, changes))

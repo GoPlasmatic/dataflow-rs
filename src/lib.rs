@@ -14,7 +14,7 @@ contain multiple tasks that transform, validate, or enrich the data.
 * **Engine**: The central component that processes messages through workflows
 * **Workflow**: A collection of tasks with conditions that determine when they should be applied
 * **Task**: An individual processing unit that performs a specific function on a message
-* **FunctionHandler**: A trait implemented by task handlers to define custom processing logic
+* **AsyncFunctionHandler**: A trait implemented by task handlers to define custom async processing logic
 * **Message**: The data structure that flows through the engine, containing payload, metadata, and processing results
 
 ## Built-in Functions
@@ -25,6 +25,51 @@ The engine comes with several pre-registered functions:
 * **map**: Maps and transforms data between different parts of a message
 * **validate**: Validates message data against rules using JSONLogic expressions
 
+## Async Support
+
+The engine fully supports asynchronous operation with Tokio, providing improved scalability and
+performance for IO-bound operations like HTTP requests:
+
+```rust
+use dataflow_rs::{Engine, Workflow};
+use dataflow_rs::engine::message::Message;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create the async workflow engine
+    let mut engine = Engine::new();
+
+    // Define and add a workflow
+    let workflow_json = r#"{
+        "id": "data_processor",
+        "name": "Data Processor",
+        "tasks": [
+            {
+                "id": "fetch_data",
+                "name": "Fetch Data",
+                "function": {
+                    "name": "http",
+                    "input": { "url": "https://api.example.com/data" }
+                }
+            }
+        ]
+    }"#;
+
+    let workflow = Workflow::from_json(workflow_json)?;
+    engine.add_workflow(&workflow);
+
+    // Create and process a message
+    let mut message = Message::new(&json!({}));
+
+    // Process the message asynchronously
+    engine.process_message(&mut message).await?;
+
+    println!("Processed result: {}", message.data["result"]);
+    Ok(())
+}
+```
+
 ## Usage Example
 
 ```rust
@@ -32,7 +77,8 @@ use dataflow_rs::{Engine, Workflow};
 use dataflow_rs::engine::message::Message;
 use serde_json::json;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the workflow engine (built-in functions are auto-registered)
     let mut engine = Engine::new();
 
@@ -77,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut message = Message::new(&json!({}));
 
     // Process the message through the workflow
-    match engine.process_message(&mut message) {
+    match engine.process_message(&mut message).await {
         Ok(_) => {
             println!("Processed result: {}", message.data["result"]);
         }
@@ -99,14 +145,15 @@ use dataflow_rs::{Engine, Result, DataflowError};
 use dataflow_rs::engine::message::Message;
 use serde_json::json;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let mut engine = Engine::new();
     // ... setup workflows ...
 
     let mut message = Message::new(&json!({}));
 
     // Process the message, errors will be collected but not halt execution
-    engine.process_message(&mut message)?;
+    engine.process_message(&mut message).await?;
 
     // Check if there were any errors during processing
     if message.has_errors() {
@@ -125,15 +172,17 @@ fn main() -> Result<()> {
 You can extend the engine with your own custom function handlers:
 
 ```rust
-use dataflow_rs::{Engine, FunctionHandler, Result, Workflow};
+use dataflow_rs::{Engine, AsyncFunctionHandler, Result, Workflow};
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::engine::error::DataflowError;
 use serde_json::{json, Value};
+use async_trait::async_trait;
 
 struct CustomFunction;
 
-impl FunctionHandler for CustomFunction {
-    fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
+#[async_trait]
+impl AsyncFunctionHandler for CustomFunction {
+    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
         // Implement your custom logic here
 
         // Validate input
@@ -156,7 +205,8 @@ impl FunctionHandler for CustomFunction {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let mut engine = Engine::new();
 
     // Register your custom function
@@ -171,6 +221,7 @@ fn main() -> Result<()> {
 pub mod engine;
 
 // Re-export all public APIs for easier access
+pub use async_trait::async_trait;
 pub use engine::error::{DataflowError, ErrorInfo, Result};
 pub use engine::RetryConfig;
-pub use engine::{Engine, FunctionHandler, Task, Workflow};
+pub use engine::{AsyncFunctionHandler, Engine, Task, Workflow};
