@@ -40,7 +40,7 @@ Dataflow-rs empowers developers to build scalable async nanoservices and data pi
 ### Key Components
 
 - **🚀 Engine**: The central async component that processes messages through workflows
-- **📋 Workflow**: A collection of tasks with conditions that determine when they should be applied
+- **📋 Workflow**: A collection of tasks with conditions that determine when they should be applied *(Note: workflow conditions can only access metadata fields)*
 - **⚙️ Task**: An individual async processing unit that performs a specific function on a message  
 - **🔧 AsyncFunctionHandler**: A trait implemented by task handlers to define custom async processing logic
 - **📨 Message**: The data structure that flows through the engine, containing payload, metadata, and processing results
@@ -127,13 +127,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Dataflow-rs is built with async-first principles using Tokio:
 
-### Async Engine Processing
+### Sequential Workflow Processing
+
+Workflows are processed **sequentially** to ensure that later workflows can depend on the results of earlier workflows:
 
 ```rust
 // The engine processes messages asynchronously
 engine.process_message(&mut message).await?;
 
-// Multiple workflows can be processed concurrently
+// Each workflow's condition is evaluated just before execution
+// using the current message state, allowing workflows to depend
+// on results from previous workflows
+
+// Multiple messages can still be processed concurrently
 let futures: Vec<_> = messages.into_iter()
     .map(|mut msg| engine.process_message(&mut msg))
     .collect();
@@ -141,9 +147,58 @@ let futures: Vec<_> = messages.into_iter()
 let results = futures::future::join_all(futures).await;
 ```
 
-### Concurrent Task Execution
+### Workflow Dependencies
 
-Tasks within workflows are executed asynchronously with proper error handling and audit trails maintained throughout the async execution chain.
+Since workflows are executed sequentially and conditions are evaluated just before execution, you can create workflows that depend on each other. However, workflow conditions can **only access metadata fields**, not data fields:
+
+```json
+{
+  "workflows": [
+    {
+      "id": "fetch_user_data",
+      "condition": true,
+      "tasks": [
+        {
+          "id": "fetch_data",
+          "function": {
+            "name": "http",
+            "input": { "url": "https://api.example.com/users/1" }
+          }
+        },
+        {
+          "id": "set_metadata",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "metadata.user_fetched",
+                  "logic": true
+                },
+                {
+                  "path": "metadata.user_id", 
+                  "logic": { "var": "temp_data.body.id" }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "process_user_data", 
+      "condition": { "!!": { "var": "user_fetched" } },
+      "tasks": [...]
+    }
+  ]
+}
+```
+
+In this example, the first workflow sets metadata flags that the second workflow's condition can evaluate.
+
+### Async Task Execution
+
+Within each workflow, tasks are executed sequentially but asynchronously with proper error handling and audit trails maintained throughout the async execution chain.
 
 ## 🛠️ Built-in Functions
 
@@ -168,7 +223,7 @@ Fetches data from external HTTP APIs asynchronously:
 ```
 
 ### 🗂️ Map Function
-Maps and transforms data between different parts of a message using JSONLogic:
+Maps and transforms data between different parts of a message using JSONLogic with support for both object and array notation:
 
 ```json
 {
@@ -183,6 +238,10 @@ Maps and transforms data between different parts of a message using JSONLogic:
                 {
                     "path": "data.processed_at",
                     "logic": { "cat": ["Processed at ", { "var": "metadata.timestamp" }] }
+                },
+                {
+                    "path": "data.transactions.0.id", 
+                    "logic": "TXN123"
                 }
             ]
         }
@@ -190,8 +249,10 @@ Maps and transforms data between different parts of a message using JSONLogic:
 }
 ```
 
+The Map function supports **array notation** in paths - when numeric indices like `0`, `1`, `2` are encountered, arrays are automatically created.
+
 ### ✅ Validate Function
-Validates message data against rules using JSONLogic expressions:
+Validates message data against rules using JSONLogic expressions. Unlike workflow conditions, validation rules can access all message fields (`data`, `metadata`, `temp_data`):
 
 ```json
 {
@@ -456,6 +517,8 @@ Ok((200, changes))
 
 ### 🔄 Concurrent Message Processing
 
+While workflows within a single message are processed sequentially, you can still process multiple **messages** concurrently:
+
 ```rust
 use futures::stream::{FuturesUnordered, StreamExt};
 
@@ -465,6 +528,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut messages = vec![/* your messages */];
     
     // Process multiple messages concurrently
+    // Each message's workflows execute sequentially within that message
     let mut futures = FuturesUnordered::new();
     
     for message in &mut messages {
@@ -638,18 +702,46 @@ engine.register_task_function("custom".to_string(), Box::new(CustomFunction));
 
 ### 🔧 Workflow Conditions
 
-Use JSONLogic for dynamic workflow selection:
+Use JSONLogic for dynamic workflow selection. **Important**: Workflow conditions can only access `metadata` fields:
 
 ```json
 {
     "id": "conditional_workflow",
     "condition": {
         "and": [
-            { "==": [{ "var": "data.type" }, "user"] },
-            { ">": [{ "var": "data.priority" }, 5] }
+            { "==": [{ "var": "message_type" }, "user"] },
+            { ">": [{ "var": "priority" }, 5] }
         ]
     },
     "tasks": [...]
+}
+```
+
+To make data available for workflow conditions, set metadata fields in earlier workflows:
+
+```json
+{
+    "id": "data_preparation",
+    "tasks": [
+        {
+            "id": "set_metadata",
+            "function": {
+                "name": "map",
+                "input": {
+                    "mappings": [
+                        {
+                            "path": "metadata.message_type",
+                            "logic": { "var": "data.type" }
+                        },
+                        {
+                            "path": "metadata.priority",
+                            "logic": { "var": "data.priority" }
+                        }
+                    ]
+                }
+            }
+        }
+    ]
 }
 ```
 

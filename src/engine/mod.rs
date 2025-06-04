@@ -32,7 +32,6 @@ pub use datalogic_rs as jsonlogic;
 
 use chrono::Utc;
 use datalogic_rs::DataLogic;
-use futures::{stream::FuturesUnordered, StreamExt};
 use log::{debug, error, info, warn};
 use message::AuditTrail;
 use serde_json::{json, Map, Number, Value};
@@ -69,6 +68,9 @@ impl Default for RetryConfig {
 ///
 /// This engine is optimized for IO-bound workloads like HTTP requests, database access,
 /// and file operations. It uses Tokio for efficient async task execution.
+///
+/// Workflows are processed sequentially to ensure that later workflows can depend
+/// on the results of earlier workflows.
 pub struct Engine {
     /// Registry of available workflows
     workflows: HashMap<String, Workflow>,
@@ -76,8 +78,6 @@ pub struct Engine {
     task_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>,
     /// Configuration for retry behavior
     retry_config: RetryConfig,
-    /// Maximum number of concurrent tasks to execute
-    max_concurrency: usize,
 }
 
 impl Default for Engine {
@@ -101,7 +101,6 @@ impl Engine {
             workflows: HashMap::new(),
             task_functions: HashMap::new(),
             retry_config: RetryConfig::default(),
-            max_concurrency: 10, // Default max concurrency
         };
 
         // Register built-in function handlers
@@ -118,14 +117,7 @@ impl Engine {
             task_functions: HashMap::new(),
             workflows: HashMap::new(),
             retry_config: RetryConfig::default(),
-            max_concurrency: 10, // Default max concurrency
         }
-    }
-
-    /// Configure max concurrency
-    pub fn with_max_concurrency(mut self, max_concurrency: usize) -> Self {
-        self.max_concurrency = max_concurrency;
-        self
     }
 
     /// Configure retry behavior
@@ -169,9 +161,14 @@ impl Engine {
     /// Processes a message through workflows that match their conditions.
     ///
     /// This async method:
-    /// 1. Evaluates conditions for each workflow
-    /// 2. For matching workflows, executes each task concurrently up to max_concurrency
-    /// 3. Updates the message with processing results and audit trail
+    /// 1. Iterates through workflows sequentially
+    /// 2. Evaluates conditions for each workflow right before execution
+    /// 3. Executes matching workflows one after another (not concurrently)
+    /// 4. Updates the message with processing results and audit trail
+    ///
+    /// Workflows are executed sequentially because later workflows may depend
+    /// on the results of earlier workflows, and their conditions may change
+    /// based on modifications made by previous workflows.
     ///
     /// # Arguments
     ///
@@ -181,49 +178,32 @@ impl Engine {
     ///
     /// * `Result<()>` - Success or an error if processing failed
     pub async fn process_message(&self, message: &mut Message) -> Result<()> {
-        debug!("Processing message {} asynchronously", message.id);
+        debug!(
+            "Processing message {} sequentially through workflows",
+            message.id
+        );
 
-        // Create a FuturesUnordered to track concurrent workflow execution
-        let mut workflow_futures = FuturesUnordered::new();
-
-        // First filter workflows that should be executed and prepare them for concurrent processing
-        let mut workflows_to_process = Vec::new();
-
+        // Process workflows sequentially, evaluating conditions just before execution
         for workflow in self.workflows.values() {
-            // Check workflow condition
+            // Evaluate workflow condition using current message state
             let condition = workflow.condition.clone().unwrap_or(Value::Bool(true));
-            let metadata_ref = &message.metadata;
 
-            if !self.evaluate_condition(&condition, metadata_ref).await? {
+            if !self
+                .evaluate_condition(&condition, &message.metadata)
+                .await?
+            {
                 debug!("Workflow {} skipped - condition not met", workflow.id);
                 continue;
             }
 
-            info!("Preparing to process workflow {}", workflow.id);
-            workflows_to_process.push(workflow.clone());
-        }
+            info!("Processing workflow {}", workflow.id);
 
-        // Start processing workflows up to max_concurrency at a time
-        let engine_task_functions = &self.task_functions;
+            // Execute this workflow and merge results back into the message
+            let (workflow_id, workflow_message) =
+                Self::process_workflow(workflow.clone(), message.clone(), &self.task_functions)
+                    .await;
 
-        // Start initial batch of workflows
-        let initial_count = self.max_concurrency.min(workflows_to_process.len());
-        for workflow in workflows_to_process.iter().take(initial_count) {
-            let message_clone = message.clone();
-
-            workflow_futures.push(Self::process_workflow(
-                workflow.clone(),
-                message_clone,
-                engine_task_functions,
-            ));
-        }
-
-        // Process remaining workflows as current ones complete
-        let mut next_workflow_index = initial_count;
-
-        // As workflows complete, process the results and start more workflows if needed
-        while let Some((workflow_id, workflow_message)) = workflow_futures.next().await {
-            // Merge this workflow's results back into the original message
+            // Merge workflow results back into the original message
             message.data = workflow_message.data;
             message.metadata = workflow_message.metadata;
             message.temp_data = workflow_message.temp_data;
@@ -232,21 +212,14 @@ impl Engine {
 
             info!("Completed processing workflow {}", workflow_id);
 
-            // Start a new workflow if there are more
-            if next_workflow_index < workflows_to_process.len() {
-                let workflow = workflows_to_process[next_workflow_index].clone();
-                next_workflow_index += 1;
-
-                let message_clone = message.clone();
-
-                workflow_futures.push(Self::process_workflow(
-                    workflow,
-                    message_clone,
-                    &self.task_functions,
-                ));
-            }
+            // If there were errors in this workflow, we may want to decide whether to continue
+            // For now, we continue processing remaining workflows even if one fails
         }
 
+        debug!(
+            "Completed processing all workflows for message {}",
+            message.id
+        );
         Ok(())
     }
 
