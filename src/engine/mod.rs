@@ -161,7 +161,7 @@ impl Engine {
     /// Processes a message through workflows that match their conditions.
     ///
     /// This async method:
-    /// 1. Iterates through workflows sequentially
+    /// 1. Iterates through workflows sequentially in deterministic order (sorted by ID)
     /// 2. Evaluates conditions for each workflow right before execution
     /// 3. Executes matching workflows one after another (not concurrently)
     /// 4. Updates the message with processing results and audit trail
@@ -183,8 +183,13 @@ impl Engine {
             message.id
         );
 
-        // Process workflows sequentially, evaluating conditions just before execution
-        for workflow in self.workflows.values() {
+        // Collect and sort workflows by ID to ensure deterministic execution order
+        // This prevents non-deterministic behavior caused by HashMap iteration order
+        let mut sorted_workflows: Vec<_> = self.workflows.iter().collect();
+        sorted_workflows.sort_by_key(|(id, _)| id.as_str());
+
+        // Process workflows sequentially in sorted order, evaluating conditions just before execution
+        for (_, workflow) in sorted_workflows {
             // Evaluate workflow condition using current message state
             let condition = workflow.condition.clone().unwrap_or(Value::Bool(true));
 
