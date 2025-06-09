@@ -195,7 +195,8 @@ impl AsyncFunctionHandler for MapFunction {
 
             // Evaluate the logic using thread-local DataLogic
             let result = FUNCTION_DATA_LOGIC.with(|data_logic_cell| {
-                let data_logic = data_logic_cell.borrow_mut();
+                let mut data_logic = data_logic_cell.borrow_mut();
+                data_logic.reset_arena();
 
                 data_logic
                     .evaluate_json(logic, &data_for_eval, None)

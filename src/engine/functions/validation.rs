@@ -42,7 +42,8 @@ impl AsyncFunctionHandler for ValidationFunction {
 
         // Use thread-local DataLogic
         let validation_result = FUNCTION_DATA_LOGIC.with(|data_logic_cell| {
-            let data_logic = data_logic_cell.borrow_mut();
+            let mut data_logic = data_logic_cell.borrow_mut();
+            data_logic.reset_arena();
 
             if let Some(rules_arr) = rules.as_array() {
                 for rule in rules_arr {
