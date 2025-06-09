@@ -245,7 +245,8 @@ impl Engine {
 
             // Evaluate task condition using thread-local DataLogic
             let should_execute = THREAD_LOCAL_DATA_LOGIC.with(|data_logic_cell| {
-                let data_logic = data_logic_cell.borrow_mut();
+                let mut data_logic = data_logic_cell.borrow_mut();
+                data_logic.reset_arena();
                 data_logic
                     .evaluate_json(&task_condition, &message.metadata, None)
                     .map_err(|e| {
@@ -433,7 +434,8 @@ impl Engine {
 
         // Use thread-local DataLogic instance instead of mutex-protected one
         THREAD_LOCAL_DATA_LOGIC.with(|data_logic_cell| {
-            let data_logic = data_logic_cell.borrow_mut();
+            let mut data_logic = data_logic_cell.borrow_mut();
+            data_logic.reset_arena();
             data_logic
                 .evaluate_json(condition, data, None)
                 .map_err(|e| {
