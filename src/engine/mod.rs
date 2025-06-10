@@ -204,9 +204,13 @@ impl Engine {
             info!("Processing workflow {}", workflow.id);
 
             // Execute this workflow and merge results back into the message
-            let (workflow_id, workflow_message) =
-                Self::process_workflow(workflow.clone(), message.clone(), &self.task_functions)
-                    .await;
+            let (workflow_id, workflow_message) = Self::process_workflow(
+                workflow.clone(),
+                message.clone(),
+                &self.task_functions,
+                &self.retry_config,
+            )
+            .await;
 
             // Merge workflow results back into the original message
             message.data = workflow_message.data;
@@ -233,6 +237,7 @@ impl Engine {
         workflow: Workflow,
         mut message: Message,
         task_functions: &HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>,
+        retry_config: &RetryConfig,
     ) -> (String, Message) {
         let workflow_id = workflow.id.clone();
         let mut workflow_errors = Vec::new();
@@ -285,6 +290,7 @@ impl Engine {
                     &mut message,
                     &function_input,
                     function.as_ref(),
+                    retry_config,
                 )
                 .await
                 {
@@ -331,17 +337,15 @@ impl Engine {
         message: &mut Message,
         input_json: &Value,
         function: &dyn AsyncFunctionHandler,
+        retry_config: &RetryConfig,
     ) -> Result<()> {
         info!("Executing task {} in workflow {}", task_id, workflow_id);
 
         let mut last_error = None;
         let mut retry_count = 0;
-        let max_retries = 3; // Default max retries
-        let retry_delay_ms = 1000; // Default retry delay in ms
-        let use_backoff = true; // Default backoff behavior
 
         // Try executing the task with retries
-        while retry_count <= max_retries {
+        while retry_count <= retry_config.max_retries {
             match function.execute(message, input_json).await {
                 Ok((status_code, changes)) => {
                     // Success! Record audit trail and return
@@ -385,20 +389,20 @@ impl Engine {
                 Err(e) => {
                     last_error = Some(e.clone());
 
-                    if retry_count < max_retries {
+                    if retry_count < retry_config.max_retries {
                         warn!(
                             "Task {} execution failed, retry {}/{}: {:?}",
                             task_id,
                             retry_count + 1,
-                            max_retries,
+                            retry_config.max_retries,
                             e
                         );
 
                         // Calculate delay with optional exponential backoff
-                        let delay = if use_backoff {
-                            retry_delay_ms * (2_u64.pow(retry_count))
+                        let delay = if retry_config.use_backoff {
+                            retry_config.retry_delay_ms * (2_u64.pow(retry_count))
                         } else {
-                            retry_delay_ms
+                            retry_config.retry_delay_ms
                         };
 
                         // Use tokio's non-blocking sleep
