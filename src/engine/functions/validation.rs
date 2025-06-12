@@ -58,6 +58,8 @@ impl AsyncFunctionHandler for ValidationFunction {
                         &json!({rule_path: message.data})
                     } else if rule_path == "metadata" {
                         &json!({rule_path: message.metadata})
+                    } else if rule_path == "temp_data" {
+                        &json!({rule_path: message.temp_data})
                     } else {
                         &json!({rule_path: message.data})
                     };
