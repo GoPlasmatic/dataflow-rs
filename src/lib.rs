@@ -159,7 +159,7 @@ async fn main() -> Result<()> {
     if message.has_errors() {
         for error in &message.errors {
             println!("Error in workflow: {:?}, task: {:?}: {:?}",
-                     error.workflow_id, error.task_id, error.error);
+                     error.workflow_id, error.task_id, error.error_message);
         }
     }
 
