@@ -148,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for err in &message.errors {
                     println!(
                         "- Workflow: {:?}, Task: {:?}, Error: {:?}",
-                        err.workflow_id, err.task_id, err.error
+                        err.workflow_id, err.task_id, err.error_message
                     );
                 }
             }

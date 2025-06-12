@@ -205,6 +205,10 @@ impl AsyncFunctionHandler for MapFunction {
                     })
             })?;
 
+            if result.is_null() {
+                continue;
+            }
+
             // Set the result at the target path
             if adjusted_path.is_empty() {
                 // Replace the entire object

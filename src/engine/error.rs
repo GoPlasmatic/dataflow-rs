@@ -91,7 +91,7 @@ pub struct ErrorInfo {
     pub timestamp: String,
 
     /// The actual error
-    pub error: DataflowError,
+    pub error_message: String,
 
     /// Whether a retry was attempted
     pub retry_attempted: bool,
@@ -107,7 +107,7 @@ impl ErrorInfo {
             workflow_id,
             task_id,
             timestamp: Utc::now().to_rfc3339(),
-            error,
+            error_message: error.to_string(),
             retry_attempted: false,
             retry_count: 0,
         }

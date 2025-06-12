@@ -428,7 +428,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     println!(
                         "   - {}: {:?}",
                         error.task_id.as_ref().unwrap_or(&"unknown".to_string()),
-                        error.error
+                        error.error_message
                     );
                 }
             }
