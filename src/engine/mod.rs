@@ -207,7 +207,7 @@ impl Engine {
             // This prevents audit entries from previous workflows being duplicated
             let mut fresh_message = Message::new(&message.payload);
             fresh_message.data = message.data.clone();
-            fresh_message.metadata = message.metadata.clone(); 
+            fresh_message.metadata = message.metadata.clone();
             fresh_message.temp_data = message.temp_data.clone();
             fresh_message.errors = message.errors.clone();
 

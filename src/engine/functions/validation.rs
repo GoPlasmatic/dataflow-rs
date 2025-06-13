@@ -91,8 +91,9 @@ impl AsyncFunctionHandler for ValidationFunction {
 
             // Only create changes if there are actual validation results to report
             // Don't create a change from null to null as this causes duplicate audit entries
-            let changes = if message.temp_data.get("validation").is_some() && 
-                         !message.temp_data["validation"].is_null() {
+            let changes = if message.temp_data.get("validation").is_some()
+                && !message.temp_data["validation"].is_null()
+            {
                 vec![Change {
                     path: "temp_data.validation".to_string(),
                     old_value: Value::Null,
