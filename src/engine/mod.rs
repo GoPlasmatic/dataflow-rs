@@ -203,10 +203,17 @@ impl Engine {
 
             info!("Processing workflow {}", workflow.id);
 
-            // Execute this workflow and merge results back into the message
+            // Execute this workflow with a fresh message (same data, empty audit trail)
+            // This prevents audit entries from previous workflows being duplicated
+            let mut fresh_message = Message::new(&message.payload);
+            fresh_message.data = message.data.clone();
+            fresh_message.metadata = message.metadata.clone(); 
+            fresh_message.temp_data = message.temp_data.clone();
+            fresh_message.errors = message.errors.clone();
+
             let (workflow_id, workflow_message) = Self::process_workflow(
                 workflow.clone(),
-                message.clone(),
+                fresh_message,
                 &self.task_functions,
                 &self.retry_config,
             )

@@ -89,11 +89,19 @@ impl AsyncFunctionHandler for ValidationFunction {
                 }
             }
 
-            let changes = vec![Change {
-                path: "temp_data.validation".to_string(),
-                old_value: Value::Null,
-                new_value: message.temp_data["validation"].clone(),
-            }];
+            // Only create changes if there are actual validation results to report
+            // Don't create a change from null to null as this causes duplicate audit entries
+            let changes = if message.temp_data.get("validation").is_some() && 
+                         !message.temp_data["validation"].is_null() {
+                vec![Change {
+                    path: "temp_data.validation".to_string(),
+                    old_value: Value::Null,
+                    new_value: message.temp_data["validation"].clone(),
+                }]
+            } else {
+                // No validation results to record - return empty changes
+                vec![]
+            };
 
             Ok((200, changes))
         });
