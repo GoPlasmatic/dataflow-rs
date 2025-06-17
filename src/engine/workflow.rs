@@ -9,6 +9,7 @@ use std::path::Path;
 pub struct Workflow {
     pub id: String,
     pub name: String,
+    pub priority: u32,
     pub description: Option<String>,
     pub condition: Option<Value>,
     pub tasks: Vec<Task>,
@@ -25,6 +26,7 @@ impl Workflow {
         Workflow {
             id: String::new(),
             name: String::new(),
+            priority: 0,
             description: None,
             condition: None,
             tasks: Vec::new(),

@@ -46,6 +46,7 @@ async fn test_workflow_execution() {
     let workflow = Workflow {
         id: "test_workflow".to_string(),
         name: "Test Workflow".to_string(),
+        priority: 0,
         description: Some("A test workflow".to_string()),
         tasks: vec![Task {
             id: "log_task".to_string(),

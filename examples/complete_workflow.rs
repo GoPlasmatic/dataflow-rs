@@ -14,6 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         "id": "complete_workflow",
         "name": "Complete Workflow Example",
+        "priority": 0,
         "description": "Demonstrates fetch -> enrich -> validate flow",
         "condition": { "==": [true, true] },
         "tasks": [

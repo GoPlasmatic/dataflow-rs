@@ -186,7 +186,7 @@ impl Engine {
         // Collect and sort workflows by ID to ensure deterministic execution order
         // This prevents non-deterministic behavior caused by HashMap iteration order
         let mut sorted_workflows: Vec<_> = self.workflows.iter().collect();
-        sorted_workflows.sort_by_key(|(id, _)| id.as_str());
+        sorted_workflows.sort_by_key(|(id, workflow)| (workflow.priority, id.as_str()));
 
         // Process workflows sequentially in sorted order, evaluating conditions just before execution
         for (_, workflow) in sorted_workflows {
@@ -203,30 +203,10 @@ impl Engine {
 
             info!("Processing workflow {}", workflow.id);
 
-            // Execute this workflow with a fresh message (same data, empty audit trail)
-            // This prevents audit entries from previous workflows being duplicated
-            let mut fresh_message = Message::new(&message.payload);
-            fresh_message.data = message.data.clone();
-            fresh_message.metadata = message.metadata.clone();
-            fresh_message.temp_data = message.temp_data.clone();
-            fresh_message.errors = message.errors.clone();
+            Self::process_workflow(workflow, message, &self.task_functions, &self.retry_config)
+                .await;
 
-            let (workflow_id, workflow_message) = Self::process_workflow(
-                workflow.clone(),
-                fresh_message,
-                &self.task_functions,
-                &self.retry_config,
-            )
-            .await;
-
-            // Merge workflow results back into the original message
-            message.data = workflow_message.data;
-            message.metadata = workflow_message.metadata;
-            message.temp_data = workflow_message.temp_data;
-            message.audit_trail.extend(workflow_message.audit_trail);
-            message.errors.extend(workflow_message.errors);
-
-            info!("Completed processing workflow {}", workflow_id);
+            info!("Completed processing workflow {}", workflow.id);
 
             // If there were errors in this workflow, we may want to decide whether to continue
             // For now, we continue processing remaining workflows even if one fails
@@ -241,11 +221,11 @@ impl Engine {
 
     /// Process a single workflow with sequential task execution
     async fn process_workflow(
-        workflow: Workflow,
-        mut message: Message,
+        workflow: &Workflow,
+        message: &mut Message,
         task_functions: &HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>,
         retry_config: &RetryConfig,
-    ) -> (String, Message) {
+    ) {
         let workflow_id = workflow.id.clone();
         let mut workflow_errors = Vec::new();
 
@@ -294,7 +274,7 @@ impl Engine {
                 match Self::execute_task_static(
                     &task_id,
                     &workflow_id,
-                    &mut message,
+                    message,
                     &function_input,
                     function.as_ref(),
                     retry_config,
@@ -332,9 +312,6 @@ impl Engine {
 
         // Add any errors encountered to the message
         message.errors.extend(workflow_errors);
-
-        // Return the processed message for this workflow
-        (workflow_id, message)
     }
 
     /// Static helper method to execute a task with retries

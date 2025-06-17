@@ -44,6 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow_json = r#"{
         "id": "data_processor",
         "name": "Data Processor",
+        "priority": 0,
         "tasks": [
             {
                 "id": "fetch_data",
@@ -87,6 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         "id": "data_processor",
         "name": "Data Processor",
+        "priority": 0,
         "tasks": [
             {
                 "id": "fetch_data",
