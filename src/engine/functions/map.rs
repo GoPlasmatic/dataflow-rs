@@ -74,8 +74,12 @@ impl MapFunction {
 
                     if let Value::Object(map) = current {
                         // Save the old value before replacing
-                        old_value = map.get(*part).cloned().unwrap_or(Value::Null);
-                        map.insert(part.to_string(), value.clone());
+                        let mut key = part.to_string();
+                        if key.starts_with("$") {
+                            key = key.strip_prefix("$").unwrap_or(&key).to_string();
+                        }
+                        old_value = map.get(&key).cloned().unwrap_or(Value::Null);
+                        map.insert(key, value.clone());
                     }
                 }
             } else {
@@ -117,16 +121,20 @@ impl MapFunction {
                     }
 
                     if let Value::Object(map) = current {
-                        if !map.contains_key(*part) {
+                        let mut key = part.to_string();
+                        if key.starts_with("$") {
+                            key = key.strip_prefix("$").unwrap_or(&key).to_string();
+                        }
+                        if !map.contains_key(&key) {
                             // Look ahead to see if next part is numeric to decide what to create
                             let next_part = path_parts.get(i + 1).unwrap_or(&"");
                             if is_numeric_index(next_part) {
                                 map.insert(part.to_string(), Value::Array(vec![]));
                             } else {
-                                map.insert(part.to_string(), json!({}));
+                                map.insert(key.clone(), json!({}));
                             }
                         }
-                        current = map.get_mut(*part).unwrap();
+                        current = map.get_mut(&key).unwrap();
                     }
                 }
             }
