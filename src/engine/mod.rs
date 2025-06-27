@@ -242,7 +242,7 @@ impl Engine {
                 data_logic
                     .evaluate_json(&task_condition, &message.metadata, None)
                     .map_err(|e| {
-                        DataflowError::LogicEvaluation(format!("Error evaluating condition: {}", e))
+                        DataflowError::LogicEvaluation(format!("Error evaluating condition: {e}"))
                     })
                     .map(|result| result.as_bool().unwrap_or(false))
             });
@@ -427,7 +427,7 @@ impl Engine {
             data_logic
                 .evaluate_json(condition, data, None)
                 .map_err(|e| {
-                    DataflowError::LogicEvaluation(format!("Error evaluating condition: {}", e))
+                    DataflowError::LogicEvaluation(format!("Error evaluating condition: {e}"))
                 })
                 .map(|result| result.as_bool().unwrap_or(false))
         })

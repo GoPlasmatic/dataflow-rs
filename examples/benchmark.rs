@@ -150,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "sync".to_string(),
     )?;
 
-    println!("\nBenchmark results saved to '{}'", BENCHMARK_LOG_FILE);
+    println!("\nBenchmark results saved to '{BENCHMARK_LOG_FILE}'");
 
     Ok(())
 }
@@ -177,10 +177,7 @@ async fn run_async_benchmark(
     let mut all_durations = Vec::with_capacity(num_iterations);
     let mut error_count = 0;
 
-    println!(
-        "Starting async benchmark with {} iterations...",
-        num_iterations
-    );
+    println!("Starting async benchmark with {num_iterations} iterations...");
 
     for i in 0..num_iterations {
         let mut message = Message::new(&json!({}));
@@ -212,7 +209,7 @@ async fn run_async_benchmark(
             Err(e) => {
                 error_count += 1;
                 if error_count <= 5 {
-                    println!("Error in iteration {}: {:?}", i, e);
+                    println!("Error in iteration {i}: {e:?}");
                 }
                 // Still record the time even for errors
                 let duration = start.elapsed();
@@ -229,7 +226,7 @@ async fn run_async_benchmark(
     }
 
     if error_count > 0 {
-        println!("Total errors encountered: {}", error_count);
+        println!("Total errors encountered: {error_count}");
     }
 
     // Sort durations for percentile calculations
@@ -241,15 +238,15 @@ async fn run_async_benchmark(
     let p99 = all_durations.get(p99_idx).unwrap_or(&Duration::ZERO);
     let avg_duration = total_duration / num_iterations as u32;
 
-    println!("\nAsync Benchmark Results (v{}):", VERSION);
-    println!("  Iterations: {}", num_iterations);
-    println!("  Errors: {}", error_count);
-    println!("  Min time: {:?}", min_duration);
-    println!("  Max time: {:?}", max_duration);
-    println!("  Avg time: {:?}", avg_duration);
-    println!("  95th percentile: {:?}", p95);
-    println!("  99th percentile: {:?}", p99);
-    println!("  Total time: {:?}", total_duration);
+    println!("\nAsync Benchmark Results (v{VERSION}):");
+    println!("  Iterations: {num_iterations}");
+    println!("  Errors: {error_count}");
+    println!("  Min time: {min_duration:?}");
+    println!("  Max time: {max_duration:?}");
+    println!("  Avg time: {avg_duration:?}");
+    println!("  95th percentile: {p95:?}");
+    println!("  99th percentile: {p99:?}");
+    println!("  Total time: {total_duration:?}");
 
     Ok(BenchmarkResults {
         iterations: num_iterations,
@@ -273,10 +270,7 @@ async fn run_sync_benchmark(
     let mut all_durations = Vec::with_capacity(num_iterations);
     let mut error_count = 0;
 
-    println!(
-        "Starting sync-style benchmark with {} iterations...",
-        num_iterations
-    );
+    println!("Starting sync-style benchmark with {num_iterations} iterations...");
 
     for i in 0..num_iterations {
         let mut message = Message::new(&json!({}));
@@ -308,7 +302,7 @@ async fn run_sync_benchmark(
             Err(e) => {
                 error_count += 1;
                 if error_count <= 5 {
-                    println!("Sync error in iteration {}: {:?}", i, e);
+                    println!("Sync error in iteration {i}: {e:?}");
                 }
                 let duration = start.elapsed();
                 all_durations.push(duration);
@@ -324,7 +318,7 @@ async fn run_sync_benchmark(
     }
 
     if error_count > 0 {
-        println!("Total sync errors encountered: {}", error_count);
+        println!("Total sync errors encountered: {error_count}");
     }
 
     all_durations.sort();
@@ -335,15 +329,15 @@ async fn run_sync_benchmark(
     let p99 = all_durations.get(p99_idx).unwrap_or(&Duration::ZERO);
     let avg_duration = total_duration / num_iterations as u32;
 
-    println!("\nSync Benchmark Results (v{}):", VERSION);
-    println!("  Iterations: {}", num_iterations);
-    println!("  Errors: {}", error_count);
-    println!("  Min time: {:?}", min_duration);
-    println!("  Max time: {:?}", max_duration);
-    println!("  Avg time: {:?}", avg_duration);
-    println!("  95th percentile: {:?}", p95);
-    println!("  99th percentile: {:?}", p99);
-    println!("  Total time: {:?}", total_duration);
+    println!("\nSync Benchmark Results (v{VERSION}):");
+    println!("  Iterations: {num_iterations}");
+    println!("  Errors: {error_count}");
+    println!("  Min time: {min_duration:?}");
+    println!("  Max time: {max_duration:?}");
+    println!("  Avg time: {avg_duration:?}");
+    println!("  95th percentile: {p95:?}");
+    println!("  99th percentile: {p99:?}");
+    println!("  Total time: {total_duration:?}");
 
     Ok(BenchmarkResults {
         iterations: num_iterations,
@@ -380,7 +374,7 @@ fn log_benchmark_results(
         "benchmark_type": benchmark_type,
     });
 
-    let version_key = format!("{}_{}", VERSION, benchmark_type);
+    let version_key = format!("{VERSION}_{benchmark_type}");
 
     if let Some(obj) = benchmark_data.as_object_mut() {
         obj.insert(version_key, benchmark_entry);
@@ -409,7 +403,7 @@ fn read_benchmark_file() -> io::Result<Value> {
     match serde_json::from_str(&contents) {
         Ok(value) => Ok(value),
         Err(e) => {
-            eprintln!("Warning: Could not parse benchmark file: {}", e);
+            eprintln!("Warning: Could not parse benchmark file: {e}");
             Ok(json!({}))
         }
     }

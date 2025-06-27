@@ -74,15 +74,14 @@ impl AsyncFunctionHandler for ValidationFunction {
                                     .unwrap_or("Validation failed")
                                     .to_string();
 
-                                println!("Validation failed: {}", message_key);
+                                println!("Validation failed: {message_key}");
                                 return Ok((400, vec![]));
                             }
                         }
                         Err(e) => {
-                            println!("Error evaluating rule: {}", e);
+                            println!("Error evaluating rule: {e}");
                             return Err(DataflowError::LogicEvaluation(format!(
-                                "Error evaluating rule: {}",
-                                e
+                                "Error evaluating rule: {e}"
                             )));
                         }
                     }

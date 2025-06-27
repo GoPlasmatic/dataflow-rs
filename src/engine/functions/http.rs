@@ -44,7 +44,7 @@ impl AsyncFunctionHandler for HttpFunction {
         let method_str = input.get("method").and_then(Value::as_str).unwrap_or("GET");
 
         let method = Method::from_str(method_str)
-            .map_err(|e| DataflowError::Validation(format!("Invalid HTTP method: {}", e)))?;
+            .map_err(|e| DataflowError::Validation(format!("Invalid HTTP method: {e}")))?;
 
         // Determine whether this method supports a body
         let supports_body = method != Method::GET && method != Method::HEAD;
@@ -59,13 +59,12 @@ impl AsyncFunctionHandler for HttpFunction {
             for (key, value) in headers {
                 if let Some(value_str) = value.as_str() {
                     let header_name = HeaderName::try_from(key).map_err(|e| {
-                        DataflowError::Validation(format!("Invalid header name '{}': {}", key, e))
+                        DataflowError::Validation(format!("Invalid header name '{key}': {e}"))
                     })?;
 
                     let header_value = HeaderValue::try_from(value_str).map_err(|e| {
                         DataflowError::Validation(format!(
-                            "Invalid header value '{}': {}",
-                            value_str, e
+                            "Invalid header value '{value_str}': {e}"
                         ))
                     })?;
 
@@ -86,16 +85,16 @@ impl AsyncFunctionHandler for HttpFunction {
         // Make the request asynchronously
         let response = request.send().await.map_err(|e| {
             if e.is_timeout() {
-                DataflowError::Timeout(format!("HTTP request timed out: {}", e))
+                DataflowError::Timeout(format!("HTTP request timed out: {e}"))
             } else if e.is_connect() {
                 DataflowError::Http {
                     status: 0,
-                    message: format!("Connection error: {}", e),
+                    message: format!("Connection error: {e}"),
                 }
             } else {
                 DataflowError::Http {
                     status: e.status().map_or(0, |s| s.as_u16()),
-                    message: format!("HTTP request failed: {}", e),
+                    message: format!("HTTP request failed: {e}"),
                 }
             }
         })?;
@@ -107,7 +106,7 @@ impl AsyncFunctionHandler for HttpFunction {
         // Parse the response asynchronously
         let response_body = response.text().await.map_err(|e| DataflowError::Http {
             status: status.as_u16(),
-            message: format!("Failed to read response body: {}", e),
+            message: format!("Failed to read response body: {e}"),
         })?;
 
         // Try to parse as JSON, but fall back to string if it's not valid JSON

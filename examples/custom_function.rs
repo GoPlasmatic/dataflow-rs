@@ -434,13 +434,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
-            println!("❌ Error processing message: {:?}", e);
+            println!("❌ Error processing message: {e:?}");
         }
     }
 
     // Demonstrate another example with different data
     let separator = "=".repeat(50);
-    println!("\n{}", separator);
+    println!("\n{separator}");
     println!("=== Second Example with Different User ===\n");
 
     let mut message2 = dataflow_rs::engine::message::Message::new(&json!({}));
@@ -515,7 +515,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::to_string_pretty(&message2.data)?);
         }
         Err(e) => {
-            println!("❌ Error processing second message: {:?}", e);
+            println!("❌ Error processing second message: {e:?}");
         }
     }
 

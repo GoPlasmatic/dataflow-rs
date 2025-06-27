@@ -67,7 +67,7 @@ async fn test_workflow_execution() {
 
     match &result {
         Ok(_) => println!("Workflow executed successfully"),
-        Err(e) => println!("Workflow execution failed: {:?}", e),
+        Err(e) => println!("Workflow execution failed: {e:?}"),
     }
 
     assert!(result.is_ok(), "Workflow execution should succeed");

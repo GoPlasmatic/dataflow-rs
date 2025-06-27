@@ -143,7 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Workflow completed successfully!");
         }
         Err(e) => {
-            eprintln!("Error executing workflow: {:?}", e);
+            eprintln!("Error executing workflow: {e:?}");
             if !message.errors.is_empty() {
                 println!("\nErrors recorded in message:");
                 for err in &message.errors {

@@ -61,8 +61,7 @@ impl MapFunction {
                         }
                     } else {
                         return Err(DataflowError::Validation(format!(
-                            "Invalid array index: {}",
-                            part
+                            "Invalid array index: {part}"
                         )));
                     }
                 } else {
@@ -110,8 +109,7 @@ impl MapFunction {
                         }
                     } else {
                         return Err(DataflowError::Validation(format!(
-                            "Invalid array index: {}",
-                            part
+                            "Invalid array index: {part}"
                         )));
                     }
                 } else {
@@ -209,7 +207,7 @@ impl AsyncFunctionHandler for MapFunction {
                 data_logic
                     .evaluate_json(logic, &data_for_eval, None)
                     .map_err(|e| {
-                        DataflowError::LogicEvaluation(format!("Failed to evaluate logic: {}", e))
+                        DataflowError::LogicEvaluation(format!("Failed to evaluate logic: {e}"))
                     })
             })?;
 
