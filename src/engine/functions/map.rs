@@ -75,8 +75,8 @@ impl MapFunction {
                     if let Value::Object(map) = current {
                         // Save the old value before replacing
                         let mut key = part.to_string();
-                        if key.starts_with("$") {
-                            key = key.strip_prefix("$").unwrap_or(&key).to_string();
+                        if key.starts_with("#") {
+                            key = key.strip_prefix("#").unwrap_or(&key).to_string();
                         }
                         old_value = map.get(&key).cloned().unwrap_or(Value::Null);
                         map.insert(key, value.clone());
@@ -122,8 +122,8 @@ impl MapFunction {
 
                     if let Value::Object(map) = current {
                         let mut key = part.to_string();
-                        if key.starts_with("$") {
-                            key = key.strip_prefix("$").unwrap_or(&key).to_string();
+                        if key.starts_with("#") {
+                            key = key.strip_prefix("#").unwrap_or(&key).to_string();
                         }
                         if !map.contains_key(&key) {
                             // Look ahead to see if next part is numeric to decide what to create
