@@ -3,6 +3,7 @@ use crate::engine::functions::FUNCTION_DATA_LOGIC;
 use crate::engine::message::{Change, Message};
 use crate::engine::AsyncFunctionHandler;
 use async_trait::async_trait;
+use log::error;
 use serde_json::{json, Value};
 
 /// A mapping function that transforms data using JSONLogic expressions.
@@ -60,6 +61,7 @@ impl MapFunction {
                             arr[index] = value.clone();
                         }
                     } else {
+                        error!("Invalid array index: {part}");
                         return Err(DataflowError::Validation(format!(
                             "Invalid array index: {part}"
                         )));
@@ -108,6 +110,7 @@ impl MapFunction {
                             current = &mut arr[index];
                         }
                     } else {
+                        error!("Invalid array index: {part}");
                         return Err(DataflowError::Validation(format!(
                             "Invalid array index: {part}"
                         )));
@@ -207,6 +210,7 @@ impl AsyncFunctionHandler for MapFunction {
                 data_logic
                     .evaluate_json(logic, &data_for_eval, None)
                     .map_err(|e| {
+                        error!("Failed to evaluate logic: {e} for {logic}, {data_for_eval}");
                         DataflowError::LogicEvaluation(format!("Failed to evaluate logic: {e}"))
                     })
             })?;
