@@ -27,7 +27,7 @@ impl MapFunction {
     }
 
     /// Set a value at the specified path within the target object
-    fn set_value_at_path(&self, target: &mut Value, path: &str, value: Value) -> Result<Value> {
+    fn set_value_at_path(&self, target: &mut Value, path: &str, value: &Value) -> Result<Value> {
         let mut current = target;
         let mut old_value = Value::Null;
         let path_parts: Vec<&str> = path.split('.').collect();
@@ -80,7 +80,20 @@ impl MapFunction {
                             key = key.strip_prefix("#").unwrap_or(&key).to_string();
                         }
                         old_value = map.get(&key).cloned().unwrap_or(Value::Null);
-                        map.insert(key, value.clone());
+                        // Merge objects if both old and new values are objects
+                        let value_to_insert = if old_value.is_object() && value.is_object() {
+                            let mut merged_map = old_value.as_object().unwrap().clone();
+                            if let Some(new_map) = value.as_object() {
+                                // New values override old values
+                                for (k, v) in new_map {
+                                    merged_map.insert(k.clone(), v.clone());
+                                }
+                            }
+                            Value::Object(merged_map)
+                        } else {
+                            value.clone()
+                        };
+                        map.insert(key, value_to_insert);
                     }
                 }
             } else {
@@ -230,8 +243,7 @@ impl AsyncFunctionHandler for MapFunction {
                 });
             } else {
                 // Set a specific path
-                let old_value =
-                    self.set_value_at_path(target_object, adjusted_path, result.clone())?;
+                let old_value = self.set_value_at_path(target_object, adjusted_path, &result)?;
                 changes.push(Change {
                     path: target_path.to_string(),
                     old_value,
@@ -586,5 +598,150 @@ mod tests {
         // Verify that "invalid_index" was treated as an object key, not array index
         assert!(message.data["items"].is_object());
         assert!(!message.data["items"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_object_merge_on_mapping() {
+        let map_fn = MapFunction::new();
+
+        // Test that when mapping to an existing object, the values are merged
+        let mut message = Message::new(&json!({}));
+        message.data = json!({
+            "config": {
+                "database": {
+                    "host": "localhost",
+                    "port": 5432,
+                    "username": "admin"
+                }
+            }
+        });
+
+        // First mapping - add new fields to existing object
+        let input = json!({
+            "mappings": [
+                {
+                    "path": "data.config.database",
+                    "logic": {
+                        "password": "secret123",
+                        "ssl": true,
+                        "port": 5433  // This should override the existing port
+                    }
+                }
+            ]
+        });
+
+        let result = map_fn.execute(&mut message, &input).await;
+
+        assert!(result.is_ok());
+        let expected = json!({
+            "config": {
+                "database": {
+                    "host": "localhost",
+                    "port": 5433,  // Updated
+                    "username": "admin",
+                    "password": "secret123",  // Added
+                    "ssl": true  // Added
+                }
+            }
+        });
+        assert_eq!(message.data, expected);
+
+        // Check that changes are recorded correctly
+        let (_, changes) = result.unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, "data.config.database");
+        assert_eq!(
+            changes[0].old_value,
+            json!({
+                "host": "localhost",
+                "port": 5432,
+                "username": "admin"
+            })
+        );
+        assert_eq!(
+            changes[0].new_value,
+            json!({
+                "password": "secret123",
+                "ssl": true,
+                "port": 5433
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_object_merge_with_nested_path() {
+        let map_fn = MapFunction::new();
+
+        // Test object merging with a nested path
+        let mut message = Message::new(&json!({}));
+        message.data = json!({
+            "user": {
+                "profile": {
+                    "name": "John Doe",
+                    "age": 30
+                }
+            }
+        });
+
+        let input = json!({
+            "mappings": [
+                {
+                    "path": "data.user.profile",
+                    "logic": {
+                        "email": "john@example.com",
+                        "age": 31,  // Override
+                        "city": "New York"
+                    }
+                }
+            ]
+        });
+
+        let result = map_fn.execute(&mut message, &input).await;
+
+        assert!(result.is_ok());
+        let expected = json!({
+            "user": {
+                "profile": {
+                    "name": "John Doe",  // Preserved
+                    "age": 31,  // Updated
+                    "email": "john@example.com",  // Added
+                    "city": "New York"  // Added
+                }
+            }
+        });
+        assert_eq!(message.data, expected);
+    }
+
+    #[tokio::test]
+    async fn test_non_object_replacement() {
+        let map_fn = MapFunction::new();
+
+        // Test that non-object values are replaced, not merged
+        let mut message = Message::new(&json!({}));
+        message.data = json!({
+            "settings": {
+                "value": "old_string"
+            }
+        });
+
+        let input = json!({
+            "mappings": [
+                {
+                    "path": "data.settings.value",
+                    "logic": {"new": "object"}
+                }
+            ]
+        });
+
+        let result = map_fn.execute(&mut message, &input).await;
+
+        assert!(result.is_ok());
+        // String should be replaced with object, not merged
+        let expected = json!({
+            "settings": {
+                "value": {"new": "object"}
+            }
+        });
+        assert_eq!(message.data, expected);
     }
 }
