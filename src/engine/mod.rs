@@ -40,7 +40,9 @@ use tokio::time::sleep;
 
 // Thread-local DataLogic instance to avoid mutex contention
 thread_local! {
-    static THREAD_LOCAL_DATA_LOGIC: RefCell<DataLogic> = RefCell::new(DataLogic::new());
+    static THREAD_LOCAL_DATA_LOGIC: RefCell<DataLogic> = RefCell::new(
+        DataLogic::with_preserve_structure()
+    );
 }
 
 /// Configuration for retry behavior

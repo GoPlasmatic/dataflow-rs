@@ -15,8 +15,9 @@ pub use map::MapFunction;
 
 // Thread-local DataLogic instance to avoid mutex contention
 thread_local! {
-    pub static FUNCTION_DATA_LOGIC: RefCell<datalogic_rs::DataLogic> =
-        RefCell::new(datalogic_rs::DataLogic::new());
+    pub static FUNCTION_DATA_LOGIC: RefCell<datalogic_rs::DataLogic> = RefCell::new(
+        datalogic_rs::DataLogic::with_preserve_structure()
+    );
 }
 
 // Re-export all built-in functions for easier access
