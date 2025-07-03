@@ -235,7 +235,18 @@ impl AsyncFunctionHandler for MapFunction {
             // Set the result at the target path
             if adjusted_path.is_empty() {
                 // Replace the entire object
-                let old_value = std::mem::replace(target_object, result.clone());
+                let old_value = if target_object.is_object() && result.is_object() {
+                    let mut merged_map = target_object.as_object().unwrap().clone();
+                    if let Some(new_map) = result.as_object() {
+                        // New values override old values
+                        for (k, v) in new_map {
+                            merged_map.insert(k.clone(), v.clone());
+                        }
+                    }
+                    std::mem::replace(target_object, Value::Object(merged_map))
+                } else {
+                    std::mem::replace(target_object, result.clone())
+                };
                 changes.push(Change {
                     path: target_path.to_string(),
                     old_value,
