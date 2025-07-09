@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "0.1.27"
+version = "0.1.28"
 edition = "2021"
 exclude = [".DS_Store", "/target", ".vscode"]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
