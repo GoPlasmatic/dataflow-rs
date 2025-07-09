@@ -73,6 +73,35 @@ impl DataflowError {
     pub fn from_serde(err: serde_json::Error) -> Self {
         DataflowError::Deserialization(err.to_string())
     }
+
+    /// Determines if this error is retryable (worth retrying)
+    ///
+    /// Retryable errors are typically transient infrastructure failures that might succeed on retry.
+    /// Non-retryable errors are typically data validation, logic, or configuration errors that
+    /// will consistently fail on retry.
+    pub fn retryable(&self) -> bool {
+        match self {
+            // Retryable errors - infrastructure/transient failures
+            DataflowError::Http { status, .. } => {
+                // Retry on server errors (5xx) and specific client errors that might be transient
+                *status >= 500 || *status == 429 || *status == 408 || *status == 0
+                // 0 means connection error
+            }
+            DataflowError::Timeout(_) => true,
+            DataflowError::Io(_) => true,
+            DataflowError::FunctionExecution { source, .. } => {
+                // Inherit retryability from the source error if present
+                source.as_ref().map(|e| e.retryable()).unwrap_or(false)
+            }
+
+            // Non-retryable errors - data/logic/configuration issues
+            DataflowError::Validation(_) => false,
+            DataflowError::LogicEvaluation(_) => false,
+            DataflowError::Deserialization(_) => false,
+            DataflowError::Workflow(_) => false,
+            DataflowError::Unknown(_) => false,
+        }
+    }
 }
 
 /// Type alias for Result with DataflowError
@@ -118,5 +147,97 @@ impl ErrorInfo {
         self.retry_attempted = true;
         self.retry_count += 1;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_retryable_errors() {
+        // Test retryable errors
+        assert!(DataflowError::Http {
+            status: 500,
+            message: "Internal Server Error".to_string()
+        }
+        .retryable());
+        assert!(DataflowError::Http {
+            status: 502,
+            message: "Bad Gateway".to_string()
+        }
+        .retryable());
+        assert!(DataflowError::Http {
+            status: 503,
+            message: "Service Unavailable".to_string()
+        }
+        .retryable());
+        assert!(DataflowError::Http {
+            status: 429,
+            message: "Too Many Requests".to_string()
+        }
+        .retryable());
+        assert!(DataflowError::Http {
+            status: 408,
+            message: "Request Timeout".to_string()
+        }
+        .retryable());
+        assert!(DataflowError::Http {
+            status: 0,
+            message: "Connection Error".to_string()
+        }
+        .retryable());
+        assert!(DataflowError::Timeout("Connection timeout".to_string()).retryable());
+        assert!(DataflowError::Io("Network error".to_string()).retryable());
+    }
+
+    #[test]
+    fn test_non_retryable_errors() {
+        // Test non-retryable errors
+        assert!(!DataflowError::Http {
+            status: 400,
+            message: "Bad Request".to_string()
+        }
+        .retryable());
+        assert!(!DataflowError::Http {
+            status: 401,
+            message: "Unauthorized".to_string()
+        }
+        .retryable());
+        assert!(!DataflowError::Http {
+            status: 403,
+            message: "Forbidden".to_string()
+        }
+        .retryable());
+        assert!(!DataflowError::Http {
+            status: 404,
+            message: "Not Found".to_string()
+        }
+        .retryable());
+        assert!(!DataflowError::Validation("Invalid input".to_string()).retryable());
+        assert!(!DataflowError::LogicEvaluation("Invalid logic".to_string()).retryable());
+        assert!(!DataflowError::Deserialization("Invalid JSON".to_string()).retryable());
+        assert!(!DataflowError::Workflow("Invalid workflow".to_string()).retryable());
+        assert!(!DataflowError::Unknown("Unknown error".to_string()).retryable());
+    }
+
+    #[test]
+    fn test_function_execution_error_retryability() {
+        // Test that function execution errors inherit retryability from source
+        let retryable_source = DataflowError::Http {
+            status: 500,
+            message: "Server Error".to_string(),
+        };
+        let non_retryable_source = DataflowError::Validation("Invalid data".to_string());
+
+        let retryable_func_error =
+            DataflowError::function_execution("HTTP call failed", Some(retryable_source));
+        let non_retryable_func_error =
+            DataflowError::function_execution("Validation failed", Some(non_retryable_source));
+        let no_source_func_error = DataflowError::function_execution("Unknown failure", None);
+
+        assert!(retryable_func_error.retryable());
+        assert!(!non_retryable_func_error.retryable());
+        assert!(!no_source_func_error.retryable());
     }
 }

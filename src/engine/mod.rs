@@ -375,9 +375,10 @@ impl Engine {
                 Err(e) => {
                     last_error = Some(e.clone());
 
-                    if retry_count < retry_config.max_retries {
+                    // Check if this error is retryable before attempting retry
+                    if retry_count < retry_config.max_retries && e.retryable() {
                         warn!(
-                            "Task {} execution failed, retry {}/{}: {:?}",
+                            "Task {} execution failed with retryable error, retry {}/{}: {:?}",
                             task_id,
                             retry_count + 1,
                             retry_config.max_retries,
@@ -396,6 +397,13 @@ impl Engine {
 
                         retry_count += 1;
                     } else {
+                        // Either we've exhausted retries or the error is not retryable
+                        if !e.retryable() {
+                            info!(
+                                "Task {} failed with non-retryable error, skipping retries: {:?}",
+                                task_id, e
+                            );
+                        }
                         break;
                     }
                 }
