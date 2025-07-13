@@ -1,4 +1,4 @@
-use crate::engine::error::{DataflowError, Result};
+use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::functions::FUNCTION_DATA_LOGIC;
 use crate::engine::message::{Change, Message};
 use crate::engine::AsyncFunctionHandler;
@@ -54,14 +54,15 @@ impl AsyncFunctionHandler for ValidationFunction {
 
                     let rule_path = rule.get("path").and_then(Value::as_str).unwrap_or("data");
 
-                    let data_to_validate = if rule_path == "data" {
-                        &json!({rule_path: message.data})
-                    } else if rule_path == "metadata" {
-                        &json!({rule_path: message.metadata})
-                    } else if rule_path == "temp_data" {
-                        &json!({rule_path: message.temp_data})
+                    let data_to_validate = if rule_path == "data" || rule_path.starts_with("data.")
+                    {
+                        &json!({"data": message.data})
+                    } else if rule_path == "metadata" || rule_path.starts_with("metadata.") {
+                        &json!({"metadata": message.metadata})
+                    } else if rule_path == "temp_data" || rule_path.starts_with("temp_data.") {
+                        &json!({"temp_data": message.temp_data})
                     } else {
-                        &json!({rule_path: message.data})
+                        &json!({"data": message.data})
                     };
 
                     // Evaluate the rule
@@ -75,7 +76,31 @@ impl AsyncFunctionHandler for ValidationFunction {
                                     .to_string();
 
                                 println!("Validation failed: {message_key}");
-                                return Ok((400, vec![]));
+
+                                // Store the validation error in the message's errors array
+                                message.errors.push(ErrorInfo::new(
+                                    None,
+                                    None,
+                                    DataflowError::Validation(message_key.clone()),
+                                ));
+
+                                // Store validation failure in temp_data for tracking
+                                if !message.temp_data.is_object() {
+                                    message.temp_data = json!({});
+                                }
+                                if let Some(obj) = message.temp_data.as_object_mut() {
+                                    if !obj.contains_key("validation_errors") {
+                                        obj.insert("validation_errors".to_string(), json!([]));
+                                    }
+                                    if let Some(errors_array) = obj
+                                        .get_mut("validation_errors")
+                                        .and_then(|v| v.as_array_mut())
+                                    {
+                                        errors_array.push(json!(message_key));
+                                    }
+                                }
+
+                                // Continue checking other rules instead of returning immediately
                             }
                         }
                         Err(e) => {
@@ -88,22 +113,41 @@ impl AsyncFunctionHandler for ValidationFunction {
                 }
             }
 
-            // Only create changes if there are actual validation results to report
-            // Don't create a change from null to null as this causes duplicate audit entries
-            let changes = if message.temp_data.get("validation").is_some()
+            // Check if any validation errors occurred
+            let has_validation_errors = message
+                .temp_data
+                .get("validation_errors")
+                .and_then(|v| v.as_array())
+                .map(|arr| !arr.is_empty())
+                .unwrap_or(false);
+
+            // Create changes to track validation results
+            let mut changes = vec![];
+
+            if message.temp_data.get("validation").is_some()
                 && !message.temp_data["validation"].is_null()
             {
-                vec![Change {
+                changes.push(Change {
                     path: "temp_data.validation".to_string(),
                     old_value: Value::Null,
                     new_value: message.temp_data["validation"].clone(),
-                }]
-            } else {
-                // No validation results to record - return empty changes
-                vec![]
-            };
+                });
+            }
 
-            Ok((200, changes))
+            if has_validation_errors {
+                changes.push(Change {
+                    path: "temp_data.validation_errors".to_string(),
+                    old_value: Value::Null,
+                    new_value: message.temp_data["validation_errors"].clone(),
+                });
+            }
+
+            // Return appropriate status code
+            if has_validation_errors {
+                Ok((400, changes))
+            } else {
+                Ok((200, changes))
+            }
         });
 
         validation_result
