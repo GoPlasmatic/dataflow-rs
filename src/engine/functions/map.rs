@@ -184,7 +184,8 @@ impl AsyncFunctionHandler for MapFunction {
                 DataflowError::Validation("Missing 'logic' in mapping".to_string())
             })?;
 
-            // Clone message data for evaluation context
+            // Clone message data for evaluation context - do this for each iteration
+            // to ensure subsequent mappings see changes from previous mappings
             let data_clone = message.data.clone();
             let metadata_clone = message.metadata.clone();
             let temp_data_clone = message.temp_data.clone();
@@ -751,6 +752,148 @@ mod tests {
         let expected = json!({
             "settings": {
                 "value": {"new": "object"}
+            }
+        });
+        assert_eq!(message.data, expected);
+    }
+
+    #[tokio::test]
+    async fn test_parent_child_mapping_issue_fix() {
+        let map_fn = MapFunction::new();
+
+        // Test case for GitHub issue #1: Multiple mappings where parent overwrites child
+        let mut message = Message::new(&json!({}));
+        message.data = json!({});
+
+        // First map to parent, then to child - child should preserve parent's other fields
+        let input = json!({
+            "mappings": [
+                {
+                    "path": "data.Parent.Child",
+                    "logic": {
+                        "Field1": "Value1",
+                        "Field2": "Value2"
+                    }
+                },
+                {
+                    "path": "data.Parent.Child.NestedObject",
+                    "logic": {
+                        "NestedField": "NestedValue"
+                    }
+                }
+            ]
+        });
+
+        let result = map_fn.execute(&mut message, &input).await;
+
+        assert!(result.is_ok());
+        let expected = json!({
+            "Parent": {
+                "Child": {
+                    "Field1": "Value1",
+                    "Field2": "Value2",
+                    "NestedObject": {
+                        "NestedField": "NestedValue"
+                    }
+                }
+            }
+        });
+        assert_eq!(message.data, expected);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_mappings_with_dependencies() {
+        let map_fn = MapFunction::new();
+
+        // Test that later mappings can use values set by earlier mappings
+        let mut message = Message::new(&json!({}));
+        message.data = json!({});
+
+        let input = json!({
+            "mappings": [
+                {
+                    "path": "data.config.database.host",
+                    "logic": "localhost"
+                },
+                {
+                    "path": "data.config.database.port",
+                    "logic": 5432
+                },
+                {
+                    // This mapping references the previously set values
+                    "path": "data.config.connectionString",
+                    "logic": {
+                        "cat": [
+                            "postgresql://",
+                            {"var": "data.config.database.host"},
+                            ":",
+                            {"var": "data.config.database.port"}
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let result = map_fn.execute(&mut message, &input).await;
+
+        assert!(result.is_ok());
+        let expected = json!({
+            "config": {
+                "database": {
+                    "host": "localhost",
+                    "port": 5432
+                },
+                "connectionString": "postgresql://localhost:5432"
+            }
+        });
+        assert_eq!(message.data, expected);
+    }
+
+    #[tokio::test]
+    async fn test_nested_path_after_parent_mapping() {
+        let map_fn = MapFunction::new();
+
+        // Test complex scenario: map to parent object, then add nested fields
+        let mut message = Message::new(&json!({}));
+        message.data = json!({});
+
+        let input = json!({
+            "mappings": [
+                {
+                    "path": "data.transaction",
+                    "logic": {
+                        "id": "TX-001",
+                        "amount": 1000,
+                        "currency": "USD"
+                    }
+                },
+                {
+                    "path": "data.transaction.metadata",
+                    "logic": {
+                        "timestamp": "2024-01-01T12:00:00Z",
+                        "source": "API"
+                    }
+                },
+                {
+                    "path": "data.transaction.metadata.tags",
+                    "logic": ["urgent", "international"]
+                }
+            ]
+        });
+
+        let result = map_fn.execute(&mut message, &input).await;
+
+        assert!(result.is_ok());
+        let expected = json!({
+            "transaction": {
+                "id": "TX-001",
+                "amount": 1000,
+                "currency": "USD",
+                "metadata": {
+                    "timestamp": "2024-01-01T12:00:00Z",
+                    "source": "API",
+                    "tags": ["urgent", "international"]
+                }
             }
         });
         assert_eq!(message.data, expected);
