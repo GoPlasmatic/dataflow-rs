@@ -157,36 +157,48 @@ mod tests {
     #[test]
     fn test_retryable_errors() {
         // Test retryable errors
-        assert!(DataflowError::Http {
-            status: 500,
-            message: "Internal Server Error".to_string()
-        }
-        .retryable());
-        assert!(DataflowError::Http {
-            status: 502,
-            message: "Bad Gateway".to_string()
-        }
-        .retryable());
-        assert!(DataflowError::Http {
-            status: 503,
-            message: "Service Unavailable".to_string()
-        }
-        .retryable());
-        assert!(DataflowError::Http {
-            status: 429,
-            message: "Too Many Requests".to_string()
-        }
-        .retryable());
-        assert!(DataflowError::Http {
-            status: 408,
-            message: "Request Timeout".to_string()
-        }
-        .retryable());
-        assert!(DataflowError::Http {
-            status: 0,
-            message: "Connection Error".to_string()
-        }
-        .retryable());
+        assert!(
+            DataflowError::Http {
+                status: 500,
+                message: "Internal Server Error".to_string()
+            }
+            .retryable()
+        );
+        assert!(
+            DataflowError::Http {
+                status: 502,
+                message: "Bad Gateway".to_string()
+            }
+            .retryable()
+        );
+        assert!(
+            DataflowError::Http {
+                status: 503,
+                message: "Service Unavailable".to_string()
+            }
+            .retryable()
+        );
+        assert!(
+            DataflowError::Http {
+                status: 429,
+                message: "Too Many Requests".to_string()
+            }
+            .retryable()
+        );
+        assert!(
+            DataflowError::Http {
+                status: 408,
+                message: "Request Timeout".to_string()
+            }
+            .retryable()
+        );
+        assert!(
+            DataflowError::Http {
+                status: 0,
+                message: "Connection Error".to_string()
+            }
+            .retryable()
+        );
         assert!(DataflowError::Timeout("Connection timeout".to_string()).retryable());
         assert!(DataflowError::Io("Network error".to_string()).retryable());
     }
@@ -194,26 +206,34 @@ mod tests {
     #[test]
     fn test_non_retryable_errors() {
         // Test non-retryable errors
-        assert!(!DataflowError::Http {
-            status: 400,
-            message: "Bad Request".to_string()
-        }
-        .retryable());
-        assert!(!DataflowError::Http {
-            status: 401,
-            message: "Unauthorized".to_string()
-        }
-        .retryable());
-        assert!(!DataflowError::Http {
-            status: 403,
-            message: "Forbidden".to_string()
-        }
-        .retryable());
-        assert!(!DataflowError::Http {
-            status: 404,
-            message: "Not Found".to_string()
-        }
-        .retryable());
+        assert!(
+            !DataflowError::Http {
+                status: 400,
+                message: "Bad Request".to_string()
+            }
+            .retryable()
+        );
+        assert!(
+            !DataflowError::Http {
+                status: 401,
+                message: "Unauthorized".to_string()
+            }
+            .retryable()
+        );
+        assert!(
+            !DataflowError::Http {
+                status: 403,
+                message: "Forbidden".to_string()
+            }
+            .retryable()
+        );
+        assert!(
+            !DataflowError::Http {
+                status: 404,
+                message: "Not Found".to_string()
+            }
+            .retryable()
+        );
         assert!(!DataflowError::Validation("Invalid input".to_string()).retryable());
         assert!(!DataflowError::LogicEvaluation("Invalid logic".to_string()).retryable());
         assert!(!DataflowError::Deserialization("Invalid JSON".to_string()).retryable());

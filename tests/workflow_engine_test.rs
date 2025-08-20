@@ -3,7 +3,7 @@ use dataflow_rs::engine::functions::AsyncFunctionHandler;
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::engine::task::Function;
 use dataflow_rs::{Engine, Result, Task, Workflow};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // A simple task implementation
 #[derive(Debug)]

@@ -1,9 +1,9 @@
+use crate::engine::AsyncFunctionHandler;
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::functions::FUNCTION_DATA_LOGIC;
 use crate::engine::message::{Change, Message};
-use crate::engine::AsyncFunctionHandler;
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::vec;
 /// A validation task function that uses JsonLogic expressions to validate message data.
 ///
@@ -41,7 +41,8 @@ impl AsyncFunctionHandler for ValidationFunction {
             .ok_or_else(|| DataflowError::Validation("Missing rules array".to_string()))?;
 
         // Use thread-local DataLogic
-        let validation_result = FUNCTION_DATA_LOGIC.with(|data_logic_cell| {
+
+        FUNCTION_DATA_LOGIC.with(|data_logic_cell| {
             let mut data_logic = data_logic_cell.borrow_mut();
             data_logic.reset_arena();
 
@@ -148,8 +149,6 @@ impl AsyncFunctionHandler for ValidationFunction {
             } else {
                 Ok((200, changes))
             }
-        });
-
-        validation_result
+        })
     }
 }

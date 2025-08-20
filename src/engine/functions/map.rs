@@ -1,10 +1,10 @@
+use crate::engine::AsyncFunctionHandler;
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::functions::FUNCTION_DATA_LOGIC;
 use crate::engine::message::{Change, Message};
-use crate::engine::AsyncFunctionHandler;
 use async_trait::async_trait;
 use log::error;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// A mapping function that transforms data using JSONLogic expressions.
 ///

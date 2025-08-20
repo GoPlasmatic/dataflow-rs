@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use dataflow_rs::{
+    Engine, Workflow,
     engine::{
+        AsyncFunctionHandler,
         error::{DataflowError, Result},
         message::{Change, Message},
-        AsyncFunctionHandler,
     },
-    Engine, Workflow,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 /// Custom function that calculates statistics from numeric data

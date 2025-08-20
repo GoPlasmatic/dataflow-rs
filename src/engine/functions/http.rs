@@ -3,10 +3,10 @@ use crate::engine::functions::AsyncFunctionHandler;
 use crate::engine::message::{Change, Message};
 use async_trait::async_trait;
 use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue},
     Client, Method,
+    header::{HeaderMap, HeaderName, HeaderValue},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::convert::TryFrom;
 use std::str::FromStr;
 use std::time::Duration;
@@ -76,10 +76,10 @@ impl AsyncFunctionHandler for HttpFunction {
         }
 
         // Add body if present for methods that support it
-        if let Some(body) = input.get("body") {
-            if supports_body {
-                request = request.json(body);
-            }
+        if let Some(body) = input.get("body")
+            && supports_body
+        {
+            request = request.json(body);
         }
 
         // Make the request asynchronously

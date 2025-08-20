@@ -224,6 +224,6 @@ pub mod engine;
 
 // Re-export all public APIs for easier access
 pub use async_trait::async_trait;
-pub use engine::error::{DataflowError, ErrorInfo, Result};
 pub use engine::RetryConfig;
+pub use engine::error::{DataflowError, ErrorInfo, Result};
 pub use engine::{AsyncFunctionHandler, Engine, Task, Workflow};

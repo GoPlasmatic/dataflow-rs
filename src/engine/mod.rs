@@ -34,7 +34,7 @@ use chrono::Utc;
 use datalogic_rs::DataLogic;
 use log::{debug, error, info, warn};
 use message::AuditTrail;
-use serde_json::{json, Map, Number, Value};
+use serde_json::{Map, Number, Value, json};
 use std::{cell::RefCell, collections::HashMap};
 use tokio::time::sleep;
 
