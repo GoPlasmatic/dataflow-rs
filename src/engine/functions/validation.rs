@@ -37,8 +37,6 @@ impl AsyncFunctionHandler for ValidationFunction {
             .ok_or_else(|| DataflowError::Validation("Missing rules array".to_string()))?;
 
         // Reset arena before processing rules
-        data_logic.reset_arena();
-
         if let Some(rules_arr) = rules.as_array() {
             for rule in rules_arr {
                 // Extract rule components

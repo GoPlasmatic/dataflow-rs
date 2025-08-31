@@ -220,7 +220,6 @@ impl AsyncFunctionHandler for MapFunction {
                 };
 
             // Evaluate the logic using provided DataLogic
-            data_logic.reset_arena();
             let result = data_logic
                 .evaluate_json(logic, &data_for_eval, None)
                 .map_err(|e| {
