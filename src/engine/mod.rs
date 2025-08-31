@@ -31,14 +31,14 @@ use serde_json::json;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create engine with default concurrency (CPU count)
     let engine = Engine::new();
-    
+
     // Or specify custom concurrency level
     let engine = Engine::with_concurrency(32);
-    
+
     // Process messages concurrently
     let mut message = Message::new(&json!({}));
     engine.process_message_concurrent(&mut message).await?;
-    
+
     Ok(())
 }
 ```
