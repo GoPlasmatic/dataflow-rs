@@ -45,11 +45,22 @@ pub mod builtins {
     }
 }
 
-/// Async interface for task functions that operate on messages
+/// Thread-safe async interface for task functions that operate on messages
 ///
-/// This trait defines how async task functions process a message with given
-/// input parameters. It is particularly useful for IO-bound operations
-/// like HTTP requests, file operations, and database queries.
+/// ## Thread-Safety (v1.0)
+///
+/// Functions now receive a DataLogic instance as a parameter, enabling thread-safe
+/// JSONLogic evaluation without internal locking. Each message gets exclusive access
+/// to a DataLogic instance for its entire workflow execution.
+///
+/// ## Usage
+///
+/// Implement this trait for custom async processing logic. The function receives:
+/// - Mutable access to the message being processed
+/// - Input parameters from the task configuration
+/// - A DataLogic instance for JSONLogic evaluation
+///
+/// Perfect for IO-bound operations like HTTP requests, database queries, and file operations.
 #[async_trait]
 pub trait AsyncFunctionHandler: Send + Sync {
     /// Execute the function asynchronously on a message with input parameters

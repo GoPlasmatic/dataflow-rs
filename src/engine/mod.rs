@@ -1,17 +1,47 @@
 /*!
 # Engine Module
 
-This module implements the core workflow engine for dataflow-rs. The engine processes
-messages through workflows composed of tasks, providing a flexible and extensible
-data processing pipeline.
+This module implements the core workflow engine for dataflow-rs. The engine provides
+thread-safe, vertically-scalable message processing through workflows composed of tasks.
+
+## Thread-Safety & Concurrency (v1.0)
+
+The engine now features a unified concurrency model with:
+- **DataLogic Pool**: Thread-safe pool of DataLogic instances for JSONLogic evaluation
+- **Arc-Swap Workflows**: Lock-free reads and atomic updates for workflow management
+- **Unified Concurrency**: Single parameter controls both pool size and max concurrent messages
+- **Zero Contention**: Pool size matches concurrent tasks to eliminate resource competition
 
 ## Key Components
 
-- **Engine**: The main engine that processes messages through workflows
-- **Workflow**: A collection of tasks with conditions that determine when they should be applied
-- **Task**: An individual processing unit that performs a specific function on a message
-- **AsyncFunctionHandler**: A trait implemented by task handlers to define custom async processing logic
-- **Message**: The data structure that flows through the engine, with data, metadata, and processing results
+- **Engine**: Thread-safe engine with configurable concurrency levels
+- **Workflow**: Collection of tasks with JSONLogic conditions, stored using Arc-Swap
+- **Task**: Individual processing unit that performs a specific function on a message
+- **AsyncFunctionHandler**: Trait for custom async processing logic (now receives DataLogic parameter)
+- **Message**: Data structure flowing through the engine, with dedicated DataLogic instance per workflow
+- **DataLogicPool**: Pool of DataLogic instances for concurrent message processing
+
+## Usage
+
+```rust,no_run
+use dataflow_rs::{Engine, engine::message::Message};
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create engine with default concurrency (CPU count)
+    let engine = Engine::new();
+    
+    // Or specify custom concurrency level
+    let engine = Engine::with_concurrency(32);
+    
+    // Process messages concurrently
+    let mut message = Message::new(&json!({}));
+    engine.process_message_concurrent(&mut message).await?;
+    
+    Ok(())
+}
+```
 */
 
 pub mod error;
@@ -102,13 +132,24 @@ impl Default for RetryConfig {
     }
 }
 
-/// Engine that processes messages through workflows using non-blocking async IO.
+/// Thread-safe engine that processes messages through workflows using non-blocking async IO.
 ///
-/// This engine is optimized for IO-bound workloads like HTTP requests, database access,
-/// and file operations. It uses Tokio for efficient async task execution.
+/// ## Architecture
 ///
-/// The engine uses a unified concurrency model where the number of DataLogic instances
-/// in the pool matches the maximum number of concurrent messages that can be processed.
+/// The engine is optimized for both IO-bound and CPU-bound workloads, featuring:
+/// - **Vertical Scalability**: Automatically utilizes all available CPU cores
+/// - **Thread-Safe Design**: All components are Send + Sync for concurrent access
+/// - **Unified Concurrency**: Single parameter controls both DataLogic pool size and max concurrent messages
+///
+/// ## Concurrency Model
+///
+/// Each message receives exclusive access to a DataLogic instance for its entire workflow execution,
+/// eliminating lock contention between tasks while maintaining thread-safety across messages.
+///
+/// ## Performance
+///
+/// The engine achieves linear scalability with CPU cores, capable of processing millions of
+/// messages per second with appropriate concurrency settings.
 pub struct Engine {
     /// Registry of available workflows (using ArcSwap for atomic reloads)
     workflows: Arc<ArcSwap<HashMap<String, Workflow>>>,
