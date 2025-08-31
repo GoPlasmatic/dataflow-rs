@@ -5,16 +5,16 @@ use crate::engine::message::{Change, Message};
 use async_trait::async_trait;
 use datalogic_rs::DataLogic;
 use log::error;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// Pre-parsed configuration for map function
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MapConfig {
     pub mappings: Vec<MapMapping>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MapMapping {
     pub path: String,
     pub logic: Value,

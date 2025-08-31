@@ -4,17 +4,17 @@ use crate::engine::functions::FunctionConfig;
 use crate::engine::message::{Change, Message};
 use async_trait::async_trait;
 use datalogic_rs::DataLogic;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::vec;
 
 /// Pre-parsed configuration for validation function
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ValidationConfig {
     pub rules: Vec<ValidationRule>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ValidationRule {
     pub logic: Value,
     pub path: String,

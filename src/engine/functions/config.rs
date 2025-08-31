@@ -1,11 +1,11 @@
 use crate::engine::error::Result;
 use crate::engine::functions::map::MapConfig;
 use crate::engine::functions::validation::ValidationConfig;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 /// Enum containing all possible pre-parsed function configurations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub enum FunctionConfig {
     Map(MapConfig),
     Validation(ValidationConfig),
