@@ -52,7 +52,7 @@ pub mod workflow;
 
 // Re-export key types for easier access
 pub use error::{DataflowError, ErrorInfo, Result};
-pub use functions::AsyncFunctionHandler;
+pub use functions::{AsyncFunctionHandler, FunctionConfig};
 pub use message::Message;
 pub use task::Task;
 pub use workflow::Workflow;
@@ -445,16 +445,16 @@ impl Engine {
             }
 
             // Execute task if we have a handler
-            if let Some(function) = task_functions.get(&task.function.name) {
+            if let Some(function) = task_functions.get(&task.function_name) {
                 let task_id = task.id.clone();
-                let function_input = task.function.input.clone();
+                let function_config = &task.function_config;
 
                 // Execute this task (with retries)
                 match Self::execute_task_static(
                     &task_id,
                     &workflow_id,
                     message,
-                    &function_input,
+                    function_config,
                     function.as_ref(),
                     &mut data_logic,
                     retry_config,
@@ -477,7 +477,7 @@ impl Engine {
                 }
             } else {
                 let error =
-                    DataflowError::Workflow(format!("Function '{}' not found", task.function.name));
+                    DataflowError::Workflow(format!("Function '{}' not found", task.function_name));
 
                 workflow_errors.push(ErrorInfo::new(
                     Some(workflow_id.clone()),
@@ -499,7 +499,7 @@ impl Engine {
         task_id: &str,
         workflow_id: &str,
         message: &mut Message,
-        input_json: &Value,
+        config: &FunctionConfig,
         function: &dyn AsyncFunctionHandler,
         data_logic: &mut DataLogic,
         retry_config: &RetryConfig,
@@ -511,7 +511,7 @@ impl Engine {
 
         // Try executing the task with retries
         while retry_count <= retry_config.max_retries {
-            match function.execute(message, input_json, data_logic).await {
+            match function.execute(message, config, data_logic).await {
                 Ok((status_code, changes)) => {
                     // Success! Record audit trail and return
                     message.audit_trail.push(AuditTrail {

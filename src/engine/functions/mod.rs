@@ -2,16 +2,15 @@ use crate::engine::error::Result;
 use crate::engine::message::{Change, Message};
 use async_trait::async_trait;
 use datalogic_rs::DataLogic;
-use serde_json::Value;
+
+pub mod config;
+pub use config::FunctionConfig;
 
 pub mod validation;
-pub use validation::ValidationFunction;
-
-pub mod http;
-pub use http::*;
+pub use validation::{ValidationConfig, ValidationFunction};
 
 pub mod map;
-pub use map::MapFunction;
+pub use map::{MapConfig, MapFunction};
 
 // Re-export all built-in functions for easier access
 pub mod builtins {
@@ -32,8 +31,6 @@ pub mod builtins {
             ),
             // Create map function
             (MAP_FUNCTION.to_string(), Box::new(MapFunction::new())),
-            // Create HTTP function with 30-second timeout
-            (HTTP_FUNCTION.to_string(), Box::new(HttpFunction::new(30))),
         ]
     }
 
@@ -57,18 +54,18 @@ pub mod builtins {
 ///
 /// Implement this trait for custom async processing logic. The function receives:
 /// - Mutable access to the message being processed
-/// - Input parameters from the task configuration
+/// - Pre-parsed function configuration
 /// - A DataLogic instance for JSONLogic evaluation
 ///
 /// Perfect for IO-bound operations like HTTP requests, database queries, and file operations.
 #[async_trait]
 pub trait AsyncFunctionHandler: Send + Sync {
-    /// Execute the function asynchronously on a message with input parameters
+    /// Execute the function asynchronously on a message with pre-parsed configuration
     ///
     /// # Arguments
     ///
     /// * `message` - The message to process
-    /// * `input` - Function input parameters
+    /// * `config` - Pre-parsed function configuration
     /// * `data_logic` - DataLogic instance for JSONLogic evaluation
     ///
     /// # Returns
@@ -77,7 +74,7 @@ pub trait AsyncFunctionHandler: Send + Sync {
     async fn execute(
         &self,
         message: &mut Message,
-        input: &Value,
+        config: &FunctionConfig,
         data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)>;
 }

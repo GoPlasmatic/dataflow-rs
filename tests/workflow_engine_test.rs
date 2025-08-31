@@ -1,10 +1,9 @@
 use async_trait::async_trait;
-use dataflow_rs::engine::functions::AsyncFunctionHandler;
+use dataflow_rs::engine::functions::{AsyncFunctionHandler, FunctionConfig};
 use dataflow_rs::engine::message::{Change, Message};
-use dataflow_rs::engine::task::Function;
 use dataflow_rs::{Engine, Result, Task, Workflow};
 use datalogic_rs::DataLogic;
-use serde_json::{Value, json};
+use serde_json::json;
 
 // A simple task implementation
 #[derive(Debug)]
@@ -15,7 +14,7 @@ impl AsyncFunctionHandler for LoggingTask {
     async fn execute(
         &self,
         message: &mut Message,
-        _input: &Value,
+        _config: &FunctionConfig,
         _data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
         println!("Executed task for message: {}", &message.id);
@@ -32,9 +31,9 @@ async fn test_task_execution() {
     let mut message = Message::new(&json!({}));
 
     // Execute the task directly
-    let input = json!({});
+    let config = FunctionConfig::Raw(json!({}));
     let mut data_logic = DataLogic::with_preserve_structure();
-    let result = task.execute(&mut message, &input, &mut data_logic).await;
+    let result = task.execute(&mut message, &config, &mut data_logic).await;
 
     // Verify the execution was successful
     assert!(result.is_ok(), "Task execution should succeed");
@@ -60,10 +59,8 @@ async fn test_workflow_execution() {
             name: "Log Task".to_string(),
             description: Some("A test task".to_string()),
             condition: Some(json!(true)),
-            function: Function {
-                name: "log".to_string(),
-                input: json!({}),
-            },
+            function_name: "log".to_string(),
+            function_config: FunctionConfig::Raw(json!({})),
         }],
         condition: Some(json!(true)),
     };

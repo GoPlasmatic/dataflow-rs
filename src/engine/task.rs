@@ -1,13 +1,15 @@
+use crate::engine::functions::FunctionConfig;
 use serde::Deserialize;
 use serde_json::Value;
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Task {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
     pub condition: Option<Value>,
-    pub function: Function,
+    pub function_name: String,
+    pub function_config: FunctionConfig,
 }
 
 impl Task {
@@ -16,20 +18,32 @@ impl Task {
         name: String,
         description: Option<String>,
         condition: Option<Value>,
-        function: Function,
+        function_name: String,
+        function_config: FunctionConfig,
     ) -> Self {
         Self {
             id,
             name,
             description,
             condition,
-            function,
+            function_name,
+            function_config,
         }
     }
 }
 
+/// Temporary structure for deserializing raw task data
 #[derive(Deserialize, Clone, Debug)]
-pub struct Function {
+pub struct RawTask {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub condition: Option<Value>,
+    pub function: RawFunction,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct RawFunction {
     pub name: String,
     pub input: Value,
 }

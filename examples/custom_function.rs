@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use dataflow_rs::{
     Engine, Workflow,
     engine::{
-        AsyncFunctionHandler,
+        AsyncFunctionHandler, FunctionConfig,
         error::{DataflowError, Result},
         message::{Change, Message},
     },
@@ -19,9 +19,19 @@ impl AsyncFunctionHandler for StatisticsFunction {
     async fn execute(
         &self,
         message: &mut Message,
-        input: &Value,
+        config: &FunctionConfig,
         _data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
+        // Extract the raw input from config
+        let input = match config {
+            FunctionConfig::Raw(input) => input,
+            _ => {
+                return Err(DataflowError::Validation(
+                    "Invalid configuration type for statistics function".to_string(),
+                ));
+            }
+        };
+
         // Extract the data path to analyze
         let data_path = input
             .get("data_path")
@@ -194,9 +204,19 @@ impl AsyncFunctionHandler for DataEnrichmentFunction {
     async fn execute(
         &self,
         message: &mut Message,
-        input: &Value,
+        config: &FunctionConfig,
         _data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
+        // Extract the raw input from config
+        let input = match config {
+            FunctionConfig::Raw(input) => input,
+            _ => {
+                return Err(DataflowError::Validation(
+                    "Invalid configuration type for enrichment function".to_string(),
+                ));
+            }
+        };
+
         // Extract lookup key and field
         let lookup_field = input
             .get("lookup_field")
