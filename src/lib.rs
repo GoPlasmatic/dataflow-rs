@@ -177,6 +177,7 @@ You can extend the engine with your own custom function handlers:
 use dataflow_rs::{Engine, AsyncFunctionHandler, Result, Workflow};
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::engine::error::DataflowError;
+use datalogic_rs::DataLogic;
 use serde_json::{json, Value};
 use async_trait::async_trait;
 
@@ -184,7 +185,7 @@ struct CustomFunction;
 
 #[async_trait]
 impl AsyncFunctionHandler for CustomFunction {
-    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
+    async fn execute(&self, message: &mut Message, input: &Value, _data_logic: &mut DataLogic) -> Result<(usize, Vec<Change>)> {
         // Implement your custom logic here
 
         // Validate input

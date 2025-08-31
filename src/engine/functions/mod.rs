@@ -1,8 +1,8 @@
 use crate::engine::error::Result;
 use crate::engine::message::{Change, Message};
 use async_trait::async_trait;
+use datalogic_rs::DataLogic;
 use serde_json::Value;
-use std::cell::RefCell;
 
 pub mod validation;
 pub use validation::ValidationFunction;
@@ -12,13 +12,6 @@ pub use http::*;
 
 pub mod map;
 pub use map::MapFunction;
-
-// Thread-local DataLogic instance to avoid mutex contention
-thread_local! {
-    pub static FUNCTION_DATA_LOGIC: RefCell<datalogic_rs::DataLogic> = RefCell::new(
-        datalogic_rs::DataLogic::with_preserve_structure()
-    );
-}
 
 // Re-export all built-in functions for easier access
 pub mod builtins {
@@ -32,12 +25,12 @@ pub mod builtins {
     // Get all built-in functions with their standard names
     pub fn get_all_functions() -> Vec<(String, Box<dyn AsyncFunctionHandler + Send + Sync>)> {
         vec![
-            // Create validation function with thread-local DataLogic
+            // Create validation function
             (
                 VALIDATION_FUNCTION.to_string(),
                 Box::new(ValidationFunction::new()),
             ),
-            // Create map function with thread-local DataLogic
+            // Create map function
             (MAP_FUNCTION.to_string(), Box::new(MapFunction::new())),
             // Create HTTP function with 30-second timeout
             (HTTP_FUNCTION.to_string(), Box::new(HttpFunction::new(30))),
@@ -65,9 +58,15 @@ pub trait AsyncFunctionHandler: Send + Sync {
     ///
     /// * `message` - The message to process
     /// * `input` - Function input parameters
+    /// * `data_logic` - DataLogic instance for JSONLogic evaluation
     ///
     /// # Returns
     ///
     /// * `Result<(usize, Vec<Change>)>` - Result containing status code and changes, or error
-    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)>;
+    async fn execute(
+        &self,
+        message: &mut Message,
+        input: &Value,
+        data_logic: &mut DataLogic,
+    ) -> Result<(usize, Vec<Change>)>;
 }

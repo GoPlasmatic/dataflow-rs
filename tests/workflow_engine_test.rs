@@ -3,6 +3,7 @@ use dataflow_rs::engine::functions::AsyncFunctionHandler;
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::engine::task::Function;
 use dataflow_rs::{Engine, Result, Task, Workflow};
+use datalogic_rs::DataLogic;
 use serde_json::{Value, json};
 
 // A simple task implementation
@@ -11,7 +12,12 @@ struct LoggingTask;
 
 #[async_trait]
 impl AsyncFunctionHandler for LoggingTask {
-    async fn execute(&self, message: &mut Message, _input: &Value) -> Result<(usize, Vec<Change>)> {
+    async fn execute(
+        &self,
+        message: &mut Message,
+        _input: &Value,
+        _data_logic: &mut DataLogic,
+    ) -> Result<(usize, Vec<Change>)> {
         println!("Executed task for message: {}", &message.id);
         Ok((200, vec![]))
     }
@@ -27,7 +33,8 @@ async fn test_task_execution() {
 
     // Execute the task directly
     let input = json!({});
-    let result = task.execute(&mut message, &input).await;
+    let mut data_logic = DataLogic::with_preserve_structure();
+    let result = task.execute(&mut message, &input, &mut data_logic).await;
 
     // Verify the execution was successful
     assert!(result.is_ok(), "Task execution should succeed");

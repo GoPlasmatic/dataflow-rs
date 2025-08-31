@@ -7,6 +7,7 @@ use dataflow_rs::{
         message::{Change, Message},
     },
 };
+use datalogic_rs::DataLogic;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -15,7 +16,12 @@ pub struct StatisticsFunction;
 
 #[async_trait]
 impl AsyncFunctionHandler for StatisticsFunction {
-    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
+    async fn execute(
+        &self,
+        message: &mut Message,
+        input: &Value,
+        _data_logic: &mut DataLogic,
+    ) -> Result<(usize, Vec<Change>)> {
         // Extract the data path to analyze
         let data_path = input
             .get("data_path")
@@ -185,7 +191,12 @@ pub struct DataEnrichmentFunction {
 
 #[async_trait]
 impl AsyncFunctionHandler for DataEnrichmentFunction {
-    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
+    async fn execute(
+        &self,
+        message: &mut Message,
+        input: &Value,
+        _data_logic: &mut DataLogic,
+    ) -> Result<(usize, Vec<Change>)> {
         // Extract lookup key and field
         let lookup_field = input
             .get("lookup_field")

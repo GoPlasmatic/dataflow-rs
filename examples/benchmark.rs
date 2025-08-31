@@ -3,15 +3,18 @@ use serde_json::{Value, json};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::task::JoinSet;
 
 const BENCHMARK_LOG_FILE: &str = "benchmark_results.json";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create the workflow engine (built-in functions are auto-registered)
-    let mut engine = Engine::new();
+    println!("========================================");
+    println!("DATAFLOW ENGINE BENCHMARK");
+    println!("========================================\n");
 
     // Define a workflow that:
     // 1. Uses pre-loaded data instead of HTTP fetch
@@ -22,6 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "id": "benchmark_workflow",
         "name": "Benchmark Workflow Example",
         "description": "Demonstrates async workflow execution with data transformation",
+        "priority": 1,
         "condition": { "==": [true, true] },
         "tasks": [
             {
@@ -70,9 +74,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     "#;
 
-    // Parse and add the workflow to the engine
+    // Parse the workflow
     let workflow = Workflow::from_json(workflow_json)?;
-    engine.add_workflow(&workflow);
 
     // Create sample user data (similar to what the HTTP endpoint would return)
     let sample_user_data = json!({
@@ -101,63 +104,101 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Run async benchmark
-    println!("=== ASYNC BENCHMARK ===");
-    let async_results = run_async_benchmark(&engine, &sample_user_data, 1000).await?;
+    let iterations = 100000;
 
-    // Run sync benchmark for comparison (using blocking approach)
-    println!("\n=== SYNC BENCHMARK (for comparison) ===");
-    let sync_results = run_sync_benchmark(&engine, &sample_user_data, 1000).await?;
+    println!("Testing with {} iterations\n", iterations);
 
-    // Compare results
-    println!("\n=== COMPARISON ===");
-    println!("Async avg: {:?}", async_results.avg_time);
-    println!("Sync avg:  {:?}", sync_results.avg_time);
+    // Test sequential performance with concurrency 1
+    println!("--- Sequential Performance (Baseline) ---");
+    println!("Concurrency | Avg Time per Message | Total Time | Messages/sec");
+    println!("------------|---------------------|------------|-------------");
+
+    // Sequential baseline
+    let engine = Arc::new(Engine::with_concurrency(1));
+    engine.add_workflow(&workflow);
+
+    let seq_results = run_sequential_benchmark(&*engine, &sample_user_data, iterations).await?;
+    let throughput = (iterations as f64) / seq_results.total_time.as_secs_f64();
+
     println!(
-        "Async is {:.2}x {} than sync",
-        if async_results.avg_time < sync_results.avg_time {
-            sync_results.avg_time.as_nanos() as f64 / async_results.avg_time.as_nanos() as f64
-        } else {
-            async_results.avg_time.as_nanos() as f64 / sync_results.avg_time.as_nanos() as f64
-        },
-        if async_results.avg_time < sync_results.avg_time {
-            "faster"
-        } else {
-            "slower"
-        }
+        "{:^11} | {:>19.3}μs | {:>10.2}ms | {:>12.0}",
+        1,
+        seq_results.avg_time.as_secs_f64() * 1_000_000.0,
+        seq_results.total_time.as_secs_f64() * 1000.0,
+        throughput
     );
 
-    // Log results to file
     log_benchmark_results(
-        async_results.iterations,
-        async_results.min_time,
-        async_results.max_time,
-        async_results.avg_time,
-        async_results.p95,
-        async_results.p99,
-        async_results.total_time,
-        "async".to_string(),
+        iterations,
+        seq_results.min_time,
+        seq_results.max_time,
+        seq_results.avg_time,
+        seq_results.p95,
+        seq_results.p99,
+        seq_results.total_time,
+        format!("seq_x1"),
     )?;
 
-    log_benchmark_results(
-        sync_results.iterations,
-        sync_results.min_time,
-        sync_results.max_time,
-        sync_results.avg_time,
-        sync_results.p95,
-        sync_results.p99,
-        sync_results.total_time,
-        "sync".to_string(),
-    )?;
+    // Test concurrent performance
+    println!("\n--- Concurrent Performance ---");
+    println!("Concurrency | Avg Time per Message | Total Time | Messages/sec | Speedup");
+    println!("------------|---------------------|------------|--------------|--------");
 
-    println!("\nBenchmark results saved to '{BENCHMARK_LOG_FILE}'");
+    // Test configurations with different concurrency levels
+    let test_configs = vec![
+        1, 16,  // 16 concurrent messages with 16 DataLogic instances
+        32,  // 32 concurrent messages with 32 DataLogic instances
+        64,  // 64 concurrent messages with 64 DataLogic instances
+        128, // 128 concurrent messages with 128 DataLogic instances
+    ];
+
+    let baseline_throughput = throughput;
+
+    for concurrency in test_configs {
+        let engine = Arc::new(Engine::with_concurrency(concurrency));
+        engine.add_workflow(&workflow);
+
+        let con_results = run_concurrent_benchmark(
+            engine.clone(),
+            &sample_user_data,
+            iterations,
+            concurrency, // Use same value for concurrent tasks
+        )
+        .await?;
+
+        let throughput = (iterations as f64) / con_results.total_time.as_secs_f64();
+        let speedup = throughput / baseline_throughput;
+
+        println!(
+            "{:^11} | {:>19.3}μs | {:>10.2}ms | {:>12.0} | {:>7.2}x",
+            concurrency,
+            con_results.avg_time.as_secs_f64() * 1_000_000.0,
+            con_results.total_time.as_secs_f64() * 1000.0,
+            throughput,
+            speedup
+        );
+
+        log_benchmark_results(
+            iterations,
+            con_results.min_time,
+            con_results.max_time,
+            con_results.avg_time,
+            con_results.p95,
+            con_results.p99,
+            con_results.total_time,
+            format!("con_x{}", concurrency),
+        )?;
+    }
+
+    println!("\n========================================");
+    println!("Benchmark results saved to '{}'", BENCHMARK_LOG_FILE);
+    println!("========================================");
 
     Ok(())
 }
 
 #[derive(Debug)]
 struct BenchmarkResults {
-    iterations: usize,
     min_time: Duration,
     max_time: Duration,
     avg_time: Duration,
@@ -166,7 +207,7 @@ struct BenchmarkResults {
     total_time: Duration,
 }
 
-async fn run_async_benchmark(
+async fn run_sequential_benchmark(
     engine: &Engine,
     sample_user_data: &Value,
     num_iterations: usize,
@@ -177,8 +218,7 @@ async fn run_async_benchmark(
     let mut all_durations = Vec::with_capacity(num_iterations);
     let mut error_count = 0;
 
-    println!("Starting async benchmark with {num_iterations} iterations...");
-
+    // Sequential processing - one message at a time
     for i in 0..num_iterations {
         let mut message = Message::new(&json!({}));
         message.temp_data = sample_user_data.clone();
@@ -219,10 +259,6 @@ async fn run_async_benchmark(
                 max_duration = max_duration.max(duration);
             }
         }
-
-        if (i + 1) % 1000 == 0 {
-            println!("Completed {} async iterations", i + 1);
-        }
     }
 
     if error_count > 0 {
@@ -238,18 +274,7 @@ async fn run_async_benchmark(
     let p99 = all_durations.get(p99_idx).unwrap_or(&Duration::ZERO);
     let avg_duration = total_duration / num_iterations as u32;
 
-    println!("\nAsync Benchmark Results (v{VERSION}):");
-    println!("  Iterations: {num_iterations}");
-    println!("  Errors: {error_count}");
-    println!("  Min time: {min_duration:?}");
-    println!("  Max time: {max_duration:?}");
-    println!("  Avg time: {avg_duration:?}");
-    println!("  95th percentile: {p95:?}");
-    println!("  99th percentile: {p99:?}");
-    println!("  Total time: {total_duration:?}");
-
     Ok(BenchmarkResults {
-        iterations: num_iterations,
         min_time: min_duration,
         max_time: max_duration,
         avg_time: avg_duration,
@@ -259,94 +284,85 @@ async fn run_async_benchmark(
     })
 }
 
-async fn run_sync_benchmark(
-    engine: &Engine,
+async fn run_concurrent_benchmark(
+    engine: Arc<Engine>,
     sample_user_data: &Value,
     num_iterations: usize,
+    concurrent_tasks: usize,
 ) -> Result<BenchmarkResults, Box<dyn std::error::Error>> {
-    let mut total_duration = Duration::new(0, 0);
-    let mut min_duration = Duration::new(u64::MAX, 0);
-    let mut max_duration = Duration::new(0, 0);
+    let start_time = Instant::now();
     let mut all_durations = Vec::with_capacity(num_iterations);
     let mut error_count = 0;
 
-    println!("Starting sync-style benchmark with {num_iterations} iterations...");
+    // Concurrent processing using JoinSet
+    let mut tasks = JoinSet::new();
 
     for i in 0..num_iterations {
-        let mut message = Message::new(&json!({}));
-        message.temp_data = sample_user_data.clone();
-        message.data = json!({});
-        message.metadata = json!({
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "iteration": i
+        let engine_clone = engine.clone();
+        let data_clone = sample_user_data.clone();
+
+        // Spawn concurrent tasks
+        tasks.spawn(async move {
+            let mut message = Message::new(&json!({}));
+            message.temp_data = data_clone;
+            message.data = json!({});
+            message.metadata = json!({
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "iteration": i
+            });
+
+            let msg_start = Instant::now();
+            let result = engine_clone.process_message(&mut message).await;
+            let duration = msg_start.elapsed();
+
+            (duration, result.is_ok(), message.has_errors())
         });
 
-        let start = Instant::now();
-        // Use tokio::task::block_in_place to simulate sync behavior
-        let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(engine.process_message(&mut message))
-        });
-
-        match result {
-            Ok(_) => {
-                let duration = start.elapsed();
+        // Limit concurrent tasks
+        while tasks.len() >= concurrent_tasks {
+            // Wait for at least one task to complete
+            if let Some(Ok((duration, ok, has_errors))) = tasks.join_next().await {
                 all_durations.push(duration);
-                total_duration += duration;
-                min_duration = min_duration.min(duration);
-                max_duration = max_duration.max(duration);
-
-                if message.has_errors() {
+                if !ok || has_errors {
                     error_count += 1;
                 }
             }
-            Err(e) => {
-                error_count += 1;
-                if error_count <= 5 {
-                    println!("Sync error in iteration {i}: {e:?}");
-                }
-                let duration = start.elapsed();
-                all_durations.push(duration);
-                total_duration += duration;
-                min_duration = min_duration.min(duration);
-                max_duration = max_duration.max(duration);
-            }
-        }
-
-        if (i + 1) % 1000 == 0 {
-            println!("Completed {} sync iterations", i + 1);
         }
     }
+
+    // Wait for remaining tasks
+    while let Some(Ok((duration, ok, has_errors))) = tasks.join_next().await {
+        all_durations.push(duration);
+        if !ok || has_errors {
+            error_count += 1;
+        }
+    }
+
+    let total_time = start_time.elapsed();
 
     if error_count > 0 {
-        println!("Total sync errors encountered: {error_count}");
+        println!("Total errors encountered: {error_count}");
     }
 
+    // Calculate statistics
     all_durations.sort();
+    let min_duration = *all_durations.first().unwrap_or(&Duration::ZERO);
+    let max_duration = *all_durations.last().unwrap_or(&Duration::ZERO);
+    let sum: Duration = all_durations.iter().sum();
+    let avg_duration = sum / all_durations.len() as u32;
 
-    let p95_idx = (num_iterations as f64 * 0.95) as usize;
-    let p99_idx = (num_iterations as f64 * 0.99) as usize;
-    let p95 = all_durations.get(p95_idx).unwrap_or(&Duration::ZERO);
-    let p99 = all_durations.get(p99_idx).unwrap_or(&Duration::ZERO);
-    let avg_duration = total_duration / num_iterations as u32;
-
-    println!("\nSync Benchmark Results (v{VERSION}):");
-    println!("  Iterations: {num_iterations}");
-    println!("  Errors: {error_count}");
-    println!("  Min time: {min_duration:?}");
-    println!("  Max time: {max_duration:?}");
-    println!("  Avg time: {avg_duration:?}");
-    println!("  95th percentile: {p95:?}");
-    println!("  99th percentile: {p99:?}");
-    println!("  Total time: {total_duration:?}");
+    let p95_idx = (all_durations.len() as f64 * 0.95) as usize;
+    let p99_idx = (all_durations.len() as f64 * 0.99) as usize;
+    let p95 = *all_durations.get(p95_idx).unwrap_or(&Duration::ZERO);
+    let p99 = *all_durations.get(p99_idx).unwrap_or(&Duration::ZERO);
 
     Ok(BenchmarkResults {
-        iterations: num_iterations,
         min_time: min_duration,
         max_time: max_duration,
         avg_time: avg_duration,
-        p95: *p95,
-        p99: *p99,
-        total_time: total_duration,
+        p95,
+        p99,
+        total_time,
     })
 }
 
@@ -374,7 +390,7 @@ fn log_benchmark_results(
         "benchmark_type": benchmark_type,
     });
 
-    let version_key = format!("{VERSION}_{benchmark_type}");
+    let version_key = format!("{}_{}", VERSION, benchmark_type);
 
     if let Some(obj) = benchmark_data.as_object_mut() {
         obj.insert(version_key, benchmark_entry);

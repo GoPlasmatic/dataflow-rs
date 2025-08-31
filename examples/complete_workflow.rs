@@ -4,7 +4,7 @@ use serde_json::json;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the workflow engine (built-in functions are auto-registered)
-    let mut engine = Engine::new();
+    let engine = Engine::new();
 
     // Define a workflow that:
     // 1. Fetches data from a public API

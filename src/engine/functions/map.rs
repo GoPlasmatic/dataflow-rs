@@ -1,8 +1,8 @@
 use crate::engine::AsyncFunctionHandler;
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::functions::FUNCTION_DATA_LOGIC;
 use crate::engine::message::{Change, Message};
 use async_trait::async_trait;
+use datalogic_rs::DataLogic;
 use log::error;
 use serde_json::{Value, json};
 
@@ -10,9 +10,7 @@ use serde_json::{Value, json};
 ///
 /// This function allows mapping data from one location to another within
 /// a message, applying transformations using JSONLogic expressions.
-pub struct MapFunction {
-    // No longer needs data_logic field
-}
+pub struct MapFunction;
 
 impl Default for MapFunction {
     fn default() -> Self {
@@ -23,7 +21,7 @@ impl Default for MapFunction {
 impl MapFunction {
     /// Create a new MapFunction
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 
     /// Set a value at the specified path within the target object
@@ -160,7 +158,12 @@ impl MapFunction {
 
 #[async_trait]
 impl AsyncFunctionHandler for MapFunction {
-    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
+    async fn execute(
+        &self,
+        message: &mut Message,
+        input: &Value,
+        data_logic: &mut DataLogic,
+    ) -> Result<(usize, Vec<Change>)> {
         // Extract mappings array from input
         let mappings = input.get("mappings").ok_or_else(|| {
             DataflowError::Validation("Missing 'mappings' array in input".to_string())
@@ -216,18 +219,14 @@ impl AsyncFunctionHandler for MapFunction {
                     (&mut message.data, target_path)
                 };
 
-            // Evaluate the logic using thread-local DataLogic
-            let result = FUNCTION_DATA_LOGIC.with(|data_logic_cell| {
-                let mut data_logic = data_logic_cell.borrow_mut();
-                data_logic.reset_arena();
-
-                data_logic
-                    .evaluate_json(logic, &data_for_eval, None)
-                    .map_err(|e| {
-                        error!("Failed to evaluate logic: {e} for {logic}, {data_for_eval}");
-                        DataflowError::LogicEvaluation(format!("Failed to evaluate logic: {e}"))
-                    })
-            })?;
+            // Evaluate the logic using provided DataLogic
+            data_logic.reset_arena();
+            let result = data_logic
+                .evaluate_json(logic, &data_for_eval, None)
+                .map_err(|e| {
+                    error!("Failed to evaluate logic: {e} for {logic}, {data_for_eval}");
+                    DataflowError::LogicEvaluation(format!("Failed to evaluate logic: {e}"))
+                })?;
 
             if result.is_null() {
                 continue;
@@ -272,6 +271,7 @@ impl AsyncFunctionHandler for MapFunction {
 mod tests {
     use super::*;
     use crate::engine::message::Message;
+    use datalogic_rs::DataLogic;
     use serde_json::json;
 
     #[tokio::test]
@@ -291,7 +291,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -321,7 +322,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -361,7 +363,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -399,7 +402,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
 
@@ -438,7 +442,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -481,7 +486,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -527,7 +533,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -562,7 +569,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         // The object should be converted to an array
@@ -594,7 +602,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         // This should succeed and create an object structure
         assert!(result.is_ok());
@@ -642,7 +651,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -708,7 +718,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -745,7 +756,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         // String should be replaced with object, not merged
@@ -784,7 +796,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -834,7 +847,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -881,7 +895,8 @@ mod tests {
             ]
         });
 
-        let result = map_fn.execute(&mut message, &input).await;
+        let mut data_logic = DataLogic::with_preserve_structure();
+        let result = map_fn.execute(&mut message, &input, &mut data_logic).await;
 
         assert!(result.is_ok());
         let expected = json!({

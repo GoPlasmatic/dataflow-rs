@@ -2,6 +2,7 @@ use crate::engine::error::{DataflowError, Result};
 use crate::engine::functions::AsyncFunctionHandler;
 use crate::engine::message::{Change, Message};
 use async_trait::async_trait;
+use datalogic_rs::DataLogic;
 use reqwest::{
     Client, Method,
     header::{HeaderMap, HeaderName, HeaderValue},
@@ -33,7 +34,12 @@ impl HttpFunction {
 
 #[async_trait]
 impl AsyncFunctionHandler for HttpFunction {
-    async fn execute(&self, message: &mut Message, input: &Value) -> Result<(usize, Vec<Change>)> {
+    async fn execute(
+        &self,
+        message: &mut Message,
+        input: &Value,
+        _data_logic: &mut DataLogic,
+    ) -> Result<(usize, Vec<Change>)> {
         // Extract URL
         let url = input
             .get("url")
