@@ -2,8 +2,8 @@ use crate::engine::AsyncFunctionHandler;
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::functions::FunctionConfig;
 use crate::engine::message::{Change, Message};
+use crate::engine::thread_local;
 use async_trait::async_trait;
-use datalogic_rs::DataLogic;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::vec;
@@ -115,11 +115,8 @@ impl AsyncFunctionHandler for ValidationFunction {
                 &json!({"data": message.data})
             };
 
-            // Create a local DataLogic instance for evaluation
-            let local_data_logic = DataLogic::new();
-            
-            // Evaluate the rule
-            match local_data_logic.evaluate_json(rule_logic, data_to_validate) {
+            // Evaluate the rule using thread-local DataLogic
+            match thread_local::evaluate_json(rule_logic, data_to_validate) {
                 Ok(v) => {
                     if !v.as_bool().unwrap_or(false) {
                         let message_key = error_message.clone();

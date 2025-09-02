@@ -2,8 +2,8 @@ use crate::engine::AsyncFunctionHandler;
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::functions::FunctionConfig;
 use crate::engine::message::{Change, Message};
+use crate::engine::thread_local;
 use async_trait::async_trait;
-use datalogic_rs::DataLogic;
 use log::error;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -259,16 +259,11 @@ impl AsyncFunctionHandler for MapFunction {
                     (&mut message.data, target_path.as_str())
                 };
 
-            // Create a local DataLogic instance for evaluation
-            // This is safe because we don't hold it across await points
-            let local_data_logic = DataLogic::with_preserve_structure();
-            
-            // Evaluate the logic using local DataLogic
-            let result = local_data_logic
-                .evaluate_json(logic, &data_for_eval)
+            // Evaluate the logic using thread-local DataLogic
+            let result = thread_local::evaluate_json(logic, &data_for_eval)
                 .map_err(|e| {
-                    error!("Failed to evaluate logic: {e} for {logic}, {data_for_eval}");
-                    DataflowError::LogicEvaluation(format!("Failed to evaluate logic: {e}"))
+                    error!("Failed to evaluate logic: {e:?} for {logic}, {data_for_eval}");
+                    e
                 })?;
 
             if result.is_null() {

@@ -52,6 +52,7 @@ pub mod error;
 pub mod functions;
 pub mod message;
 pub mod task;
+pub mod thread_local;
 pub mod workflow;
 
 // Re-export key types for easier access
@@ -65,7 +66,6 @@ pub use workflow::Workflow;
 pub use datalogic_rs as jsonlogic;
 
 use chrono::Utc;
-use datalogic_rs::DataLogic;
 use log::{debug, error, info, warn};
 use message::AuditTrail;
 use serde_json::{Map, Number, Value, json};
@@ -97,6 +97,7 @@ impl Default for RetryConfig {
 }
 
 /// Thread-safe engine that processes messages through workflows using non-blocking async IO.
+#[derive(Clone)]
 ///
 /// ## Architecture
 ///
@@ -261,10 +262,7 @@ impl Engine {
             // Evaluate workflow condition using current message state
             let condition = workflow.condition.clone().unwrap_or(Value::Bool(true));
 
-            if !self
-                .evaluate_condition(&condition, &message.metadata)
-                .await?
-            {
+            if !thread_local::evaluate_condition(&condition, &message.metadata)? {
                 debug!("Workflow {} skipped - condition not met", workflow.id);
                 continue;
             }
@@ -321,24 +319,6 @@ impl Engine {
         self.process_message(message).await
     }
 
-    /// Process a single workflow with sequential task execution
-    /// Evaluate a condition synchronously (non-async) to avoid Send issues with DataLogic
-    fn evaluate_condition_sync(condition: &Value, data: &Value) -> Result<bool> {
-        // For simple boolean conditions, short-circuit
-        if let Value::Bool(b) = condition {
-            return Ok(*b);
-        }
-        
-        // Create a local DataLogic instance for evaluation
-        let data_logic = DataLogic::with_preserve_structure();
-        data_logic
-            .evaluate_json(condition, data)
-            .map_err(|e| {
-                DataflowError::LogicEvaluation(format!("Error evaluating condition: {e}"))
-            })
-            .map(|result| result.as_bool().unwrap_or(false))
-    }
-    
     async fn process_workflow(
         workflow: &Workflow,
         message: &mut Message,
@@ -355,7 +335,7 @@ impl Engine {
             let task_condition = task.condition.clone().unwrap_or(Value::Bool(true));
 
             // Evaluate task condition synchronously to avoid Send issues
-            let should_execute = Self::evaluate_condition_sync(&task_condition, &message.metadata);
+            let should_execute = thread_local::evaluate_condition(&task_condition, &message.metadata);
 
             // Handle condition evaluation result
             let should_execute = match should_execute {
@@ -529,11 +509,5 @@ impl Engine {
         );
 
         Err(error)
-    }
-
-    /// Evaluates a condition using DataLogic
-    async fn evaluate_condition(&self, condition: &Value, data: &Value) -> Result<bool> {
-        // Use the synchronous evaluation to avoid Send issues
-        Self::evaluate_condition_sync(condition, data)
     }
 }
