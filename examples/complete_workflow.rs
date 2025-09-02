@@ -1,10 +1,9 @@
 use dataflow_rs::{Engine, Workflow, engine::message::Message};
 use serde_json::json;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define a workflow that:
-    // 1. Fetches data from a public API
+    // 1. Prepares sample user data
     // 2. Enriches the message with transformed data
     // 3. Validates the enriched data
     let workflow_json = r#"
@@ -12,24 +11,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "id": "complete_workflow",
         "name": "Complete Workflow Example",
         "priority": 0,
-        "description": "Demonstrates fetch -> enrich -> validate flow",
+        "description": "Demonstrates enrich -> validate flow",
         "condition": { "==": [true, true] },
         "tasks": [
-            {
-                "id": "fetch_user_data",
-                "name": "Fetch User Data",
-                "description": "Get user data from a public API",
-                "function": {
-                    "name": "http",
-                    "input": {
-                        "url": "https://jsonplaceholder.typicode.com/users/1",
-                        "method": "GET",
-                        "headers": {
-                            "Accept": "application/json"
-                        }
-                    }
-                }
-            },
             {
                 "id": "initialize_user",
                 "name": "Initialize User Structure",
@@ -127,17 +111,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parse the workflow
     let workflow = Workflow::from_json(workflow_json)?;
-    
+
     // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
     let engine = Engine::new(vec![workflow], None, None, None, None);
 
-    // Create a message to process with properly initialized data structure
+    // Create a message to process with sample user data
     let mut message = Message::new(&json!({}));
 
-    // Process the message through the workflow asynchronously
+    // Add sample user data to temp_data (simulating what would come from an API)
+    message.temp_data = json!({
+        "body": {
+            "id": 1,
+            "name": "John Doe",
+            "email": "john.doe@example.com",
+            "address": {
+                "street": "123 Main St",
+                "city": "New York"
+            },
+            "company": {
+                "name": "Acme Corp"
+            }
+        }
+    });
+
+    // Process the message through the workflow
     println!("Processing message through workflow...");
 
-    match engine.process_message(&mut message).await {
+    match engine.process_message(&mut message) {
         Ok(_) => {
             println!("Workflow completed successfully!");
         }

@@ -1,6 +1,6 @@
-use std::cell::RefCell;
 use datalogic_rs::DataLogic;
 use serde_json::Value;
+use std::cell::RefCell;
 
 use crate::engine::error::{DataflowError, Result};
 
@@ -23,10 +23,11 @@ where
 /// Evaluate a JSON logic expression using the thread-local DataLogic
 pub fn evaluate_json(logic: &Value, data: &Value) -> Result<Value> {
     DATA_LOGIC.with(|dl| {
-        let result = dl.borrow()
+        let result = dl
+            .borrow()
             .evaluate_json(logic, data)
             .map_err(|e| DataflowError::LogicEvaluation(format!("Error evaluating logic: {}", e)));
-        
+
         // Debug logging
         if std::env::var("DEBUG_LOGIC").is_ok() {
             eprintln!("Logic evaluation:");
@@ -34,7 +35,7 @@ pub fn evaluate_json(logic: &Value, data: &Value) -> Result<Value> {
             eprintln!("  Data: {}", data);
             eprintln!("  Result: {:?}", result);
         }
-        
+
         result
     })
 }
@@ -45,11 +46,13 @@ pub fn evaluate_condition(condition: &Value, data: &Value) -> Result<bool> {
     if let Value::Bool(b) = condition {
         return Ok(*b);
     }
-    
+
     DATA_LOGIC.with(|dl| {
         dl.borrow()
             .evaluate_json(condition, data)
             .map(|result| result.as_bool().unwrap_or(false))
-            .map_err(|e| DataflowError::LogicEvaluation(format!("Error evaluating condition: {}", e)))
+            .map_err(|e| {
+                DataflowError::LogicEvaluation(format!("Error evaluating condition: {}", e))
+            })
     })
 }

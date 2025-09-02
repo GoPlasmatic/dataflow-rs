@@ -1,9 +1,8 @@
-use crate::engine::AsyncFunctionHandler;
+use crate::engine::FunctionHandler;
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::functions::FunctionConfig;
 use crate::engine::message::{Change, Message};
 use crate::engine::thread_local;
-use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::vec;
@@ -82,9 +81,8 @@ impl ValidationFunction {
     }
 }
 
-#[async_trait]
-impl AsyncFunctionHandler for ValidationFunction {
-    async fn execute(
+impl FunctionHandler for ValidationFunction {
+    fn execute(
         &self,
         message: &mut Message,
         config: &FunctionConfig,

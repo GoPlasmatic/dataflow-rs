@@ -1,6 +1,5 @@
 use crate::engine::error::Result;
 use crate::engine::message::{Change, Message};
-use async_trait::async_trait;
 
 pub mod config;
 pub use config::FunctionConfig;
@@ -21,7 +20,7 @@ pub mod builtins {
     pub const HTTP_FUNCTION: &str = "http";
 
     // Get all built-in functions with their standard names
-    pub fn get_all_functions() -> Vec<(String, Box<dyn AsyncFunctionHandler + Send + Sync>)> {
+    pub fn get_all_functions() -> Vec<(String, Box<dyn FunctionHandler + Send + Sync>)> {
         vec![
             // Create validation function
             (
@@ -32,16 +31,9 @@ pub mod builtins {
             (MAP_FUNCTION.to_string(), Box::new(MapFunction::new())),
         ]
     }
-
-    // Get all built-in async functions with their standard names
-    // This is the same as get_all_functions but separated to maintain
-    // API compatibility for AsyncEngine
-    pub fn get_all_async_functions() -> Vec<(String, Box<dyn AsyncFunctionHandler + Send + Sync>)> {
-        get_all_functions()
-    }
 }
 
-/// Thread-safe async interface for task functions that operate on messages
+/// Interface for task functions that operate on messages
 ///
 /// ## Thread-Safety (v1.0)
 ///
@@ -50,14 +42,11 @@ pub mod builtins {
 ///
 /// ## Usage
 ///
-/// Implement this trait for custom async processing logic. The function receives:
+/// Implement this trait for custom processing logic. The function receives:
 /// - Mutable access to the message being processed
 /// - Pre-parsed function configuration
-///
-/// Perfect for IO-bound operations like HTTP requests, database queries, and file operations.
-#[async_trait]
-pub trait AsyncFunctionHandler: Send + Sync {
-    /// Execute the function asynchronously on a message with pre-parsed configuration
+pub trait FunctionHandler: Send + Sync {
+    /// Execute the function on a message with pre-parsed configuration
     ///
     /// # Arguments
     ///
@@ -67,7 +56,7 @@ pub trait AsyncFunctionHandler: Send + Sync {
     /// # Returns
     ///
     /// * `Result<(usize, Vec<Change>)>` - Result containing status code and changes, or error
-    async fn execute(
+    fn execute(
         &self,
         message: &mut Message,
         config: &FunctionConfig,

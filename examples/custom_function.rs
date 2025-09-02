@@ -1,8 +1,7 @@
-use async_trait::async_trait;
 use dataflow_rs::{
     Engine, Workflow,
     engine::{
-        AsyncFunctionHandler, FunctionConfig,
+        FunctionConfig, FunctionHandler,
         error::{DataflowError, Result},
         message::{Change, Message},
     },
@@ -13,9 +12,8 @@ use std::collections::HashMap;
 /// Custom function that calculates statistics from numeric data
 pub struct StatisticsFunction;
 
-#[async_trait]
-impl AsyncFunctionHandler for StatisticsFunction {
-    async fn execute(
+impl FunctionHandler for StatisticsFunction {
+    fn execute(
         &self,
         message: &mut Message,
         config: &FunctionConfig,
@@ -197,9 +195,8 @@ pub struct DataEnrichmentFunction {
     enrichment_data: HashMap<String, Value>,
 }
 
-#[async_trait]
-impl AsyncFunctionHandler for DataEnrichmentFunction {
-    async fn execute(
+impl FunctionHandler for DataEnrichmentFunction {
+    fn execute(
         &self,
         message: &mut Message,
         config: &FunctionConfig,
@@ -230,8 +227,8 @@ impl AsyncFunctionHandler for DataEnrichmentFunction {
             .and_then(Value::as_str)
             .unwrap_or("data.enrichment");
 
-        // Simulate async operation (e.g., database lookup, API call)
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        // Simulate operation (e.g., database lookup, API call)
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         // Look up enrichment data
         let enrichment = if let Some(data) = self.enrichment_data.get(lookup_value) {
@@ -331,8 +328,7 @@ impl DataEnrichmentFunction {
     }
 }
 
-#[tokio::main]
-async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("=== Custom Function Example ===\n");
 
     // Define a workflow that uses our custom functions
@@ -340,7 +336,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     {
         "id": "custom_function_demo",
         "name": "Custom Function Demo",
-        "description": "Demonstrates custom async functions in workflow",
+        "description": "Demonstrates custom functions in workflow",
         "condition": { "==": [true, true] },
         "tasks": [
             {
@@ -463,31 +459,32 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     "#;
 
     let workflow2 = Workflow::from_json(workflow2_json)?;
-    
+
     // Prepare custom functions
     let mut custom_functions = HashMap::new();
     custom_functions.insert(
         "statistics".to_string(),
-        Box::new(StatisticsFunction::new()) as Box<dyn AsyncFunctionHandler + Send + Sync>,
+        Box::new(StatisticsFunction::new()) as Box<dyn FunctionHandler + Send + Sync>,
     );
     custom_functions.insert(
         "enrich_data".to_string(),
-        Box::new(DataEnrichmentFunction::new()) as Box<dyn AsyncFunctionHandler + Send + Sync>,
+        Box::new(DataEnrichmentFunction::new()) as Box<dyn FunctionHandler + Send + Sync>,
     );
     custom_functions.insert(
         "map".to_string(),
-        Box::new(dataflow_rs::engine::functions::MapFunction::new()) as Box<dyn AsyncFunctionHandler + Send + Sync>,
+        Box::new(dataflow_rs::engine::functions::MapFunction::new())
+            as Box<dyn FunctionHandler + Send + Sync>,
     );
-    
+
     // Create engine with custom functions only (no built-ins)
     let engine = Engine::new(
         vec![workflow, workflow2],
         Some(custom_functions),
-        Some(false),  // Don't include built-ins
-        None,         // Default concurrency
-        None,         // Default retry config
+        Some(false), // Don't include built-ins
+        None,        // Default concurrency
+        None,        // Default retry config
     );
-    
+
     // Create sample data for first message
     let sample_data = json!({
         "measurements": [10.5, 15.2, 8.7, 22.1, 18.9, 12.3, 25.6, 14.8, 19.4, 16.7],
@@ -503,7 +500,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Processing message with custom functions...\n");
 
     // Process the message through our custom workflow
-    match engine.process_message(&mut message).await {
+    match engine.process_message(&mut message) {
         Ok(_) => {
             println!("✅ Message processed successfully!\n");
 
@@ -537,9 +534,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             println!("❌ Error processing message: {e:?}");
         }
     }
-    
+
     // Process second message
-    match engine.process_message(&mut message2).await {
+    match engine.process_message(&mut message2) {
         Ok(_) => {
             println!("✅ Second message processed successfully!\n");
             println!("📊 Results for user_456:");

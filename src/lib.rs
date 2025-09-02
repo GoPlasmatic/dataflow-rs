@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }"#;
 
     let workflow = Workflow::from_json(workflow_json)?;
-    
+
     // Create the async workflow engine with the workflow
     let engine = Engine::new(vec![workflow], None, None, None, None);
 
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut message = Message::new(&json!({}));
 
     // Process the message asynchronously
-    engine.process_message(&mut message).await?;
+    engine.process_message(&mut message)?;
 
     println!("Processed result: {}", message.data["result"]);
     Ok(())
@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parse the workflow
     let workflow = Workflow::from_json(workflow_json)?;
-    
+
     // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
     let engine = Engine::new(vec![workflow], None, None, None, None);
 
@@ -153,7 +153,7 @@ async fn main() -> Result<()> {
     let mut message = Message::new(&json!({}));
 
     // Process the message, errors will be collected but not halt execution
-    engine.process_message(&mut message).await?;
+    engine.process_message(&mut message)?;
 
     // Check if there were any errors during processing
     if message.has_errors() {
@@ -217,10 +217,10 @@ async fn main() -> Result<()> {
     // Create custom functions
     let mut custom_functions = HashMap::new();
     custom_functions.insert(
-        "custom".to_string(), 
+        "custom".to_string(),
         Box::new(CustomFunction) as Box<dyn AsyncFunctionHandler + Send + Sync>
     );
-    
+
     // Create engine with workflows and custom functions
     let engine = Engine::new(vec![/* workflows */], Some(custom_functions), None, None, None);
 
@@ -233,7 +233,6 @@ async fn main() -> Result<()> {
 pub mod engine;
 
 // Re-export all public APIs for easier access
-pub use async_trait::async_trait;
 pub use engine::RetryConfig;
 pub use engine::error::{DataflowError, ErrorInfo, Result};
-pub use engine::{AsyncFunctionHandler, Engine, Task, Workflow};
+pub use engine::{Engine, FunctionHandler, Task, Workflow};

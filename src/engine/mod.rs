@@ -17,7 +17,7 @@ The engine now features a unified concurrency model with:
 - **Engine**: Thread-safe engine with configurable concurrency levels
 - **Workflow**: Collection of tasks with JSONLogic conditions, stored using Arc-Swap
 - **Task**: Individual processing unit that performs a specific function on a message
-- **AsyncFunctionHandler**: Trait for custom async processing logic
+- **FunctionHandler**: Trait for custom processing logic
 - **Message**: Data structure flowing through the engine
 
 ## Usage
@@ -26,22 +26,18 @@ The engine now features a unified concurrency model with:
 use dataflow_rs::{Engine, Workflow, engine::message::Message};
 use serde_json::json;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define workflows
     let workflows = vec![
         Workflow::from_json(r#"{"id": "example", "name": "Example", "tasks": []}"#)?
     ];
-    
-    // Create engine with defaults (built-ins enabled, default concurrency)
+
+    // Create engine with defaults (built-ins enabled)
     let engine = Engine::new(workflows.clone(), None, None, None, None);
 
-    // Or specify custom concurrency level
-    let engine = Engine::new(workflows, None, None, Some(32), None);
-
-    // Process messages concurrently
+    // Process messages
     let mut message = Message::new(&json!({}));
-    engine.process_message_concurrent(&mut message).await?;
+    engine.process_message(&mut message)?;
 
     Ok(())
 }
@@ -57,7 +53,7 @@ pub mod workflow;
 
 // Re-export key types for easier access
 pub use error::{DataflowError, ErrorInfo, Result};
-pub use functions::{AsyncFunctionHandler, FunctionConfig};
+pub use functions::{FunctionConfig, FunctionHandler};
 pub use message::Message;
 pub use task::Task;
 pub use workflow::Workflow;
@@ -71,9 +67,8 @@ use message::AuditTrail;
 use serde_json::{Map, Number, Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
-use tokio::time::sleep;
-
+use std::thread;
+use std::time::Duration;
 
 /// Configuration for retry behavior
 #[derive(Debug, Clone)]
@@ -96,15 +91,14 @@ impl Default for RetryConfig {
     }
 }
 
-/// Thread-safe engine that processes messages through workflows using non-blocking async IO.
+/// Single-threaded engine that processes messages through workflows.
 #[derive(Clone)]
 ///
 /// ## Architecture
 ///
 /// The engine is optimized for both IO-bound and CPU-bound workloads, featuring:
-/// - **Vertical Scalability**: Automatically utilizes all available CPU cores
-/// - **Thread-Safe Design**: All components are Send + Sync for concurrent access
-/// - **Unified Concurrency**: Single parameter controls max concurrent messages
+/// - **Single-Threaded**: Designed for simple synchronous processing
+/// - **Thread-Local DataLogic**: Uses thread-local storage for JSONLogic evaluation
 /// - **Immutable Workflows**: Workflows are defined at initialization and cannot be changed
 ///
 /// ## Concurrency Model
@@ -114,17 +108,14 @@ impl Default for RetryConfig {
 ///
 /// ## Performance
 ///
-/// The engine achieves linear scalability with CPU cores, capable of processing millions of
-/// messages per second with appropriate concurrency settings.
+/// Applications can implement their own engine pooling across threads for parallel processing.
 pub struct Engine {
     /// Registry of available workflows (immutable after initialization)
     workflows: Arc<HashMap<String, Workflow>>,
     /// Registry of function handlers that can be executed by tasks (immutable after initialization)
-    task_functions: Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
-    /// Semaphore to limit concurrent message processing
-    concurrency_limiter: Arc<Semaphore>,
-    /// Maximum concurrency level (pool size and max concurrent messages)
-    concurrency: usize,
+    task_functions: Arc<HashMap<String, Box<dyn FunctionHandler + Send + Sync>>>,
+    /// Thread-local DataLogic instance for JSONLogic evaluation
+    /// Note: This is handled via thread_local module, not stored in Engine
     /// Configuration for retry behavior
     retry_config: RetryConfig,
 }
@@ -142,7 +133,6 @@ impl Engine {
     /// * `workflows` - The workflows to use for processing messages
     /// * `custom_functions` - Optional custom function handlers (None uses empty map)
     /// * `include_builtins` - Optional flag to include built-in functions (defaults to true if None)
-    /// * `concurrency` - Optional max concurrent messages (defaults to 2x CPU cores if None)
     /// * `retry_config` - Optional retry configuration (uses default if None)
     ///
     /// # Example
@@ -151,22 +141,20 @@ impl Engine {
     /// use dataflow_rs::{Engine, Workflow};
     ///
     /// let workflows = vec![Workflow::from_json(r#"{"id": "test", "name": "Test", "priority": 0, "tasks": []}"#).unwrap()];
-    /// 
+    ///
     /// // Simple usage with defaults
     /// let engine = Engine::new(workflows.clone(), None, None, None, None);
-    /// 
-    /// // With custom concurrency
-    /// let engine = Engine::new(workflows, None, None, Some(32), None);
+    ///
     /// ```
     pub fn new(
         workflows: Vec<Workflow>,
-        custom_functions: Option<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
+        custom_functions: Option<HashMap<String, Box<dyn FunctionHandler + Send + Sync>>>,
         include_builtins: Option<bool>,
-        concurrency: Option<usize>,
+        _concurrency: Option<usize>,
         retry_config: Option<RetryConfig>,
     ) -> Self {
         let mut workflow_map = HashMap::new();
-        
+
         // Validate and add all workflows
         for workflow in workflows {
             if let Err(e) = workflow.validate() {
@@ -175,36 +163,23 @@ impl Engine {
             }
             workflow_map.insert(workflow.id.clone(), workflow);
         }
-        
-        let mut task_functions = custom_functions.unwrap_or_else(HashMap::new);
-        
+
+        let mut task_functions = custom_functions.unwrap_or_default();
+
         // Add built-in function handlers if requested (defaults to true)
         if include_builtins.unwrap_or(true) {
             for (name, handler) in functions::builtins::get_all_functions() {
                 task_functions.insert(name, handler);
             }
         }
-        
-        // Default concurrency based on available CPU cores
-        let concurrency = concurrency.unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|n| n.get() * 2) // 2x CPU cores
-                .unwrap_or(8) // Fallback to 8
-        });
-        
+
+        // Concurrency parameter is now ignored since engine is single-threaded
+
         Self {
             workflows: Arc::new(workflow_map),
             task_functions: Arc::new(task_functions),
-            concurrency_limiter: Arc::new(Semaphore::new(concurrency)),
-            concurrency,
             retry_config: retry_config.unwrap_or_default(),
         }
-    }
-
-
-    /// Get the configured concurrency level
-    pub fn concurrency(&self) -> usize {
-        self.concurrency
     }
 
     /// Get the configured retry configuration
@@ -218,7 +193,7 @@ impl Engine {
     }
 
     /// Get the registered task functions
-    pub fn task_functions(&self) -> &HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> {
+    pub fn task_functions(&self) -> &HashMap<String, Box<dyn FunctionHandler + Send + Sync>> {
         &self.task_functions
     }
 
@@ -229,7 +204,7 @@ impl Engine {
 
     /// Processes a message through workflows that match their conditions.
     ///
-    /// This async method:
+    /// This method:
     /// 1. Iterates through workflows sequentially in deterministic order (sorted by ID)
     /// 2. Evaluates conditions for each workflow right before execution
     /// 3. Executes matching workflows one after another (not concurrently)
@@ -246,7 +221,7 @@ impl Engine {
     /// # Returns
     ///
     /// * `Result<()>` - Success or an error if processing failed
-    pub async fn process_message(&self, message: &mut Message) -> Result<()> {
+    pub fn process_message(&self, message: &mut Message) -> Result<()> {
         debug!(
             "Processing message {} sequentially through workflows",
             message.id
@@ -269,13 +244,7 @@ impl Engine {
 
             info!("Processing workflow {}", workflow.id);
 
-            Self::process_workflow(
-                workflow,
-                message,
-                &self.task_functions,
-                &self.retry_config,
-            )
-            .await;
+            Self::process_workflow(workflow, message, &self.task_functions, &self.retry_config);
 
             info!("Completed processing workflow {}", workflow.id);
 
@@ -290,39 +259,10 @@ impl Engine {
         Ok(())
     }
 
-    /// Process a message with automatic concurrency control.
-    /// This method will wait if the maximum concurrency level is reached.
-    ///
-    /// Use this when spawning concurrent tasks to ensure the engine's
-    /// concurrency limit is respected.
-    ///
-    /// # Example
-    /// ```ignore
-    /// use tokio::task::JoinSet;
-    /// let mut tasks = JoinSet::new();
-    ///
-    /// for msg in messages {
-    ///     let engine = engine.clone();
-    ///     tasks.spawn(async move {
-    ///         engine.process_message_concurrent(msg).await
-    ///     });
-    /// }
-    /// ```
-    pub async fn process_message_concurrent(&self, message: &mut Message) -> Result<()> {
-        // Acquire a permit from the semaphore to limit concurrency
-        let _permit = self.concurrency_limiter.acquire().await.map_err(|e| {
-            DataflowError::Unknown(format!("Failed to acquire concurrency permit: {}", e))
-        })?;
-
-        // Process the message while holding the permit
-        // The permit is automatically released when dropped
-        self.process_message(message).await
-    }
-
-    async fn process_workflow(
+    fn process_workflow(
         workflow: &Workflow,
         message: &mut Message,
-        task_functions: &HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>,
+        task_functions: &HashMap<String, Box<dyn FunctionHandler + Send + Sync>>,
         retry_config: &RetryConfig,
     ) {
         let workflow_id = workflow.id.clone();
@@ -335,7 +275,8 @@ impl Engine {
             let task_condition = task.condition.clone().unwrap_or(Value::Bool(true));
 
             // Evaluate task condition synchronously to avoid Send issues
-            let should_execute = thread_local::evaluate_condition(&task_condition, &message.metadata);
+            let should_execute =
+                thread_local::evaluate_condition(&task_condition, &message.metadata);
 
             // Handle condition evaluation result
             let should_execute = match should_execute {
@@ -368,9 +309,7 @@ impl Engine {
                     function_config,
                     function.as_ref(),
                     retry_config,
-                )
-                .await
-                {
+                ) {
                     Ok(_) => {
                         debug!("Task {} completed successfully", task_id);
                     }
@@ -405,12 +344,12 @@ impl Engine {
     }
 
     /// Static helper method to execute a task with retries
-    async fn execute_task_static(
+    fn execute_task_static(
         task_id: &str,
         workflow_id: &str,
         message: &mut Message,
         config: &FunctionConfig,
-        function: &dyn AsyncFunctionHandler,
+        function: &dyn FunctionHandler,
         retry_config: &RetryConfig,
     ) -> Result<()> {
         info!("Executing task {} in workflow {}", task_id, workflow_id);
@@ -420,7 +359,7 @@ impl Engine {
 
         // Try executing the task with retries
         while retry_count <= retry_config.max_retries {
-            match function.execute(message, config).await {
+            match function.execute(message, config) {
                 Ok((status_code, changes)) => {
                     // Success! Record audit trail and return
                     message.audit_trail.push(AuditTrail {
@@ -480,8 +419,8 @@ impl Engine {
                             retry_config.retry_delay_ms
                         };
 
-                        // Use tokio's non-blocking sleep
-                        sleep(std::time::Duration::from_millis(delay)).await;
+                        // Sleep using standard thread sleep
+                        thread::sleep(Duration::from_millis(delay));
 
                         retry_count += 1;
                     } else {
