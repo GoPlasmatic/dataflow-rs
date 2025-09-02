@@ -2,7 +2,7 @@ use crate::engine::FunctionHandler;
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::functions::FunctionConfig;
 use crate::engine::message::{Change, Message};
-use crate::engine::thread_local;
+use datalogic_rs::DataLogic;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::vec;
@@ -86,6 +86,7 @@ impl FunctionHandler for ValidationFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
+        datalogic: &DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the pre-parsed validation configuration
         let validation_config = match config {
@@ -113,8 +114,8 @@ impl FunctionHandler for ValidationFunction {
                 &json!({"data": message.data})
             };
 
-            // Evaluate the rule using thread-local DataLogic
-            match thread_local::evaluate_json(rule_logic, data_to_validate) {
+            // Evaluate the rule using the provided DataLogic
+            match datalogic.evaluate_json(rule_logic, data_to_validate) {
                 Ok(v) => {
                     if !v.as_bool().unwrap_or(false) {
                         let message_key = error_message.clone();

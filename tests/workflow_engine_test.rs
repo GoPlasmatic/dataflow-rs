@@ -1,6 +1,7 @@
 use dataflow_rs::engine::functions::{FunctionConfig, FunctionHandler};
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::{Engine, Result, Task, Workflow};
+use datalogic_rs::DataLogic;
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -13,6 +14,7 @@ impl FunctionHandler for LoggingTask {
         &self,
         message: &mut Message,
         _config: &FunctionConfig,
+        _datalogic: &DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
         println!("Executed task for message: {}", &message.id);
         Ok((200, vec![]))
@@ -29,7 +31,8 @@ fn test_task_execution() {
 
     // Execute the task directly
     let config = FunctionConfig::Raw(json!({}));
-    let result = task.execute(&mut message, &config);
+    let datalogic = DataLogic::with_preserve_structure();
+    let result = task.execute(&mut message, &config, &datalogic);
 
     // Verify the execution was successful
     assert!(result.is_ok(), "Task execution should succeed");

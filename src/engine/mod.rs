@@ -48,7 +48,6 @@ pub mod error;
 pub mod functions;
 pub mod message;
 pub mod task;
-pub mod thread_local;
 pub mod workflow;
 
 // Re-export key types for easier access
@@ -60,6 +59,7 @@ pub use workflow::Workflow;
 
 // Re-export the jsonlogic library under our namespace
 pub use datalogic_rs as jsonlogic;
+use datalogic_rs::DataLogic;
 
 use chrono::Utc;
 use log::{debug, error, info, warn};
@@ -92,19 +92,13 @@ impl Default for RetryConfig {
 }
 
 /// Single-threaded engine that processes messages through workflows.
-#[derive(Clone)]
 ///
 /// ## Architecture
 ///
 /// The engine is optimized for both IO-bound and CPU-bound workloads, featuring:
 /// - **Single-Threaded**: Designed for simple synchronous processing
-/// - **Thread-Local DataLogic**: Uses thread-local storage for JSONLogic evaluation
+/// - **Direct DataLogic**: Uses a direct DataLogic instance for JSONLogic evaluation
 /// - **Immutable Workflows**: Workflows are defined at initialization and cannot be changed
-///
-/// ## Concurrency Model
-///
-/// Each JSONLogic evaluation creates a local DataLogic instance, eliminating thread-safety
-/// concerns while maintaining high performance.
 ///
 /// ## Performance
 ///
@@ -114,10 +108,22 @@ pub struct Engine {
     workflows: Arc<HashMap<String, Workflow>>,
     /// Registry of function handlers that can be executed by tasks (immutable after initialization)
     task_functions: Arc<HashMap<String, Box<dyn FunctionHandler + Send + Sync>>>,
-    /// Thread-local DataLogic instance for JSONLogic evaluation
-    /// Note: This is handled via thread_local module, not stored in Engine
+    /// DataLogic instance for JSONLogic evaluation
+    datalogic: DataLogic<'static>,
     /// Configuration for retry behavior
     retry_config: RetryConfig,
+}
+
+impl Clone for Engine {
+    fn clone(&self) -> Self {
+        Self {
+            workflows: Arc::clone(&self.workflows),
+            task_functions: Arc::clone(&self.task_functions),
+            // Create a new DataLogic instance for the cloned Engine
+            datalogic: DataLogic::with_preserve_structure(),
+            retry_config: self.retry_config.clone(),
+        }
+    }
 }
 
 impl Default for Engine {
@@ -178,6 +184,7 @@ impl Engine {
         Self {
             workflows: Arc::new(workflow_map),
             task_functions: Arc::new(task_functions),
+            datalogic: DataLogic::with_preserve_structure(),
             retry_config: retry_config.unwrap_or_default(),
         }
     }
@@ -237,14 +244,14 @@ impl Engine {
             // Evaluate workflow condition using current message state
             let condition = workflow.condition.clone().unwrap_or(Value::Bool(true));
 
-            if !thread_local::evaluate_condition(&condition, &message.metadata)? {
+            if !self.evaluate_condition(&condition, &message.metadata)? {
                 debug!("Workflow {} skipped - condition not met", workflow.id);
                 continue;
             }
 
             info!("Processing workflow {}", workflow.id);
 
-            Self::process_workflow(workflow, message, &self.task_functions, &self.retry_config);
+            self.process_workflow(workflow, message);
 
             info!("Completed processing workflow {}", workflow.id);
 
@@ -259,12 +266,7 @@ impl Engine {
         Ok(())
     }
 
-    fn process_workflow(
-        workflow: &Workflow,
-        message: &mut Message,
-        task_functions: &HashMap<String, Box<dyn FunctionHandler + Send + Sync>>,
-        retry_config: &RetryConfig,
-    ) {
+    fn process_workflow(&self, workflow: &Workflow, message: &mut Message) {
         let workflow_id = workflow.id.clone();
         let mut workflow_errors = Vec::new();
 
@@ -274,9 +276,8 @@ impl Engine {
         for task in &workflow.tasks {
             let task_condition = task.condition.clone().unwrap_or(Value::Bool(true));
 
-            // Evaluate task condition synchronously to avoid Send issues
-            let should_execute =
-                thread_local::evaluate_condition(&task_condition, &message.metadata);
+            // Evaluate task condition
+            let should_execute = self.evaluate_condition(&task_condition, &message.metadata);
 
             // Handle condition evaluation result
             let should_execute = match should_execute {
@@ -297,18 +298,17 @@ impl Engine {
             }
 
             // Execute task if we have a handler
-            if let Some(function) = task_functions.get(&task.function_name) {
+            if let Some(function) = self.task_functions.get(&task.function_name) {
                 let task_id = task.id.clone();
                 let function_config = &task.function_config;
 
                 // Execute this task (with retries)
-                match Self::execute_task_static(
+                match self.execute_task(
                     &task_id,
                     &workflow_id,
                     message,
                     function_config,
                     function.as_ref(),
-                    retry_config,
                 ) {
                     Ok(_) => {
                         debug!("Task {} completed successfully", task_id);
@@ -343,14 +343,14 @@ impl Engine {
         message.errors.extend(workflow_errors);
     }
 
-    /// Static helper method to execute a task with retries
-    fn execute_task_static(
+    /// Helper method to execute a task with retries
+    fn execute_task(
+        &self,
         task_id: &str,
         workflow_id: &str,
         message: &mut Message,
         config: &FunctionConfig,
         function: &dyn FunctionHandler,
-        retry_config: &RetryConfig,
     ) -> Result<()> {
         info!("Executing task {} in workflow {}", task_id, workflow_id);
 
@@ -358,8 +358,8 @@ impl Engine {
         let mut retry_count = 0;
 
         // Try executing the task with retries
-        while retry_count <= retry_config.max_retries {
-            match function.execute(message, config) {
+        while retry_count <= self.retry_config.max_retries {
+            match function.execute(message, config, &self.datalogic) {
                 Ok((status_code, changes)) => {
                     // Success! Record audit trail and return
                     message.audit_trail.push(AuditTrail {
@@ -403,20 +403,20 @@ impl Engine {
                     last_error = Some(e.clone());
 
                     // Check if this error is retryable before attempting retry
-                    if retry_count < retry_config.max_retries && e.retryable() {
+                    if retry_count < self.retry_config.max_retries && e.retryable() {
                         warn!(
                             "Task {} execution failed with retryable error, retry {}/{}: {:?}",
                             task_id,
                             retry_count + 1,
-                            retry_config.max_retries,
+                            self.retry_config.max_retries,
                             e
                         );
 
                         // Calculate delay with optional exponential backoff
-                        let delay = if retry_config.use_backoff {
-                            retry_config.retry_delay_ms * (2_u64.pow(retry_count))
+                        let delay = if self.retry_config.use_backoff {
+                            self.retry_config.retry_delay_ms * (2_u64.pow(retry_count))
                         } else {
-                            retry_config.retry_delay_ms
+                            self.retry_config.retry_delay_ms
                         };
 
                         // Sleep using standard thread sleep
@@ -448,5 +448,20 @@ impl Engine {
         );
 
         Err(error)
+    }
+
+    /// Evaluate a condition using the engine's DataLogic
+    fn evaluate_condition(&self, condition: &Value, data: &Value) -> Result<bool> {
+        // Short-circuit for simple boolean conditions
+        if let Value::Bool(b) = condition {
+            return Ok(*b);
+        }
+
+        self.datalogic
+            .evaluate_json(condition, data)
+            .map(|result| result.as_bool().unwrap_or(false))
+            .map_err(|e| {
+                DataflowError::LogicEvaluation(format!("Error evaluating condition: {}", e))
+            })
     }
 }

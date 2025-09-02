@@ -1,5 +1,6 @@
 use crate::engine::error::Result;
 use crate::engine::message::{Change, Message};
+use datalogic_rs::DataLogic;
 
 pub mod config;
 pub use config::FunctionConfig;
@@ -35,16 +36,12 @@ pub mod builtins {
 
 /// Interface for task functions that operate on messages
 ///
-/// ## Thread-Safety (v1.0)
-///
-/// Functions create local DataLogic instances as needed for JSONLogic evaluation,
-/// ensuring thread-safety without locks or shared state.
-///
 /// ## Usage
 ///
 /// Implement this trait for custom processing logic. The function receives:
 /// - Mutable access to the message being processed
 /// - Pre-parsed function configuration
+/// - Reference to the DataLogic instance for JSONLogic evaluation
 pub trait FunctionHandler: Send + Sync {
     /// Execute the function on a message with pre-parsed configuration
     ///
@@ -52,6 +49,7 @@ pub trait FunctionHandler: Send + Sync {
     ///
     /// * `message` - The message to process
     /// * `config` - Pre-parsed function configuration
+    /// * `datalogic` - Reference to DataLogic instance for JSONLogic evaluation
     ///
     /// # Returns
     ///
@@ -60,5 +58,6 @@ pub trait FunctionHandler: Send + Sync {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
+        datalogic: &DataLogic,
     ) -> Result<(usize, Vec<Change>)>;
 }

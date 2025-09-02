@@ -2,7 +2,7 @@ use crate::engine::FunctionHandler;
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::functions::FunctionConfig;
 use crate::engine::message::{Change, Message};
-use crate::engine::thread_local;
+use datalogic_rs::DataLogic;
 use log::error;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -207,6 +207,7 @@ impl FunctionHandler for MapFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
+        datalogic: &DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the pre-parsed map configuration
         let map_config = match config {
@@ -257,11 +258,13 @@ impl FunctionHandler for MapFunction {
                     (&mut message.data, target_path.as_str())
                 };
 
-            // Evaluate the logic using thread-local DataLogic
-            let result = thread_local::evaluate_json(logic, &data_for_eval).map_err(|e| {
-                error!("Failed to evaluate logic: {e:?} for {logic}, {data_for_eval}");
-                e
-            })?;
+            // Evaluate the logic using the provided DataLogic
+            let result = datalogic
+                .evaluate_json(logic, &data_for_eval)
+                .map_err(|e| {
+                    error!("Failed to evaluate logic: {e:?} for {logic}, {data_for_eval}");
+                    DataflowError::LogicEvaluation(format!("Error evaluating logic: {}", e))
+                })?;
 
             if result.is_null() {
                 continue;
@@ -306,11 +309,14 @@ impl FunctionHandler for MapFunction {
 mod tests {
     use super::*;
     use crate::engine::message::Message;
+    use datalogic_rs::DataLogic;
     use serde_json::json;
 
     #[test]
     fn test_array_notation_simple() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test simple array notation: data.items.0.name
         let mut message = Message::new(&json!({}));
@@ -326,7 +332,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -342,6 +348,8 @@ mod tests {
     #[test]
     fn test_array_notation_complex_path() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test complex path like the original example: data.MX.FIToFICstmrCdtTrf.CdtTrfTxInf.0.PmtId.InstrId
         let mut message = Message::new(&json!({}));
@@ -357,7 +365,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -379,6 +387,7 @@ mod tests {
     #[test]
     fn test_multiple_array_indices() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test multiple array indices in the same path: data.matrix.0.1.value
         let mut message = Message::new(&json!({}));
@@ -398,7 +407,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -422,6 +431,7 @@ mod tests {
     #[test]
     fn test_array_extension() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test that arrays are extended when accessing high indices
         let mut message = Message::new(&json!({}));
@@ -437,7 +447,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
 
@@ -458,6 +468,7 @@ mod tests {
     #[test]
     fn test_mixed_array_and_object_notation() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test mixing array and object notation: data.users.0.profile.addresses.1.city
         let mut message = Message::new(&json!({}));
@@ -477,7 +488,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -501,6 +512,7 @@ mod tests {
     #[test]
     fn test_overwrite_existing_value() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test overwriting an existing value in an array
         let mut message = Message::new(&json!({}));
@@ -521,7 +533,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -543,6 +555,7 @@ mod tests {
     #[test]
     fn test_array_notation_with_jsonlogic() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test array notation with JSONLogic expressions
         let mut message = Message::new(&json!({}));
@@ -568,7 +581,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -585,6 +598,7 @@ mod tests {
     #[test]
     fn test_convert_object_to_array() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test converting an existing object to an array when numeric index is encountered
         let mut message = Message::new(&json!({}));
@@ -604,7 +618,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         // The object should be converted to an array
@@ -622,6 +636,7 @@ mod tests {
     #[test]
     fn test_non_numeric_index_handling() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test that non-numeric strings are treated as object keys, not array indices
         let mut message = Message::new(&json!({}));
@@ -637,7 +652,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         // This should succeed and create an object structure
         assert!(result.is_ok());
@@ -658,6 +673,7 @@ mod tests {
     #[test]
     fn test_object_merge_on_mapping() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test that when mapping to an existing object, the values are merged
         let mut message = Message::new(&json!({}));
@@ -686,7 +702,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -727,6 +743,7 @@ mod tests {
     #[test]
     fn test_object_merge_with_nested_path() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test object merging with a nested path
         let mut message = Message::new(&json!({}));
@@ -753,7 +770,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -772,6 +789,7 @@ mod tests {
     #[test]
     fn test_non_object_replacement() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test that non-object values are replaced, not merged
         let mut message = Message::new(&json!({}));
@@ -791,7 +809,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         // String should be replaced with object, not merged
@@ -806,6 +824,7 @@ mod tests {
     #[test]
     fn test_parent_child_mapping_issue_fix() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test case for GitHub issue #1: Multiple mappings where parent overwrites child
         let mut message = Message::new(&json!({}));
@@ -831,7 +850,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -851,6 +870,7 @@ mod tests {
     #[test]
     fn test_multiple_mappings_with_dependencies() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test that later mappings can use values set by earlier mappings
         let mut message = Message::new(&json!({}));
@@ -882,7 +902,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
@@ -900,6 +920,7 @@ mod tests {
     #[test]
     fn test_nested_path_after_parent_mapping() {
         let map_fn = MapFunction::new();
+        let _datalogic = DataLogic::with_preserve_structure();
 
         // Test complex scenario: map to parent object, then add nested fields
         let mut message = Message::new(&json!({}));
@@ -930,7 +951,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config);
+        let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
         let expected = json!({
