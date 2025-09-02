@@ -23,16 +23,21 @@ The engine now features a unified concurrency model with:
 ## Usage
 
 ```rust,no_run
-use dataflow_rs::{Engine, engine::message::Message};
+use dataflow_rs::{Engine, Workflow, engine::message::Message};
 use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create engine with default concurrency (CPU count)
-    let engine = Engine::new();
+    // Define workflows
+    let workflows = vec![
+        Workflow::from_json(r#"{"id": "example", "name": "Example", "tasks": []}"#)?
+    ];
+    
+    // Create engine with defaults (built-ins enabled, default concurrency)
+    let engine = Engine::new(workflows.clone(), None, None, None, None);
 
     // Or specify custom concurrency level
-    let engine = Engine::with_concurrency(32);
+    let engine = Engine::new(workflows, None, None, Some(32), None);
 
     // Process messages concurrently
     let mut message = Message::new(&json!({}));
@@ -59,7 +64,6 @@ pub use workflow::Workflow;
 // Re-export the jsonlogic library under our namespace
 pub use datalogic_rs as jsonlogic;
 
-use arc_swap::ArcSwap;
 use chrono::Utc;
 use datalogic_rs::DataLogic;
 use log::{debug, error, info, warn};
@@ -100,6 +104,7 @@ impl Default for RetryConfig {
 /// - **Vertical Scalability**: Automatically utilizes all available CPU cores
 /// - **Thread-Safe Design**: All components are Send + Sync for concurrent access
 /// - **Unified Concurrency**: Single parameter controls max concurrent messages
+/// - **Immutable Workflows**: Workflows are defined at initialization and cannot be changed
 ///
 /// ## Concurrency Model
 ///
@@ -111,10 +116,10 @@ impl Default for RetryConfig {
 /// The engine achieves linear scalability with CPU cores, capable of processing millions of
 /// messages per second with appropriate concurrency settings.
 pub struct Engine {
-    /// Registry of available workflows (using ArcSwap for atomic reloads)
-    workflows: Arc<ArcSwap<HashMap<String, Workflow>>>,
-    /// Registry of function handlers that can be executed by tasks
-    task_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>,
+    /// Registry of available workflows (immutable after initialization)
+    workflows: Arc<HashMap<String, Workflow>>,
+    /// Registry of function handlers that can be executed by tasks (immutable after initialization)
+    task_functions: Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
     /// Semaphore to limit concurrent message processing
     concurrency_limiter: Arc<Semaphore>,
     /// Maximum concurrency level (pool size and max concurrent messages)
@@ -125,129 +130,95 @@ pub struct Engine {
 
 impl Default for Engine {
     fn default() -> Self {
-        Self::new()
+        Self::new(Vec::new(), None, None, None, None)
     }
 }
 
 impl Engine {
-    /// Creates a new Engine instance with built-in function handlers pre-registered.
+    /// Creates a new Engine instance with configurable parameters.
+    ///
+    /// # Arguments
+    /// * `workflows` - The workflows to use for processing messages
+    /// * `custom_functions` - Optional custom function handlers (None uses empty map)
+    /// * `include_builtins` - Optional flag to include built-in functions (defaults to true if None)
+    /// * `concurrency` - Optional max concurrent messages (defaults to 2x CPU cores if None)
+    /// * `retry_config` - Optional retry configuration (uses default if None)
     ///
     /// # Example
     ///
     /// ```
-    /// use dataflow_rs::Engine;
+    /// use dataflow_rs::{Engine, Workflow};
     ///
-    /// let engine = Engine::new();
+    /// let workflows = vec![Workflow::from_json(r#"{"id": "test", "name": "Test", "priority": 0, "tasks": []}"#).unwrap()];
+    /// 
+    /// // Simple usage with defaults
+    /// let engine = Engine::new(workflows.clone(), None, None, None, None);
+    /// 
+    /// // With custom concurrency
+    /// let engine = Engine::new(workflows, None, None, Some(32), None);
     /// ```
-    pub fn new() -> Self {
+    pub fn new(
+        workflows: Vec<Workflow>,
+        custom_functions: Option<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
+        include_builtins: Option<bool>,
+        concurrency: Option<usize>,
+        retry_config: Option<RetryConfig>,
+    ) -> Self {
+        let mut workflow_map = HashMap::new();
+        
+        // Validate and add all workflows
+        for workflow in workflows {
+            if let Err(e) = workflow.validate() {
+                error!("Invalid workflow {}: {:?}", workflow.id, e);
+                continue;
+            }
+            workflow_map.insert(workflow.id.clone(), workflow);
+        }
+        
+        let mut task_functions = custom_functions.unwrap_or_else(HashMap::new);
+        
+        // Add built-in function handlers if requested (defaults to true)
+        if include_builtins.unwrap_or(true) {
+            for (name, handler) in functions::builtins::get_all_functions() {
+                task_functions.insert(name, handler);
+            }
+        }
+        
         // Default concurrency based on available CPU cores
-        let concurrency = std::thread::available_parallelism()
-            .map(|n| n.get() * 2) // 2x CPU cores
-            .unwrap_or(8); // Fallback to 8
-
-        Self::with_concurrency(concurrency)
-    }
-
-    /// Create a new engine with a specific concurrency level.
-    /// This sets the maximum number of concurrent messages.
-    ///
-    /// # Arguments
-    /// * `concurrency` - Maximum number of messages that can be processed concurrently
-    pub fn with_concurrency(concurrency: usize) -> Self {
-        let mut engine = Self {
-            workflows: Arc::new(ArcSwap::from_pointee(HashMap::new())),
-            task_functions: HashMap::new(),
-            concurrency_limiter: Arc::new(Semaphore::new(concurrency)),
-            concurrency,
-            retry_config: RetryConfig::default(),
-        };
-
-        // Register built-in function handlers
-        for (name, handler) in functions::builtins::get_all_functions() {
-            engine.register_task_function(name, handler);
-        }
-
-        engine
-    }
-
-    /// Create a new engine with a specific pool size (deprecated, use with_concurrency)
-    #[deprecated(since = "1.0.0", note = "Use with_concurrency instead")]
-    pub fn with_pool_size(pool_size: usize) -> Self {
-        Self::with_concurrency(pool_size)
-    }
-
-    /// Create a new engine instance without any pre-registered functions
-    pub fn new_empty() -> Self {
-        let concurrency = std::thread::available_parallelism()
-            .map(|n| n.get() * 2)
-            .unwrap_or(8);
-
+        let concurrency = concurrency.unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get() * 2) // 2x CPU cores
+                .unwrap_or(8) // Fallback to 8
+        });
+        
         Self {
-            workflows: Arc::new(ArcSwap::from_pointee(HashMap::new())),
-            task_functions: HashMap::new(),
+            workflows: Arc::new(workflow_map),
+            task_functions: Arc::new(task_functions),
             concurrency_limiter: Arc::new(Semaphore::new(concurrency)),
             concurrency,
-            retry_config: RetryConfig::default(),
+            retry_config: retry_config.unwrap_or_default(),
         }
     }
+
 
     /// Get the configured concurrency level
     pub fn concurrency(&self) -> usize {
         self.concurrency
     }
 
-    /// Configure retry behavior
-    pub fn with_retry_config(mut self, config: RetryConfig) -> Self {
-        self.retry_config = config;
-        self
+    /// Get the configured retry configuration
+    pub fn retry_config(&self) -> &RetryConfig {
+        &self.retry_config
     }
 
-    /// Adds a workflow to the engine.
-    ///
-    /// # Arguments
-    ///
-    /// * `workflow` - The workflow to add
-    pub fn add_workflow(&self, workflow: &Workflow) {
-        if workflow.validate().is_ok() {
-            let current = self.workflows.load();
-            let mut new_workflows = HashMap::clone(&current);
-            new_workflows.insert(workflow.id.clone(), workflow.clone());
-            self.workflows.store(Arc::new(new_workflows));
-        } else {
-            error!("Invalid workflow: {}", workflow.id);
-        }
+    /// Get the configured workflows
+    pub fn workflows(&self) -> &HashMap<String, Workflow> {
+        &self.workflows
     }
 
-    /// Reload all workflows atomically
-    pub fn reload_workflows(&self, new_workflows: Vec<Workflow>) -> Result<()> {
-        let mut workflow_map = HashMap::new();
-
-        for workflow in new_workflows {
-            if workflow.validate().is_ok() {
-                workflow_map.insert(workflow.id.clone(), workflow);
-            } else {
-                warn!("Skipping invalid workflow: {}", workflow.id);
-            }
-        }
-
-        // Atomic swap for zero-cost reads
-        self.workflows.store(Arc::new(workflow_map));
-        info!("Reloaded {} workflows", self.workflows.load().len());
-        Ok(())
-    }
-
-    /// Registers a custom function handler with the engine.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the function handler
-    /// * `handler` - The function handler implementation
-    pub fn register_task_function(
-        &mut self,
-        name: String,
-        handler: Box<dyn AsyncFunctionHandler + Send + Sync>,
-    ) {
-        self.task_functions.insert(name, handler);
+    /// Get the registered task functions
+    pub fn task_functions(&self) -> &HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> {
+        &self.task_functions
     }
 
     /// Check if a function with the given name is registered
@@ -280,10 +251,9 @@ impl Engine {
             message.id
         );
 
-        // Load workflows atomically and sort by ID to ensure deterministic execution order
+        // Sort workflows by priority and ID to ensure deterministic execution order
         // This prevents non-deterministic behavior caused by HashMap iteration order
-        let workflows = self.workflows.load();
-        let mut sorted_workflows: Vec<_> = workflows.iter().collect();
+        let mut sorted_workflows: Vec<_> = self.workflows.iter().collect();
         sorted_workflows.sort_by_key(|(id, workflow)| (workflow.priority, id.as_str()));
 
         // Process workflows sequentially in sorted order, evaluating conditions just before execution

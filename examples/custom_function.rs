@@ -335,26 +335,6 @@ impl DataEnrichmentFunction {
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("=== Custom Function Example ===\n");
 
-    // Create engine without built-in functions to demonstrate custom ones
-    let mut engine = Engine::new_empty();
-
-    // Register our custom functions
-    engine.register_task_function(
-        "statistics".to_string(),
-        Box::new(StatisticsFunction::new()),
-    );
-
-    engine.register_task_function(
-        "enrich_data".to_string(),
-        Box::new(DataEnrichmentFunction::new()),
-    );
-
-    // Also register built-in map function for data preparation
-    engine.register_task_function(
-        "map".to_string(),
-        Box::new(dataflow_rs::engine::functions::MapFunction::new()),
-    );
-
     // Define a workflow that uses our custom functions
     let workflow_json = r#"
     {
@@ -412,59 +392,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
     "#;
 
-    // Parse and add the workflow
+    // Parse the first workflow
     let workflow = Workflow::from_json(workflow_json)?;
-    engine.add_workflow(&workflow);
-
-    // Create sample data
-    let sample_data = json!({
-        "measurements": [10.5, 15.2, 8.7, 22.1, 18.9, 12.3, 25.6, 14.8, 19.4, 16.7],
-        "user_id": "user_123",
-        "timestamp": "2024-01-15T10:30:00Z"
-    });
-
-    // Create and process message
-    let mut message = dataflow_rs::engine::message::Message::new(&json!({}));
-    message.temp_data = sample_data;
-    message.data = json!({});
-
-    println!("Processing message with custom functions...\n");
-
-    // Process the message through our custom workflow
-    match engine.process_message(&mut message).await {
-        Ok(_) => {
-            println!("✅ Message processed successfully!\n");
-
-            println!("📊 Final Results:");
-            println!("{}\n", serde_json::to_string_pretty(&message.data)?);
-
-            println!("📋 Audit Trail:");
-            for (i, audit) in message.audit_trail.iter().enumerate() {
-                println!(
-                    "{}. Task: {} (Status: {})",
-                    i + 1,
-                    audit.task_id,
-                    audit.status_code
-                );
-                println!("   Timestamp: {}", audit.timestamp);
-                println!("   Changes: {} field(s) modified", audit.changes.len());
-            }
-
-            if message.has_errors() {
-                println!("\n⚠️  Errors encountered:");
-                for error in &message.errors {
-                    println!(
-                        "   - {}: {:?}",
-                        error.task_id.as_ref().unwrap_or(&"unknown".to_string()),
-                        error.error_message
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            println!("❌ Error processing message: {e:?}");
-        }
-    }
 
     // Demonstrate another example with different data
     let separator = "=".repeat(50);
@@ -534,8 +463,82 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     "#;
 
     let workflow2 = Workflow::from_json(workflow2_json)?;
-    engine.add_workflow(&workflow2);
+    
+    // Prepare custom functions
+    let mut custom_functions = HashMap::new();
+    custom_functions.insert(
+        "statistics".to_string(),
+        Box::new(StatisticsFunction::new()) as Box<dyn AsyncFunctionHandler + Send + Sync>,
+    );
+    custom_functions.insert(
+        "enrich_data".to_string(),
+        Box::new(DataEnrichmentFunction::new()) as Box<dyn AsyncFunctionHandler + Send + Sync>,
+    );
+    custom_functions.insert(
+        "map".to_string(),
+        Box::new(dataflow_rs::engine::functions::MapFunction::new()) as Box<dyn AsyncFunctionHandler + Send + Sync>,
+    );
+    
+    // Create engine with custom functions only (no built-ins)
+    let engine = Engine::new(
+        vec![workflow, workflow2],
+        Some(custom_functions),
+        Some(false),  // Don't include built-ins
+        None,         // Default concurrency
+        None,         // Default retry config
+    );
+    
+    // Create sample data for first message
+    let sample_data = json!({
+        "measurements": [10.5, 15.2, 8.7, 22.1, 18.9, 12.3, 25.6, 14.8, 19.4, 16.7],
+        "user_id": "user_123",
+        "timestamp": "2024-01-15T10:30:00Z"
+    });
 
+    // Create and process first message
+    let mut message = dataflow_rs::engine::message::Message::new(&json!({}));
+    message.temp_data = sample_data;
+    message.data = json!({});
+
+    println!("Processing message with custom functions...\n");
+
+    // Process the message through our custom workflow
+    match engine.process_message(&mut message).await {
+        Ok(_) => {
+            println!("✅ Message processed successfully!\n");
+
+            println!("📊 Final Results:");
+            println!("{}\n", serde_json::to_string_pretty(&message.data)?);
+
+            println!("📋 Audit Trail:");
+            for (i, audit) in message.audit_trail.iter().enumerate() {
+                println!(
+                    "{}. Task: {} (Status: {})",
+                    i + 1,
+                    audit.task_id,
+                    audit.status_code
+                );
+                println!("   Timestamp: {}", audit.timestamp);
+                println!("   Changes: {} field(s) modified", audit.changes.len());
+            }
+
+            if message.has_errors() {
+                println!("\n⚠️  Errors encountered:");
+                for error in &message.errors {
+                    println!(
+                        "   - {}: {:?}",
+                        error.task_id.as_ref().unwrap_or(&"unknown".to_string()),
+                        error.error_message
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            println!("❌ Error processing message: {e:?}");
+        }
+    }
+    
+    // Process second message
     match engine.process_message(&mut message2).await {
         Ok(_) => {
             println!("✅ Second message processed successfully!\n");

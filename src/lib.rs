@@ -37,10 +37,7 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create the async workflow engine
-    let mut engine = Engine::new();
-
-    // Define and add a workflow
+    // Define a workflow
     let workflow_json = r#"{
         "id": "data_processor",
         "name": "Data Processor",
@@ -58,7 +55,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }"#;
 
     let workflow = Workflow::from_json(workflow_json)?;
-    engine.add_workflow(&workflow);
+    
+    // Create the async workflow engine with the workflow
+    let engine = Engine::new(vec![workflow], None, None, None, None);
 
     // Create and process a message
     let mut message = Message::new(&json!({}));
@@ -80,9 +79,6 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create the workflow engine (built-in functions are auto-registered)
-    let mut engine = Engine::new();
-
     // Define a workflow in JSON
     let workflow_json = r#"
     {
@@ -117,9 +113,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     "#;
 
-    // Parse and add the workflow to the engine
+    // Parse the workflow
     let workflow = Workflow::from_json(workflow_json)?;
-    engine.add_workflow(&workflow);
+    
+    // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
+    let engine = Engine::new(vec![workflow], None, None, None, None);
 
     // Create a message to process
     let mut message = Message::new(&json!({}));
@@ -149,8 +147,8 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut engine = Engine::new();
     // ... setup workflows ...
+    let engine = Engine::new(vec![/* workflows */], None, None, None, None);
 
     let mut message = Message::new(&json!({}));
 
@@ -179,6 +177,7 @@ use dataflow_rs::engine::{FunctionConfig, message::{Change, Message}, error::Dat
 use datalogic_rs::DataLogic;
 use serde_json::{json, Value};
 use async_trait::async_trait;
+use std::collections::HashMap;
 
 struct CustomFunction;
 
@@ -215,10 +214,15 @@ impl AsyncFunctionHandler for CustomFunction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut engine = Engine::new();
-
-    // Register your custom function
-    engine.register_task_function("custom".to_string(), Box::new(CustomFunction));
+    // Create custom functions
+    let mut custom_functions = HashMap::new();
+    custom_functions.insert(
+        "custom".to_string(), 
+        Box::new(CustomFunction) as Box<dyn AsyncFunctionHandler + Send + Sync>
+    );
+    
+    // Create engine with workflows and custom functions
+    let engine = Engine::new(vec![/* workflows */], Some(custom_functions), None, None, None);
 
     // Now it can be used in workflows...
     Ok(())

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use dataflow_rs::engine::functions::{AsyncFunctionHandler, FunctionConfig};
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::{Engine, Result, Task, Workflow};
+use std::collections::HashMap;
 use serde_json::json;
 
 // A simple task implementation
@@ -38,14 +39,7 @@ async fn test_task_execution() {
 
 #[tokio::test]
 async fn test_workflow_execution() {
-    let mut engine = Engine::new();
-
-    engine.register_task_function("log".to_string(), Box::new(LoggingTask));
-
-    // Create a dummy message
-    let mut message = Message::new(&json!({}));
-
-    // Add a workflow to the engine
+    // Create a workflow
     let workflow = Workflow {
         id: "test_workflow".to_string(),
         name: "Test Workflow".to_string(),
@@ -61,7 +55,19 @@ async fn test_workflow_execution() {
         }],
         condition: Some(json!(true)),
     };
-    engine.add_workflow(&workflow);
+    
+    // Create custom functions
+    let mut custom_functions = HashMap::new();
+    custom_functions.insert(
+        "log".to_string(), 
+        Box::new(LoggingTask) as Box<dyn AsyncFunctionHandler + Send + Sync>
+    );
+    
+    // Create engine with the workflow and custom function
+    let engine = Engine::new(vec![workflow], Some(custom_functions), None, None, None);
+
+    // Create a dummy message
+    let mut message = Message::new(&json!({}));
 
     // Process the message
     let result = engine.process_message(&mut message).await;

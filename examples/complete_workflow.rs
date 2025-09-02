@@ -3,9 +3,6 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create the workflow engine (built-in functions are auto-registered)
-    let engine = Engine::new();
-
     // Define a workflow that:
     // 1. Fetches data from a public API
     // 2. Enriches the message with transformed data
@@ -128,9 +125,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     "#;
 
-    // Parse and add the workflow to the engine
+    // Parse the workflow
     let workflow = Workflow::from_json(workflow_json)?;
-    engine.add_workflow(&workflow);
+    
+    // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
+    let engine = Engine::new(vec![workflow], None, None, None, None);
 
     // Create a message to process with properly initialized data structure
     let mut message = Message::new(&json!({}));

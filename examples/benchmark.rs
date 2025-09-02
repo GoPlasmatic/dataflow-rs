@@ -114,8 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("------------|---------------------|------------|-------------");
 
     // Sequential baseline
-    let engine = Arc::new(Engine::with_concurrency(1));
-    engine.add_workflow(&workflow);
+    let engine = Arc::new(Engine::new(vec![workflow.clone()], None, None, Some(1), None));
 
     let seq_results = run_sequential_benchmark(&*engine, &sample_user_data, iterations).await?;
     let throughput = (iterations as f64) / seq_results.total_time.as_secs_f64();
@@ -155,8 +154,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let baseline_throughput = throughput;
 
     for concurrency in test_configs {
-        let engine = Arc::new(Engine::with_concurrency(concurrency));
-        engine.add_workflow(&workflow);
+        let engine = Arc::new(Engine::new(vec![workflow.clone()], None, None, Some(concurrency), None));
 
         let con_results = run_concurrent_benchmark(
             engine.clone(),
