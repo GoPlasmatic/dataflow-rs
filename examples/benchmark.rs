@@ -146,10 +146,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test configurations with different concurrency levels
     let test_configs = vec![
-        1, 16,  // 16 concurrent messages with 16 DataLogic instances
-        32,  // 32 concurrent messages with 32 DataLogic instances
-        64,  // 64 concurrent messages with 64 DataLogic instances
-        128, // 128 concurrent messages with 128 DataLogic instances
+        1, 16,  // 16 concurrent messages
+        32,  // 32 concurrent messages
+        64,  // 64 concurrent messages
+        128, // 128 concurrent messages
     ];
 
     let baseline_throughput = throughput;

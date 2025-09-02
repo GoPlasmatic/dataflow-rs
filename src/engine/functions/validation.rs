@@ -88,7 +88,6 @@ impl AsyncFunctionHandler for ValidationFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the pre-parsed validation configuration
         let validation_config = match config {
@@ -116,8 +115,11 @@ impl AsyncFunctionHandler for ValidationFunction {
                 &json!({"data": message.data})
             };
 
+            // Create a local DataLogic instance for evaluation
+            let local_data_logic = DataLogic::new();
+            
             // Evaluate the rule
-            match data_logic.evaluate_json(rule_logic, data_to_validate, None) {
+            match local_data_logic.evaluate_json(rule_logic, data_to_validate) {
                 Ok(v) => {
                     if !v.as_bool().unwrap_or(false) {
                         let message_key = error_message.clone();

@@ -184,7 +184,7 @@ struct CustomFunction;
 
 #[async_trait]
 impl AsyncFunctionHandler for CustomFunction {
-    async fn execute(&self, message: &mut Message, config: &FunctionConfig, _data_logic: &mut DataLogic) -> Result<(usize, Vec<Change>)> {
+    async fn execute(&self, message: &mut Message, config: &FunctionConfig) -> Result<(usize, Vec<Change>)> {
         // Implement your custom logic here
 
         // Extract the raw input from config

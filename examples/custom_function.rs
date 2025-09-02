@@ -7,7 +7,6 @@ use dataflow_rs::{
         message::{Change, Message},
     },
 };
-use datalogic_rs::DataLogic;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -20,7 +19,6 @@ impl AsyncFunctionHandler for StatisticsFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        _data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the raw input from config
         let input = match config {
@@ -205,7 +203,6 @@ impl AsyncFunctionHandler for DataEnrichmentFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        _data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the raw input from config
         let input = match config {

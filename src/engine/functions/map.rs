@@ -209,7 +209,6 @@ impl AsyncFunctionHandler for MapFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the pre-parsed map configuration
         let map_config = match config {
@@ -260,9 +259,13 @@ impl AsyncFunctionHandler for MapFunction {
                     (&mut message.data, target_path.as_str())
                 };
 
-            // Evaluate the logic using provided DataLogic
-            let result = data_logic
-                .evaluate_json(logic, &data_for_eval, None)
+            // Create a local DataLogic instance for evaluation
+            // This is safe because we don't hold it across await points
+            let local_data_logic = DataLogic::with_preserve_structure();
+            
+            // Evaluate the logic using local DataLogic
+            let result = local_data_logic
+                .evaluate_json(logic, &data_for_eval)
                 .map_err(|e| {
                     error!("Failed to evaluate logic: {e} for {logic}, {data_for_eval}");
                     DataflowError::LogicEvaluation(format!("Failed to evaluate logic: {e}"))
@@ -311,7 +314,6 @@ impl AsyncFunctionHandler for MapFunction {
 mod tests {
     use super::*;
     use crate::engine::message::Message;
-    use datalogic_rs::DataLogic;
     use serde_json::json;
 
     #[tokio::test]
@@ -332,8 +334,7 @@ mod tests {
         });
 
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let mut data_logic = DataLogic::with_preserve_structure();
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -363,9 +364,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -405,9 +405,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -445,9 +444,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
 
@@ -486,9 +484,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -531,9 +528,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -579,9 +575,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -616,9 +611,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         // The object should be converted to an array
@@ -650,9 +644,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         // This should succeed and create an object structure
         assert!(result.is_ok());
@@ -700,9 +693,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -768,9 +760,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -807,9 +798,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         // String should be replaced with object, not merged
@@ -848,9 +838,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -900,9 +889,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({
@@ -949,9 +937,8 @@ mod tests {
             ]
         });
 
-        let mut data_logic = DataLogic::with_preserve_structure();
         let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
-        let result = map_fn.execute(&mut message, &config, &mut data_logic).await;
+        let result = map_fn.execute(&mut message, &config).await;
 
         assert!(result.is_ok());
         let expected = json!({

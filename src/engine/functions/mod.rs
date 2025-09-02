@@ -1,7 +1,6 @@
 use crate::engine::error::Result;
 use crate::engine::message::{Change, Message};
 use async_trait::async_trait;
-use datalogic_rs::DataLogic;
 
 pub mod config;
 pub use config::FunctionConfig;
@@ -46,16 +45,14 @@ pub mod builtins {
 ///
 /// ## Thread-Safety (v1.0)
 ///
-/// Functions now receive a DataLogic instance as a parameter, enabling thread-safe
-/// JSONLogic evaluation without internal locking. Each message gets exclusive access
-/// to a DataLogic instance for its entire workflow execution.
+/// Functions create local DataLogic instances as needed for JSONLogic evaluation,
+/// ensuring thread-safety without locks or shared state.
 ///
 /// ## Usage
 ///
 /// Implement this trait for custom async processing logic. The function receives:
 /// - Mutable access to the message being processed
 /// - Pre-parsed function configuration
-/// - A DataLogic instance for JSONLogic evaluation
 ///
 /// Perfect for IO-bound operations like HTTP requests, database queries, and file operations.
 #[async_trait]
@@ -66,7 +63,6 @@ pub trait AsyncFunctionHandler: Send + Sync {
     ///
     /// * `message` - The message to process
     /// * `config` - Pre-parsed function configuration
-    /// * `data_logic` - DataLogic instance for JSONLogic evaluation
     ///
     /// # Returns
     ///
@@ -75,6 +71,5 @@ pub trait AsyncFunctionHandler: Send + Sync {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)>;
 }

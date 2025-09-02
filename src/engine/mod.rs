@@ -7,7 +7,7 @@ thread-safe, vertically-scalable message processing through workflows composed o
 ## Thread-Safety & Concurrency (v1.0)
 
 The engine now features a unified concurrency model with:
-- **DataLogic Pool**: Thread-safe pool of DataLogic instances for JSONLogic evaluation
+- **Local DataLogic**: Each JSONLogic evaluation creates a local DataLogic instance
 - **Arc-Swap Workflows**: Lock-free reads and atomic updates for workflow management
 - **Unified Concurrency**: Single parameter controls both pool size and max concurrent messages
 - **Zero Contention**: Pool size matches concurrent tasks to eliminate resource competition
@@ -17,9 +17,8 @@ The engine now features a unified concurrency model with:
 - **Engine**: Thread-safe engine with configurable concurrency levels
 - **Workflow**: Collection of tasks with JSONLogic conditions, stored using Arc-Swap
 - **Task**: Individual processing unit that performs a specific function on a message
-- **AsyncFunctionHandler**: Trait for custom async processing logic (now receives DataLogic parameter)
-- **Message**: Data structure flowing through the engine, with dedicated DataLogic instance per workflow
-- **DataLogicPool**: Pool of DataLogic instances for concurrent message processing
+- **AsyncFunctionHandler**: Trait for custom async processing logic
+- **Message**: Data structure flowing through the engine
 
 ## Usage
 
@@ -68,48 +67,9 @@ use message::AuditTrail;
 use serde_json::{Map, Number, Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
-/// DataLogic pool for thread-safe concurrent access
-pub struct DataLogicPool {
-    instances: Vec<Arc<Mutex<DataLogic>>>,
-    next: AtomicUsize,
-}
-
-impl DataLogicPool {
-    pub fn new(size: usize) -> Self {
-        let instances = (0..size)
-            .map(|_| Arc::new(Mutex::new(DataLogic::with_preserve_structure())))
-            .collect();
-
-        Self {
-            instances,
-            next: AtomicUsize::new(0),
-        }
-    }
-
-    pub async fn with_instance<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut DataLogic) -> R,
-    {
-        // Round-robin selection for load distribution
-        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.instances.len();
-        let instance = &self.instances[index];
-
-        let mut guard = instance.lock().await;
-        guard.reset_arena(); // Clean state before use
-        f(&mut guard)
-    }
-
-    /// Get a DataLogic instance for exclusive use within a workflow
-    pub fn get_instance(&self) -> Arc<Mutex<DataLogic>> {
-        // Round-robin selection for load distribution
-        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.instances.len();
-        self.instances[index].clone()
-    }
-}
 
 /// Configuration for retry behavior
 #[derive(Debug, Clone)]
@@ -139,12 +99,12 @@ impl Default for RetryConfig {
 /// The engine is optimized for both IO-bound and CPU-bound workloads, featuring:
 /// - **Vertical Scalability**: Automatically utilizes all available CPU cores
 /// - **Thread-Safe Design**: All components are Send + Sync for concurrent access
-/// - **Unified Concurrency**: Single parameter controls both DataLogic pool size and max concurrent messages
+/// - **Unified Concurrency**: Single parameter controls max concurrent messages
 ///
 /// ## Concurrency Model
 ///
-/// Each message receives exclusive access to a DataLogic instance for its entire workflow execution,
-/// eliminating lock contention between tasks while maintaining thread-safety across messages.
+/// Each JSONLogic evaluation creates a local DataLogic instance, eliminating thread-safety
+/// concerns while maintaining high performance.
 ///
 /// ## Performance
 ///
@@ -155,8 +115,6 @@ pub struct Engine {
     workflows: Arc<ArcSwap<HashMap<String, Workflow>>>,
     /// Registry of function handlers that can be executed by tasks
     task_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>,
-    /// DataLogic pool for thread-safe access
-    datalogic_pool: Arc<DataLogicPool>,
     /// Semaphore to limit concurrent message processing
     concurrency_limiter: Arc<Semaphore>,
     /// Maximum concurrency level (pool size and max concurrent messages)
@@ -191,7 +149,7 @@ impl Engine {
     }
 
     /// Create a new engine with a specific concurrency level.
-    /// This sets both the DataLogic pool size and the maximum concurrent messages.
+    /// This sets the maximum number of concurrent messages.
     ///
     /// # Arguments
     /// * `concurrency` - Maximum number of messages that can be processed concurrently
@@ -199,7 +157,6 @@ impl Engine {
         let mut engine = Self {
             workflows: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             task_functions: HashMap::new(),
-            datalogic_pool: Arc::new(DataLogicPool::new(concurrency)),
             concurrency_limiter: Arc::new(Semaphore::new(concurrency)),
             concurrency,
             retry_config: RetryConfig::default(),
@@ -228,7 +185,6 @@ impl Engine {
         Self {
             workflows: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             task_functions: HashMap::new(),
-            datalogic_pool: Arc::new(DataLogicPool::new(concurrency)),
             concurrency_limiter: Arc::new(Semaphore::new(concurrency)),
             concurrency,
             retry_config: RetryConfig::default(),
@@ -349,7 +305,6 @@ impl Engine {
                 workflow,
                 message,
                 &self.task_functions,
-                &self.datalogic_pool,
                 &self.retry_config,
             )
             .await;
@@ -397,20 +352,31 @@ impl Engine {
     }
 
     /// Process a single workflow with sequential task execution
+    /// Evaluate a condition synchronously (non-async) to avoid Send issues with DataLogic
+    fn evaluate_condition_sync(condition: &Value, data: &Value) -> Result<bool> {
+        // For simple boolean conditions, short-circuit
+        if let Value::Bool(b) = condition {
+            return Ok(*b);
+        }
+        
+        // Create a local DataLogic instance for evaluation
+        let data_logic = DataLogic::with_preserve_structure();
+        data_logic
+            .evaluate_json(condition, data)
+            .map_err(|e| {
+                DataflowError::LogicEvaluation(format!("Error evaluating condition: {e}"))
+            })
+            .map(|result| result.as_bool().unwrap_or(false))
+    }
+    
     async fn process_workflow(
         workflow: &Workflow,
         message: &mut Message,
         task_functions: &HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>,
-        datalogic_pool: &DataLogicPool,
         retry_config: &RetryConfig,
     ) {
         let workflow_id = workflow.id.clone();
         let mut workflow_errors = Vec::new();
-
-        // Acquire a DataLogic instance for the entire workflow processing
-        // This avoids repeated lock acquisitions for each task
-        let data_logic_instance = datalogic_pool.get_instance();
-        let mut data_logic = data_logic_instance.lock().await;
 
         // Process tasks SEQUENTIALLY within this workflow
         // IMPORTANT: Task order matters! Results from previous tasks are used by subsequent tasks.
@@ -418,13 +384,8 @@ impl Engine {
         for task in &workflow.tasks {
             let task_condition = task.condition.clone().unwrap_or(Value::Bool(true));
 
-            // Evaluate task condition using the acquired DataLogic instance
-            let should_execute = data_logic
-                .evaluate_json(&task_condition, &message.metadata, None)
-                .map_err(|e| {
-                    DataflowError::LogicEvaluation(format!("Error evaluating condition: {e}"))
-                })
-                .map(|result| result.as_bool().unwrap_or(false));
+            // Evaluate task condition synchronously to avoid Send issues
+            let should_execute = Self::evaluate_condition_sync(&task_condition, &message.metadata);
 
             // Handle condition evaluation result
             let should_execute = match should_execute {
@@ -456,7 +417,6 @@ impl Engine {
                     message,
                     function_config,
                     function.as_ref(),
-                    &mut data_logic,
                     retry_config,
                 )
                 .await
@@ -501,7 +461,6 @@ impl Engine {
         message: &mut Message,
         config: &FunctionConfig,
         function: &dyn AsyncFunctionHandler,
-        data_logic: &mut DataLogic,
         retry_config: &RetryConfig,
     ) -> Result<()> {
         info!("Executing task {} in workflow {}", task_id, workflow_id);
@@ -511,7 +470,7 @@ impl Engine {
 
         // Try executing the task with retries
         while retry_count <= retry_config.max_retries {
-            match function.execute(message, config, data_logic).await {
+            match function.execute(message, config).await {
                 Ok((status_code, changes)) => {
                     // Success! Record audit trail and return
                     message.audit_trail.push(AuditTrail {
@@ -604,21 +563,7 @@ impl Engine {
 
     /// Evaluates a condition using DataLogic
     async fn evaluate_condition(&self, condition: &Value, data: &Value) -> Result<bool> {
-        // For simple boolean conditions, short-circuit
-        if let Value::Bool(b) = condition {
-            return Ok(*b);
-        }
-
-        // Use pooled DataLogic instance
-        self.datalogic_pool
-            .with_instance(|data_logic| {
-                data_logic
-                    .evaluate_json(condition, data, None)
-                    .map_err(|e| {
-                        DataflowError::LogicEvaluation(format!("Error evaluating condition: {e}"))
-                    })
-                    .map(|result| result.as_bool().unwrap_or(false))
-            })
-            .await
+        // Use the synchronous evaluation to avoid Send issues
+        Self::evaluate_condition_sync(condition, data)
     }
 }

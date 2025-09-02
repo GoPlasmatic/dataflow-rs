@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use dataflow_rs::engine::functions::{AsyncFunctionHandler, FunctionConfig};
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::{Engine, Result, Task, Workflow};
-use datalogic_rs::DataLogic;
 use serde_json::json;
 
 // A simple task implementation
@@ -15,7 +14,6 @@ impl AsyncFunctionHandler for LoggingTask {
         &self,
         message: &mut Message,
         _config: &FunctionConfig,
-        _data_logic: &mut DataLogic,
     ) -> Result<(usize, Vec<Change>)> {
         println!("Executed task for message: {}", &message.id);
         Ok((200, vec![]))
@@ -32,8 +30,7 @@ async fn test_task_execution() {
 
     // Execute the task directly
     let config = FunctionConfig::Raw(json!({}));
-    let mut data_logic = DataLogic::with_preserve_structure();
-    let result = task.execute(&mut message, &config, &mut data_logic).await;
+    let result = task.execute(&mut message, &config).await;
 
     // Verify the execution was successful
     assert!(result.is_ok(), "Task execution should succeed");
