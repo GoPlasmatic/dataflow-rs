@@ -12,7 +12,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "name": "Complete Workflow Example",
         "priority": 0,
         "description": "Demonstrates enrich -> validate flow",
-        "condition": { "==": [true, true] },
         "tasks": [
             {
                 "id": "initialize_user",
@@ -23,8 +22,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "input": {
                         "mappings": [
                             {
-                                "path": "data",
-                                "logic": { "preserve": {"user": {}} }
+                                "path": "data.user",
+                                "logic": {}
                             }
                         ]
                     }

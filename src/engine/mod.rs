@@ -242,9 +242,7 @@ impl Engine {
         // Process workflows sequentially in sorted order, evaluating conditions just before execution
         for (_, workflow) in sorted_workflows {
             // Evaluate workflow condition using current message state
-            let condition = workflow.condition.clone().unwrap_or(Value::Bool(true));
-
-            if !self.evaluate_condition(&condition, &message.metadata)? {
+            if !self.evaluate_condition(&workflow.condition, &message.metadata)? {
                 debug!("Workflow {} skipped - condition not met", workflow.id);
                 continue;
             }
@@ -274,10 +272,8 @@ impl Engine {
         // IMPORTANT: Task order matters! Results from previous tasks are used by subsequent tasks.
         // We intentionally process tasks one after another rather than concurrently.
         for task in &workflow.tasks {
-            let task_condition = task.condition.clone().unwrap_or(Value::Bool(true));
-
             // Evaluate task condition
-            let should_execute = self.evaluate_condition(&task_condition, &message.metadata);
+            let should_execute = self.evaluate_condition(&task.condition, &message.metadata);
 
             // Handle condition evaluation result
             let should_execute = match should_execute {
@@ -298,9 +294,10 @@ impl Engine {
             }
 
             // Execute task if we have a handler
-            if let Some(function) = self.task_functions.get(&task.function_name) {
+            let function_name = task.function.function_name();
+            if let Some(function) = self.task_functions.get(function_name) {
                 let task_id = task.id.clone();
-                let function_config = &task.function_config;
+                let function_config = &task.function;
 
                 // Execute this task (with retries)
                 match self.execute_task(
@@ -326,7 +323,7 @@ impl Engine {
                 }
             } else {
                 let error =
-                    DataflowError::Workflow(format!("Function '{}' not found", task.function_name));
+                    DataflowError::Workflow(format!("Function '{}' not found", function_name));
 
                 workflow_errors.push(ErrorInfo::new(
                     Some(workflow_id.clone()),

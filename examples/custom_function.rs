@@ -22,7 +22,7 @@ impl FunctionHandler for StatisticsFunction {
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the raw input from config
         let input = match config {
-            FunctionConfig::Raw(input) => input,
+            FunctionConfig::Custom { input, .. } => input,
             _ => {
                 return Err(DataflowError::Validation(
                     "Invalid configuration type for statistics function".to_string(),
@@ -206,7 +206,7 @@ impl FunctionHandler for DataEnrichmentFunction {
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the raw input from config
         let input = match config {
-            FunctionConfig::Raw(input) => input,
+            FunctionConfig::Custom { input, .. } => input,
             _ => {
                 return Err(DataflowError::Validation(
                     "Invalid configuration type for enrichment function".to_string(),
@@ -340,7 +340,6 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "id": "custom_function_demo",
         "name": "Custom Function Demo",
         "description": "Demonstrates custom functions in workflow",
-        "condition": { "==": [true, true] },
         "tasks": [
             {
                 "id": "prepare_data",
@@ -413,7 +412,6 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "id": "custom_function_demo_2",
         "name": "Custom Function Demo 2",
         "description": "Second demo with different user",
-        "condition": { "==": [true, true] },
         "tasks": [
             {
                 "id": "prepare_data",

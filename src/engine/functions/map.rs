@@ -211,7 +211,7 @@ impl FunctionHandler for MapFunction {
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the pre-parsed map configuration
         let map_config = match config {
-            FunctionConfig::Map(config) => config,
+            FunctionConfig::Map { input, .. } => input,
             _ => {
                 return Err(DataflowError::Validation(
                     "Invalid configuration type for map function".to_string(),
@@ -331,7 +331,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -364,7 +367,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -406,7 +412,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -446,7 +455,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -487,7 +499,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -532,7 +547,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -580,7 +598,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -617,7 +638,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -651,7 +675,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         // This should succeed and create an object structure
@@ -701,7 +728,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -769,7 +799,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -808,7 +841,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -849,7 +885,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -901,7 +940,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());
@@ -950,7 +992,10 @@ mod tests {
             ]
         });
 
-        let config = FunctionConfig::Map(MapConfig::from_json(&input).unwrap());
+        let config = FunctionConfig::Map {
+            name: crate::engine::functions::config::MapName::Map,
+            input: MapConfig::from_json(&input).unwrap(),
+        };
         let result = map_fn.execute(&mut message, &config, &_datalogic);
 
         assert!(result.is_ok());

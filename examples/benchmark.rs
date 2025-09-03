@@ -20,7 +20,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "name": "Benchmark Workflow",
         "description": "Simple workflow for performance testing",
         "priority": 1,
-        "condition": { "==": [true, true] },
         "tasks": [
             {
                 "id": "transform_data",

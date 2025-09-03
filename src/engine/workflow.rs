@@ -1,30 +1,27 @@
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::functions::FunctionConfig;
-use crate::engine::task::{RawTask, Task};
+use crate::engine::task::Task;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-#[derive(Clone, Debug)]
+/// Workflow represents a collection of tasks that execute sequentially
+#[derive(Clone, Debug, Deserialize)]
 pub struct Workflow {
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub priority: u32,
     pub description: Option<String>,
-    pub condition: Option<Value>,
+    #[serde(default = "default_condition")]
+    pub condition: Value,
+    #[serde(skip)]
+    pub condition_index: Option<usize>,
     pub tasks: Vec<Task>,
 }
 
-/// Raw workflow structure for deserialization
-#[derive(Deserialize, Clone, Debug)]
-struct RawWorkflow {
-    pub id: String,
-    pub name: String,
-    pub priority: u32,
-    pub description: Option<String>,
-    pub condition: Option<Value>,
-    pub tasks: Vec<RawTask>,
+fn default_condition() -> Value {
+    Value::Bool(true)
 }
 
 impl Default for Workflow {
@@ -40,46 +37,15 @@ impl Workflow {
             name: String::new(),
             priority: 0,
             description: None,
-            condition: None,
+            condition: Value::Bool(true),
+            condition_index: None,
             tasks: Vec::new(),
         }
     }
 
     /// Load workflow from JSON string
     pub fn from_json(json_str: &str) -> Result<Self> {
-        // First deserialize to raw workflow
-        let raw_workflow: RawWorkflow =
-            serde_json::from_str(json_str).map_err(DataflowError::from_serde)?;
-
-        // Convert raw workflow to parsed workflow with pre-parsed task configs
-        let mut parsed_tasks = Vec::new();
-        for raw_task in raw_workflow.tasks {
-            // Pre-parse the function configuration based on function name
-            let function_config = FunctionConfig::from_function_input(
-                &raw_task.function.name,
-                &raw_task.function.input,
-            )?;
-
-            // Create parsed task with pre-parsed config
-            let task = Task::new(
-                raw_task.id,
-                raw_task.name,
-                raw_task.description,
-                raw_task.condition,
-                raw_task.function.name,
-                function_config,
-            );
-            parsed_tasks.push(task);
-        }
-
-        Ok(Workflow {
-            id: raw_workflow.id,
-            name: raw_workflow.name,
-            priority: raw_workflow.priority,
-            description: raw_workflow.description,
-            condition: raw_workflow.condition,
-            tasks: parsed_tasks,
-        })
+        serde_json::from_str(json_str).map_err(DataflowError::from_serde)
     }
 
     /// Load workflow from JSON file

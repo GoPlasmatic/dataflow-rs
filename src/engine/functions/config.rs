@@ -1,27 +1,48 @@
-use crate::engine::error::Result;
 use crate::engine::functions::map::MapConfig;
 use crate::engine::functions::validation::ValidationConfig;
 use serde::Deserialize;
 use serde_json::Value;
 
-/// Enum containing all possible pre-parsed function configurations
+/// Enum containing all possible function configurations
+/// Uses internally tagged representation for clean deserialization
 #[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
 pub enum FunctionConfig {
-    Map(MapConfig),
-    Validation(ValidationConfig),
+    Map {
+        name: MapName,
+        input: MapConfig,
+    },
+    Validation {
+        name: ValidationName, 
+        input: ValidationConfig,
+    },
     /// For custom or unknown functions, store raw input
-    Raw(Value),
+    Custom {
+        name: String,
+        input: Value,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MapName {
+    Map,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValidationName {
+    Validation,
+    Validate,
 }
 
 impl FunctionConfig {
-    /// Parse function configuration based on function name
-    pub fn from_function_input(function_name: &str, input: &Value) -> Result<Self> {
-        match function_name {
-            "map" => Ok(FunctionConfig::Map(MapConfig::from_json(input)?)),
-            "validation" | "validate" => Ok(FunctionConfig::Validation(
-                ValidationConfig::from_json(input)?,
-            )),
-            _ => Ok(FunctionConfig::Raw(input.clone())),
+    /// Get the function name for this configuration
+    pub fn function_name(&self) -> &str {
+        match self {
+            FunctionConfig::Map { .. } => "map",
+            FunctionConfig::Validation { .. } => "validate",
+            FunctionConfig::Custom { name, .. } => name,
         }
     }
 }

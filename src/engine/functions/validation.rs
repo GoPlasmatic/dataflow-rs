@@ -90,7 +90,7 @@ impl FunctionHandler for ValidationFunction {
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the pre-parsed validation configuration
         let validation_config = match config {
-            FunctionConfig::Validation(config) => config,
+            FunctionConfig::Validation { input, .. } => input,
             _ => {
                 return Err(DataflowError::Validation(
                     "Invalid configuration type for validation function".to_string(),

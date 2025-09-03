@@ -30,7 +30,10 @@ fn test_task_execution() {
     let mut message = Message::new(&json!({}));
 
     // Execute the task directly
-    let config = FunctionConfig::Raw(json!({}));
+    let config = FunctionConfig::Custom {
+        name: "log".to_string(),
+        input: json!({}),
+    };
     let datalogic = DataLogic::with_preserve_structure();
     let result = task.execute(&mut message, &config, &datalogic);
 
@@ -50,11 +53,14 @@ fn test_workflow_execution() {
             id: "log_task".to_string(),
             name: "Log Task".to_string(),
             description: Some("A test task".to_string()),
-            condition: Some(json!(true)),
-            function_name: "log".to_string(),
-            function_config: FunctionConfig::Raw(json!({})),
+            condition: json!(true),
+            function: FunctionConfig::Custom {
+                name: "log".to_string(),
+                input: json!({}),
+            },
         }],
-        condition: Some(json!(true)),
+        condition: json!(true),
+        condition_index: None,
     };
 
     // Create custom functions
