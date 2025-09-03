@@ -478,8 +478,6 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         vec![workflow, workflow2],
         Some(custom_functions),
         None, // Use default (includes built-ins)
-        None, // Default concurrency
-        None, // Default retry config
     );
 
     // Create sample data for first message

@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow = Workflow::from_json(workflow_json)?;
 
     // Create the engine with built-in functions
-    let engine = Engine::new(vec![workflow], None, None, None, None);
+    let engine = Engine::new(vec![workflow], None, None);
 
     // Sample data for benchmarking
     let sample_data = json!({

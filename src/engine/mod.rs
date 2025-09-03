@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     // Create engine with defaults (built-ins enabled)
-    let engine = Engine::new(workflows.clone(), None, None, None, None);
+    let engine = Engine::new(workflows.clone(), None, None);
 
     // Process messages
     let mut message = Message::new(&json!({}));
@@ -112,7 +112,7 @@ pub struct Engine {
 
 impl Default for Engine {
     fn default() -> Self {
-        Self::new(Vec::new(), None, None, None, None)
+        Self::new(Vec::new(), None, None)
     }
 }
 
@@ -133,14 +133,12 @@ impl Engine {
     /// let workflows = vec![Workflow::from_json(r#"{"id": "test", "name": "Test", "priority": 0, "tasks": []}"#).unwrap()];
     ///
     /// // Simple usage with defaults
-    /// let engine = Engine::new(workflows.clone(), None, None, None, None);
+    /// let engine = Engine::new(workflows.clone(), None, None);
     ///
     /// ```
     pub fn new(
         workflows: Vec<Workflow>,
         custom_functions: Option<HashMap<String, Box<dyn FunctionHandler + Send + Sync>>>,
-        include_builtins: Option<bool>,
-        _concurrency: Option<usize>,
         retry_config: Option<RetryConfig>,
     ) -> Self {
         // Compile workflows
@@ -151,10 +149,8 @@ impl Engine {
         let mut task_functions = custom_functions.unwrap_or_default();
 
         // Add built-in function handlers if requested (defaults to true)
-        if include_builtins.unwrap_or(true) {
-            for (name, handler) in functions::builtins::get_all_functions() {
-                task_functions.insert(name, handler);
-            }
+        for (name, handler) in functions::builtins::get_all_functions() {
+            task_functions.insert(name, handler);
         }
 
         Self {

@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow = Workflow::from_json(workflow_json)?;
 
     // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
-    let engine = Engine::new(vec![workflow], None, None, None, None);
+    let engine = Engine::new(vec![workflow], None, None);
 
     // Create a message to process with sample user data
     let mut message = Message::new(&json!({}));
