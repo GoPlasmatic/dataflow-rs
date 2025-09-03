@@ -10,6 +10,8 @@ pub struct Task {
     pub description: Option<String>,
     #[serde(default = "default_condition")]
     pub condition: Value,
+    #[serde(skip)]
+    pub condition_index: Option<usize>,
     pub function: FunctionConfig,
 }
 

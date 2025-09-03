@@ -54,6 +54,7 @@ fn test_workflow_execution() {
             name: "Log Task".to_string(),
             description: Some("A test task".to_string()),
             condition: json!(true),
+            condition_index: None,
             function: FunctionConfig::Custom {
                 name: "log".to_string(),
                 input: json!({}),

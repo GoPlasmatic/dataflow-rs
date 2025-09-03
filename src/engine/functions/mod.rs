@@ -6,31 +6,21 @@ pub mod config;
 pub use config::FunctionConfig;
 
 pub mod validation;
-pub use validation::{ValidationConfig, ValidationFunction};
+pub use validation::{ValidationConfig, ValidationRule};
 
 pub mod map;
-pub use map::{MapConfig, MapFunction};
+pub use map::{MapConfig, MapMapping};
 
 // Re-export all built-in functions for easier access
 pub mod builtins {
     use super::*;
 
-    // Standard function names used for registering built-ins
-    pub const VALIDATION_FUNCTION: &str = "validate";
-    pub const MAP_FUNCTION: &str = "map";
-    pub const HTTP_FUNCTION: &str = "http";
-
     // Get all built-in functions with their standard names
     pub fn get_all_functions() -> Vec<(String, Box<dyn FunctionHandler + Send + Sync>)> {
-        vec![
-            // Create validation function
-            (
-                VALIDATION_FUNCTION.to_string(),
-                Box::new(ValidationFunction::new()),
-            ),
-            // Create map function
-            (MAP_FUNCTION.to_string(), Box::new(MapFunction::new())),
-        ]
+        // Map and Validate are now internal to the Engine for better performance
+        // They can directly access compiled logic cache
+        // Add other built-in functions here as needed (HTTP, File I/O, etc.)
+        vec![]
     }
 }
 

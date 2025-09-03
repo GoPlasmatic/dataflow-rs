@@ -1,11 +1,6 @@
-use crate::engine::FunctionHandler;
-use crate::engine::error::{DataflowError, ErrorInfo, Result};
-use crate::engine::functions::FunctionConfig;
-use crate::engine::message::{Change, Message};
-use datalogic_rs::DataLogic;
+use crate::engine::error::{DataflowError, Result};
 use serde::Deserialize;
-use serde_json::{Value, json};
-use std::vec;
+use serde_json::Value;
 
 /// Pre-parsed configuration for validation function
 #[derive(Debug, Clone, Deserialize)]
@@ -18,6 +13,8 @@ pub struct ValidationRule {
     pub logic: Value,
     pub path: String,
     pub message: String,
+    #[serde(skip)]
+    pub logic_index: Option<usize>,
 }
 
 impl ValidationConfig {
@@ -54,6 +51,7 @@ impl ValidationConfig {
                 logic,
                 path,
                 message,
+                logic_index: None,
             });
         }
 
@@ -63,134 +61,77 @@ impl ValidationConfig {
     }
 }
 
-/// A validation task function that uses JsonLogic expressions to validate message data.
-///
-/// This function executes validation rules defined in JsonLogic against data in the message,
-/// and reports validation failures by adding errors to the message's errors array.
-pub struct ValidationFunction;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
-impl Default for ValidationFunction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ValidationFunction {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl FunctionHandler for ValidationFunction {
-    fn execute(
-        &self,
-        message: &mut Message,
-        config: &FunctionConfig,
-        datalogic: &DataLogic,
-    ) -> Result<(usize, Vec<Change>)> {
-        // Extract the pre-parsed validation configuration
-        let validation_config = match config {
-            FunctionConfig::Validation { input, .. } => input,
-            _ => {
-                return Err(DataflowError::Validation(
-                    "Invalid configuration type for validation function".to_string(),
-                ));
-            }
-        };
-
-        // Process each rule
-        for rule in &validation_config.rules {
-            let rule_logic = &rule.logic;
-            let rule_path = &rule.path;
-            let error_message = &rule.message;
-
-            let data_to_validate = if rule_path == "data" || rule_path.starts_with("data.") {
-                &json!({"data": message.data})
-            } else if rule_path == "metadata" || rule_path.starts_with("metadata.") {
-                &json!({"metadata": message.metadata})
-            } else if rule_path == "temp_data" || rule_path.starts_with("temp_data.") {
-                &json!({"temp_data": message.temp_data})
-            } else {
-                &json!({"data": message.data})
-            };
-
-            // Evaluate the rule using the provided DataLogic
-            match datalogic.evaluate_json(rule_logic, data_to_validate) {
-                Ok(v) => {
-                    if !v.as_bool().unwrap_or(false) {
-                        let message_key = error_message.clone();
-
-                        println!("Validation failed: {message_key}");
-
-                        // Store the validation error in the message's errors array
-                        message.errors.push(ErrorInfo::new(
-                            None,
-                            None,
-                            DataflowError::Validation(message_key.clone()),
-                        ));
-
-                        // Store validation failure in temp_data for tracking
-                        if !message.temp_data.is_object() {
-                            message.temp_data = json!({});
-                        }
-                        if let Some(obj) = message.temp_data.as_object_mut() {
-                            if !obj.contains_key("validation_errors") {
-                                obj.insert("validation_errors".to_string(), json!([]));
-                            }
-                            if let Some(errors_array) = obj
-                                .get_mut("validation_errors")
-                                .and_then(|v| v.as_array_mut())
-                            {
-                                errors_array.push(json!(message_key));
-                            }
-                        }
-
-                        // Continue checking other rules instead of returning immediately
-                    }
+    #[test]
+    fn test_validation_config_from_json() {
+        let input = json!({
+            "rules": [
+                {
+                    "logic": {"!!": [{"var": "data.required_field"}]},
+                    "path": "data",
+                    "message": "Required field is missing"
+                },
+                {
+                    "logic": {">": [{"var": "data.age"}, 18]},
+                    "message": "Must be over 18"
                 }
-                Err(e) => {
-                    println!("Error evaluating rule: {e}");
-                    return Err(DataflowError::LogicEvaluation(format!(
-                        "Error evaluating rule: {e}"
-                    )));
+            ]
+        });
+
+        let config = ValidationConfig::from_json(&input).unwrap();
+        assert_eq!(config.rules.len(), 2);
+        assert_eq!(config.rules[0].path, "data");
+        assert_eq!(config.rules[0].message, "Required field is missing");
+        assert_eq!(config.rules[1].path, "data"); // Default path
+        assert_eq!(config.rules[1].message, "Must be over 18");
+    }
+
+    #[test]
+    fn test_validation_config_missing_rules() {
+        let input = json!({});
+        let result = ValidationConfig::from_json(&input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validation_config_invalid_rules() {
+        let input = json!({
+            "rules": "not_an_array"
+        });
+        let result = ValidationConfig::from_json(&input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validation_config_missing_logic() {
+        let input = json!({
+            "rules": [
+                {
+                    "path": "data",
+                    "message": "Some error"
                 }
-            }
-        }
+            ]
+        });
+        let result = ValidationConfig::from_json(&input);
+        assert!(result.is_err());
+    }
 
-        // Check if any validation errors occurred
-        let has_validation_errors = message
-            .temp_data
-            .get("validation_errors")
-            .and_then(|v| v.as_array())
-            .map(|arr| !arr.is_empty())
-            .unwrap_or(false);
+    #[test]
+    fn test_validation_config_defaults() {
+        let input = json!({
+            "rules": [
+                {
+                    "logic": {"var": "data.field"}
+                }
+            ]
+        });
 
-        // Create changes to track validation results
-        let mut changes = vec![];
-
-        if message.temp_data.get("validation").is_some()
-            && !message.temp_data["validation"].is_null()
-        {
-            changes.push(Change {
-                path: "temp_data.validation".to_string(),
-                old_value: Value::Null,
-                new_value: message.temp_data["validation"].clone(),
-            });
-        }
-
-        if has_validation_errors {
-            changes.push(Change {
-                path: "temp_data.validation_errors".to_string(),
-                old_value: Value::Null,
-                new_value: message.temp_data["validation_errors"].clone(),
-            });
-        }
-
-        // Return appropriate status code
-        if has_validation_errors {
-            Ok((400, changes))
-        } else {
-            Ok((200, changes))
-        }
+        let config = ValidationConfig::from_json(&input).unwrap();
+        assert_eq!(config.rules[0].path, "data");
+        assert_eq!(config.rules[0].message, "Validation failed");
     }
 }

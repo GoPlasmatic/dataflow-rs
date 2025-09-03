@@ -44,9 +44,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 */
 
+pub mod compiler;
 pub mod error;
+pub mod executor;
 pub mod functions;
 pub mod message;
+pub mod retry;
 pub mod task;
 pub mod workflow;
 
@@ -54,42 +57,20 @@ pub mod workflow;
 pub use error::{DataflowError, ErrorInfo, Result};
 pub use functions::{FunctionConfig, FunctionHandler};
 pub use message::Message;
+pub use retry::RetryConfig;
 pub use task::Task;
 pub use workflow::Workflow;
 
-// Re-export the jsonlogic library under our namespace
-pub use datalogic_rs as jsonlogic;
-use datalogic_rs::DataLogic;
-
 use chrono::Utc;
+use datalogic_rs::{DataLogic, Logic};
 use log::{debug, error, info, warn};
-use message::AuditTrail;
+use message::{AuditTrail, Change};
 use serde_json::{Map, Number, Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
-/// Configuration for retry behavior
-#[derive(Debug, Clone)]
-pub struct RetryConfig {
-    /// Maximum number of retries
-    pub max_retries: u32,
-    /// Delay between retries in milliseconds
-    pub retry_delay_ms: u64,
-    /// Whether to use exponential backoff
-    pub use_backoff: bool,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            retry_delay_ms: 1000,
-            use_backoff: true,
-        }
-    }
-}
+use compiler::LogicCompiler;
+use executor::InternalExecutor;
 
 /// Single-threaded engine that processes messages through workflows.
 ///
@@ -110,20 +91,10 @@ pub struct Engine {
     task_functions: Arc<HashMap<String, Box<dyn FunctionHandler + Send + Sync>>>,
     /// DataLogic instance for JSONLogic evaluation
     datalogic: DataLogic<'static>,
+    /// Compiled logic cache
+    logic_cache: Vec<Logic<'static>>,
     /// Configuration for retry behavior
     retry_config: RetryConfig,
-}
-
-impl Clone for Engine {
-    fn clone(&self) -> Self {
-        Self {
-            workflows: Arc::clone(&self.workflows),
-            task_functions: Arc::clone(&self.task_functions),
-            // Create a new DataLogic instance for the cloned Engine
-            datalogic: DataLogic::with_preserve_structure(),
-            retry_config: self.retry_config.clone(),
-        }
-    }
 }
 
 impl Default for Engine {
@@ -159,16 +130,10 @@ impl Engine {
         _concurrency: Option<usize>,
         retry_config: Option<RetryConfig>,
     ) -> Self {
-        let mut workflow_map = HashMap::new();
-
-        // Validate and add all workflows
-        for workflow in workflows {
-            if let Err(e) = workflow.validate() {
-                error!("Invalid workflow {}: {:?}", workflow.id, e);
-                continue;
-            }
-            workflow_map.insert(workflow.id.clone(), workflow);
-        }
+        // Compile workflows
+        let mut compiler = LogicCompiler::new();
+        let workflow_map = compiler.compile_workflows(workflows);
+        let (datalogic, logic_cache) = compiler.into_parts();
 
         let mut task_functions = custom_functions.unwrap_or_default();
 
@@ -179,12 +144,11 @@ impl Engine {
             }
         }
 
-        // Concurrency parameter is now ignored since engine is single-threaded
-
         Self {
             workflows: Arc::new(workflow_map),
             task_functions: Arc::new(task_functions),
-            datalogic: DataLogic::with_preserve_structure(),
+            datalogic,
+            logic_cache,
             retry_config: retry_config.unwrap_or_default(),
         }
     }
@@ -235,26 +199,26 @@ impl Engine {
         );
 
         // Sort workflows by priority and ID to ensure deterministic execution order
-        // This prevents non-deterministic behavior caused by HashMap iteration order
         let mut sorted_workflows: Vec<_> = self.workflows.iter().collect();
         sorted_workflows.sort_by_key(|(id, workflow)| (workflow.priority, id.as_str()));
 
-        // Process workflows sequentially in sorted order, evaluating conditions just before execution
+        let executor = InternalExecutor::new(&self.datalogic, &self.logic_cache);
+
+        // Process workflows sequentially in sorted order
         for (_, workflow) in sorted_workflows {
             // Evaluate workflow condition using current message state
-            if !self.evaluate_condition(&workflow.condition, &message.metadata)? {
+            if !executor.evaluate_condition(
+                workflow.condition_index,
+                &workflow.condition,
+                &message.metadata,
+            )? {
                 debug!("Workflow {} skipped - condition not met", workflow.id);
                 continue;
             }
 
             info!("Processing workflow {}", workflow.id);
-
-            self.process_workflow(workflow, message);
-
+            self.process_workflow(workflow, message, &executor);
             info!("Completed processing workflow {}", workflow.id);
-
-            // If there were errors in this workflow, we may want to decide whether to continue
-            // For now, we continue processing remaining workflows even if one fails
         }
 
         debug!(
@@ -264,18 +228,27 @@ impl Engine {
         Ok(())
     }
 
-    fn process_workflow(&self, workflow: &Workflow, message: &mut Message) {
+    fn process_workflow(
+        &self,
+        workflow: &Workflow,
+        message: &mut Message,
+        executor: &InternalExecutor,
+    ) {
         let workflow_id = workflow.id.clone();
         let mut workflow_errors = Vec::new();
+        
+        // Cache timestamp for this workflow execution to reduce clock_gettime calls
+        let workflow_timestamp = Utc::now().to_rfc3339();
 
         // Process tasks SEQUENTIALLY within this workflow
-        // IMPORTANT: Task order matters! Results from previous tasks are used by subsequent tasks.
-        // We intentionally process tasks one after another rather than concurrently.
         for task in &workflow.tasks {
             // Evaluate task condition
-            let should_execute = self.evaluate_condition(&task.condition, &message.metadata);
+            let should_execute = executor.evaluate_condition(
+                task.condition_index,
+                &task.condition,
+                &message.metadata,
+            );
 
-            // Handle condition evaluation result
             let should_execute = match should_execute {
                 Ok(result) => result,
                 Err(e) => {
@@ -293,46 +266,67 @@ impl Engine {
                 continue;
             }
 
-            // Execute task if we have a handler
-            let function_name = task.function.function_name();
-            if let Some(function) = self.task_functions.get(function_name) {
-                let task_id = task.id.clone();
-                let function_config = &task.function;
+            // Execute task based on its type
+            let task_id = task.id.clone();
+            let function_config = &task.function;
 
-                // Execute this task (with retries)
-                match self.execute_task(
-                    &task_id,
-                    &workflow_id,
-                    message,
-                    function_config,
-                    function.as_ref(),
-                ) {
-                    Ok(_) => {
-                        debug!("Task {} completed successfully", task_id);
-                    }
-                    Err(error) => {
-                        workflow_errors.push(ErrorInfo::new(
-                            Some(workflow_id.clone()),
-                            Some(task_id.clone()),
-                            error.clone(),
-                        ));
-
-                        // Break the task sequence if a task fails
-                        break;
+            let execution_result = match function_config {
+                FunctionConfig::Map { input, .. } => executor.execute_map(message, input),
+                FunctionConfig::Validation { input, .. } => {
+                    executor.execute_validate(message, input)
+                }
+                FunctionConfig::Custom { name, .. } => {
+                    if let Some(function) = self.task_functions.get(name) {
+                        self.execute_task(
+                            &task_id,
+                            &workflow_id,
+                            message,
+                            function_config,
+                            function.as_ref(),
+                        )
+                    } else {
+                        Err(DataflowError::Workflow(format!(
+                            "Function '{}' not found",
+                            name
+                        )))
                     }
                 }
-            } else {
-                let error =
-                    DataflowError::Workflow(format!("Function '{}' not found", function_name));
+            };
 
-                workflow_errors.push(ErrorInfo::new(
-                    Some(workflow_id.clone()),
-                    Some(task.id.clone()),
-                    error,
-                ));
+            // Handle execution result
+            match execution_result {
+                Ok((status_code, changes)) => {
+                    debug!(
+                        "Task {} completed successfully with status {}",
+                        task_id, status_code
+                    );
 
-                // Break the task sequence if a function is not found
-                break;
+                    // Record audit trail using cached timestamp
+                    message.audit_trail.push(AuditTrail {
+                        workflow_id: workflow_id.to_string(),
+                        task_id: task_id.to_string(),
+                        timestamp: workflow_timestamp.clone(),
+                        changes,
+                        status_code,
+                    });
+
+                    // Add progress metadata with cached timestamp
+                    self.update_progress_metadata_with_timestamp(
+                        message,
+                        &task_id,
+                        &workflow_id,
+                        status_code,
+                        &workflow_timestamp,
+                    );
+                }
+                Err(error) => {
+                    workflow_errors.push(ErrorInfo::new(
+                        Some(workflow_id.clone()),
+                        Some(task_id.clone()),
+                        error.clone(),
+                    ));
+                    break; // Break the task sequence if a task fails
+                }
             }
         }
 
@@ -340,7 +334,7 @@ impl Engine {
         message.errors.extend(workflow_errors);
     }
 
-    /// Helper method to execute a task with retries
+    /// Execute a custom task with retries
     fn execute_task(
         &self,
         task_id: &str,
@@ -348,7 +342,7 @@ impl Engine {
         message: &mut Message,
         config: &FunctionConfig,
         function: &dyn FunctionHandler,
-    ) -> Result<()> {
+    ) -> Result<(usize, Vec<Change>)> {
         info!("Executing task {} in workflow {}", task_id, workflow_id);
 
         let mut last_error = None;
@@ -358,48 +352,26 @@ impl Engine {
         while retry_count <= self.retry_config.max_retries {
             match function.execute(message, config, &self.datalogic) {
                 Ok((status_code, changes)) => {
-                    // Success! Record audit trail and return
-                    message.audit_trail.push(AuditTrail {
-                        workflow_id: workflow_id.to_string(),
-                        task_id: task_id.to_string(),
-                        timestamp: Utc::now().to_rfc3339(),
-                        changes,
-                        status_code,
-                    });
-
                     info!("Task {} completed with status {}", task_id, status_code);
 
-                    // Add progress metadata
-                    let mut progress = Map::new();
-                    progress.insert("task_id".to_string(), Value::String(task_id.to_string()));
-                    progress.insert(
-                        "workflow_id".to_string(),
-                        Value::String(workflow_id.to_string()),
-                    );
-                    progress.insert(
-                        "status_code".to_string(),
-                        Value::Number(Number::from(status_code)),
-                    );
-                    progress.insert(
-                        "timestamp".to_string(),
-                        Value::String(Utc::now().to_rfc3339()),
-                    );
-
                     if retry_count > 0 {
-                        progress.insert(
-                            "retries".to_string(),
-                            Value::Number(Number::from(retry_count)),
+                        self.update_progress_metadata_with_retries(
+                            message,
+                            task_id,
+                            workflow_id,
+                            status_code,
+                            retry_count,
                         );
+                    } else {
+                        self.update_progress_metadata(message, task_id, workflow_id, status_code);
                     }
 
-                    message.metadata["progress"] = json!(progress);
-
-                    return Ok(());
+                    return Ok((status_code, changes));
                 }
                 Err(e) => {
                     last_error = Some(e.clone());
 
-                    // Check if this error is retryable before attempting retry
+                    // Check if this error is retryable
                     if retry_count < self.retry_config.max_retries && e.retryable() {
                         warn!(
                             "Task {} execution failed with retryable error, retry {}/{}: {:?}",
@@ -409,19 +381,9 @@ impl Engine {
                             e
                         );
 
-                        // Calculate delay with optional exponential backoff
-                        let delay = if self.retry_config.use_backoff {
-                            self.retry_config.retry_delay_ms * (2_u64.pow(retry_count))
-                        } else {
-                            self.retry_config.retry_delay_ms
-                        };
-
-                        // Sleep using standard thread sleep
-                        thread::sleep(Duration::from_millis(delay));
-
+                        self.retry_config.sleep(retry_count);
                         retry_count += 1;
                     } else {
-                        // Either we've exhausted retries or the error is not retryable
                         if !e.retryable() {
                             info!(
                                 "Task {} failed with non-retryable error, skipping retries: {:?}",
@@ -447,18 +409,88 @@ impl Engine {
         Err(error)
     }
 
-    /// Evaluate a condition using the engine's DataLogic
-    fn evaluate_condition(&self, condition: &Value, data: &Value) -> Result<bool> {
-        // Short-circuit for simple boolean conditions
-        if let Value::Bool(b) = condition {
-            return Ok(*b);
-        }
+    /// Update progress metadata
+    fn update_progress_metadata(
+        &self,
+        message: &mut Message,
+        task_id: &str,
+        workflow_id: &str,
+        status_code: usize,
+    ) {
+        let timestamp = Utc::now().to_rfc3339();
+        self.update_progress_metadata_with_timestamp(
+            message,
+            task_id,
+            workflow_id,
+            status_code,
+            &timestamp,
+        );
+    }
 
-        self.datalogic
-            .evaluate_json(condition, data)
-            .map(|result| result.as_bool().unwrap_or(false))
-            .map_err(|e| {
-                DataflowError::LogicEvaluation(format!("Error evaluating condition: {}", e))
-            })
+    /// Update progress metadata with provided timestamp
+    fn update_progress_metadata_with_timestamp(
+        &self,
+        message: &mut Message,
+        task_id: &str,
+        workflow_id: &str,
+        status_code: usize,
+        timestamp: &str,
+    ) {
+        let mut progress = Map::new();
+        progress.insert("task_id".to_string(), Value::String(task_id.to_string()));
+        progress.insert(
+            "workflow_id".to_string(),
+            Value::String(workflow_id.to_string()),
+        );
+        progress.insert(
+            "status_code".to_string(),
+            Value::Number(Number::from(status_code)),
+        );
+        progress.insert(
+            "timestamp".to_string(),
+            Value::String(timestamp.to_string()),
+        );
+        message.metadata["progress"] = json!(progress);
+    }
+
+    /// Update progress metadata with retry count
+    fn update_progress_metadata_with_retries(
+        &self,
+        message: &mut Message,
+        task_id: &str,
+        workflow_id: &str,
+        status_code: usize,
+        retry_count: u32,
+    ) {
+        let mut progress = Map::new();
+        progress.insert("task_id".to_string(), Value::String(task_id.to_string()));
+        progress.insert(
+            "workflow_id".to_string(),
+            Value::String(workflow_id.to_string()),
+        );
+        progress.insert(
+            "status_code".to_string(),
+            Value::Number(Number::from(status_code)),
+        );
+        progress.insert(
+            "timestamp".to_string(),
+            Value::String(Utc::now().to_rfc3339()),
+        );
+        progress.insert(
+            "retries".to_string(),
+            Value::Number(Number::from(retry_count)),
+        );
+        message.metadata["progress"] = json!(progress);
+    }
+
+    /// Evaluate logic using compiled index or direct evaluation (public for testing)
+    pub fn evaluate_logic(
+        &self,
+        logic_index: Option<usize>,
+        logic: &Value,
+        data: &Value,
+    ) -> Result<Value> {
+        let executor = InternalExecutor::new(&self.datalogic, &self.logic_cache);
+        executor.evaluate_logic(logic_index, logic, data)
     }
 }

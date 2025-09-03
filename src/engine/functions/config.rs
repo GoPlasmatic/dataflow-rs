@@ -13,7 +13,7 @@ pub enum FunctionConfig {
         input: MapConfig,
     },
     Validation {
-        name: ValidationName, 
+        name: ValidationName,
         input: ValidationConfig,
     },
     /// For custom or unknown functions, store raw input

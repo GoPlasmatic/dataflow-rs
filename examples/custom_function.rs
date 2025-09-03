@@ -471,19 +471,15 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "enrich_data".to_string(),
         Box::new(DataEnrichmentFunction::new()) as Box<dyn FunctionHandler + Send + Sync>,
     );
-    custom_functions.insert(
-        "map".to_string(),
-        Box::new(dataflow_rs::engine::functions::MapFunction::new())
-            as Box<dyn FunctionHandler + Send + Sync>,
-    );
+    // Note: map and validate are now built-in to the Engine and will be used automatically
 
-    // Create engine with custom functions only (no built-ins)
+    // Create engine with custom functions and built-ins (map/validate are always included internally)
     let engine = Engine::new(
         vec![workflow, workflow2],
         Some(custom_functions),
-        Some(false), // Don't include built-ins
-        None,        // Default concurrency
-        None,        // Default retry config
+        None, // Use default (includes built-ins)
+        None, // Default concurrency
+        None, // Default retry config
     );
 
     // Create sample data for first message
