@@ -236,7 +236,7 @@ impl Engine {
     ) {
         let workflow_id = workflow.id.clone();
         let mut workflow_errors = Vec::new();
-        
+
         // Cache timestamp for this workflow execution to reduce clock_gettime calls
         let workflow_timestamp = Utc::now().to_rfc3339();
 

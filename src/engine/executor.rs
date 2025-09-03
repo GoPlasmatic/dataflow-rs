@@ -31,9 +31,14 @@ impl<'a> InternalExecutor<'a> {
 
         // Check if we need parsed data for compiled logic
         let needs_parsed_data = config.mappings.iter().any(|m| m.logic_index.is_some());
-        
+
         // Lazy initialization of data structures
-        let data_for_eval = if needs_parsed_data || config.mappings.iter().any(|m| m.logic.is_object() || m.logic.is_array()) {
+        let data_for_eval = if needs_parsed_data
+            || config
+                .mappings
+                .iter()
+                .any(|m| m.logic.is_object() || m.logic.is_array())
+        {
             Some(json!({
                 "data": &message.data,
                 "metadata": &message.metadata,
@@ -45,10 +50,14 @@ impl<'a> InternalExecutor<'a> {
 
         // Parse to DataValue once if we have any compiled logic
         let parsed_data = if needs_parsed_data && data_for_eval.is_some() {
-            Some(self.datalogic.parse_data_json(data_for_eval.as_ref().unwrap()).map_err(|e| {
-                error!("Failed to parse data for evaluation: {e:?}");
-                DataflowError::LogicEvaluation(format!("Error parsing data: {}", e))
-            })?)
+            Some(
+                self.datalogic
+                    .parse_data_json(data_for_eval.as_ref().unwrap())
+                    .map_err(|e| {
+                        error!("Failed to parse data for evaluation: {e:?}");
+                        DataflowError::LogicEvaluation(format!("Error parsing data: {}", e))
+                    })?,
+            )
         } else {
             None
         };
@@ -135,14 +144,15 @@ impl<'a> InternalExecutor<'a> {
             let validation_result = if let Some(logic_index) = rule.logic_index {
                 if logic_index < self.logic_cache.len() {
                     let compiled_logic = &self.logic_cache[logic_index];
-                    let data_to_validate = if rule_path == "data" || rule_path.starts_with("data.") {
+                    let data_to_validate = if rule_path == "data" || rule_path.starts_with("data.")
+                    {
                         &data_json
                     } else if rule_path == "metadata" || rule_path.starts_with("metadata.") {
                         &metadata_json
                     } else {
                         &temp_data_json
                     };
-                    
+
                     if let Ok(data_val) = self.datalogic.parse_data_json(data_to_validate) {
                         self.datalogic
                             .evaluate(compiled_logic, data_val)
@@ -153,7 +163,8 @@ impl<'a> InternalExecutor<'a> {
                     }
                 } else {
                     // Fallback to JSON evaluation
-                    let data_to_validate = if rule_path == "data" || rule_path.starts_with("data.") {
+                    let data_to_validate = if rule_path == "data" || rule_path.starts_with("data.")
+                    {
                         &data_json
                     } else if rule_path == "metadata" || rule_path.starts_with("metadata.") {
                         &metadata_json
@@ -223,11 +234,14 @@ impl<'a> InternalExecutor<'a> {
                 let data_value = self.datalogic.parse_data_json(data).map_err(|e| {
                     DataflowError::LogicEvaluation(format!("Error parsing data: {}", e))
                 })?;
-                
-                let result = self.datalogic.evaluate(compiled_logic, data_value).map_err(|e| {
-                    DataflowError::LogicEvaluation(format!("Error evaluating logic: {}", e))
-                })?;
-                
+
+                let result = self
+                    .datalogic
+                    .evaluate(compiled_logic, data_value)
+                    .map_err(|e| {
+                        DataflowError::LogicEvaluation(format!("Error evaluating logic: {}", e))
+                    })?;
+
                 Ok(result.to_json())
             } else {
                 Err(DataflowError::LogicEvaluation(format!(
@@ -263,7 +277,7 @@ impl<'a> InternalExecutor<'a> {
                 let data_value = self.datalogic.parse_data_json(data).map_err(|e| {
                     DataflowError::LogicEvaluation(format!("Error parsing data: {}", e))
                 })?;
-                
+
                 let result = self
                     .datalogic
                     .evaluate(logic, data_value)
@@ -373,15 +387,15 @@ impl<'a> InternalExecutor<'a> {
                         *current = Value::Array(vec![]);
                     }
 
-                    if let Ok(index) = part.parse::<usize>() {
-                        if let Value::Array(arr) = current {
-                            // Extend array if needed
-                            while arr.len() <= index {
-                                arr.push(Value::Null);
-                            }
-                            old_value = arr[index].clone();
-                            arr[index] = value.clone();
+                    if let Ok(index) = part.parse::<usize>()
+                        && let Value::Array(arr) = current
+                    {
+                        // Extend array if needed
+                        while arr.len() <= index {
+                            arr.push(Value::Null);
                         }
+                        old_value = arr[index].clone();
+                        arr[index] = value.clone();
                     }
                 } else {
                     // Handle object key
@@ -405,13 +419,13 @@ impl<'a> InternalExecutor<'a> {
                         *current = Value::Array(vec![]);
                     }
 
-                    if let Ok(index) = part.parse::<usize>() {
-                        if let Value::Array(arr) = current {
-                            while arr.len() <= index {
-                                arr.push(Value::Null);
-                            }
-                            current = &mut arr[index];
+                    if let Ok(index) = part.parse::<usize>()
+                        && let Value::Array(arr) = current
+                    {
+                        while arr.len() <= index {
+                            arr.push(Value::Null);
                         }
+                        current = &mut arr[index];
                     }
                 } else {
                     // Handle object navigation
