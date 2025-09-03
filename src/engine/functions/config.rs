@@ -29,7 +29,7 @@ pub enum MapName {
     Map,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ValidationName {
     Validation,

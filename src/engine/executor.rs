@@ -53,13 +53,15 @@ impl<'a> InternalExecutor<'a> {
         // Check if we need parsed data for compiled logic
         let needs_parsed_data = config.mappings.iter().any(|m| m.logic_index.is_some());
 
-        // Lazy initialization of data structures
-        let data_for_eval = if needs_parsed_data
+        // Determine if we need data for evaluation
+        let needs_data = needs_parsed_data
             || config
                 .mappings
                 .iter()
-                .any(|m| m.logic.is_object() || m.logic.is_array())
-        {
+                .any(|m| m.logic.is_object() || m.logic.is_array());
+
+        // Initialize mutable data_for_eval if needed
+        let mut data_for_eval = if needs_data {
             Some(json!({
                 "data": &message.data,
                 "metadata": &message.metadata,
@@ -69,23 +71,27 @@ impl<'a> InternalExecutor<'a> {
             None
         };
 
-        // Parse to DataValue once if we have any compiled logic
-        let parsed_data = if needs_parsed_data && data_for_eval.is_some() {
-            Some(
-                self.datalogic
-                    .parse_data_json(data_for_eval.as_ref().unwrap())
-                    .map_err(|e| {
-                        error!("Failed to parse data for evaluation: {e:?}");
-                        DataflowError::LogicEvaluation(format!("Error parsing data: {}", e))
-                    })?,
-            )
-        } else {
-            None
-        };
-
         for mapping in &config.mappings {
             let target_path = &mapping.path;
             let logic = &mapping.logic;
+
+            // Parse data for compiled logic evaluation if needed
+            let parsed_data = if let Some(logic_index) = mapping.logic_index {
+                if logic_index < self.logic_cache.len() && data_for_eval.is_some() {
+                    Some(
+                        self.datalogic
+                            .parse_data_json(data_for_eval.as_ref().unwrap())
+                            .map_err(|e| {
+                                error!("Failed to parse data for evaluation: {e:?}");
+                                DataflowError::LogicEvaluation(format!("Error parsing data: {}", e))
+                            })?,
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
             // Evaluate using compiled logic if available
             let result = if let Some(logic_index) = mapping.logic_index {
@@ -135,8 +141,26 @@ impl<'a> InternalExecutor<'a> {
             changes.push(Change {
                 path: target_path.clone(),
                 old_value,
-                new_value: result,
+                new_value: result.clone(),
             });
+
+            // Update data_for_eval with the new value so subsequent mappings see the changes
+            if let Some(ref mut data) = data_for_eval {
+                // Update the appropriate field in data_for_eval based on the path
+                if let Some(adjusted_path) = target_path.strip_prefix("data.") {
+                    if let Some(data_obj) = data.get_mut("data") {
+                        let _ = self.set_value_at_path(data_obj, adjusted_path, &result);
+                    }
+                } else if let Some(adjusted_path) = target_path.strip_prefix("temp_data.") {
+                    if let Some(temp_data_obj) = data.get_mut("temp_data") {
+                        let _ = self.set_value_at_path(temp_data_obj, adjusted_path, &result);
+                    }
+                } else if let Some(adjusted_path) = target_path.strip_prefix("metadata.")
+                    && let Some(metadata_obj) = data.get_mut("metadata")
+                {
+                    let _ = self.set_value_at_path(metadata_obj, adjusted_path, &result);
+                }
+            }
         }
 
         Ok((200, changes))
@@ -389,16 +413,36 @@ impl<'a> InternalExecutor<'a> {
             s.parse::<usize>().is_ok()
         }
 
-        // Empty path means replace the entire value
+        // Empty path means replace or merge the entire value
         if path.is_empty() {
             old_value = current.clone();
-            *current = value.clone();
+            // If both current and new value are objects, merge them
+            if let (Value::Object(current_obj), Value::Object(new_obj)) =
+                (current.clone(), value.clone())
+            {
+                let mut merged = current_obj;
+                for (key, val) in new_obj {
+                    merged.insert(key, val);
+                }
+                *current = Value::Object(merged);
+            } else {
+                // Otherwise, replace entirely
+                *current = value.clone();
+            }
             return Ok(old_value);
         }
 
         // Navigate to the parent of the target location
         for (i, part) in path_parts.iter().enumerate() {
-            let is_numeric = is_numeric_index(part);
+            // Strip '#' prefix if present (used to indicate numeric keys that should be treated as strings)
+            let (part_clean, force_string) = if let Some(stripped) = part.strip_prefix('#') {
+                (stripped, true)
+            } else {
+                (*part, false)
+            };
+
+            // Check if it's numeric only if not forced to be a string
+            let is_numeric = !force_string && is_numeric_index(part_clean);
 
             if i == path_parts.len() - 1 {
                 // We're at the last part, so set the value
@@ -408,7 +452,7 @@ impl<'a> InternalExecutor<'a> {
                         *current = Value::Array(vec![]);
                     }
 
-                    if let Ok(index) = part.parse::<usize>()
+                    if let Ok(index) = part_clean.parse::<usize>()
                         && let Value::Array(arr) = current
                     {
                         // Extend array if needed
@@ -425,11 +469,22 @@ impl<'a> InternalExecutor<'a> {
                     }
 
                     if let Value::Object(map) = current {
-                        old_value = map
-                            .get(part.to_string().as_str())
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        map.insert(part.to_string(), value.clone());
+                        old_value = map.get(part_clean).cloned().unwrap_or(Value::Null);
+
+                        // If both the existing value and new value are objects, merge them
+                        if let (Some(Value::Object(existing_obj)), Value::Object(new_obj)) =
+                            (map.get(part_clean), value)
+                        {
+                            // Create a merged object by cloning the existing and adding new fields
+                            let mut merged = existing_obj.clone();
+                            for (key, val) in new_obj {
+                                merged.insert(key.clone(), val.clone());
+                            }
+                            map.insert(part_clean.to_string(), Value::Object(merged));
+                        } else {
+                            // Otherwise, just replace the value as before
+                            map.insert(part_clean.to_string(), value.clone());
+                        }
                     }
                 }
             } else {
@@ -440,7 +495,7 @@ impl<'a> InternalExecutor<'a> {
                         *current = Value::Array(vec![]);
                     }
 
-                    if let Ok(index) = part.parse::<usize>()
+                    if let Ok(index) = part_clean.parse::<usize>()
                         && let Value::Array(arr) = current
                     {
                         while arr.len() <= index {
@@ -455,16 +510,22 @@ impl<'a> InternalExecutor<'a> {
                     }
 
                     if let Value::Object(map) = current {
-                        if !map.contains_key(part.to_string().as_str()) {
+                        if !map.contains_key(part_clean) {
                             // Look ahead to see if next part is numeric to decide what to create
                             let next_part = path_parts.get(i + 1).unwrap_or(&"");
-                            if is_numeric_index(next_part) {
-                                map.insert(part.to_string(), Value::Array(vec![]));
+                            // Strip '#' prefix from next part if present when checking
+                            let next_clean = if let Some(stripped) = next_part.strip_prefix('#') {
+                                stripped
                             } else {
-                                map.insert(part.to_string(), json!({}));
+                                next_part
+                            };
+                            if is_numeric_index(next_clean) && !next_part.starts_with('#') {
+                                map.insert(part_clean.to_string(), Value::Array(vec![]));
+                            } else {
+                                map.insert(part_clean.to_string(), json!({}));
                             }
                         }
-                        current = map.get_mut(part.to_string().as_str()).unwrap();
+                        current = map.get_mut(part_clean).unwrap();
                     }
                 }
             }
