@@ -3,7 +3,7 @@
 
   # Dataflow-rs
 
-  **A thread-safe, vertically-scalable async workflow engine for building high-performance data processing pipelines in Rust.**
+  **A high-performance workflow engine for building data processing pipelines in Rust with zero-overhead JSONLogic evaluation.**
 
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
   [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
@@ -12,14 +12,14 @@
 
 ---
 
-Dataflow-rs is a Rust library for creating high-performance, asynchronous data processing pipelines with built-in thread-safety and vertical scalability. It's designed to maximize CPU utilization through intelligent concurrency management, allowing you to build complex workflows that automatically scale with your hardware. Whether you're building REST APIs, processing Kafka streams, or creating sophisticated data transformation pipelines, Dataflow-rs provides enterprise-grade performance out of the box.
+Dataflow-rs is a Rust library for creating high-performance data processing pipelines with pre-compiled JSONLogic and zero runtime overhead. It features a modular architecture that separates compilation from execution, ensuring predictable low-latency performance. Whether you're building REST APIs, processing Kafka streams, or creating sophisticated data transformation pipelines, Dataflow-rs provides enterprise-grade performance with minimal complexity.
 
 ## 🚀 Key Features
 
-- **Thread-Safe & Scalable:** Built-in concurrency management with automatic vertical scaling to utilize all available CPU cores.
-- **Zero-Cost Workflow Updates:** Arc-Swap architecture allows lock-free reads and atomic workflow updates.
-- **Intelligent Resource Pooling:** DataLogic instance pooling eliminates contention and maximizes throughput.
-- **Asynchronous by Design:** Built on Tokio for non-blocking, high-performance concurrent processing.
+- **Zero Runtime Compilation:** All JSONLogic expressions pre-compiled at startup for optimal performance.
+- **Modular Architecture:** Clear separation between compilation (LogicCompiler) and execution (InternalExecutor).
+- **Direct DataLogic Instantiation:** Each engine has its own DataLogic instance for zero contention.
+- **Immutable Workflows:** Workflows compiled once at initialization for predictable performance.
 - **Dynamic Workflows:** Use JSONLogic to control workflow execution based on your data.
 - **Extensible:** Easily add your own custom processing steps (tasks) to the engine.
 - **Built-in Functions:** Comes with thread-safe implementations of HTTP requests, data mapping, and validation.
@@ -86,16 +86,18 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a new engine (defaults to CPU count for max concurrency)
-    let engine = Engine::new();
-    
-    // Or specify custom concurrency level
-    // let engine = Engine::with_concurrency(32);
-
-    // Define and add a workflow
+    // Define workflows
     let workflow_json = r#"{ ... }"#; // Your workflow JSON from above
     let workflow = Workflow::from_json(workflow_json)?;
-    engine.add_workflow(&workflow);
+    
+    // Create engine with workflows (immutable after creation)
+    let engine = Engine::new(
+        vec![workflow],  // Workflows to compile and cache
+        None,           // Use default built-in functions
+        None,           // Use default custom functions
+        None,           // Use default DataLogic
+        None,           // Use default retry config
+    );
 
     // Process a single message
     let mut message = Message::new(&json!({}));
@@ -107,9 +109,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### 4. Concurrent Processing (New in v1.0)
+### 4. Parallel Processing with Multiple Engines
 
-Process multiple messages concurrently with automatic resource management:
+For parallel processing, create multiple engine instances across threads:
 
 ```rust
 use dataflow_rs::{Engine, Workflow};
@@ -120,22 +122,21 @@ use tokio::task::JoinSet;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create engine with 16 concurrent workers
-    let engine = Arc::new(Engine::with_concurrency(16));
-    
-    // Add your workflow
+    // Define your workflows
     let workflow_json = r#"{ ... }"#; // Your workflow JSON
     let workflow = Workflow::from_json(workflow_json)?;
-    engine.add_workflow(&workflow);
+    let workflows = vec![workflow];
 
-    // Process messages concurrently
+    // Process messages in parallel using multiple engine instances
     let mut tasks = JoinSet::new();
     
     for i in 0..1000 {
-        let engine_clone = engine.clone();
+        let workflows_clone = workflows.clone();
         tasks.spawn(async move {
+            // Each task creates its own engine instance (zero contention)
+            let engine = Engine::new(workflows_clone, None, None, None, None);
             let mut message = Message::new(&json!({"id": i}));
-            engine_clone.process_message_concurrent(&mut message).await
+            engine.process_message(&mut message)
         });
     }
 
@@ -144,27 +145,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         result??;
     }
 
-    println!("✅ Processed 1000 messages concurrently!");
+    println!("✅ Processed 1000 messages in parallel!");
     Ok(())
 }
 ```
 
 ## ✨ Core Concepts
 
-- **Engine:** The heart of the library, now thread-safe with configurable concurrency levels.
-- **Workflow:** A sequence of tasks that are executed in order, stored using Arc-Swap for lock-free reads.
-- **Task:** A single step in a workflow, like making an HTTP request or transforming data.
-- **Message:** The data that flows through the engine, with each message getting its own DataLogic instance.
-- **Concurrency:** Unified concurrency model where pool size matches max concurrent messages to eliminate contention.
+- **Engine:** High-performance engine with pre-compiled logic and immutable workflows.
+- **LogicCompiler:** Compiles all JSONLogic expressions at initialization for zero runtime overhead.
+- **InternalExecutor:** Executes built-in functions using pre-compiled logic from the cache.
+- **Workflow:** A sequence of tasks executed in order, with conditions accessing only metadata.
+- **Task:** A single processing step with optional JSONLogic conditions.
+- **Message:** The data structure flowing through workflows with audit trail support.
+
+## 🏗️ Architecture
+
+The v3.0 architecture focuses on simplicity and performance through clear separation of concerns:
+
+### Compilation Phase (Startup)
+1. **LogicCompiler** compiles all JSONLogic expressions from workflows and tasks
+2. Creates an indexed cache of compiled logic for O(1) runtime access
+3. Validates all logic expressions early, failing fast on errors
+4. Stores compiled logic in contiguous memory for cache efficiency
+
+### Execution Phase (Runtime)
+1. **Engine** orchestrates message processing through immutable workflows
+2. **InternalExecutor** evaluates conditions and executes built-in functions
+3. Uses compiled logic from cache - zero compilation overhead at runtime
+4. Direct DataLogic instantiation eliminates any locking or contention
+
+### Key Design Decisions
+- **Immutable Workflows:** All workflows defined at engine creation, cannot be modified
+- **Pre-compilation:** All expensive parsing/compilation done once at startup
+- **Direct Instantiation:** Each engine owns its DataLogic instance directly
+- **Modular Design:** Clear boundaries between compilation, execution, and orchestration
 
 ## ⚡ Performance
 
-Dataflow-rs v1.0 introduces significant performance improvements through its unified concurrency model:
+Dataflow-rs achieves optimal performance through architectural improvements:
 
-- **Improved Scalability:** Performance scales with available CPU cores
-- **Zero Contention:** Pool size matches concurrent tasks to eliminate resource contention
-- **Lock-Free Reads:** Arc-Swap architecture enables zero-cost workflow reads
-- **High Throughput:** Achieve substantial throughput improvements with increased concurrency
+- **Pre-Compilation:** All JSONLogic compiled at startup, zero runtime overhead
+- **Cache-Friendly:** Compiled logic stored contiguously in memory
+- **Direct Instantiation:** DataLogic instances created directly without locking
+- **Predictable Latency:** No runtime allocations for logic evaluation
+- **Modular Design:** Clear separation of compilation and execution phases
 
 Run the included benchmark to test performance on your hardware:
 ```bash
@@ -173,38 +198,50 @@ cargo run --example benchmark
 
 ## 🛠️ Custom Functions
 
-You can extend the engine with your own custom logic by implementing the `AsyncFunctionHandler` trait. Note that in v1.0, functions receive a DataLogic instance for thread-safe JSONLogic evaluation.
+You can extend the engine with your own custom logic by implementing the `FunctionHandler` trait:
 
 ```rust
-use dataflow_rs::engine::{AsyncFunctionHandler, error::Result, message::{Change, Message}};
-use async_trait::async_trait;
+use dataflow_rs::engine::{FunctionHandler, error::Result, message::{Change, Message}};
 use serde_json::Value;
-use datalogic_rs::DataLogic;
 
 pub struct MyCustomFunction;
 
-#[async_trait]
-impl AsyncFunctionHandler for MyCustomFunction {
-    async fn execute(
+impl FunctionHandler for MyCustomFunction {
+    fn execute(
         &self, 
         message: &mut Message, 
         input: &Value,
-        data_logic: &mut DataLogic  // New in v1.0: DataLogic instance provided
     ) -> Result<(usize, Vec<Change>)> {
-        // Your custom async logic here
-        // Use data_logic for any JSONLogic evaluation
-        println!("Hello from a thread-safe custom function!");
+        // Your custom logic here
+        println!("Hello from a custom function!");
         
-        // Example: evaluate JSONLogic
-        let logic = serde_json::json!({"var": "data.field"});
-        let result = data_logic.apply(&logic, &message.data)?;
+        // Modify message data
+        message.data["processed"] = json!(true);
         
-        Ok((200, vec![]))
+        // Return status code and changes for audit trail
+        Ok((200, vec![Change {
+            path: "data.processed".to_string(),
+            old_value: json!(null),
+            new_value: json!(true),
+            operation: "set".to_string(),
+        }]))
     }
 }
 
-// Then, register it with the engine:
-// engine.register_task_function("my_custom_function", Box::new(MyCustomFunction));
+// Register when creating the engine:
+let mut custom_functions = HashMap::new();
+custom_functions.insert(
+    "my_custom_function".to_string(),
+    Box::new(MyCustomFunction) as Box<dyn FunctionHandler + Send + Sync>
+);
+
+let engine = Engine::new(
+    workflows,
+    None,  // Use default built-ins
+    Some(custom_functions),
+    None,  // Use default DataLogic
+    None,  // Use default retry config
+);
 ```
 
 ## 🤝 Contributing

@@ -2,23 +2,32 @@
 # Engine Module
 
 This module implements the core workflow engine for dataflow-rs. The engine provides
-thread-safe, vertically-scalable message processing through workflows composed of tasks.
+high-performance, asynchronous message processing through workflows composed of tasks.
 
-## Thread-Safety & Concurrency (v1.0)
+## Architecture
 
-The engine now features a unified concurrency model with:
-- **Local DataLogic**: Each JSONLogic evaluation creates a local DataLogic instance
-- **Arc-Swap Workflows**: Lock-free reads and atomic updates for workflow management
-- **Unified Concurrency**: Single parameter controls both pool size and max concurrent messages
-- **Zero Contention**: Pool size matches concurrent tasks to eliminate resource competition
+The engine features a modular architecture with clear separation of concerns:
+- **Compiler**: Pre-compiles JSONLogic expressions for optimal runtime performance
+- **Executor**: Handles internal function execution (map, validation) efficiently
+- **Engine**: Orchestrates workflow processing with immutable, pre-configured workflows
+- **Direct DataLogic**: Each engine instance has its own DataLogic for zero contention
 
 ## Key Components
 
-- **Engine**: Thread-safe engine with configurable concurrency levels
-- **Workflow**: Collection of tasks with JSONLogic conditions, stored using Arc-Swap
+- **Engine**: Single-threaded engine optimized for both IO-bound and CPU-bound workloads
+- **LogicCompiler**: Compiles and caches JSONLogic expressions during initialization
+- **InternalExecutor**: Executes built-in map and validation functions with compiled logic
+- **Workflow**: Collection of tasks with JSONLogic conditions (metadata-only access)
 - **Task**: Individual processing unit that performs a specific function on a message
-- **FunctionHandler**: Trait for custom processing logic
-- **Message**: Data structure flowing through the engine
+- **FunctionHandler**: Trait for custom processing logic implementation
+- **Message**: Data structure flowing through the engine with audit trail
+
+## Performance Optimizations
+
+- **Pre-compilation**: All JSONLogic expressions compiled at startup
+- **Direct Instantiation**: DataLogic instances created directly, avoiding any locking
+- **Immutable Workflows**: Workflows defined at initialization for predictable performance
+- **Efficient Caching**: Compiled logic cached for fast repeated evaluations
 
 ## Usage
 
@@ -72,18 +81,22 @@ use std::sync::Arc;
 use compiler::LogicCompiler;
 use executor::InternalExecutor;
 
-/// Single-threaded engine that processes messages through workflows.
+/// High-performance workflow engine for message processing.
 ///
 /// ## Architecture
 ///
-/// The engine is optimized for both IO-bound and CPU-bound workloads, featuring:
-/// - **Single-Threaded**: Designed for simple synchronous processing
-/// - **Direct DataLogic**: Uses a direct DataLogic instance for JSONLogic evaluation
-/// - **Immutable Workflows**: Workflows are defined at initialization and cannot be changed
+/// The engine features a modular design optimized for both IO-bound and CPU-bound workloads:
+/// - **Separation of Concerns**: Compiler handles pre-compilation, Executor handles runtime
+/// - **Direct DataLogic**: Single DataLogic instance per engine for zero contention
+/// - **Immutable Workflows**: All workflows compiled and cached at initialization
+/// - **Pre-compiled Logic**: JSONLogic expressions compiled once for optimal performance
 ///
-/// ## Performance
+/// ## Performance Characteristics
 ///
-/// Applications can implement their own engine pooling across threads for parallel processing.
+/// - **Zero Runtime Compilation**: All logic compiled during initialization
+/// - **Cache-Friendly**: Compiled logic stored in contiguous memory
+/// - **Predictable Latency**: No runtime allocations for logic evaluation
+/// - **Thread-Safe Design**: Applications can safely use multiple engine instances across threads
 pub struct Engine {
     /// Registry of available workflows (immutable after initialization)
     workflows: Arc<HashMap<String, Workflow>>,

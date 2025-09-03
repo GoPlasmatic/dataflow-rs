@@ -1,3 +1,13 @@
+//! # Internal Function Execution Module
+//!
+//! This module handles the efficient execution of built-in functions (map and validation)
+//! using pre-compiled logic. It provides optimized execution paths for:
+//!
+//! - Data transformations with JSONLogic mappings
+//! - Rule-based validation with custom error messages
+//! - Efficient condition evaluation for workflows and tasks
+//! - Minimal allocation through lazy data structure initialization
+
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::functions::{MapConfig, ValidationConfig};
 use crate::engine::message::{Change, Message};
@@ -6,9 +16,20 @@ use datalogic_rs::{DataLogic, Logic};
 use log::{debug, error};
 use serde_json::{Value, json};
 
-/// Handles execution of internal map and validation functions
+/// Executes internal functions using pre-compiled logic for optimal performance.
+///
+/// The `InternalExecutor` provides:
+/// - Efficient execution of map transformations using compiled logic
+/// - Fast validation rule evaluation with detailed error reporting
+/// - Condition evaluation for workflow and task control flow
+/// - Lazy initialization to avoid unnecessary allocations
+///
+/// By using pre-compiled logic from the cache, the executor avoids all
+/// runtime compilation overhead, ensuring predictable low-latency execution.
 pub struct InternalExecutor<'a> {
+    /// Reference to the DataLogic instance for evaluation
     datalogic: &'a DataLogic<'static>,
+    /// Reference to the compiled logic cache
     logic_cache: &'a Vec<Logic<'static>>,
 }
 

@@ -1,3 +1,13 @@
+//! # Workflow Compilation Module
+//!
+//! This module handles the pre-compilation of JSONLogic expressions used throughout
+//! the engine. By compiling all logic at initialization time, we achieve:
+//!
+//! - Zero runtime compilation overhead
+//! - Predictable performance characteristics
+//! - Early validation of logic expressions
+//! - Efficient memory layout for cached logic
+
 use crate::engine::functions::{MapConfig, ValidationConfig};
 use crate::engine::{FunctionConfig, Workflow};
 use datalogic_rs::{DataLogic, Logic};
@@ -5,9 +15,20 @@ use log::{debug, error};
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// Handles compilation of JSONLogic expressions for workflows and tasks
+/// Compiles and caches JSONLogic expressions for optimal runtime performance.
+///
+/// The `LogicCompiler` is responsible for:
+/// - Pre-compiling all workflow conditions
+/// - Pre-compiling task-specific logic (map transformations, validation rules)
+/// - Maintaining a cache of compiled logic for efficient runtime evaluation
+/// - Providing early validation of logic expressions
+///
+/// This separation of compilation from execution ensures that all expensive
+/// parsing and compilation work is done once at startup, not during message processing.
 pub struct LogicCompiler {
+    /// DataLogic instance used for compilation
     datalogic: DataLogic<'static>,
+    /// Cache of compiled logic expressions indexed by their position
     logic_cache: Vec<Logic<'static>>,
 }
 
