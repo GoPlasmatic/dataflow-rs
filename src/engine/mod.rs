@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     // Create engine with defaults (built-ins enabled)
-    let engine = Engine::new(workflows.clone(), None, None);
+    let mut engine = Engine::new(workflows.clone(), None, None);
 
     // Process messages
     let mut message = Message::new(&json!({}));
@@ -75,6 +75,7 @@ use datalogic_rs::{DataLogic, Logic};
 use log::{debug, error, info, warn};
 use message::{AuditTrail, Change};
 use serde_json::{Map, Number, Value, json};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -102,8 +103,8 @@ pub struct Engine {
     workflows: Arc<HashMap<String, Workflow>>,
     /// Registry of function handlers that can be executed by tasks (immutable after initialization)
     task_functions: Arc<HashMap<String, Box<dyn FunctionHandler + Send + Sync>>>,
-    /// DataLogic instance for JSONLogic evaluation
-    datalogic: DataLogic<'static>,
+    /// DataLogic instance for JSONLogic evaluation (wrapped in RefCell for interior mutability)
+    datalogic: RefCell<DataLogic<'static>>,
     /// Compiled logic cache
     logic_cache: Vec<Logic<'static>>,
     /// Configuration for retry behavior
@@ -133,7 +134,7 @@ impl Engine {
     /// let workflows = vec![Workflow::from_json(r#"{"id": "test", "name": "Test", "priority": 0, "tasks": []}"#).unwrap()];
     ///
     /// // Simple usage with defaults
-    /// let engine = Engine::new(workflows.clone(), None, None);
+    /// let mut engine = Engine::new(workflows.clone(), None, None);
     ///
     /// ```
     pub fn new(
@@ -156,7 +157,7 @@ impl Engine {
         Self {
             workflows: Arc::new(workflow_map),
             task_functions: Arc::new(task_functions),
-            datalogic,
+            datalogic: RefCell::new(datalogic),
             logic_cache,
             retry_config: retry_config.unwrap_or_default(),
         }
@@ -189,6 +190,7 @@ impl Engine {
     /// 2. Evaluates conditions for each workflow right before execution
     /// 3. Executes matching workflows one after another (not concurrently)
     /// 4. Updates the message with processing results and audit trail
+    /// 5. Clears the evaluation arena after processing to prevent memory leaks
     ///
     /// Workflows are executed sequentially because later workflows may depend
     /// on the results of earlier workflows, and their conditions may change
@@ -201,7 +203,7 @@ impl Engine {
     /// # Returns
     ///
     /// * `Result<()>` - Success or an error if processing failed
-    pub fn process_message(&self, message: &mut Message) -> Result<()> {
+    pub fn process_message(&mut self, message: &mut Message) -> Result<()> {
         debug!(
             "Processing message {} sequentially through workflows",
             message.id
@@ -211,22 +213,26 @@ impl Engine {
         let mut sorted_workflows: Vec<_> = self.workflows.iter().collect();
         sorted_workflows.sort_by_key(|(id, workflow)| (workflow.priority, id.as_str()));
 
-        let executor = InternalExecutor::new(&self.datalogic, &self.logic_cache);
-
         // Process workflows sequentially in sorted order
         for (_, workflow) in sorted_workflows {
             // Evaluate workflow condition using current message state
-            if !executor.evaluate_condition(
-                workflow.condition_index,
-                &workflow.condition,
-                &message.metadata,
-            )? {
+            let should_process = {
+                let datalogic = self.datalogic.borrow();
+                let executor = InternalExecutor::new(&datalogic, &self.logic_cache);
+                executor.evaluate_condition(
+                    workflow.condition_index,
+                    &workflow.condition,
+                    &message.metadata,
+                )?
+            };
+
+            if !should_process {
                 debug!("Workflow {} skipped - condition not met", workflow.id);
                 continue;
             }
 
             info!("Processing workflow {}", workflow.id);
-            self.process_workflow(workflow, message, &executor);
+            self.process_workflow(workflow, message);
             info!("Completed processing workflow {}", workflow.id);
         }
 
@@ -234,15 +240,15 @@ impl Engine {
             "Completed processing all workflows for message {}",
             message.id
         );
+
+        // Clear the evaluation arena to free memory allocated during message processing
+        // This prevents memory leaks from accumulating across multiple message processing calls
+        self.datalogic.borrow_mut().reset_eval_arena();
+
         Ok(())
     }
 
-    fn process_workflow(
-        &self,
-        workflow: &Workflow,
-        message: &mut Message,
-        executor: &InternalExecutor,
-    ) {
+    fn process_workflow(&self, workflow: &Workflow, message: &mut Message) {
         let workflow_id = workflow.id.clone();
         let mut workflow_errors = Vec::new();
 
@@ -252,11 +258,15 @@ impl Engine {
         // Process tasks SEQUENTIALLY within this workflow
         for task in &workflow.tasks {
             // Evaluate task condition
-            let should_execute = executor.evaluate_condition(
-                task.condition_index,
-                &task.condition,
-                &message.metadata,
-            );
+            let should_execute = {
+                let datalogic = self.datalogic.borrow();
+                let executor = InternalExecutor::new(&datalogic, &self.logic_cache);
+                executor.evaluate_condition(
+                    task.condition_index,
+                    &task.condition,
+                    &message.metadata,
+                )
+            };
 
             let should_execute = match should_execute {
                 Ok(result) => result,
@@ -280,8 +290,14 @@ impl Engine {
             let function_config = &task.function;
 
             let execution_result = match function_config {
-                FunctionConfig::Map { input, .. } => executor.execute_map(message, input),
+                FunctionConfig::Map { input, .. } => {
+                    let datalogic = self.datalogic.borrow();
+                    let executor = InternalExecutor::new(&datalogic, &self.logic_cache);
+                    executor.execute_map(message, input)
+                }
                 FunctionConfig::Validation { input, .. } => {
+                    let datalogic = self.datalogic.borrow();
+                    let executor = InternalExecutor::new(&datalogic, &self.logic_cache);
                     executor.execute_validate(message, input)
                 }
                 FunctionConfig::Custom { name, .. } => {
@@ -359,7 +375,7 @@ impl Engine {
 
         // Try executing the task with retries
         while retry_count <= self.retry_config.max_retries {
-            match function.execute(message, config, &self.datalogic) {
+            match function.execute(message, config, &self.datalogic.borrow()) {
                 Ok((status_code, changes)) => {
                     info!("Task {} completed with status {}", task_id, status_code);
 
@@ -499,7 +515,8 @@ impl Engine {
         logic: &Value,
         data: &Value,
     ) -> Result<Value> {
-        let executor = InternalExecutor::new(&self.datalogic, &self.logic_cache);
+        let datalogic = self.datalogic.borrow();
+        let executor = InternalExecutor::new(&datalogic, &self.logic_cache);
         executor.evaluate_logic(logic_index, logic, data)
     }
 }

@@ -72,7 +72,7 @@ fn test_workflow_execution() {
     );
 
     // Create engine with the workflow and custom function
-    let engine = Engine::new(vec![workflow], Some(custom_functions), None);
+    let mut engine = Engine::new(vec![workflow], Some(custom_functions), None);
 
     // Create a dummy message
     let mut message = Message::new(&json!({}));

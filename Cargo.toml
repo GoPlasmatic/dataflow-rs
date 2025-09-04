@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "1.0.5"
+version = "1.0.6"
 edition = "2024"
 exclude = [".DS_Store", "/target", ".vscode"]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
@@ -16,7 +16,7 @@ categories = ["data-structures", "development-tools", "parsing"]
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7"
 serde_json = "1.0"
-datalogic-rs = "3.1"
+datalogic-rs = "3.1.0"
 uuid = { version = "1.18", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json", "blocking"] }

@@ -474,7 +474,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Note: map and validate are now built-in to the Engine and will be used automatically
 
     // Create engine with custom functions and built-ins (map/validate are always included internally)
-    let engine = Engine::new(
+    let mut engine = Engine::new(
         vec![workflow, workflow2],
         Some(custom_functions),
         None, // Use default (includes built-ins)

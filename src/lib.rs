@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow = Workflow::from_json(workflow_json)?;
 
     // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
-    let engine = Engine::new(vec![workflow], None, None);
+    let mut engine = Engine::new(vec![workflow], None, None);
 
     // Create a message to process
     let mut message = Message::new(&json!({}));
@@ -101,7 +101,7 @@ use serde_json::json;
 
 fn main() -> Result<()> {
     // ... setup workflows ...
-    let engine = Engine::new(vec![/* workflows */], None, None);
+    let mut engine = Engine::new(vec![/* workflows */], None, None);
 
     let mut message = Message::new(&json!({}));
 
