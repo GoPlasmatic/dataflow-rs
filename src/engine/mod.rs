@@ -165,6 +165,32 @@ impl Engine {
         }
     }
 
+    /// Creates a new Engine instance with shared function handlers.
+    /// This is useful when creating multiple engine instances that share the same function registry.
+    ///
+    /// # Arguments
+    /// * `workflows` - The workflows to use for processing messages
+    /// * `task_functions` - Shared function handlers wrapped in Arc
+    /// * `retry_config` - Optional retry configuration (uses default if None)
+    pub fn new_with_shared_functions(
+        workflows: Vec<Workflow>,
+        task_functions: Arc<HashMap<String, Box<dyn FunctionHandler + Send + Sync>>>,
+        retry_config: Option<RetryConfig>,
+    ) -> Self {
+        // Compile workflows
+        let mut compiler = LogicCompiler::new();
+        let workflow_map = compiler.compile_workflows(workflows);
+        let (datalogic, logic_cache) = compiler.into_parts();
+
+        Self {
+            workflows: Arc::new(workflow_map),
+            task_functions,
+            datalogic: RefCell::new(datalogic),
+            logic_cache,
+            retry_config: retry_config.unwrap_or_default(),
+        }
+    }
+
     /// Processes a message through workflows that match their conditions.
     ///
     /// This method:

@@ -291,7 +291,7 @@ impl ThreadedEngine {
         let WorkerConfig {
             id,
             workflows,
-            task_functions: _task_functions,
+            task_functions,
             retry_config,
             work_queue,
             available_workers,
@@ -299,14 +299,15 @@ impl ThreadedEngine {
             shutdown,
         } = config;
         // Create this worker's Engine instance
-        // We need to convert Arc<HashMap> to Vec<Workflow> for Engine::new
+        // We need to convert Arc<HashMap> to Vec<Workflow> for Engine::new_with_shared_functions
         let workflows_vec: Vec<Workflow> = workflows.values().cloned().collect();
 
-        // For now, we'll pass None for custom functions since we can't easily clone trait objects
-        // The built-in functions will be registered automatically
-        let functions_map = None;
-
-        let mut engine = Engine::new(workflows_vec, functions_map, Some(retry_config));
+        // Use the new_with_shared_functions method to share the function registry
+        let mut engine = Engine::new_with_shared_functions(
+            workflows_vec,
+            Arc::clone(&task_functions),
+            Some(retry_config),
+        );
 
         loop {
             // Mark as available before waiting for work
@@ -388,8 +389,34 @@ impl Clone for ThreadedEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::Workflow;
-    use serde_json::json;
+    use crate::engine::{Workflow, FunctionConfig};
+    use crate::engine::message::Change;
+    use crate::engine::functions::FunctionHandler;
+    use datalogic_rs::datalogic::DataLogic;
+    use serde_json::{json, Value};
+
+    // Custom test function handler
+    struct TestFunction {
+        name: String,
+    }
+
+    impl FunctionHandler for TestFunction {
+        fn execute(
+            &self,
+            message: &mut Message,
+            _config: &FunctionConfig,
+            _datalogic: &DataLogic,
+        ) -> Result<(usize, Vec<Change>)> {
+            // Add a field to indicate the custom function was called
+            let old_value = message.data.get("custom_function_called").unwrap_or(&Value::Null).clone();
+            message.data["custom_function_called"] = json!(self.name);
+            Ok((200, vec![Change {
+                path: "data.custom_function_called".to_string(),
+                old_value,
+                new_value: json!(self.name),
+            }]))
+        }
+    }
 
     #[test]
     fn test_threaded_engine_creation() {
@@ -428,6 +455,43 @@ mod tests {
 
         let result = engine.process_message(message).await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_custom_functions() {
+        // Create a workflow that uses a custom function
+        let workflows = vec![
+            Workflow::from_json(r#"{
+                "id": "test", 
+                "name": "Test",
+                "priority": 0,
+                "tasks": [{
+                    "id": "custom_task",
+                    "name": "Custom Task",
+                    "function": {
+                        "name": "test_function",
+                        "input": {}
+                    }
+                }]
+            }"#)
+            .unwrap(),
+        ];
+
+        // Create custom functions map
+        let mut custom_functions = HashMap::new();
+        custom_functions.insert(
+            "test_function".to_string(),
+            Box::new(TestFunction { name: "test_function".to_string() }) as Box<dyn FunctionHandler + Send + Sync>
+        );
+
+        let engine = ThreadedEngine::new(workflows, Some(custom_functions), None, 2);
+        let message = Message::new(&json!({"test": "data"}));
+
+        let result = engine.process_message_sync(message);
+        assert!(result.is_ok());
+        
+        let processed_message = result.unwrap();
+        assert_eq!(processed_message.data["custom_function_called"], json!("test_function"));
     }
 
     #[test]
