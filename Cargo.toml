@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "1.0.7"
+version = "1.0.8"
 edition = "2024"
 exclude = [".DS_Store", "/target", ".vscode"]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
@@ -20,7 +20,10 @@ uuid = { version = "1.18", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2.0"
 log = "0.4"
-tokio = { version = "1", features = ["sync", "rt"] }
+tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
+crossbeam = "0.8"
+crossbeam-deque = "0.8"
+rand = "0.8"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

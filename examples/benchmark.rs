@@ -1,15 +1,14 @@
-use dataflow_rs::{Engine, Message, Workflow};
+use dataflow_rs::{Engine, Message, ThreadedEngine, Workflow};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Instant;
 
-use dataflow_rs::ThreadedEngine;
-
 const ITERATIONS: usize = 100_000;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╔══════════════════════════════════════════╗");
     println!("║      DATAFLOW ENGINE BENCHMARK          ║");
     println!("╚══════════════════════════════════════════╝");
@@ -123,18 +122,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("═══════════════════════════════════════════");
     let single_throughput = run_single_threaded_benchmark(workflow.clone(), &sample_data)?;
 
-    // Run multi-threaded benchmarks
+    // Collect all results for comparison
+    let mut all_results = Vec::new();
+    let mut async_results = Vec::new();
+
+    // Run multi-threaded benchmarks with SYNC interface
     {
         println!();
         println!("═══════════════════════════════════════════");
-        println!("📊 MULTI-THREADED ENGINE");
+        println!("📊 MULTI-THREADED ENGINE - SYNC INTERFACE");
         println!("═══════════════════════════════════════════");
 
         // Test with different worker and client configurations
         let worker_counts = vec![1, 2, 4, 8];
         let client_counts = vec![1, 2, 4, 8, 16];
-
-        let mut all_results = Vec::new();
 
         for &workers in &worker_counts {
             println!("\n🔧 Testing {} worker thread(s):", workers);
@@ -258,18 +259,132 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Explain why threaded performance is lower
         if best.2 < single_throughput {
             println!();
-            println!("⚠️  WHY IS THREADING SLOWER?");
+            println!("⚠️  WHY IS SYNC THREADING SLOWER?");
             println!("──────────────────────────────");
             println!("  For CPU-bound tasks with ~5-10μs execution time:");
             println!("  • Synchronization overhead (~2-3μs per message)");
             println!("  • Context switching cost (~1-10μs)");
-            println!("  • Lock contention on work queue");
+            println!("  • Channel bridging overhead in sync interface");
             println!("  • Cache misses from thread switching");
+        }
+    }
+
+    // Run multi-threaded benchmarks with ASYNC interface
+    {
+        println!();
+        println!("═══════════════════════════════════════════");
+        println!("📊 MULTI-THREADED ENGINE - ASYNC INTERFACE");
+        println!("═══════════════════════════════════════════");
+
+        let worker_counts = vec![1, 2, 4, 8];
+        let client_counts = vec![1, 2, 4, 8, 16, 32];
+
+        for &workers in &worker_counts {
+            println!("\n🔧 Testing {} worker thread(s):", workers);
+            println!("─────────────────────────────────────");
+
+            for &clients in &client_counts {
+                let throughput =
+                    run_async_benchmark(workflow.clone(), &sample_data, workers, clients).await?;
+
+                async_results.push((workers, clients, throughput));
+
+                let speedup = throughput / single_throughput;
+                let efficiency = (speedup / workers as f64) * 100.0;
+
+                println!(
+                    "  {:2} client(s): {:>8.0} msg/s (speedup: {:.2}x, efficiency: {:.1}%)",
+                    clients, throughput, speedup, efficiency
+                );
+            }
+        }
+
+        // Display async results table
+        println!();
+        println!("═══════════════════════════════════════════════════════════════════════════════");
+        println!("📊 ASYNC PERFORMANCE MATRIX (throughput in msg/s)");
+        println!("═══════════════════════════════════════════════════════════════════════════════");
+        println!(
+            "        │ Concurrent Tasks                                                      "
+        );
+        println!("Workers │    1    │    2    │    4    │    8    │   16    │   32    │ Best");
+        println!("────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────");
+
+        for &workers in &worker_counts {
+            print!("{:^7} │", workers);
+            let mut row_best = 0.0;
+
+            for &clients in &client_counts {
+                let throughput = async_results
+                    .iter()
+                    .find(|(w, c, _)| *w == workers && *c == clients)
+                    .map(|(_, _, t)| *t)
+                    .unwrap_or(0.0);
+
+                print!(" {:>7.0} │", throughput);
+                if throughput > row_best {
+                    row_best = throughput;
+                }
+            }
+
+            let speedup = row_best / single_throughput;
+            print!(" {:>7.0}", row_best);
+            println!(" ({:.2}x)", speedup);
+        }
+
+        println!("═══════════════════════════════════════════════════════════════════════════════");
+
+        // Compare best results from both interfaces
+        let best_sync = all_results
+            .iter()
+            .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+            .unwrap();
+
+        let best_async = async_results
+            .iter()
+            .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+            .unwrap();
+
+        println!();
+        println!("═══════════════════════════════════════════");
+        println!("📊 PERFORMANCE COMPARISON SUMMARY");
+        println!("═══════════════════════════════════════════");
+        println!(
+            "  • Single-threaded baseline: {:.0} msg/s",
+            single_throughput
+        );
+        println!(
+            "  • Best SYNC ({} workers, {} clients): {:.0} msg/s ({:.2}x)",
+            best_sync.0,
+            best_sync.1,
+            best_sync.2,
+            best_sync.2 / single_throughput
+        );
+        println!(
+            "  • Best ASYNC ({} workers, {} clients): {:.0} msg/s ({:.2}x)",
+            best_async.0,
+            best_async.1,
+            best_async.2,
+            best_async.2 / single_throughput
+        );
+        println!();
+
+        if best_async.2 > best_sync.2 {
+            let improvement = (best_async.2 / best_sync.2 - 1.0) * 100.0;
+            println!(
+                "  🎯 Async interface is {:.1}% faster than sync",
+                improvement
+            );
             println!();
-            println!("  Threading is beneficial for:");
-            println!("  • I/O-bound operations (network, disk)");
-            println!("  • Tasks taking >1ms per message");
-            println!("  • Blocking operations (database queries)");
+            println!("💡 WHY ASYNC IS FASTER:");
+            println!("───────────────────────");
+            println!("  • No channel bridging overhead");
+            println!("  • Direct oneshot channel communication");
+            println!("  • Better integration with Tokio runtime");
+            println!("  • Natural async/await flow without blocking");
+        } else {
+            println!("  ⚠️  Sync interface performed similarly or better");
+            println!("      CPU-bound workload dominates any overhead differences");
         }
     }
 
@@ -400,6 +515,64 @@ fn run_parallel_benchmark(
     let elapsed = start.elapsed();
     let total_processed = success_count.load(Ordering::Relaxed);
     let throughput = total_processed as f64 / elapsed.as_secs_f64();
+
+    Ok(throughput)
+}
+
+async fn run_async_benchmark(
+    workflow: Workflow,
+    sample_data: &serde_json::Value,
+    worker_threads: usize,
+    client_tasks: usize,
+) -> Result<f64, Box<dyn std::error::Error>> {
+    let engine = Arc::new(ThreadedEngine::new(
+        vec![workflow],
+        None,
+        None,
+        worker_threads,
+    ));
+
+    // Warm-up
+    for _ in 0..100 {
+        let message = Message::new(&json!({}));
+        let _ = engine.process_message(message).await;
+    }
+
+    let messages_per_client = ITERATIONS / client_tasks;
+    let success_count = Arc::new(AtomicUsize::new(0));
+
+    let start = Instant::now();
+    let mut handles = Vec::new();
+
+    for client_id in 0..client_tasks {
+        let engine = Arc::clone(&engine);
+        let sample_data = sample_data.clone();
+        let success = Arc::clone(&success_count);
+
+        let handle = tokio::spawn(async move {
+            for i in 0..messages_per_client {
+                let mut message = Message::new(&json!({}));
+                message.temp_data = sample_data.clone();
+                message.metadata = json!({
+                    "iteration": client_id * messages_per_client + i
+                });
+
+                if engine.process_message(message).await.is_ok() {
+                    success.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    let elapsed = start.elapsed();
+    let actual_messages = success_count.load(Ordering::Relaxed);
+    let throughput = actual_messages as f64 / elapsed.as_secs_f64();
 
     Ok(throughput)
 }
