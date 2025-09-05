@@ -60,6 +60,7 @@ pub mod functions;
 pub mod message;
 pub mod retry;
 pub mod task;
+pub mod threaded;
 pub mod workflow;
 
 // Re-export key types for easier access
@@ -68,6 +69,7 @@ pub use functions::{FunctionConfig, FunctionHandler};
 pub use message::Message;
 pub use retry::RetryConfig;
 pub use task::Task;
+pub use threaded::ThreadedEngine;
 pub use workflow::Workflow;
 
 use chrono::Utc;
@@ -161,26 +163,6 @@ impl Engine {
             logic_cache,
             retry_config: retry_config.unwrap_or_default(),
         }
-    }
-
-    /// Get the configured retry configuration
-    pub fn retry_config(&self) -> &RetryConfig {
-        &self.retry_config
-    }
-
-    /// Get the configured workflows
-    pub fn workflows(&self) -> &HashMap<String, Workflow> {
-        &self.workflows
-    }
-
-    /// Get the registered task functions
-    pub fn task_functions(&self) -> &HashMap<String, Box<dyn FunctionHandler + Send + Sync>> {
-        &self.task_functions
-    }
-
-    /// Check if a function with the given name is registered
-    pub fn has_function(&self, name: &str) -> bool {
-        self.task_functions.contains_key(name)
     }
 
     /// Processes a message through workflows that match their conditions.
@@ -506,17 +488,5 @@ impl Engine {
             Value::Number(Number::from(retry_count)),
         );
         message.metadata["progress"] = json!(progress);
-    }
-
-    /// Evaluate logic using compiled index or direct evaluation (public for testing)
-    pub fn evaluate_logic(
-        &self,
-        logic_index: Option<usize>,
-        logic: &Value,
-        data: &Value,
-    ) -> Result<Value> {
-        let datalogic = self.datalogic.borrow();
-        let executor = InternalExecutor::new(&datalogic, &self.logic_cache);
-        executor.evaluate_logic(logic_index, logic, data)
     }
 }

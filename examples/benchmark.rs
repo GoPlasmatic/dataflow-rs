@@ -1,30 +1,36 @@
-use dataflow_rs::{Engine, Workflow, engine::message::Message};
+use dataflow_rs::{Engine, Message, Workflow};
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier};
+use std::thread;
 use std::time::Instant;
 
-const ITERATIONS: usize = 1_000_000;
+use dataflow_rs::ThreadedEngine;
+
+const ITERATIONS: usize = 100_000;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("========================================");
-    println!("DATAFLOW ENGINE BENCHMARK");
-    println!("========================================\n");
-    println!(
-        "Running {} iterations on single-threaded engine\n",
-        ITERATIONS
-    );
+    println!("╔══════════════════════════════════════════╗");
+    println!("║      DATAFLOW ENGINE BENCHMARK          ║");
+    println!("╚══════════════════════════════════════════╝");
+    println!();
+    println!("Configuration:");
+    println!("  • Total iterations: {}", ITERATIONS);
+    println!("  • CPU cores available: {}", num_cpus::get());
+    println!();
 
-    // Define a simple workflow with data transformation
+    // Define a CPU-intensive workflow with multiple transformations
     let workflow_json = r#"
     {
         "id": "benchmark_workflow",
         "name": "Benchmark Workflow",
-        "description": "Simple workflow for performance testing",
+        "description": "CPU-intensive workflow for performance testing",
         "priority": 1,
         "tasks": [
             {
                 "id": "transform_data",
                 "name": "Transform Data",
-                "description": "Map data fields",
+                "description": "Complex data transformations",
                 "function": {
                     "name": "map",
                     "input": {
@@ -54,6 +60,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         "minor"
                                     ]
                                 }
+                            },
+                            {
+                                "path": "data.calculations.total",
+                                "logic": {
+                                    "*": [
+                                        { "+": [{ "var": "temp_data.age" }, 10] },
+                                        { "/": [{ "var": "temp_data.id" }, 100] }
+                                    ]
+                                }
                             }
                         ]
                     }
@@ -76,6 +91,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "path": "data",
                                 "logic": { "!!": { "var": "data.user.email" } },
                                 "message": "User email is required"
+                            },
+                            {
+                                "path": "data",
+                                "logic": { ">": [{ "var": "data.calculations.total" }, 0] },
+                                "message": "Total must be positive"
                             }
                         ]
                     }
@@ -88,9 +108,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse the workflow
     let workflow = Workflow::from_json(workflow_json)?;
 
-    // Create the engine with built-in functions
-    let mut engine = Engine::new(vec![workflow], None, None);
-
     // Sample data for benchmarking
     let sample_data = json!({
         "id": 12345,
@@ -100,88 +117,289 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "department": "Engineering"
     });
 
-    // Warm-up run
-    println!("Warming up...");
+    // Run single-threaded benchmark
+    println!("═══════════════════════════════════════════");
+    println!("📊 SINGLE-THREADED ENGINE");
+    println!("═══════════════════════════════════════════");
+    let single_throughput = run_single_threaded_benchmark(workflow.clone(), &sample_data)?;
+
+    // Run multi-threaded benchmarks
+    {
+        println!();
+        println!("═══════════════════════════════════════════");
+        println!("📊 MULTI-THREADED ENGINE");
+        println!("═══════════════════════════════════════════");
+
+        // Test with different worker and client configurations
+        let worker_counts = vec![1, 2, 4, 8];
+        let client_counts = vec![1, 2, 4, 8, 16];
+
+        let mut all_results = Vec::new();
+
+        for &workers in &worker_counts {
+            println!("\n🔧 Testing {} worker thread(s):", workers);
+            println!("─────────────────────────────────────");
+
+            for &clients in &client_counts {
+                let throughput =
+                    run_parallel_benchmark(workflow.clone(), &sample_data, workers, clients)?;
+
+                all_results.push((workers, clients, throughput));
+
+                // Show progress
+                let speedup = throughput / single_throughput;
+                let efficiency = (speedup / workers as f64) * 100.0;
+
+                println!(
+                    "  {:2} client(s): {:>8.0} msg/s (speedup: {:.2}x, efficiency: {:.1}%)",
+                    clients, throughput, speedup, efficiency
+                );
+            }
+        }
+
+        // Display comprehensive results table
+        println!();
+        println!("═══════════════════════════════════════════════════════════════════════");
+        println!("📊 PERFORMANCE MATRIX (throughput in msg/s)");
+        println!("═══════════════════════════════════════════════════════════════════════");
+        println!("        │ Concurrent Clients                                           ");
+        println!("Workers │    1    │    2    │    4    │    8    │   16    │ Best");
+        println!("────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────");
+
+        for &workers in &worker_counts {
+            print!("{:^7} │", workers);
+            let mut row_best = 0.0;
+
+            for &clients in &client_counts {
+                let throughput = all_results
+                    .iter()
+                    .find(|(w, c, _)| *w == workers && *c == clients)
+                    .map(|(_, _, t)| *t)
+                    .unwrap_or(0.0);
+
+                print!(" {:>7.0} │", throughput);
+                if throughput > row_best {
+                    row_best = throughput;
+                }
+            }
+
+            let speedup = row_best / single_throughput;
+            print!(" {:>7.0}", row_best);
+            println!(" ({:.2}x)", speedup);
+        }
+
+        println!("═══════════════════════════════════════════════════════════════════════");
+
+        // Key insights and analysis
+        println!();
+        println!("📈 KEY INSIGHTS:");
+        println!("────────────────");
+        println!(
+            "  • Single-threaded baseline: {:.0} msg/s",
+            single_throughput
+        );
+
+        // Find best configuration
+        let best = all_results
+            .iter()
+            .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+            .unwrap();
+        println!(
+            "  • Best configuration: {} workers, {} clients = {:.0} msg/s",
+            best.0, best.1, best.2
+        );
+        println!(
+            "  • Maximum speedup achieved: {:.2}x",
+            best.2 / single_throughput
+        );
+
+        // Analyze scaling patterns
+        let single_client_1w = all_results
+            .iter()
+            .find(|(w, c, _)| *w == 1 && *c == 1)
+            .map(|(_, _, t)| *t)
+            .unwrap_or(0.0);
+
+        let single_client_4w = all_results
+            .iter()
+            .find(|(w, c, _)| *w == 4 && *c == 1)
+            .map(|(_, _, t)| *t)
+            .unwrap_or(0.0);
+
+        let multi_client_4w = all_results
+            .iter()
+            .find(|(w, c, _)| *w == 4 && *c == 16)
+            .map(|(_, _, t)| *t)
+            .unwrap_or(0.0);
+
+        println!();
+        println!("💡 SCALING ANALYSIS:");
+        println!("────────────────────");
+
+        if single_client_4w <= single_client_1w * 1.1 {
+            println!("  ⚠️  Single client cannot saturate multiple workers");
+            println!("      1 worker, 1 client:  {:.0} msg/s", single_client_1w);
+            println!(
+                "      4 workers, 1 client: {:.0} msg/s (no improvement)",
+                single_client_4w
+            );
+        }
+
+        if multi_client_4w > single_client_4w * 1.5 {
+            println!("  ✅ Multiple clients enable better parallelism");
+            println!("      4 workers, 1 client:   {:.0} msg/s", single_client_4w);
+            println!(
+                "      4 workers, 16 clients: {:.0} msg/s ({:.1}x better)",
+                multi_client_4w,
+                multi_client_4w / single_client_4w
+            );
+        }
+
+        // Explain why threaded performance is lower
+        if best.2 < single_throughput {
+            println!();
+            println!("⚠️  WHY IS THREADING SLOWER?");
+            println!("──────────────────────────────");
+            println!("  For CPU-bound tasks with ~5-10μs execution time:");
+            println!("  • Synchronization overhead (~2-3μs per message)");
+            println!("  • Context switching cost (~1-10μs)");
+            println!("  • Lock contention on work queue");
+            println!("  • Cache misses from thread switching");
+            println!();
+            println!("  Threading is beneficial for:");
+            println!("  • I/O-bound operations (network, disk)");
+            println!("  • Tasks taking >1ms per message");
+            println!("  • Blocking operations (database queries)");
+        }
+    }
+
+    Ok(())
+}
+
+fn run_single_threaded_benchmark(
+    workflow: Workflow,
+    sample_data: &serde_json::Value,
+) -> Result<f64, Box<dyn std::error::Error>> {
+    let mut engine = Engine::new(vec![workflow], None, None);
+
+    // Warm-up
+    print!("Warming up...");
+    use std::io::Write;
+    std::io::stdout().flush()?;
+
     for _ in 0..1000 {
         let mut message = Message::new(&json!({}));
         message.temp_data = sample_data.clone();
         let _ = engine.process_message(&mut message);
     }
+    println!(" done");
 
     // Benchmark run
-    println!("Starting benchmark...\n");
-
-    let mut all_durations = Vec::with_capacity(ITERATIONS);
-    let mut success_count = 0;
-    let mut error_count = 0;
+    print!("Running benchmark...");
+    std::io::stdout().flush()?;
 
     let benchmark_start = Instant::now();
+    let mut success_count = 0;
 
     for i in 0..ITERATIONS {
         let mut message = Message::new(&json!({}));
         message.temp_data = sample_data.clone();
-        message.metadata = json!({
-            "iteration": i,
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        });
+        message.metadata = json!({ "iteration": i });
 
-        let iteration_start = Instant::now();
-        match engine.process_message(&mut message) {
-            Ok(_) => {
-                success_count += 1;
-                if message.has_errors() {
-                    error_count += 1;
-                }
-            }
-            Err(_) => {
-                error_count += 1;
-            }
+        if engine.process_message(&mut message).is_ok() {
+            success_count += 1;
         }
-        let iteration_duration = iteration_start.elapsed();
-        all_durations.push(iteration_duration);
 
-        // Progress indicator every 10k iterations
+        // Progress indicator
         if (i + 1) % 10000 == 0 {
             print!(".");
-            use std::io::Write;
             std::io::stdout().flush()?;
         }
     }
 
     let total_time = benchmark_start.elapsed();
-    println!("\n\nBenchmark Complete!");
-    println!("==========================================\n");
+    println!(" done");
 
-    // Calculate statistics
-    all_durations.sort_unstable();
-    let p50 = all_durations[ITERATIONS * 50 / 100];
-    let p90 = all_durations[ITERATIONS * 90 / 100];
-    let p95 = all_durations[ITERATIONS * 95 / 100];
-    let p99 = all_durations[ITERATIONS * 99 / 100];
     let throughput = ITERATIONS as f64 / total_time.as_secs_f64();
 
-    // Display results
-    println!("📊 PERFORMANCE METRICS");
-    println!("──────────────────────────────────────────");
-    println!("Total iterations:    {:>10}", ITERATIONS);
-    println!("Successful:          {:>10}", success_count);
-    println!("Errors:              {:>10}", error_count);
+    println!();
+    println!("Results:");
+    println!("  • Total time:    {:.3} seconds", total_time.as_secs_f64());
+    println!("  • Successful:    {} / {}", success_count, ITERATIONS);
+    println!("  • Throughput:    {:.0} messages/second", throughput);
     println!(
-        "Total time:          {:>10.3} seconds",
-        total_time.as_secs_f64()
+        "  • Avg latency:   {:.1} μs/message",
+        total_time.as_micros() as f64 / ITERATIONS as f64
     );
-    println!();
 
-    println!("Messages/second:     {:>10.0}", throughput);
-    println!();
+    Ok(throughput)
+}
 
-    println!("📉 LATENCY PERCENTILES");
-    println!("──────────────────────────────────────────");
-    println!("P50:                 {:>10.3} μs", p50.as_micros() as f64);
-    println!("P90:                 {:>10.3} μs", p90.as_micros() as f64);
-    println!("P95:                 {:>10.3} μs", p95.as_micros() as f64);
-    println!("P99:                 {:>10.3} μs", p99.as_micros() as f64);
-    println!();
+fn run_parallel_benchmark(
+    workflow: Workflow,
+    sample_data: &serde_json::Value,
+    worker_threads: usize,
+    client_threads: usize,
+) -> Result<f64, Box<dyn std::error::Error>> {
+    let engine = Arc::new(ThreadedEngine::new(
+        vec![workflow],
+        None,
+        None,
+        worker_threads,
+    ));
 
-    Ok(())
+    // Warm-up
+    for _ in 0..100 {
+        let message = Message::new(&json!({}));
+        let _ = engine.process_message_sync(message);
+    }
+
+    let messages_per_client = ITERATIONS / client_threads;
+    let success_count = Arc::new(AtomicUsize::new(0));
+    let barrier = Arc::new(Barrier::new(client_threads + 1));
+
+    // Spawn client threads to submit work concurrently
+    let mut handles = Vec::new();
+
+    for client_id in 0..client_threads {
+        let engine = Arc::clone(&engine);
+        let sample_data = sample_data.clone();
+        let success = Arc::clone(&success_count);
+        let barrier = Arc::clone(&barrier);
+
+        let handle = thread::spawn(move || {
+            // Wait for all clients to be ready
+            barrier.wait();
+
+            // Submit messages
+            for i in 0..messages_per_client {
+                let mut message = Message::new(&json!({}));
+                message.temp_data = sample_data.clone();
+                message.metadata = json!({
+                    "iteration": client_id * messages_per_client + i
+                });
+
+                if engine.process_message_sync(message).is_ok() {
+                    success.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    // Start timing when all clients are ready
+    barrier.wait();
+    let start = Instant::now();
+
+    // Wait for all clients to complete
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let elapsed = start.elapsed();
+    let total_processed = success_count.load(Ordering::Relaxed);
+    let throughput = total_processed as f64 / elapsed.as_secs_f64();
+
+    Ok(throughput)
 }

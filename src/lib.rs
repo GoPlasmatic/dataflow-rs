@@ -21,7 +21,6 @@ contain multiple tasks that transform, validate, or enrich the data.
 
 The engine comes with several pre-registered functions:
 
-* **http**: Fetches data from external HTTP APIs
 * **map**: Maps and transforms data between different parts of a message
 * **validate**: Validates message data against rules using JSONLogic expressions
 
@@ -41,14 +40,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "priority": 0,
         "tasks": [
             {
-                "id": "fetch_data",
-                "name": "Fetch Data",
-                "function": {
-                    "name": "http",
-                    "input": { "url": "https://api.example.com/data" }
-                }
-            },
-            {
                 "id": "transform_data",
                 "name": "Transform Data",
                 "function": {
@@ -57,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "mappings": [
                             {
                                 "path": "data.result",
-                                "logic": { "var": "temp_data.body.value" }
+                                "logic": { "var": "temp_data.value" }
                             }
                         ]
                     }
@@ -192,4 +183,4 @@ pub use engine::RetryConfig;
 pub use engine::error::{DataflowError, ErrorInfo, Result};
 pub use engine::functions::{MapConfig, MapMapping, ValidationConfig, ValidationRule};
 pub use engine::message::{AuditTrail, Change, Message};
-pub use engine::{Engine, FunctionConfig, FunctionHandler, Task, Workflow};
+pub use engine::{Engine, FunctionConfig, FunctionHandler, Task, ThreadedEngine, Workflow};
