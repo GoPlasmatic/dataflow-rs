@@ -12,12 +12,13 @@
 
 ---
 
-Dataflow-rs is a Rust library for creating high-performance data processing pipelines with pre-compiled JSONLogic and zero runtime overhead. It features a modular architecture that separates compilation from execution, ensuring predictable low-latency performance. With built-in multi-threading support through ThreadedEngine, it provides excellent vertical scaling capabilities. Whether you're building REST APIs, processing Kafka streams, or creating sophisticated data transformation pipelines, Dataflow-rs provides enterprise-grade performance with minimal complexity.
+Dataflow-rs is a Rust library for creating high-performance data processing pipelines with pre-compiled JSONLogic and zero runtime overhead. It features a modular architecture that separates compilation from execution, ensuring predictable low-latency performance. With built-in multi-threading support through ThreadedEngine and high-performance parallel processing via RayonEngine, it provides excellent vertical scaling capabilities. Whether you're building REST APIs, processing Kafka streams, or creating sophisticated data transformation pipelines, Dataflow-rs provides enterprise-grade performance with minimal complexity.
 
 ## 🚀 Key Features
 
 - **Zero Runtime Compilation:** All JSONLogic expressions pre-compiled at startup for optimal performance.
 - **Multi-Threading Support:** Built-in ThreadedEngine with configurable thread pools for vertical scaling.
+- **Parallel Processing:** RayonEngine leverages work-stealing for CPU-intensive workloads.
 - **Modular Architecture:** Clear separation between compilation (LogicCompiler) and execution (InternalExecutor).
 - **Direct DataLogic Instantiation:** Each engine has its own DataLogic instance for zero contention.
 - **Immutable Workflows:** Workflows compiled once at initialization for predictable performance.
@@ -35,7 +36,7 @@ Here's a quick example to get you up and running.
 
 ```toml
 [dependencies]
-dataflow-rs = "1.0.7"
+dataflow-rs = "1.0.8"
 serde_json = "1.0"
 ```
 
@@ -152,17 +153,65 @@ The ThreadedEngine provides:
 - **Both sync and async APIs** for flexible integration
 - **Health monitoring** and worker restart capabilities
 
+### 5. High-Performance Parallel Processing with RayonEngine
+
+For CPU-intensive workloads requiring maximum parallelism, use RayonEngine:
+
+```rust
+use dataflow_rs::{RayonEngine, Workflow, Message};
+use serde_json::json;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Define your workflows
+    let workflow_json = r#"{ ... }"#; // Your workflow JSON
+    let workflow = Workflow::from_json(workflow_json)?;
+    
+    // Create RayonEngine (uses all CPU cores by default)
+    let engine = RayonEngine::new(
+        vec![workflow],  // Workflows
+        None,           // Custom functions (optional)
+        None,           // Retry config (optional)
+    );
+
+    // Process batch of messages in parallel
+    let messages: Vec<Message> = (0..10000)
+        .map(|i| Message::new(&json!({"id": i})))
+        .collect();
+    
+    let results = engine.process_batch(messages);
+    
+    // Handle results
+    for result in results {
+        match result {
+            Ok(message) => println!("Processed: {:?}", message.data),
+            Err(e) => eprintln!("Error: {:?}", e),
+        }
+    }
+
+    println!("✅ Processed 10000 messages with RayonEngine!");
+    Ok(())
+}
+```
+
+The RayonEngine provides:
+- **Work-stealing parallelism** for automatic load balancing
+- **Thread-local engines** for zero contention
+- **Batch processing** for maximum throughput
+- **Stream processing** with parallel iterators
+- **CPU-optimized** for compute-intensive workloads
+
 ## ✨ Core Concepts
 
 - **Engine:** High-performance engine with pre-compiled logic and immutable workflows.
 - **ThreadedEngine:** Multi-threaded variant with configurable thread pool for vertical scaling.
+- **RayonEngine:** Parallel processing engine using Rayon's work-stealing for CPU-bound workloads.
 - **LogicCompiler:** Compiles all JSONLogic expressions at initialization for zero runtime overhead.
 - **InternalExecutor:** Executes built-in functions using pre-compiled logic from the cache.
 - **Workflow:** A sequence of tasks executed in order, with conditions accessing only metadata.
 - **Task:** A single processing step with optional JSONLogic conditions.
 - **Message:** The data structure flowing through workflows with audit trail support.
 
-## 🔧 Choosing Between Engine and ThreadedEngine
+## 🔧 Choosing Between Engine Types
 
 **Use `Engine` when:**
 - Processing messages sequentially in a single thread
@@ -173,8 +222,14 @@ The ThreadedEngine provides:
 **Use `ThreadedEngine` when:**
 - Need to process multiple messages concurrently
 - Want vertical scaling on multi-core systems
-- Have CPU-bound workloads that benefit from parallelism
+- Have mixed I/O and CPU-bound workloads
 - Need a built-in thread pool with work distribution
+
+**Use `RayonEngine` when:**
+- Processing large batches of messages in parallel
+- CPU-intensive workloads with minimal I/O
+- Need automatic work-stealing for load balancing
+- Want maximum CPU utilization across all cores
 
 ## 🏗️ Architecture
 
@@ -204,17 +259,20 @@ Dataflow-rs achieves optimal performance through architectural improvements:
 
 - **Pre-Compilation:** All JSONLogic compiled at startup, zero runtime overhead
 - **Multi-Threading:** Built-in ThreadedEngine for vertical scaling with configurable worker threads
+- **Parallel Processing:** RayonEngine with work-stealing for maximum CPU utilization
 - **Cache-Friendly:** Compiled logic stored contiguously in memory
 - **Direct Instantiation:** DataLogic instances created directly without locking
 - **Predictable Latency:** No runtime allocations for logic evaluation
 - **Modular Design:** Clear separation of compilation and execution phases
 
-Run the included benchmark to test performance on your hardware:
+Run the included benchmarks to test performance on your hardware:
 ```bash
-cargo run --example benchmark
+cargo run --example benchmark           # Comprehensive comparison
+cargo run --example threaded_benchmark  # ThreadedEngine performance
+cargo run --example rayon_benchmark     # RayonEngine performance
 ```
 
-The benchmark compares single-threaded Engine vs multi-threaded ThreadedEngine with various worker and client configurations, providing detailed performance metrics and scaling analysis.
+The benchmarks compare single-threaded Engine vs multi-threaded ThreadedEngine vs parallel RayonEngine with various configurations, providing detailed performance metrics and scaling analysis.
 
 ## 🛠️ Custom Functions
 

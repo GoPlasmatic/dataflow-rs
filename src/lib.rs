@@ -183,4 +183,6 @@ pub use engine::RetryConfig;
 pub use engine::error::{DataflowError, ErrorInfo, Result};
 pub use engine::functions::{MapConfig, MapMapping, ValidationConfig, ValidationRule};
 pub use engine::message::{AuditTrail, Change, Message};
-pub use engine::{Engine, FunctionConfig, FunctionHandler, Task, ThreadedEngine, Workflow};
+pub use engine::{
+    Engine, FunctionConfig, FunctionHandler, RayonEngine, Task, ThreadedEngine, Workflow,
+};
