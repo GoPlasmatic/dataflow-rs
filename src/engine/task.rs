@@ -13,6 +13,8 @@ pub struct Task {
     #[serde(skip)]
     pub condition_index: Option<usize>,
     pub function: FunctionConfig,
+    #[serde(default)]
+    pub continue_on_error: bool,
 }
 
 fn default_condition() -> Value {

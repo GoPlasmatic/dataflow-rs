@@ -1,6 +1,7 @@
 use crate::engine::error::ErrorInfo;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -19,10 +20,10 @@ impl Message {
     pub fn new(payload: &Value) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
-            data: Value::Null,
+            data: json!({}),
             payload: payload.clone(),
-            metadata: Value::Null,
-            temp_data: Value::Null,
+            metadata: json!({}),
+            temp_data: json!({}),
             audit_trail: vec![],
             errors: vec![],
         }
@@ -43,9 +44,9 @@ impl Message {
 pub struct AuditTrail {
     pub workflow_id: String,
     pub task_id: String,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
     pub changes: Vec<Change>,
-    pub status_code: usize,
+    pub status: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -31,7 +31,8 @@ use dataflow_rs::{Engine, Workflow};
 use dataflow_rs::engine::message::Message;
 use serde_json::json;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define a workflow in JSON
     let workflow_json = r#"
     {
@@ -62,13 +63,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow = Workflow::from_json(workflow_json)?;
 
     // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
-    let mut engine = Engine::new(vec![workflow], None, None);
+    let engine = Engine::new(vec![workflow], None);
 
     // Create a message to process
     let mut message = Message::new(&json!({}));
 
     // Process the message through the workflow
-    match engine.process_message(&mut message) {
+    match engine.process_message(&mut message).await {
         Ok(_) => {
             println!("Processed result: {}", message.data["result"]);
         }
@@ -90,20 +91,21 @@ use dataflow_rs::{Engine, Result, DataflowError};
 use dataflow_rs::engine::message::Message;
 use serde_json::json;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // ... setup workflows ...
-    let mut engine = Engine::new(vec![/* workflows */], None, None);
+    let engine = Engine::new(vec![/* workflows */], None);
 
     let mut message = Message::new(&json!({}));
 
     // Process the message, errors will be collected but not halt execution
-    engine.process_message(&mut message)?;
+    engine.process_message(&mut message).await?;
 
     // Check if there were any errors during processing
     if message.has_errors() {
         for error in &message.errors {
             println!("Error in workflow: {:?}, task: {:?}: {:?}",
-                     error.workflow_id, error.task_id, error.error_message);
+                     error.workflow_id, error.task_id, error.message);
         }
     }
 
@@ -167,8 +169,8 @@ fn main() -> Result<()> {
         Box::new(CustomFunction) as Box<dyn FunctionHandler + Send + Sync>
     );
 
-    // Create engine with workflows and custom functions
-    let engine = Engine::new(vec![/* workflows */], Some(custom_functions), None);
+    // Create engine with workflows and custom functions (using from_sync_handlers for FunctionHandler)
+    let engine = Engine::from_sync_handlers(vec![/* workflows */], Some(custom_functions));
 
     // Now it can be used in workflows...
     Ok(())
@@ -179,10 +181,9 @@ fn main() -> Result<()> {
 pub mod engine;
 
 // Re-export all public APIs for easier access
-pub use engine::RetryConfig;
 pub use engine::error::{DataflowError, ErrorInfo, Result};
-pub use engine::functions::{MapConfig, MapMapping, ValidationConfig, ValidationRule};
-pub use engine::message::{AuditTrail, Change, Message};
-pub use engine::{
-    Engine, FunctionConfig, FunctionHandler, RayonEngine, Task, ThreadedEngine, Workflow,
+pub use engine::functions::{
+    AsyncFunctionHandler, FunctionConfig, MapConfig, MapMapping, ValidationConfig, ValidationRule,
 };
+pub use engine::message::{AuditTrail, Change, Message};
+pub use engine::{Engine, FunctionHandler, Task, Workflow};

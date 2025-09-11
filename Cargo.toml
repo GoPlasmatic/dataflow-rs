@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "1.0.9"
+version = "2.0.0"
 edition = "2024"
 exclude = [".DS_Store", "/target", ".vscode"]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
@@ -15,18 +15,17 @@ categories = ["data-structures", "development-tools", "parsing"]
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-datalogic-rs = "3.1.0"
+datalogic-rs = { version = "4.0", path = "../datalogic-rs" }
 uuid = { version = "1.18", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2.0"
 log = "0.4"
-tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
-crossbeam = "0.8"
-crossbeam-deque = "0.8"
-rand = "0.8"
-rayon = "1.10"
-num_cpus = "1.16"
+tokio = { version = "1", features = ["sync", "rt", "macros", "time", "rt-multi-thread"] }
+async-trait = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 env_logger = "0.11"
+axum = "0.7"
+futures = "0.3"
+num_cpus = "1.16"

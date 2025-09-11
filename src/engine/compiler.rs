@@ -1,35 +1,33 @@
 //! # Workflow Compilation Module
 //!
 //! This module handles the pre-compilation of JSONLogic expressions used throughout
-//! the engine. By compiling all logic at initialization time, we achieve:
+//! the engine. By compiling all logic at initialization time with DataLogic v4, we achieve:
 //!
 //! - Zero runtime compilation overhead
-//! - Predictable performance characteristics
+//! - Thread-safe compiled logic via Arc
 //! - Early validation of logic expressions
-//! - Efficient memory layout for cached logic
+//! - Efficient memory sharing across async tasks
 
 use crate::engine::functions::{MapConfig, ValidationConfig};
 use crate::engine::{FunctionConfig, Workflow};
-use datalogic_rs::{DataLogic, Logic};
+use datalogic_rs::{CompiledLogic, DataLogic};
 use log::{debug, error};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Compiles and caches JSONLogic expressions for optimal runtime performance.
 ///
 /// The `LogicCompiler` is responsible for:
-/// - Pre-compiling all workflow conditions
+/// - Pre-compiling all workflow conditions using DataLogic v4
 /// - Pre-compiling task-specific logic (map transformations, validation rules)
-/// - Maintaining a cache of compiled logic for efficient runtime evaluation
+/// - Maintaining Arc-wrapped compiled logic for thread-safe sharing
 /// - Providing early validation of logic expressions
-///
-/// This separation of compilation from execution ensures that all expensive
-/// parsing and compilation work is done once at startup, not during message processing.
 pub struct LogicCompiler {
-    /// DataLogic instance used for compilation
-    datalogic: DataLogic<'static>,
+    /// Shared DataLogic instance for compilation
+    datalogic: Arc<DataLogic>,
     /// Cache of compiled logic expressions indexed by their position
-    logic_cache: Vec<Logic<'static>>,
+    logic_cache: Vec<Arc<CompiledLogic>>,
 }
 
 impl Default for LogicCompiler {
@@ -39,26 +37,26 @@ impl Default for LogicCompiler {
 }
 
 impl LogicCompiler {
-    /// Create a new LogicCompiler
+    /// Create a new LogicCompiler with DataLogic v4
     pub fn new() -> Self {
         Self {
-            datalogic: DataLogic::with_preserve_structure(),
+            datalogic: Arc::new(DataLogic::with_preserve_structure()),
             logic_cache: Vec::new(),
         }
     }
 
     /// Get the DataLogic instance
-    pub fn datalogic(&self) -> &DataLogic<'static> {
-        &self.datalogic
+    pub fn datalogic(&self) -> Arc<DataLogic> {
+        Arc::clone(&self.datalogic)
     }
 
     /// Get the logic cache
-    pub fn logic_cache(&self) -> &Vec<Logic<'static>> {
+    pub fn logic_cache(&self) -> &Vec<Arc<CompiledLogic>> {
         &self.logic_cache
     }
 
     /// Consume the compiler and return its components
-    pub fn into_parts(self) -> (DataLogic<'static>, Vec<Logic<'static>>) {
+    pub fn into_parts(self) -> (Arc<DataLogic>, Vec<Arc<CompiledLogic>>) {
         (self.datalogic, self.logic_cache)
     }
 
@@ -102,35 +100,33 @@ impl LogicCompiler {
         workflow_map
     }
 
-    /// Compile tasks within a workflow
+    /// Compile task conditions and function logic for a workflow
     fn compile_workflow_tasks(&mut self, workflow: &mut Workflow) {
         for task in &mut workflow.tasks {
-            // Skip simple boolean conditions
-            if !matches!(task.condition, Value::Bool(_)) {
-                debug!(
-                    "Compiling condition for task {} in workflow {}: {:?}",
-                    task.id, workflow.id, task.condition
-                );
-                match self.compile_logic(&task.condition) {
-                    Ok(index) => {
-                        task.condition_index = index;
-                        debug!("Task {} condition compiled at index {:?}", task.id, index);
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to parse condition for task {} in workflow {}: {:?}",
-                            task.id, workflow.id, e
-                        );
-                    }
+            // Compile task condition
+            debug!(
+                "Compiling condition for task {} in workflow {}: {:?}",
+                task.id, workflow.id, task.condition
+            );
+            match self.compile_logic(&task.condition) {
+                Ok(index) => {
+                    task.condition_index = index;
+                    debug!("Task {} condition compiled at index {:?}", task.id, index);
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to parse condition for task {} in workflow {}: {:?}",
+                        task.id, workflow.id, e
+                    );
                 }
             }
 
-            // Compile logic for map and validation functions
+            // Compile function-specific logic (map transformations, validation rules)
             self.compile_function_logic(&mut task.function, &task.id, &workflow.id);
         }
     }
 
-    /// Compile logic within function configurations
+    /// Compile function-specific logic based on function type
     fn compile_function_logic(
         &mut self,
         function: &mut FunctionConfig,
@@ -145,19 +141,14 @@ impl LogicCompiler {
                 self.compile_validation_logic(input, task_id, workflow_id);
             }
             _ => {
-                // Custom functions don't have logic to compile
+                // Custom functions don't need pre-compilation
             }
         }
     }
 
-    /// Compile map function logic
+    /// Compile map transformation logic
     fn compile_map_logic(&mut self, config: &mut MapConfig, task_id: &str, workflow_id: &str) {
         for mapping in &mut config.mappings {
-            // Skip if logic is a simple value
-            if !mapping.logic.is_object() && !mapping.logic.is_array() {
-                continue;
-            }
-
             debug!(
                 "Compiling map logic for task {} in workflow {}: {:?}",
                 task_id, workflow_id, mapping.logic
@@ -165,7 +156,10 @@ impl LogicCompiler {
             match self.compile_logic(&mapping.logic) {
                 Ok(index) => {
                     mapping.logic_index = index;
-                    debug!("Map logic compiled at index {:?}", index);
+                    debug!(
+                        "Map logic for task {} compiled at index {:?}",
+                        task_id, index
+                    );
                 }
                 Err(e) => {
                     error!(
@@ -177,7 +171,7 @@ impl LogicCompiler {
         }
     }
 
-    /// Compile validation function logic
+    /// Compile validation rule logic
     fn compile_validation_logic(
         &mut self,
         config: &mut ValidationConfig,
@@ -185,11 +179,6 @@ impl LogicCompiler {
         workflow_id: &str,
     ) {
         for rule in &mut config.rules {
-            // Skip if logic is a simple value
-            if !rule.logic.is_object() && !rule.logic.is_array() {
-                continue;
-            }
-
             debug!(
                 "Compiling validation logic for task {} in workflow {}: {:?}",
                 task_id, workflow_id, rule.logic
@@ -197,7 +186,10 @@ impl LogicCompiler {
             match self.compile_logic(&rule.logic) {
                 Ok(index) => {
                     rule.logic_index = index;
-                    debug!("Validation logic compiled at index {:?}", index);
+                    debug!(
+                        "Validation logic for task {} compiled at index {:?}",
+                        task_id, index
+                    );
                 }
                 Err(e) => {
                     error!(
@@ -209,9 +201,10 @@ impl LogicCompiler {
         }
     }
 
-    /// Compile a single logic expression and add it to the cache
+    /// Compile a logic expression and cache it
     fn compile_logic(&mut self, logic: &Value) -> Result<Option<usize>, String> {
-        match self.datalogic.parse_logic_json(logic) {
+        // DataLogic v4: compile returns Arc<CompiledLogic>
+        match self.datalogic.compile(logic) {
             Ok(compiled) => {
                 let index = self.logic_cache.len();
                 self.logic_cache.push(compiled);

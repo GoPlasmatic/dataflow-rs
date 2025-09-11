@@ -1,16 +1,28 @@
+//! # Custom Function Example
+//!
+//! This example demonstrates how to create and use custom async functions
+//! with the dataflow-rs engine.
+//!
+//! Run with: `cargo run --example custom_function`
+
+use async_trait::async_trait;
+use dataflow_rs::Result;
 use dataflow_rs::{
     Engine, Workflow,
     engine::{
-        FunctionConfig, FunctionHandler,
-        error::{DataflowError, Result},
+        AsyncFunctionHandler, FunctionConfig, SyncFunctionWrapper,
+        error::DataflowError,
+        functions::FunctionHandler,
         message::{Change, Message},
     },
 };
 use datalogic_rs::DataLogic;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::sync::Arc;
 
-/// Custom function that calculates statistics from numeric data
+/// Custom synchronous function that calculates statistics from numeric data
+/// This demonstrates using legacy sync handlers with the new async engine
 pub struct StatisticsFunction;
 
 impl FunctionHandler for StatisticsFunction {
@@ -34,13 +46,13 @@ impl FunctionHandler for StatisticsFunction {
         let data_path = input
             .get("data_path")
             .and_then(Value::as_str)
-            .unwrap_or("data.numbers");
+            .unwrap_or("numbers");
 
         // Extract the output path where to store results
         let output_path = input
             .get("output_path")
             .and_then(Value::as_str)
-            .unwrap_or("data.statistics");
+            .unwrap_or("statistics");
 
         // Get the numbers from the specified path
         let numbers = self.extract_numbers_from_path(message, data_path)?;
@@ -82,18 +94,10 @@ impl StatisticsFunction {
 
     fn extract_numbers_from_path(&self, message: &Message, path: &str) -> Result<Vec<f64>> {
         let parts: Vec<&str> = path.split('.').collect();
-        let mut current = if parts[0] == "data" {
-            &message.data
-        } else if parts[0] == "temp_data" {
-            &message.temp_data
-        } else if parts[0] == "metadata" {
-            &message.metadata
-        } else {
-            &message.data
-        };
+        let mut current = &message.data;
 
         // Navigate to the target location
-        for part in &parts[1..] {
+        for part in parts {
             current = current.get(part).unwrap_or(&Value::Null);
         }
 
@@ -101,41 +105,36 @@ impl StatisticsFunction {
         match current {
             Value::Array(arr) => {
                 let mut numbers = Vec::new();
-                for item in arr {
-                    if let Some(num) = item.as_f64() {
+                for val in arr {
+                    if let Some(num) = val.as_f64() {
                         numbers.push(num);
-                    } else if let Some(num) = item.as_i64() {
-                        numbers.push(num as f64);
                     }
                 }
                 Ok(numbers)
             }
-            Value::Number(num) => {
-                if let Some(f) = num.as_f64() {
-                    Ok(vec![f])
-                } else {
-                    Ok(vec![])
-                }
-            }
-            _ => Ok(vec![]),
+            _ => Err(DataflowError::Validation(format!(
+                "Expected array at path '{}', found {:?}",
+                path, current
+            ))),
         }
     }
 
     fn calculate_statistics(&self, numbers: &[f64]) -> Value {
-        let count = numbers.len();
+        let count = numbers.len() as f64;
         let sum: f64 = numbers.iter().sum();
-        let mean = sum / count as f64;
+        let mean = sum / count;
 
         let mut sorted = numbers.to_vec();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        let median = if count % 2 == 0 {
-            (sorted[count / 2 - 1] + sorted[count / 2]) / 2.0
+        let median = if sorted.len() % 2 == 0 {
+            let mid = sorted.len() / 2;
+            (sorted[mid - 1] + sorted[mid]) / 2.0
         } else {
-            sorted[count / 2]
+            sorted[sorted.len() / 2]
         };
 
-        let variance: f64 = numbers.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / count as f64;
+        let variance: f64 = numbers.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / count;
         let std_dev = variance.sqrt();
 
         json!({
@@ -144,65 +143,52 @@ impl StatisticsFunction {
             "mean": mean,
             "median": median,
             "min": sorted[0],
-            "max": sorted[count - 1],
-            "variance": variance,
-            "std_dev": std_dev
+            "max": sorted[sorted.len() - 1],
+            "std_dev": std_dev,
+            "variance": variance
         })
     }
 
     fn set_value_at_path(&self, message: &mut Message, path: &str, value: Value) -> Result<()> {
         let parts: Vec<&str> = path.split('.').collect();
-        let target = if parts[0] == "data" {
-            &mut message.data
-        } else if parts[0] == "temp_data" {
-            &mut message.temp_data
-        } else if parts[0] == "metadata" {
-            &mut message.metadata
-        } else {
-            &mut message.data
-        };
+        let mut current = &mut message.data;
 
-        // Navigate and set the value
-        let mut current = target;
-        for (i, part) in parts[1..].iter().enumerate() {
-            if i == parts.len() - 2 {
-                // Last part, set the value
-                if current.is_null() {
-                    *current = json!({});
-                }
+        for (i, part) in parts.iter().enumerate() {
+            if i == parts.len() - 1 {
+                // Last part - set the value
                 if let Value::Object(map) = current {
-                    map.insert(part.to_string(), value.clone());
+                    map.insert(part.to_string(), value);
+                    return Ok(());
                 }
-                break;
             } else {
-                // Navigate deeper
-                if current.is_null() {
+                // Navigate or create intermediate objects
+                if !current.is_object() {
                     *current = json!({});
                 }
                 if let Value::Object(map) = current {
-                    if !map.contains_key(*part) {
-                        map.insert(part.to_string(), json!({}));
-                    }
-                    current = map.get_mut(*part).unwrap();
+                    current = map.entry(part.to_string()).or_insert_with(|| json!({}));
                 }
             }
         }
 
-        Ok(())
+        Err(DataflowError::Validation(format!(
+            "Failed to set value at path '{}'",
+            path
+        )))
     }
 }
 
-/// Custom function that enriches data with external information
-pub struct DataEnrichmentFunction {
-    enrichment_data: HashMap<String, Value>,
-}
+/// Custom async function that enriches data with external information
+/// This demonstrates a native async handler
+pub struct AsyncDataEnrichmentFunction;
 
-impl FunctionHandler for DataEnrichmentFunction {
-    fn execute(
+#[async_trait]
+impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
+    async fn execute(
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        _datalogic: &DataLogic,
+        _datalogic: Arc<DataLogic>,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the raw input from config
         let input = match config {
@@ -214,148 +200,79 @@ impl FunctionHandler for DataEnrichmentFunction {
             }
         };
 
-        // Extract lookup key and field
-        let lookup_field = input
-            .get("lookup_field")
+        // Get user ID to enrich
+        let user_id = input
+            .get("user_id_path")
             .and_then(Value::as_str)
-            .ok_or_else(|| DataflowError::Validation("Missing lookup_field".to_string()))?;
+            .unwrap_or("user_id");
 
-        let lookup_value = input
-            .get("lookup_value")
+        let user_id_value = message
+            .data
+            .get(user_id)
             .and_then(Value::as_str)
-            .ok_or_else(|| DataflowError::Validation("Missing lookup_value".to_string()))?;
+            .unwrap_or("unknown");
 
-        let output_path = input
-            .get("output_path")
-            .and_then(Value::as_str)
-            .unwrap_or("data.enrichment");
+        // Simulate async API call
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        // Simulate operation (e.g., database lookup, API call)
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // Create enriched data (simulated)
+        let enriched_data = json!({
+            "user_profile": {
+                "id": user_id_value,
+                "name": format!("User {}", user_id_value),
+                "email": format!("{}@example.com", user_id_value),
+                "created_at": "2024-01-15T10:30:00Z",
+                "preferences": {
+                    "theme": "dark",
+                    "notifications": true
+                }
+            },
+            "enrichment_timestamp": chrono::Utc::now().to_rfc3339()
+        });
 
-        // Look up enrichment data
-        let enrichment = if let Some(data) = self.enrichment_data.get(lookup_value) {
-            data.clone()
-        } else {
-            json!({
-                "status": "not_found",
-                "message": format!("No enrichment data found for {}: {}", lookup_field, lookup_value)
-            })
-        };
-
-        // Store enrichment data
-        self.set_value_at_path(message, output_path, enrichment.clone())?;
+        // Add enriched data to message
+        if let Value::Object(ref mut map) = message.data {
+            map.insert("enriched".to_string(), enriched_data.clone());
+        }
 
         Ok((
             200,
             vec![Change {
-                path: output_path.to_string(),
+                path: "enriched".to_string(),
                 old_value: Value::Null,
-                new_value: enrichment,
+                new_value: enriched_data,
             }],
         ))
     }
 }
 
-impl Default for DataEnrichmentFunction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[tokio::main]
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
 
-impl DataEnrichmentFunction {
-    pub fn new() -> Self {
-        let mut enrichment_data = HashMap::new();
+    println!("🚀 Custom Function Example");
+    println!("==========================\n");
 
-        // Sample enrichment data
-        enrichment_data.insert(
-            "user_123".to_string(),
-            json!({
-                "department": "Engineering",
-                "location": "San Francisco",
-                "manager": "Alice Johnson",
-                "start_date": "2022-01-15",
-                "security_clearance": "Level 2"
-            }),
-        );
-
-        enrichment_data.insert(
-            "user_456".to_string(),
-            json!({
-                "department": "Marketing",
-                "location": "New York",
-                "manager": "Bob Smith",
-                "start_date": "2021-06-01",
-                "security_clearance": "Level 1"
-            }),
-        );
-
-        Self { enrichment_data }
-    }
-
-    fn set_value_at_path(&self, message: &mut Message, path: &str, value: Value) -> Result<()> {
-        let parts: Vec<&str> = path.split('.').collect();
-        let target = if parts[0] == "data" {
-            &mut message.data
-        } else if parts[0] == "temp_data" {
-            &mut message.temp_data
-        } else if parts[0] == "metadata" {
-            &mut message.metadata
-        } else {
-            &mut message.data
-        };
-
-        let mut current = target;
-        for (i, part) in parts[1..].iter().enumerate() {
-            if i == parts.len() - 2 {
-                if current.is_null() {
-                    *current = json!({});
-                }
-                if let Value::Object(map) = current {
-                    map.insert(part.to_string(), value.clone());
-                }
-                break;
-            } else {
-                if current.is_null() {
-                    *current = json!({});
-                }
-                if let Value::Object(map) = current {
-                    if !map.contains_key(*part) {
-                        map.insert(part.to_string(), json!({}));
-                    }
-                    current = map.get_mut(*part).unwrap();
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    println!("=== Custom Function Example ===\n");
-
-    // Define a workflow that uses our custom functions
+    // Define workflow with custom function
     let workflow_json = r#"
     {
-        "id": "custom_function_demo",
-        "name": "Custom Function Demo",
-        "description": "Demonstrates custom functions in workflow",
+        "id": "statistics_workflow",
+        "name": "Data Processing Workflow",
         "tasks": [
             {
                 "id": "prepare_data",
                 "name": "Prepare Data",
-                "description": "Extract and prepare data for analysis",
                 "function": {
                     "name": "map",
                     "input": {
                         "mappings": [
                             {
-                                "path": "data.numbers",
-                                "logic": { "var": "temp_data.measurements" }
+                                "path": "numbers",
+                                "logic": { "var": "measurements" }
                             },
                             {
-                                "path": "data.user_id",
-                                "logic": { "var": "temp_data.user_id" }
+                                "path": "user_id",
+                                "logic": { "var": "user_id" }
                             }
                         ]
                     }
@@ -364,25 +281,42 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             {
                 "id": "calculate_stats",
                 "name": "Calculate Statistics",
-                "description": "Calculate statistical measures from numeric data",
                 "function": {
                     "name": "statistics",
                     "input": {
-                        "data_path": "data.numbers",
-                        "output_path": "data.stats"
+                        "data_path": "numbers",
+                        "output_path": "statistics"
                     }
                 }
             },
             {
                 "id": "enrich_user_data",
                 "name": "Enrich User Data",
-                "description": "Add additional user information",
                 "function": {
                     "name": "enrich_data",
                     "input": {
-                        "lookup_field": "user_id",
-                        "lookup_value": "user_123",
-                        "output_path": "data.user_info"
+                        "user_id_path": "user_id"
+                    }
+                }
+            },
+            {
+                "id": "validate_results",
+                "name": "Validate Results",
+                "function": {
+                    "name": "validation",
+                    "input": {
+                        "rules": [
+                            {
+                                "path": "statistics.count",
+                                "logic": { ">": [{ "var": "statistics.count" }, 0] },
+                                "message": "Statistics must have at least one data point"
+                            },
+                            {
+                                "path": "enriched.user_profile",
+                                "logic": { "!!": { "var": "enriched.user_profile" } },
+                                "message": "User profile enrichment is required"
+                            }
+                        ]
                     }
                 }
             }
@@ -390,112 +324,43 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
     "#;
 
-    // Parse the first workflow
     let workflow = Workflow::from_json(workflow_json)?;
 
-    // Demonstrate another example with different data
-    let separator = "=".repeat(50);
-    println!("\n{separator}");
-    println!("=== Second Example with Different User ===\n");
-
-    let mut message2 = dataflow_rs::engine::message::Message::new(&json!({}));
-    message2.temp_data = json!({
-        "measurements": [5.1, 7.3, 9.8, 6.2, 8.5],
-        "user_id": "user_456",
-        "timestamp": "2024-01-15T11:00:00Z"
-    });
-    message2.data = json!({});
-
-    // Create a workflow for the second user
-    let workflow2_json = r#"
-    {
-        "id": "custom_function_demo_2",
-        "name": "Custom Function Demo 2",
-        "description": "Second demo with different user",
-        "tasks": [
-            {
-                "id": "prepare_data",
-                "name": "Prepare Data",
-                "function": {
-                    "name": "map",
-                    "input": {
-                        "mappings": [
-                            {
-                                "path": "data.numbers",
-                                "logic": { "var": "temp_data.measurements" }
-                            },
-                            {
-                                "path": "data.user_id",
-                                "logic": { "var": "temp_data.user_id" }
-                            }
-                        ]
-                    }
-                }
-            },
-            {
-                "id": "calculate_stats",
-                "name": "Calculate Statistics",
-                "function": {
-                    "name": "statistics",
-                    "input": {
-                        "data_path": "data.numbers",
-                        "output_path": "data.analysis"
-                    }
-                }
-            },
-            {
-                "id": "enrich_user_data",
-                "name": "Enrich User Data",
-                "function": {
-                    "name": "enrich_data",
-                    "input": {
-                        "lookup_field": "user_id",
-                        "lookup_value": "user_456",
-                        "output_path": "data.employee_details"
-                    }
-                }
-            }
-        ]
-    }
-    "#;
-
-    let workflow2 = Workflow::from_json(workflow2_json)?;
-
     // Prepare custom functions
-    let mut custom_functions = HashMap::new();
+    let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
+        HashMap::new();
+
+    // Add sync function wrapped for async compatibility
     custom_functions.insert(
         "statistics".to_string(),
-        Box::new(StatisticsFunction::new()) as Box<dyn FunctionHandler + Send + Sync>,
+        Box::new(SyncFunctionWrapper::new(
+            Box::new(StatisticsFunction::new()) as Box<dyn FunctionHandler + Send + Sync>,
+        )),
     );
+
+    // Add native async function
     custom_functions.insert(
         "enrich_data".to_string(),
-        Box::new(DataEnrichmentFunction::new()) as Box<dyn FunctionHandler + Send + Sync>,
-    );
-    // Note: map and validate are now built-in to the Engine and will be used automatically
-
-    // Create engine with custom functions and built-ins (map/validate are always included internally)
-    let mut engine = Engine::new(
-        vec![workflow, workflow2],
-        Some(custom_functions),
-        None, // Use default (includes built-ins)
+        Box::new(AsyncDataEnrichmentFunction),
     );
 
-    // Create sample data for first message
+    // Create engine with custom functions
+    let engine = Engine::new(vec![workflow], Some(custom_functions));
+
+    // Create sample data
     let sample_data = json!({
         "measurements": [10.5, 15.2, 8.7, 22.1, 18.9, 12.3, 25.6, 14.8, 19.4, 16.7],
         "user_id": "user_123",
         "timestamp": "2024-01-15T10:30:00Z"
     });
 
-    // Create and process first message
-    let mut message = dataflow_rs::engine::message::Message::new(&json!({}));
-    message.temp_data = sample_data;
-    message.data = json!({});
+    // Create and process message
+    let mut message = Message::new(&sample_data);
 
     println!("Processing message with custom functions...\n");
 
     // Process the message through our custom workflow
-    match engine.process_message(&mut message) {
+    match engine.process_message(&mut message).await {
         Ok(_) => {
             println!("✅ Message processed successfully!\n");
 
@@ -508,7 +373,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     "{}. Task: {} (Status: {})",
                     i + 1,
                     audit.task_id,
-                    audit.status_code
+                    audit.status
                 );
                 println!("   Timestamp: {}", audit.timestamp);
                 println!("   Changes: {} field(s) modified", audit.changes.len());
@@ -518,9 +383,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 println!("\n⚠️  Errors encountered:");
                 for error in &message.errors {
                     println!(
-                        "   - {}: {:?}",
+                        "   - {}: {}",
                         error.task_id.as_ref().unwrap_or(&"unknown".to_string()),
-                        error.error_message
+                        error.message
                     );
                 }
             }
@@ -530,19 +395,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Process second message
-    match engine.process_message(&mut message2) {
-        Ok(_) => {
-            println!("✅ Second message processed successfully!\n");
-            println!("📊 Results for user_456:");
-            println!("{}", serde_json::to_string_pretty(&message2.data)?);
-        }
-        Err(e) => {
-            println!("❌ Error processing second message: {e:?}");
-        }
-    }
-
-    println!("\n🎉 Custom function examples completed!");
+    println!("\n🎉 Custom function example completed!");
 
     Ok(())
 }

@@ -18,6 +18,8 @@ pub struct Workflow {
     #[serde(skip)]
     pub condition_index: Option<usize>,
     pub tasks: Vec<Task>,
+    #[serde(default)]
+    pub continue_on_error: bool,
 }
 
 fn default_condition() -> Value {
@@ -40,6 +42,7 @@ impl Workflow {
             condition: Value::Bool(true),
             condition_index: None,
             tasks: Vec::new(),
+            continue_on_error: false,
         }
     }
 

@@ -1,6 +1,11 @@
 use crate::engine::error::{DataflowError, Result};
+use crate::engine::message::{Change, Message};
+use crate::engine::utils::{get_nested_value, set_nested_value};
+use datalogic_rs::{CompiledLogic, DataLogic};
+use log::{debug, error};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
+use std::sync::Arc;
 
 /// Pre-parsed configuration for map function
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +55,71 @@ impl MapConfig {
         Ok(MapConfig {
             mappings: parsed_mappings,
         })
+    }
+
+    /// Execute the map transformations using pre-compiled logic
+    pub fn execute(
+        &self,
+        message: &mut Message,
+        datalogic: &Arc<DataLogic>,
+        logic_cache: &[Arc<CompiledLogic>],
+    ) -> Result<(usize, Vec<Change>)> {
+        let mut changes = Vec::new();
+        let mut errors_encountered = false;
+
+        // Combine all message fields for evaluation
+        let eval_data = json!({
+            "data": &message.data,
+            "payload": &message.payload,
+            "metadata": &message.metadata,
+            "temp_data": &message.temp_data
+        });
+
+        // Process each mapping
+        for mapping in &self.mappings {
+            debug!("Processing mapping to path: {}", mapping.path);
+
+            // Get the compiled logic from cache
+            let compiled_logic = match mapping.logic_index {
+                Some(index) if index < logic_cache.len() => &logic_cache[index],
+                _ => {
+                    error!("Map: Logic not compiled for mapping to {}", mapping.path);
+                    errors_encountered = true;
+                    continue;
+                }
+            };
+
+            // Evaluate the transformation logic using DataLogic v4
+            // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
+            let result = datalogic.evaluate_owned(compiled_logic, eval_data.clone());
+
+            match result {
+                Ok(transformed_value) => {
+                    // Store the transformed value in the target path
+                    let old_value = get_nested_value(&message.data, &mapping.path);
+                    changes.push(Change {
+                        path: mapping.path.clone(),
+                        old_value: old_value.cloned().unwrap_or(Value::Null),
+                        new_value: transformed_value.clone(),
+                    });
+
+                    // Update the message data
+                    set_nested_value(&mut message.data, &mapping.path, transformed_value);
+                    debug!("Successfully mapped to path: {}", mapping.path);
+                }
+                Err(e) => {
+                    error!(
+                        "Map: Error evaluating logic for path {}: {:?}",
+                        mapping.path, e
+                    );
+                    errors_encountered = true;
+                }
+            }
+        }
+
+        // Return appropriate status based on results
+        let status = if errors_encountered { 500 } else { 200 };
+        Ok((status, changes))
     }
 }
 

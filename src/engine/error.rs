@@ -22,6 +22,14 @@ pub enum DataflowError {
     #[error("Workflow error: {0}")]
     Workflow(String),
 
+    /// Task-related errors
+    #[error("Task error: {0}")]
+    Task(String),
+
+    /// Function not found errors
+    #[error("Function not found: {0}")]
+    FunctionNotFound(String),
+
     /// JSON serialization/deserialization errors
     #[error("Deserialization error: {0}")]
     Deserialization(String),
@@ -99,6 +107,8 @@ impl DataflowError {
             DataflowError::LogicEvaluation(_) => false,
             DataflowError::Deserialization(_) => false,
             DataflowError::Workflow(_) => false,
+            DataflowError::Task(_) => false,
+            DataflowError::FunctionNotFound(_) => false,
             DataflowError::Unknown(_) => false,
         }
     }
@@ -110,43 +120,165 @@ pub type Result<T> = std::result::Result<T, DataflowError>;
 /// Structured error information for error tracking in messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorInfo {
+    /// Error code (e.g., "WORKFLOW_ERROR", "TASK_ERROR", "VALIDATION_ERROR")
+    pub code: String,
+
+    /// Human-readable error message
+    pub message: String,
+
+    /// Optional path to the error location (e.g., "workflow.id", "task.id", "data.field")
+    pub path: Option<String>,
+
     /// ID of the workflow where the error occurred (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow_id: Option<String>,
 
     /// ID of the task where the error occurred (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
 
     /// Timestamp when the error occurred
-    pub timestamp: String,
-
-    /// The actual error
-    pub error_message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
 
     /// Whether a retry was attempted
-    pub retry_attempted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_attempted: Option<bool>,
 
     /// Number of retries attempted
-    pub retry_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_count: Option<u32>,
 }
 
 impl ErrorInfo {
-    /// Create a new error info entry
+    /// Create a new error info entry with all fields
     pub fn new(workflow_id: Option<String>, task_id: Option<String>, error: DataflowError) -> Self {
         Self {
+            code: match &error {
+                DataflowError::Validation(_) => "VALIDATION_ERROR".to_string(),
+                DataflowError::Workflow(_) => "WORKFLOW_ERROR".to_string(),
+                DataflowError::Task(_) => "TASK_ERROR".to_string(),
+                DataflowError::FunctionNotFound(_) => "FUNCTION_NOT_FOUND".to_string(),
+                DataflowError::FunctionExecution { .. } => "FUNCTION_ERROR".to_string(),
+                DataflowError::LogicEvaluation(_) => "LOGIC_ERROR".to_string(),
+                DataflowError::Http { .. } => "HTTP_ERROR".to_string(),
+                DataflowError::Timeout(_) => "TIMEOUT_ERROR".to_string(),
+                DataflowError::Io(_) => "IO_ERROR".to_string(),
+                DataflowError::Deserialization(_) => "DESERIALIZATION_ERROR".to_string(),
+                DataflowError::Unknown(_) => "UNKNOWN_ERROR".to_string(),
+            },
+            message: error.to_string(),
+            path: None,
             workflow_id,
             task_id,
-            timestamp: Utc::now().to_rfc3339(),
-            error_message: error.to_string(),
-            retry_attempted: false,
-            retry_count: 0,
+            timestamp: Some(Utc::now().to_rfc3339()),
+            retry_attempted: Some(false),
+            retry_count: Some(0),
+        }
+    }
+
+    /// Create a simple error info with just code, message, and optional path
+    pub fn simple(code: String, message: String, path: Option<String>) -> Self {
+        Self {
+            code,
+            message,
+            path,
+            workflow_id: None,
+            task_id: None,
+            timestamp: Some(Utc::now().to_rfc3339()),
+            retry_attempted: None,
+            retry_count: None,
         }
     }
 
     /// Mark that a retry was attempted
     pub fn with_retry(mut self) -> Self {
-        self.retry_attempted = true;
-        self.retry_count += 1;
+        self.retry_attempted = Some(true);
+        self.retry_count = Some(self.retry_count.unwrap_or(0) + 1);
         self
+    }
+
+    /// Create a builder for ErrorInfo
+    pub fn builder(code: impl Into<String>, message: impl Into<String>) -> ErrorInfoBuilder {
+        ErrorInfoBuilder::new(code, message)
+    }
+}
+
+/// Builder for creating ErrorInfo instances with a fluent API
+pub struct ErrorInfoBuilder {
+    code: String,
+    message: String,
+    path: Option<String>,
+    workflow_id: Option<String>,
+    task_id: Option<String>,
+    timestamp: Option<String>,
+    retry_attempted: Option<bool>,
+    retry_count: Option<u32>,
+}
+
+impl ErrorInfoBuilder {
+    /// Create a new ErrorInfoBuilder with required fields
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            path: None,
+            workflow_id: None,
+            task_id: None,
+            timestamp: Some(Utc::now().to_rfc3339()),
+            retry_attempted: None,
+            retry_count: None,
+        }
+    }
+
+    /// Set the error path
+    pub fn path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    /// Set the workflow ID
+    pub fn workflow_id(mut self, id: impl Into<String>) -> Self {
+        self.workflow_id = Some(id.into());
+        self
+    }
+
+    /// Set the task ID
+    pub fn task_id(mut self, id: impl Into<String>) -> Self {
+        self.task_id = Some(id.into());
+        self
+    }
+
+    /// Set custom timestamp (defaults to now if not set)
+    pub fn timestamp(mut self, timestamp: impl Into<String>) -> Self {
+        self.timestamp = Some(timestamp.into());
+        self
+    }
+
+    /// Mark as retry attempted
+    pub fn retry_attempted(mut self, attempted: bool) -> Self {
+        self.retry_attempted = Some(attempted);
+        self
+    }
+
+    /// Set retry count
+    pub fn retry_count(mut self, count: u32) -> Self {
+        self.retry_count = Some(count);
+        self
+    }
+
+    /// Build the ErrorInfo instance
+    pub fn build(self) -> ErrorInfo {
+        ErrorInfo {
+            code: self.code,
+            message: self.message,
+            path: self.path,
+            workflow_id: self.workflow_id,
+            task_id: self.task_id,
+            timestamp: self.timestamp,
+            retry_attempted: self.retry_attempted,
+            retry_count: self.retry_count,
+        }
     }
 }
 
@@ -259,5 +391,32 @@ mod tests {
         assert!(retryable_func_error.retryable());
         assert!(!non_retryable_func_error.retryable());
         assert!(!no_source_func_error.retryable());
+    }
+
+    #[test]
+    fn test_error_info_builder() {
+        // Test basic builder
+        let error = ErrorInfo::builder("TEST_ERROR", "Test message").build();
+        assert_eq!(error.code, "TEST_ERROR");
+        assert_eq!(error.message, "Test message");
+        assert!(error.timestamp.is_some());
+        assert!(error.path.is_none());
+
+        // Test full builder
+        let error = ErrorInfo::builder("VALIDATION_ERROR", "Field validation failed")
+            .path("data.email")
+            .workflow_id("workflow_1")
+            .task_id("validate_email")
+            .retry_attempted(true)
+            .retry_count(2)
+            .build();
+
+        assert_eq!(error.code, "VALIDATION_ERROR");
+        assert_eq!(error.message, "Field validation failed");
+        assert_eq!(error.path, Some("data.email".to_string()));
+        assert_eq!(error.workflow_id, Some("workflow_1".to_string()));
+        assert_eq!(error.task_id, Some("validate_email".to_string()));
+        assert_eq!(error.retry_attempted, Some(true));
+        assert_eq!(error.retry_count, Some(2));
     }
 }

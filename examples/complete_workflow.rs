@@ -1,7 +1,17 @@
+//! # Complete Workflow Example
+//!
+//! This example demonstrates a complete workflow with data transformation and validation
+//! using the async dataflow-rs engine.
+//!
+//! Run with: `cargo run --example complete_workflow`
+
 use dataflow_rs::{Engine, Workflow, engine::message::Message};
 use serde_json::json;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
     // Define a workflow that:
     // 1. Prepares sample user data
     // 2. Enriches the message with transformed data
@@ -22,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "input": {
                         "mappings": [
                             {
-                                "path": "data.user",
+                                "path": "user",
                                 "logic": {}
                             }
                         ]
@@ -38,30 +48,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "input": {
                         "mappings": [
                             {
-                                "path": "data.user.id", 
-                                "logic": { "var": "temp_data.body.id" }
+                                "path": "user.id", 
+                                "logic": { "var": "payload.body.id" }
                             },
                             {
-                                "path": "data.user.name", 
-                                "logic": { "var": "temp_data.body.name" }
+                                "path": "user.name", 
+                                "logic": { "var": "payload.body.name" }
                             },
                             {
-                                "path": "data.user.email", 
-                                "logic": { "var": "temp_data.body.email" }
+                                "path": "user.email", 
+                                "logic": { "var": "payload.body.email" }
                             },
                             {
-                                "path": "data.user.address", 
+                                "path": "user.address", 
                                 "logic": {
                                     "cat": [
-                                        { "var": "temp_data.body.address.street" },
+                                        { "var": "payload.body.address.street" },
                                         ", ",
-                                        { "var": "temp_data.body.address.city" }
+                                        { "var": "payload.body.address.city" }
                                     ]
                                 }
                             },
                             {
-                                "path": "data.user.company", 
-                                "logic": { "var": "temp_data.body.company.name" }
+                                "path": "user.company", 
+                                "logic": { "var": "payload.body.company.name" }
                             }
                         ]
                     }
@@ -72,26 +82,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "name": "Validate User Data",
                 "description": "Ensure the user data meets our requirements",
                 "function": {
-                    "name": "validate",
+                    "name": "validation",
                     "input": {
                         "rules": [
                             {
-                                "path": "data",
+                                "path": "user.id",
                                 "logic": { "!!": { "var": "data.user.id" } },
                                 "message": "User ID is required"
                             },
                             {
-                                "path": "data",
+                                "path": "user.name",
                                 "logic": { "!!": { "var": "data.user.name" } },
                                 "message": "User name is required"
                             },
                             {
-                                "path": "data",
+                                "path": "user.email",
                                 "logic": { "!!": { "var": "data.user.email" } },
                                 "message": "User email is required"
                             },
                             {
-                                "path": "data",
+                                "path": "user.email",
                                 "logic": {
                                     "in": [
                                         "@",
@@ -111,14 +121,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse the workflow
     let workflow = Workflow::from_json(workflow_json)?;
 
-    // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
-    let mut engine = Engine::new(vec![workflow], None, None);
+    // Create the workflow engine with the workflow (built-in functions are auto-registered)
+    let engine = Engine::new(vec![workflow], None);
 
     // Create a message to process with sample user data
-    let mut message = Message::new(&json!({}));
-
-    // Add sample user data to temp_data (simulating what would come from an API)
-    message.temp_data = json!({
+    let mut message = Message::new(&json!({
         "body": {
             "id": 1,
             "name": "John Doe",
@@ -131,23 +138,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "name": "Acme Corp"
             }
         }
-    });
+    }));
 
     // Process the message through the workflow
     println!("Processing message through workflow...");
 
-    match engine.process_message(&mut message) {
+    match engine.process_message(&mut message).await {
         Ok(_) => {
-            println!("Workflow completed successfully!");
+            println!("✅ Workflow completed successfully!");
         }
         Err(e) => {
-            eprintln!("Error executing workflow: {e:?}");
+            eprintln!("❌ Error executing workflow: {e:?}");
             if !message.errors.is_empty() {
                 println!("\nErrors recorded in message:");
                 for err in &message.errors {
                     println!(
-                        "- Workflow: {:?}, Task: {:?}, Error: {:?}",
-                        err.workflow_id, err.task_id, err.error_message
+                        "- Workflow: {:?}, Task: {:?}, Error: {}",
+                        err.workflow_id, err.task_id, err.message
                     );
                 }
             }

@@ -1,6 +1,11 @@
-use crate::engine::error::{DataflowError, Result};
+use crate::engine::error::{DataflowError, ErrorInfo, Result};
+use crate::engine::message::{Change, Message};
+use crate::engine::utils::is_truthy;
+use datalogic_rs::{CompiledLogic, DataLogic};
+use log::{debug, error};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
+use std::sync::Arc;
 
 /// Pre-parsed configuration for validation function
 #[derive(Debug, Clone, Deserialize)]
@@ -58,6 +63,80 @@ impl ValidationConfig {
         Ok(ValidationConfig {
             rules: parsed_rules,
         })
+    }
+
+    /// Execute the validation rules using pre-compiled logic
+    pub fn execute(
+        &self,
+        message: &mut Message,
+        datalogic: &Arc<DataLogic>,
+        logic_cache: &[Arc<CompiledLogic>],
+    ) -> Result<(usize, Vec<Change>)> {
+        let changes = Vec::new();
+        let mut validation_errors = Vec::new();
+
+        // Combine all message fields for validation
+        let data_to_validate = json!({
+            "data": &message.data,
+            "payload": &message.payload,
+            "metadata": &message.metadata,
+            "temp_data": &message.temp_data
+        });
+
+        // Process each validation rule
+        for (idx, rule) in self.rules.iter().enumerate() {
+            debug!("Processing validation rule {}: {}", idx, rule.message);
+
+            // Get the compiled logic from cache
+            let compiled_logic = match rule.logic_index {
+                Some(index) if index < logic_cache.len() => &logic_cache[index],
+                _ => {
+                    error!("Validation: Logic not compiled for rule at index {}", idx);
+                    validation_errors.push(ErrorInfo::simple(
+                        "COMPILATION_ERROR".to_string(),
+                        format!("Logic not compiled for rule at index: {}", idx),
+                        None,
+                    ));
+                    continue;
+                }
+            };
+
+            // Evaluate the validation rule using DataLogic v4
+            // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
+            let result = datalogic.evaluate_owned(compiled_logic, data_to_validate.clone());
+
+            match result {
+                Ok(value) => {
+                    // Check if validation passed (truthy value)
+                    if !is_truthy(&value) {
+                        debug!("Validation failed for rule {}: {}", idx, rule.message);
+                        validation_errors.push(ErrorInfo::simple(
+                            "VALIDATION_ERROR".to_string(),
+                            rule.message.clone(),
+                            Some(rule.path.clone()),
+                        ));
+                    } else {
+                        debug!("Validation passed for rule {}", idx);
+                    }
+                }
+                Err(e) => {
+                    error!("Validation: Error evaluating rule {}: {:?}", idx, e);
+                    validation_errors.push(ErrorInfo::simple(
+                        "EVALUATION_ERROR".to_string(),
+                        format!("Failed to evaluate rule {}: {}", idx, e),
+                        None,
+                    ));
+                }
+            }
+        }
+
+        // Add validation errors to message if any
+        if !validation_errors.is_empty() {
+            message.errors.extend(validation_errors);
+            Ok((400, changes)) // Return 400 for validation failures
+        } else {
+            Ok((200, changes))
+        }
     }
 }
 
