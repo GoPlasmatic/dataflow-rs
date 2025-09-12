@@ -10,9 +10,8 @@ use dataflow_rs::Result;
 use dataflow_rs::{
     Engine, Workflow,
     engine::{
-        AsyncFunctionHandler, FunctionConfig, SyncFunctionWrapper,
+        AsyncFunctionHandler, FunctionConfig,
         error::DataflowError,
-        functions::FunctionHandler,
         message::{Change, Message},
     },
 };
@@ -21,16 +20,16 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Custom synchronous function that calculates statistics from numeric data
-/// This demonstrates using legacy sync handlers with the new async engine
+/// Custom async function that calculates statistics from numeric data
 pub struct StatisticsFunction;
 
-impl FunctionHandler for StatisticsFunction {
-    fn execute(
+#[async_trait]
+impl AsyncFunctionHandler for StatisticsFunction {
+    async fn execute(
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        _datalogic: &DataLogic,
+        _datalogic: Arc<DataLogic>,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract the raw input from config
         let input = match config {
@@ -330,12 +329,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
         HashMap::new();
 
-    // Add sync function wrapped for async compatibility
+    // Add statistics function
     custom_functions.insert(
         "statistics".to_string(),
-        Box::new(SyncFunctionWrapper::new(
-            Box::new(StatisticsFunction::new()) as Box<dyn FunctionHandler + Send + Sync>,
-        )),
+        Box::new(StatisticsFunction::new()),
     );
 
     // Add native async function

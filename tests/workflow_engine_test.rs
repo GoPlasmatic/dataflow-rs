@@ -1,7 +1,5 @@
 use async_trait::async_trait;
-use dataflow_rs::engine::functions::{
-    AsyncFunctionHandler, FunctionConfig, FunctionHandler, SyncFunctionWrapper,
-};
+use dataflow_rs::engine::functions::{AsyncFunctionHandler, FunctionConfig};
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::{Engine, Result, Task, Workflow};
 use datalogic_rs::DataLogic;
@@ -9,16 +7,17 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// A simple sync task implementation for backward compatibility testing
+// A simple async task implementation
 #[derive(Debug)]
 struct LoggingTask;
 
-impl FunctionHandler for LoggingTask {
-    fn execute(
+#[async_trait]
+impl AsyncFunctionHandler for LoggingTask {
+    async fn execute(
         &self,
         message: &mut Message,
         _config: &FunctionConfig,
-        _datalogic: &DataLogic,
+        _datalogic: Arc<DataLogic>,
     ) -> Result<(usize, Vec<Change>)> {
         println!("Executed task for message: {}", &message.id);
         Ok((200, vec![]))
@@ -43,8 +42,8 @@ impl AsyncFunctionHandler for AsyncLoggingTask {
     }
 }
 
-#[test]
-fn test_sync_task_execution() {
+#[tokio::test]
+async fn test_async_task_execution() {
     // This test only tests the task implementation
     let task = LoggingTask;
 
@@ -56,8 +55,8 @@ fn test_sync_task_execution() {
         name: "log".to_string(),
         input: json!({}),
     };
-    let datalogic = DataLogic::with_preserve_structure();
-    let result = task.execute(&mut message, &config, &datalogic);
+    let datalogic = Arc::new(DataLogic::with_preserve_structure());
+    let result = task.execute(&mut message, &config, datalogic).await;
 
     // Verify the execution was successful
     assert!(result.is_ok(), "Task execution should succeed");
@@ -92,13 +91,8 @@ async fn test_workflow_execution() {
     let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
         HashMap::new();
 
-    // Wrap sync handler for async compatibility
-    custom_functions.insert(
-        "log".to_string(),
-        Box::new(SyncFunctionWrapper::new(
-            Box::new(LoggingTask) as Box<dyn FunctionHandler + Send + Sync>
-        )),
-    );
+    // Add async logging handler
+    custom_functions.insert("log".to_string(), Box::new(LoggingTask));
 
     // Create engine with the workflow and custom function
     let engine = Engine::new(vec![workflow], Some(custom_functions));

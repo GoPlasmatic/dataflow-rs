@@ -14,7 +14,7 @@ contain multiple tasks that transform, validate, or enrich the data.
 * **Engine**: The central component that processes messages through workflows
 * **Workflow**: A collection of tasks with conditions that determine when they should be applied
 * **Task**: An individual processing unit that performs a specific function on a message
-* **FunctionHandler**: A trait implemented by task handlers to define custom processing logic
+* **AsyncFunctionHandler**: A trait implemented by task handlers to define custom async processing logic
 * **Message**: The data structure that flows through the engine, containing payload, metadata, and processing results
 
 ## Built-in Functions
@@ -118,21 +118,23 @@ async fn main() -> Result<()> {
 You can extend the engine with your own custom function handlers:
 
 ```rust,no_run
-use dataflow_rs::{Engine, FunctionHandler, Result, Workflow};
+use dataflow_rs::{Engine, AsyncFunctionHandler, Result, Workflow};
 use dataflow_rs::engine::{FunctionConfig, message::{Change, Message}, error::DataflowError};
 use datalogic_rs::DataLogic;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+use async_trait::async_trait;
 
 struct CustomFunction;
 
-impl FunctionHandler for CustomFunction {
-    fn execute(
+#[async_trait]
+impl AsyncFunctionHandler for CustomFunction {
+    async fn execute(
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        datalogic: &DataLogic,
+        datalogic: Arc<DataLogic>,
     ) -> Result<(usize, Vec<Change>)> {
         // Implement your custom logic here
 
@@ -162,16 +164,17 @@ impl FunctionHandler for CustomFunction {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Create custom functions
     let mut custom_functions = HashMap::new();
     custom_functions.insert(
         "custom".to_string(),
-        Box::new(CustomFunction) as Box<dyn FunctionHandler + Send + Sync>
+        Box::new(CustomFunction) as Box<dyn AsyncFunctionHandler + Send + Sync>
     );
 
-    // Create engine with workflows and custom functions (using from_sync_handlers for FunctionHandler)
-    let engine = Engine::from_sync_handlers(vec![/* workflows */], Some(custom_functions));
+    // Create engine with workflows and custom functions
+    let engine = Engine::new(vec![/* workflows */], Some(custom_functions));
 
     // Now it can be used in workflows...
     Ok(())
@@ -187,4 +190,4 @@ pub use engine::functions::{
     AsyncFunctionHandler, FunctionConfig, MapConfig, MapMapping, ValidationConfig, ValidationRule,
 };
 pub use engine::message::{AuditTrail, Change, Message};
-pub use engine::{Engine, FunctionHandler, Task, Workflow};
+pub use engine::{Engine, Task, Workflow};

@@ -276,35 +276,37 @@ The benchmarks compare single-threaded Engine vs multi-threaded ThreadedEngine v
 
 ## 🛠️ Custom Functions
 
-You can extend the engine with your own custom logic by implementing the `FunctionHandler` trait:
+You can extend the engine with your own custom logic by implementing the `AsyncFunctionHandler` trait:
 
 ```rust
-use dataflow_rs::engine::{FunctionHandler, FunctionConfig, error::Result, message::{Change, Message}};
+use async_trait::async_trait;
+use dataflow_rs::engine::{AsyncFunctionHandler, FunctionConfig, error::Result, message::{Change, Message}};
 use datalogic_rs::DataLogic;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct MyCustomFunction;
 
-impl FunctionHandler for MyCustomFunction {
-    fn execute(
+#[async_trait]
+impl AsyncFunctionHandler for MyCustomFunction {
+    async fn execute(
         &self, 
         message: &mut Message, 
         config: &FunctionConfig,
-        datalogic: &DataLogic,
+        datalogic: Arc<DataLogic>,
     ) -> Result<(usize, Vec<Change>)> {
-        // Your custom logic here
-        println!("Hello from a custom function!");
+        // Your custom logic here (can be async or sync)
+        println!("Hello from a custom async function!");
         
         // Modify message data
         message.data["processed"] = json!(true);
         
         // Return status code and changes for audit trail
         Ok((200, vec![Change {
-            path: "data.processed".to_string(),
-            old_value: json!(null),
-            new_value: json!(true),
-            operation: "set".to_string(),
+            path: Arc::from("data.processed"),
+            old_value: Arc::new(json!(null)),
+            new_value: Arc::new(json!(true)),
         }]))
     }
 }
@@ -313,13 +315,12 @@ impl FunctionHandler for MyCustomFunction {
 let mut custom_functions = HashMap::new();
 custom_functions.insert(
     "my_custom_function".to_string(),
-    Box::new(MyCustomFunction) as Box<dyn FunctionHandler + Send + Sync>
+    Box::new(MyCustomFunction) as Box<dyn AsyncFunctionHandler + Send + Sync>
 );
 
-let mut engine = Engine::new(
+let engine = Engine::new(
     workflows,
-    Some(custom_functions),  // Custom functions
-    None,  // Use default retry config
+    Some(custom_functions),  // Custom async functions
 );
 ```
 

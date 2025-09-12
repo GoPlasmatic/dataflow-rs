@@ -67,7 +67,7 @@ pub mod workflow_executor;
 
 // Re-export key types for easier access
 pub use error::{DataflowError, ErrorInfo, Result};
-pub use functions::{AsyncFunctionHandler, FunctionConfig, FunctionHandler, SyncFunctionWrapper};
+pub use functions::{AsyncFunctionHandler, FunctionConfig};
 pub use message::Message;
 pub use task::Task;
 pub use workflow::Workflow;
@@ -165,27 +165,6 @@ impl Engine {
             datalogic,
             logic_cache,
         }
-    }
-
-    /// Creates a new Engine instance from legacy synchronous function handlers.
-    ///
-    /// This method wraps synchronous handlers with `SyncFunctionWrapper` for async compatibility.
-    pub fn from_sync_handlers(
-        workflows: Vec<Workflow>,
-        sync_functions: Option<HashMap<String, Box<dyn FunctionHandler + Send + Sync>>>,
-    ) -> Self {
-        let async_functions = sync_functions.map(|funcs| {
-            funcs
-                .into_iter()
-                .map(|(name, handler)| {
-                    let wrapped: Box<dyn AsyncFunctionHandler + Send + Sync> =
-                        Box::new(SyncFunctionWrapper::new(handler));
-                    (name, wrapped)
-                })
-                .collect()
-        });
-
-        Self::new(workflows, async_functions)
     }
 
     /// Processes a message through workflows that match their conditions.

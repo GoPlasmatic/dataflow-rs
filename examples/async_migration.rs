@@ -12,10 +12,7 @@
 //! Run with: `cargo run --example async_migration`
 
 use async_trait::async_trait;
-use dataflow_rs::{
-    AsyncFunctionHandler, Engine, FunctionConfig, FunctionHandler, Message, Workflow,
-    engine::SyncFunctionWrapper,
-};
+use dataflow_rs::{AsyncFunctionHandler, Engine, FunctionConfig, Message, Workflow};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -44,17 +41,18 @@ impl AsyncFunctionHandler for AsyncHttpHandler {
     }
 }
 
-// Example of adapting a legacy synchronous handler
-struct LegacySyncHandler;
+// Example of a simple async handler (can be CPU-bound without spawn_blocking)
+struct SimpleAsyncHandler;
 
-impl FunctionHandler for LegacySyncHandler {
-    fn execute(
+#[async_trait]
+impl AsyncFunctionHandler for SimpleAsyncHandler {
+    async fn execute(
         &self,
         message: &mut Message,
         _config: &FunctionConfig,
-        _datalogic: &datalogic_rs::DataLogic,
+        _datalogic: Arc<datalogic_rs::DataLogic>,
     ) -> dataflow_rs::Result<(usize, Vec<dataflow_rs::engine::message::Change>)> {
-        // Synchronous processing
+        // Simple processing - no need for spawn_blocking
         message.data["processed"] = json!(true);
         Ok((200, vec![]))
     }
@@ -130,13 +128,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         custom_functions.insert("async_http".to_string(), Box::new(AsyncHttpHandler));
 
-        // Wrap legacy sync handler for compatibility
-        custom_functions.insert(
-            "legacy_sync".to_string(),
-            Box::new(SyncFunctionWrapper::new(
-                Box::new(LegacySyncHandler) as Box<dyn FunctionHandler + Send + Sync>
-            )),
-        );
+        // Add simple async handler
+        custom_functions.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
 
         let engine = Engine::new(vec![workflow.clone()], Some(custom_functions));
 
@@ -151,16 +144,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Message processed: {:?}", message.data);
     }
 
-    // Method 2: Create engine from legacy sync handlers (for migration)
-    println!("\nMethod 2: Migrating from sync handlers");
+    // Method 2: Using async handlers for CPU-bound work
+    println!("\nMethod 2: CPU-bound async handlers");
     {
-        let mut sync_functions: HashMap<String, Box<dyn FunctionHandler + Send + Sync>> =
+        let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
             HashMap::new();
 
-        sync_functions.insert("legacy_sync".to_string(), Box::new(LegacySyncHandler));
+        custom_functions.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
 
-        // Engine automatically wraps sync handlers for async execution
-        let engine = Engine::from_sync_handlers(vec![workflow.clone()], Some(sync_functions));
+        // All handlers are now async, even CPU-bound ones
+        let engine = Engine::new(vec![workflow.clone()], Some(custom_functions));
 
         let mut message = Message::from_value(&json!({
             "required_field": "present",
