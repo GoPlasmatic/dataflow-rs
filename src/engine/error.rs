@@ -191,6 +191,20 @@ impl ErrorInfo {
         }
     }
 
+    /// Create a simple error info from references (avoids cloning when possible)
+    pub fn simple_ref(code: &str, message: &str, path: Option<&str>) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.to_string(),
+            path: path.map(|s| s.to_string()),
+            workflow_id: None,
+            task_id: None,
+            timestamp: Some(Utc::now().to_rfc3339()),
+            retry_attempted: None,
+            retry_count: None,
+        }
+    }
+
     /// Mark that a retry was attempted
     pub fn with_retry(mut self) -> Self {
         self.retry_attempted = Some(true);

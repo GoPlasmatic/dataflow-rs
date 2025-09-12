@@ -51,10 +51,13 @@ impl WorkflowExecutor {
     /// # Returns
     /// * `Result<bool>` - Ok(true) if workflow was executed, Ok(false) if skipped, Err on failure
     pub async fn execute(&self, workflow: &Workflow, message: &mut Message) -> Result<bool> {
+        // Cache metadata Arc for reuse
+        let metadata_arc = Arc::new(message.metadata.clone());
+
         // Evaluate workflow condition
         let should_execute = self
             .internal_executor
-            .evaluate_condition(workflow.condition_index, Arc::new(message.metadata.clone()))?;
+            .evaluate_condition(workflow.condition_index, Arc::clone(&metadata_arc))?;
 
         if !should_execute {
             debug!("Skipping workflow {} - condition not met", workflow.id);
@@ -64,8 +67,8 @@ impl WorkflowExecutor {
         info!("Executing workflow: {}", workflow.id);
         message.metadata["current_workflow"] = json!(workflow.id);
 
-        // Execute workflow tasks
-        let result = self.execute_tasks(workflow, message).await;
+        // Execute workflow tasks (pass the cached metadata_arc)
+        let result = self.execute_tasks(workflow, message, metadata_arc).await;
 
         // Clear current workflow from metadata
         message
@@ -101,10 +104,12 @@ impl WorkflowExecutor {
     }
 
     /// Execute all tasks in a workflow
-    async fn execute_tasks(&self, workflow: &Workflow, message: &mut Message) -> Result<()> {
-        // Cache metadata Arc for reuse across task evaluations
-        let metadata_arc = Arc::new(message.metadata.clone());
-
+    async fn execute_tasks(
+        &self,
+        workflow: &Workflow,
+        message: &mut Message,
+        metadata_arc: Arc<serde_json::Value>,
+    ) -> Result<()> {
         for task in &workflow.tasks {
             // Evaluate task condition
             let should_execute = self

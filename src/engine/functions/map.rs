@@ -1,10 +1,10 @@
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::message::{Change, Message};
+use crate::engine::message::{Change, EvaluationContext, Message};
 use crate::engine::utils::{get_nested_value, set_nested_value};
 use datalogic_rs::{CompiledLogic, DataLogic};
 use log::{debug, error};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 
 /// Pre-parsed configuration for map function
@@ -67,14 +67,9 @@ impl MapConfig {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
 
-        // Combine all message fields for evaluation
-        let eval_data = json!({
-            "data": &message.data,
-            "payload": message.payload.as_ref(),
-            "metadata": &message.metadata,
-            "temp_data": &message.temp_data
-        });
-        let eval_data = Arc::new(eval_data);
+        // Use evaluation context to avoid repeated JSON creation
+        let eval_context = EvaluationContext::from_message(message);
+        let eval_data = eval_context.to_arc_json();
 
         // Process each mapping
         for mapping in &self.mappings {
@@ -98,11 +93,10 @@ impl MapConfig {
                 Ok(transformed_value) => {
                     // Store the transformed value in the target path
                     let old_value = get_nested_value(&message.data, &mapping.path);
-                    let transformed_value_arc = Arc::new(transformed_value.clone());
                     changes.push(Change {
                         path: Arc::from(mapping.path.as_str()),
                         old_value: Arc::new(old_value.cloned().unwrap_or(Value::Null)),
-                        new_value: transformed_value_arc,
+                        new_value: Arc::new(transformed_value.clone()),
                     });
 
                     // Update the message data

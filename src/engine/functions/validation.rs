@@ -1,10 +1,10 @@
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
-use crate::engine::message::{Change, Message};
+use crate::engine::message::{Change, EvaluationContext, Message};
 use crate::engine::utils::is_truthy;
 use datalogic_rs::{CompiledLogic, DataLogic};
 use log::{debug, error};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 
 /// Pre-parsed configuration for validation function
@@ -75,14 +75,9 @@ impl ValidationConfig {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
 
-        // Combine all message fields for validation
-        let data_to_validate = json!({
-            "data": &message.data,
-            "payload": message.payload.as_ref(),
-            "metadata": &message.metadata,
-            "temp_data": &message.temp_data
-        });
-        let data_to_validate = Arc::new(data_to_validate);
+        // Use evaluation context to avoid repeated JSON creation
+        let eval_context = EvaluationContext::from_message(message);
+        let data_to_validate = eval_context.to_arc_json();
 
         // Process each validation rule
         for (idx, rule) in self.rules.iter().enumerate() {
@@ -93,9 +88,9 @@ impl ValidationConfig {
                 Some(index) if index < logic_cache.len() => &logic_cache[index],
                 _ => {
                     error!("Validation: Logic not compiled for rule at index {}", idx);
-                    validation_errors.push(ErrorInfo::simple(
-                        "COMPILATION_ERROR".to_string(),
-                        format!("Logic not compiled for rule at index: {}", idx),
+                    validation_errors.push(ErrorInfo::simple_ref(
+                        "COMPILATION_ERROR",
+                        &format!("Logic not compiled for rule at index: {}", idx),
                         None,
                     ));
                     continue;
@@ -111,10 +106,10 @@ impl ValidationConfig {
                     // Check if validation passed (truthy value)
                     if !is_truthy(&value) {
                         debug!("Validation failed for rule {}: {}", idx, rule.message);
-                        validation_errors.push(ErrorInfo::simple(
-                            "VALIDATION_ERROR".to_string(),
-                            rule.message.clone(),
-                            Some(rule.path.clone()),
+                        validation_errors.push(ErrorInfo::simple_ref(
+                            "VALIDATION_ERROR",
+                            &rule.message,
+                            Some(&rule.path),
                         ));
                     } else {
                         debug!("Validation passed for rule {}", idx);
@@ -122,9 +117,9 @@ impl ValidationConfig {
                 }
                 Err(e) => {
                     error!("Validation: Error evaluating rule {}: {:?}", idx, e);
-                    validation_errors.push(ErrorInfo::simple(
-                        "EVALUATION_ERROR".to_string(),
-                        format!("Failed to evaluate rule {}: {}", idx, e),
+                    validation_errors.push(ErrorInfo::simple_ref(
+                        "EVALUATION_ERROR",
+                        &format!("Failed to evaluate rule {}: {}", idx, e),
                         None,
                     ));
                 }
