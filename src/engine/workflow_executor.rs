@@ -54,7 +54,7 @@ impl WorkflowExecutor {
         // Evaluate workflow condition
         let should_execute = self
             .internal_executor
-            .evaluate_condition(workflow.condition_index, &message.metadata)?;
+            .evaluate_condition(workflow.condition_index, Arc::new(message.metadata.clone()))?;
 
         if !should_execute {
             debug!("Skipping workflow {} - condition not met", workflow.id);
@@ -102,11 +102,14 @@ impl WorkflowExecutor {
 
     /// Execute all tasks in a workflow
     async fn execute_tasks(&self, workflow: &Workflow, message: &mut Message) -> Result<()> {
+        // Cache metadata Arc for reuse across task evaluations
+        let metadata_arc = Arc::new(message.metadata.clone());
+
         for task in &workflow.tasks {
             // Evaluate task condition
             let should_execute = self
                 .internal_executor
-                .evaluate_condition(task.condition_index, &message.metadata)?;
+                .evaluate_condition(task.condition_index, Arc::clone(&metadata_arc))?;
 
             if !should_execute {
                 debug!("Skipping task {} - condition not met", task.id);
@@ -152,8 +155,8 @@ impl WorkflowExecutor {
                 // Record audit trail
                 message.audit_trail.push(AuditTrail {
                     timestamp: Utc::now(),
-                    workflow_id: workflow_id.to_string(),
-                    task_id: task_id.to_string(),
+                    workflow_id: Arc::from(workflow_id),
+                    task_id: Arc::from(task_id),
                     status,
                     changes,
                 });
@@ -178,8 +181,8 @@ impl WorkflowExecutor {
                 // Record error in audit trail
                 message.audit_trail.push(AuditTrail {
                     timestamp: Utc::now(),
-                    workflow_id: workflow_id.to_string(),
-                    task_id: task_id.to_string(),
+                    workflow_id: Arc::from(workflow_id),
+                    task_id: Arc::from(task_id),
                     status: 500,
                     changes: vec![],
                 });
@@ -240,7 +243,7 @@ mod tests {
         ));
         let workflow_executor = WorkflowExecutor::new(task_executor, internal_executor);
 
-        let mut message = Message::new(&json!({}));
+        let mut message = Message::from_value(&json!({}));
 
         // Execute workflow - should be skipped due to false condition
         let executed = workflow_executor
@@ -286,7 +289,7 @@ mod tests {
         ));
         let workflow_executor = WorkflowExecutor::new(task_executor, internal_executor);
 
-        let mut message = Message::new(&json!({}));
+        let mut message = Message::from_value(&json!({}));
 
         // Execute workflow - should succeed with empty task list
         let executed = workflow_executor

@@ -70,10 +70,11 @@ impl MapConfig {
         // Combine all message fields for evaluation
         let eval_data = json!({
             "data": &message.data,
-            "payload": &message.payload,
+            "payload": message.payload.as_ref(),
             "metadata": &message.metadata,
             "temp_data": &message.temp_data
         });
+        let eval_data = Arc::new(eval_data);
 
         // Process each mapping
         for mapping in &self.mappings {
@@ -91,16 +92,17 @@ impl MapConfig {
 
             // Evaluate the transformation logic using DataLogic v4
             // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
-            let result = datalogic.evaluate_owned(compiled_logic, eval_data.clone());
+            let result = datalogic.evaluate(compiled_logic, Arc::clone(&eval_data));
 
             match result {
                 Ok(transformed_value) => {
                     // Store the transformed value in the target path
                     let old_value = get_nested_value(&message.data, &mapping.path);
+                    let transformed_value_arc = Arc::new(transformed_value.clone());
                     changes.push(Change {
-                        path: mapping.path.clone(),
-                        old_value: old_value.cloned().unwrap_or(Value::Null),
-                        new_value: transformed_value.clone(),
+                        path: Arc::from(mapping.path.as_str()),
+                        old_value: Arc::new(old_value.cloned().unwrap_or(Value::Null)),
+                        new_value: transformed_value_arc,
                     });
 
                     // Update the message data

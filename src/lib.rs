@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(vec![workflow], None);
 
     // Create a message to process
-    let mut message = Message::new(&json!({}));
+    let mut message = Message::from_value(&json!({}));
 
     // Process the message through the workflow
     match engine.process_message(&mut message).await {
@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
     // ... setup workflows ...
     let engine = Engine::new(vec![/* workflows */], None);
 
-    let mut message = Message::new(&json!({}));
+    let mut message = Message::from_value(&json!({}));
 
     // Process the message, errors will be collected but not halt execution
     engine.process_message(&mut message).await?;
@@ -123,6 +123,7 @@ use dataflow_rs::engine::{FunctionConfig, message::{Change, Message}, error::Dat
 use datalogic_rs::DataLogic;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 struct CustomFunction;
 
@@ -150,9 +151,9 @@ impl FunctionHandler for CustomFunction {
         // Record changes for audit trail
         let changes = vec![
             Change {
-                path: "data.custom_field".to_string(),
-                old_value: Value::Null,
-                new_value: json!("custom value"),
+                path: Arc::from("data.custom_field"),
+                old_value: Arc::new(Value::Null),
+                new_value: Arc::new(json!("custom value")),
             }
         ];
 

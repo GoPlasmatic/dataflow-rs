@@ -2,13 +2,14 @@ use crate::engine::error::ErrorInfo;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
     pub id: String,
     pub data: Value,
-    pub payload: Value,
+    pub payload: Arc<Value>,
     pub metadata: Value,
     pub temp_data: Value,
     pub audit_trail: Vec<AuditTrail>,
@@ -17,16 +18,21 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn new(payload: &Value) -> Self {
+    pub fn new(payload: Arc<Value>) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             data: json!({}),
-            payload: payload.clone(),
+            payload,
             metadata: json!({}),
             temp_data: json!({}),
             audit_trail: vec![],
             errors: vec![],
         }
+    }
+
+    /// Convenience method for creating a message from a Value reference
+    pub fn from_value(payload: &Value) -> Self {
+        Self::new(Arc::new(payload.clone()))
     }
 
     /// Add an error to the message
@@ -42,8 +48,8 @@ impl Message {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AuditTrail {
-    pub workflow_id: String,
-    pub task_id: String,
+    pub workflow_id: Arc<str>,
+    pub task_id: Arc<str>,
     pub timestamp: DateTime<Utc>,
     pub changes: Vec<Change>,
     pub status: usize,
@@ -51,7 +57,7 @@ pub struct AuditTrail {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Change {
-    pub path: String,
-    pub old_value: Value,
-    pub new_value: Value,
+    pub path: Arc<str>,
+    pub old_value: Arc<Value>,
+    pub new_value: Arc<Value>,
 }

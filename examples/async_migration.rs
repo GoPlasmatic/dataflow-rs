@@ -140,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let engine = Engine::new(vec![workflow.clone()], Some(custom_functions));
 
-        let mut message = Message::new(&json!({
+        let mut message = Message::from_value(&json!({
             "required_field": "present",
             "input": "test data"
         }));
@@ -162,7 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Engine automatically wraps sync handlers for async execution
         let engine = Engine::from_sync_handlers(vec![workflow.clone()], Some(sync_functions));
 
-        let mut message = Message::new(&json!({
+        let mut message = Message::from_value(&json!({
             "required_field": "present",
             "input": "test data"
         }));
@@ -227,7 +227,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let engine = Arc::new(Engine::new(vec![workflow], None));
 
         // Single message
-        let mut message = Message::new(&json!({
+        let mut message = Message::from_value(&json!({
             "required_field": "present",
             "input": "test data"
         }));
@@ -238,10 +238,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Concurrent processing (simulating multiple API requests)
         let messages = vec![
-            Message::new(&json!({"required_field": "1", "input": "data1"})),
-            Message::new(&json!({"required_field": "2", "input": "data2"})),
-            Message::new(&json!({"required_field": "3", "input": "data3"})),
-            Message::new(&json!({"required_field": "4", "input": "data4"})),
+            Message::from_value(&json!({"required_field": "1", "input": "data1"})),
+            Message::from_value(&json!({"required_field": "2", "input": "data2"})),
+            Message::from_value(&json!({"required_field": "3", "input": "data3"})),
+            Message::from_value(&json!({"required_field": "4", "input": "data4"})),
         ];
 
         let start = Instant::now();

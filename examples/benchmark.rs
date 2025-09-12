@@ -176,7 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let engine = Arc::clone(&engine);
             let data = sample_data.clone();
             tokio::spawn(async move {
-                let mut message = Message::new(&data);
+                let mut message = Message::from_value(&data);
                 engine.process_message(&mut message).await.unwrap();
             })
         })
@@ -205,7 +205,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let handle = tokio::spawn(async move {
             let msg_start = Instant::now();
 
-            let mut message = Message::new(&data);
+            let mut message = Message::from_value(&data);
             message.metadata = json!({ "iteration": i });
 
             engine.process_message(&mut message).await.unwrap();

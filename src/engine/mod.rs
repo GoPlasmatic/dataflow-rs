@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(workflows, None);
 
     // Process messages asynchronously
-    let mut message = Message::new(&json!({}));
+    let mut message = Message::from_value(&json!({}));
     engine.process_message(&mut message).await?;
 
     Ok(())

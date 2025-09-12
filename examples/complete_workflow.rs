@@ -125,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(vec![workflow], None);
 
     // Create a message to process with sample user data
-    let mut message = Message::new(&json!({
+    let mut message = Message::from_value(&json!({
         "body": {
             "id": 1,
             "name": "John Doe",

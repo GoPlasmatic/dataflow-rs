@@ -78,10 +78,11 @@ impl ValidationConfig {
         // Combine all message fields for validation
         let data_to_validate = json!({
             "data": &message.data,
-            "payload": &message.payload,
+            "payload": message.payload.as_ref(),
             "metadata": &message.metadata,
             "temp_data": &message.temp_data
         });
+        let data_to_validate = Arc::new(data_to_validate);
 
         // Process each validation rule
         for (idx, rule) in self.rules.iter().enumerate() {
@@ -103,7 +104,7 @@ impl ValidationConfig {
 
             // Evaluate the validation rule using DataLogic v4
             // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
-            let result = datalogic.evaluate_owned(compiled_logic, data_to_validate.clone());
+            let result = datalogic.evaluate(compiled_logic, Arc::clone(&data_to_validate));
 
             match result {
                 Ok(value) => {

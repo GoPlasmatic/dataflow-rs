@@ -49,7 +49,7 @@ fn test_sync_task_execution() {
     let task = LoggingTask;
 
     // Create a dummy message
-    let mut message = Message::new(&json!({}));
+    let mut message = Message::from_value(&json!({}));
 
     // Execute the task directly
     let config = FunctionConfig::Custom {
@@ -104,7 +104,7 @@ async fn test_workflow_execution() {
     let engine = Engine::new(vec![workflow], Some(custom_functions));
 
     // Create a dummy message
-    let mut message = Message::new(&json!({}));
+    let mut message = Message::from_value(&json!({}));
 
     // Process the message
     let result = engine.process_message(&mut message).await;
@@ -123,7 +123,8 @@ async fn test_workflow_execution() {
         "Message should have one audit trail entry"
     );
     assert_eq!(
-        message.audit_trail[0].task_id, "log_task",
+        message.audit_trail[0].task_id.as_ref(),
+        "log_task",
         "Audit trail should contain the executed task"
     );
 }
@@ -162,7 +163,7 @@ async fn test_async_workflow_execution() {
     let engine = Engine::new(vec![workflow], Some(custom_functions));
 
     // Create a dummy message
-    let mut message = Message::new(&json!({}));
+    let mut message = Message::from_value(&json!({}));
 
     // Process the message
     let result = engine.process_message(&mut message).await;
@@ -176,7 +177,8 @@ async fn test_async_workflow_execution() {
         "Message should have one audit trail entry"
     );
     assert_eq!(
-        message.audit_trail[0].task_id, "async_log_task",
+        message.audit_trail[0].task_id.as_ref(),
+        "async_log_task",
         "Audit trail should contain the executed async task"
     );
 }

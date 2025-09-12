@@ -73,9 +73,9 @@ impl FunctionHandler for StatisticsFunction {
         Ok((
             200,
             vec![Change {
-                path: output_path.to_string(),
-                old_value: Value::Null,
-                new_value: stats,
+                path: Arc::from(output_path),
+                old_value: Arc::new(Value::Null),
+                new_value: Arc::new(stats),
             }],
         ))
     }
@@ -238,9 +238,9 @@ impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
         Ok((
             200,
             vec![Change {
-                path: "enriched".to_string(),
-                old_value: Value::Null,
-                new_value: enriched_data,
+                path: Arc::from("enriched"),
+                old_value: Arc::new(Value::Null),
+                new_value: Arc::new(enriched_data),
             }],
         ))
     }
@@ -268,11 +268,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         "mappings": [
                             {
                                 "path": "numbers",
-                                "logic": { "var": "measurements" }
+                                "logic": { "var": "payload.measurements" }
                             },
                             {
                                 "path": "user_id",
-                                "logic": { "var": "user_id" }
+                                "logic": { "var": "payload.user_id" }
                             }
                         ]
                     }
@@ -355,7 +355,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     });
 
     // Create and process message
-    let mut message = Message::new(&sample_data);
+    let mut message = Message::from_value(&sample_data);
 
     println!("Processing message with custom functions...\n");
 

@@ -73,17 +73,13 @@ impl InternalExecutor {
     pub fn evaluate_condition(
         &self,
         condition_index: Option<usize>,
-        metadata: &Value,
+        metadata: Arc<Value>,
     ) -> Result<bool> {
         match condition_index {
             Some(index) if index < self.logic_cache.len() => {
                 let compiled_logic = &self.logic_cache[index];
-
-                // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
                 // Conditions typically evaluate against metadata directly
-                let result = self
-                    .datalogic
-                    .evaluate_owned(compiled_logic, metadata.clone());
+                let result = self.datalogic.evaluate(compiled_logic, metadata);
 
                 match result {
                     Ok(value) => Ok(is_truthy(&value)),
