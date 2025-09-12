@@ -93,14 +93,22 @@ impl MapConfig {
                 Ok(transformed_value) => {
                     // Store the transformed value in the target path
                     let old_value = get_nested_value(&message.data, &mapping.path);
+                    let old_value_arc = Arc::new(old_value.cloned().unwrap_or(Value::Null));
+                    // Create Arc once and share it
+                    let new_value_arc = Arc::new(transformed_value);
+
                     changes.push(Change {
                         path: Arc::from(mapping.path.as_str()),
-                        old_value: Arc::new(old_value.cloned().unwrap_or(Value::Null)),
-                        new_value: Arc::new(transformed_value.clone()),
+                        old_value: Arc::clone(&old_value_arc),
+                        new_value: Arc::clone(&new_value_arc),
                     });
 
-                    // Update the message data
-                    set_nested_value(&mut message.data, &mapping.path, transformed_value);
+                    // Update the message data - extract from Arc to avoid double clone
+                    set_nested_value(
+                        &mut message.data,
+                        &mapping.path,
+                        Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone()),
+                    );
                     debug!("Successfully mapped to path: {}", mapping.path);
                 }
                 Err(e) => {

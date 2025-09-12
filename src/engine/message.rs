@@ -67,6 +67,7 @@ impl Message {
     }
 
     /// Convenience method for creating a message from a Value reference
+    /// Note: This clones the entire Value. Use from_arc() to avoid cloning when possible.
     pub fn from_value(payload: &Value) -> Self {
         Self::new(Arc::new(payload.clone()))
     }
