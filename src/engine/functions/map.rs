@@ -154,9 +154,24 @@ impl MapConfig {
                         };
 
                         if target_path.is_empty() {
-                            // Replace entire temp_data
-                            message.temp_data =
+                            // Merge with existing temp_data instead of replacing
+                            let new_value =
                                 Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone());
+                            if let Value::Object(new_map) = new_value {
+                                // If new value is an object, merge its fields
+                                if let Value::Object(existing_map) = &mut message.temp_data {
+                                    // Merge new fields into existing object
+                                    for (key, value) in new_map {
+                                        existing_map.insert(key, value);
+                                    }
+                                } else {
+                                    // If existing is not an object, replace with new object
+                                    message.temp_data = Value::Object(new_map);
+                                }
+                            } else {
+                                // If new value is not an object, replace entirely
+                                message.temp_data = new_value;
+                            }
                         } else {
                             set_nested_value(
                                 &mut message.temp_data,
@@ -168,14 +183,38 @@ impl MapConfig {
                         // Update data field
                         let target_path = if mapping.path.starts_with("data.") {
                             &mapping.path[5..] // Skip "data."
+                        } else if mapping.path == "data" {
+                            "" // Root of data
                         } else {
                             &mapping.path
                         };
-                        set_nested_value(
-                            &mut message.data,
-                            target_path,
-                            Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone()),
-                        );
+
+                        if target_path.is_empty() {
+                            // Merge with existing data instead of replacing
+                            let new_value =
+                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone());
+                            if let Value::Object(new_map) = new_value {
+                                // If new value is an object, merge its fields
+                                if let Value::Object(existing_map) = &mut message.data {
+                                    // Merge new fields into existing object
+                                    for (key, value) in new_map {
+                                        existing_map.insert(key, value);
+                                    }
+                                } else {
+                                    // If existing is not an object, replace with new object
+                                    message.data = Value::Object(new_map);
+                                }
+                            } else {
+                                // If new value is not an object, replace entirely
+                                message.data = new_value;
+                            }
+                        } else {
+                            set_nested_value(
+                                &mut message.data,
+                                target_path,
+                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone()),
+                            );
+                        }
                     }
                     debug!("Successfully mapped to path: {}", mapping.path);
                 }

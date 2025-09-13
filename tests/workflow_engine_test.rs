@@ -239,23 +239,27 @@ async fn test_temp_data_replacement_behavior() {
     // Process the message
     engine.process_message(&mut message).await.unwrap();
 
-    // Current behavior: temp_data is REPLACED, not merged
-    // So field1 will be lost when field2 is set
-    assert_eq!(message.temp_data, json!({"field2": "second_value"}));
+    // After fix: temp_data is MERGED, not replaced
+    // Both field1 and field2 should exist
+    assert_eq!(
+        message.temp_data,
+        json!({
+            "field1": "first_value",
+            "field2": "second_value"
+        })
+    );
 
-    // Verify that field1 is NOT present (demonstrating the replacement behavior)
+    // Verify that both fields are present (demonstrating the merge behavior)
     assert!(
-        message.temp_data.get("field1").is_none(),
-        "field1 should be absent due to replacement behavior"
+        message.temp_data.get("field1").is_some(),
+        "field1 should be present after merge"
     );
     assert!(
         message.temp_data.get("field2").is_some(),
-        "field2 should be present as it was set last"
+        "field2 should be present after merge"
     );
 
-    // If we wanted merging behavior, both fields should exist:
-    // Expected for merge: {"field1": "first_value", "field2": "second_value"}
-    // Actual: {"field2": "second_value"}
+    // The merge behavior preserves existing fields while adding new ones
 }
 
 #[tokio::test]
@@ -354,7 +358,7 @@ async fn test_data_field_replacement_behavior() {
                             "mappings": [
                                 {
                                     "path": "data",
-                                    "logic": {"field1": "value1", "existing": "preserved"}
+                                    "logic": {"field1": "value1"}
                                 }
                             ]
                         }
@@ -388,22 +392,31 @@ async fn test_data_field_replacement_behavior() {
         .collect();
 
     let engine = Engine::new(workflows, None);
-    let mut message = Message::from_value(&json!({"initial": "data"}));
+    let mut message = Message::from_value(&json!({}));
+    // Initialize the data field with existing data to test merging
+    message.data = json!({"initial": "data"});
 
     engine.process_message(&mut message).await.unwrap();
 
-    // When using path "data", it creates a nested "data" field rather than replacing root
-    // This is because "data" is treated as a field name, not the root data object
-    assert_eq!(message.data, json!({"data": {"field2": "value2"}}));
+    // After fix: When using path "data", it merges with existing data
+    // Note: Order may vary in the JSON object
+    assert_eq!(message.data["initial"], json!("data"));
+    assert_eq!(message.data["field1"], json!("value1"));
+    assert_eq!(message.data["field2"], json!("value2"));
 
-    // The initial field is also lost because the entire root is replaced
+    // All fields should be present after merging
     assert!(
-        message.data.get("initial").is_none(),
-        "initial field is lost when root data is replaced"
+        message.data.get("initial").is_some(),
+        "initial field should be preserved"
     );
-
-    // To actually replace fields at the root level, you would need to use paths like:
-    // "field1", "field2" (without "data." prefix) for root-level fields
+    assert!(
+        message.data.get("field1").is_some(),
+        "field1 should be present"
+    );
+    assert!(
+        message.data.get("field2").is_some(),
+        "field2 should be present"
+    );
 }
 
 #[tokio::test]
@@ -746,5 +759,105 @@ async fn test_sequential_mappings_issue_simplified() {
         message.data.get("value2"),
         Some(&json!(20)),
         "Second mapping should see first mapping's result and compute 10 * 2 = 20"
+    );
+}
+
+#[tokio::test]
+async fn test_temp_data_merge_real_scenario() {
+    // Test based on the real audit log scenario where temp_data was being replaced
+    let workflows_json = json!([
+        {
+            "id": "test_workflow",
+            "name": "Test Temp Data Merge",
+            "priority": 1,
+            "condition": true,
+            "tasks": [
+                {
+                    "id": "task1",
+                    "name": "Set initial temp_data fields",
+                    "function": {
+                        "name": "map",
+                        "input": {
+                            "mappings": [
+                                {
+                                    "path": "temp_data",
+                                    "logic": {
+                                        "Receiver": "NQZATAE1",
+                                        "Sender": "ZSZUBOM1",
+                                        "UETR": "8e49e852-45a1-42f7-b120-18d232541285",
+                                        "clearing_channel": null,
+                                        "field53b_account_indicator": null,
+                                        "field53b_is_account": false,
+                                        "has_rtgs_indicator": null
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "id": "task2",
+                    "name": "Add settlement fields (should merge, not replace)",
+                    "function": {
+                        "name": "map",
+                        "input": {
+                            "mappings": [
+                                {
+                                    "path": "temp_data",
+                                    "logic": {
+                                        "settlement_account": null,
+                                        "settlement_method": "INDA"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    ]);
+
+    let workflows: Vec<Workflow> = workflows_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| serde_json::from_value(w.clone()).unwrap())
+        .collect();
+
+    let engine = Engine::new(workflows, None);
+    let mut message = Message::from_value(&json!({}));
+
+    engine.process_message(&mut message).await.unwrap();
+
+    // After merge, all fields should be present
+    assert_eq!(message.temp_data["Receiver"], json!("NQZATAE1"));
+    assert_eq!(message.temp_data["Sender"], json!("ZSZUBOM1"));
+    assert_eq!(
+        message.temp_data["UETR"],
+        json!("8e49e852-45a1-42f7-b120-18d232541285")
+    );
+    assert_eq!(message.temp_data["settlement_method"], json!("INDA"));
+    assert_eq!(message.temp_data["settlement_account"], json!(null));
+
+    // Verify the complete structure has all fields
+    assert!(
+        message.temp_data.get("Receiver").is_some(),
+        "Receiver should be preserved"
+    );
+    assert!(
+        message.temp_data.get("Sender").is_some(),
+        "Sender should be preserved"
+    );
+    assert!(
+        message.temp_data.get("UETR").is_some(),
+        "UETR should be preserved"
+    );
+    assert!(
+        message.temp_data.get("settlement_method").is_some(),
+        "settlement_method should be added"
+    );
+    assert!(
+        message.temp_data.get("settlement_account").is_some(),
+        "settlement_account should be added"
     );
 }
