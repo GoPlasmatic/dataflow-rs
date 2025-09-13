@@ -14,6 +14,8 @@ use serde_json::Value;
 /// - `"user.name"` - Access object property
 /// - `"items.0"` - Access array element by index
 /// - `"user.addresses.0.city"` - Combined object and array access
+/// - `"data.#20"` - Access field named "20" (# prefix removed)
+/// - `"data.##"` - Access field named "#" (first # removed, second # kept)
 ///
 /// # Arguments
 /// * `data` - The JSON value to navigate
@@ -35,10 +37,16 @@ pub fn get_nested_value<'b>(data: &'b Value, path: &str) -> Option<&'b Value> {
     for part in parts {
         match current {
             Value::Object(map) => {
-                current = map.get(part)?;
+                // Handle # prefix for numeric or special field names
+                let field_name = if let Some(stripped) = part.strip_prefix('#') {
+                    stripped // Remove the first # character
+                } else {
+                    part
+                };
+                current = map.get(field_name)?;
             }
             Value::Array(arr) => {
-                // Safely parse and validate array index
+                // For arrays, try to parse as index (no # prefix handling needed)
                 let index = match part.parse::<usize>() {
                     Ok(idx) => idx,
                     Err(_) => return None, // Invalid index format
@@ -63,6 +71,12 @@ pub fn get_nested_value<'b>(data: &'b Value, path: &str) -> Option<&'b Value> {
 /// Creates intermediate objects or arrays as needed when navigating the path.
 /// Supports setting values in nested objects and arrays with automatic expansion.
 ///
+/// # Path Syntax
+/// - `"user.name"` - Set object property
+/// - `"items.0"` - Set array element
+/// - `"data.#20"` - Set field named "20" (# prefix removed)
+/// - `"data.##"` - Set field named "#" (first # removed)
+///
 /// # Arguments
 /// * `data` - The JSON value to modify
 /// * `path` - Dot-separated path to the target location
@@ -86,10 +100,16 @@ pub fn set_nested_value(data: &mut Value, path: &str, value: Value) {
             // Last part - set the value
             match current {
                 Value::Object(map) => {
-                    map.insert(part.to_string(), value);
+                    // Handle # prefix for field names
+                    let field_name = if let Some(stripped) = part.strip_prefix('#') {
+                        stripped // Remove the first # character
+                    } else {
+                        part
+                    };
+                    map.insert(field_name.to_string(), value);
                 }
                 Value::Array(arr) => {
-                    // Try to parse as array index
+                    // Try to parse as array index (no # prefix for arrays)
                     if let Ok(index) = part.parse::<usize>() {
                         // Expand array if necessary (fill with nulls)
                         while arr.len() <= index {
@@ -114,14 +134,20 @@ pub fn set_nested_value(data: &mut Value, path: &str, value: Value) {
 
         match current {
             Value::Object(map) => {
-                // Check if current part is meant to be an array index
-                if let Ok(_index) = part.parse::<usize>() {
-                    // This shouldn't happen in a well-formed path
-                    return;
-                }
+                // Handle # prefix for field names
+                let field_name = if let Some(stripped) = part.strip_prefix('#') {
+                    stripped // Remove the first # character
+                } else {
+                    // Check if current part is meant to be an array index
+                    if let Ok(_index) = part.parse::<usize>() {
+                        // This shouldn't happen in a well-formed path for objects
+                        return;
+                    }
+                    part
+                };
 
                 // Create the appropriate structure for the next level
-                current = map.entry(part.to_string()).or_insert_with(|| {
+                current = map.entry(field_name.to_string()).or_insert_with(|| {
                     if next_is_array {
                         Value::Array(Vec::new())
                     } else {
@@ -407,5 +433,205 @@ mod tests {
         let mut data3 = json!({"arr": [1, 2, 3]});
         set_nested_value(&mut data3, "arr.1", json!("replaced"));
         assert_eq!(data3["arr"], json!([1, "replaced", 3]));
+    }
+
+    #[test]
+    fn test_hash_prefix_in_paths() {
+        // Test getting values with # prefix
+        let data = json!({
+            "fields": {
+                "20": "numeric field name",
+                "#": "hash field",
+                "##": "double hash field",
+                "normal": "normal field"
+            }
+        });
+
+        // Access field named "20" using #20
+        assert_eq!(
+            get_nested_value(&data, "fields.#20"),
+            Some(&json!("numeric field name"))
+        );
+
+        // Access field named "#" using ##
+        assert_eq!(
+            get_nested_value(&data, "fields.##"),
+            Some(&json!("hash field"))
+        );
+
+        // Access field named "##" using ###
+        assert_eq!(
+            get_nested_value(&data, "fields.###"),
+            Some(&json!("double hash field"))
+        );
+
+        // Normal field access still works
+        assert_eq!(
+            get_nested_value(&data, "fields.normal"),
+            Some(&json!("normal field"))
+        );
+
+        // Non-existent field with # prefix
+        assert_eq!(get_nested_value(&data, "fields.#999"), None);
+    }
+
+    #[test]
+    fn test_set_hash_prefix_in_paths() {
+        let mut data = json!({});
+
+        // Set field named "20" using #20
+        set_nested_value(&mut data, "fields.#20", json!("value for 20"));
+        assert_eq!(data["fields"]["20"], json!("value for 20"));
+
+        // Set field named "#" using ##
+        set_nested_value(&mut data, "fields.##", json!("hash value"));
+        assert_eq!(data["fields"]["#"], json!("hash value"));
+
+        // Set field named "##" using ###
+        set_nested_value(&mut data, "fields.###", json!("double hash value"));
+        assert_eq!(data["fields"]["##"], json!("double hash value"));
+
+        // Normal field setting still works
+        set_nested_value(&mut data, "fields.normal", json!("normal value"));
+        assert_eq!(data["fields"]["normal"], json!("normal value"));
+
+        // Verify the complete structure
+        assert_eq!(
+            data,
+            json!({
+                "fields": {
+                    "20": "value for 20",
+                    "#": "hash value",
+                    "##": "double hash value",
+                    "normal": "normal value"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_hash_prefix_with_arrays() {
+        let mut data = json!({
+            "items": [
+                {"0": "field named zero", "id": 1},
+                {"1": "field named one", "id": 2}
+            ]
+        });
+
+        // Access array element, then field named "0" using #0
+        assert_eq!(
+            get_nested_value(&data, "items.0.#0"),
+            Some(&json!("field named zero"))
+        );
+
+        // Access array element, then field named "1" using #1
+        assert_eq!(
+            get_nested_value(&data, "items.1.#1"),
+            Some(&json!("field named one"))
+        );
+
+        // Set a field named "2" in array element using #2
+        set_nested_value(&mut data, "items.0.#2", json!("field named two"));
+        assert_eq!(data["items"][0]["2"], json!("field named two"));
+
+        // Array indices still work normally (without # prefix)
+        assert_eq!(get_nested_value(&data, "items.0.id"), Some(&json!(1)));
+        assert_eq!(get_nested_value(&data, "items.1.id"), Some(&json!(2)));
+    }
+
+    #[test]
+    fn test_hash_prefix_field_with_array_value() {
+        // Test case: "data.fields.#72.0" should access field named "72" then array index 0
+        let data = json!({
+            "data": {
+                "fields": {
+                    "72": ["first", "second", "third"],
+                    "100": ["alpha", "beta", "gamma"],
+                    "normal": ["one", "two", "three"]
+                }
+            }
+        });
+
+        // Access field named "72" (using #72) then array index 0
+        assert_eq!(
+            get_nested_value(&data, "data.fields.#72.0"),
+            Some(&json!("first"))
+        );
+
+        // Access field named "72" then array index 1
+        assert_eq!(
+            get_nested_value(&data, "data.fields.#72.1"),
+            Some(&json!("second"))
+        );
+
+        // Access field named "72" then array index 2
+        assert_eq!(
+            get_nested_value(&data, "data.fields.#72.2"),
+            Some(&json!("third"))
+        );
+
+        // Access field named "100" then array indices
+        assert_eq!(
+            get_nested_value(&data, "data.fields.#100.0"),
+            Some(&json!("alpha"))
+        );
+        assert_eq!(
+            get_nested_value(&data, "data.fields.#100.1"),
+            Some(&json!("beta"))
+        );
+
+        // Normal field access still works
+        assert_eq!(
+            get_nested_value(&data, "data.fields.normal.0"),
+            Some(&json!("one"))
+        );
+
+        // Test setting values in arrays accessed via # prefix
+        let mut data_mut = data.clone();
+        set_nested_value(&mut data_mut, "data.fields.#72.0", json!("modified"));
+        assert_eq!(data_mut["data"]["fields"]["72"][0], json!("modified"));
+
+        // Test creating new field with numeric name containing array
+        set_nested_value(&mut data_mut, "data.fields.#999.0", json!("new value"));
+        assert_eq!(data_mut["data"]["fields"]["999"][0], json!("new value"));
+
+        // Test nested objects in arrays accessed via # prefix
+        let complex_data = json!({
+            "fields": {
+                "42": [
+                    {"name": "item1", "value": 100},
+                    {"name": "item2", "value": 200}
+                ]
+            }
+        });
+
+        assert_eq!(
+            get_nested_value(&complex_data, "fields.#42.0.name"),
+            Some(&json!("item1"))
+        );
+        assert_eq!(
+            get_nested_value(&complex_data, "fields.#42.1.value"),
+            Some(&json!(200))
+        );
+
+        // Test multiple # prefixes in path
+        let multi_hash_data = json!({
+            "data": {
+                "#fields": {
+                    "##": ["hash array"],
+                    "10": ["numeric array"]
+                }
+            }
+        });
+
+        // Access field named "#fields" using ##fields
+        assert_eq!(
+            get_nested_value(&multi_hash_data, "data.##fields.###.0"),
+            Some(&json!("hash array"))
+        );
+        assert_eq!(
+            get_nested_value(&multi_hash_data, "data.##fields.#10.0"),
+            Some(&json!("numeric array"))
+        );
     }
 }
