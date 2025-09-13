@@ -67,10 +67,6 @@ impl MapConfig {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
 
-        // Use evaluation context to avoid repeated JSON creation
-        let eval_context = EvaluationContext::from_message(message);
-        let eval_data = eval_context.to_arc_json();
-
         // Process each mapping
         for mapping in &self.mappings {
             debug!("Processing mapping to path: {}", mapping.path);
@@ -101,9 +97,14 @@ impl MapConfig {
                 }
             };
 
+            // Create fresh evaluation context for each mapping to include previous changes
+            // This ensures subsequent mappings can see changes made by previous mappings
+            let eval_context = EvaluationContext::from_message(message);
+            let eval_data = eval_context.to_arc_json();
+
             // Evaluate the transformation logic using DataLogic v4
             // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
-            let result = datalogic.evaluate(compiled_logic, Arc::clone(&eval_data));
+            let result = datalogic.evaluate(compiled_logic, eval_data);
 
             match result {
                 Ok(transformed_value) => {
