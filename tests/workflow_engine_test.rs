@@ -861,3 +861,141 @@ async fn test_temp_data_merge_real_scenario() {
         "settlement_account should be added"
     );
 }
+
+#[tokio::test]
+async fn test_nested_temp_data_mappings_preserve_existing_fields() {
+    // Test the exact scenario from the user's audit log
+    let workflows_json = json!([
+        {
+            "id": "mt200-document-mapper",
+            "name": "MT200 Document Mapper",
+            "priority": 1,
+            "condition": true,
+            "tasks": [
+                {
+                    "id": "initialize_temp_data",
+                    "name": "Initialize temp_data",
+                    "function": {
+                        "name": "map",
+                        "input": {
+                            "mappings": [
+                                {
+                                    "path": "temp_data.Receiver",
+                                    "logic": "YLLUSAW1"
+                                },
+                                {
+                                    "path": "temp_data.Sender",
+                                    "logic": "VLUIYUR1"
+                                },
+                                {
+                                    "path": "temp_data.UETR",
+                                    "logic": "3e06e786-1292-48bc-b3f1-0f7cc04330d1"
+                                },
+                                {
+                                    "path": "temp_data.clearing_channel",
+                                    "logic": null
+                                },
+                                {
+                                    "path": "temp_data.field53b_account_indicator",
+                                    "logic": null
+                                },
+                                {
+                                    "path": "temp_data.field53b_is_account",
+                                    "logic": false
+                                },
+                                {
+                                    "path": "temp_data.has_rtgs_indicator",
+                                    "logic": null
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "id": "determine_settlement_method",
+                    "name": "Determine Settlement Method",
+                    "function": {
+                        "name": "map",
+                        "input": {
+                            "mappings": [
+                                {
+                                    "path": "temp_data",
+                                    "logic": {
+                                        "settlement_method": "INDA",
+                                        "settlement_account": null
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    ]);
+
+    // Parse workflows from JSON
+    let workflows: Vec<Workflow> = workflows_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| serde_json::from_value(w.clone()).unwrap())
+        .collect();
+
+    let engine = Engine::new(workflows, None);
+    let mut message = Message::from_value(&json!({}));
+
+    engine.process_message(&mut message).await.unwrap();
+
+    // Check the audit trail for the second task
+    let settlement_audit = message
+        .audit_trail
+        .iter()
+        .find(|a| a.task_id == Arc::from("determine_settlement_method"))
+        .expect("Should have audit entry for determine_settlement_method");
+
+    println!("Settlement method audit changes:");
+    for change in &settlement_audit.changes {
+        println!("  Path: {}", change.path);
+        println!("  Old: {:?}", change.old_value);
+        println!("  New: {:?}", change.new_value);
+    }
+
+    // Verify the audit trail shows the root temp_data path (since we're now assigning to root)
+    assert_eq!(settlement_audit.changes.len(), 1, "Should have 1 change");
+    assert_eq!(settlement_audit.changes[0].path.as_ref(), "temp_data");
+
+    // Print the final temp_data to verify
+    println!("Final temp_data: {:?}", message.temp_data);
+
+    // After the second task, ALL fields should still be present
+    assert_eq!(message.temp_data["Receiver"], json!("YLLUSAW1"));
+    assert_eq!(message.temp_data["Sender"], json!("VLUIYUR1"));
+    assert_eq!(
+        message.temp_data["UETR"],
+        json!("3e06e786-1292-48bc-b3f1-0f7cc04330d1")
+    );
+    assert_eq!(message.temp_data["clearing_channel"], json!(null));
+    assert_eq!(message.temp_data["field53b_account_indicator"], json!(null));
+    assert_eq!(message.temp_data["field53b_is_account"], json!(false));
+    assert_eq!(message.temp_data["has_rtgs_indicator"], json!(null));
+    assert_eq!(message.temp_data["settlement_method"], json!("INDA"));
+    assert_eq!(message.temp_data["settlement_account"], json!(null));
+
+    // Verify all fields exist
+    assert!(
+        message.temp_data.get("Receiver").is_some(),
+        "Receiver should be preserved"
+    );
+    assert!(
+        message.temp_data.get("Sender").is_some(),
+        "Sender should be preserved"
+    );
+    assert!(
+        message.temp_data.get("UETR").is_some(),
+        "UETR should be preserved"
+    );
+    assert!(
+        message.temp_data.get("settlement_method").is_some(),
+        "settlement_method should be added"
+    );
+}

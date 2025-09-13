@@ -135,6 +135,10 @@ impl MapConfig {
                     // Create Arc once and share it
                     let new_value_arc = Arc::new(transformed_value);
 
+                    debug!(
+                        "Recording change for path '{}': old={:?}, new={:?}",
+                        mapping.path, old_value_arc, new_value_arc
+                    );
                     changes.push(Change {
                         path: Arc::from(mapping.path.as_str()),
                         old_value: Arc::clone(&old_value_arc),
