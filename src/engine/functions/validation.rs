@@ -1,6 +1,5 @@
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::message::{Change, EvaluationContext, Message};
-use crate::engine::utils::is_truthy;
 use datalogic_rs::{CompiledLogic, DataLogic};
 use log::{debug, error};
 use serde::Deserialize;
@@ -83,11 +82,34 @@ impl ValidationConfig {
         for (idx, rule) in self.rules.iter().enumerate() {
             debug!("Processing validation rule {}: {}", idx, rule.message);
 
-            // Get the compiled logic from cache
+            // Get the compiled logic from cache with proper bounds checking
             let compiled_logic = match rule.logic_index {
-                Some(index) if index < logic_cache.len() => &logic_cache[index],
-                _ => {
-                    error!("Validation: Logic not compiled for rule at index {}", idx);
+                Some(index) => {
+                    // Ensure index is valid before accessing
+                    if index >= logic_cache.len() {
+                        error!(
+                            "Validation: Logic index {} out of bounds (cache size: {}) for rule at index {}",
+                            index,
+                            logic_cache.len(),
+                            idx
+                        );
+                        validation_errors.push(ErrorInfo::simple_ref(
+                            "COMPILATION_ERROR",
+                            &format!(
+                                "Logic index {} out of bounds for rule at index {}",
+                                index, idx
+                            ),
+                            None,
+                        ));
+                        continue;
+                    }
+                    &logic_cache[index]
+                }
+                None => {
+                    error!(
+                        "Validation: Logic not compiled (no index) for rule at index {}",
+                        idx
+                    );
                     validation_errors.push(ErrorInfo::simple_ref(
                         "COMPILATION_ERROR",
                         &format!("Logic not compiled for rule at index: {}", idx),
@@ -103,8 +125,8 @@ impl ValidationConfig {
 
             match result {
                 Ok(value) => {
-                    // Check if validation passed (truthy value)
-                    if !is_truthy(&value) {
+                    // Check if validation passed (must be explicitly true)
+                    if value != Value::Bool(true) {
                         debug!("Validation failed for rule {}: {}", idx, rule.message);
                         validation_errors.push(ErrorInfo::simple_ref(
                             "VALIDATION_ERROR",

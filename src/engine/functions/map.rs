@@ -75,11 +75,27 @@ impl MapConfig {
         for mapping in &self.mappings {
             debug!("Processing mapping to path: {}", mapping.path);
 
-            // Get the compiled logic from cache
+            // Get the compiled logic from cache with proper bounds checking
             let compiled_logic = match mapping.logic_index {
-                Some(index) if index < logic_cache.len() => &logic_cache[index],
-                _ => {
-                    error!("Map: Logic not compiled for mapping to {}", mapping.path);
+                Some(index) => {
+                    // Ensure index is valid before accessing
+                    if index >= logic_cache.len() {
+                        error!(
+                            "Map: Logic index {} out of bounds (cache size: {}) for mapping to {}",
+                            index,
+                            logic_cache.len(),
+                            mapping.path
+                        );
+                        errors_encountered = true;
+                        continue;
+                    }
+                    &logic_cache[index]
+                }
+                None => {
+                    error!(
+                        "Map: Logic not compiled (no index) for mapping to {}",
+                        mapping.path
+                    );
                     errors_encountered = true;
                     continue;
                 }
@@ -91,8 +107,29 @@ impl MapConfig {
 
             match result {
                 Ok(transformed_value) => {
-                    // Store the transformed value in the target path
-                    let old_value = get_nested_value(&message.data, &mapping.path);
+                    debug!(
+                        "Map: Evaluated logic for path {} resulted in: {:?}",
+                        mapping.path, transformed_value
+                    );
+
+                    // Get old value from the appropriate location
+                    let old_value = if mapping.path.starts_with("temp_data") {
+                        if mapping.path == "temp_data" {
+                            Some(&message.temp_data)
+                        } else if mapping.path.starts_with("temp_data.") {
+                            get_nested_value(&message.temp_data, &mapping.path[10..])
+                        } else {
+                            None
+                        }
+                    } else {
+                        let target_path = if mapping.path.starts_with("data.") {
+                            &mapping.path[5..] // Skip "data."
+                        } else {
+                            &mapping.path
+                        };
+                        get_nested_value(&message.data, target_path)
+                    };
+
                     let old_value_arc = Arc::new(old_value.cloned().unwrap_or(Value::Null));
                     // Create Arc once and share it
                     let new_value_arc = Arc::new(transformed_value);
@@ -104,11 +141,41 @@ impl MapConfig {
                     });
 
                     // Update the message data - extract from Arc to avoid double clone
-                    set_nested_value(
-                        &mut message.data,
-                        &mapping.path,
-                        Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone()),
-                    );
+                    // Handle different path prefixes to update the correct part of the message
+                    if mapping.path.starts_with("temp_data") {
+                        // Update temp_data field
+                        let target_path = if mapping.path == "temp_data" {
+                            "" // Root of temp_data
+                        } else if mapping.path.starts_with("temp_data.") {
+                            &mapping.path[10..] // Skip "temp_data."
+                        } else {
+                            &mapping.path
+                        };
+
+                        if target_path.is_empty() {
+                            // Replace entire temp_data
+                            message.temp_data =
+                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone());
+                        } else {
+                            set_nested_value(
+                                &mut message.temp_data,
+                                target_path,
+                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone()),
+                            );
+                        }
+                    } else {
+                        // Update data field
+                        let target_path = if mapping.path.starts_with("data.") {
+                            &mapping.path[5..] // Skip "data."
+                        } else {
+                            &mapping.path
+                        };
+                        set_nested_value(
+                            &mut message.data,
+                            target_path,
+                            Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone()),
+                        );
+                    }
                     debug!("Successfully mapped to path: {}", mapping.path);
                 }
                 Err(e) => {

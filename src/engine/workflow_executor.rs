@@ -51,7 +51,7 @@ impl WorkflowExecutor {
     /// # Returns
     /// * `Result<bool>` - Ok(true) if workflow was executed, Ok(false) if skipped, Err on failure
     pub async fn execute(&self, workflow: &Workflow, message: &mut Message) -> Result<bool> {
-        // Cache metadata Arc for reuse
+        // Create evaluation context with all message fields for condition evaluation
         let metadata_arc = Arc::new(message.metadata.clone());
 
         // Evaluate workflow condition
@@ -67,8 +67,8 @@ impl WorkflowExecutor {
         info!("Executing workflow: {}", workflow.id);
         message.metadata["current_workflow"] = json!(workflow.id);
 
-        // Execute workflow tasks (pass the cached metadata_arc)
-        let result = self.execute_tasks(workflow, message, metadata_arc).await;
+        // Execute workflow tasks
+        let result = self.execute_tasks(workflow, message).await;
 
         // Clear current workflow from metadata
         message
@@ -104,13 +104,12 @@ impl WorkflowExecutor {
     }
 
     /// Execute all tasks in a workflow
-    async fn execute_tasks(
-        &self,
-        workflow: &Workflow,
-        message: &mut Message,
-        metadata_arc: Arc<serde_json::Value>,
-    ) -> Result<()> {
+    async fn execute_tasks(&self, workflow: &Workflow, message: &mut Message) -> Result<()> {
         for task in &workflow.tasks {
+            // Create fresh evaluation context to include any temp_data changes from previous tasks
+            // This ensures task conditions can see updated temp_data values
+            let metadata_arc = Arc::new(message.metadata.clone());
+
             // Evaluate task condition
             let should_execute = self
                 .internal_executor
@@ -165,6 +164,27 @@ impl WorkflowExecutor {
                     status,
                     changes,
                 });
+
+                // Update progress metadata for workflow chaining
+                if let Some(metadata) = message.metadata.as_object_mut() {
+                    // Update existing progress or create new one
+                    if let Some(progress) = metadata.get_mut("progress") {
+                        if let Some(progress_obj) = progress.as_object_mut() {
+                            progress_obj.insert("workflow_id".to_string(), json!(workflow_id));
+                            progress_obj.insert("task_id".to_string(), json!(task_id));
+                            progress_obj.insert("status_code".to_string(), json!(status));
+                        }
+                    } else {
+                        metadata.insert(
+                            "progress".to_string(),
+                            json!({
+                                "workflow_id": workflow_id,
+                                "task_id": task_id,
+                                "status_code": status
+                            }),
+                        );
+                    }
+                }
 
                 // Check status code
                 if (400..500).contains(&status) {

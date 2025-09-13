@@ -11,7 +11,6 @@
 use crate::engine::error::Result;
 use crate::engine::functions::{MapConfig, ValidationConfig};
 use crate::engine::message::{Change, Message};
-use crate::engine::utils::is_truthy;
 use datalogic_rs::{CompiledLogic, DataLogic};
 use log::error;
 use serde_json::Value;
@@ -82,7 +81,10 @@ impl InternalExecutor {
                 let result = self.datalogic.evaluate(compiled_logic, metadata);
 
                 match result {
-                    Ok(value) => Ok(is_truthy(&value)),
+                    Ok(value) => {
+                        // Check for explicit boolean true, same as validation function
+                        Ok(value == Value::Bool(true))
+                    }
                     Err(e) => {
                         error!("Failed to evaluate condition: {:?}", e);
                         Ok(false)

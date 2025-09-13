@@ -184,14 +184,12 @@ impl Engine {
         message.metadata["processed_at"] = json!(Utc::now().to_rfc3339());
         message.metadata["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
 
-        // Sort workflows by ID for deterministic execution order
-        let mut workflow_ids: Vec<_> = self.workflows.keys().collect();
-        workflow_ids.sort();
+        // Sort workflows by priority for proper execution order
+        let mut workflows: Vec<_> = self.workflows.values().collect();
+        workflows.sort_by_key(|w| w.priority);
 
-        // Process each workflow
-        for workflow_id in workflow_ids {
-            let workflow = &self.workflows[workflow_id];
-
+        // Process each workflow in priority order
+        for workflow in workflows {
             // Execute workflow through the workflow executor
             self.workflow_executor.execute(workflow, message).await?;
         }
