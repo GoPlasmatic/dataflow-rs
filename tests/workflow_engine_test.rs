@@ -999,3 +999,284 @@ async fn test_nested_temp_data_mappings_preserve_existing_fields() {
         "settlement_method should be added"
     );
 }
+
+#[tokio::test]
+async fn test_exact_user_scenario_with_self_reference() {
+    // Test the EXACT scenario from the user's mapping task
+    let workflows_json = json!([
+        {
+            "id": "mt200-document-mapper",
+            "name": "MT200 Document Mapper",
+            "priority": 1,
+            "condition": true,
+            "tasks": [
+                {
+                    "id": "initialize_temp_data",
+                    "name": "Initialize temp_data",
+                    "function": {
+                        "name": "map",
+                        "input": {
+                            "mappings": [
+                                {
+                                    "path": "temp_data.Receiver",
+                                    "logic": "ZCZEGSG1"
+                                },
+                                {
+                                    "path": "temp_data.Sender",
+                                    "logic": "KWFUTHQ1"
+                                },
+                                {
+                                    "path": "temp_data.UETR",
+                                    "logic": "2ce6f720-e9e3-40ee-8ad9-395ca532105f"
+                                },
+                                {
+                                    "path": "temp_data.clearing_channel",
+                                    "logic": null
+                                },
+                                {
+                                    "path": "temp_data.field53b_account_indicator",
+                                    "logic": null
+                                },
+                                {
+                                    "path": "temp_data.field53b_is_account",
+                                    "logic": false
+                                },
+                                {
+                                    "path": "temp_data.has_rtgs_indicator",
+                                    "logic": null
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "id": "determine_settlement_method",
+                    "name": "Determine Settlement Method",
+                    "function": {
+                        "name": "map",
+                        "input": {
+                            "mappings": [
+                                {
+                                    "path": "temp_data.Sender",
+                                    "logic": {"var": "temp_data.Sender"}
+                                },
+                                {
+                                    "path": "temp_data.Receiver",
+                                    "logic": {"var": "temp_data.Receiver"}
+                                },
+                                {
+                                    "path": "temp_data.UETR",
+                                    "logic": "NEW-UETR-VALUE"
+                                },
+                                {
+                                    "path": "temp_data.settlement_method",
+                                    "logic": "INDA"
+                                },
+                                {
+                                    "path": "temp_data.settlement_account",
+                                    "logic": null
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    ]);
+
+    // Parse workflows from JSON
+    let workflows: Vec<Workflow> = workflows_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| serde_json::from_value(w.clone()).unwrap())
+        .collect();
+
+    let engine = Engine::new(workflows, None);
+    let mut message = Message::from_value(&json!({}));
+
+    engine.process_message(&mut message).await.unwrap();
+
+    // Check the audit trail for the second task
+    let settlement_audit = message
+        .audit_trail
+        .iter()
+        .find(|a| a.task_id == Arc::from("determine_settlement_method"))
+        .expect("Should have audit entry for determine_settlement_method");
+
+    println!(
+        "Number of changes in audit: {}",
+        settlement_audit.changes.len()
+    );
+    println!("Settlement method audit changes:");
+    for change in &settlement_audit.changes {
+        println!("  Path: {}", change.path);
+        println!("  Old: {:?}", change.old_value);
+        println!("  New: {:?}", change.new_value);
+    }
+
+    // Print the final temp_data to verify
+    println!("Final temp_data: {:?}", message.temp_data);
+
+    // The audit should have 5 individual changes, NOT 1 aggregated change
+    assert_eq!(
+        settlement_audit.changes.len(),
+        5,
+        "Should have 5 changes for 5 mappings"
+    );
+
+    // After the second task, ALL fields should still be present including the ones not mentioned
+    assert_eq!(message.temp_data["Receiver"], json!("ZCZEGSG1"));
+    assert_eq!(message.temp_data["Sender"], json!("KWFUTHQ1"));
+    assert_eq!(message.temp_data["UETR"], json!("NEW-UETR-VALUE")); // Changed value
+    assert_eq!(message.temp_data["clearing_channel"], json!(null)); // Should be preserved!
+    assert_eq!(message.temp_data["field53b_account_indicator"], json!(null)); // Should be preserved!
+    assert_eq!(message.temp_data["field53b_is_account"], json!(false)); // Should be preserved!
+    assert_eq!(message.temp_data["has_rtgs_indicator"], json!(null)); // Should be preserved!
+    assert_eq!(message.temp_data["settlement_method"], json!("INDA"));
+    assert_eq!(message.temp_data["settlement_account"], json!(null));
+}
+
+#[tokio::test]
+async fn test_what_if_mappings_aggregated_to_single_object() {
+    // What if someone is pre-processing the mappings to aggregate them?
+    let workflows_json = json!([
+        {
+            "id": "mt200-document-mapper",
+            "name": "MT200 Document Mapper",
+            "priority": 1,
+            "condition": true,
+            "tasks": [
+                {
+                    "id": "initialize_temp_data",
+                    "name": "Initialize temp_data",
+                    "function": {
+                        "name": "map",
+                        "input": {
+                            "mappings": [
+                                {
+                                    "path": "temp_data.Receiver",
+                                    "logic": "ZCZEGSG1"
+                                },
+                                {
+                                    "path": "temp_data.Sender",
+                                    "logic": "KWFUTHQ1"
+                                },
+                                {
+                                    "path": "temp_data.UETR",
+                                    "logic": "2ce6f720-e9e3-40ee-8ad9-395ca532105f"
+                                },
+                                {
+                                    "path": "temp_data.clearing_channel",
+                                    "logic": null
+                                },
+                                {
+                                    "path": "temp_data.field53b_account_indicator",
+                                    "logic": null
+                                },
+                                {
+                                    "path": "temp_data.field53b_is_account",
+                                    "logic": false
+                                },
+                                {
+                                    "path": "temp_data.has_rtgs_indicator",
+                                    "logic": null
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "id": "determine_settlement_method",
+                    "name": "Determine Settlement Method AGGREGATED",
+                    "function": {
+                        "name": "map",
+                        "input": {
+                            "mappings": [
+                                {
+                                    // What if all mappings are being combined into one?
+                                    "path": "temp_data",
+                                    "logic": {
+                                        // Only the NEW/CHANGED fields
+                                        "settlement_method": "INDA",
+                                        "settlement_account": null
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    ]);
+
+    // Parse workflows from JSON
+    let workflows: Vec<Workflow> = workflows_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| serde_json::from_value(w.clone()).unwrap())
+        .collect();
+
+    let engine = Engine::new(workflows, None);
+    let mut message = Message::from_value(&json!({}));
+
+    engine.process_message(&mut message).await.unwrap();
+
+    // Check the audit trail for the second task
+    let settlement_audit = message
+        .audit_trail
+        .iter()
+        .find(|a| a.task_id == Arc::from("determine_settlement_method"))
+        .expect("Should have audit entry for determine_settlement_method");
+
+    println!(
+        "AGGREGATED test - Number of changes: {}",
+        settlement_audit.changes.len()
+    );
+    println!("AGGREGATED test - Audit changes:");
+    for change in &settlement_audit.changes {
+        println!("  Path: {}", change.path);
+        println!(
+            "  Old value fields: {:?}",
+            change
+                .old_value
+                .as_object()
+                .map(|o| o.keys().collect::<Vec<_>>())
+        );
+        println!(
+            "  New value fields: {:?}",
+            change
+                .new_value
+                .as_object()
+                .map(|o| o.keys().collect::<Vec<_>>())
+        );
+    }
+
+    // This matches the user's audit log pattern!
+    assert_eq!(
+        settlement_audit.changes.len(),
+        1,
+        "Should have 1 aggregated change"
+    );
+    assert_eq!(settlement_audit.changes[0].path.as_ref(), "temp_data");
+
+    // The old_value should have all the existing fields
+    let old_obj = settlement_audit.changes[0].old_value.as_object().unwrap();
+    assert!(old_obj.contains_key("Receiver"));
+    assert!(old_obj.contains_key("Sender"));
+    assert!(old_obj.contains_key("UETR"));
+
+    // The new_value should have only the new fields
+    let new_obj = settlement_audit.changes[0].new_value.as_object().unwrap();
+    assert!(new_obj.contains_key("settlement_method"));
+    assert!(new_obj.contains_key("settlement_account"));
+    assert_eq!(new_obj.len(), 2, "Should only have the 2 new fields");
+
+    // But the final temp_data should have ALL fields (because of our merge logic)
+    println!("AGGREGATED test - Final temp_data: {:?}", message.temp_data);
+    assert_eq!(message.temp_data["Receiver"], json!("ZCZEGSG1"));
+    assert_eq!(message.temp_data["Sender"], json!("KWFUTHQ1"));
+    assert_eq!(message.temp_data["clearing_channel"], json!(null));
+    assert_eq!(message.temp_data["settlement_method"], json!("INDA"));
+}

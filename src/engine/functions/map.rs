@@ -67,6 +67,8 @@ impl MapConfig {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
 
+        debug!("Map: Executing {} mappings", self.mappings.len());
+
         // Process each mapping
         for mapping in &self.mappings {
             debug!("Processing mapping to path: {}", mapping.path);
