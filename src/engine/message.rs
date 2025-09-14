@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Message {
     pub id: String,
     pub payload: Arc<Value>,
@@ -14,6 +14,53 @@ pub struct Message {
     pub audit_trail: Vec<AuditTrail>,
     /// Errors that occurred during message processing
     pub errors: Vec<ErrorInfo>,
+    /// Cached Arc of the context to avoid repeated cloning
+    /// This is invalidated (set to None) whenever context is modified
+    context_arc_cache: Option<Arc<Value>>,
+}
+
+// Custom Serialize implementation to exclude context_arc_cache
+impl Serialize for Message {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Message", 5)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("payload", &self.payload)?;
+        state.serialize_field("context", &self.context)?;
+        state.serialize_field("audit_trail", &self.audit_trail)?;
+        state.serialize_field("errors", &self.errors)?;
+        state.end()
+    }
+}
+
+// Custom Deserialize implementation to initialize context_arc_cache as None
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct MessageData {
+            id: String,
+            payload: Arc<Value>,
+            context: Value,
+            audit_trail: Vec<AuditTrail>,
+            errors: Vec<ErrorInfo>,
+        }
+
+        let data = MessageData::deserialize(deserializer)?;
+        Ok(Message {
+            id: data.id,
+            payload: data.payload,
+            context: data.context,
+            audit_trail: data.audit_trail,
+            errors: data.errors,
+            context_arc_cache: None,
+        })
+    }
 }
 
 impl Message {
@@ -28,7 +75,26 @@ impl Message {
             }),
             audit_trail: vec![],
             errors: vec![],
+            context_arc_cache: None,
         }
+    }
+
+    /// Get or create an Arc reference to the context
+    /// This method returns a cached Arc if available, or creates and caches a new one
+    pub fn get_context_arc(&mut self) -> Arc<Value> {
+        if let Some(ref arc) = self.context_arc_cache {
+            Arc::clone(arc)
+        } else {
+            let arc = Arc::new(self.context.clone());
+            self.context_arc_cache = Some(Arc::clone(&arc));
+            arc
+        }
+    }
+
+    /// Invalidate the cached context Arc
+    /// Call this whenever the context is modified
+    pub fn invalidate_context_cache(&mut self) {
+        self.context_arc_cache = None;
     }
 
     /// Convenience method for creating a message from a Value reference

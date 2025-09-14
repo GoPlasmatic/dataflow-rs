@@ -74,8 +74,8 @@ impl ValidationConfig {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
 
-        // Pass context directly to DataLogic for validation
-        let data_to_validate = Arc::new(message.context.clone());
+        // Use the cached context Arc from the message (validation is read-only)
+        let context_arc = message.get_context_arc();
 
         // Process each validation rule
         for (idx, rule) in self.rules.iter().enumerate() {
@@ -119,8 +119,8 @@ impl ValidationConfig {
             };
 
             // Evaluate the validation rule using DataLogic v4
-            // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
-            let result = datalogic.evaluate(compiled_logic, Arc::clone(&data_to_validate));
+            // Reuse the same Arc for all rules - validation is read-only
+            let result = datalogic.evaluate(compiled_logic, Arc::clone(&context_arc));
 
             match result {
                 Ok(value) => {

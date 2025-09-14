@@ -69,12 +69,11 @@ impl MapConfig {
 
         debug!("Map: Executing {} mappings", self.mappings.len());
 
-        // Create the Arc once for all mappings
-        let mut context_arc = Arc::new(message.context.clone());
-        let mut context_modified = false;
-
         // Process each mapping
         for mapping in &self.mappings {
+            // Get or create context Arc for this iteration
+            // This ensures we use cached Arc when available, or create fresh one after modifications
+            let context_arc = message.get_context_arc();
             debug!("Processing mapping to path: {}", mapping.path);
 
             // Get the compiled logic from cache with proper bounds checking
@@ -103,19 +102,9 @@ impl MapConfig {
                 }
             };
 
-            // Only recreate context Arc if it was modified
-            // This ensures subsequent mappings can see changes while avoiding unnecessary clones
-            if context_modified {
-                context_arc = Arc::new(message.context.clone());
-                context_modified = false;
-            }
-
-            // Reuse the Arc by cloning the reference, not the data
-            let current_context = Arc::clone(&context_arc);
-
             // Evaluate the transformation logic using DataLogic v4
             // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
-            let result = datalogic.evaluate(compiled_logic, current_context);
+            let result = datalogic.evaluate(compiled_logic, Arc::clone(&context_arc));
 
             match result {
                 Ok(transformed_value) => {
@@ -176,7 +165,9 @@ impl MapConfig {
                         // Set nested value in context
                         set_nested_value(&mut message.context, &mapping.path, transformed_value);
                     }
-                    context_modified = true; // Mark that we've modified the context
+                    // Invalidate the cached context Arc since we modified the context
+                    // The next iteration (if any) will create a fresh Arc when needed
+                    message.invalidate_context_cache();
                     debug!("Successfully mapped to path: {}", mapping.path);
                 }
                 Err(e) => {

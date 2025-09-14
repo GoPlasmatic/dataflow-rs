@@ -183,6 +183,7 @@ impl Engine {
         // Set processing metadata
         message.context["metadata"]["processed_at"] = json!(Utc::now().to_rfc3339());
         message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
+        message.invalidate_context_cache();
 
         // Sort workflows by priority for proper execution order
         let mut workflows: Vec<_> = self.workflows.values().collect();
