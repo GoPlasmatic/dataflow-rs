@@ -181,8 +181,8 @@ impl Engine {
     /// * `Result<()>` - Ok(()) if processing succeeded, Err if a fatal error occurred
     pub async fn process_message(&self, message: &mut Message) -> Result<()> {
         // Set processing metadata
-        message.metadata["processed_at"] = json!(Utc::now().to_rfc3339());
-        message.metadata["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
+        message.context["metadata"]["processed_at"] = json!(Utc::now().to_rfc3339());
+        message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
 
         // Sort workflows by priority for proper execution order
         let mut workflows: Vec<_> = self.workflows.values().collect();

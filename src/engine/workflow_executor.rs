@@ -51,13 +51,13 @@ impl WorkflowExecutor {
     /// # Returns
     /// * `Result<bool>` - Ok(true) if workflow was executed, Ok(false) if skipped, Err on failure
     pub async fn execute(&self, workflow: &Workflow, message: &mut Message) -> Result<bool> {
-        // Create evaluation context with all message fields for condition evaluation
-        let metadata_arc = Arc::new(message.metadata.clone());
+        // Pass full context for condition evaluation (workflow can check metadata, data, or temp_data)
+        let context_arc = Arc::new(message.context.clone());
 
         // Evaluate workflow condition
         let should_execute = self
             .internal_executor
-            .evaluate_condition(workflow.condition_index, Arc::clone(&metadata_arc))?;
+            .evaluate_condition(workflow.condition_index, Arc::clone(&context_arc))?;
 
         if !should_execute {
             debug!("Skipping workflow {} - condition not met", workflow.id);
@@ -65,14 +65,13 @@ impl WorkflowExecutor {
         }
 
         info!("Executing workflow: {}", workflow.id);
-        message.metadata["current_workflow"] = json!(workflow.id);
+        message.context["metadata"]["current_workflow"] = json!(workflow.id);
 
         // Execute workflow tasks
         let result = self.execute_tasks(workflow, message).await;
 
         // Clear current workflow from metadata
-        message
-            .metadata
+        message.context["metadata"]
             .as_object_mut()
             .map(|m| m.remove("current_workflow"));
 
@@ -106,14 +105,14 @@ impl WorkflowExecutor {
     /// Execute all tasks in a workflow
     async fn execute_tasks(&self, workflow: &Workflow, message: &mut Message) -> Result<()> {
         for task in &workflow.tasks {
-            // Create fresh evaluation context to include any temp_data changes from previous tasks
-            // This ensures task conditions can see updated temp_data values
-            let metadata_arc = Arc::new(message.metadata.clone());
+            // Create fresh context to include any changes from previous tasks
+            // This ensures task conditions can see updated data/temp_data values
+            let context_arc = Arc::new(message.context.clone());
 
             // Evaluate task condition
             let should_execute = self
                 .internal_executor
-                .evaluate_condition(task.condition_index, Arc::clone(&metadata_arc))?;
+                .evaluate_condition(task.condition_index, Arc::clone(&context_arc))?;
 
             if !should_execute {
                 debug!("Skipping task {} - condition not met", task.id);
@@ -121,7 +120,7 @@ impl WorkflowExecutor {
             }
 
             debug!("Executing task: {} in workflow: {}", task.id, workflow.id);
-            message.metadata["current_task"] = json!(task.id);
+            message.context["metadata"]["current_task"] = json!(task.id);
 
             // Execute the task
             let result = self.task_executor.execute(task, message).await;
@@ -137,8 +136,7 @@ impl WorkflowExecutor {
         }
 
         // Clear current task from metadata
-        message
-            .metadata
+        message.context["metadata"]
             .as_object_mut()
             .map(|m| m.remove("current_task"));
 
@@ -166,7 +164,7 @@ impl WorkflowExecutor {
                 });
 
                 // Update progress metadata for workflow chaining
-                if let Some(metadata) = message.metadata.as_object_mut() {
+                if let Some(metadata) = message.context["metadata"].as_object_mut() {
                     // Update existing progress or create new one
                     if let Some(progress) = metadata.get_mut("progress") {
                         if let Some(progress_obj) = progress.as_object_mut() {

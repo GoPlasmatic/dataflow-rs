@@ -234,7 +234,7 @@ async fn test_temp_data_replacement_behavior() {
     let mut message = Message::from_value(&json!({"test": "data"}));
 
     // Initially temp_data should be empty
-    assert_eq!(message.temp_data, json!({}));
+    assert_eq!(message.temp_data(), &json!({}));
 
     // Process the message
     engine.process_message(&mut message).await.unwrap();
@@ -242,8 +242,8 @@ async fn test_temp_data_replacement_behavior() {
     // After fix: temp_data is MERGED, not replaced
     // Both field1 and field2 should exist
     assert_eq!(
-        message.temp_data,
-        json!({
+        message.temp_data(),
+        &json!({
             "field1": "first_value",
             "field2": "second_value"
         })
@@ -251,11 +251,11 @@ async fn test_temp_data_replacement_behavior() {
 
     // Verify that both fields are present (demonstrating the merge behavior)
     assert!(
-        message.temp_data.get("field1").is_some(),
+        message.context["temp_data"].get("field1").is_some(),
         "field1 should be present after merge"
     );
     assert!(
-        message.temp_data.get("field2").is_some(),
+        message.context["temp_data"].get("field2").is_some(),
         "field2 should be present after merge"
     );
 
@@ -321,8 +321,8 @@ async fn test_temp_data_nested_path_preservation() {
 
     // With nested paths, both fields should be preserved
     assert_eq!(
-        message.temp_data,
-        json!({
+        message.temp_data(),
+        &json!({
             "field1": "first_value",
             "field2": "second_value"
         })
@@ -330,11 +330,11 @@ async fn test_temp_data_nested_path_preservation() {
 
     // Both fields should exist when using nested paths
     assert!(
-        message.temp_data.get("field1").is_some(),
+        message.context["temp_data"].get("field1").is_some(),
         "field1 should exist with nested path approach"
     );
     assert!(
-        message.temp_data.get("field2").is_some(),
+        message.context["temp_data"].get("field2").is_some(),
         "field2 should exist with nested path approach"
     );
 }
@@ -394,27 +394,27 @@ async fn test_data_field_replacement_behavior() {
     let engine = Engine::new(workflows, None);
     let mut message = Message::from_value(&json!({}));
     // Initialize the data field with existing data to test merging
-    message.data = json!({"initial": "data"});
+    message.context["data"] = json!({"initial": "data"});
 
     engine.process_message(&mut message).await.unwrap();
 
     // After fix: When using path "data", it merges with existing data
     // Note: Order may vary in the JSON object
-    assert_eq!(message.data["initial"], json!("data"));
-    assert_eq!(message.data["field1"], json!("value1"));
-    assert_eq!(message.data["field2"], json!("value2"));
+    assert_eq!(message.context["data"]["initial"], json!("data"));
+    assert_eq!(message.context["data"]["field1"], json!("value1"));
+    assert_eq!(message.context["data"]["field2"], json!("value2"));
 
     // All fields should be present after merging
     assert!(
-        message.data.get("initial").is_some(),
+        message.context["data"].get("initial").is_some(),
         "initial field should be preserved"
     );
     assert!(
-        message.data.get("field1").is_some(),
+        message.context["data"].get("field1").is_some(),
         "field1 should be present"
     );
     assert!(
-        message.data.get("field2").is_some(),
+        message.context["data"].get("field2").is_some(),
         "field2 should be present"
     );
 }
@@ -474,14 +474,26 @@ async fn test_hash_prefix_in_mapping_paths() {
     engine.process_message(&mut message).await.unwrap();
 
     // Verify fields with numeric names were created correctly
-    assert_eq!(message.data["fields"]["20"], json!("value for field 20"));
-    assert_eq!(message.data["fields"]["100"], json!("value for field 100"));
-    assert_eq!(message.data["fields"]["#"], json!("value for hash field"));
-    assert_eq!(message.data["fields"]["##"], json!("value for double hash"));
+    assert_eq!(
+        message.context["data"]["fields"]["20"],
+        json!("value for field 20")
+    );
+    assert_eq!(
+        message.context["data"]["fields"]["100"],
+        json!("value for field 100")
+    );
+    assert_eq!(
+        message.context["data"]["fields"]["#"],
+        json!("value for hash field")
+    );
+    assert_eq!(
+        message.context["data"]["fields"]["##"],
+        json!("value for double hash")
+    );
 
     // Verify the complete structure
     assert_eq!(
-        message.data["fields"],
+        message.context["data"]["fields"],
         json!({
             "20": "value for field 20",
             "100": "value for field 100",
@@ -555,28 +567,28 @@ async fn test_hash_prefix_with_array_values_in_mapping() {
 
     // Verify field "72" is an array with modified values
     assert_eq!(
-        message.data["fields"]["72"],
+        message.context["data"]["fields"]["72"],
         json!(["modified_first", "initial2", "modified_third"])
     );
 
     // Verify field "100" is an array with modified second element
     assert_eq!(
-        message.data["fields"]["100"],
+        message.context["data"]["fields"]["100"],
         json!(["alpha", "modified_beta"])
     );
 
     // Verify we can access these via get_nested_value with # prefix
     use dataflow_rs::engine::utils::get_nested_value;
     assert_eq!(
-        get_nested_value(&message.data, "fields.#72.0"),
+        get_nested_value(&message.context["data"], "fields.#72.0"),
         Some(&json!("modified_first"))
     );
     assert_eq!(
-        get_nested_value(&message.data, "fields.#72.2"),
+        get_nested_value(&message.context["data"], "fields.#72.2"),
         Some(&json!("modified_third"))
     );
     assert_eq!(
-        get_nested_value(&message.data, "fields.#100.1"),
+        get_nested_value(&message.context["data"], "fields.#100.1"),
         Some(&json!("modified_beta"))
     );
 }
@@ -655,50 +667,53 @@ async fn test_sequential_mappings_within_same_task() {
     engine.process_message(&mut message).await.unwrap();
 
     // Verify first mapping worked
-    assert_eq!(message.data["step1"], json!("initial_value"));
+    assert_eq!(message.context["data"]["step1"], json!("initial_value"));
 
     // CRITICAL TEST: Verify second mapping could see the first mapping's result
     // This now works after fixing the evaluation context issue
     assert_eq!(
-        message.data.get("step2"),
+        message.context["data"].get("step2"),
         Some(&json!("initial_value")),
         "Second mapping should see first mapping's result"
     );
 
     // Verify third mapping could see both previous mappings (they should be equal)
     assert_eq!(
-        message.data.get("step3"),
+        message.context["data"].get("step3"),
         Some(&json!(true)), // step1 == step2 should be true
         "Third mapping should see results from both previous mappings"
     );
 
     // Verify temp_data was set
-    assert_eq!(message.temp_data["temp1"], json!("temp_value"));
+    assert_eq!(message.context["temp_data"]["temp1"], json!("temp_value"));
 
     // Verify mapping could reference temp_data
     assert_eq!(
-        message.data.get("from_temp"),
+        message.context["data"].get("from_temp"),
         Some(&json!("temp_value")),
         "Mapping should be able to reference temp_data"
     );
 
     // Verify array was created
-    assert_eq!(message.data["array_test"], json!(["a", "b", "c"]));
+    assert_eq!(
+        message.context["data"]["array_test"],
+        json!(["a", "b", "c"])
+    );
 
     // Verify array element could be referenced
     assert_eq!(
-        message.data.get("array_element"),
+        message.context["data"].get("array_element"),
         Some(&json!("b")),
         "Should be able to reference array element from previous mapping"
     );
 
     println!(
         "Final data: {}",
-        serde_json::to_string_pretty(&message.data).unwrap()
+        serde_json::to_string_pretty(&message.context["data"]).unwrap()
     );
     println!(
         "Final temp_data: {}",
-        serde_json::to_string_pretty(&message.temp_data).unwrap()
+        serde_json::to_string_pretty(&message.context["temp_data"]).unwrap()
     );
 }
 
@@ -749,14 +764,14 @@ async fn test_sequential_mappings_issue_simplified() {
     engine.process_message(&mut message).await.unwrap();
 
     // First mapping should work
-    assert_eq!(message.data["value1"], json!(10));
+    assert_eq!(message.context["data"]["value1"], json!(10));
 
     // Second mapping should now see value1 and compute 10 * 2 = 20
-    println!("value2 result: {:?}", message.data.get("value2"));
+    println!("value2 result: {:?}", message.context["data"].get("value2"));
 
     // This now works correctly after the fix
     assert_eq!(
-        message.data.get("value2"),
+        message.context["data"].get("value2"),
         Some(&json!(20)),
         "Second mapping should see first mapping's result and compute 10 * 2 = 20"
     );
@@ -830,34 +845,44 @@ async fn test_temp_data_merge_real_scenario() {
     engine.process_message(&mut message).await.unwrap();
 
     // After merge, all fields should be present
-    assert_eq!(message.temp_data["Receiver"], json!("NQZATAE1"));
-    assert_eq!(message.temp_data["Sender"], json!("ZSZUBOM1"));
+    assert_eq!(message.context["temp_data"]["Receiver"], json!("NQZATAE1"));
+    assert_eq!(message.context["temp_data"]["Sender"], json!("ZSZUBOM1"));
     assert_eq!(
-        message.temp_data["UETR"],
+        message.context["temp_data"]["UETR"],
         json!("8e49e852-45a1-42f7-b120-18d232541285")
     );
-    assert_eq!(message.temp_data["settlement_method"], json!("INDA"));
-    assert_eq!(message.temp_data["settlement_account"], json!(null));
+    assert_eq!(
+        message.context["temp_data"]["settlement_method"],
+        json!("INDA")
+    );
+    assert_eq!(
+        message.context["temp_data"]["settlement_account"],
+        json!(null)
+    );
 
     // Verify the complete structure has all fields
     assert!(
-        message.temp_data.get("Receiver").is_some(),
+        message.context["temp_data"].get("Receiver").is_some(),
         "Receiver should be preserved"
     );
     assert!(
-        message.temp_data.get("Sender").is_some(),
+        message.context["temp_data"].get("Sender").is_some(),
         "Sender should be preserved"
     );
     assert!(
-        message.temp_data.get("UETR").is_some(),
+        message.context["temp_data"].get("UETR").is_some(),
         "UETR should be preserved"
     );
     assert!(
-        message.temp_data.get("settlement_method").is_some(),
+        message.context["temp_data"]
+            .get("settlement_method")
+            .is_some(),
         "settlement_method should be added"
     );
     assert!(
-        message.temp_data.get("settlement_account").is_some(),
+        message.context["temp_data"]
+            .get("settlement_account")
+            .is_some(),
         "settlement_account should be added"
     );
 }
@@ -965,37 +990,57 @@ async fn test_nested_temp_data_mappings_preserve_existing_fields() {
     assert_eq!(settlement_audit.changes[0].path.as_ref(), "temp_data");
 
     // Print the final temp_data to verify
-    println!("Final temp_data: {:?}", message.temp_data);
+    println!("Final temp_data: {:?}", message.context["temp_data"]);
 
     // After the second task, ALL fields should still be present
-    assert_eq!(message.temp_data["Receiver"], json!("YLLUSAW1"));
-    assert_eq!(message.temp_data["Sender"], json!("VLUIYUR1"));
+    assert_eq!(message.context["temp_data"]["Receiver"], json!("YLLUSAW1"));
+    assert_eq!(message.context["temp_data"]["Sender"], json!("VLUIYUR1"));
     assert_eq!(
-        message.temp_data["UETR"],
+        message.context["temp_data"]["UETR"],
         json!("3e06e786-1292-48bc-b3f1-0f7cc04330d1")
     );
-    assert_eq!(message.temp_data["clearing_channel"], json!(null));
-    assert_eq!(message.temp_data["field53b_account_indicator"], json!(null));
-    assert_eq!(message.temp_data["field53b_is_account"], json!(false));
-    assert_eq!(message.temp_data["has_rtgs_indicator"], json!(null));
-    assert_eq!(message.temp_data["settlement_method"], json!("INDA"));
-    assert_eq!(message.temp_data["settlement_account"], json!(null));
+    assert_eq!(
+        message.context["temp_data"]["clearing_channel"],
+        json!(null)
+    );
+    assert_eq!(
+        message.context["temp_data"]["field53b_account_indicator"],
+        json!(null)
+    );
+    assert_eq!(
+        message.context["temp_data"]["field53b_is_account"],
+        json!(false)
+    );
+    assert_eq!(
+        message.context["temp_data"]["has_rtgs_indicator"],
+        json!(null)
+    );
+    assert_eq!(
+        message.context["temp_data"]["settlement_method"],
+        json!("INDA")
+    );
+    assert_eq!(
+        message.context["temp_data"]["settlement_account"],
+        json!(null)
+    );
 
     // Verify all fields exist
     assert!(
-        message.temp_data.get("Receiver").is_some(),
+        message.context["temp_data"].get("Receiver").is_some(),
         "Receiver should be preserved"
     );
     assert!(
-        message.temp_data.get("Sender").is_some(),
+        message.context["temp_data"].get("Sender").is_some(),
         "Sender should be preserved"
     );
     assert!(
-        message.temp_data.get("UETR").is_some(),
+        message.context["temp_data"].get("UETR").is_some(),
         "UETR should be preserved"
     );
     assert!(
-        message.temp_data.get("settlement_method").is_some(),
+        message.context["temp_data"]
+            .get("settlement_method")
+            .is_some(),
         "settlement_method should be added"
     );
 }
@@ -1116,7 +1161,7 @@ async fn test_exact_user_scenario_with_self_reference() {
     }
 
     // Print the final temp_data to verify
-    println!("Final temp_data: {:?}", message.temp_data);
+    println!("Final temp_data: {:?}", message.context["temp_data"]);
 
     // The audit should have 4 individual changes (null mapping is skipped)
     assert_eq!(
@@ -1126,16 +1171,34 @@ async fn test_exact_user_scenario_with_self_reference() {
     );
 
     // After the second task, ALL fields should still be present including the ones not mentioned
-    assert_eq!(message.temp_data["Receiver"], json!("ZCZEGSG1"));
-    assert_eq!(message.temp_data["Sender"], json!("KWFUTHQ1"));
-    assert_eq!(message.temp_data["UETR"], json!("NEW-UETR-VALUE")); // Changed value
-    assert_eq!(message.temp_data["clearing_channel"], json!(null)); // Should be preserved!
-    assert_eq!(message.temp_data["field53b_account_indicator"], json!(null)); // Should be preserved!
-    assert_eq!(message.temp_data["field53b_is_account"], json!(false)); // Should be preserved!
-    assert_eq!(message.temp_data["has_rtgs_indicator"], json!(null)); // Should be preserved!
-    assert_eq!(message.temp_data["settlement_method"], json!("INDA"));
+    assert_eq!(message.context["temp_data"]["Receiver"], json!("ZCZEGSG1"));
+    assert_eq!(message.context["temp_data"]["Sender"], json!("KWFUTHQ1"));
+    assert_eq!(
+        message.context["temp_data"]["UETR"],
+        json!("NEW-UETR-VALUE")
+    ); // Changed value
+    assert_eq!(
+        message.context["temp_data"]["clearing_channel"],
+        json!(null)
+    ); // Should be preserved!
+    assert_eq!(
+        message.context["temp_data"]["field53b_account_indicator"],
+        json!(null)
+    ); // Should be preserved!
+    assert_eq!(
+        message.context["temp_data"]["field53b_is_account"],
+        json!(false)
+    ); // Should be preserved!
+    assert_eq!(
+        message.context["temp_data"]["has_rtgs_indicator"],
+        json!(null)
+    ); // Should be preserved!
+    assert_eq!(
+        message.context["temp_data"]["settlement_method"],
+        json!("INDA")
+    );
     // settlement_account should not exist since null mapping is skipped
-    assert_eq!(message.temp_data.get("settlement_account"), None);
+    assert_eq!(message.context["temp_data"].get("settlement_account"), None);
 }
 
 #[tokio::test]
@@ -1275,9 +1338,18 @@ async fn test_what_if_mappings_aggregated_to_single_object() {
     assert_eq!(new_obj.len(), 2, "Should only have the 2 new fields");
 
     // But the final temp_data should have ALL fields (because of our merge logic)
-    println!("AGGREGATED test - Final temp_data: {:?}", message.temp_data);
-    assert_eq!(message.temp_data["Receiver"], json!("ZCZEGSG1"));
-    assert_eq!(message.temp_data["Sender"], json!("KWFUTHQ1"));
-    assert_eq!(message.temp_data["clearing_channel"], json!(null));
-    assert_eq!(message.temp_data["settlement_method"], json!("INDA"));
+    println!(
+        "AGGREGATED test - Final temp_data: {:?}",
+        message.context["temp_data"]
+    );
+    assert_eq!(message.context["temp_data"]["Receiver"], json!("ZCZEGSG1"));
+    assert_eq!(message.context["temp_data"]["Sender"], json!("KWFUTHQ1"));
+    assert_eq!(
+        message.context["temp_data"]["clearing_channel"],
+        json!(null)
+    );
+    assert_eq!(
+        message.context["temp_data"]["settlement_method"],
+        json!("INDA")
+    );
 }

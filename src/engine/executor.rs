@@ -68,17 +68,18 @@ impl InternalExecutor {
     }
 
     /// Evaluate a condition using cached compiled logic
-    /// The data passed here should be the metadata field for workflow/task conditions
+    /// The context passed here contains data, metadata, temp_data, and payload
+    /// Conditions can now access any field: metadata.field, data.field, temp_data.field
     pub fn evaluate_condition(
         &self,
         condition_index: Option<usize>,
-        metadata: Arc<Value>,
+        context: Arc<Value>,
     ) -> Result<bool> {
         match condition_index {
             Some(index) if index < self.logic_cache.len() => {
                 let compiled_logic = &self.logic_cache[index];
-                // Conditions typically evaluate against metadata directly
-                let result = self.datalogic.evaluate(compiled_logic, metadata);
+                // Evaluate condition against the full context
+                let result = self.datalogic.evaluate(compiled_logic, context);
 
                 match result {
                     Ok(value) => {

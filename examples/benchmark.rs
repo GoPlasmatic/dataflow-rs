@@ -206,7 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let msg_start = Instant::now();
 
             let mut message = Message::from_value(&data);
-            message.metadata = json!({ "iteration": i });
+            message.context["metadata"] = json!({ "iteration": i });
 
             engine.process_message(&mut message).await.unwrap();
 

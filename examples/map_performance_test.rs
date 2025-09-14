@@ -57,7 +57,10 @@ async fn main() {
 
     // Benchmark
     let iterations = 100_000;
-    println!("Running {} iterations with 10 sequential mappings each...", iterations);
+    println!(
+        "Running {} iterations with 10 sequential mappings each...",
+        iterations
+    );
 
     let start = Instant::now();
     for _ in 0..iterations {
@@ -77,6 +80,12 @@ async fn main() {
     println!("Total time: {:?}", duration);
     println!("Throughput: {:.0} messages/second", throughput);
     println!("Average time per message: {:.2} μs", avg_time);
-    println!("Total mappings processed: {} (10 per message)", iterations * 10);
-    println!("Mapping throughput: {:.0} mappings/second", throughput * 10.0);
+    println!(
+        "Total mappings processed: {} (10 per message)",
+        iterations * 10
+    );
+    println!(
+        "Mapping throughput: {:.0} mappings/second",
+        throughput * 10.0
+    );
 }

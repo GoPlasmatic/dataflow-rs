@@ -5,49 +5,12 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Evaluation context for DataLogic to avoid repeated JSON creation
-pub struct EvaluationContext<'a> {
-    pub data: &'a Value,
-    pub payload: &'a Value,
-    pub metadata: &'a Value,
-    pub temp_data: &'a Value,
-}
-
-impl<'a> EvaluationContext<'a> {
-    /// Create evaluation context from a message
-    pub fn from_message(message: &'a Message) -> Self {
-        Self {
-            data: &message.data,
-            payload: message.payload.as_ref(),
-            metadata: &message.metadata,
-            temp_data: &message.temp_data,
-        }
-    }
-
-    /// Convert to JSON Value for DataLogic evaluation
-    /// This is still needed for DataLogic but we avoid creating it repeatedly
-    pub fn to_json(&self) -> Value {
-        json!({
-            "data": self.data,
-            "payload": self.payload,
-            "metadata": self.metadata,
-            "temp_data": self.temp_data
-        })
-    }
-
-    /// Convert to Arc<Value> for DataLogic evaluation
-    pub fn to_arc_json(&self) -> Arc<Value> {
-        Arc::new(self.to_json())
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
     pub id: String,
-    pub data: Value,
     pub payload: Arc<Value>,
-    pub metadata: Value,
-    pub temp_data: Value,
+    /// Unified context containing data, metadata, and temp_data
+    pub context: Value,
     pub audit_trail: Vec<AuditTrail>,
     /// Errors that occurred during message processing
     pub errors: Vec<ErrorInfo>,
@@ -57,10 +20,12 @@ impl Message {
     pub fn new(payload: Arc<Value>) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
-            data: json!({}),
             payload,
-            metadata: json!({}),
-            temp_data: json!({}),
+            context: json!({
+                "data": {},
+                "metadata": {},
+                "temp_data": {}
+            }),
             audit_trail: vec![],
             errors: vec![],
         }
@@ -85,6 +50,36 @@ impl Message {
     /// Check if message has errors
     pub fn has_errors(&self) -> bool {
         !self.errors.is_empty()
+    }
+
+    /// Get a reference to the data field in context
+    pub fn data(&self) -> &Value {
+        &self.context["data"]
+    }
+
+    /// Get a mutable reference to the data field in context
+    pub fn data_mut(&mut self) -> &mut Value {
+        &mut self.context["data"]
+    }
+
+    /// Get a reference to the metadata field in context
+    pub fn metadata(&self) -> &Value {
+        &self.context["metadata"]
+    }
+
+    /// Get a mutable reference to the metadata field in context
+    pub fn metadata_mut(&mut self) -> &mut Value {
+        &mut self.context["metadata"]
+    }
+
+    /// Get a reference to the temp_data field in context
+    pub fn temp_data(&self) -> &Value {
+        &self.context["temp_data"]
+    }
+
+    /// Get a mutable reference to the temp_data field in context
+    pub fn temp_data_mut(&mut self) -> &mut Value {
+        &mut self.context["temp_data"]
     }
 }
 

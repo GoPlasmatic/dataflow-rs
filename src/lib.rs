@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Process the message through the workflow
     match engine.process_message(&mut message).await {
         Ok(_) => {
-            println!("Processed result: {}", message.data["result"]);
+            println!("Processed result: {}", message.context["data"]["result"]);
         }
         Err(e) => {
             println!("Error in workflow: {:?}", e);

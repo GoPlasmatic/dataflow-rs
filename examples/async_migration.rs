@@ -32,7 +32,7 @@ impl AsyncFunctionHandler for AsyncHttpHandler {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Update message data
-        message.data["http_response"] = json!({
+        message.context["data"]["http_response"] = json!({
             "status": "success",
             "data": "Response from API"
         });
@@ -53,7 +53,7 @@ impl AsyncFunctionHandler for SimpleAsyncHandler {
         _datalogic: Arc<datalogic_rs::DataLogic>,
     ) -> dataflow_rs::Result<(usize, Vec<dataflow_rs::engine::message::Change>)> {
         // Simple processing - no need for spawn_blocking
-        message.data["processed"] = json!(true);
+        message.context["data"]["processed"] = json!(true);
         Ok((200, vec![]))
     }
 }
@@ -141,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Process message asynchronously
         engine.process_message(&mut message).await?;
 
-        println!("Message processed: {:?}", message.data);
+        println!("Message processed: {:?}", message.context["data"]);
     }
 
     // Method 2: Using async handlers for CPU-bound work
@@ -162,7 +162,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         engine.process_message(&mut message).await?;
 
-        println!("Message processed with sync handlers: {:?}", message.data);
+        println!(
+            "Message processed with sync handlers: {:?}",
+            message.context["data"]
+        );
     }
 
     // Method 3: Using with Axum web server

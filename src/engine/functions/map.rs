@@ -1,5 +1,5 @@
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::message::{Change, EvaluationContext, Message};
+use crate::engine::message::{Change, Message};
 use crate::engine::utils::{get_nested_value, set_nested_value};
 use datalogic_rs::{CompiledLogic, DataLogic};
 use log::{debug, error};
@@ -69,9 +69,9 @@ impl MapConfig {
 
         debug!("Map: Executing {} mappings", self.mappings.len());
 
-        // Create initial evaluation context - we'll reuse and update this Arc
-        let mut eval_data: Option<Arc<Value>> = None;
-        let mut message_modified = false;
+        // Create the Arc once for all mappings
+        let mut context_arc = Arc::new(message.context.clone());
+        let mut context_modified = false;
 
         // Process each mapping
         for mapping in &self.mappings {
@@ -103,20 +103,19 @@ impl MapConfig {
                 }
             };
 
-            // Only recreate evaluation context if message was modified or this is the first iteration
+            // Only recreate context Arc if it was modified
             // This ensures subsequent mappings can see changes while avoiding unnecessary clones
-            if eval_data.is_none() || message_modified {
-                let eval_context = EvaluationContext::from_message(message);
-                eval_data = Some(eval_context.to_arc_json());
-                message_modified = false;
+            if context_modified {
+                context_arc = Arc::new(message.context.clone());
+                context_modified = false;
             }
 
             // Reuse the Arc by cloning the reference, not the data
-            let current_eval_data = Arc::clone(eval_data.as_ref().unwrap());
+            let current_context = Arc::clone(&context_arc);
 
             // Evaluate the transformation logic using DataLogic v4
             // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
-            let result = datalogic.evaluate(compiled_logic, current_eval_data);
+            let result = datalogic.evaluate(compiled_logic, current_context);
 
             match result {
                 Ok(transformed_value) => {
@@ -134,31 +133,8 @@ impl MapConfig {
                         continue;
                     }
 
-                    // Get old value from the appropriate location
-                    let old_value = if mapping.path.starts_with("temp_data") {
-                        if mapping.path == "temp_data" {
-                            Some(&message.temp_data)
-                        } else if mapping.path.starts_with("temp_data.") {
-                            get_nested_value(&message.temp_data, &mapping.path[10..])
-                        } else {
-                            None
-                        }
-                    } else if mapping.path.starts_with("metadata") {
-                        if mapping.path == "metadata" {
-                            Some(&message.metadata)
-                        } else if mapping.path.starts_with("metadata.") {
-                            get_nested_value(&message.metadata, &mapping.path[9..])
-                        } else {
-                            None
-                        }
-                    } else {
-                        let target_path = if mapping.path.starts_with("data.") {
-                            &mapping.path[5..] // Skip "data."
-                        } else {
-                            &mapping.path
-                        };
-                        get_nested_value(&message.data, target_path)
-                    };
+                    // Get old value from the appropriate location in context
+                    let old_value = get_nested_value(&message.context, &mapping.path);
 
                     let old_value_arc = Arc::new(old_value.cloned().unwrap_or(Value::Null));
                     let new_value_arc = Arc::new(transformed_value.clone());
@@ -173,114 +149,34 @@ impl MapConfig {
                         new_value: Arc::clone(&new_value_arc),
                     });
 
-                    // Update the message data directly with the transformed value
-                    // Handle different path prefixes to update the correct part of the message
-                    if mapping.path.starts_with("temp_data") {
-                        // Update temp_data field
-                        let target_path = if mapping.path == "temp_data" {
-                            "" // Root of temp_data
-                        } else if mapping.path.starts_with("temp_data.") {
-                            &mapping.path[10..] // Skip "temp_data."
-                        } else {
-                            &mapping.path
-                        };
-
-                        if target_path.is_empty() {
-                            // Merge with existing temp_data instead of replacing
-                            if let Value::Object(new_map) = transformed_value {
-                                // If new value is an object, merge its fields
-                                if let Value::Object(existing_map) = &mut message.temp_data {
-                                    // Merge new fields into existing object
-                                    for (key, value) in new_map {
-                                        existing_map.insert(key, value);
-                                    }
-                                } else {
-                                    // If existing is not an object, replace with new object
-                                    message.temp_data = Value::Object(new_map);
+                    // Update the context directly with the transformed value
+                    // Check if we're replacing a root field (data, metadata, or temp_data)
+                    if mapping.path == "data"
+                        || mapping.path == "metadata"
+                        || mapping.path == "temp_data"
+                    {
+                        // Merge with existing field instead of replacing entirely
+                        if let Value::Object(new_map) = transformed_value {
+                            // If new value is an object, merge its fields
+                            if let Value::Object(existing_map) = &mut message.context[&mapping.path]
+                            {
+                                // Merge new fields into existing object
+                                for (key, value) in new_map {
+                                    existing_map.insert(key, value);
                                 }
                             } else {
-                                // If new value is not an object, replace entirely
-                                message.temp_data = transformed_value;
+                                // If existing is not an object, replace with new object
+                                message.context[&mapping.path] = Value::Object(new_map);
                             }
                         } else {
-                            set_nested_value(
-                                &mut message.temp_data,
-                                target_path,
-                                transformed_value,
-                            );
+                            // If new value is not an object, replace entirely
+                            message.context[&mapping.path] = transformed_value;
                         }
-                        message_modified = true;  // Mark that we've modified the message
-                    } else if mapping.path.starts_with("metadata") {
-                        // Update metadata field
-                        let target_path = if mapping.path == "metadata" {
-                            "" // Root of metadata
-                        } else if mapping.path.starts_with("metadata.") {
-                            &mapping.path[9..] // Skip "metadata."
-                        } else {
-                            &mapping.path
-                        };
-
-                        if target_path.is_empty() {
-                            // Merge with existing metadata instead of replacing
-                            if let Value::Object(new_map) = transformed_value {
-                                // If new value is an object, merge its fields
-                                if let Value::Object(existing_map) = &mut message.metadata {
-                                    // Merge new fields into existing object
-                                    for (key, value) in new_map {
-                                        existing_map.insert(key, value);
-                                    }
-                                } else {
-                                    // If existing is not an object, replace with new object
-                                    message.metadata = Value::Object(new_map);
-                                }
-                            } else {
-                                // If new value is not an object, replace entirely
-                                message.metadata = transformed_value;
-                            }
-                        } else {
-                            set_nested_value(
-                                &mut message.metadata,
-                                target_path,
-                                transformed_value,
-                            );
-                        }
-                        message_modified = true;  // Mark that we've modified the message
                     } else {
-                        // Update data field
-                        let target_path = if mapping.path.starts_with("data.") {
-                            &mapping.path[5..] // Skip "data."
-                        } else if mapping.path == "data" {
-                            "" // Root of data
-                        } else {
-                            &mapping.path
-                        };
-
-                        if target_path.is_empty() {
-                            // Merge with existing data instead of replacing
-                            if let Value::Object(new_map) = transformed_value {
-                                // If new value is an object, merge its fields
-                                if let Value::Object(existing_map) = &mut message.data {
-                                    // Merge new fields into existing object
-                                    for (key, value) in new_map {
-                                        existing_map.insert(key, value);
-                                    }
-                                } else {
-                                    // If existing is not an object, replace with new object
-                                    message.data = Value::Object(new_map);
-                                }
-                            } else {
-                                // If new value is not an object, replace entirely
-                                message.data = transformed_value;
-                            }
-                        } else {
-                            set_nested_value(
-                                &mut message.data,
-                                target_path,
-                                transformed_value,
-                            );
-                        }
-                        message_modified = true;  // Mark that we've modified the message
+                        // Set nested value in context
+                        set_nested_value(&mut message.context, &mapping.path, transformed_value);
                     }
+                    context_modified = true; // Mark that we've modified the context
                     debug!("Successfully mapped to path: {}", mapping.path);
                 }
                 Err(e) => {
@@ -375,7 +271,7 @@ mod tests {
 
         // Create test message
         let mut message = Message::new(Arc::new(json!({})));
-        message.data = json!({
+        message.context["data"] = json!({
             "SwiftMT": {
                 "message_type": "103"
             }
@@ -403,8 +299,7 @@ mod tests {
 
         // Verify metadata was updated
         assert_eq!(
-            message
-                .metadata
+            message.context["metadata"]
                 .get("SwiftMT")
                 .and_then(|v| v.get("message_type")),
             Some(&json!("103"))
@@ -418,10 +313,10 @@ mod tests {
 
         // Create test message with existing values
         let mut message = Message::new(Arc::new(json!({})));
-        message.data = json!({
+        message.context["data"] = json!({
             "existing_field": "should_remain"
         });
-        message.metadata = json!({
+        message.context["metadata"] = json!({
             "existing_meta": "should_remain"
         });
 
@@ -464,22 +359,22 @@ mod tests {
         assert_eq!(changes[0].path.as_ref(), "data.actual_field");
 
         // Verify that null mappings were skipped (fields don't exist)
-        assert_eq!(message.data.get("new_field"), None);
-        assert_eq!(message.metadata.get("new_meta"), None);
+        assert_eq!(message.context["data"].get("new_field"), None);
+        assert_eq!(message.context["metadata"].get("new_meta"), None);
 
         // Verify existing fields remain unchanged
         assert_eq!(
-            message.data.get("existing_field"),
+            message.context["data"].get("existing_field"),
             Some(&json!("should_remain"))
         );
         assert_eq!(
-            message.metadata.get("existing_meta"),
+            message.context["metadata"].get("existing_meta"),
             Some(&json!("should_remain"))
         );
 
         // Verify the successful mapping
         assert_eq!(
-            message.data.get("actual_field"),
+            message.context["data"].get("actual_field"),
             Some(&json!("actual_value"))
         );
     }
@@ -491,7 +386,7 @@ mod tests {
 
         // Create test message
         let mut message = Message::new(Arc::new(json!({})));
-        message.data = json!({
+        message.context["data"] = json!({
             "ISO20022_MX": {
                 "document": {
                     "TxInf": {
@@ -544,21 +439,19 @@ mod tests {
 
         // Verify all fields were updated correctly
         assert_eq!(
-            message
-                .data
+            message.context["data"]
                 .get("SwiftMT")
                 .and_then(|v| v.get("message_type")),
             Some(&json!("103"))
         );
         assert_eq!(
-            message
-                .metadata
+            message.context["metadata"]
                 .get("SwiftMT")
                 .and_then(|v| v.get("message_type")),
             Some(&json!("103"))
         );
         assert_eq!(
-            message.temp_data.get("original_msg_type"),
+            message.context["temp_data"].get("original_msg_type"),
             Some(&json!("pacs.008.001.08"))
         );
     }

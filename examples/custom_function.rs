@@ -93,7 +93,7 @@ impl StatisticsFunction {
 
     fn extract_numbers_from_path(&self, message: &Message, path: &str) -> Result<Vec<f64>> {
         let parts: Vec<&str> = path.split('.').collect();
-        let mut current = &message.data;
+        let mut current = &message.context["data"];
 
         // Navigate to the target location
         for part in parts {
@@ -150,7 +150,7 @@ impl StatisticsFunction {
 
     fn set_value_at_path(&self, message: &mut Message, path: &str, value: Value) -> Result<()> {
         let parts: Vec<&str> = path.split('.').collect();
-        let mut current = &mut message.data;
+        let mut current = &mut message.context["data"];
 
         for (i, part) in parts.iter().enumerate() {
             if i == parts.len() - 1 {
@@ -205,8 +205,7 @@ impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
             .and_then(Value::as_str)
             .unwrap_or("user_id");
 
-        let user_id_value = message
-            .data
+        let user_id_value = message.context["data"]
             .get(user_id)
             .and_then(Value::as_str)
             .unwrap_or("unknown");
@@ -230,7 +229,7 @@ impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
         });
 
         // Add enriched data to message
-        if let Value::Object(ref mut map) = message.data {
+        if let Value::Object(ref mut map) = message.context["data"] {
             map.insert("enriched".to_string(), enriched_data.clone());
         }
 
@@ -362,7 +361,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             println!("✅ Message processed successfully!\n");
 
             println!("📊 Final Results:");
-            println!("{}\n", serde_json::to_string_pretty(&message.data)?);
+            println!(
+                "{}\n",
+                serde_json::to_string_pretty(&message.context["data"])?
+            );
 
             println!("📋 Audit Trail:");
             for (i, audit) in message.audit_trail.iter().enumerate() {

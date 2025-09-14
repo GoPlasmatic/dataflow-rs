@@ -1,5 +1,5 @@
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
-use crate::engine::message::{Change, EvaluationContext, Message};
+use crate::engine::message::{Change, Message};
 use datalogic_rs::{CompiledLogic, DataLogic};
 use log::{debug, error};
 use serde::Deserialize;
@@ -74,9 +74,8 @@ impl ValidationConfig {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
 
-        // Use evaluation context to avoid repeated JSON creation
-        let eval_context = EvaluationContext::from_message(message);
-        let data_to_validate = eval_context.to_arc_json();
+        // Pass context directly to DataLogic for validation
+        let data_to_validate = Arc::new(message.context.clone());
 
         // Process each validation rule
         for (idx, rule) in self.rules.iter().enumerate() {
