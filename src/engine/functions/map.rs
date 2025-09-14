@@ -69,6 +69,10 @@ impl MapConfig {
 
         debug!("Map: Executing {} mappings", self.mappings.len());
 
+        // Create initial evaluation context - we'll reuse and update this Arc
+        let mut eval_data: Option<Arc<Value>> = None;
+        let mut message_modified = false;
+
         // Process each mapping
         for mapping in &self.mappings {
             debug!("Processing mapping to path: {}", mapping.path);
@@ -99,14 +103,20 @@ impl MapConfig {
                 }
             };
 
-            // Create fresh evaluation context for each mapping to include previous changes
-            // This ensures subsequent mappings can see changes made by previous mappings
-            let eval_context = EvaluationContext::from_message(message);
-            let eval_data = eval_context.to_arc_json();
+            // Only recreate evaluation context if message was modified or this is the first iteration
+            // This ensures subsequent mappings can see changes while avoiding unnecessary clones
+            if eval_data.is_none() || message_modified {
+                let eval_context = EvaluationContext::from_message(message);
+                eval_data = Some(eval_context.to_arc_json());
+                message_modified = false;
+            }
+
+            // Reuse the Arc by cloning the reference, not the data
+            let current_eval_data = Arc::clone(eval_data.as_ref().unwrap());
 
             // Evaluate the transformation logic using DataLogic v4
             // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
-            let result = datalogic.evaluate(compiled_logic, eval_data);
+            let result = datalogic.evaluate(compiled_logic, current_eval_data);
 
             match result {
                 Ok(transformed_value) => {
@@ -151,8 +161,7 @@ impl MapConfig {
                     };
 
                     let old_value_arc = Arc::new(old_value.cloned().unwrap_or(Value::Null));
-                    // Create Arc once and share it
-                    let new_value_arc = Arc::new(transformed_value);
+                    let new_value_arc = Arc::new(transformed_value.clone());
 
                     debug!(
                         "Recording change for path '{}': old={:?}, new={:?}",
@@ -160,11 +169,11 @@ impl MapConfig {
                     );
                     changes.push(Change {
                         path: Arc::from(mapping.path.as_str()),
-                        old_value: Arc::clone(&old_value_arc),
+                        old_value: old_value_arc,
                         new_value: Arc::clone(&new_value_arc),
                     });
 
-                    // Update the message data - extract from Arc to avoid double clone
+                    // Update the message data directly with the transformed value
                     // Handle different path prefixes to update the correct part of the message
                     if mapping.path.starts_with("temp_data") {
                         // Update temp_data field
@@ -178,9 +187,7 @@ impl MapConfig {
 
                         if target_path.is_empty() {
                             // Merge with existing temp_data instead of replacing
-                            let new_value =
-                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone());
-                            if let Value::Object(new_map) = new_value {
+                            if let Value::Object(new_map) = transformed_value {
                                 // If new value is an object, merge its fields
                                 if let Value::Object(existing_map) = &mut message.temp_data {
                                     // Merge new fields into existing object
@@ -193,15 +200,16 @@ impl MapConfig {
                                 }
                             } else {
                                 // If new value is not an object, replace entirely
-                                message.temp_data = new_value;
+                                message.temp_data = transformed_value;
                             }
                         } else {
                             set_nested_value(
                                 &mut message.temp_data,
                                 target_path,
-                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone()),
+                                transformed_value,
                             );
                         }
+                        message_modified = true;  // Mark that we've modified the message
                     } else if mapping.path.starts_with("metadata") {
                         // Update metadata field
                         let target_path = if mapping.path == "metadata" {
@@ -214,9 +222,7 @@ impl MapConfig {
 
                         if target_path.is_empty() {
                             // Merge with existing metadata instead of replacing
-                            let new_value =
-                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone());
-                            if let Value::Object(new_map) = new_value {
+                            if let Value::Object(new_map) = transformed_value {
                                 // If new value is an object, merge its fields
                                 if let Value::Object(existing_map) = &mut message.metadata {
                                     // Merge new fields into existing object
@@ -229,15 +235,16 @@ impl MapConfig {
                                 }
                             } else {
                                 // If new value is not an object, replace entirely
-                                message.metadata = new_value;
+                                message.metadata = transformed_value;
                             }
                         } else {
                             set_nested_value(
                                 &mut message.metadata,
                                 target_path,
-                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone()),
+                                transformed_value,
                             );
                         }
+                        message_modified = true;  // Mark that we've modified the message
                     } else {
                         // Update data field
                         let target_path = if mapping.path.starts_with("data.") {
@@ -250,9 +257,7 @@ impl MapConfig {
 
                         if target_path.is_empty() {
                             // Merge with existing data instead of replacing
-                            let new_value =
-                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone());
-                            if let Value::Object(new_map) = new_value {
+                            if let Value::Object(new_map) = transformed_value {
                                 // If new value is an object, merge its fields
                                 if let Value::Object(existing_map) = &mut message.data {
                                     // Merge new fields into existing object
@@ -265,15 +270,16 @@ impl MapConfig {
                                 }
                             } else {
                                 // If new value is not an object, replace entirely
-                                message.data = new_value;
+                                message.data = transformed_value;
                             }
                         } else {
                             set_nested_value(
                                 &mut message.data,
                                 target_path,
-                                Arc::try_unwrap(new_value_arc).unwrap_or_else(|arc| (*arc).clone()),
+                                transformed_value,
                             );
                         }
+                        message_modified = true;  // Mark that we've modified the message
                     }
                     debug!("Successfully mapped to path: {}", mapping.path);
                 }
