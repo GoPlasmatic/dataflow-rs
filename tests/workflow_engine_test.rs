@@ -1118,11 +1118,11 @@ async fn test_exact_user_scenario_with_self_reference() {
     // Print the final temp_data to verify
     println!("Final temp_data: {:?}", message.temp_data);
 
-    // The audit should have 5 individual changes, NOT 1 aggregated change
+    // The audit should have 4 individual changes (null mapping is skipped)
     assert_eq!(
         settlement_audit.changes.len(),
-        5,
-        "Should have 5 changes for 5 mappings"
+        4,
+        "Should have 4 changes for non-null mappings"
     );
 
     // After the second task, ALL fields should still be present including the ones not mentioned
@@ -1134,7 +1134,8 @@ async fn test_exact_user_scenario_with_self_reference() {
     assert_eq!(message.temp_data["field53b_is_account"], json!(false)); // Should be preserved!
     assert_eq!(message.temp_data["has_rtgs_indicator"], json!(null)); // Should be preserved!
     assert_eq!(message.temp_data["settlement_method"], json!("INDA"));
-    assert_eq!(message.temp_data["settlement_account"], json!(null));
+    // settlement_account should not exist since null mapping is skipped
+    assert_eq!(message.temp_data.get("settlement_account"), None);
 }
 
 #[tokio::test]
