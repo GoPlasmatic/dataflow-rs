@@ -15,7 +15,6 @@ pub struct ValidationConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ValidationRule {
     pub logic: Value,
-    pub path: String,
     pub message: String,
     #[serde(skip)]
     pub logic_index: Option<usize>,
@@ -39,12 +38,6 @@ impl ValidationConfig {
                 .ok_or_else(|| DataflowError::Validation("Missing 'logic' in rule".to_string()))?
                 .clone();
 
-            let path = rule
-                .get("path")
-                .and_then(Value::as_str)
-                .unwrap_or("data")
-                .to_string();
-
             let message = rule
                 .get("message")
                 .and_then(Value::as_str)
@@ -53,7 +46,6 @@ impl ValidationConfig {
 
             parsed_rules.push(ValidationRule {
                 logic,
-                path,
                 message,
                 logic_index: None,
             });
@@ -130,7 +122,7 @@ impl ValidationConfig {
                         validation_errors.push(ErrorInfo::simple_ref(
                             "VALIDATION_ERROR",
                             &rule.message,
-                            Some(&rule.path),
+                            None
                         ));
                     } else {
                         debug!("Validation passed for rule {}", idx);
@@ -180,9 +172,7 @@ mod tests {
 
         let config = ValidationConfig::from_json(&input).unwrap();
         assert_eq!(config.rules.len(), 2);
-        assert_eq!(config.rules[0].path, "data");
         assert_eq!(config.rules[0].message, "Required field is missing");
-        assert_eq!(config.rules[1].path, "data"); // Default path
         assert_eq!(config.rules[1].message, "Must be over 18");
     }
 
@@ -227,7 +217,6 @@ mod tests {
         });
 
         let config = ValidationConfig::from_json(&input).unwrap();
-        assert_eq!(config.rules[0].path, "data");
         assert_eq!(config.rules[0].message, "Validation failed");
     }
 }
