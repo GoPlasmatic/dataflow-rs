@@ -164,6 +164,7 @@ impl WorkflowExecutor {
                         );
                     }
                 }
+                message.invalidate_context_cache();
 
                 // Check status code
                 if (400..500).contains(&status) {
