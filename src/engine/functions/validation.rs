@@ -122,7 +122,7 @@ impl ValidationConfig {
                         validation_errors.push(ErrorInfo::simple_ref(
                             "VALIDATION_ERROR",
                             &rule.message,
-                            None
+                            None,
                         ));
                     } else {
                         debug!("Validation passed for rule {}", idx);
