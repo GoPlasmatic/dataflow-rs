@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "2.0.1"
+version = "2.0.2"
 edition = "2024"
 exclude = [".DS_Store", "/target", ".vscode"]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
@@ -26,6 +26,6 @@ async-trait = "0.1"
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 env_logger = "0.11"
-axum = "0.7"
+axum = "0.8"
 futures = "0.3"
 num_cpus = "1.17"
