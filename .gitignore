@@ -25,3 +25,7 @@ Cargo.lock
 /target
 .DS_Store
 .claude/
+
+# mdBook documentation
+docs/book/
+docs/src/wasm/
