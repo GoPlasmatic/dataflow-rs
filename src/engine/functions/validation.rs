@@ -1,3 +1,36 @@
+//! # Validation Function Module
+//!
+//! This module provides rule-based validation capabilities using JSONLogic expressions.
+//! The validation function evaluates a set of rules against message data and collects
+//! any validation errors that occur.
+//!
+//! ## Features
+//!
+//! - Define validation rules using JSONLogic expressions
+//! - Custom error messages for each rule
+//! - Non-destructive: validation is read-only and doesn't modify message data
+//! - Errors are collected in the message's error list
+//!
+//! ## Example Usage
+//!
+//! ```json
+//! {
+//!     "name": "validation",
+//!     "input": {
+//!         "rules": [
+//!             {
+//!                 "logic": {"!!": [{"var": "data.email"}]},
+//!                 "message": "Email is required"
+//!             },
+//!             {
+//!                 "logic": {">": [{"var": "data.age"}, 0]},
+//!                 "message": "Age must be positive"
+//!             }
+//!         ]
+//!     }
+//! }
+//! ```
+
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::message::{Change, Message};
 use datalogic_rs::{CompiledLogic, DataLogic};
@@ -6,21 +39,47 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Pre-parsed configuration for validation function
+/// Configuration for the validation function containing a list of rules.
+///
+/// Each rule specifies a JSONLogic condition that must evaluate to `true`
+/// for the validation to pass. If a rule evaluates to anything other than
+/// `true`, its error message is added to the message's error list.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ValidationConfig {
+    /// List of validation rules to evaluate.
     pub rules: Vec<ValidationRule>,
 }
 
+/// A single validation rule with a condition and error message.
+///
+/// The rule's logic is evaluated against the message context. If it does not
+/// return exactly `true`, the validation fails and the error message is recorded.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ValidationRule {
+    /// JSONLogic expression that must evaluate to `true` for validation to pass.
+    /// Any other result (false, null, etc.) is considered a validation failure.
     pub logic: Value,
+
+    /// Error message to display if validation fails.
+    /// Defaults to "Validation failed" if not specified.
     pub message: String,
+
+    /// Index into the compiled logic cache. Set during workflow compilation.
     #[serde(skip)]
     pub logic_index: Option<usize>,
 }
 
 impl ValidationConfig {
+    /// Parses a `ValidationConfig` from a JSON value.
+    ///
+    /// # Arguments
+    /// * `input` - JSON object containing a "rules" array
+    ///
+    /// # Errors
+    /// Returns `DataflowError::Validation` if:
+    /// - The "rules" field is missing
+    /// - The "rules" field is not an array
+    /// - Any rule is missing the "logic" field
     pub fn from_json(input: &Value) -> Result<Self> {
         let rules = input.get("rules").ok_or_else(|| {
             DataflowError::Validation("Missing 'rules' array in input".to_string())
@@ -56,7 +115,25 @@ impl ValidationConfig {
         })
     }
 
-    /// Execute the validation rules using pre-compiled logic
+    /// Executes all validation rules using pre-compiled logic.
+    ///
+    /// Evaluates each rule sequentially against the message context.
+    /// This is a read-only operation that does not modify message data.
+    ///
+    /// # Arguments
+    /// * `message` - The message to validate (errors are added to its error list)
+    /// * `datalogic` - DataLogic instance for evaluation
+    /// * `logic_cache` - Pre-compiled logic expressions
+    ///
+    /// # Returns
+    /// * `Ok((200, []))` - All rules passed, no changes made
+    /// * `Ok((400, []))` - One or more rules failed, errors added to message
+    ///
+    /// # Error Types
+    /// Validation errors are recorded with the following codes:
+    /// - `VALIDATION_ERROR` - Rule evaluated to non-true value
+    /// - `EVALUATION_ERROR` - Rule evaluation failed with an error
+    /// - `COMPILATION_ERROR` - Logic was not properly compiled
     pub fn execute(
         &self,
         message: &mut Message,
@@ -218,5 +295,127 @@ mod tests {
 
         let config = ValidationConfig::from_json(&input).unwrap();
         assert_eq!(config.rules[0].message, "Validation failed");
+    }
+
+    #[test]
+    fn test_validation_execute_passes() {
+        use crate::engine::message::Message;
+
+        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+
+        // Create test message with valid data
+        let mut message = Message::new(Arc::new(json!({})));
+        message.context["data"] = json!({
+            "email": "test@example.com",
+            "age": 25
+        });
+
+        // Create validation rules that should pass
+        let mut config = ValidationConfig {
+            rules: vec![
+                ValidationRule {
+                    logic: json!({"!!": [{"var": "data.email"}]}),
+                    message: "Email is required".to_string(),
+                    logic_index: None,
+                },
+                ValidationRule {
+                    logic: json!({">": [{"var": "data.age"}, 18]}),
+                    message: "Must be over 18".to_string(),
+                    logic_index: None,
+                },
+            ],
+        };
+
+        // Compile the logic and set indices
+        let mut logic_cache = Vec::new();
+        for (i, rule) in config.rules.iter_mut().enumerate() {
+            logic_cache.push(datalogic.compile(&rule.logic).unwrap());
+            rule.logic_index = Some(i);
+        }
+
+        // Execute validation
+        let result = config.execute(&mut message, &datalogic, &logic_cache);
+        assert!(result.is_ok());
+
+        let (status, changes) = result.unwrap();
+        assert_eq!(status, 200);
+        assert!(changes.is_empty()); // Validation doesn't create changes
+        assert!(message.errors.is_empty()); // No validation errors
+    }
+
+    #[test]
+    fn test_validation_execute_fails() {
+        use crate::engine::message::Message;
+
+        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+
+        // Create test message with invalid data
+        let mut message = Message::new(Arc::new(json!({})));
+        message.context["data"] = json!({
+            "age": 15  // Missing email and age under 18
+        });
+
+        // Create validation rules
+        let mut config = ValidationConfig {
+            rules: vec![
+                ValidationRule {
+                    logic: json!({"!!": [{"var": "data.email"}]}),
+                    message: "Email is required".to_string(),
+                    logic_index: None,
+                },
+                ValidationRule {
+                    logic: json!({">": [{"var": "data.age"}, 18]}),
+                    message: "Must be over 18".to_string(),
+                    logic_index: None,
+                },
+            ],
+        };
+
+        // Compile the logic and set indices
+        let mut logic_cache = Vec::new();
+        for (i, rule) in config.rules.iter_mut().enumerate() {
+            logic_cache.push(datalogic.compile(&rule.logic).unwrap());
+            rule.logic_index = Some(i);
+        }
+
+        // Execute validation
+        let result = config.execute(&mut message, &datalogic, &logic_cache);
+        assert!(result.is_ok());
+
+        let (status, _changes) = result.unwrap();
+        assert_eq!(status, 400); // Validation failure returns 400
+        assert_eq!(message.errors.len(), 2); // Two validation errors
+
+        // Check error messages
+        let error_messages: Vec<&str> = message.errors.iter().map(|e| e.message.as_str()).collect();
+        assert!(error_messages.contains(&"Email is required"));
+        assert!(error_messages.contains(&"Must be over 18"));
+    }
+
+    #[test]
+    fn test_validation_uncompiled_logic() {
+        use crate::engine::message::Message;
+
+        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+
+        let mut message = Message::new(Arc::new(json!({})));
+
+        // Config with no logic_index set (uncompiled)
+        let config = ValidationConfig {
+            rules: vec![ValidationRule {
+                logic: json!(true),
+                message: "Test".to_string(),
+                logic_index: None, // Not compiled
+            }],
+        };
+
+        let logic_cache = Vec::new();
+        let result = config.execute(&mut message, &datalogic, &logic_cache);
+        assert!(result.is_ok());
+
+        let (status, _) = result.unwrap();
+        assert_eq!(status, 400); // Should fail due to compilation error
+        assert!(!message.errors.is_empty());
+        assert!(message.errors[0].code == "COMPILATION_ERROR");
     }
 }

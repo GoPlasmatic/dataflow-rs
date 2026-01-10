@@ -433,4 +433,136 @@ mod tests {
         assert_eq!(error.retry_attempted, Some(true));
         assert_eq!(error.retry_count, Some(2));
     }
+
+    #[test]
+    fn test_error_info_new_from_dataflow_error() {
+        // Test ErrorInfo::new generates correct codes for each error type
+        let test_cases = vec![
+            (
+                DataflowError::Validation("test".to_string()),
+                "VALIDATION_ERROR",
+            ),
+            (
+                DataflowError::Workflow("test".to_string()),
+                "WORKFLOW_ERROR",
+            ),
+            (DataflowError::Task("test".to_string()), "TASK_ERROR"),
+            (
+                DataflowError::FunctionNotFound("test".to_string()),
+                "FUNCTION_NOT_FOUND",
+            ),
+            (
+                DataflowError::function_execution("test", None),
+                "FUNCTION_ERROR",
+            ),
+            (
+                DataflowError::LogicEvaluation("test".to_string()),
+                "LOGIC_ERROR",
+            ),
+            (DataflowError::http(404, "Not Found"), "HTTP_ERROR"),
+            (DataflowError::Timeout("test".to_string()), "TIMEOUT_ERROR"),
+            (DataflowError::Io("test".to_string()), "IO_ERROR"),
+            (
+                DataflowError::Deserialization("test".to_string()),
+                "DESERIALIZATION_ERROR",
+            ),
+            (DataflowError::Unknown("test".to_string()), "UNKNOWN_ERROR"),
+        ];
+
+        for (error, expected_code) in test_cases {
+            let info = ErrorInfo::new(
+                Some("workflow_1".to_string()),
+                Some("task_1".to_string()),
+                error,
+            );
+            assert_eq!(info.code, expected_code);
+            assert_eq!(info.workflow_id, Some("workflow_1".to_string()));
+            assert_eq!(info.task_id, Some("task_1".to_string()));
+            assert!(info.timestamp.is_some());
+            assert_eq!(info.retry_attempted, Some(false));
+            assert_eq!(info.retry_count, Some(0));
+        }
+    }
+
+    #[test]
+    fn test_error_info_simple_constructors() {
+        // Test simple constructor
+        let error = ErrorInfo::simple(
+            "CUSTOM_ERROR".to_string(),
+            "Custom message".to_string(),
+            Some("data.field".to_string()),
+        );
+        assert_eq!(error.code, "CUSTOM_ERROR");
+        assert_eq!(error.message, "Custom message");
+        assert_eq!(error.path, Some("data.field".to_string()));
+        assert!(error.workflow_id.is_none());
+        assert!(error.task_id.is_none());
+        assert!(error.timestamp.is_some());
+
+        // Test simple_ref constructor
+        let error = ErrorInfo::simple_ref("REF_ERROR", "Ref message", Some("data.path"));
+        assert_eq!(error.code, "REF_ERROR");
+        assert_eq!(error.message, "Ref message");
+        assert_eq!(error.path, Some("data.path".to_string()));
+
+        // Test simple_ref with None path
+        let error = ErrorInfo::simple_ref("NO_PATH", "No path message", None);
+        assert!(error.path.is_none());
+    }
+
+    #[test]
+    fn test_error_info_with_retry() {
+        let error = ErrorInfo::simple_ref("TEST", "Test", None);
+        assert!(error.retry_attempted.is_none());
+        assert!(error.retry_count.is_none());
+
+        let error = error.with_retry();
+        assert_eq!(error.retry_attempted, Some(true));
+        assert_eq!(error.retry_count, Some(1));
+
+        let error = error.with_retry();
+        assert_eq!(error.retry_attempted, Some(true));
+        assert_eq!(error.retry_count, Some(2));
+    }
+
+    #[test]
+    fn test_error_display_messages() {
+        // Test that error display messages are correct
+        assert_eq!(
+            DataflowError::Validation("test".to_string()).to_string(),
+            "Validation error: test"
+        );
+        assert_eq!(
+            DataflowError::Workflow("test".to_string()).to_string(),
+            "Workflow error: test"
+        );
+        assert_eq!(
+            DataflowError::Task("test".to_string()).to_string(),
+            "Task error: test"
+        );
+        assert_eq!(
+            DataflowError::FunctionNotFound("test".to_string()).to_string(),
+            "Function not found: test"
+        );
+        assert_eq!(
+            DataflowError::http(404, "Not Found").to_string(),
+            "HTTP error: 404 - Not Found"
+        );
+        assert_eq!(
+            DataflowError::Timeout("test".to_string()).to_string(),
+            "Timeout error: test"
+        );
+    }
+
+    #[test]
+    fn test_error_conversions() {
+        // Test from_serde (we can't easily create a real serde error, but we can test the conversion works)
+        let json_str = "invalid json";
+        let serde_result: std::result::Result<serde_json::Value, _> =
+            serde_json::from_str(json_str);
+        if let Err(e) = serde_result {
+            let dataflow_err = DataflowError::from_serde(e);
+            assert!(matches!(dataflow_err, DataflowError::Deserialization(_)));
+        }
+    }
 }

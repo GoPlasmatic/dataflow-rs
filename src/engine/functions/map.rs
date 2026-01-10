@@ -1,3 +1,37 @@
+//! # Map Function Module
+//!
+//! This module provides data transformation capabilities using JSONLogic expressions.
+//! The map function allows copying, transforming, and reorganizing data within messages
+//! by evaluating JSONLogic expressions and assigning results to specified paths.
+//!
+//! ## Features
+//!
+//! - Transform data using JSONLogic expressions
+//! - Support for nested path access and creation
+//! - Automatic merging for root fields (data, metadata, temp_data)
+//! - Null value handling (null results skip assignment)
+//! - Change tracking for audit trails
+//!
+//! ## Example Usage
+//!
+//! ```json
+//! {
+//!     "name": "map",
+//!     "input": {
+//!         "mappings": [
+//!             {
+//!                 "path": "data.full_name",
+//!                 "logic": {"cat": [{"var": "data.first_name"}, " ", {"var": "data.last_name"}]}
+//!             },
+//!             {
+//!                 "path": "metadata.processed",
+//!                 "logic": true
+//!             }
+//!         ]
+//!     }
+//! }
+//! ```
+
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::message::{Change, Message};
 use crate::engine::utils::{get_nested_value, set_nested_value};
@@ -7,21 +41,47 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Pre-parsed configuration for map function
+/// Configuration for the map function containing a list of mappings.
+///
+/// Each mapping specifies a target path and a JSONLogic expression to evaluate.
+/// Mappings are processed sequentially, allowing later mappings to use results
+/// from earlier ones.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MapConfig {
+    /// List of mappings to execute in order.
     pub mappings: Vec<MapMapping>,
 }
 
+/// A single mapping that transforms and assigns data.
+///
+/// The mapping evaluates a JSONLogic expression against the message context
+/// and assigns the result to the specified path.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MapMapping {
+    /// Target path where the result will be stored (e.g., "data.user.name").
+    /// Supports dot notation for nested paths and `#` prefix for numeric field names.
     pub path: String,
+
+    /// JSONLogic expression to evaluate. Can reference any field in the context
+    /// using `{"var": "path.to.field"}` syntax.
     pub logic: Value,
+
+    /// Index into the compiled logic cache. Set during workflow compilation.
     #[serde(skip)]
     pub logic_index: Option<usize>,
 }
 
 impl MapConfig {
+    /// Parses a `MapConfig` from a JSON value.
+    ///
+    /// # Arguments
+    /// * `input` - JSON object containing a "mappings" array
+    ///
+    /// # Errors
+    /// Returns `DataflowError::Validation` if:
+    /// - The "mappings" field is missing
+    /// - The "mappings" field is not an array
+    /// - Any mapping is missing "path" or "logic" fields
     pub fn from_json(input: &Value) -> Result<Self> {
         let mappings = input.get("mappings").ok_or_else(|| {
             DataflowError::Validation("Missing 'mappings' array in input".to_string())
@@ -57,7 +117,25 @@ impl MapConfig {
         })
     }
 
-    /// Execute the map transformations using pre-compiled logic
+    /// Executes all map transformations using pre-compiled logic.
+    ///
+    /// Processes each mapping sequentially, evaluating the JSONLogic expression
+    /// and assigning the result to the target path. Changes are tracked for
+    /// audit trail purposes.
+    ///
+    /// # Arguments
+    /// * `message` - The message to transform (modified in place)
+    /// * `datalogic` - DataLogic instance for evaluation
+    /// * `logic_cache` - Pre-compiled logic expressions
+    ///
+    /// # Returns
+    /// * `Ok((status, changes))` - Status code (200 success, 500 if errors) and list of changes
+    /// * `Err` - If a critical error occurs during execution
+    ///
+    /// # Behavior
+    /// - Null evaluation results are skipped (no assignment made)
+    /// - Root field assignments (data, metadata, temp_data) merge objects instead of replacing
+    /// - Each successful assignment invalidates the context cache for subsequent mappings
     pub fn execute(
         &self,
         message: &mut Message,
