@@ -2,6 +2,7 @@
   "name": "@goplasmatic/dataflow-ui",
   "version": "0.1.0",
   "type": "module",
+  "description": "React visualization library for dataflow-rs workflow engine",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,12 +17,26 @@
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GoPlasmatic/dataflow-rs"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "workflow",
+    "dataflow",
+    "visualization",
+    "react",
+    "jsonlogic"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "build:lib": "tsc && vite build --config vite.lib.config.ts",
     "preview": "vite preview",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "prepublishOnly": "npm run build:lib",
+    "publish:npm": "npm run build:lib && npm publish --access public"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
