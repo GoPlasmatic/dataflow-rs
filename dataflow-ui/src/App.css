@@ -1,0 +1,565 @@
+/* ============================================
+   VSCode-Inspired Color Scheme
+   ============================================ */
+
+/* Light Theme (VSCode Light+) */
+:root {
+  --app-bg: #f3f3f3;
+  --app-header-bg: #3c3c3c;
+  --app-header-text: #ffffff;
+  --app-panel-bg: #ffffff;
+  --app-editor-bg: #ffffff;
+  --app-border: #e5e5e5;
+  --app-border-subtle: #f0f0f0;
+  --app-text: #333333;
+  --app-text-secondary: #6e6e6e;
+  --app-text-muted: #999999;
+  --app-accent: #0078d4;
+  --app-accent-hover: #006cbd;
+  --app-accent-subtle: rgba(0, 120, 212, 0.1);
+  --app-error: #f14c4c;
+  --app-error-bg: rgba(241, 76, 76, 0.1);
+  --app-success: #388a34;
+  --app-success-bg: rgba(56, 138, 52, 0.1);
+  --app-warning: #cca700;
+  --app-warning-bg: rgba(204, 167, 0, 0.1);
+  --app-statusbar-bg: #007acc;
+  --app-statusbar-text: #ffffff;
+  --app-statusbar-item-hover: rgba(255, 255, 255, 0.12);
+  --app-scrollbar-bg: #e4e4e4;
+  --app-scrollbar-thumb: #c1c1c1;
+  --app-scrollbar-thumb-hover: #a8a8a8;
+}
+
+/* Dark Theme (VSCode Dark+) */
+[data-theme="dark"] {
+  --app-bg: #1e1e1e;
+  --app-header-bg: #323233;
+  --app-header-text: #cccccc;
+  --app-panel-bg: #252526;
+  --app-editor-bg: #1e1e1e;
+  --app-border: #3c3c3c;
+  --app-border-subtle: #2d2d2d;
+  --app-text: #cccccc;
+  --app-text-secondary: #9d9d9d;
+  --app-text-muted: #6e6e6e;
+  --app-accent: #0078d4;
+  --app-accent-hover: #1c97ea;
+  --app-accent-subtle: rgba(0, 120, 212, 0.2);
+  --app-error: #f14c4c;
+  --app-error-bg: rgba(241, 76, 76, 0.15);
+  --app-success: #4ec9b0;
+  --app-success-bg: rgba(78, 201, 176, 0.15);
+  --app-warning: #dcdcaa;
+  --app-warning-bg: rgba(220, 220, 170, 0.15);
+  --app-statusbar-bg: #007acc;
+  --app-statusbar-text: #ffffff;
+  --app-statusbar-item-hover: rgba(255, 255, 255, 0.12);
+  --app-scrollbar-bg: #1e1e1e;
+  --app-scrollbar-thumb: #424242;
+  --app-scrollbar-thumb-hover: #525252;
+}
+
+/* ============================================
+   Reset & Base Styles
+   ============================================ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: var(--app-bg);
+  color: var(--app-text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--app-scrollbar-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--app-scrollbar-thumb);
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--app-scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--app-scrollbar-bg);
+}
+
+/* ============================================
+   App Layout
+   ============================================ */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ============================================
+   Header
+   ============================================ */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  height: 48px;
+  background: var(--app-header-bg);
+  color: var(--app-header-text);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-title h1 {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.header-subtitle {
+  font-size: 12px;
+  color: var(--app-text-muted);
+  opacity: 0.8;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.header-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--app-header-text);
+  text-decoration: none;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.header-link:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.header-divider {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.2);
+  margin: 0 8px;
+}
+
+/* Action buttons (Format, etc.) */
+.header-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--app-header-text);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.header-action:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.header-action:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* ============================================
+   Examples Dropdown
+   ============================================ */
+
+.examples-dropdown {
+  position: relative;
+}
+
+.examples-dropdown-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--app-header-text);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.examples-dropdown-trigger:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.examples-dropdown-label {
+  color: var(--app-text-muted);
+}
+
+.examples-dropdown-value {
+  font-weight: 500;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropdown-icon {
+  transition: transform 0.15s;
+  opacity: 0.7;
+}
+
+.dropdown-icon.open {
+  transform: rotate(180deg);
+}
+
+.examples-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 220px;
+  background: var(--app-panel-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.examples-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--app-text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.examples-dropdown-item:hover {
+  background: var(--app-bg);
+}
+
+.examples-dropdown-item.selected {
+  background: var(--app-accent);
+  color: white;
+}
+
+/* ============================================
+   Theme Toggle
+   ============================================ */
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--app-header-text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.theme-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================
+   Main Content
+   ============================================ */
+
+.app-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ============================================
+   Panels
+   ============================================ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--app-panel-bg);
+  overflow: hidden;
+}
+
+.editor-panel {
+  flex-shrink: 0;
+  border-right: 1px solid var(--app-border);
+}
+
+.editor-panel.collapsed {
+  width: 0 !important;
+  border-right: none;
+}
+
+.visual-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ============================================
+   Editor Sections
+   ============================================ */
+
+.editor-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.editor-section:last-child {
+  border-bottom: none;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--app-bg);
+  border-bottom: 1px solid var(--app-border);
+}
+
+.editor-header h3 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--app-text-secondary);
+}
+
+.editor-error {
+  font-size: 11px;
+  color: var(--app-error);
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-content {
+  flex: 1;
+  overflow: hidden;
+  background: var(--app-editor-bg);
+}
+
+/* Monaco Editor Wrapper */
+.df-monaco-editor-wrapper {
+  height: 100%;
+  min-height: 100%;
+}
+
+/* ============================================
+   Divider
+   ============================================ */
+
+.divider {
+  width: 1px;
+  background: var(--app-border);
+  cursor: col-resize;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -2px;
+  right: -2px;
+  bottom: 0;
+  background: transparent;
+}
+
+.divider:hover,
+.divider.dragging {
+  background: var(--app-accent);
+  width: 2px;
+}
+
+/* ============================================
+   Visual Panel Header
+   ============================================ */
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--app-bg);
+  border-bottom: 1px solid var(--app-border);
+}
+
+.panel-header h2 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--app-text-secondary);
+}
+
+.panel-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ============================================
+   Status Bar
+   ============================================ */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 10px;
+  background: var(--app-statusbar-bg);
+  color: var(--app-statusbar-text);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.status-bar-left,
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  height: 24px;
+  cursor: default;
+  transition: background 0.1s;
+}
+
+.status-item:hover {
+  background: var(--app-statusbar-item-hover);
+}
+
+.status-item svg {
+  opacity: 0.9;
+}
+
+.status-divider {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.3);
+  margin: 0 4px;
+}
+
+.status-error {
+  background: rgba(241, 76, 76, 0.3);
+}
+
+.status-error:hover {
+  background: rgba(241, 76, 76, 0.4);
+}
+
+.status-success {
+  opacity: 0.9;
+}
+
+/* ============================================
+   Selected Task Info
+   ============================================ */
+
+.selected-task-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--app-text-secondary);
+}
+
+.selected-task-info button {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--app-text-secondary);
+  background: transparent;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.selected-task-info button:hover {
+  background: var(--app-bg);
+  border-color: var(--app-text-muted);
+}
+
+/* ============================================
+   Keyboard Shortcut Hints
+   ============================================ */
+
+.shortcut-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.shortcut-hint kbd {
+  padding: 1px 4px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 2px;
+  font-family: inherit;
+  font-size: 10px;
+}
