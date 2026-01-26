@@ -7,6 +7,7 @@ use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::executor::InternalExecutor;
 use crate::engine::message::{AuditTrail, Change, Message};
 use crate::engine::task_executor::TaskExecutor;
+use crate::engine::trace::{ExecutionStep, ExecutionTrace};
 use crate::engine::workflow::Workflow;
 use chrono::Utc;
 use log::{debug, error, info, warn};
@@ -92,6 +93,69 @@ impl WorkflowExecutor {
         }
     }
 
+    /// Execute a workflow with step-by-step tracing
+    ///
+    /// Similar to `execute` but records execution steps for debugging.
+    ///
+    /// # Arguments
+    /// * `workflow` - The workflow to execute
+    /// * `message` - The message being processed
+    /// * `trace` - The execution trace to record steps to
+    ///
+    /// # Returns
+    /// * `Result<bool>` - Ok(true) if workflow was executed, Ok(false) if skipped, Err on failure
+    pub async fn execute_with_trace(
+        &self,
+        workflow: &Workflow,
+        message: &mut Message,
+        trace: &mut ExecutionTrace,
+    ) -> Result<bool> {
+        // Use cached context Arc for condition evaluation
+        let context_arc = message.get_context_arc();
+
+        // Evaluate workflow condition
+        let should_execute = self
+            .internal_executor
+            .evaluate_condition(workflow.condition_index, context_arc)?;
+
+        if !should_execute {
+            debug!("Skipping workflow {} - condition not met", workflow.id);
+            // Record skipped workflow step
+            trace.add_step(ExecutionStep::workflow_skipped(&workflow.id));
+            return Ok(false);
+        }
+
+        // Execute workflow tasks with trace collection
+        match self
+            .execute_tasks_with_trace(workflow, message, trace)
+            .await
+        {
+            Ok(_) => {
+                info!("Successfully completed workflow: {}", workflow.id);
+                Ok(true)
+            }
+            Err(e) if workflow.continue_on_error => {
+                warn!(
+                    "Workflow {} encountered error but continuing: {:?}",
+                    workflow.id, e
+                );
+                message.errors.push(
+                    ErrorInfo::builder(
+                        "WORKFLOW_ERROR",
+                        format!("Workflow {} error: {}", workflow.id, e),
+                    )
+                    .workflow_id(&workflow.id)
+                    .build(),
+                );
+                Ok(true)
+            }
+            Err(e) => {
+                error!("Workflow {} failed: {:?}", workflow.id, e);
+                Err(e)
+            }
+        }
+    }
+
     /// Execute all tasks in a workflow
     async fn execute_tasks(&self, workflow: &Workflow, message: &mut Message) -> Result<()> {
         for task in &workflow.tasks {
@@ -119,6 +183,48 @@ impl WorkflowExecutor {
                 task.continue_on_error,
                 message,
             )?;
+        }
+
+        Ok(())
+    }
+
+    /// Execute all tasks in a workflow with trace collection
+    async fn execute_tasks_with_trace(
+        &self,
+        workflow: &Workflow,
+        message: &mut Message,
+        trace: &mut ExecutionTrace,
+    ) -> Result<()> {
+        for task in &workflow.tasks {
+            // Use cached context Arc - it will be fresh if previous task modified it
+            let context_arc = message.get_context_arc();
+
+            // Evaluate task condition
+            let should_execute = self
+                .internal_executor
+                .evaluate_condition(task.condition_index, context_arc)?;
+
+            if !should_execute {
+                debug!("Skipping task {} - condition not met", task.id);
+                // Record skipped task step
+                trace.add_step(ExecutionStep::task_skipped(&workflow.id, &task.id));
+                continue;
+            }
+
+            // Execute the task
+            let result = self.task_executor.execute(task, message).await;
+
+            // Handle task result
+            self.handle_task_result(
+                result,
+                &workflow.id,
+                &task.id,
+                task.continue_on_error,
+                message,
+            )?;
+
+            // Record executed step with message snapshot
+            trace.add_step(ExecutionStep::executed(&workflow.id, &task.id, message));
         }
 
         Ok(())

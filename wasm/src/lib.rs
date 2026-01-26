@@ -5,7 +5,7 @@
 //! # Usage
 //!
 //! ```javascript
-//! import init, { WasmEngine, create_message } from 'dataflow-wasm';
+//! import init, { WasmEngine } from 'dataflow-wasm';
 //!
 //! await init();
 //!
@@ -22,7 +22,7 @@
 //!             input: {
 //!                 mappings: [{
 //!                     path: "data.result",
-//!                     logic: { "var": "data.input" }
+//!                     logic: { "var": "payload.input" }
 //!                 }]
 //!             }
 //!         }
@@ -32,9 +32,9 @@
 //! // Create engine
 //! const engine = new WasmEngine(workflows);
 //!
-//! // Create and process a message
-//! const message = create_message('{"input": "hello"}', '{"type": "test"}');
-//! const result = await engine.process(message);
+//! // Process a payload directly
+//! const payload = JSON.stringify({ input: "hello" });
+//! const result = await engine.process(payload);
 //! console.log(JSON.parse(result));
 //! ```
 
@@ -131,28 +131,32 @@ impl WasmEngine {
         })
     }
 
-    /// Process a message through the engine's workflows.
+    /// Process a payload through the engine's workflows.
     ///
     /// This is an async operation that returns a Promise.
     ///
     /// # Arguments
-    /// * `message_json` - JSON string of the message to process
+    /// * `payload_json` - JSON string of the payload to process
     ///
     /// # Returns
     /// A Promise that resolves to the processed message as a JSON string
     ///
     /// # Example
     /// ```javascript
-    /// const result = await engine.process(messageJson);
+    /// const payload = JSON.stringify({ name: "John", email: "john@example.com" });
+    /// const result = await engine.process(payload);
     /// const processed = JSON.parse(result);
     /// console.log(processed.context.data);
     /// ```
     #[wasm_bindgen]
-    pub fn process(&self, message_json: &str) -> js_sys::Promise {
-        let message_result: Result<Message, _> = serde_json::from_str(message_json);
+    pub fn process(&self, payload_json: &str) -> js_sys::Promise {
+        let payload_result: Result<Value, _> = serde_json::from_str(payload_json);
 
-        match message_result {
-            Ok(mut message) => {
+        match payload_result {
+            Ok(payload) => {
+                // Create message from payload using Message::from_value
+                let mut message = Message::from_value(&payload);
+
                 // Clone the Arc for the async block
                 let engine = Arc::clone(&self.inner);
 
@@ -166,7 +170,54 @@ impl WasmEngine {
                 })
             }
             Err(e) => {
-                let error_msg = format!("Invalid message JSON: {}", e);
+                let error_msg = format!("Invalid payload JSON: {}", e);
+                future_to_promise(async move { Err(JsValue::from_str(&error_msg)) })
+            }
+        }
+    }
+
+    /// Process a payload with step-by-step execution tracing.
+    ///
+    /// This is an async operation that returns a Promise with the execution trace.
+    /// The trace contains message snapshots after each step, including which
+    /// workflows/tasks were executed or skipped.
+    ///
+    /// # Arguments
+    /// * `payload_json` - JSON string of the payload to process
+    ///
+    /// # Returns
+    /// A Promise that resolves to the execution trace as a JSON string
+    ///
+    /// # Example
+    /// ```javascript
+    /// const payload = JSON.stringify({ name: "John", email: "john@example.com" });
+    /// const trace = await engine.process_with_trace(payload);
+    /// const traceData = JSON.parse(trace);
+    /// console.log(traceData.steps); // Array of execution steps
+    /// ```
+    #[wasm_bindgen]
+    pub fn process_with_trace(&self, payload_json: &str) -> js_sys::Promise {
+        let payload_result: Result<Value, _> = serde_json::from_str(payload_json);
+
+        match payload_result {
+            Ok(payload) => {
+                // Create message from payload using Message::from_value
+                let mut message = Message::from_value(&payload);
+
+                // Clone the Arc for the async block
+                let engine = Arc::clone(&self.inner);
+
+                future_to_promise(async move {
+                    match engine.process_message_with_trace(&mut message).await {
+                        Ok(trace) => serde_json::to_string(&trace)
+                            .map(|s| JsValue::from_str(&s))
+                            .map_err(|e| JsValue::from_str(&e.to_string())),
+                        Err(e) => Err(JsValue::from_str(&e.to_string())),
+                    }
+                })
+            }
+            Err(e) => {
+                let error_msg = format!("Invalid payload JSON: {}", e);
                 future_to_promise(async move { Err(JsValue::from_str(&error_msg)) })
             }
         }
@@ -189,28 +240,29 @@ impl WasmEngine {
     }
 }
 
-/// Process a message through a one-off engine (convenience function).
+/// Process a payload through a one-off engine (convenience function).
 ///
-/// Creates an engine with the given workflows and processes a single message.
-/// Use WasmEngine class for better performance when processing multiple messages.
+/// Creates an engine with the given workflows and processes a single payload.
+/// Use WasmEngine class for better performance when processing multiple payloads.
 ///
 /// # Arguments
 /// * `workflows_json` - JSON string containing an array of workflow definitions
-/// * `message_json` - JSON string of the message to process
+/// * `payload_json` - JSON string of the payload to process
 ///
 /// # Returns
 /// A Promise that resolves to the processed message as a JSON string
 ///
 /// # Example
 /// ```javascript
-/// const result = await process_message(workflowsJson, messageJson);
+/// const payload = JSON.stringify({ name: "John", email: "john@example.com" });
+/// const result = await process_message(workflowsJson, payload);
 /// console.log(JSON.parse(result));
 /// ```
 #[wasm_bindgen]
-pub fn process_message(workflows_json: &str, message_json: &str) -> js_sys::Promise {
+pub fn process_message(workflows_json: &str, payload_json: &str) -> js_sys::Promise {
     let engine_result = WasmEngine::new(workflows_json);
     match engine_result {
-        Ok(engine) => engine.process(message_json),
+        Ok(engine) => engine.process(payload_json),
         Err(e) => future_to_promise(async move { Err(JsValue::from_str(&e)) }),
     }
 }

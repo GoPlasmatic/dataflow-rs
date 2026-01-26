@@ -3,20 +3,25 @@
 //! This example demonstrates how to create and use custom async functions
 //! with the dataflow-rs engine.
 //!
+//! The workflow follows the recommended pattern:
+//! 1. parse_json - Load payload into data context
+//! 2. Custom functions - Process the data
+//! 3. validation - Validate results
+//!
 //! Run with: `cargo run --example custom_function`
 
 use async_trait::async_trait;
 use dataflow_rs::Result;
 use dataflow_rs::{
-    Engine, Workflow,
     engine::{
-        AsyncFunctionHandler, FunctionConfig,
         error::DataflowError,
         message::{Change, Message},
+        AsyncFunctionHandler, FunctionConfig,
     },
+    Engine, Workflow,
 };
 use datalogic_rs::DataLogic;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -248,29 +253,42 @@ impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
-    println!("🚀 Custom Function Example");
+    println!("Custom Function Example");
     println!("==========================\n");
 
-    // Define workflow with custom function
+    // Define workflow with parse_json as first task, followed by custom functions
     let workflow_json = r#"
     {
         "id": "statistics_workflow",
         "name": "Data Processing Workflow",
         "tasks": [
             {
+                "id": "load_payload",
+                "name": "Load Payload",
+                "description": "Parse JSON payload into data context",
+                "function": {
+                    "name": "parse_json",
+                    "input": {
+                        "source": "payload",
+                        "target": "input"
+                    }
+                }
+            },
+            {
                 "id": "prepare_data",
                 "name": "Prepare Data",
+                "description": "Extract fields from parsed input",
                 "function": {
                     "name": "map",
                     "input": {
                         "mappings": [
                             {
-                                "path": "numbers",
-                                "logic": { "var": "payload.measurements" }
+                                "path": "data.numbers",
+                                "logic": { "var": "data.input.measurements" }
                             },
                             {
-                                "path": "user_id",
-                                "logic": { "var": "payload.user_id" }
+                                "path": "data.user_id",
+                                "logic": { "var": "data.input.user_id" }
                             }
                         ]
                     }
@@ -305,13 +323,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     "input": {
                         "rules": [
                             {
-                                "path": "statistics.count",
-                                "logic": { ">": [{ "var": "statistics.count" }, 0] },
+                                "logic": { ">": [{ "var": "data.statistics.count" }, 0] },
                                 "message": "Statistics must have at least one data point"
                             },
                             {
-                                "path": "enriched.user_profile",
-                                "logic": { "!!": { "var": "enriched.user_profile" } },
+                                "logic": { "!!": { "var": "data.enriched.user_profile" } },
                                 "message": "User profile enrichment is required"
                             }
                         ]
@@ -358,15 +374,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Process the message through our custom workflow
     match engine.process_message(&mut message).await {
         Ok(_) => {
-            println!("✅ Message processed successfully!\n");
+            println!("Message processed successfully!\n");
 
-            println!("📊 Final Results:");
+            println!("Final Results:");
             println!(
                 "{}\n",
                 serde_json::to_string_pretty(&message.context["data"])?
             );
 
-            println!("📋 Audit Trail:");
+            println!("Audit Trail:");
             for (i, audit) in message.audit_trail.iter().enumerate() {
                 println!(
                     "{}. Task: {} (Status: {})",
@@ -379,7 +395,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
 
             if message.has_errors() {
-                println!("\n⚠️  Errors encountered:");
+                println!("\nErrors encountered:");
                 for error in &message.errors {
                     println!(
                         "   - {}: {}",
@@ -390,11 +406,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
-            println!("❌ Error processing message: {e:?}");
+            println!("Error processing message: {e:?}");
         }
     }
 
-    println!("\n🎉 Custom function example completed!");
+    println!("\nCustom function example completed!");
 
     Ok(())
 }

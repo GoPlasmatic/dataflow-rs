@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -8,14 +8,28 @@ import {
   ArrowRightLeft,
   CheckCircle,
   ListTree,
+  Check,
+  X,
+  AlertCircle,
+  Clock,
+  SkipForward,
 } from 'lucide-react';
-import type { Workflow, Task, JsonLogicValue } from '../../../types';
+import type { Workflow, Task, JsonLogicValue, DebugNodeState } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
+import {
+  useWorkflowDebugState,
+  useWorkflowConditionDebugState,
+  useTaskDebugState,
+  useTaskConditionDebugState,
+} from '../hooks';
+import { useDebugger } from '../context';
 
 interface TreeViewProps {
   workflows: Workflow[];
   selection: TreeSelectionType;
   onSelect: (selection: TreeSelectionType) => void;
+  /** Enable debug mode with state indicators */
+  debugMode?: boolean;
 }
 
 interface TreeNodeProps {
@@ -29,6 +43,12 @@ interface TreeNodeProps {
   onToggle?: () => void;
   onClick?: () => void;
   children?: React.ReactNode;
+  /** Debug state for this node */
+  debugState?: DebugNodeState | null;
+  /** Condition result (for condition nodes) */
+  conditionResult?: boolean;
+  /** Whether this is the current step */
+  isCurrent?: boolean;
 }
 
 function TreeNode({
@@ -42,6 +62,9 @@ function TreeNode({
   onToggle,
   onClick,
   children,
+  debugState,
+  conditionResult,
+  isCurrent,
 }: TreeNodeProps) {
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -53,8 +76,11 @@ function TreeNode({
     onToggle?.();
   };
 
+  const debugStateClass = debugState ? `df-tree-node-${debugState}` : '';
+  const currentClass = isCurrent ? 'df-tree-node-current-step' : '';
+
   return (
-    <div className="df-tree-node">
+    <div className={`df-tree-node ${debugStateClass} ${currentClass}`}>
       <div
         className={`df-tree-node-content ${isSelected ? 'df-tree-node-selected' : ''}`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
@@ -69,12 +95,51 @@ function TreeNode({
         </span>
         {icon && <span className="df-tree-icon" style={iconColor ? { color: iconColor } : undefined}>{icon}</span>}
         <span className="df-tree-label">{label}</span>
+
+        {/* Debug state indicator */}
+        {debugState && (
+          <span className="df-tree-debug-indicator">
+            <DebugStateIcon state={debugState} conditionResult={conditionResult} />
+          </span>
+        )}
       </div>
       {isExpanded && hasChildren && (
         <div className="df-tree-children">{children}</div>
       )}
     </div>
   );
+}
+
+function DebugStateIcon({
+  state,
+  conditionResult,
+}: {
+  state: DebugNodeState;
+  conditionResult?: boolean;
+}) {
+  // For condition nodes, show pass/fail indicator
+  if (conditionResult !== undefined) {
+    return conditionResult ? (
+      <Check size={12} className="df-debug-icon-pass" />
+    ) : (
+      <X size={12} className="df-debug-icon-fail" />
+    );
+  }
+
+  switch (state) {
+    case 'executed':
+      return <Check size={12} className="df-debug-icon-executed" />;
+    case 'skipped':
+      return <SkipForward size={12} className="df-debug-icon-skipped" />;
+    case 'error':
+      return <AlertCircle size={12} className="df-debug-icon-error" />;
+    case 'current':
+      return <Clock size={12} className="df-debug-icon-current" />;
+    case 'pending':
+      return <Clock size={12} className="df-debug-icon-pending" />;
+    default:
+      return null;
+  }
 }
 
 interface MappingItem {
@@ -105,6 +170,7 @@ function TaskNode({
   onSelect,
   expandedNodes,
   toggleNode,
+  debugMode = false,
 }: {
   task: Task;
   workflow: Workflow;
@@ -113,6 +179,7 @@ function TaskNode({
   onSelect: (selection: TreeSelectionType) => void;
   expandedNodes: Set<string>;
   toggleNode: (id: string) => void;
+  debugMode?: boolean;
 }) {
   const taskId = `task-${workflow.id}-${task.id}`;
   const isExpanded = expandedNodes.has(taskId);
@@ -128,6 +195,10 @@ function TaskNode({
     selection.task.id === task.id &&
     selection.workflow.id === workflow.id;
 
+  // Get debug states
+  const taskDebugState = useTaskDebugState(task, workflow);
+  const taskConditionDebugState = useTaskConditionDebugState(task, workflow);
+
   return (
     <TreeNode
       label={task.name}
@@ -139,6 +210,8 @@ function TaskNode({
       level={level}
       onToggle={() => toggleNode(taskId)}
       onClick={() => onSelect({ type: 'task', task, workflow })}
+      debugState={debugMode ? taskDebugState.state : null}
+      isCurrent={debugMode && taskDebugState.isCurrent}
     >
       {/* Task Condition */}
       {hasCondition && (
@@ -160,6 +233,9 @@ function TaskNode({
               condition: task.condition as JsonLogicValue,
             })
           }
+          debugState={debugMode ? taskConditionDebugState.state : null}
+          conditionResult={debugMode ? taskConditionDebugState.conditionResult : undefined}
+          isCurrent={debugMode && taskConditionDebugState.isCurrent}
         />
       )}
 
@@ -225,6 +301,7 @@ function WorkflowNode({
   onSelect,
   expandedNodes,
   toggleNode,
+  debugMode = false,
 }: {
   workflow: Workflow;
   level: number;
@@ -232,12 +309,17 @@ function WorkflowNode({
   onSelect: (selection: TreeSelectionType) => void;
   expandedNodes: Set<string>;
   toggleNode: (id: string) => void;
+  debugMode?: boolean;
 }) {
   const workflowId = `workflow-${workflow.id}`;
   const isExpanded = expandedNodes.has(workflowId);
   const hasCondition = workflow.condition !== undefined && workflow.condition !== null && workflow.condition !== true;
   const hasTasks = workflow.tasks.length > 0;
   const hasChildren = hasCondition || hasTasks;
+
+  // Get debug states
+  const workflowDebugState = useWorkflowDebugState(workflow);
+  const workflowConditionDebugState = useWorkflowConditionDebugState(workflow);
 
   return (
     <TreeNode
@@ -249,6 +331,7 @@ function WorkflowNode({
       level={level}
       onToggle={() => toggleNode(workflowId)}
       onClick={() => toggleNode(workflowId)}
+      debugState={debugMode ? workflowDebugState.state : null}
     >
       {/* Workflow Condition */}
       {hasCondition && (
@@ -268,6 +351,9 @@ function WorkflowNode({
               condition: workflow.condition as JsonLogicValue,
             })
           }
+          debugState={debugMode ? workflowConditionDebugState.state : null}
+          conditionResult={debugMode ? workflowConditionDebugState.conditionResult : undefined}
+          isCurrent={debugMode && workflowConditionDebugState.isCurrent}
         />
       )}
 
@@ -280,6 +366,7 @@ function WorkflowNode({
           onSelect={onSelect}
           expandedNodes={expandedNodes}
           toggleNode={toggleNode}
+          debugMode={debugMode}
         />
       )}
     </TreeNode>
@@ -293,6 +380,7 @@ function TasksNode({
   onSelect,
   expandedNodes,
   toggleNode,
+  debugMode = false,
 }: {
   workflow: Workflow;
   level: number;
@@ -300,6 +388,7 @@ function TasksNode({
   onSelect: (selection: TreeSelectionType) => void;
   expandedNodes: Set<string>;
   toggleNode: (id: string) => void;
+  debugMode?: boolean;
 }) {
   const nodeId = `tasks-${workflow.id}`;
   const isExpanded = expandedNodes.has(nodeId);
@@ -325,13 +414,18 @@ function TasksNode({
           onSelect={onSelect}
           expandedNodes={expandedNodes}
           toggleNode={toggleNode}
+          debugMode={debugMode}
         />
       ))}
     </TreeNode>
   );
 }
 
-export function TreeView({ workflows, selection, onSelect }: TreeViewProps) {
+export function TreeView({ workflows, selection, onSelect, debugMode = false }: TreeViewProps) {
+  // Always call hook unconditionally (React rules of hooks)
+  const debuggerContext = useDebugger();
+  const effectiveDebugContext = debugMode ? debuggerContext : null;
+
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
     // Initially expand the root "Workflows" node and first workflow
     const initial = new Set(['workflows-root']);
@@ -344,6 +438,50 @@ export function TreeView({ workflows, selection, onSelect }: TreeViewProps) {
   const sortedWorkflows = useMemo(() => {
     return [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
   }, [workflows]);
+
+  // Track last selected step to prevent redundant selections
+  const lastSelectedRef = useRef<{ workflowId: string; taskId?: string } | null>(null);
+
+  // Auto-expand and select based on current debug step
+  useEffect(() => {
+    // Don't auto-select if at step -1 (ready state) or no step
+    if (!debugMode || !effectiveDebugContext?.currentStep ||
+        effectiveDebugContext.state.currentStepIndex < 0) {
+      return;
+    }
+
+    const { workflow_id, task_id } = effectiveDebugContext.currentStep;
+
+    // Check if we already selected this step
+    if (lastSelectedRef.current?.workflowId === workflow_id &&
+        lastSelectedRef.current?.taskId === task_id) {
+      return;
+    }
+
+    // Auto-expand nodes to show current step
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      next.add('workflows-root');
+      next.add(`workflow-${workflow_id}`);
+      next.add(`tasks-${workflow_id}`);
+      if (task_id) {
+        next.add(`task-${workflow_id}-${task_id}`);
+      }
+      return next;
+    });
+
+    // Auto-select the current task or workflow
+    if (task_id) {
+      const workflow = workflows.find(w => w.id === workflow_id);
+      const task = workflow?.tasks.find(t => t.id === task_id);
+      if (workflow && task) {
+        lastSelectedRef.current = { workflowId: workflow_id, taskId: task_id };
+        onSelect({ type: 'task', task, workflow });
+      }
+    } else {
+      lastSelectedRef.current = { workflowId: workflow_id };
+    }
+  }, [debugMode, effectiveDebugContext?.currentStep, effectiveDebugContext?.state.currentStepIndex, workflows, onSelect]);
 
   const toggleNode = (id: string) => {
     setExpandedNodes((prev) => {
@@ -360,7 +498,7 @@ export function TreeView({ workflows, selection, onSelect }: TreeViewProps) {
   const isRootExpanded = expandedNodes.has('workflows-root');
 
   return (
-    <div className="df-tree-view">
+    <div className={`df-tree-view ${debugMode ? 'df-tree-view-debug' : ''}`}>
       <TreeNode
         label="Workflows"
         icon={<Layers size={14} />}
@@ -380,6 +518,7 @@ export function TreeView({ workflows, selection, onSelect }: TreeViewProps) {
             onSelect={onSelect}
             expandedNodes={expandedNodes}
             toggleNode={toggleNode}
+            debugMode={debugMode}
           />
         ))}
       </TreeNode>

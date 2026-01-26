@@ -563,3 +563,203 @@ body {
   font-family: inherit;
   font-size: 10px;
 }
+
+/* ============================================
+   Mode Toggle
+   ============================================ */
+
+.mode-toggle {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.mode-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--app-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-toggle-btn:hover {
+  color: var(--app-header-text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mode-toggle-btn.active {
+  color: var(--app-header-text);
+  background: var(--app-accent);
+}
+
+.mode-toggle-btn.active:hover {
+  background: var(--app-accent-hover);
+}
+
+.mode-toggle-btn svg {
+  flex-shrink: 0;
+}
+
+/* ============================================
+   Inline Debug Controls (in panel header)
+   ============================================ */
+
+.debug-controls-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.execution-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.execution-status.success {
+  color: var(--app-success);
+}
+
+.execution-status.error {
+  color: var(--app-error);
+}
+
+.debug-btn-run {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+  background: var(--app-success);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.debug-btn-run:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-success) 85%, black);
+}
+
+.debug-btn-run:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.debug-btn-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--app-text-secondary);
+  background: transparent;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.debug-btn-reset:hover {
+  color: var(--app-text);
+  background: var(--app-bg);
+  border-color: var(--app-text-muted);
+}
+
+/* ============================================
+   Step-by-Step Debug Controls
+   ============================================ */
+
+.step-counter {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--app-text-secondary);
+  white-space: nowrap;
+}
+
+.step-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--app-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  padding: 2px;
+}
+
+.step-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.step-btn:hover:not(:disabled) {
+  background: var(--app-accent);
+  color: white;
+}
+
+.step-btn:active:not(:disabled) {
+  background: var(--app-accent);
+  color: white;
+}
+
+.step-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Result panel changes indicator */
+.df-visualizer-result-changes {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--app-success);
+  background: var(--app-success-bg);
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: 8px;
+}
+
+/* Monaco editor highlighted lines */
+.df-highlighted-line {
+  background-color: rgba(78, 201, 176, 0.15) !important;
+  border-left: 3px solid #4ec9b0 !important;
+}
+
+.df-highlighted-glyph {
+  background-color: #4ec9b0;
+  width: 4px !important;
+  margin-left: 3px;
+  border-radius: 2px;
+}
+
+/* Light theme adjustments */
+:root .df-highlighted-line {
+  background-color: rgba(56, 138, 52, 0.12) !important;
+  border-left: 3px solid #388a34 !important;
+}
+
+:root .df-highlighted-glyph {
+  background-color: #388a34;
+}

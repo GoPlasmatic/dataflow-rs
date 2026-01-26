@@ -190,4 +190,5 @@ pub use engine::functions::{
     AsyncFunctionHandler, FunctionConfig, MapConfig, MapMapping, ValidationConfig, ValidationRule,
 };
 pub use engine::message::{AuditTrail, Change, Message};
+pub use engine::trace::{ExecutionStep, ExecutionTrace, StepResult};
 pub use engine::{Engine, Task, Workflow};

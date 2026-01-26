@@ -3,9 +3,14 @@
 //! This example demonstrates a complete workflow with data transformation and validation
 //! using the async dataflow-rs engine.
 //!
+//! The workflow follows the recommended pattern:
+//! 1. parse_json - Load payload into data context
+//! 2. map - Transform data to desired structure
+//! 3. validation - Validate the transformed data
+//!
 //! Run with: `cargo run --example complete_workflow`
 
-use dataflow_rs::{Engine, Workflow, engine::message::Message};
+use dataflow_rs::{engine::message::Message, Engine, Workflow};
 use serde_json::json;
 
 #[tokio::main]
@@ -13,65 +18,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     // Define a workflow that:
-    // 1. Prepares sample user data
-    // 2. Enriches the message with transformed data
-    // 3. Validates the enriched data
+    // 1. Parses the payload into the data context (recommended first step)
+    // 2. Transforms the data to our model
+    // 3. Validates the transformed data
     let workflow_json = r#"
     {
         "id": "complete_workflow",
         "name": "Complete Workflow Example",
         "priority": 0,
-        "description": "Demonstrates enrich -> validate flow",
+        "description": "Demonstrates parse -> transform -> validate flow",
         "tasks": [
             {
-                "id": "initialize_user",
-                "name": "Initialize User Structure",
-                "description": "Create empty user object in data",
+                "id": "load_payload",
+                "name": "Load Payload",
+                "description": "Parse JSON payload into data context",
                 "function": {
-                    "name": "map",
+                    "name": "parse_json",
                     "input": {
-                        "mappings": [
-                            {
-                                "path": "user",
-                                "logic": {}
-                            }
-                        ]
+                        "source": "payload",
+                        "target": "input"
                     }
                 }
             },
             {
                 "id": "transform_data",
                 "name": "Transform Data",
-                "description": "Map API response to our data model",
+                "description": "Map input data to our user model",
                 "function": {
                     "name": "map",
                     "input": {
                         "mappings": [
                             {
-                                "path": "user.id", 
-                                "logic": { "var": "payload.body.id" }
+                                "path": "data.user.id",
+                                "logic": { "var": "data.input.body.id" }
                             },
                             {
-                                "path": "user.name", 
-                                "logic": { "var": "payload.body.name" }
+                                "path": "data.user.name",
+                                "logic": { "var": "data.input.body.name" }
                             },
                             {
-                                "path": "user.email", 
-                                "logic": { "var": "payload.body.email" }
+                                "path": "data.user.email",
+                                "logic": { "var": "data.input.body.email" }
                             },
                             {
-                                "path": "user.address", 
+                                "path": "data.user.address",
                                 "logic": {
                                     "cat": [
-                                        { "var": "payload.body.address.street" },
+                                        { "var": "data.input.body.address.street" },
                                         ", ",
-                                        { "var": "payload.body.address.city" }
+                                        { "var": "data.input.body.address.city" }
                                     ]
                                 }
                             },
                             {
-                                "path": "user.company", 
-                                "logic": { "var": "payload.body.company.name" }
+                                "path": "data.user.company",
+                                "logic": { "var": "data.input.body.company.name" }
                             }
                         ]
                     }
@@ -86,22 +87,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "input": {
                         "rules": [
                             {
-                                "path": "user.id",
                                 "logic": { "!!": { "var": "data.user.id" } },
                                 "message": "User ID is required"
                             },
                             {
-                                "path": "user.name",
                                 "logic": { "!!": { "var": "data.user.name" } },
                                 "message": "User name is required"
                             },
                             {
-                                "path": "user.email",
                                 "logic": { "!!": { "var": "data.user.email" } },
                                 "message": "User email is required"
                             },
                             {
-                                "path": "user.email",
                                 "logic": {
                                     "in": [
                                         "@",
@@ -145,10 +142,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match engine.process_message(&mut message).await {
         Ok(_) => {
-            println!("✅ Workflow completed successfully!");
+            println!("Workflow completed successfully!");
         }
         Err(e) => {
-            eprintln!("❌ Error executing workflow: {e:?}");
+            eprintln!("Error executing workflow: {e:?}");
             if !message.errors.is_empty() {
                 println!("\nErrors recorded in message:");
                 for err in &message.errors {
@@ -161,10 +158,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Show final data structure
+    println!("\nTransformed user data:");
     println!(
-        "\nFull message structure:\n{}",
-        serde_json::to_string_pretty(&message)?
+        "{}",
+        serde_json::to_string_pretty(&message.context["data"]["user"])?
     );
+
+    println!("\nAudit trail:");
+    for audit in &message.audit_trail {
+        println!(
+            "  - Task: {} (Status: {}, Changes: {})",
+            audit.task_id,
+            audit.status,
+            audit.changes.len()
+        );
+    }
+
+    if !message.errors.is_empty() {
+        println!("\nValidation errors:");
+        for err in &message.errors {
+            println!("  - {}", err.message);
+        }
+    }
 
     Ok(())
 }

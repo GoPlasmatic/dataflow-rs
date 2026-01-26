@@ -61,6 +61,7 @@ pub mod functions;
 pub mod message;
 pub mod task;
 pub mod task_executor;
+pub mod trace;
 pub mod utils;
 pub mod workflow;
 pub mod workflow_executor;
@@ -70,6 +71,7 @@ pub use error::{DataflowError, ErrorInfo, Result};
 pub use functions::{AsyncFunctionHandler, FunctionConfig};
 pub use message::Message;
 pub use task::Task;
+pub use trace::{ExecutionStep, ExecutionTrace, StepResult};
 pub use workflow::Workflow;
 
 use chrono::Utc;
@@ -196,6 +198,44 @@ impl Engine {
         }
 
         Ok(())
+    }
+
+    /// Processes a message through workflows with step-by-step tracing.
+    ///
+    /// This method is similar to `process_message` but captures an execution trace
+    /// that can be used for debugging and step-by-step visualization.
+    ///
+    /// # Arguments
+    /// * `message` - The message to process through workflows
+    ///
+    /// # Returns
+    /// * `Result<ExecutionTrace>` - The execution trace with message snapshots
+    pub async fn process_message_with_trace(
+        &self,
+        message: &mut Message,
+    ) -> Result<ExecutionTrace> {
+        use trace::ExecutionTrace;
+
+        // Set processing metadata
+        message.context["metadata"]["processed_at"] = json!(Utc::now().to_rfc3339());
+        message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
+        message.invalidate_context_cache();
+
+        let mut trace = ExecutionTrace::new();
+
+        // Sort workflows by priority for proper execution order
+        let mut workflows: Vec<_> = self.workflows.values().collect();
+        workflows.sort_by_key(|w| w.priority);
+
+        // Process each workflow in priority order
+        for workflow in workflows {
+            // Execute workflow through the workflow executor with trace collection
+            self.workflow_executor
+                .execute_with_trace(workflow, message, &mut trace)
+                .await?;
+        }
+
+        Ok(trace)
     }
 
     /// Get a reference to the workflows

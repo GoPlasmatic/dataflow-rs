@@ -1,8 +1,8 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import type { Workflow, Task, JsonLogicValue } from '../../types';
-import { ThemeProvider, useTheme } from './context';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import type { Workflow, Task, JsonLogicValue, Message, Change } from '../../types';
+import { ThemeProvider, useTheme, useDebugger } from './context';
 import { TreeView, DetailsPanel } from './views';
-import { ErrorBoundary } from '../common';
+import { ErrorBoundary, JsonEditor } from '../common';
 import type { Theme } from './context';
 
 import './styles/visualizer.css';
@@ -41,6 +41,10 @@ export interface WorkflowVisualizerProps {
   theme?: Theme;
   /** Class name for the root element */
   className?: string;
+  /** Execution result to display in the result panel */
+  executionResult?: Message | null;
+  /** Enable debug mode with step-by-step visualization */
+  debugMode?: boolean;
 }
 
 // Get display info for the current selection
@@ -76,20 +80,28 @@ function getSelectionInfo(selection: TreeSelectionType): { title: string; subtit
   }
 }
 
-function WorkflowVisualizerInner({
+function VisualizerInner({
   workflows,
   onTaskSelect,
   onWorkflowSelect,
+  executionResult,
+  debugMode = false,
 }: {
   workflows: Workflow[];
   onTaskSelect?: (task: Task, workflow: Workflow) => void;
   onWorkflowSelect?: (workflow: Workflow) => void;
+  executionResult?: Message | null;
+  debugMode?: boolean;
 }) {
   const { resolvedTheme } = useTheme();
+  const debuggerContext = debugMode ? useDebugger() : null;
   const [selection, setSelection] = useState<TreeSelectionType>({ type: 'none' });
   const [leftPanelWidth, setLeftPanelWidth] = useState(280);
   const [isDragging, setIsDragging] = useState(false);
+  const [treePanelHeight, setTreePanelHeight] = useState(50); // percentage
+  const [isVerticalDragging, setIsVerticalDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const leftPanelRef = useRef<HTMLDivElement>(null);
 
   const handleSelection = (newSelection: TreeSelectionType) => {
     setSelection(newSelection);
@@ -110,6 +122,11 @@ function WorkflowVisualizerInner({
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsDragging(true);
+  }, []);
+
+  const handleVerticalMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsVerticalDragging(true);
   }, []);
 
   useEffect(() => {
@@ -136,32 +153,125 @@ function WorkflowVisualizerInner({
     };
   }, [isDragging]);
 
+  useEffect(() => {
+    if (!isVerticalDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (leftPanelRef.current) {
+        const rect = leftPanelRef.current.getBoundingClientRect();
+        const relativeY = e.clientY - rect.top;
+        const percentage = (relativeY / rect.height) * 100;
+        setTreePanelHeight(Math.max(20, Math.min(80, percentage)));
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsVerticalDragging(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isVerticalDragging]);
+
   const selectionInfo = getSelectionInfo(selection);
+
+  // Determine which message to display in result panel
+  const hasDebugTrace = debugMode && debuggerContext?.hasTrace;
+  const displayMessage = hasDebugTrace
+    ? debuggerContext?.currentMessage
+    : executionResult;
+  const currentChanges = hasDebugTrace ? debuggerContext?.currentChanges : [];
+  const currentStepIndex = hasDebugTrace ? debuggerContext?.state.currentStepIndex : -1;
+
+  // Compute highlighted paths from changes
+  const highlightedPaths = useMemo(() => {
+    if (!currentChanges || currentChanges.length === 0) return undefined;
+    return currentChanges.map((change: Change) => change.path);
+  }, [currentChanges]);
+
+  const isDraggingAny = isDragging || isVerticalDragging;
 
   return (
     <ErrorBoundary>
       <div
         ref={containerRef}
-        className={`df-visualizer-horizontal df-theme-${resolvedTheme} ${isDragging ? 'df-dragging' : ''}`}
+        className={`df-visualizer-horizontal df-theme-${resolvedTheme} ${isDraggingAny ? 'df-dragging' : ''}`}
       >
-        {/* Left section: Tree view */}
-        <div className="df-visualizer-left" style={{ width: leftPanelWidth }}>
-          <div className="df-visualizer-left-header">
-            <span className="df-visualizer-left-title">Explorer</span>
+        {/* Left section: Tree view + Result panel */}
+        <div
+          ref={leftPanelRef}
+          className="df-visualizer-left"
+          style={{ width: leftPanelWidth }}
+        >
+          {/* Tree view section */}
+          <div
+            className={`df-visualizer-left-tree ${displayMessage ? 'df-with-result' : ''}`}
+            style={displayMessage ? { height: `${treePanelHeight}%` } : undefined}
+          >
+            <div className="df-visualizer-left-header">
+              <span className="df-visualizer-left-title">Explorer</span>
+            </div>
+            <div className="df-visualizer-left-content">
+              {workflows.length === 0 ? (
+                <div className="df-empty-state">
+                  <p>No workflows to display</p>
+                </div>
+              ) : (
+                <TreeView
+                  workflows={workflows}
+                  selection={selection}
+                  onSelect={handleSelection}
+                  debugMode={debugMode}
+                />
+              )}
+            </div>
           </div>
-          <div className="df-visualizer-left-content">
-            {workflows.length === 0 ? (
-              <div className="df-empty-state">
-                <p>No workflows to display</p>
+
+          {/* Horizontal resizer between tree and result */}
+          {displayMessage && (
+            <div
+              className={`df-visualizer-divider-horizontal ${isVerticalDragging ? 'df-divider-active' : ''}`}
+              onMouseDown={handleVerticalMouseDown}
+            />
+          )}
+
+          {/* Result panel (bottom half when result exists) */}
+          {displayMessage && (
+            <div
+              className="df-visualizer-result-panel"
+              style={{ height: `${100 - treePanelHeight}%` }}
+            >
+              <div className="df-visualizer-result-header">
+                <span className="df-visualizer-result-title">
+                  {hasDebugTrace
+                    ? (currentStepIndex !== undefined && currentStepIndex >= 0
+                        ? `Step ${currentStepIndex + 1}`
+                        : 'Ready')
+                    : 'Result'}
+                </span>
+                {hasDebugTrace && currentChanges && currentChanges.length > 0 && (
+                  <span className="df-visualizer-result-changes">
+                    {currentChanges.length} change{currentChanges.length !== 1 ? 's' : ''}
+                  </span>
+                )}
               </div>
-            ) : (
-              <TreeView
-                workflows={workflows}
-                selection={selection}
-                onSelect={handleSelection}
-              />
-            )}
-          </div>
+
+              <div className="df-visualizer-result-content">
+                <JsonEditor
+                  value={JSON.stringify(displayMessage, null, 2)}
+                  onChange={() => {}}
+                  readOnly={true}
+                  theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+                  highlightedPaths={highlightedPaths}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Resizable divider */}
@@ -193,14 +303,18 @@ export function WorkflowVisualizer({
   onTaskSelect,
   theme = 'system',
   className = '',
+  executionResult,
+  debugMode = false,
 }: WorkflowVisualizerProps) {
   return (
     <ThemeProvider defaultTheme={theme}>
       <div className={`df-root ${className}`}>
-        <WorkflowVisualizerInner
+        <VisualizerInner
           workflows={workflows}
           onTaskSelect={onTaskSelect}
           onWorkflowSelect={onWorkflowSelect}
+          executionResult={executionResult}
+          debugMode={debugMode}
         />
       </div>
     </ThemeProvider>

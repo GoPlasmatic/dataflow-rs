@@ -1536,3 +1536,1365 @@
   background: var(--df-border-color);
   opacity: 0;
 }
+
+/* ============================================
+   DEBUGGER STYLES
+   ============================================ */
+
+/* Debug mode layout */
+.df-debug-mode {
+  display: flex;
+  flex-direction: column;
+}
+
+.df-debug-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-debug-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.df-debug-mode-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--df-accent-primary);
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--df-accent-primary) 15%, transparent);
+  border-radius: 4px;
+}
+
+.df-debug-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.df-debug-input-section {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--df-bg-primary);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.df-debug-tree {
+  border-right: none;
+}
+
+.df-debug-right {
+  display: flex;
+  flex-direction: column;
+}
+
+.df-debug-right-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+}
+
+.df-debug-right-tab {
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.df-debug-right-tab:hover {
+  background: var(--df-bg-hover);
+}
+
+.df-debug-right-tab-active {
+  color: var(--df-accent-primary);
+  background: var(--df-bg-primary);
+  border-color: var(--df-border-color);
+}
+
+/* Debug controls */
+.df-debug-controls {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 16px;
+  background: var(--df-bg-secondary);
+  border-radius: 8px;
+  min-width: 480px;
+}
+
+.df-debug-controls-compact {
+  gap: 10px;
+  padding: 8px 12px;
+  min-width: auto;
+}
+
+.df-debug-controls-compact .df-debug-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.df-debug-controls-compact .df-debug-btn-primary {
+  width: 36px;
+  height: 36px;
+}
+
+.df-debug-controls-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.df-debug-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--df-bg-primary);
+  border: 2px solid var(--df-border-color);
+  border-radius: 8px;
+  color: var(--df-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-weight: 600;
+}
+
+.df-debug-btn:hover:not(:disabled) {
+  background: var(--df-bg-hover);
+  border-color: var(--df-accent-primary);
+  color: var(--df-text-primary);
+  transform: scale(1.05);
+}
+
+.df-debug-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.df-debug-btn-primary {
+  width: 48px;
+  height: 48px;
+  background: var(--df-accent-primary);
+  border-color: var(--df-accent-primary);
+  color: white;
+  box-shadow: 0 2px 8px rgba(0, 120, 212, 0.3);
+}
+
+.df-debug-btn-primary:hover:not(:disabled) {
+  background: var(--df-accent-secondary);
+  border-color: var(--df-accent-secondary);
+  color: white;
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 120, 212, 0.4);
+}
+
+.df-debug-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.df-debug-progress-bar {
+  flex: 1;
+  min-width: 120px;
+  height: 6px;
+  background: var(--df-bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.df-debug-progress-fill {
+  height: 100%;
+  background: var(--df-accent-primary);
+  transition: width 0.15s ease;
+}
+
+.df-debug-step-counter {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--df-text-primary);
+  white-space: nowrap;
+}
+
+.df-debug-executing {
+  color: var(--df-accent-primary);
+  font-weight: 600;
+}
+
+.df-debug-speed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--df-text-secondary);
+  padding-left: 12px;
+  border-left: 1px solid var(--df-border-color);
+}
+
+.df-debug-speed-slider {
+  width: 80px;
+  height: 6px;
+  cursor: pointer;
+}
+
+.df-debug-speed-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  min-width: 50px;
+}
+
+/* Debug input panel */
+.df-debug-input-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.df-debug-input-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-debug-input-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--df-text-secondary);
+}
+
+.df-debug-input-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.df-debug-btn-sm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: transparent;
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.df-debug-btn-sm:hover {
+  background: var(--df-bg-hover);
+  border-color: var(--df-border-color-strong);
+}
+
+.df-debug-btn-cancel {
+  color: var(--df-text-muted);
+}
+
+.df-debug-btn-save {
+  color: var(--df-accent-primary);
+  border-color: var(--df-accent-primary);
+}
+
+.df-debug-btn-save:hover {
+  background: color-mix(in srgb, var(--df-accent-primary) 10%, transparent);
+}
+
+.df-debug-input-sections {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.df-debug-input-section {
+  margin-bottom: 4px;
+}
+
+.df-debug-input-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s ease;
+}
+
+.df-debug-input-section-header:hover {
+  background: var(--df-bg-hover);
+}
+
+.df-debug-section-toggle {
+  color: var(--df-text-muted);
+  flex-shrink: 0;
+}
+
+.df-debug-section-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--df-text-primary);
+  flex: 1;
+}
+
+.df-debug-section-empty {
+  font-size: 11px;
+  color: var(--df-text-muted);
+  font-style: italic;
+}
+
+.df-debug-section-edit {
+  font-size: 11px;
+  color: var(--df-accent-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.df-debug-input-section-header:hover .df-debug-section-edit {
+  opacity: 1;
+}
+
+.df-debug-section-edit:hover {
+  background: color-mix(in srgb, var(--df-accent-primary) 15%, transparent);
+}
+
+.df-debug-input-section-content {
+  padding: 4px 8px 8px 24px;
+}
+
+.df-debug-input-preview {
+  margin: 0;
+  padding: 8px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--df-text-secondary);
+  background: var(--df-bg-secondary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.df-debug-input-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.df-debug-input-textarea {
+  width: 100%;
+  min-height: 100px;
+  max-height: 200px;
+  padding: 8px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--df-text-primary);
+  background: var(--df-bg-secondary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.df-debug-input-textarea:focus {
+  outline: none;
+  border-color: var(--df-accent-primary);
+}
+
+.df-debug-input-error {
+  font-size: 11px;
+  color: var(--df-error);
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--df-error) 10%, transparent);
+  border-radius: 4px;
+}
+
+.df-debug-input-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.df-debug-input-footer {
+  padding: 12px;
+  background: var(--df-bg-secondary);
+  border-top: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-debug-run-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: white;
+  background: var(--df-accent-primary);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.df-debug-run-btn:hover:not(:disabled) {
+  background: var(--df-accent-secondary);
+}
+
+.df-debug-run-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.df-debug-spin {
+  animation: df-spin 1s linear infinite;
+}
+
+@keyframes df-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Debug state panel */
+.df-debug-state-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.df-debug-state-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  color: var(--df-text-muted);
+  text-align: center;
+}
+
+.df-debug-state-header {
+  display: flex;
+  padding: 8px 12px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-debug-state-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.df-debug-state-tab {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.df-debug-state-tab:hover {
+  background: var(--df-bg-hover);
+}
+
+.df-debug-state-tab-active {
+  color: var(--df-text-primary);
+  background: var(--df-bg-primary);
+}
+
+.df-debug-state-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--df-bg-secondary);
+}
+
+.df-debug-state-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--df-bg-primary);
+  border-top: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-debug-state-step-type {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.df-debug-state-badge {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+}
+
+.df-debug-state-badge-executed {
+  color: var(--df-success);
+  background: color-mix(in srgb, var(--df-success) 15%, transparent);
+}
+
+.df-debug-state-badge-skipped {
+  color: var(--df-text-muted);
+  background: var(--df-bg-tertiary);
+}
+
+.df-debug-state-badge-error {
+  color: var(--df-error);
+  background: color-mix(in srgb, var(--df-error) 15%, transparent);
+}
+
+.df-debug-state-badge-current {
+  color: var(--df-accent-primary);
+  background: color-mix(in srgb, var(--df-accent-primary) 15%, transparent);
+}
+
+.df-debug-state-badge-pending {
+  color: var(--df-text-muted);
+  background: var(--df-bg-tertiary);
+}
+
+.df-debug-state-type-label {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+
+.df-debug-state-condition {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+
+.df-debug-state-error {
+  font-size: 12px;
+  color: var(--df-error);
+}
+
+/* Message view */
+.df-debug-message-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.df-debug-message-section {
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.df-debug-message-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.df-debug-message-section-header:hover {
+  background: var(--df-bg-hover);
+}
+
+.df-debug-section-arrow {
+  font-size: 10px;
+  color: var(--df-text-muted);
+}
+
+.df-debug-section-key {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--df-text-primary);
+}
+
+.df-debug-message-section-content {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--df-text-secondary);
+  background: var(--df-bg-secondary);
+  border-top: 1px solid var(--df-border-color);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+/* Diff view */
+.df-debug-diff-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--df-text-muted);
+  font-style: italic;
+}
+
+.df-debug-diff-view {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.df-debug-diff-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-size: 11px;
+}
+
+.df-debug-diff-added {
+  background: color-mix(in srgb, var(--df-success) 10%, transparent);
+}
+
+.df-debug-diff-removed {
+  background: color-mix(in srgb, var(--df-error) 10%, transparent);
+}
+
+.df-debug-diff-modified {
+  background: color-mix(in srgb, var(--df-warning) 10%, transparent);
+}
+
+.df-debug-diff-indicator {
+  font-weight: 600;
+  flex-shrink: 0;
+  width: 12px;
+}
+
+.df-debug-diff-added .df-debug-diff-indicator {
+  color: var(--df-success);
+}
+
+.df-debug-diff-removed .df-debug-diff-indicator {
+  color: var(--df-error);
+}
+
+.df-debug-diff-modified .df-debug-diff-indicator {
+  color: var(--df-warning);
+}
+
+.df-debug-diff-path {
+  color: var(--df-accent-primary);
+  flex-shrink: 0;
+}
+
+.df-debug-diff-value {
+  flex: 1;
+  color: var(--df-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.df-debug-diff-old {
+  color: var(--df-error);
+  text-decoration: line-through;
+}
+
+.df-debug-diff-new {
+  color: var(--df-success);
+}
+
+.df-debug-diff-arrow {
+  color: var(--df-text-muted);
+}
+
+/* Changes view */
+.df-debug-changes-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--df-text-muted);
+  font-style: italic;
+}
+
+.df-debug-changes-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.df-debug-change-item {
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.df-debug-change-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+}
+
+.df-debug-change-op {
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  border-radius: 3px;
+}
+
+.df-debug-change-op-add {
+  color: var(--df-success);
+  background: color-mix(in srgb, var(--df-success) 15%, transparent);
+}
+
+.df-debug-change-op-modify {
+  color: var(--df-warning);
+  background: color-mix(in srgb, var(--df-warning) 15%, transparent);
+}
+
+.df-debug-change-op-delete {
+  color: var(--df-error);
+  background: color-mix(in srgb, var(--df-error) 15%, transparent);
+}
+
+.df-debug-change-path {
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+  color: var(--df-accent-primary);
+  flex: 1;
+}
+
+.df-debug-change-source {
+  font-size: 11px;
+  color: var(--df-text-muted);
+}
+
+.df-debug-change-values {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+  background: var(--df-bg-secondary);
+  border-top: 1px solid var(--df-border-color);
+}
+
+.df-debug-change-old {
+  color: var(--df-error);
+}
+
+.df-debug-change-new {
+  color: var(--df-success);
+}
+
+.df-debug-change-arrow {
+  color: var(--df-text-muted);
+}
+
+/* Tree node debug states */
+.df-tree-view-debug .df-tree-node-pending .df-tree-node-content {
+  opacity: 0.6;
+}
+
+.df-tree-view-debug .df-tree-node-executed .df-tree-node-content {
+  opacity: 1;
+}
+
+.df-tree-view-debug .df-tree-node-skipped .df-tree-node-content {
+  opacity: 0.4;
+}
+
+.df-tree-view-debug .df-tree-node-error .df-tree-node-content {
+  background: color-mix(in srgb, var(--df-error) 10%, transparent);
+}
+
+.df-tree-view-debug .df-tree-node-current .df-tree-node-content {
+  background: color-mix(in srgb, var(--df-accent-primary) 15%, transparent);
+}
+
+.df-tree-node-current-step .df-tree-node-content {
+  animation: df-pulse 1s ease-in-out infinite;
+}
+
+@keyframes df-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.df-tree-debug-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.df-debug-icon-pass,
+.df-debug-icon-executed {
+  color: var(--df-success);
+}
+
+.df-debug-icon-fail,
+.df-debug-icon-error {
+  color: var(--df-error);
+}
+
+.df-debug-icon-skipped {
+  color: var(--df-text-muted);
+}
+
+.df-debug-icon-current {
+  color: var(--df-accent-primary);
+  animation: df-spin 2s linear infinite;
+}
+
+.df-debug-icon-pending {
+  color: var(--df-text-muted);
+  opacity: 0.5;
+}
+
+/* Debug bubble/tooltip */
+.df-debug-bubble {
+  min-width: 200px;
+  max-width: 320px;
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 8px;
+  box-shadow: var(--df-shadow-lg);
+  z-index: 10000;
+  overflow: hidden;
+}
+
+.df-debug-bubble-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+}
+
+.df-debug-bubble-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--df-text-primary);
+}
+
+.df-debug-bubble-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--df-text-muted);
+  cursor: pointer;
+}
+
+.df-debug-bubble-close:hover {
+  background: var(--df-bg-hover);
+  color: var(--df-text-primary);
+}
+
+.df-debug-bubble-content {
+  padding: 10px 12px;
+}
+
+.df-debug-bubble-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.df-debug-bubble-row:last-child {
+  margin-bottom: 0;
+}
+
+.df-debug-bubble-label {
+  font-size: 11px;
+  color: var(--df-text-muted);
+  min-width: 60px;
+}
+
+.df-debug-bubble-value {
+  font-size: 12px;
+  color: var(--df-text-primary);
+}
+
+.df-debug-bubble-state {
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 3px;
+}
+
+.df-debug-bubble-state-executed {
+  color: var(--df-success);
+  background: color-mix(in srgb, var(--df-success) 15%, transparent);
+}
+
+.df-debug-bubble-state-skipped {
+  color: var(--df-text-muted);
+  background: var(--df-bg-tertiary);
+}
+
+.df-debug-bubble-state-error {
+  color: var(--df-error);
+  background: color-mix(in srgb, var(--df-error) 15%, transparent);
+}
+
+.df-debug-bubble-state-current {
+  color: var(--df-accent-primary);
+  background: color-mix(in srgb, var(--df-accent-primary) 15%, transparent);
+}
+
+.df-debug-bubble-condition {
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 3px;
+}
+
+.df-debug-bubble-condition-true {
+  color: var(--df-success);
+  background: color-mix(in srgb, var(--df-success) 15%, transparent);
+}
+
+.df-debug-bubble-condition-false {
+  color: var(--df-error);
+  background: color-mix(in srgb, var(--df-error) 15%, transparent);
+}
+
+.df-debug-bubble-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--df-error);
+  background: color-mix(in srgb, var(--df-error) 10%, transparent);
+  border-radius: 4px;
+}
+
+/* Debug badge for tree nodes */
+.df-debug-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.df-debug-badge-sm {
+  font-size: 10px;
+}
+
+.df-debug-badge-md {
+  font-size: 12px;
+}
+
+.df-debug-badge-condition-pass {
+  color: var(--df-success);
+}
+
+.df-debug-badge-condition-fail {
+  color: var(--df-error);
+}
+
+/* ============================================
+   Simplified Debug Mode Styles
+   ============================================ */
+
+/* Run actions in explorer header */
+.df-debug-run-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.df-debug-btn-run {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: white;
+  background: var(--df-success);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.df-debug-btn-run:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--df-success) 85%, black);
+}
+
+.df-debug-btn-run:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.df-debug-btn-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: var(--df-text-secondary);
+  background: transparent;
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.df-debug-btn-reset:hover {
+  color: var(--df-text-primary);
+  background: var(--df-bg-hover);
+  border-color: var(--df-border-color-strong);
+}
+
+/* Tab header for Details/Result */
+.df-debug-tabs-header {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-debug-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.df-debug-tab:hover {
+  color: var(--df-text-primary);
+}
+
+.df-debug-tab-active {
+  color: var(--df-accent-primary);
+  border-bottom-color: var(--df-accent-primary);
+}
+
+/* Result badge in tab */
+.df-debug-result-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+}
+
+.df-debug-result-success {
+  color: var(--df-success);
+}
+
+.df-debug-result-error {
+  color: var(--df-error);
+}
+
+/* Result panel */
+.df-debug-result-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.df-debug-result-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: var(--df-text-muted);
+  text-align: center;
+}
+
+.df-debug-result-empty p {
+  font-size: 13px;
+  margin: 0;
+}
+
+.df-debug-result-status {
+  padding: 10px 16px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+}
+
+.df-debug-status-success {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--df-success);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.df-debug-status-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--df-error);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.df-debug-result-content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  background: var(--df-bg-primary);
+}
+
+.df-debug-result-json {
+  margin: 0;
+  padding: 12px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--df-text-primary);
+  background: var(--df-bg-secondary);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Debug status bar at bottom */
+.df-debug-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--df-accent-primary);
+  color: white;
+  font-size: 11px;
+  flex-shrink: 0;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+
+.df-debug-statusbar-left,
+.df-debug-statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.df-debug-statusbar-current {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.df-debug-statusbar-label {
+  opacity: 0.8;
+}
+
+.df-debug-statusbar-value {
+  font-weight: 600;
+}
+
+.df-debug-statusbar-type {
+  opacity: 0.7;
+  font-size: 10px;
+}
+
+.df-debug-statusbar-change {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.df-debug-statusbar-path {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-weight: 500;
+}
+
+.df-debug-statusbar-op {
+  opacity: 0.8;
+  font-size: 10px;
+}
+
+.df-debug-statusbar-source {
+  opacity: 0.7;
+}
+
+/* Adjust debug mode layout */
+.df-debug-mode {
+  position: relative;
+}
+
+.df-debug-mode .df-visualizer-left-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Add padding at bottom when status bar is visible */
+.df-debug-mode.df-visualizer-horizontal {
+  padding-bottom: 30px;
+}
+
+/* ============================================
+   Result Panel in Tree View (Split Layout)
+   ============================================ */
+
+.df-visualizer-left {
+  display: flex;
+  flex-direction: column;
+}
+
+.df-visualizer-left-tree {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.df-visualizer-left-tree.df-with-result {
+  flex: 1;
+  max-height: 50%;
+  border-bottom: 1px solid var(--df-border-color);
+}
+
+.df-visualizer-result-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.df-visualizer-result-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-visualizer-result-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--df-text-secondary);
+}
+
+.df-visualizer-result-content {
+  flex: 1;
+  overflow: auto;
+  background: var(--df-bg-primary);
+}
+
+.df-result-json {
+  margin: 0;
+  padding: 12px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--df-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Horizontal divider between tree and result */
+.df-visualizer-divider-horizontal {
+  height: 1px;
+  width: 100%;
+  background: var(--df-border-color);
+  cursor: row-resize;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.df-visualizer-divider-horizontal::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+  background: transparent;
+}
+
+.df-visualizer-divider-horizontal:hover,
+.df-visualizer-divider-horizontal.df-divider-active {
+  background: var(--df-accent-primary);
+  height: 2px;
+}
+
+/* Tree view section when result exists */
+.df-visualizer-left-tree.df-with-result {
+  flex: none;
+  border-bottom: none;
+}
+

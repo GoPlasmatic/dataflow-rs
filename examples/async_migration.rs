@@ -9,6 +9,11 @@
 //! 3. **DataLogic v4**: Leverages Arc<CompiledLogic> for zero-copy sharing
 //! 4. **Tokio Integration**: Designed for Tokio runtime with mixed I/O and CPU workloads
 //!
+//! ## Recommended Workflow Pattern:
+//! 1. parse_json - Load payload into data context (first task)
+//! 2. map/validation - Transform and validate
+//! 3. Custom async handlers - External integrations
+//!
 //! Run with: `cargo run --example async_migration`
 
 use async_trait::async_trait;
@@ -62,13 +67,25 @@ impl AsyncFunctionHandler for SimpleAsyncHandler {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
-    // Create workflows
+    // Create workflows with parse_json as the first task
     let workflow_json = r#"
     {
         "id": "async_workflow",
         "name": "Async Processing Workflow",
         "priority": 0,
         "tasks": [
+            {
+                "id": "load_payload",
+                "name": "Load Payload",
+                "description": "Parse JSON payload into data context",
+                "function": {
+                    "name": "parse_json",
+                    "input": {
+                        "source": "payload",
+                        "target": "input"
+                    }
+                }
+            },
             {
                 "id": "validate",
                 "name": "Validate Input",
@@ -77,9 +94,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "input": {
                         "rules": [
                             {
-                                "logic": {"!!": [{"var": "data.required_field"}]},
-                                "message": "Required field is missing",
-                                "path": "data.required_field"
+                                "logic": {"!!": [{"var": "data.input.required_field"}]},
+                                "message": "Required field is missing"
                             }
                         ]
                     }
@@ -94,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "mappings": [
                             {
                                 "path": "data.transformed",
-                                "logic": {"var": "data.input"}
+                                "logic": {"var": "data.input.value"}
                             }
                         ]
                     }
@@ -104,14 +120,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "id": "http_call",
                 "name": "Make HTTP Call",
                 "function": {
-                    "name": "async_http"
+                    "name": "async_http",
+                    "input": {}
                 }
             },
             {
-                "id": "legacy_process",
-                "name": "Legacy Processing",
+                "id": "simple_process",
+                "name": "Simple Processing",
                 "function": {
-                    "name": "legacy_sync"
+                    "name": "simple_async",
+                    "input": {}
                 }
             }
         ]
@@ -135,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut message = Message::from_value(&json!({
             "required_field": "present",
-            "input": "test data"
+            "value": "test data"
         }));
 
         // Process message asynchronously
@@ -150,6 +168,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
             HashMap::new();
 
+        // Register both handlers
+        custom_functions.insert("async_http".to_string(), Box::new(AsyncHttpHandler));
         custom_functions.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
 
         // All handlers are now async, even CPU-bound ones
@@ -157,13 +177,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut message = Message::from_value(&json!({
             "required_field": "present",
-            "input": "test data"
+            "value": "test data"
         }));
 
         engine.process_message(&mut message).await?;
 
         println!(
-            "Message processed with sync handlers: {:?}",
+            "Message processed with async handlers: {:?}",
             message.context["data"]
         );
     }
@@ -171,10 +191,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Method 3: Using with Axum web server
     println!("\nMethod 3: Integration with Axum");
     {
-        use axum::{Json, Router, routing::post};
+        use axum::{routing::post, Json, Router};
+
+        // Create custom functions for this engine instance
+        let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
+            HashMap::new();
+        custom_functions.insert("async_http".to_string(), Box::new(AsyncHttpHandler));
+        custom_functions.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
 
         // Create engine once and share across requests
-        let engine = Arc::new(Engine::new(vec![workflow.clone()], None));
+        let engine = Arc::new(Engine::new(vec![workflow.clone()], Some(custom_functions)));
 
         async fn process_handler(
             engine: Arc<Engine>,
@@ -206,7 +232,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Example request:");
         println!("  curl -X POST http://localhost:3000/process \\");
         println!("    -H 'Content-Type: application/json' \\");
-        println!("    -d '{{\"data\":{{\"required_field\":\"test\",\"input\":\"data\"}}}}'");
+        println!("    -d '{{\"required_field\":\"test\",\"value\":\"data\"}}'");
 
         // Uncomment to run the server
         // let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -220,12 +246,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         use std::time::Instant;
 
-        let engine = Arc::new(Engine::new(vec![workflow], None));
+        // Create custom functions for performance testing
+        let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
+            HashMap::new();
+        custom_functions.insert("async_http".to_string(), Box::new(AsyncHttpHandler));
+        custom_functions.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
+
+        let engine = Arc::new(Engine::new(vec![workflow], Some(custom_functions)));
 
         // Single message
         let mut message = Message::from_value(&json!({
             "required_field": "present",
-            "input": "test data"
+            "value": "test data"
         }));
 
         let start = Instant::now();
@@ -234,10 +266,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Concurrent processing (simulating multiple API requests)
         let messages = vec![
-            Message::from_value(&json!({"required_field": "1", "input": "data1"})),
-            Message::from_value(&json!({"required_field": "2", "input": "data2"})),
-            Message::from_value(&json!({"required_field": "3", "input": "data3"})),
-            Message::from_value(&json!({"required_field": "4", "input": "data4"})),
+            Message::from_value(&json!({"required_field": "1", "value": "data1"})),
+            Message::from_value(&json!({"required_field": "2", "value": "data2"})),
+            Message::from_value(&json!({"required_field": "3", "value": "data3"})),
+            Message::from_value(&json!({"required_field": "4", "value": "data4"})),
         ];
 
         let start = Instant::now();
@@ -256,11 +288,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("All messages processed: {} succeeded", results.len());
     }
 
-    println!("\n✅ Migration complete! Key benefits:");
+    println!("\nMigration complete! Key benefits:");
     println!("  - Simplified architecture (no custom thread management)");
     println!("  - Better Tokio integration for mixed I/O and CPU workloads");
     println!("  - Zero-copy sharing with Arc<CompiledLogic>");
     println!("  - Backward compatibility with sync handlers");
+    println!("  - parse_json/parse_xml functions for loading payload into context");
 
     Ok(())
 }

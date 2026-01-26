@@ -13,6 +13,12 @@ pub use validation::{ValidationConfig, ValidationRule};
 pub mod map;
 pub use map::{MapConfig, MapMapping};
 
+pub mod parse;
+pub use parse::ParseConfig;
+
+pub mod publish;
+pub use publish::PublishConfig;
+
 // Re-export all built-in functions for easier access
 pub mod builtins {
     use super::*;

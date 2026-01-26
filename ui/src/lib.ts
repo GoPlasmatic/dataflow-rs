@@ -1,6 +1,10 @@
 // Main component
 export { WorkflowVisualizer } from './components/workflow-visualizer';
-export type { WorkflowVisualizerProps, SelectionType, TreeSelectionType } from './components/workflow-visualizer';
+export type {
+  WorkflowVisualizerProps,
+  SelectionType,
+  TreeSelectionType,
+} from './components/workflow-visualizer';
 
 // Sub-components (for advanced usage)
 export {
@@ -12,12 +16,34 @@ export {
 
 export { RulesListView, WorkflowFlowView, TreeView } from './components/workflow-visualizer/views';
 
+// Debug components
+export {
+  DebuggerControls,
+  MessageInputPanel,
+  MessageStatePanel,
+  DebugInfoBubble,
+  DebugStateBadge,
+} from './components/workflow-visualizer/debug';
+
 // Context and hooks
 export {
   ThemeProvider,
   useTheme,
+  DebuggerProvider,
+  useDebugger,
+  useDebuggerOptional,
 } from './components/workflow-visualizer/context';
 export type { Theme } from './components/workflow-visualizer/context';
+
+// Debug hooks
+export {
+  useTreeNodeDebugState,
+  useWorkflowDebugState,
+  useWorkflowConditionDebugState,
+  useTaskDebugState,
+  useTaskConditionDebugState,
+} from './components/workflow-visualizer/hooks';
+export type { TreeNodeDebugState } from './components/workflow-visualizer/hooks';
 
 // Common components
 export { SearchInput, JsonViewer, ErrorBoundary } from './components/common';
@@ -33,9 +59,35 @@ export type {
   ValidationRule,
   ValidationFunctionInput,
   BuiltinFunctionType,
+  // Debug types
+  Message,
+  ErrorInfo,
+  Change,
+  AuditTrail,
+  DebugNodeState,
+  ConditionResult,
+  ExecutionStep,
+  ExecutionTrace,
+  StepResult,
+  PlaybackState,
+  DebuggerState,
+  DebuggerAction,
+  // Legacy types (for backwards compatibility)
+  LegacyExecutionStep,
+  LegacyWorkflowExecutionTrace,
 } from './types';
 
-export { isBuiltinFunction, getFunctionDisplayInfo } from './types';
+export {
+  isBuiltinFunction,
+  getFunctionDisplayInfo,
+  // Debug helpers
+  createEmptyMessage,
+  cloneMessage,
+  getMessageAtStep,
+  getChangesAtStep,
+  getWorkflowState,
+  getTaskState,
+} from './types';
 
 // Styles
 import './components/workflow-visualizer/styles/visualizer.css';

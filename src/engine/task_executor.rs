@@ -77,6 +77,22 @@ impl TaskExecutor {
                 // Execute built-in validation function
                 self.executor.execute_validation(message, input)
             }
+            FunctionConfig::ParseJson { input, .. } => {
+                // Execute built-in parse_json function
+                crate::engine::functions::parse::execute_parse_json(message, input)
+            }
+            FunctionConfig::ParseXml { input, .. } => {
+                // Execute built-in parse_xml function
+                crate::engine::functions::parse::execute_parse_xml(message, input)
+            }
+            FunctionConfig::PublishJson { input, .. } => {
+                // Execute built-in publish_json function
+                crate::engine::functions::publish::execute_publish_json(message, input)
+            }
+            FunctionConfig::PublishXml { input, .. } => {
+                // Execute built-in publish_xml function
+                crate::engine::functions::publish::execute_publish_xml(message, input)
+            }
             FunctionConfig::Custom { name, .. } => {
                 // Execute custom function handler
                 self.execute_custom_function(name, message, &task.function)
@@ -105,7 +121,8 @@ impl TaskExecutor {
     /// Check if a function handler exists
     pub fn has_function(&self, name: &str) -> bool {
         match name {
-            "map" | "validation" | "validate" => true,
+            "map" | "validation" | "validate" | "parse_json" | "parse_xml" | "publish_json"
+            | "publish_xml" => true,
             custom_name => self.task_functions.contains_key(custom_name),
         }
     }

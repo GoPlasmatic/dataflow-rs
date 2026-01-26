@@ -1,21 +1,34 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Sun, Moon, Github, BookOpen, ChevronDown, PanelLeftClose, PanelLeft, Braces } from 'lucide-react';
-import { WorkflowVisualizer } from './components/workflow-visualizer';
+import { Sun, Moon, Github, BookOpen, ChevronDown, PanelLeftClose, PanelLeft, Braces, Play, CheckCircle, XCircle, ChevronLeft, ChevronRight, Pause, Square } from 'lucide-react';
+import { WorkflowVisualizer, DebuggerProvider, useDebugger } from './components/workflow-visualizer';
 import { JsonEditor, StatusBar } from './components/common';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import type { Workflow } from './types';
+import initWasm, { WasmEngine } from '@goplasmatic/dataflow-wasm';
+import type { Workflow, ExecutionTrace } from './types';
+import { getMessageAtStep } from './types';
 import './App.css';
 
-// Sample workflows for demonstration (using only built-in functions: map, validation)
-const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object }> = {
-  'User & Order Processing': {
+// Sample workflows for demonstration (using built-in functions: parse_json, map, validation)
+// All workflows follow the recommended pattern: parse_json first to load payload into data context
+const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: object }> = {
+  'User Processing': {
     workflows: [
       {
         id: 'user-processing',
         name: 'User Processing',
         priority: 0,
-        condition: { '==': [{ var: 'metadata.type' }, 'user'] },
         tasks: [
+          {
+            id: 'load-payload',
+            name: 'Load Payload',
+            function: {
+              name: 'parse_json',
+              input: {
+                source: 'payload',
+                target: 'input',
+              },
+            },
+          },
           {
             id: 'init-user',
             name: 'Initialize User',
@@ -23,9 +36,9 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
               name: 'map',
               input: {
                 mappings: [
-                  { path: 'data.user.id', logic: { var: 'payload.id' } },
-                  { path: 'data.user.full_name', logic: { cat: [{ var: 'payload.first_name' }, ' ', { var: 'payload.last_name' }] } },
-                  { path: 'data.user.email', logic: { var: 'payload.email' } },
+                  { path: 'data.user.id', logic: { var: 'data.input.id' } },
+                  { path: 'data.user.full_name', logic: { cat: [{ var: 'data.input.first_name' }, ' ', { var: 'data.input.last_name' }] } },
+                  { path: 'data.user.email', logic: { var: 'data.input.email' } },
                 ],
               },
             },
@@ -45,12 +58,27 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
           },
         ],
       },
+    ],
+    payload: { id: '123', first_name: 'John', last_name: 'Doe', email: 'john@example.com' },
+  },
+  'Order Processing': {
+    workflows: [
       {
         id: 'order-processing',
         name: 'Order Processing',
-        priority: 1,
-        condition: { '==': [{ var: 'metadata.type' }, 'order'] },
+        priority: 0,
         tasks: [
+          {
+            id: 'load-payload',
+            name: 'Load Payload',
+            function: {
+              name: 'parse_json',
+              input: {
+                source: 'payload',
+                target: 'input',
+              },
+            },
+          },
           {
             id: 'parse-order',
             name: 'Parse Order',
@@ -58,8 +86,8 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
               name: 'map',
               input: {
                 mappings: [
-                  { path: 'data.order.id', logic: { var: 'payload.order_id' } },
-                  { path: 'data.order.total', logic: { var: 'payload.amount' } },
+                  { path: 'data.order.id', logic: { var: 'data.input.order_id' } },
+                  { path: 'data.order.total', logic: { var: 'data.input.amount' } },
                 ],
               },
             },
@@ -92,10 +120,7 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
         ],
       },
     ],
-    message: {
-      metadata: { type: 'user', notify: true },
-      payload: { id: '123', first_name: 'John', last_name: 'Doe', email: 'john@example.com' },
-    },
+    payload: { order_id: 'ORD-001', amount: 150.00 },
   },
   'Simple Validation': {
     workflows: [
@@ -105,14 +130,25 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
         priority: 0,
         tasks: [
           {
+            id: 'load-payload',
+            name: 'Load Payload',
+            function: {
+              name: 'parse_json',
+              input: {
+                source: 'payload',
+                target: 'input',
+              },
+            },
+          },
+          {
             id: 'check-required',
             name: 'Check Required Fields',
             function: {
               name: 'validation',
               input: {
                 rules: [
-                  { logic: { '!!': { var: 'payload.name' } }, message: 'Name is required' },
-                  { logic: { '!!': { var: 'payload.email' } }, message: 'Email is required' },
+                  { logic: { '!!': { var: 'data.input.name' } }, message: 'Name is required' },
+                  { logic: { '!!': { var: 'data.input.email' } }, message: 'Email is required' },
                 ],
               },
             },
@@ -124,8 +160,8 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
               name: 'map',
               input: {
                 mappings: [
-                  { path: 'data.formatted_name', logic: { upper: { var: 'payload.name' } } },
-                  { path: 'data.email_lower', logic: { lower: { var: 'payload.email' } } },
+                  { path: 'data.formatted_name', logic: { upper: { var: 'data.input.name' } } },
+                  { path: 'data.email_lower', logic: { lower: { var: 'data.input.email' } } },
                 ],
               },
             },
@@ -133,12 +169,9 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
         ],
       },
     ],
-    message: {
-      metadata: {},
-      payload: { name: 'alice', email: 'Alice@Test.com' },
-    },
+    payload: { name: 'alice', email: 'Alice@Test.com' },
   },
-  'Data Pipeline (8 Workflows)': {
+  'Data Pipeline': {
     workflows: [
       {
         id: 'input-mapping',
@@ -146,15 +179,27 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
         priority: 0,
         tasks: [
           {
+            id: 'load-payload',
+            name: 'Load Payload',
+            function: {
+              name: 'parse_json',
+              input: {
+                source: 'payload',
+                target: 'input',
+              },
+            },
+          },
+          {
             id: 'extract-fields',
             name: 'Extract Fields',
             function: {
               name: 'map',
               input: {
                 mappings: [
-                  { path: 'data.customer.id', logic: { var: 'payload.customer_id' } },
-                  { path: 'data.customer.name', logic: { var: 'payload.customer_name' } },
-                  { path: 'data.items', logic: { var: 'payload.line_items' } },
+                  { path: 'data.customer.id', logic: { var: 'data.input.customer_id' } },
+                  { path: 'data.customer.name', logic: { var: 'data.input.customer_name' } },
+                  { path: 'data.items', logic: { var: 'data.input.line_items' } },
+                  { path: 'data.pricing.subtotal', logic: { var: 'data.input.subtotal' } },
                 ],
               },
             },
@@ -186,7 +231,7 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
               name: 'validation',
               input: {
                 rules: [
-                  { logic: { '>': [{ var: 'data.items.length' }, 0] }, message: 'At least one item required' },
+                  { logic: { '!!': { 'var': 'data.items.0' } }, message: 'At least one item required' },
                 ],
               },
             },
@@ -197,20 +242,7 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
         id: 'pricing-calc',
         name: 'Pricing Calculation',
         priority: 2,
-        condition: { '>': [{ var: 'metadata.item_count' }, 0] },
         tasks: [
-          {
-            id: 'calc-subtotal',
-            name: 'Calculate Subtotal',
-            function: {
-              name: 'map',
-              input: {
-                mappings: [
-                  { path: 'data.pricing.subtotal', logic: { var: 'payload.subtotal' } },
-                ],
-              },
-            },
-          },
           {
             id: 'calc-tax',
             name: 'Calculate Tax',
@@ -242,7 +274,6 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
         id: 'discount-check',
         name: 'Discount Processing',
         priority: 3,
-        condition: { '!!': { var: 'metadata.coupon_code' } },
         tasks: [
           {
             id: 'apply-discount',
@@ -356,17 +387,14 @@ const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; message: object 
         ],
       },
     ],
-    message: {
-      metadata: { item_count: 3, coupon_code: 'SAVE10' },
-      payload: {
-        customer_id: 'CUST-001',
-        customer_name: 'Acme Corp',
-        line_items: [
-          { sku: 'ITEM-A', qty: 2, price: 25.00 },
-          { sku: 'ITEM-B', qty: 1, price: 50.00 },
-        ],
-        subtotal: 100.00,
-      },
+    payload: {
+      customer_id: 'CUST-001',
+      customer_name: 'Acme Corp',
+      line_items: [
+        { sku: 'ITEM-A', qty: 2, price: 25.00 },
+        { sku: 'ITEM-B', qty: 1, price: 50.00 },
+      ],
+      subtotal: 100.00,
     },
   },
 };
@@ -390,19 +418,191 @@ function useTheme() {
   return { theme, toggleTheme };
 }
 
-function App() {
+// Debug controls component that uses the debugger context
+function DebugControls({
+  workflows,
+  payloadText,
+  payloadError,
+  wasmReady,
+}: {
+  workflows: Workflow[];
+  payloadText: string;
+  payloadError: string | null;
+  wasmReady: boolean;
+}) {
+  const {
+    state,
+    hasTrace,
+    isAtStart,
+    isAtEnd,
+    totalSteps,
+    executeTrace,
+    reset,
+    stepForward,
+    stepBackward,
+    play,
+    pause,
+  } = useDebugger();
+
+  const [executionSuccess, setExecutionSuccess] = useState<boolean | null>(null);
+  const lastExecutionRef = useRef<{ workflows: string; payload: string } | null>(null);
+
+  const runDebug = useCallback(async () => {
+    if (!wasmReady || workflows.length === 0 || payloadError) return;
+
+    // Check if this is the same execution
+    const workflowsJson = JSON.stringify(workflows);
+    const current = { workflows: workflowsJson, payload: payloadText };
+    if (lastExecutionRef.current?.workflows === current.workflows &&
+        lastExecutionRef.current?.payload === current.payload) {
+      return; // Skip if same as last execution
+    }
+
+    setExecutionSuccess(null);
+    reset();
+
+    try {
+      const payload = JSON.parse(payloadText);
+      const engine = new WasmEngine(workflowsJson);
+
+      // Use process_with_trace for step-by-step debugging
+      const traceJson = await engine.process_with_trace(JSON.stringify(payload));
+      const trace: ExecutionTrace = JSON.parse(traceJson);
+
+      executeTrace(trace);
+      lastExecutionRef.current = current;
+
+      // Check if execution was successful
+      const finalMessage = trace.steps.length > 0
+        ? getMessageAtStep(trace, trace.steps.length - 1)
+        : null;
+      setExecutionSuccess(finalMessage ? finalMessage.errors.length === 0 : true);
+
+      engine.free();
+    } catch (err) {
+      console.error('Execution error:', err);
+      setExecutionSuccess(false);
+    }
+  }, [wasmReady, workflows, payloadText, payloadError, executeTrace, reset]);
+
+  // Auto-run when workflows or payload change
+  useEffect(() => {
+    if (!wasmReady || workflows.length === 0 || payloadError) return;
+
+    // Debounce the auto-run
+    const timeoutId = setTimeout(() => {
+      runDebug();
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [wasmReady, workflows, payloadText, payloadError, runDebug]);
+
+  const handleReset = useCallback(() => {
+    reset();
+    setExecutionSuccess(null);
+    // Clear the ref so auto-run will re-execute
+    lastExecutionRef.current = null;
+  }, [reset]);
+
+  return (
+    <div className="debug-controls-inline">
+      {executionSuccess !== null && (
+        <span className={`execution-status ${executionSuccess ? 'success' : 'error'}`}>
+          {executionSuccess ? <CheckCircle size={14} /> : <XCircle size={14} />}
+          {executionSuccess ? 'Success' : 'Error'}
+        </span>
+      )}
+
+      {/* Always show step counter */}
+      <span className="step-counter">
+        {hasTrace
+          ? (state.currentStepIndex >= 0
+              ? `Step ${state.currentStepIndex + 1} / ${totalSteps}`
+              : `Ready (${totalSteps} steps)`)
+          : 'Ready'}
+      </span>
+
+      {/* Always show step controls */}
+      <div className="step-controls">
+        <button
+          className="step-btn"
+          onClick={stepBackward}
+          disabled={!hasTrace || isAtStart}
+          title="Previous Step"
+        >
+          <ChevronLeft size={16} />
+        </button>
+
+        {state.playbackState === 'playing' ? (
+          <button
+            className="step-btn"
+            onClick={pause}
+            title="Pause"
+          >
+            <Pause size={14} />
+          </button>
+        ) : (
+          <button
+            className="step-btn"
+            onClick={play}
+            disabled={!hasTrace || isAtEnd}
+            title="Play"
+          >
+            <Play size={14} />
+          </button>
+        )}
+
+        <button
+          className="step-btn"
+          onClick={stepForward}
+          disabled={!hasTrace || isAtEnd}
+          title="Next Step"
+        >
+          <ChevronRight size={16} />
+        </button>
+
+        <button
+          className="step-btn"
+          onClick={handleReset}
+          disabled={!hasTrace}
+          title="Stop"
+        >
+          <Square size={12} />
+        </button>
+      </div>
+
+    </div>
+  );
+}
+
+function AppContent() {
   const { theme, toggleTheme } = useTheme();
 
   const [workflowsText, setWorkflowsText] = useState('');
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [workflowsError, setWorkflowsError] = useState<string | null>(null);
 
-  const [messageText, setMessageText] = useState('{}');
-  const [messageError, setMessageError] = useState<string | null>(null);
+  const [payloadText, setPayloadText] = useState('{}');
+  const [payloadError, setPayloadError] = useState<string | null>(null);
 
   const [selectedExample, setSelectedExample] = useState(Object.keys(SAMPLE_WORKFLOWS)[0]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // WASM initialization state
+  const [wasmReady, setWasmReady] = useState(false);
+
+  // Initialize WASM module
+  useEffect(() => {
+    initWasm()
+      .then(() => {
+        setWasmReady(true);
+        console.log('WASM module initialized');
+      })
+      .catch((err) => {
+        console.error('Failed to initialize WASM:', err);
+      });
+  }, []);
 
   const [panelWidth, setPanelWidth] = useState(400);
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
@@ -432,22 +632,22 @@ function App() {
     }
   }, []);
 
-  // Handle message text change
-  const handleMessageChange = useCallback((text: string) => {
-    setMessageText(text);
+  // Handle payload text change
+  const handlePayloadChange = useCallback((text: string) => {
+    setPayloadText(text);
     if (!text.trim()) {
-      setMessageError(null);
+      setPayloadError(null);
       return;
     }
     try {
       const parsed = JSON.parse(text);
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setMessageError('Message must be a JSON object');
+        setPayloadError('Payload must be a JSON object');
         return;
       }
-      setMessageError(null);
+      setPayloadError(null);
     } catch (err) {
-      setMessageError(err instanceof Error ? err.message : 'Invalid JSON');
+      setPayloadError(err instanceof Error ? err.message : 'Invalid JSON');
     }
   }, []);
 
@@ -459,8 +659,8 @@ function App() {
       setWorkflows(sample.workflows);
       setWorkflowsText(JSON.stringify(sample.workflows, null, 2));
       setWorkflowsError(null);
-      setMessageText(JSON.stringify(sample.message, null, 2));
-      setMessageError(null);
+      setPayloadText(JSON.stringify(sample.payload, null, 2));
+      setPayloadError(null);
       setDropdownOpen(false);
     }
   }, []);
@@ -518,12 +718,12 @@ function App() {
       // Ignore formatting errors
     }
     try {
-      const parsedMessage = JSON.parse(messageText);
-      setMessageText(JSON.stringify(parsedMessage, null, 2));
+      const parsedPayload = JSON.parse(payloadText);
+      setPayloadText(JSON.stringify(parsedPayload, null, 2));
     } catch {
       // Ignore formatting errors
     }
-  }, [workflowsText, messageText]);
+  }, [workflowsText, payloadText]);
 
   // Keyboard shortcuts
   useKeyboardShortcuts({
@@ -630,13 +830,13 @@ function App() {
           </div>
           <div className="editor-section">
             <div className="editor-header">
-              <h3>Message</h3>
-              {messageError && <span className="editor-error">{messageError}</span>}
+              <h3>Payload</h3>
+              {payloadError && <span className="editor-error">{payloadError}</span>}
             </div>
             <div className="editor-content">
               <JsonEditor
-                value={messageText}
-                onChange={handleMessageChange}
+                value={payloadText}
+                onChange={handlePayloadChange}
                 theme={theme}
                 onCursorChange={handleCursorChange}
               />
@@ -656,11 +856,19 @@ function App() {
         <div className="panel visual-panel">
           <div className="panel-header">
             <h2>Workflow Flow</h2>
+            <DebugControls
+              workflows={workflows}
+              payloadText={payloadText}
+              payloadError={payloadError}
+              wasmReady={wasmReady}
+            />
           </div>
           <div className="panel-content">
             <WorkflowVisualizer
+              key={workflowsText}
               workflows={workflows}
               theme={theme}
+              debugMode={true}
             />
           </div>
         </div>
@@ -670,10 +878,18 @@ function App() {
       <StatusBar
         workflows={workflows}
         workflowsError={workflowsError}
-        messageError={messageError}
+        messageError={payloadError}
         cursorPosition={cursorPosition}
       />
     </div>
+  );
+}
+
+function App() {
+  return (
+    <DebuggerProvider autoActivate={true}>
+      <AppContent />
+    </DebuggerProvider>
   );
 }
 
