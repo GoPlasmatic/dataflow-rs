@@ -1,22 +1,19 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { CheckCircle, XCircle, ChevronLeft, ChevronRight, Pause, Play, Square } from 'lucide-react';
 import { useDebugger } from './workflow-visualizer';
-import { WasmEngine } from '@goplasmatic/dataflow-wasm';
-import type { Workflow, ExecutionTrace } from '../types';
+import type { Workflow } from '../types';
 import { getMessageAtStep } from '../types';
 
 export interface DebugControlsProps {
   workflows: Workflow[];
   payloadText: string;
   payloadError: string | null;
-  wasmReady: boolean;
 }
 
 export function DebugControls({
   workflows,
   payloadText,
   payloadError,
-  wasmReady,
 }: DebugControlsProps) {
   const {
     state,
@@ -24,19 +21,21 @@ export function DebugControls({
     isAtStart,
     isAtEnd,
     totalSteps,
+    isEngineReady,
     executeTrace,
     reset,
     stepForward,
     stepBackward,
     play,
     pause,
+    runExecution,
   } = useDebugger();
 
   const [executionSuccess, setExecutionSuccess] = useState<boolean | null>(null);
   const lastExecutionRef = useRef<{ workflows: string; payload: string } | null>(null);
 
   const runDebug = useCallback(async () => {
-    if (!wasmReady || workflows.length === 0 || payloadError) return;
+    if (!isEngineReady || workflows.length === 0 || payloadError) return;
 
     // Check if this is the same execution
     const workflowsJson = JSON.stringify(workflows);
@@ -51,31 +50,27 @@ export function DebugControls({
 
     try {
       const payload = JSON.parse(payloadText);
-      const engine = new WasmEngine(workflowsJson);
+      const trace = await runExecution(workflows, payload);
 
-      // Use process_with_trace for step-by-step debugging
-      const traceJson = await engine.process_with_trace(JSON.stringify(payload));
-      const trace: ExecutionTrace = JSON.parse(traceJson);
+      if (trace) {
+        executeTrace(trace);
+        lastExecutionRef.current = current;
 
-      executeTrace(trace);
-      lastExecutionRef.current = current;
-
-      // Check if execution was successful
-      const finalMessage = trace.steps.length > 0
-        ? getMessageAtStep(trace, trace.steps.length - 1)
-        : null;
-      setExecutionSuccess(finalMessage ? finalMessage.errors.length === 0 : true);
-
-      engine.free();
+        // Check if execution was successful
+        const finalMessage = trace.steps.length > 0
+          ? getMessageAtStep(trace, trace.steps.length - 1)
+          : null;
+        setExecutionSuccess(finalMessage ? finalMessage.errors.length === 0 : true);
+      }
     } catch (err) {
       console.error('Execution error:', err);
       setExecutionSuccess(false);
     }
-  }, [wasmReady, workflows, payloadText, payloadError, executeTrace, reset]);
+  }, [isEngineReady, workflows, payloadText, payloadError, executeTrace, reset, runExecution]);
 
   // Auto-run when workflows or payload change
   useEffect(() => {
-    if (!wasmReady || workflows.length === 0 || payloadError) return;
+    if (!isEngineReady || workflows.length === 0 || payloadError) return;
 
     // Debounce the auto-run
     const timeoutId = setTimeout(() => {
@@ -83,7 +78,7 @@ export function DebugControls({
     }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [wasmReady, workflows, payloadText, payloadError, runDebug]);
+  }, [isEngineReady, workflows, payloadText, payloadError, runDebug]);
 
   const handleReset = useCallback(() => {
     reset();

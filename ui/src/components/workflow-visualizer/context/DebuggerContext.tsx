@@ -5,6 +5,9 @@ import type {
   ExecutionTrace,
   ExecutionStep,
   Message,
+  Workflow,
+  DataflowEngine,
+  EngineFactory,
 } from '../../../types';
 import { getMessageAtStep, getChangesAtStep } from '../../../types';
 import type { Change } from '../../../types';
@@ -167,6 +170,8 @@ interface DebuggerContextValue {
   stepBackward: () => void;
   goToStep: (index: number) => void;
   setSpeed: (speed: number) => void;
+  // Engine execution method
+  runExecution: (workflows: Workflow[], payload: Record<string, unknown>) => Promise<ExecutionTrace | null>;
   // Computed values
   currentStep: ExecutionStep | null;
   currentMessage: Message | null;
@@ -176,6 +181,7 @@ interface DebuggerContextValue {
   hasTrace: boolean;
   progress: number;
   totalSteps: number;
+  isEngineReady: boolean;
 }
 
 const DebuggerContext = createContext<DebuggerContextValue | null>(null);
@@ -186,6 +192,12 @@ interface DebuggerProviderProps {
   initialPayload?: Record<string, unknown>;
   /** Auto-start in debug mode */
   autoActivate?: boolean;
+  /**
+   * Factory function to create engine instances when workflows change.
+   * Called whenever workflows are updated to create a fresh engine.
+   * Use this for custom WASM engines with plugins.
+   */
+  engineFactory?: EngineFactory;
 }
 
 /**
@@ -195,6 +207,7 @@ export function DebuggerProvider({
   children,
   initialPayload,
   autoActivate = false,
+  engineFactory,
 }: DebuggerProviderProps) {
   const [state, dispatch] = useReducer(debuggerReducer, {
     ...initialState,
@@ -203,6 +216,11 @@ export function DebuggerProvider({
   });
 
   const playbackTimerRef = useRef<number | null>(null);
+  const engineRef = useRef<DataflowEngine | null>(null);
+  const lastWorkflowsJsonRef = useRef<string | null>(null);
+
+  // Determine if engine is ready for execution
+  const isEngineReady = Boolean(engineFactory);
 
   // Convenience action dispatchers
   const activate = useCallback(() => dispatch({ type: 'ACTIVATE' }), []);
@@ -228,6 +246,47 @@ export function DebuggerProvider({
   const stepBackward = useCallback(() => dispatch({ type: 'STEP_BACKWARD' }), []);
   const goToStep = useCallback((index: number) => dispatch({ type: 'GO_TO_STEP', index }), []);
   const setSpeed = useCallback((speed: number) => dispatch({ type: 'SET_SPEED', speed }), []);
+
+  /**
+   * Execute workflows with the provided payload and return the execution trace.
+   * Uses engineFactory to create a new engine when workflows change.
+   */
+  const runExecution = useCallback(
+    async (workflows: Workflow[], payload: Record<string, unknown>): Promise<ExecutionTrace | null> => {
+      if (workflows.length === 0 || !engineFactory) {
+        return null;
+      }
+
+      try {
+        const workflowsJson = JSON.stringify(workflows);
+
+        // Create new engine if workflows changed or no engine exists
+        if (lastWorkflowsJsonRef.current !== workflowsJson || !engineRef.current) {
+          // Dispose previous engine
+          if (engineRef.current?.dispose) {
+            engineRef.current.dispose();
+          }
+          engineRef.current = engineFactory(workflows);
+          lastWorkflowsJsonRef.current = workflowsJson;
+        }
+        return await engineRef.current.processWithTrace(payload);
+      } catch (error) {
+        console.error('Execution error:', error);
+        throw error;
+      }
+    },
+    [engineFactory]
+  );
+
+  // Cleanup engine on unmount
+  useEffect(() => {
+    return () => {
+      if (engineRef.current?.dispose) {
+        engineRef.current.dispose();
+        engineRef.current = null;
+      }
+    };
+  }, []);
 
   // Handle playback timer
   useEffect(() => {
@@ -287,6 +346,7 @@ export function DebuggerProvider({
     stepBackward,
     goToStep,
     setSpeed,
+    runExecution,
     currentStep,
     currentMessage,
     currentChanges,
@@ -295,6 +355,7 @@ export function DebuggerProvider({
     hasTrace,
     progress,
     totalSteps,
+    isEngineReady,
   };
 
   return <DebuggerContext.Provider value={value}>{children}</DebuggerContext.Provider>;

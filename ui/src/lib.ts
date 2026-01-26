@@ -73,6 +73,9 @@ export type {
   PlaybackState,
   DebuggerState,
   DebuggerAction,
+  // Engine types
+  DataflowEngine,
+  EngineFactory,
   // Legacy types (for backwards compatibility)
   LegacyExecutionStep,
   LegacyWorkflowExecutionTrace,
@@ -89,6 +92,9 @@ export {
   getWorkflowState,
   getTaskState,
 } from './types';
+
+// Engine adapters
+export { WasmEngineAdapter, defaultEngineFactory } from './engines';
 
 // Styles
 import './components/workflow-visualizer/styles/index.css';
