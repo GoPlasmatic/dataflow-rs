@@ -34,7 +34,7 @@ Whether you're building REST APIs, processing Kafka streams, or creating sophist
 
 Experience the power of dataflow-rs directly in your browser. Define a workflow and message, then see the processing result instantly.
 
-> **Want more features?** Try the [Full Debugger UI](/debugger/) with step-by-step execution, breakpoints, and workflow visualization.
+> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution, breakpoints, and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"transform","name":"Transform Workflow","tasks":[{"id":"map_data","name":"Map Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.name"},"!"]}},{"path":"data.processed","logic":true}]}}}]}]' data-message='{"data":{"name":"World"},"metadata":{"source":"playground"}}'>
 </div>

@@ -194,7 +194,7 @@ Tasks within a workflow execute sequentially, allowing later tasks to depend on 
 
 ## Try It
 
-> **Want more features?** Try the [Full Debugger UI](/debugger/) with step-by-step execution and workflow visualization.
+> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"conditional_workflow","name":"Conditional Workflow","condition":{"==":[{"var":"metadata.type"},"user"]},"tasks":[{"id":"greet","name":"Greet User","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Welcome, ",{"var":"data.name"},"!"]}}]}}}]}]' data-message='{"data":{"name":"Alice"},"metadata":{"type":"user"}}'>
 </div>

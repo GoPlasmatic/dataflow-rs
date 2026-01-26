@@ -117,7 +117,7 @@ Validation is read-only, so it produces no audit trail entries.
 
 ## Try It
 
-> **Want more features?** Try the [Full Debugger UI](/debugger/) with step-by-step execution and workflow visualization.
+> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"audit_demo","name":"Audit Demo","tasks":[{"id":"step1","name":"Step 1","function":{"name":"map","input":{"mappings":[{"path":"data.full_name","logic":{"cat":[{"var":"data.first_name"}," ",{"var":"data.last_name"}]}}]}}},{"id":"step2","name":"Step 2","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.full_name"},"!"]}}]}}},{"id":"step3","name":"Step 3","function":{"name":"map","input":{"mappings":[{"path":"data.processed","logic":true},{"path":"temp_data.step_count","logic":3}]}}}]}]' data-message='{"data":{"first_name":"John","last_name":"Doe"},"metadata":{}}'>
 </div>

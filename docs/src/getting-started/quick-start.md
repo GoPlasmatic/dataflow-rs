@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Try It Interactively
 
-> **Want more features?** Try the [Full Debugger UI](/debugger/) with step-by-step execution and workflow visualization.
+> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"greeting_workflow","name":"Greeting Workflow","tasks":[{"id":"create_greeting","name":"Create Greeting","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.name"},"!"]}}]}}}]}]' data-message='{"data":{"name":"World"},"metadata":{}}'>
 </div>

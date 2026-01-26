@@ -227,7 +227,7 @@ Access fields with:
 
 ## Try It
 
-> **Want more features?** Try the [Full Debugger UI](/debugger/) with step-by-step execution and workflow visualization.
+> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"jsonlogic_demo","name":"JSONLogic Demo","tasks":[{"id":"transform","name":"Transform","function":{"name":"map","input":{"mappings":[{"path":"data.full_name","logic":{"cat":[{"var":"data.first_name"}," ",{"var":"data.last_name"}]}},{"path":"data.grade","logic":{"if":[{">=": [{"var":"data.score"},90]},"A",{">=": [{"var":"data.score"},80]},"B",{">=": [{"var":"data.score"},70]},"C","F"]}},{"path":"data.total","logic":{"*":[{"var":"data.price"},{"var":"data.quantity"}]}},{"path":"data.has_email","logic":{"!!":[{"var":"data.email"}]}}]}}}]}]' data-message='{"data":{"first_name":"John","last_name":"Doe","score":85,"price":10,"quantity":5,"email":"john@example.com"},"metadata":{}}'>
 </div>

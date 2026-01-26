@@ -4,8 +4,8 @@ import path from 'path';
 
 export default defineConfig(({ command }) => ({
   plugins: [react()],
-  // Use /debugger/ base path for production build (embedded in docs)
-  base: command === 'build' ? '/debugger/' : '/',
+  // Use /dataflow-rs/debugger/ base path for production build (GitHub Pages)
+  base: command === 'build' ? '/dataflow-rs/debugger/' : '/',
   server: {
     port: 3000,
     fs: {
