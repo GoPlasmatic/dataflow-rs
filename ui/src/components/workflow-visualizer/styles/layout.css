@@ -1,0 +1,1479 @@
+/* ============================================
+   ROOT AND VISUALIZER LAYOUT
+   ============================================ */
+
+/* Root */
+.df-root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--df-text-primary);
+  height: 100%;
+  width: 100%;
+}
+
+/* Visualizer */
+.df-visualizer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--df-bg-secondary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Clean visualizer (no chrome) */
+.df-visualizer-clean {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--df-bg-secondary);
+  overflow: hidden;
+}
+
+/* Split layout visualizer (vertical) */
+.df-visualizer-split {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--df-bg-secondary);
+  overflow: hidden;
+}
+
+.df-visualizer-top {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--df-border-color);
+}
+
+.df-visualizer-bottom {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Horizontal layout visualizer (tree on left, details on right) */
+.df-visualizer-horizontal {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  width: 100%;
+  background: var(--df-bg-secondary);
+  overflow: hidden;
+}
+
+.df-visualizer-left {
+  height: 100%;
+  overflow: hidden;
+  background: var(--df-bg-primary);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border-color);
+}
+
+.df-visualizer-left-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-visualizer-left-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--df-text-secondary);
+}
+
+.df-visualizer-left-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.df-visualizer-divider {
+  width: 1px;
+  height: 100%;
+  background: var(--df-border-color);
+  cursor: col-resize;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.df-visualizer-divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -3px;
+  right: -3px;
+  bottom: 0;
+  background: transparent;
+}
+
+.df-visualizer-divider:hover,
+.df-divider-active {
+  background: var(--df-accent-primary);
+  width: 2px;
+}
+
+.df-visualizer-horizontal.df-dragging {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.df-visualizer-right {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--df-bg-primary);
+}
+
+.df-visualizer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: var(--df-bg-primary);
+  border-bottom: 1px solid var(--df-border-color);
+}
+
+.df-visualizer-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--df-text-primary);
+}
+
+.df-visualizer-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.df-visualizer-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.df-visualizer-footer {
+  padding: 12px 20px;
+  background: var(--df-bg-primary);
+  border-top: 1px solid var(--df-border-color);
+}
+
+.df-workflow-count {
+  font-size: 13px;
+  color: var(--df-text-tertiary);
+}
+
+/* ============================================
+   SEARCH INPUT
+   ============================================ */
+
+.df-search-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--df-bg-secondary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 6px;
+  min-width: 280px;
+}
+
+.df-search-input:focus-within {
+  border-color: var(--df-accent-primary);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.df-search-icon {
+  color: var(--df-text-muted);
+  flex-shrink: 0;
+}
+
+.df-search-field {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--df-text-primary);
+  outline: none;
+}
+
+.df-search-field::placeholder {
+  color: var(--df-text-muted);
+}
+
+.df-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--df-text-muted);
+  cursor: pointer;
+}
+
+.df-search-clear:hover {
+  background: var(--df-bg-hover);
+  color: var(--df-text-secondary);
+}
+
+/* ============================================
+   RULES LIST VIEW
+   ============================================ */
+
+.df-rules-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.df-rules-list-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.df-action-button {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.df-action-button:hover {
+  background: var(--df-bg-hover);
+  border-color: var(--df-border-color-strong);
+}
+
+.df-workflow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ============================================
+   WORKFLOW CARD
+   ============================================ */
+
+.df-workflow-card {
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--df-shadow);
+}
+
+.df-workflow-card-expanded {
+  border-color: var(--df-border-color-strong);
+}
+
+.df-workflow-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.df-workflow-header:hover {
+  background: var(--df-bg-hover);
+}
+
+.df-workflow-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--df-text-tertiary);
+}
+
+.df-workflow-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.df-workflow-name {
+  font-weight: 600;
+  color: var(--df-text-primary);
+}
+
+.df-workflow-description {
+  display: block;
+  font-size: 13px;
+  color: var(--df-text-tertiary);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-workflow-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--df-text-tertiary);
+}
+
+.df-workflow-priority {
+  font-weight: 500;
+}
+
+.df-workflow-settings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--df-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.15s ease;
+}
+
+.df-workflow-header:hover .df-workflow-settings {
+  opacity: 1;
+}
+
+.df-workflow-settings:hover {
+  background: var(--df-bg-tertiary);
+  color: var(--df-text-secondary);
+}
+
+.df-workflow-body {
+  padding: 16px;
+  border-top: 1px solid var(--df-border-color);
+  background: var(--df-bg-secondary);
+}
+
+.df-workflow-collapsed-info {
+  padding: 0 16px 14px;
+}
+
+.df-section-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--df-text-tertiary);
+  margin-bottom: 8px;
+}
+
+.df-workflow-condition-section {
+  margin-bottom: 16px;
+}
+
+.df-workflow-condition {
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.df-condition-code {
+  margin: 0;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-size: 13px;
+  color: var(--df-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.df-condition-always-text {
+  color: var(--df-text-muted);
+  font-style: italic;
+}
+
+.df-workflow-tasks-section {
+  margin-bottom: 8px;
+}
+
+.df-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.df-workflow-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--df-border-color);
+}
+
+.df-continue-on-error {
+  font-size: 12px;
+  color: var(--df-warning);
+}
+
+/* ============================================
+   TASK ROW
+   ============================================ */
+
+.df-task-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.df-task-row:hover {
+  border-color: var(--df-border-color-strong);
+  box-shadow: var(--df-shadow);
+}
+
+.df-task-row-highlighted {
+  border-color: var(--df-accent-primary);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.df-task-index {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--df-text-muted);
+  min-width: 24px;
+}
+
+.df-task-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.df-task-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.df-task-name {
+  font-weight: 500;
+  color: var(--df-text-primary);
+}
+
+.df-task-subtitle {
+  display: block;
+  font-size: 12px;
+  color: var(--df-text-muted);
+  margin-top: 2px;
+}
+
+.df-task-chevron {
+  color: var(--df-text-muted);
+  flex-shrink: 0;
+}
+
+/* ============================================
+   FUNCTION TYPE BADGE
+   ============================================ */
+
+.df-function-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--df-spacing-xs);
+  padding: 2px var(--df-spacing-sm);
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+}
+
+.df-function-badge-map {
+  color: var(--df-function-map);
+  background: color-mix(in srgb, var(--df-function-map) 15%, transparent);
+}
+
+.df-function-badge-validation {
+  color: var(--df-function-validation);
+  background: color-mix(in srgb, var(--df-function-validation) 15%, transparent);
+}
+
+.df-function-badge-custom {
+  color: var(--df-function-custom);
+  background: color-mix(in srgb, var(--df-function-custom) 15%, transparent);
+}
+
+/* ============================================
+   CONDITION BADGE
+   ============================================ */
+
+.df-condition-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: default;
+  position: relative;
+}
+
+.df-condition-always {
+  color: var(--df-success);
+  background: color-mix(in srgb, var(--df-success) 15%, transparent);
+}
+
+.df-condition-conditional {
+  color: var(--df-text-secondary);
+  background: var(--df-bg-tertiary);
+}
+
+.df-condition-tooltip {
+  z-index: 10000;
+  min-width: 200px;
+  max-width: var(--df-tooltip-width);
+  max-height: var(--df-tooltip-max-height);
+  overflow: hidden;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+.df-condition-tooltip-header {
+  padding: var(--df-spacing-sm) var(--df-spacing-md);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  background: #0f172a;
+  border-bottom: 1px solid #334155;
+}
+
+.df-condition-tooltip-content {
+  padding: var(--df-spacing-sm);
+  max-height: calc(var(--df-tooltip-max-height) - 40px);
+  overflow: auto;
+}
+
+.df-condition-tooltip-editor {
+  width: 100%;
+  min-height: 100px;
+}
+
+/* ============================================
+   EMPTY STATE
+   ============================================ */
+
+.df-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--df-text-tertiary);
+}
+
+.df-empty-state p {
+  margin: 0 0 16px;
+}
+
+/* ============================================
+   JSON VIEWER
+   ============================================ */
+
+.df-json-viewer {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.df-json-node {
+  padding-left: 16px;
+}
+
+.df-json-node:first-child {
+  padding-left: 0;
+}
+
+.df-json-key {
+  color: var(--df-accent-primary);
+}
+
+.df-json-colon {
+  color: var(--df-text-muted);
+}
+
+.df-json-string {
+  color: var(--df-success);
+}
+
+.df-json-number {
+  color: var(--df-warning);
+}
+
+.df-json-boolean {
+  color: var(--df-accent-secondary);
+}
+
+.df-json-null,
+.df-json-undefined {
+  color: var(--df-text-muted);
+}
+
+.df-json-bracket {
+  color: var(--df-text-secondary);
+}
+
+.df-json-comma {
+  color: var(--df-text-muted);
+}
+
+.df-json-preview {
+  color: var(--df-text-muted);
+  font-style: italic;
+}
+
+.df-json-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-right: 4px;
+  background: transparent;
+  border: none;
+  color: var(--df-text-muted);
+  cursor: pointer;
+}
+
+.df-json-toggle:hover {
+  color: var(--df-text-secondary);
+}
+
+.df-json-children {
+  margin-left: 8px;
+}
+
+/* ============================================
+   FLOW VIEW - Horizontal Workflow Flow
+   ============================================ */
+
+.df-flow-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.df-flow-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+}
+
+.df-flow-container {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  min-width: min-content;
+}
+
+/* Node wrapper - contains connector + node */
+.df-flow-node-wrapper {
+  display: flex;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
+/* Arrow connectors */
+.df-flow-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 48px;
+  color: var(--df-text-muted);
+  flex-shrink: 0;
+}
+
+/* Start and End nodes */
+.df-flow-start-node,
+.df-flow-end-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 16px;
+  min-width: 80px;
+  height: 48px;
+  background: var(--df-bg-primary);
+  border: 2px solid var(--df-accent-primary);
+  border-radius: 8px;
+  color: var(--df-accent-primary);
+  font-weight: 600;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.df-flow-start-node {
+  flex-direction: row;
+}
+
+.df-flow-end-node {
+  flex-direction: row;
+  border-color: var(--df-success);
+  color: var(--df-success);
+}
+
+/* Individual workflow column */
+.df-flow-column {
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--df-shadow);
+  flex-shrink: 0;
+}
+
+.df-flow-workflow-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--df-accent-primary);
+  color: white;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.df-flow-workflow-header:hover {
+  background: var(--df-accent-secondary);
+}
+
+.df-flow-workflow-priority {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.df-flow-workflow-name {
+  flex: 1;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Condition icon badge (tick/branch) */
+.df-condition-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.df-condition-icon-always {
+  color: var(--df-success);
+  background: color-mix(in srgb, var(--df-success) 15%, transparent);
+}
+
+.df-condition-icon-conditional {
+  color: var(--df-warning);
+  background: color-mix(in srgb, var(--df-warning) 15%, transparent);
+}
+
+/* Workflow header condition icons */
+.df-flow-workflow-header .df-condition-icon-always {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.2);
+}
+
+.df-flow-workflow-header .df-condition-icon-conditional {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.2);
+}
+
+/* Task list within workflow */
+.df-flow-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+/* Individual task card */
+.df-flow-task {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--df-bg-secondary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.df-flow-task:hover {
+  border-color: var(--df-border-color-strong);
+  box-shadow: var(--df-shadow);
+}
+
+.df-flow-task-highlighted {
+  border-color: var(--df-accent-primary);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+/* Task header row */
+.df-flow-task-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.df-flow-task-index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--df-text-muted);
+  background: var(--df-bg-tertiary);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.df-flow-task-name {
+  flex: 1;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--df-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Task function row */
+.df-flow-task-function {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--df-border-color);
+}
+
+.df-flow-task-details-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--df-accent-primary);
+  background: transparent;
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.df-flow-task-details-link:hover {
+  background: var(--df-bg-hover);
+  border-color: var(--df-accent-primary);
+}
+
+/* ============================================
+   DETAILS PANEL - VSCode Editor Style
+   ============================================ */
+
+.df-details-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--df-bg-primary);
+  overflow: hidden;
+}
+
+.df-details-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.df-details-no-header .df-details-content {
+  padding-top: 12px;
+}
+
+.df-details-empty-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  color: var(--df-text-muted);
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.df-details-empty-content p {
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 280px;
+}
+
+.df-details-empty-icon {
+  opacity: 0.4;
+  color: var(--df-text-muted);
+}
+
+.df-details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--df-spacing-md);
+  padding: 10px 16px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-details-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.df-details-header-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--df-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-details-header-subtitle {
+  font-size: 11px;
+  color: var(--df-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-details-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--df-text-muted);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.df-details-close:hover {
+  background: var(--df-bg-hover);
+  color: var(--df-text-primary);
+}
+
+.df-details-content {
+  flex: 1;
+  overflow: hidden;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--df-bg-secondary);
+}
+
+.df-details-logic-editor {
+  flex: 1;
+  min-height: 200px;
+  height: 100%;
+  width: 100%;
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.df-details-logic-editor .df-datalogic-viewer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.df-details-task-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Split View Layout (left list, right diagram) */
+.df-details-split-view {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.df-details-split-left {
+  display: flex;
+  flex-direction: column;
+  width: 220px;
+  min-width: 180px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.df-details-split-right {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  gap: 8px;
+}
+
+/* Validation Rules List */
+.df-validation-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.df-validation-rule-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--df-bg-secondary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.df-validation-rule-item:hover {
+  background: var(--df-bg-hover);
+  border-color: var(--df-border-color-strong);
+}
+
+.df-validation-rule-item.df-rule-selected {
+  background: color-mix(in srgb, var(--df-accent-primary) 15%, transparent);
+  border-color: var(--df-accent-primary);
+}
+
+.df-rule-index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--df-text-muted);
+  background: var(--df-bg-tertiary);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.df-validation-rule-item.df-rule-selected .df-rule-index {
+  background: var(--df-accent-primary);
+  color: white;
+}
+
+.df-rule-message {
+  font-size: 13px;
+  color: var(--df-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-details-sections {
+  display: flex;
+  gap: 16px;
+}
+
+.df-details-section {
+  flex: 1;
+  min-width: 0;
+}
+
+.df-details-section-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--df-text-tertiary);
+}
+
+.df-details-code {
+  margin: 0;
+  padding: 12px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--df-bg-secondary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 150px;
+}
+
+/* Clickable condition icon */
+.df-condition-icon-clickable {
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.df-condition-icon-clickable:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.df-condition-icon-selected {
+  box-shadow: 0 0 0 2px var(--df-accent-primary);
+}
+
+/* Selected states */
+.df-flow-column-selected {
+  box-shadow: 0 0 0 2px var(--df-accent-primary);
+}
+
+.df-flow-task-selected {
+  border-color: var(--df-accent-primary) !important;
+  box-shadow: 0 0 0 1px var(--df-accent-primary);
+}
+
+/* ============================================
+   LOGIC TREE VISUALIZATION
+   ============================================ */
+
+.df-logic-tree-container {
+  padding: 12px;
+  background: var(--df-bg-secondary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 150px;
+}
+
+.df-logic-node {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.df-logic-operator-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  background: var(--df-accent-primary);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'SF Mono', Monaco, monospace;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.df-logic-operands {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--df-border-color);
+}
+
+.df-logic-operand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.df-logic-connector-line {
+  width: 12px;
+  height: 2px;
+  background: var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-logic-value {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 12px;
+  border-radius: 4px;
+  background: var(--df-bg-tertiary);
+}
+
+.df-logic-string {
+  color: var(--df-success);
+}
+
+.df-logic-number {
+  color: var(--df-warning);
+}
+
+.df-logic-boolean {
+  color: var(--df-accent-primary);
+}
+
+.df-logic-null {
+  color: var(--df-text-muted);
+  font-style: italic;
+}
+
+.df-logic-bracket {
+  color: var(--df-text-muted);
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.df-logic-comma {
+  color: var(--df-text-muted);
+  margin-right: 4px;
+}
+
+.df-logic-array {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.df-logic-array-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.df-logic-array-item {
+  display: flex;
+  align-items: center;
+}
+
+.df-logic-object-node {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.df-logic-object-entries {
+  padding-left: 12px;
+}
+
+.df-logic-object-entry {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.df-logic-key {
+  color: var(--df-accent-primary);
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 12px;
+}
+
+.df-logic-colon {
+  color: var(--df-text-muted);
+}
+
+/* ============================================
+   ERROR BOUNDARY
+   ============================================ */
+
+.df-error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: var(--df-spacing-lg);
+  background: var(--df-bg-secondary);
+}
+
+.df-error-boundary-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--df-spacing-md);
+  max-width: 400px;
+  padding: var(--df-spacing-lg);
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-error);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.df-error-boundary-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--df-error);
+}
+
+.df-error-boundary-message {
+  margin: 0;
+  font-size: 14px;
+  color: var(--df-text-secondary);
+}
+
+.df-error-boundary-button {
+  padding: var(--df-spacing-sm) var(--df-spacing-lg);
+  font-size: 14px;
+  font-weight: 500;
+  color: white;
+  background: var(--df-accent-primary);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.df-error-boundary-button:hover {
+  background: var(--df-accent-secondary);
+}
+
+/* ============================================
+   RESULT PANEL IN TREE VIEW (SPLIT LAYOUT)
+   ============================================ */
+
+.df-visualizer-left-tree {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.df-visualizer-left-tree.df-with-result {
+  flex: 1;
+  max-height: 50%;
+  border-bottom: 1px solid var(--df-border-color);
+}
+
+.df-visualizer-result-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.df-visualizer-result-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--df-bg-secondary);
+  border-bottom: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-visualizer-result-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--df-text-secondary);
+}
+
+.df-visualizer-result-content {
+  flex: 1;
+  overflow: auto;
+  background: var(--df-bg-primary);
+}
+
+.df-result-json {
+  margin: 0;
+  padding: 12px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--df-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Horizontal divider between tree and result */
+.df-visualizer-divider-horizontal {
+  height: 1px;
+  width: 100%;
+  background: var(--df-border-color);
+  cursor: row-resize;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.df-visualizer-divider-horizontal::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+  background: transparent;
+}
+
+.df-visualizer-divider-horizontal:hover,
+.df-visualizer-divider-horizontal.df-divider-active {
+  background: var(--df-accent-primary);
+  height: 2px;
+}
+
+/* Tree view section when result exists */
+.df-visualizer-left-tree.df-with-result {
+  flex: none;
+  border-bottom: none;
+}

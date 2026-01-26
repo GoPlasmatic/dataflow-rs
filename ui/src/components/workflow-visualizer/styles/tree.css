@@ -1,0 +1,161 @@
+/* ============================================
+   TREE VIEW - VSCode Explorer Style
+   ============================================ */
+
+.df-tree-view {
+  padding: var(--df-spacing-xs) 0;
+  user-select: none;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.df-tree-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.df-tree-node-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 4px 8px;
+  margin: 0;
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  border-left: 2px solid transparent;
+}
+
+.df-tree-node-content:hover {
+  background: var(--df-bg-hover);
+}
+
+.df-tree-node-selected {
+  background: color-mix(in srgb, var(--df-accent-primary) 12%, var(--df-bg-primary));
+  border-left-color: var(--df-accent-primary);
+}
+
+.df-tree-node-selected:hover {
+  background: color-mix(in srgb, var(--df-accent-primary) 18%, var(--df-bg-primary));
+}
+
+.df-tree-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--df-text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.1s ease;
+}
+
+.df-tree-toggle:hover {
+  background: var(--df-bg-tertiary);
+  color: var(--df-text-primary);
+}
+
+.df-tree-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.df-tree-label {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--df-text-primary);
+}
+
+.df-tree-node-selected .df-tree-label {
+  font-weight: 500;
+  color: var(--df-text-primary);
+}
+
+.df-tree-children {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tree node depth indicators - VSCode style guide lines */
+.df-tree-node-content::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--df-border-color);
+  opacity: 0;
+}
+
+/* Tree node debug states */
+.df-tree-view-debug .df-tree-node-pending .df-tree-node-content {
+  opacity: 0.6;
+}
+
+.df-tree-view-debug .df-tree-node-executed .df-tree-node-content {
+  opacity: 1;
+}
+
+.df-tree-view-debug .df-tree-node-skipped .df-tree-node-content {
+  opacity: 0.4;
+}
+
+.df-tree-view-debug .df-tree-node-error .df-tree-node-content {
+  background: color-mix(in srgb, var(--df-error) 10%, transparent);
+}
+
+.df-tree-view-debug .df-tree-node-current .df-tree-node-content {
+  background: color-mix(in srgb, var(--df-accent-primary) 15%, transparent);
+}
+
+.df-tree-node-current-step .df-tree-node-content {
+  animation: df-pulse 1s ease-in-out infinite;
+}
+
+@keyframes df-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.df-tree-debug-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.df-debug-icon-pass,
+.df-debug-icon-executed {
+  color: var(--df-success);
+}
+
+.df-debug-icon-fail,
+.df-debug-icon-error {
+  color: var(--df-error);
+}
+
+.df-debug-icon-skipped {
+  color: var(--df-text-muted);
+}
+
+.df-debug-icon-current {
+  color: var(--df-accent-primary);
+  animation: df-spin 2s linear infinite;
+}
+
+.df-debug-icon-pending {
+  color: var(--df-text-muted);
+  opacity: 0.5;
+}

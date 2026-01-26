@@ -1,0 +1,79 @@
+/* ============================================
+   VSCode-Inspired Theme Variables
+   ============================================ */
+
+.df-theme-light {
+  /* Colors - VSCode Light+ inspired */
+  --df-bg-primary: #ffffff;
+  --df-bg-secondary: #f3f3f3;
+  --df-bg-tertiary: #ececec;
+  --df-bg-hover: #e8e8e8;
+  --df-border-color: #e5e5e5;
+  --df-border-color-strong: #cccccc;
+  --df-text-primary: #333333;
+  --df-text-secondary: #6e6e6e;
+  --df-text-tertiary: #848484;
+  --df-text-muted: #999999;
+  --df-accent-primary: #0078d4;
+  --df-accent-secondary: #006cbd;
+  --df-success: #388a34;
+  --df-warning: #bf8803;
+  --df-error: #f14c4c;
+  --df-info: #1a85ff;
+  --df-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  --df-shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.12);
+
+  /* Layout sizes */
+  --df-tooltip-width: 360px;
+  --df-tooltip-max-height: 300px;
+  --df-flow-column-width: 240px;
+  --df-icon-size-sm: 12px;
+  --df-icon-size-md: 16px;
+  --df-spacing-xs: 4px;
+  --df-spacing-sm: 8px;
+  --df-spacing-md: 12px;
+  --df-spacing-lg: 16px;
+
+  /* Function badge colors */
+  --df-function-map: #388a34;
+  --df-function-validation: #bf8803;
+  --df-function-custom: #6e6e6e;
+}
+
+.df-theme-dark {
+  /* Colors - VSCode Dark+ inspired */
+  --df-bg-primary: #252526;
+  --df-bg-secondary: #1e1e1e;
+  --df-bg-tertiary: #2d2d2d;
+  --df-bg-hover: #3c3c3c;
+  --df-border-color: #3c3c3c;
+  --df-border-color-strong: #4d4d4d;
+  --df-text-primary: #cccccc;
+  --df-text-secondary: #9d9d9d;
+  --df-text-tertiary: #858585;
+  --df-text-muted: #6e6e6e;
+  --df-accent-primary: #0078d4;
+  --df-accent-secondary: #1c97ea;
+  --df-success: #4ec9b0;
+  --df-warning: #dcdcaa;
+  --df-error: #f14c4c;
+  --df-info: #75beff;
+  --df-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  --df-shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.3);
+
+  /* Layout sizes */
+  --df-tooltip-width: 360px;
+  --df-tooltip-max-height: 300px;
+  --df-flow-column-width: 240px;
+  --df-icon-size-sm: 12px;
+  --df-icon-size-md: 16px;
+  --df-spacing-xs: 4px;
+  --df-spacing-sm: 8px;
+  --df-spacing-md: 12px;
+  --df-spacing-lg: 16px;
+
+  /* Function badge colors */
+  --df-function-map: #4ec9b0;
+  --df-function-validation: #dcdcaa;
+  --df-function-custom: #9d9d9d;
+}

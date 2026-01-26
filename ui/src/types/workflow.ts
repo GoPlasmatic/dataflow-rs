@@ -70,6 +70,11 @@ export interface MapMapping {
 }
 
 /**
+ * Alias for MapMapping - used in tree and details views
+ */
+export type MappingItem = MapMapping;
+
+/**
  * Map function input configuration
  */
 export interface MapFunctionInput {

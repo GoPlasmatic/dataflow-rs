@@ -1,22 +1,11 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import type { Workflow, Task, JsonLogicValue, Message, Change } from '../../types';
+import type { Workflow, Task, JsonLogicValue, Message, Change, MappingItem, ValidationRule } from '../../types';
 import { ThemeProvider, useTheme, useDebugger } from './context';
 import { TreeView, DetailsPanel } from './views';
 import { ErrorBoundary, JsonEditor } from '../common';
 import type { Theme } from './context';
 
-import './styles/visualizer.css';
-
-// Mapping and validation rule types for selection
-interface MappingItem {
-  path: string;
-  logic: JsonLogicValue;
-}
-
-interface ValidationRule {
-  logic: JsonLogicValue;
-  message: string;
-}
+import './styles/index.css';
 
 // Extended selection types for tree view
 export type TreeSelectionType =

@@ -55,6 +55,7 @@ export type {
   FunctionConfig,
   JsonLogicValue,
   MapMapping,
+  MappingItem,
   MapFunctionInput,
   ValidationRule,
   ValidationFunctionInput,
@@ -90,4 +91,4 @@ export {
 } from './types';
 
 // Styles
-import './components/workflow-visualizer/styles/visualizer.css';
+import './components/workflow-visualizer/styles/index.css';
