@@ -16,7 +16,7 @@ cat > package.json << 'EOF'
   "type": "module",
   "author": "Plasmatic Engineering <shankar@goplasmatic.io>",
   "description": "WebAssembly bindings for dataflow-rs workflow engine",
-  "version": "2.0.4",
+  "version": "2.0.7",
   "license": "Apache-2.0",
   "homepage": "https://github.com/GoPlasmatic/dataflow-rs",
   "repository": {
