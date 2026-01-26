@@ -45,21 +45,39 @@ println!("Loaded {} workflows", engine.workflows().len());
 ## Processing Messages
 
 ```rust
-use dataflow_rs::Message;
+use dataflow_rs::engine::message::Message;
 use serde_json::json;
+use std::sync::Arc;
 
-// Create a message
-let mut message = Message::new(&json!({
+// Create a message with payload
+let payload = Arc::new(json!({
     "user": "john",
     "action": "login"
 }));
+let mut message = Message::new(payload);
 
 // Process through all matching workflows
 engine.process_message(&mut message).await?;
 
 // Access results
-println!("Processed data: {:?}", message.context["data"]);
+println!("Processed data: {:?}", message.data());
 println!("Audit trail: {:?}", message.audit_trail);
+```
+
+## Execution Tracing
+
+For debugging, use `process_message_with_trace` to capture step-by-step execution:
+
+```rust
+let (mut message, trace) = engine.process_message_with_trace(&mut message).await?;
+
+println!("Steps executed: {}", trace.executed_count());
+println!("Steps skipped: {}", trace.skipped_count());
+
+for step in &trace.steps {
+    println!("Workflow: {}, Task: {:?}, Result: {:?}",
+        step.workflow_id, step.task_id, step.result);
+}
 ```
 
 ## Workflow Execution Order
@@ -154,6 +172,13 @@ Processes a message through all matching workflows.
 
 - Returns `Result<()>` - Ok if processing succeeded
 - Message is modified in place with results and audit trail
+
+### `engine.process_message_with_trace(&mut message)`
+
+Processes a message and returns an execution trace for debugging.
+
+- Returns `Result<ExecutionTrace>` - Contains all execution steps with message snapshots
+- Useful for step-by-step debugging and visualization
 
 ### `engine.workflows()`
 

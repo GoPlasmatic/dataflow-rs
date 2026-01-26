@@ -7,8 +7,10 @@ Build your first data processing workflow in minutes.
 Workflows are defined in JSON and consist of tasks that process data sequentially.
 
 ```rust
-use dataflow_rs::{Engine, Workflow, Message};
+use dataflow_rs::{Engine, Workflow};
+use dataflow_rs::engine::message::Message;
 use serde_json::json;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,16 +43,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the engine (compiles all logic at startup)
     let engine = Engine::new(vec![workflow], None);
 
-    // Create a message to process
-    let mut message = Message::new(&json!({
-        "name": "World"
-    }));
+    // Create a message with payload
+    let payload = Arc::new(json!({"name": "World"}));
+    let mut message = Message::new(payload);
+
+    // Load payload into data context
+    message.context["data"]["name"] = json!("World");
 
     // Process the message
     engine.process_message(&mut message).await?;
 
     // Print the result
-    println!("Result: {}", serde_json::to_string_pretty(&message.context)?);
+    println!("Greeting: {}", message.data()["greeting"]);
 
     Ok(())
 }

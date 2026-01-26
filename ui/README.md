@@ -17,10 +17,12 @@ A React component library for visualizing and debugging [dataflow-rs](https://gi
 ## Features
 
 - **Workflow Visualization** - Interactive tree view of workflows, tasks, and conditions
-- **Execution Debugging** - Step-by-step execution trace visualization with change highlighting
+- **Execution Debugging** - Step-by-step execution trace visualization with message snapshots
 - **JSONLogic Viewer** - Visual representation of JSONLogic expressions via [@goplasmatic/datalogic-ui](https://www.npmjs.com/package/@goplasmatic/datalogic-ui)
 - **Theme Support** - Light, dark, and system theme modes
 - **TypeScript** - Full type definitions included
+- **Monaco Editor Integration** - JSON editing with syntax highlighting
+- **Change Highlighting** - Visual diff of message changes at each step
 
 ## Installation
 

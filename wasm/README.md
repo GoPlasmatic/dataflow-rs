@@ -16,9 +16,10 @@ WebAssembly bindings for [dataflow-rs](https://github.com/GoPlasmatic/dataflow-r
 ## Features
 
 - **Browser Execution** - Run dataflow-rs workflows directly in the browser
-- **Full Feature Parity** - Same workflow engine as the native Rust version
+- **Full Feature Parity** - Same workflow engine as the native Rust version including all built-in functions
+- **Built-in Functions** - parse_json, parse_xml, map, validation, publish_json, publish_xml
 - **TypeScript Support** - Full type definitions included
-- **Execution Tracing** - Debug workflows with step-by-step execution traces
+- **Execution Tracing** - Debug workflows with step-by-step execution traces and message snapshots
 
 ## Installation
 

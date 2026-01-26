@@ -20,12 +20,14 @@ Whether you're building REST APIs, processing Kafka streams, or creating sophist
 
 ## Key Features
 
+- **Async-First Architecture** - Native async/await support with Tokio for high-throughput processing
 - **Zero Runtime Compilation** - All JSONLogic expressions pre-compiled at startup for optimal performance
-- **Modular Architecture** - Clear separation between compilation and execution phases
+- **Execution Tracing** - Step-by-step debugging with message snapshots after each task
+- **Built-in Functions** - Parse (JSON/XML), Map, Validate, and Publish (JSON/XML) for complete data pipelines
 - **Dynamic Workflows** - Use JSONLogic to control workflow execution based on your data
-- **Extensible** - Easily add custom processing steps (tasks) to the engine
-- **Built-in Functions** - Thread-safe implementations of data mapping and validation
-- **Resilient** - Built-in error handling and retry mechanisms for transient failures
+- **Extensible** - Easily add custom async processing steps (tasks) to the engine
+- **WebAssembly Support** - Run workflows in the browser with `@goplasmatic/dataflow-wasm`
+- **React UI Components** - Visualize and debug workflows with `@goplasmatic/dataflow-ui`
 - **Auditing** - Track all changes to your data as it moves through the pipeline
 
 ## Try It Now

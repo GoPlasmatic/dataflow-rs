@@ -4,7 +4,7 @@ Add dataflow-rs to your Rust project using Cargo.
 
 ## Requirements
 
-- Rust 1.70 or later
+- Rust 1.85 or later (Edition 2024)
 - Cargo (comes with Rust)
 
 ## Add to Cargo.toml

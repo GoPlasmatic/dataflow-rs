@@ -101,7 +101,7 @@ let engine = Engine::new(workflows, Some(custom_functions));
 
 ## Accessing Configuration
 
-The `config.input` contains the function's input configuration:
+For custom functions, extract configuration from the `FunctionConfig::Custom` variant:
 
 ```rust
 async fn execute(
@@ -110,13 +110,19 @@ async fn execute(
     config: &FunctionConfig,
     datalogic: Arc<DataLogic>,
 ) -> Result<(usize, Vec<Change>)> {
+    // Extract input from Custom variant
+    let input = match config {
+        FunctionConfig::Custom { input, .. } => input,
+        _ => return Err(DataflowError::Validation("Invalid config".into())),
+    };
+
     // Access input parameters
-    let option1 = config.input
+    let option1 = input
         .get("option1")
         .and_then(Value::as_str)
         .unwrap_or("default");
 
-    let option2 = config.input
+    let option2 = input
         .get("option2")
         .and_then(Value::as_i64)
         .unwrap_or(0);
@@ -167,7 +173,13 @@ impl AsyncFunctionHandler for HttpFetchFunction {
         config: &FunctionConfig,
         _datalogic: Arc<DataLogic>,
     ) -> Result<(usize, Vec<Change>)> {
-        let url = config.input
+        // Extract URL from config
+        let input = match config {
+            FunctionConfig::Custom { input, .. } => input,
+            _ => return Err(DataflowError::Validation("Invalid config".into())),
+        };
+
+        let url = input
             .get("url")
             .and_then(Value::as_str)
             .ok_or_else(|| DataflowError::Validation("Missing url".to_string()))?;
@@ -175,15 +187,18 @@ impl AsyncFunctionHandler for HttpFetchFunction {
         // Make HTTP request
         let response = reqwest::get(url)
             .await
-            .map_err(|e| DataflowError::ExecutionError(e.to_string()))?;
+            .map_err(|e| DataflowError::Processing(e.to_string()))?;
 
         let data: Value = response.json()
             .await
-            .map_err(|e| DataflowError::ExecutionError(e.to_string()))?;
+            .map_err(|e| DataflowError::Processing(e.to_string()))?;
 
         // Store result
-        let old_value = message.context["data"]["fetched"].clone();
-        message.context["data"]["fetched"] = data.clone();
+        let old_value = message.data().get("fetched").cloned().unwrap_or(json!(null));
+        if let Some(data_obj) = message.data_mut().as_object_mut() {
+            data_obj.insert("fetched".to_string(), data.clone());
+        }
+        message.invalidate_context_cache();
 
         let changes = vec![Change {
             path: Arc::from("data.fetched"),
@@ -209,14 +224,20 @@ async fn execute(&self, ...) -> Result<(usize, Vec<Change>)> {
         return Err(DataflowError::Validation("Invalid input".to_string()));
     }
 
-    // Execution error
+    // Processing error
     if some_operation_fails {
-        return Err(DataflowError::ExecutionError("Operation failed".to_string()));
+        return Err(DataflowError::Processing("Operation failed".to_string()));
+    }
+
+    // Configuration error
+    if config_is_invalid {
+        return Err(DataflowError::Configuration("Invalid config".to_string()));
     }
 
     // Or return status codes without error
-    // 400 for validation failure (errors added to message)
-    // 500 for execution failure
+    // 200 for success
+    // 400 for validation failure
+    // 500 for processing failure
     Ok((200, vec![]))
 }
 ```
@@ -245,8 +266,14 @@ impl AsyncFunctionHandler for StatisticsFunction {
         config: &FunctionConfig,
         _datalogic: Arc<DataLogic>,
     ) -> Result<(usize, Vec<Change>)> {
+        // Extract config from Custom variant
+        let input = match config {
+            FunctionConfig::Custom { input, .. } => input,
+            _ => return Err(DataflowError::Configuration("Invalid config".into())),
+        };
+
         // Get the field to analyze
-        let field = config.input
+        let field = input
             .get("field")
             .and_then(Value::as_str)
             .ok_or_else(|| DataflowError::Validation(
@@ -254,12 +281,13 @@ impl AsyncFunctionHandler for StatisticsFunction {
             ))?;
 
         // Get the array from message
-        let data = message.context["data"]
+        let data = message.data()
             .get(field)
             .and_then(Value::as_array)
             .ok_or_else(|| DataflowError::Validation(
                 format!("Field '{}' is not an array", field)
-            ))?;
+            ))?
+            .clone();
 
         // Calculate statistics
         let numbers: Vec<f64> = data.iter()
@@ -288,8 +316,10 @@ impl AsyncFunctionHandler for StatisticsFunction {
         });
 
         // Store in message
-        let old_value = message.context["data"]["statistics"].clone();
-        message.context["data"]["statistics"] = stats.clone();
+        let old_value = message.data().get("statistics").cloned().unwrap_or(json!(null));
+        if let Some(data_obj) = message.data_mut().as_object_mut() {
+            data_obj.insert("statistics".to_string(), stats.clone());
+        }
         message.invalidate_context_cache();
 
         let changes = vec![Change {
