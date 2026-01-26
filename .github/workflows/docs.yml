@@ -6,6 +6,7 @@ on:
     paths:
       - 'docs/**'
       - 'wasm/**'
+      - 'ui/**'
       - 'src/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
@@ -51,6 +52,19 @@ jobs:
 
       - name: Build documentation
         run: mdbook build docs
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Debugger UI
+        run: |
+          cd ui
+          npm ci
+          npm run build
+          mkdir -p ../docs/book/debugger
+          cp -r dist/* ../docs/book/debugger/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

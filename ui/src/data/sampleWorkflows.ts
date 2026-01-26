@@ -155,8 +155,8 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
               name: 'map',
               input: {
                 mappings: [
-                  { path: 'data.formatted_name', logic: { upper: { var: 'data.input.name' } } },
-                  { path: 'data.email_lower', logic: { lower: { var: 'data.input.email' } } },
+                  { path: 'data.full_name', logic: { cat: [{ var: 'data.input.name' }, ' (verified)'] } },
+                  { path: 'data.has_email', logic: { '!!': { var: 'data.input.email' } } },
                 ],
               },
             },

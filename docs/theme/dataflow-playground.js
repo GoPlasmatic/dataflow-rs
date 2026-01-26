@@ -323,7 +323,7 @@ function initFullPlayground() {
             message: '{"data":{"name":"World"},"metadata":{}}'
         },
         'Data Mapping': {
-            workflows: '[{"id":"mapping","name":"Data Mapping","tasks":[{"id":"map_fields","name":"Map Fields","function":{"name":"map","input":{"mappings":[{"path":"data.full_name","logic":{"cat":[{"var":"data.first_name"}," ",{"var":"data.last_name"}]}},{"path":"data.email_domain","logic":{"substr":[{"var":"data.email"},{"+":[{"strpos":[{"var":"data.email"},"@"]},1]}]}}]}}}]}]',
+            workflows: '[{"id":"mapping","name":"Data Mapping","tasks":[{"id":"map_fields","name":"Map Fields","function":{"name":"map","input":{"mappings":[{"path":"data.full_name","logic":{"cat":[{"var":"data.first_name"}," ",{"var":"data.last_name"}]}},{"path":"data.is_valid_email","logic":{"in":["@",{"var":"data.email"}]}}]}}}]}]',
             message: '{"data":{"first_name":"John","last_name":"Doe","email":"john@example.com"},"metadata":{}}'
         },
         'Validation Rules': {
@@ -335,7 +335,7 @@ function initFullPlayground() {
             message: '{"data":{"name":"John","tier":"premium"},"metadata":{}}'
         },
         'Multi-Workflow': {
-            workflows: '[{"id":"enrich","name":"Enrich Data","priority":1,"tasks":[{"id":"add_timestamp","function":{"name":"map","input":{"mappings":[{"path":"temp_data.processed_at","logic":"2024-01-01T00:00:00Z"}]}}}]},{"id":"transform","name":"Transform Data","priority":2,"tasks":[{"id":"build_output","function":{"name":"map","input":{"mappings":[{"path":"data.output","logic":{"cat":["Processed: ",{"var":"data.input"}," at ",{"var":"temp_data.processed_at"}]}}]}}}]}]',
+            workflows: '[{"id":"enrich","name":"Enrich Data","priority":1,"tasks":[{"id":"add_timestamp","name":"Add Timestamp","function":{"name":"map","input":{"mappings":[{"path":"temp_data.processed_at","logic":"2024-01-01T00:00:00Z"}]}}}]},{"id":"transform","name":"Transform Data","priority":2,"tasks":[{"id":"build_output","name":"Build Output","function":{"name":"map","input":{"mappings":[{"path":"data.output","logic":{"cat":["Processed: ",{"var":"data.input"}," at ",{"var":"temp_data.processed_at"}]}}]}}}]}]',
             message: '{"data":{"input":"test data"},"metadata":{}}'
         },
         'Error Handling': {

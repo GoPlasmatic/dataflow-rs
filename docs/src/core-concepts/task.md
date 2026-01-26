@@ -175,6 +175,8 @@ Tasks execute in order within a workflow. Later tasks can use results from earli
 
 ## Try It
 
+> **Want more features?** Try the [Full Debugger UI](/debugger/) with step-by-step execution and workflow visualization.
+
 <div class="playground-widget" data-workflows='[{"id":"conditional_tasks","name":"Conditional Tasks","tasks":[{"id":"check_premium","name":"Check Premium","condition":{"==":[{"var":"data.tier"},"premium"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":20}]}}},{"id":"check_standard","name":"Check Standard","condition":{"==":[{"var":"data.tier"},"standard"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":5}]}}},{"id":"apply_discount","name":"Apply Discount","function":{"name":"map","input":{"mappings":[{"path":"data.final_price","logic":{"-":[{"var":"data.price"},{"/":{"*":[{"var":"data.price"},{"var":"data.discount"}]},100}]}}]}}}]}]' data-message='{"data":{"tier":"premium","price":100},"metadata":{}}'>
 </div>
 

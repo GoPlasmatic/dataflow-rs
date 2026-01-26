@@ -184,6 +184,8 @@ In workflow conditions and mappings, access message fields using JSONLogic:
 
 ## Try It
 
+> **Want more features?** Try the [Full Debugger UI](/debugger/) with step-by-step execution and workflow visualization.
+
 <div class="playground-widget" data-workflows='[{"id":"message_demo","name":"Message Demo","tasks":[{"id":"set_temp","name":"Set Temp Data","function":{"name":"map","input":{"mappings":[{"path":"temp_data.full_name","logic":{"cat":[{"var":"data.first_name"}," ",{"var":"data.last_name"}]}}]}}},{"id":"use_temp","name":"Use Temp Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"temp_data.full_name"},"!"]}}]}}}]}]' data-message='{"data":{"first_name":"John","last_name":"Doe"},"metadata":{"source":"playground"}}'>
 </div>
 

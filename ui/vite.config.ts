@@ -2,8 +2,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react()],
+  // Use /debugger/ base path for production build (embedded in docs)
+  base: command === 'build' ? '/debugger/' : '/',
   server: {
     port: 3000,
     fs: {
@@ -14,4 +16,4 @@ export default defineConfig({
       ],
     },
   },
-});
+}));

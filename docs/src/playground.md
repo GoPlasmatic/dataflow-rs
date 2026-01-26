@@ -2,6 +2,8 @@
 
 Try dataflow-rs directly in your browser. Define workflows, create messages, and see the processing results in real-time.
 
+> **Looking for advanced debugging?** Try the [Full Debugger UI](/debugger/) with step-by-step execution, breakpoints, workflow visualization, and more!
+
 <div id="full-playground"></div>
 
 ## How to Use
