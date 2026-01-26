@@ -50,7 +50,10 @@ export function TreeNode({
   const currentClass = isCurrent ? 'df-tree-node-current-step' : '';
 
   return (
-    <div className={`df-tree-node ${debugStateClass} ${currentClass}`}>
+    <div
+      className={`df-tree-node ${debugStateClass} ${currentClass}`}
+      data-current-step={isCurrent ? 'true' : undefined}
+    >
       <div
         className={`df-tree-node-content ${isSelected ? 'df-tree-node-selected' : ''}`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}

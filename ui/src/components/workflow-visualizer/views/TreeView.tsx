@@ -3,7 +3,8 @@ import { Layers } from 'lucide-react';
 import type { Workflow } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useDebugger } from '../context';
-import { TreeNode, WorkflowNode, TREE_COLORS } from '../components';
+import { TreeNode, WorkflowNode, FolderNode, TREE_COLORS } from '../components';
+import { buildFolderTree, getFirstLevelFolderIds, getParentFolderIds } from '../utils/folderTree';
 
 interface TreeViewProps {
   workflows: Workflow[];
@@ -18,21 +19,67 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
   const debuggerContext = useDebugger();
   const effectiveDebugContext = debugMode ? debuggerContext : null;
 
+  // Build folder tree from workflows
+  const folderTree = useMemo(() => buildFolderTree(workflows), [workflows]);
+
+  // Sort root-level folders alphabetically
+  const sortedRootFolders = useMemo(() => {
+    return Array.from(folderTree.folders.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [folderTree]);
+
+  // Root-level workflows (no path) - already sorted by priority in buildFolderTree
+  const rootWorkflows = folderTree.workflows;
+
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
-    // Initially expand the root "Workflows" node and first workflow
+    // Initially expand the root "Workflows" node and first-level folders
     const initial = new Set(['workflows-root']);
-    if (workflows.length > 0) {
-      initial.add(`workflow-${workflows[0].id}`);
-    }
+    getFirstLevelFolderIds(folderTree).forEach(id => initial.add(id));
     return initial;
   });
 
-  const sortedWorkflows = useMemo(() => {
-    return [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
-  }, [workflows]);
+  // Update expanded nodes when folder tree changes (e.g., new workflows loaded)
+  useEffect(() => {
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      next.add('workflows-root');
+      // Expand first-level folders by default
+      getFirstLevelFolderIds(folderTree).forEach(id => next.add(id));
+      return next;
+    });
+  }, [folderTree]);
+
+  // Expand the first workflow when workflows change
+  useEffect(() => {
+    const allWorkflows = [...folderTree.workflows];
+    // Also collect workflows from folders
+    function collectWorkflows(folders: Map<string, typeof folderTree.folders extends Map<string, infer T> ? T : never>) {
+      for (const folder of folders.values()) {
+        allWorkflows.push(...folder.workflows);
+        collectWorkflows(folder.folders);
+      }
+    }
+    collectWorkflows(folderTree.folders);
+
+    if (allWorkflows.length > 0) {
+      // Sort by priority and expand the first one
+      allWorkflows.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+      setExpandedNodes((prev) => {
+        const next = new Set(prev);
+        next.add(`workflow-${allWorkflows[0].id}`);
+        // Also expand parent folders if needed
+        getParentFolderIds(allWorkflows[0].path).forEach(id => next.add(id));
+        return next;
+      });
+    }
+  }, [folderTree]);
 
   // Track last selected step to prevent redundant selections
   const lastSelectedRef = useRef<{ workflowId: string; taskId?: string } | null>(null);
+
+  // Ref for tree container (used for auto-scroll)
+  const treeContainerRef = useRef<HTMLDivElement>(null);
 
   // Auto-expand and select based on current debug step
   useEffect(() => {
@@ -50,10 +97,17 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
       return;
     }
 
+    // Find the workflow to get its path
+    const workflow = workflows.find(w => w.id === workflow_id);
+
     // Auto-expand nodes to show current step
     setExpandedNodes((prev) => {
       const next = new Set(prev);
       next.add('workflows-root');
+      // Expand parent folders if workflow has a path
+      if (workflow?.path) {
+        getParentFolderIds(workflow.path).forEach(id => next.add(id));
+      }
       next.add(`workflow-${workflow_id}`);
       next.add(`tasks-${workflow_id}`);
       if (task_id) {
@@ -64,7 +118,6 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
 
     // Auto-select the current task or workflow
     if (task_id) {
-      const workflow = workflows.find(w => w.id === workflow_id);
       const task = workflow?.tasks.find(t => t.id === task_id);
       if (workflow && task) {
         lastSelectedRef.current = { workflowId: workflow_id, taskId: task_id };
@@ -73,6 +126,17 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
     } else {
       lastSelectedRef.current = { workflowId: workflow_id };
     }
+
+    // Auto-scroll to current step after a short delay (to allow DOM to update)
+    setTimeout(() => {
+      const currentStepElement = treeContainerRef.current?.querySelector('[data-current-step="true"]');
+      if (currentStepElement) {
+        currentStepElement.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+        });
+      }
+    }, 50);
   }, [debugMode, effectiveDebugContext?.currentStep, effectiveDebugContext?.state.currentStepIndex, workflows, onSelect]);
 
   const toggleNode = (id: string) => {
@@ -88,20 +152,36 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
   };
 
   const isRootExpanded = expandedNodes.has('workflows-root');
+  const totalWorkflowCount = workflows.length;
 
   return (
-    <div className={`df-tree-view ${debugMode ? 'df-tree-view-debug' : ''}`}>
+    <div ref={treeContainerRef} className={`df-tree-view ${debugMode ? 'df-tree-view-debug' : ''}`}>
       <TreeNode
         label="Workflows"
         icon={<Layers size={14} />}
         iconColor={TREE_COLORS.workflow}
         isExpanded={isRootExpanded}
-        hasChildren={sortedWorkflows.length > 0}
+        hasChildren={totalWorkflowCount > 0}
         level={0}
         onToggle={() => toggleNode('workflows-root')}
         onClick={() => toggleNode('workflows-root')}
       >
-        {sortedWorkflows.map((workflow) => (
+        {/* Render folders first (alphabetically) */}
+        {sortedRootFolders.map((folder) => (
+          <FolderNode
+            key={folder.fullPath}
+            folder={folder}
+            level={1}
+            selection={selection}
+            onSelect={onSelect}
+            expandedNodes={expandedNodes}
+            toggleNode={toggleNode}
+            debugMode={debugMode}
+          />
+        ))}
+
+        {/* Render root-level workflows (by priority) */}
+        {rootWorkflows.map((workflow) => (
           <WorkflowNode
             key={workflow.id}
             workflow={workflow}

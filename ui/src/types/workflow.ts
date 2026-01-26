@@ -51,6 +51,8 @@ export interface Workflow {
   priority?: number;
   /** Optional description */
   description?: string;
+  /** Optional folder path for grouping (e.g., "orders/processing") */
+  path?: string;
   /** JSONLogic condition (evaluated against metadata only) */
   condition?: JsonLogicValue;
   /** Tasks in this workflow */

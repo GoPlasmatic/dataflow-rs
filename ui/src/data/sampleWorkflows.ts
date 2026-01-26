@@ -171,6 +171,7 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
       {
         id: 'input-mapping',
         name: 'Input Mapping',
+        path: 'data/input',
         priority: 0,
         tasks: [
           {
@@ -204,6 +205,7 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
       {
         id: 'input-validation',
         name: 'Input Validation',
+        path: 'data/validation',
         priority: 1,
         tasks: [
           {
@@ -236,6 +238,7 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
       {
         id: 'pricing-calc',
         name: 'Pricing Calculation',
+        path: 'data/processing',
         priority: 2,
         tasks: [
           {
@@ -268,6 +271,7 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
       {
         id: 'discount-check',
         name: 'Discount Processing',
+        path: 'data/processing',
         priority: 3,
         tasks: [
           {
@@ -288,6 +292,7 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
       {
         id: 'shipping-calc',
         name: 'Shipping Calculation',
+        path: 'data/processing',
         priority: 4,
         tasks: [
           {
@@ -320,6 +325,7 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
       {
         id: 'order-validation',
         name: 'Order Validation',
+        path: 'data/validation',
         priority: 5,
         tasks: [
           {
@@ -340,6 +346,7 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
       {
         id: 'output-mapping',
         name: 'Output Mapping',
+        path: 'data/output',
         priority: 6,
         tasks: [
           {
