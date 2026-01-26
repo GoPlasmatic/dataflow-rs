@@ -3,6 +3,7 @@
   "version": "2.0.4",
   "type": "module",
   "description": "React visualization library for dataflow-rs workflow engine",
+  "author": "Plasmatic Engineering <shankar@goplasmatic.io>",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,11 +17,17 @@
   },
   "files": [
     "dist",
+    "README.md",
     "!dist/*.map"
   ],
+  "homepage": "https://github.com/GoPlasmatic/dataflow-rs",
   "repository": {
     "type": "git",
-    "url": "https://github.com/GoPlasmatic/dataflow-rs"
+    "url": "https://github.com/GoPlasmatic/dataflow-rs",
+    "directory": "ui"
+  },
+  "bugs": {
+    "url": "https://github.com/GoPlasmatic/dataflow-rs/issues"
   },
   "license": "Apache-2.0",
   "keywords": [
@@ -28,7 +35,8 @@
     "dataflow",
     "visualization",
     "react",
-    "jsonlogic"
+    "jsonlogic",
+    "typescript"
   ],
   "scripts": {
     "dev": "vite",
