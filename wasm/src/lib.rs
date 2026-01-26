@@ -15,6 +15,13 @@
 //!     name: "Example Workflow",
 //!     priority: 1,
 //!     tasks: [{
+//!         id: "parse_payload",
+//!         name: "Parse Payload",
+//!         function: {
+//!             name: "parse",
+//!             input: {}
+//!         }
+//!     }, {
 //!         id: "task1",
 //!         name: "Transform Data",
 //!         function: {
@@ -22,7 +29,7 @@
 //!             input: {
 //!                 mappings: [{
 //!                     path: "data.result",
-//!                     logic: { "var": "payload.input" }
+//!                     logic: { "var": "data.input" }
 //!                 }]
 //!             }
 //!         }
@@ -32,14 +39,14 @@
 //! // Create engine
 //! const engine = new WasmEngine(workflows);
 //!
-//! // Process a payload directly
-//! const payload = JSON.stringify({ input: "hello" });
+//! // Process a payload (raw string, parsed by the parse plugin)
+//! const payload = '{"input": "hello"}';
 //! const result = await engine.process(payload);
 //! console.log(JSON.parse(result));
 //! ```
 
 use dataflow_rs::{Engine, Message, Workflow};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
@@ -51,35 +58,6 @@ use wasm_bindgen_futures::future_to_promise;
 #[wasm_bindgen(start)]
 pub fn init() {
     console_error_panic_hook::set_once();
-}
-
-/// Create a message JSON string from data and metadata.
-///
-/// # Arguments
-/// * `data` - JSON string containing the message data (goes to context.data)
-/// * `metadata` - JSON string containing the message metadata (goes to context.metadata)
-///
-/// # Returns
-/// JSON string representing the complete message, or an error message
-///
-/// # Example
-/// ```javascript
-/// const message = create_message('{"name": "John"}', '{"type": "user"}');
-/// const result = await engine.process(message);
-/// ```
-#[wasm_bindgen]
-pub fn create_message(data: &str, metadata: &str) -> Result<String, String> {
-    let data_value: Value =
-        serde_json::from_str(data).map_err(|e| format!("Invalid data JSON: {}", e))?;
-    let metadata_value: Value =
-        serde_json::from_str(metadata).map_err(|e| format!("Invalid metadata JSON: {}", e))?;
-
-    // Create a message with empty payload, then set context data and metadata
-    let mut message = Message::from_value(&json!({}));
-    message.context["data"] = data_value;
-    message.context["metadata"] = metadata_value;
-
-    serde_json::to_string(&message).map_err(|e| e.to_string())
 }
 
 /// A WebAssembly-compatible workflow engine.
@@ -134,46 +112,38 @@ impl WasmEngine {
     /// Process a payload through the engine's workflows.
     ///
     /// This is an async operation that returns a Promise.
+    /// The payload is stored as a raw string and should be parsed by a parse plugin
+    /// in the workflow if JSON parsing is needed.
     ///
     /// # Arguments
-    /// * `payload_json` - JSON string of the payload to process
+    /// * `payload` - Raw string payload to process (not parsed by the engine)
     ///
     /// # Returns
     /// A Promise that resolves to the processed message as a JSON string
     ///
     /// # Example
     /// ```javascript
-    /// const payload = JSON.stringify({ name: "John", email: "john@example.com" });
+    /// const payload = '{"name": "John", "email": "john@example.com"}';
     /// const result = await engine.process(payload);
     /// const processed = JSON.parse(result);
     /// console.log(processed.context.data);
     /// ```
     #[wasm_bindgen]
-    pub fn process(&self, payload_json: &str) -> js_sys::Promise {
-        let payload_result: Result<Value, _> = serde_json::from_str(payload_json);
+    pub fn process(&self, payload: &str) -> js_sys::Promise {
+        // Store payload as a raw string - parsing is done by the parse plugin
+        let mut message = Message::from_value(&Value::String(payload.to_string()));
 
-        match payload_result {
-            Ok(payload) => {
-                // Create message from payload using Message::from_value
-                let mut message = Message::from_value(&payload);
+        // Clone the Arc for the async block
+        let engine = Arc::clone(&self.inner);
 
-                // Clone the Arc for the async block
-                let engine = Arc::clone(&self.inner);
-
-                future_to_promise(async move {
-                    match engine.process_message(&mut message).await {
-                        Ok(()) => serde_json::to_string(&message)
-                            .map(|s| JsValue::from_str(&s))
-                            .map_err(|e| JsValue::from_str(&e.to_string())),
-                        Err(e) => Err(JsValue::from_str(&e.to_string())),
-                    }
-                })
+        future_to_promise(async move {
+            match engine.process_message(&mut message).await {
+                Ok(()) => serde_json::to_string(&message)
+                    .map(|s| JsValue::from_str(&s))
+                    .map_err(|e| JsValue::from_str(&e.to_string())),
+                Err(e) => Err(JsValue::from_str(&e.to_string())),
             }
-            Err(e) => {
-                let error_msg = format!("Invalid payload JSON: {}", e);
-                future_to_promise(async move { Err(JsValue::from_str(&error_msg)) })
-            }
-        }
+        })
     }
 
     /// Process a payload with step-by-step execution tracing.
@@ -181,46 +151,37 @@ impl WasmEngine {
     /// This is an async operation that returns a Promise with the execution trace.
     /// The trace contains message snapshots after each step, including which
     /// workflows/tasks were executed or skipped.
+    /// The payload is stored as a raw string and should be parsed by a parse plugin.
     ///
     /// # Arguments
-    /// * `payload_json` - JSON string of the payload to process
+    /// * `payload` - Raw string payload to process (not parsed by the engine)
     ///
     /// # Returns
     /// A Promise that resolves to the execution trace as a JSON string
     ///
     /// # Example
     /// ```javascript
-    /// const payload = JSON.stringify({ name: "John", email: "john@example.com" });
+    /// const payload = '{"name": "John", "email": "john@example.com"}';
     /// const trace = await engine.process_with_trace(payload);
     /// const traceData = JSON.parse(trace);
     /// console.log(traceData.steps); // Array of execution steps
     /// ```
     #[wasm_bindgen]
-    pub fn process_with_trace(&self, payload_json: &str) -> js_sys::Promise {
-        let payload_result: Result<Value, _> = serde_json::from_str(payload_json);
+    pub fn process_with_trace(&self, payload: &str) -> js_sys::Promise {
+        // Store payload as a raw string - parsing is done by the parse plugin
+        let mut message = Message::from_value(&Value::String(payload.to_string()));
 
-        match payload_result {
-            Ok(payload) => {
-                // Create message from payload using Message::from_value
-                let mut message = Message::from_value(&payload);
+        // Clone the Arc for the async block
+        let engine = Arc::clone(&self.inner);
 
-                // Clone the Arc for the async block
-                let engine = Arc::clone(&self.inner);
-
-                future_to_promise(async move {
-                    match engine.process_message_with_trace(&mut message).await {
-                        Ok(trace) => serde_json::to_string(&trace)
-                            .map(|s| JsValue::from_str(&s))
-                            .map_err(|e| JsValue::from_str(&e.to_string())),
-                        Err(e) => Err(JsValue::from_str(&e.to_string())),
-                    }
-                })
+        future_to_promise(async move {
+            match engine.process_message_with_trace(&mut message).await {
+                Ok(trace) => serde_json::to_string(&trace)
+                    .map(|s| JsValue::from_str(&s))
+                    .map_err(|e| JsValue::from_str(&e.to_string())),
+                Err(e) => Err(JsValue::from_str(&e.to_string())),
             }
-            Err(e) => {
-                let error_msg = format!("Invalid payload JSON: {}", e);
-                future_to_promise(async move { Err(JsValue::from_str(&error_msg)) })
-            }
-        }
+        })
     }
 
     /// Get the number of workflows registered in the engine.
@@ -244,25 +205,26 @@ impl WasmEngine {
 ///
 /// Creates an engine with the given workflows and processes a single payload.
 /// Use WasmEngine class for better performance when processing multiple payloads.
+/// The payload is stored as a raw string and should be parsed by a parse plugin.
 ///
 /// # Arguments
 /// * `workflows_json` - JSON string containing an array of workflow definitions
-/// * `payload_json` - JSON string of the payload to process
+/// * `payload` - Raw string payload to process (not parsed by the engine)
 ///
 /// # Returns
 /// A Promise that resolves to the processed message as a JSON string
 ///
 /// # Example
 /// ```javascript
-/// const payload = JSON.stringify({ name: "John", email: "john@example.com" });
+/// const payload = '{"name": "John", "email": "john@example.com"}';
 /// const result = await process_message(workflowsJson, payload);
 /// console.log(JSON.parse(result));
 /// ```
 #[wasm_bindgen]
-pub fn process_message(workflows_json: &str, payload_json: &str) -> js_sys::Promise {
+pub fn process_message(workflows_json: &str, payload: &str) -> js_sys::Promise {
     let engine_result = WasmEngine::new(workflows_json);
     match engine_result {
-        Ok(engine) => engine.process(payload_json),
+        Ok(engine) => engine.process(payload),
         Err(e) => future_to_promise(async move { Err(JsValue::from_str(&e)) }),
     }
 }

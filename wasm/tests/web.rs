@@ -6,18 +6,6 @@ use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test]
-fn test_create_message() {
-    let data = r#"{"name": "John", "age": 30}"#;
-    let metadata = r#"{"type": "user"}"#;
-    let result = create_message(data, metadata).unwrap();
-
-    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-    assert_eq!(parsed["context"]["data"]["name"], "John");
-    assert_eq!(parsed["context"]["data"]["age"], 30);
-    assert_eq!(parsed["context"]["metadata"]["type"], "user");
-}
-
-#[wasm_bindgen_test]
 fn test_create_engine_simple() {
     let workflows = r#"[{
         "id": "test_workflow",
@@ -71,26 +59,20 @@ fn test_workflows_must_be_array() {
 }
 
 #[wasm_bindgen_test]
-fn test_create_message_invalid_data() {
-    let result = create_message("not json", "{}");
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Invalid data JSON"));
-}
-
-#[wasm_bindgen_test]
-fn test_create_message_invalid_metadata() {
-    let result = create_message("{}", "not json");
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Invalid metadata JSON"));
-}
-
-#[wasm_bindgen_test]
-async fn test_process_message_with_mapping() {
+async fn test_process_payload_as_string() {
+    // Workflow that uses parse plugin first, then maps data
     let workflows = r#"[{
         "id": "mapper",
         "name": "Mapper Workflow",
         "priority": 1,
         "tasks": [{
+            "id": "parse_payload",
+            "name": "Parse Payload",
+            "function": {
+                "name": "parse",
+                "input": {}
+            }
+        }, {
             "id": "copy_name",
             "name": "Copy Name",
             "function": {
@@ -107,11 +89,10 @@ async fn test_process_message_with_mapping() {
 
     let engine = WasmEngine::new(workflows).unwrap();
 
-    // Create a message with input data
-    let message = create_message(r#"{"input_name": "Alice"}"#, r#"{}"#).unwrap();
+    // Payload is passed as a raw string (not pre-parsed)
+    let payload = r#"{"input_name": "Alice"}"#;
 
-    // Process it (this returns a Promise in JS, but in Rust tests we await it directly)
-    let promise = engine.process(&message);
+    let promise = engine.process(payload);
     let result = wasm_bindgen_futures::JsFuture::from(promise).await;
 
     assert!(result.is_ok());
@@ -122,19 +103,42 @@ async fn test_process_message_with_mapping() {
 }
 
 #[wasm_bindgen_test]
-async fn test_process_invalid_message() {
+async fn test_process_raw_payload_stored_as_string() {
+    // Workflow without parse plugin - payload should remain as string
     let workflows = r#"[{
-        "id": "test",
-        "name": "Test",
+        "id": "no_parse",
+        "name": "No Parse Workflow",
         "priority": 1,
-        "tasks": [{"id": "t", "name": "T", "function": {"name": "map", "input": {"mappings": []}}}]
+        "tasks": [{
+            "id": "noop",
+            "name": "No-op Task",
+            "function": {
+                "name": "map",
+                "input": {
+                    "mappings": [{
+                        "path": "data.processed",
+                        "logic": true
+                    }]
+                }
+            }
+        }]
     }]"#;
 
     let engine = WasmEngine::new(workflows).unwrap();
-    let promise = engine.process("not valid json");
+
+    // Payload is passed as a raw string
+    let payload = r#"{"some": "data"}"#;
+
+    let promise = engine.process(payload);
     let result = wasm_bindgen_futures::JsFuture::from(promise).await;
 
-    assert!(result.is_err());
+    assert!(result.is_ok());
+    let result_str = result.unwrap().as_string().unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result_str).unwrap();
+
+    // Payload should be stored as a string value (not parsed JSON)
+    assert_eq!(parsed["payload"], r#"{"some": "data"}"#);
+    assert_eq!(parsed["context"]["data"]["processed"], true);
 }
 
 #[wasm_bindgen_test]
@@ -144,6 +148,13 @@ async fn test_process_message_standalone() {
         "name": "Standalone",
         "priority": 1,
         "tasks": [{
+            "id": "parse",
+            "name": "Parse",
+            "function": {
+                "name": "parse",
+                "input": {}
+            }
+        }, {
             "id": "t",
             "name": "T",
             "function": {
@@ -158,8 +169,8 @@ async fn test_process_message_standalone() {
         }]
     }]"#;
 
-    let message = create_message("{}", "{}").unwrap();
-    let promise = process_message(workflows, &message);
+    let payload = r#"{}"#;
+    let promise = process_message(workflows, payload);
     let result = wasm_bindgen_futures::JsFuture::from(promise).await;
 
     assert!(result.is_ok());
@@ -171,7 +182,32 @@ async fn test_process_message_standalone() {
 
 #[wasm_bindgen_test]
 async fn test_workflow_with_condition() {
+    // Workflow with condition - uses parse plugin first to populate metadata
     let workflows = r#"[{
+        "id": "parse_first",
+        "name": "Parse First",
+        "priority": 0,
+        "tasks": [{
+            "id": "parse",
+            "name": "Parse",
+            "function": {
+                "name": "parse",
+                "input": {}
+            }
+        }, {
+            "id": "copy_metadata",
+            "name": "Copy to Metadata",
+            "function": {
+                "name": "map",
+                "input": {
+                    "mappings": [{
+                        "path": "metadata.should_run",
+                        "logic": {"var": "data.should_run"}
+                    }]
+                }
+            }
+        }]
+    }, {
         "id": "conditional",
         "name": "Conditional Workflow",
         "priority": 1,
@@ -194,16 +230,16 @@ async fn test_workflow_with_condition() {
     let engine = WasmEngine::new(workflows).unwrap();
 
     // Test with condition met
-    let message_run = create_message("{}", r#"{"should_run": true}"#).unwrap();
-    let result = wasm_bindgen_futures::JsFuture::from(engine.process(&message_run))
+    let payload_run = r#"{"should_run": true}"#;
+    let result = wasm_bindgen_futures::JsFuture::from(engine.process(payload_run))
         .await
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&result.as_string().unwrap()).unwrap();
     assert_eq!(parsed["context"]["data"]["ran"], true);
 
     // Test with condition not met
-    let message_skip = create_message("{}", r#"{"should_run": false}"#).unwrap();
-    let result = wasm_bindgen_futures::JsFuture::from(engine.process(&message_skip))
+    let payload_skip = r#"{"should_run": false}"#;
+    let result = wasm_bindgen_futures::JsFuture::from(engine.process(payload_skip))
         .await
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&result.as_string().unwrap()).unwrap();

@@ -17,7 +17,7 @@ WebAssembly bindings for [dataflow-rs](https://github.com/GoPlasmatic/dataflow-r
 
 - **Browser Execution** - Run dataflow-rs workflows directly in the browser
 - **Full Feature Parity** - Same workflow engine as the native Rust version including all built-in functions
-- **Built-in Functions** - parse_json, parse_xml, map, validation, publish_json, publish_xml
+- **Built-in Functions** - parse, map, validation, publish
 - **TypeScript Support** - Full type definitions included
 - **Execution Tracing** - Debug workflows with step-by-step execution traces and message snapshots
 
@@ -42,6 +42,15 @@ const workflows = [
     name: 'My Workflow',
     tasks: [
       {
+        // Parse the raw payload string into data
+        id: 'parse-payload',
+        name: 'Parse Payload',
+        function: {
+          name: 'parse',
+          input: {}
+        }
+      },
+      {
         id: 'task-1',
         name: 'Transform Data',
         function: {
@@ -58,12 +67,13 @@ const workflows = [
 ];
 
 // Create engine
-const engine = new WasmEngine(workflows);
+const engine = new WasmEngine(JSON.stringify(workflows));
 
-// Process a message
-const message = { data: { input: 'hello' }, metadata: {} };
-const result = await engine.process(message);
-console.log(result); // { data: { input: 'hello', output: 'hello' }, ... }
+// Process a payload (raw string - parsed by the parse plugin)
+const payload = '{"input": "hello"}';
+const result = await engine.process(payload);
+const parsed = JSON.parse(result);
+console.log(parsed.context.data); // { input: 'hello', output: 'hello' }
 ```
 
 ## API
@@ -72,44 +82,66 @@ console.log(result); // { data: { input: 'hello', output: 'hello' }, ... }
 
 ```typescript
 class WasmEngine {
-  constructor(workflows: Workflow[]);
+  // Create engine from JSON string of workflow definitions
+  constructor(workflows_json: string);
 
-  // Process a message through all workflows
-  process(message: Message): Promise<Message>;
+  // Process a raw payload string through all workflows
+  // The payload is stored as-is and should be parsed by the parse plugin
+  process(payload: string): Promise<string>;
 
   // Process with execution trace for debugging
-  processWithTrace(message: Message): Promise<ExecutionTrace>;
+  process_with_trace(payload: string): Promise<string>;
+
+  // Get number of registered workflows
+  workflow_count(): number;
+
+  // Get list of workflow IDs as JSON array string
+  workflow_ids(): string;
 }
 ```
 
-### Types
+### Standalone Function
 
 ```typescript
-interface Workflow {
-  id: string;
-  name: string;
-  condition?: JsonLogicValue;
-  tasks: Task[];
-}
+// Process a payload through a one-off engine (convenience function)
+// Use WasmEngine class for better performance when processing multiple payloads
+function process_message(workflows_json: string, payload: string): Promise<string>;
+```
 
-interface Task {
-  id: string;
-  name: string;
-  condition?: JsonLogicValue;
-  function: FunctionConfig;
-}
+### Payload Handling
 
+The payload is stored as a **raw string** and is not automatically parsed. Use the `parse` plugin as the first task in your workflow to parse JSON/XML payloads into `context.data`:
+
+```typescript
+{
+  id: 'parse-payload',
+  name: 'Parse Payload',
+  function: {
+    name: 'parse',
+    input: {
+      source: 'payload',      // default
+      target: 'data',         // default
+      format: 'json'          // default, or 'xml'
+    }
+  }
+}
+```
+
+### Message Structure
+
+The processed message has the following structure:
+
+```typescript
 interface Message {
-  data: object;
-  metadata: object;
-  payload?: object;
-  temp_data?: object;
-}
-
-interface ExecutionTrace {
-  steps: ExecutionStep[];
-  initial_message: Message;
-  final_message: Message;
+  id: string;
+  payload: string;              // Raw payload string
+  context: {
+    data: object;               // Parsed data (populated by parse plugin)
+    metadata: object;           // Workflow metadata
+    temp_data: object;          // Temporary data during processing
+  };
+  audit_trail: AuditEntry[];    // Execution history
+  errors: ErrorInfo[];          // Any errors that occurred
 }
 ```
 
