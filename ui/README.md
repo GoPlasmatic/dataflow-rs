@@ -91,13 +91,48 @@ interface WorkflowVisualizerProps {
 Enable step-by-step execution visualization:
 
 ```tsx
-import { WorkflowVisualizer, DebuggerProvider, DebuggerControls } from '@goplasmatic/dataflow-ui';
+import { WorkflowVisualizer, DebuggerProvider, DebuggerControls, defaultEngineFactory } from '@goplasmatic/dataflow-ui';
 
 function DebugView() {
   return (
-    <DebuggerProvider>
+    <DebuggerProvider engineFactory={defaultEngineFactory}>
       <WorkflowVisualizer workflows={workflows} debugMode={true} />
       <DebuggerControls />
+    </DebuggerProvider>
+  );
+}
+```
+
+### Custom WASM Engine
+
+Use a custom WASM engine with plugins or custom functions:
+
+```tsx
+import { WorkflowVisualizer, DebuggerProvider, DataflowEngine } from '@goplasmatic/dataflow-ui';
+import { MyCustomWasmEngine } from './my-custom-wasm';
+
+// Implement the DataflowEngine interface
+class MyEngineAdapter implements DataflowEngine {
+  private engine: MyCustomWasmEngine;
+
+  constructor(workflows: Workflow[]) {
+    this.engine = new MyCustomWasmEngine(JSON.stringify(workflows));
+  }
+
+  async processWithTrace(payload: Record<string, unknown>) {
+    const result = await this.engine.process_with_trace(JSON.stringify(payload));
+    return JSON.parse(result);
+  }
+
+  dispose() {
+    this.engine.free();
+  }
+}
+
+function CustomDebugView() {
+  return (
+    <DebuggerProvider engineFactory={(workflows) => new MyEngineAdapter(workflows)}>
+      <WorkflowVisualizer workflows={workflows} debugMode={true} />
     </DebuggerProvider>
   );
 }
@@ -115,6 +150,12 @@ function DebugView() {
 - `useTheme` - Access theme state
 - `useDebugger` - Access debugger state and controls
 - `useTaskDebugState` - Get debug state for a specific task
+
+### Engine
+- `WasmEngineAdapter` - Default WASM engine adapter
+- `defaultEngineFactory` - Factory function for default engine
+- `DataflowEngine` - Interface for custom engines
+- `EngineFactory` - Type for engine factory functions
 
 ### Types
 All TypeScript types are exported for workflow definitions, tasks, messages, and execution traces.

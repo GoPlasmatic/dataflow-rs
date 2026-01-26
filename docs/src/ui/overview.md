@@ -105,12 +105,13 @@ import {
   WorkflowVisualizer,
   DebuggerProvider,
   DebuggerControls,
+  defaultEngineFactory,
   useDebugger
 } from '@goplasmatic/dataflow-ui';
 
 function DebugView() {
   return (
-    <DebuggerProvider>
+    <DebuggerProvider engineFactory={defaultEngineFactory}>
       <WorkflowVisualizer
         workflows={workflows}
         debugMode={true}
@@ -120,6 +121,47 @@ function DebugView() {
   );
 }
 ```
+
+## Custom WASM Engine
+
+Use a custom WASM engine with plugins or custom functions for debugging. Implement the `DataflowEngine` interface:
+
+```tsx
+import {
+  WorkflowVisualizer,
+  DebuggerProvider,
+  DataflowEngine,
+  Workflow
+} from '@goplasmatic/dataflow-ui';
+import { MyCustomWasmEngine } from './my-custom-wasm';
+
+class MyEngineAdapter implements DataflowEngine {
+  private engine: MyCustomWasmEngine;
+
+  constructor(workflows: Workflow[]) {
+    this.engine = new MyCustomWasmEngine(JSON.stringify(workflows));
+  }
+
+  async processWithTrace(payload: Record<string, unknown>) {
+    const result = await this.engine.process_with_trace(JSON.stringify(payload));
+    return JSON.parse(result);
+  }
+
+  dispose() {
+    this.engine.free();
+  }
+}
+
+function CustomDebugView() {
+  return (
+    <DebuggerProvider engineFactory={(workflows) => new MyEngineAdapter(workflows)}>
+      <WorkflowVisualizer workflows={workflows} debugMode={true} />
+    </DebuggerProvider>
+  );
+}
+```
+
+The `engineFactory` is called whenever workflows change, ensuring the engine always has the latest workflow definitions.
 
 ### Debugger Controls
 
@@ -200,6 +242,13 @@ function MyComponent() {
 - `useDebugger` - Debugger state and controls
 - `useTaskDebugState` - Debug state for a specific task
 - `useWorkflowDebugState` - Debug state for a workflow
+
+### Engine
+
+- `WasmEngineAdapter` - Default WASM engine adapter
+- `defaultEngineFactory` - Factory function for default engine
+- `DataflowEngine` - Interface for custom engines
+- `EngineFactory` - Type for engine factory functions
 
 ### Types
 
