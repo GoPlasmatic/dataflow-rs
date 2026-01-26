@@ -191,7 +191,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Method 3: Using with Axum web server
     println!("\nMethod 3: Integration with Axum");
     {
-        use axum::{routing::post, Json, Router};
+        use axum::{Json, Router, routing::post};
 
         // Create custom functions for this engine instance
         let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =

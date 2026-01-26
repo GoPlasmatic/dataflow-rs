@@ -10,7 +10,7 @@
 //!
 //! Run with: `cargo run --example complete_workflow`
 
-use dataflow_rs::{engine::message::Message, Engine, Workflow};
+use dataflow_rs::{Engine, Workflow, engine::message::Message};
 use serde_json::json;
 
 #[tokio::main]

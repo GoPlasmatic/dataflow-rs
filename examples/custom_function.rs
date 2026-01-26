@@ -13,15 +13,15 @@
 use async_trait::async_trait;
 use dataflow_rs::Result;
 use dataflow_rs::{
+    Engine, Workflow,
     engine::{
+        AsyncFunctionHandler, FunctionConfig,
         error::DataflowError,
         message::{Change, Message},
-        AsyncFunctionHandler, FunctionConfig,
     },
-    Engine, Workflow,
 };
 use datalogic_rs::DataLogic;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
