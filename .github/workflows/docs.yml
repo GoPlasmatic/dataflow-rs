@@ -40,9 +40,9 @@ jobs:
 
       - name: Copy WASM to docs
         run: |
-          mkdir -p docs/src/wasm-pkg
-          cp wasm/pkg/dataflow_wasm.js docs/src/wasm-pkg/
-          cp wasm/pkg/dataflow_wasm_bg.wasm docs/src/wasm-pkg/
+          mkdir -p docs/src/wasm
+          cp wasm/pkg/dataflow_wasm.js docs/src/wasm/
+          cp wasm/pkg/dataflow_wasm_bg.wasm docs/src/wasm/
 
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2

@@ -28,4 +28,7 @@ Cargo.lock
 
 # mdBook documentation
 docs/book/
-docs/src/wasm/
+
+# WASM build artifacts (but not docs)
+docs/src/wasm/*.js
+docs/src/wasm/*.wasm
