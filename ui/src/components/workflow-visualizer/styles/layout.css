@@ -1428,6 +1428,16 @@
   color: var(--df-text-secondary);
 }
 
+.df-visualizer-result-changes {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--df-success);
+  background: color-mix(in srgb, var(--df-success) 15%, transparent);
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: auto;
+}
+
 .df-visualizer-result-content {
   flex: 1;
   overflow: auto;
