@@ -137,6 +137,8 @@ export interface DebuggerState {
   isExecuting: boolean;
   /** Error during execution */
   executionError: string | null;
+  /** Whether to skip steps with failed conditions (result: 'skipped') */
+  skipFailedConditions: boolean;
 }
 
 /**
@@ -156,7 +158,8 @@ export type DebuggerAction =
   | { type: 'STEP_FORWARD' }
   | { type: 'STEP_BACKWARD' }
   | { type: 'GO_TO_STEP'; index: number }
-  | { type: 'SET_SPEED'; speed: number };
+  | { type: 'SET_SPEED'; speed: number }
+  | { type: 'SET_SKIP_FAILED_CONDITIONS'; skip: boolean };
 
 /**
  * Create an empty message

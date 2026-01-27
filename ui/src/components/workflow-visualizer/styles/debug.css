@@ -1308,6 +1308,40 @@
   color: white;
 }
 
+.df-debug-toolbar-options {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--df-border-color);
+}
+
+.df-debug-toolbar-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--df-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.df-debug-toolbar-checkbox-label:hover {
+  color: var(--df-text-primary);
+}
+
+.df-debug-toolbar-checkbox {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--df-accent-primary);
+}
+
+.df-debug-toolbar-checkbox:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .df-debug-toolbar-actions {
   display: flex;
   align-items: center;

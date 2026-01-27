@@ -60,6 +60,8 @@ export function IntegratedDebugToolbar({
     hasTrace,
     totalSteps,
     isEngineReady,
+    skipFailedConditions,
+    setSkipFailedConditions,
   } = useDebugger();
 
   const { playbackState, currentStepIndex, isExecuting, executionError, trace } = state;
@@ -298,6 +300,20 @@ export function IntegratedDebugToolbar({
         >
           <ChevronsRight size={14} />
         </button>
+      </div>
+
+      {/* Filter workflows checkbox */}
+      <div className="df-debug-toolbar-options">
+        <label className="df-debug-toolbar-checkbox-label">
+          <input
+            type="checkbox"
+            checked={skipFailedConditions}
+            onChange={(e) => setSkipFailedConditions(e.target.checked)}
+            className="df-debug-toolbar-checkbox"
+            disabled={isExecuting}
+          />
+          <span>Filter Workflows</span>
+        </label>
       </div>
 
       {/* Run / Reset buttons */}

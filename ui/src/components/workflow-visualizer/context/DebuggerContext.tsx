@@ -24,6 +24,7 @@ const initialState: DebuggerState = {
   inputPayload: null,
   isExecuting: false,
   executionError: null,
+  skipFailedConditions: false,
 };
 
 /**
@@ -104,22 +105,37 @@ function debuggerReducer(state: DebuggerState, action: DebuggerAction): Debugger
         executionError: null,
       };
 
-    case 'STEP_FORWARD':
+    case 'STEP_FORWARD': {
       if (!state.trace || state.trace.steps.length === 0) {
         return state;
       }
-      // If at end, just pause
-      if (state.currentStepIndex >= state.trace.steps.length - 1) {
+
+      let nextIndex = state.currentStepIndex + 1;
+
+      // If skip failed conditions is enabled, find the next executed step
+      if (state.skipFailedConditions) {
+        while (
+          nextIndex < state.trace.steps.length &&
+          state.trace.steps[nextIndex].result === 'skipped'
+        ) {
+          nextIndex++;
+        }
+      }
+
+      // If at or past end, just pause
+      if (nextIndex >= state.trace.steps.length) {
         return {
           ...state,
+          currentStepIndex: state.trace.steps.length - 1, // Go to last step
           playbackState: 'paused', // Auto-pause at end
         };
       }
-      // Move from -1 (ready) to 0, or increment normally
+
       return {
         ...state,
-        currentStepIndex: state.currentStepIndex + 1,
+        currentStepIndex: nextIndex,
       };
+    }
 
     case 'STEP_BACKWARD':
       // Allow going back to -1 (ready state)
@@ -142,6 +158,12 @@ function debuggerReducer(state: DebuggerState, action: DebuggerAction): Debugger
       return {
         ...state,
         playbackSpeed: Math.max(100, Math.min(2000, action.speed)),
+      };
+
+    case 'SET_SKIP_FAILED_CONDITIONS':
+      return {
+        ...state,
+        skipFailedConditions: action.skip,
       };
 
     default:
@@ -170,6 +192,7 @@ interface DebuggerContextValue {
   stepBackward: () => void;
   goToStep: (index: number) => void;
   setSpeed: (speed: number) => void;
+  setSkipFailedConditions: (skip: boolean) => void;
   // Engine execution method
   runExecution: (workflows: Workflow[], payload: Record<string, unknown>) => Promise<ExecutionTrace | null>;
   // Computed values
@@ -182,6 +205,7 @@ interface DebuggerContextValue {
   progress: number;
   totalSteps: number;
   isEngineReady: boolean;
+  skipFailedConditions: boolean;
 }
 
 const DebuggerContext = createContext<DebuggerContextValue | null>(null);
@@ -246,6 +270,10 @@ export function DebuggerProvider({
   const stepBackward = useCallback(() => dispatch({ type: 'STEP_BACKWARD' }), []);
   const goToStep = useCallback((index: number) => dispatch({ type: 'GO_TO_STEP', index }), []);
   const setSpeed = useCallback((speed: number) => dispatch({ type: 'SET_SPEED', speed }), []);
+  const setSkipFailedConditions = useCallback(
+    (skip: boolean) => dispatch({ type: 'SET_SKIP_FAILED_CONDITIONS', skip }),
+    []
+  );
 
   /**
    * Execute workflows with the provided payload and return the execution trace.
@@ -346,6 +374,7 @@ export function DebuggerProvider({
     stepBackward,
     goToStep,
     setSpeed,
+    setSkipFailedConditions,
     runExecution,
     currentStep,
     currentMessage,
@@ -356,6 +385,7 @@ export function DebuggerProvider({
     progress,
     totalSteps,
     isEngineReady,
+    skipFailedConditions: state.skipFailedConditions,
   };
 
   return <DebuggerContext.Provider value={value}>{children}</DebuggerContext.Provider>;

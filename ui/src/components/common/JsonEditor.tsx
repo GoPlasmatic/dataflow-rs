@@ -216,7 +216,7 @@ export function JsonEditor({
           acceptSuggestionOnEnter: 'off',
           formatOnPaste: true,
           formatOnType: false,
-          glyphMargin: highlightedPaths && highlightedPaths.length > 0,
+          glyphMargin: false,
         }}
       />
     </div>
