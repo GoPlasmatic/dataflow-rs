@@ -1440,8 +1440,28 @@
 
 .df-visualizer-result-content {
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
   background: var(--df-bg-primary);
+}
+
+/* Monaco Editor Wrapper */
+.df-monaco-editor-wrapper {
+  height: 100%;
+  min-height: 100%;
+}
+
+/* Monaco Editor Line Highlighting (for debug mode) */
+.df-highlighted-line {
+  background-color: color-mix(in srgb, var(--df-success) 15%, transparent) !important;
+  border-left: 3px solid var(--df-success) !important;
+}
+
+.df-highlighted-glyph {
+  background-color: var(--df-success);
+  width: 4px !important;
+  margin-left: 3px;
+  border-radius: 2px;
 }
 
 .df-result-json {
