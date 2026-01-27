@@ -59,12 +59,14 @@ export function IntegratedDebugToolbar({
     isAtEnd,
     hasTrace,
     totalSteps,
+    currentFilteredPosition,
+    filteredStepIndices,
     isEngineReady,
     skipFailedConditions,
     setSkipFailedConditions,
   } = useDebugger();
 
-  const { playbackState, currentStepIndex, isExecuting, executionError, trace } = state;
+  const { playbackState, isExecuting, executionError, trace } = state;
 
   // Track last execution to prevent duplicates
   const lastExecutionRef = useRef<{ workflows: string; payload: string } | null>(null);
@@ -123,12 +125,12 @@ export function IntegratedDebugToolbar({
     }
   }, [hasTrace, stop]);
 
-  // Go to last step
+  // Go to last step (use actual index from filtered list)
   const goToLast = useCallback(() => {
-    if (hasTrace && totalSteps > 0) {
-      goToStep(totalSteps - 1);
+    if (hasTrace && filteredStepIndices.length > 0) {
+      goToStep(filteredStepIndices[filteredStepIndices.length - 1]);
     }
-  }, [hasTrace, totalSteps, goToStep]);
+  }, [hasTrace, filteredStepIndices, goToStep]);
 
   // Debounced auto-execute when workflows or payload change
   useEffect(() => {
@@ -229,10 +231,10 @@ export function IntegratedDebugToolbar({
     if (!hasTrace) {
       return 'Ready';
     }
-    if (currentStepIndex < 0) {
+    if (currentFilteredPosition < 0) {
       return 'Ready';
     }
-    return `Step ${currentStepIndex + 1} / ${totalSteps}`;
+    return `Step ${currentFilteredPosition + 1} / ${totalSteps}`;
   };
 
   return (

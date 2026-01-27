@@ -28,6 +28,23 @@ const initialState: DebuggerState = {
 };
 
 /**
+ * Get filtered step indices based on skipFailedConditions setting.
+ * Returns indices of steps that should be shown during debugging.
+ */
+function getFilteredStepIndices(trace: ExecutionTrace | null, skipFailedConditions: boolean): number[] {
+  if (!trace || trace.steps.length === 0) {
+    return [];
+  }
+  if (!skipFailedConditions) {
+    return trace.steps.map((_, i) => i);
+  }
+  return trace.steps
+    .map((step, i) => ({ step, index: i }))
+    .filter(({ step }) => step.result !== 'skipped')
+    .map(({ index }) => index);
+}
+
+/**
  * Debugger reducer
  */
 function debuggerReducer(state: DebuggerState, action: DebuggerAction): DebuggerState {
@@ -110,25 +127,30 @@ function debuggerReducer(state: DebuggerState, action: DebuggerAction): Debugger
         return state;
       }
 
-      let nextIndex = state.currentStepIndex + 1;
-
-      // If skip failed conditions is enabled, find the next executed step
-      if (state.skipFailedConditions) {
-        while (
-          nextIndex < state.trace.steps.length &&
-          state.trace.steps[nextIndex].result === 'skipped'
-        ) {
-          nextIndex++;
-        }
+      const filteredIndices = getFilteredStepIndices(state.trace, state.skipFailedConditions);
+      if (filteredIndices.length === 0) {
+        return state;
       }
 
-      // If at or past end, just pause
-      if (nextIndex >= state.trace.steps.length) {
+      // Find current position in filtered list
+      const currentFilteredPos = filteredIndices.findIndex(i => i === state.currentStepIndex);
+
+      let nextIndex: number;
+      if (state.currentStepIndex === -1) {
+        // At ready state, go to first filtered step
+        nextIndex = filteredIndices[0];
+      } else if (currentFilteredPos === -1) {
+        // Current step is not in filtered list (shouldn't happen), go to first
+        nextIndex = filteredIndices[0];
+      } else if (currentFilteredPos >= filteredIndices.length - 1) {
+        // At end of filtered steps, pause
         return {
           ...state,
-          currentStepIndex: state.trace.steps.length - 1, // Go to last step
-          playbackState: 'paused', // Auto-pause at end
+          playbackState: 'paused',
         };
+      } else {
+        // Move to next filtered step
+        nextIndex = filteredIndices[currentFilteredPos + 1];
       }
 
       return {
@@ -137,14 +159,38 @@ function debuggerReducer(state: DebuggerState, action: DebuggerAction): Debugger
       };
     }
 
-    case 'STEP_BACKWARD':
-      // Allow going back to -1 (ready state)
-      if (state.currentStepIndex <= -1) return state;
+    case 'STEP_BACKWARD': {
+      if (!state.trace || state.currentStepIndex <= -1) {
+        return state;
+      }
+
+      const filteredIndices = getFilteredStepIndices(state.trace, state.skipFailedConditions);
+      if (filteredIndices.length === 0) {
+        return {
+          ...state,
+          currentStepIndex: -1,
+          playbackState: 'paused',
+        };
+      }
+
+      // Find current position in filtered list
+      const currentFilteredPos = filteredIndices.findIndex(i => i === state.currentStepIndex);
+
+      let prevIndex: number;
+      if (currentFilteredPos <= 0) {
+        // At or before first filtered step, go to ready state
+        prevIndex = -1;
+      } else {
+        // Move to previous filtered step
+        prevIndex = filteredIndices[currentFilteredPos - 1];
+      }
+
       return {
         ...state,
-        currentStepIndex: state.currentStepIndex - 1,
-        playbackState: 'paused', // Pause on manual step
+        currentStepIndex: prevIndex,
+        playbackState: 'paused',
       };
+    }
 
     case 'GO_TO_STEP':
       if (!state.trace || action.index < 0 || action.index >= state.trace.steps.length) return state;
@@ -160,11 +206,28 @@ function debuggerReducer(state: DebuggerState, action: DebuggerAction): Debugger
         playbackSpeed: Math.max(100, Math.min(2000, action.speed)),
       };
 
-    case 'SET_SKIP_FAILED_CONDITIONS':
+    case 'SET_SKIP_FAILED_CONDITIONS': {
+      // If enabling filter and current step would be filtered out, move to nearest valid step
+      if (action.skip && state.trace && state.currentStepIndex >= 0) {
+        const currentStep = state.trace.steps[state.currentStepIndex];
+        if (currentStep && currentStep.result === 'skipped') {
+          // Find the next non-skipped step, or go to ready state
+          const filteredIndices = getFilteredStepIndices(state.trace, true);
+          const nextValidIndex = filteredIndices.find(i => i > state.currentStepIndex);
+          const prevValidIndex = [...filteredIndices].reverse().find(i => i < state.currentStepIndex);
+
+          return {
+            ...state,
+            skipFailedConditions: action.skip,
+            currentStepIndex: nextValidIndex ?? prevValidIndex ?? -1,
+          };
+        }
+      }
       return {
         ...state,
         skipFailedConditions: action.skip,
       };
+    }
 
     default:
       return state;
@@ -204,6 +267,10 @@ interface DebuggerContextValue {
   hasTrace: boolean;
   progress: number;
   totalSteps: number;
+  /** Current position within filtered steps (0-indexed), -1 if at ready state */
+  currentFilteredPosition: number;
+  /** Array of actual step indices that are shown (for navigation) */
+  filteredStepIndices: number[];
   isEngineReady: boolean;
   skipFailedConditions: boolean;
 }
@@ -349,12 +416,20 @@ export function DebuggerProvider({
     ? getChangesAtStep(state.trace, state.currentStepIndex)
     : [];
 
-  const totalSteps = state.trace ? state.trace.steps.length : 0;
+  // Compute filtered indices for accurate step counting
+  const filteredStepIndices = getFilteredStepIndices(state.trace, state.skipFailedConditions);
+  const totalSteps = filteredStepIndices.length;
+
+  // Find current position within filtered steps
+  const currentFilteredPos = state.currentStepIndex >= 0
+    ? filteredStepIndices.findIndex(i => i === state.currentStepIndex)
+    : -1;
+
   const isAtStart = state.currentStepIndex <= -1; // -1 is "ready" state (before step 0)
-  const isAtEnd = state.currentStepIndex >= totalSteps - 1 && state.currentStepIndex >= 0;
+  const isAtEnd = currentFilteredPos >= totalSteps - 1 && currentFilteredPos >= 0;
   const hasTrace = state.trace !== null && totalSteps > 0;
-  const progress = totalSteps > 0 && state.currentStepIndex >= 0
-    ? (state.currentStepIndex + 1) / totalSteps
+  const progress = totalSteps > 0 && currentFilteredPos >= 0
+    ? (currentFilteredPos + 1) / totalSteps
     : 0;
 
   const value: DebuggerContextValue = {
@@ -384,6 +459,8 @@ export function DebuggerProvider({
     hasTrace,
     progress,
     totalSteps,
+    currentFilteredPosition: currentFilteredPos,
+    filteredStepIndices,
     isEngineReady,
     skipFailedConditions: state.skipFailedConditions,
   };
