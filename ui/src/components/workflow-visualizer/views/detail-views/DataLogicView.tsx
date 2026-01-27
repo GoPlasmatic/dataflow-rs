@@ -11,7 +11,7 @@ export function DataLogicView({ value }: DataLogicViewProps) {
 
   return (
     <div className="df-details-content">
-      <div className="df-details-logic-editor">
+      <div className="df-details-logic-editor" data-theme={resolvedTheme}>
         <DataLogicEditor
           value={value}
           mode="visualize"

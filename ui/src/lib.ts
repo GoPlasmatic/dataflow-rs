@@ -2,7 +2,6 @@
 export { WorkflowVisualizer } from './components/workflow-visualizer';
 export type {
   WorkflowVisualizerProps,
-  SelectionType,
   TreeSelectionType,
 } from './components/workflow-visualizer';
 
@@ -23,6 +22,7 @@ export {
   MessageStatePanel,
   DebugInfoBubble,
   DebugStateBadge,
+  IntegratedDebugToolbar,
 } from './components/workflow-visualizer/debug';
 
 // Context and hooks
@@ -76,9 +76,8 @@ export type {
   // Engine types
   DataflowEngine,
   EngineFactory,
-  // Legacy types (for backwards compatibility)
-  LegacyExecutionStep,
-  LegacyWorkflowExecutionTrace,
+  // Debug config type
+  DebugConfig,
 } from './types';
 
 export {
@@ -98,3 +97,7 @@ export { WasmEngineAdapter, defaultEngineFactory } from './engines';
 
 // Styles
 import './components/workflow-visualizer/styles/index.css';
+// React Flow styles (required for diagram visualizer)
+import '@xyflow/react/dist/style.css';
+// DataLogic UI styles (for diagram visualizer)
+import '@goplasmatic/datalogic-ui/styles.css';

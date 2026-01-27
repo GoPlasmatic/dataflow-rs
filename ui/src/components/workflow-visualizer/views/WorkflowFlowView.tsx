@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Play, CheckCircle, ArrowRight, Check, GitBranch, ExternalLink } from 'lucide-react';
 import type { Workflow, Task, JsonLogicValue } from '../../../types';
 import { FunctionTypeBadge } from '../cards/FunctionTypeBadge';
-import type { SelectionType } from '../WorkflowVisualizer';
+import type { TreeSelectionType } from '../WorkflowVisualizer';
 
 interface WorkflowFlowViewProps {
   workflows: Workflow[];
@@ -10,7 +10,7 @@ interface WorkflowFlowViewProps {
   onWorkflowSelect?: (workflow: Workflow) => void;
   onWorkflowConditionClick?: (workflow: Workflow) => void;
   onTaskConditionClick?: (task: Task, workflow: Workflow) => void;
-  selection?: SelectionType;
+  selection?: TreeSelectionType;
   highlightedTaskIds?: Set<string>;
 }
 

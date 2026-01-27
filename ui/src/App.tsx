@@ -1,8 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Sun, Moon, Github, BookOpen, ChevronDown, PanelLeftClose, PanelLeft, Braces } from 'lucide-react';
-import { WorkflowVisualizer, DebuggerProvider } from './components/workflow-visualizer';
+import { WorkflowVisualizer } from './components/workflow-visualizer';
 import { JsonEditor, StatusBar } from './components/common';
-import { DebugControls } from './components/DebugControls';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { defaultEngineFactory } from './engines';
 import initWasm from '@goplasmatic/dataflow-wasm';
@@ -176,7 +175,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
   }, []);
 
   return (
-    <DebuggerProvider autoActivate={true} engineFactory={engineFactory}>
+    <>
       <div className="app" data-theme={theme}>
         <header className="app-header">
           <div className="header-title">
@@ -292,22 +291,25 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
             />
           )}
 
-          {/* Right Panel - Visual Flow */}
+          {/* Right Panel - Visualizer */}
           <div className="panel visual-panel">
-            <div className="panel-header">
-              <h2>Workflow Flow</h2>
-              <DebugControls
-                workflows={workflows}
-                payloadText={payloadText}
-                payloadError={payloadError}
-              />
-            </div>
             <div className="panel-content">
               <WorkflowVisualizer
                 key={workflowsText}
                 workflows={workflows}
                 theme={theme}
-                debugMode={true}
+                debugConfig={{
+                  enabled: true,
+                  engineFactory: engineFactory!,
+                  autoExecute: true,
+                }}
+                debugPayload={(() => {
+                  try {
+                    return JSON.parse(payloadText);
+                  } catch {
+                    return {};
+                  }
+                })()}
               />
             </div>
           </div>
@@ -321,7 +323,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
           cursorPosition={cursorPosition}
         />
       </div>
-    </DebuggerProvider>
+    </>
   );
 }
 

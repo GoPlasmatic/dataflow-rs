@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Layers } from 'lucide-react';
 import type { Workflow } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
-import { useDebugger } from '../context';
+import { useDebuggerOptional } from '../context';
 import { TreeNode, WorkflowNode, FolderNode, TREE_COLORS } from '../components';
 import { buildFolderTree, getFirstLevelFolderIds, getParentFolderIds } from '../utils/folderTree';
 
@@ -15,8 +15,8 @@ interface TreeViewProps {
 }
 
 export function TreeView({ workflows, selection, onSelect, debugMode = false }: TreeViewProps) {
-  // Always call hook unconditionally (React rules of hooks)
-  const debuggerContext = useDebugger();
+  // Use optional hook that returns null if no provider exists
+  const debuggerContext = useDebuggerOptional();
   const effectiveDebugContext = debugMode ? debuggerContext : null;
 
   // Build folder tree from workflows

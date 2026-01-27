@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import type { Workflow, Task, JsonLogicValue, Message, Change, MappingItem, ValidationRule } from '../../types';
-import { ThemeProvider, useTheme, useDebugger } from './context';
+import type { DebugConfig } from '../../types/debugConfig';
+import { ThemeProvider, useTheme, useDebuggerOptional, DebuggerProvider } from './context';
 import { TreeView, DetailsPanel } from './views';
+import { IntegratedDebugToolbar } from './debug';
 import { ErrorBoundary, JsonEditor } from '../common';
 import type { Theme } from './context';
 
@@ -16,8 +18,6 @@ export type TreeSelectionType =
   | { type: 'mapping'; task: Task; workflow: Workflow; mapping: MappingItem; mappingIndex: number }
   | { type: 'validation-rule'; task: Task; workflow: Workflow; rule: ValidationRule; ruleIndex: number };
 
-// Legacy selection type alias for backwards compatibility
-export type SelectionType = TreeSelectionType;
 
 export interface WorkflowVisualizerProps {
   /** Array of workflow definitions to display */
@@ -32,8 +32,16 @@ export interface WorkflowVisualizerProps {
   className?: string;
   /** Execution result to display in the result panel */
   executionResult?: Message | null;
-  /** Enable debug mode with step-by-step visualization */
-  debugMode?: boolean;
+  /**
+   * Debug configuration for integrated debug mode.
+   * When enabled, automatically wraps with DebuggerProvider and shows controls.
+   */
+  debugConfig?: DebugConfig;
+  /**
+   * Payload for debugging. Used with debugConfig.
+   * Takes precedence over debugConfig.initialPayload.
+   */
+  debugPayload?: Record<string, unknown>;
 }
 
 // Get display info for the current selection
@@ -69,21 +77,31 @@ function getSelectionInfo(selection: TreeSelectionType): { title: string; subtit
   }
 }
 
+interface VisualizerInnerProps {
+  workflows: Workflow[];
+  onTaskSelect?: (task: Task, workflow: Workflow) => void;
+  onWorkflowSelect?: (workflow: Workflow) => void;
+  executionResult?: Message | null;
+  /** Debug config for toolbar and debug mode */
+  debugConfig?: DebugConfig;
+  /** Payload for debugging */
+  debugPayload?: Record<string, unknown>;
+}
+
 function VisualizerInner({
   workflows,
   onTaskSelect,
   onWorkflowSelect,
   executionResult,
-  debugMode = false,
-}: {
-  workflows: Workflow[];
-  onTaskSelect?: (task: Task, workflow: Workflow) => void;
-  onWorkflowSelect?: (workflow: Workflow) => void;
-  executionResult?: Message | null;
-  debugMode?: boolean;
-}) {
+  debugConfig,
+  debugPayload,
+}: VisualizerInnerProps) {
   const { resolvedTheme } = useTheme();
-  const debuggerContext = debugMode ? useDebugger() : null;
+  // Derive debug mode from debugConfig
+  const debugMode = debugConfig?.enabled ?? false;
+  // Use optional hook that returns null if no provider exists
+  const debuggerContext = useDebuggerOptional();
+  const effectiveDebugContext = debugMode ? debuggerContext : null;
   const [selection, setSelection] = useState<TreeSelectionType>({ type: 'none' });
   const [leftPanelWidth, setLeftPanelWidth] = useState(280);
   const [isDragging, setIsDragging] = useState(false);
@@ -170,12 +188,12 @@ function VisualizerInner({
   const selectionInfo = getSelectionInfo(selection);
 
   // Determine which message to display in result panel
-  const hasDebugTrace = debugMode && debuggerContext?.hasTrace;
+  const hasDebugTrace = debugMode && effectiveDebugContext?.hasTrace;
   const displayMessage = hasDebugTrace
-    ? debuggerContext?.currentMessage
+    ? effectiveDebugContext?.currentMessage
     : executionResult;
-  const currentChanges = hasDebugTrace ? debuggerContext?.currentChanges : [];
-  const currentStepIndex = hasDebugTrace ? debuggerContext?.state.currentStepIndex : -1;
+  const currentChanges = hasDebugTrace ? effectiveDebugContext?.currentChanges : [];
+  const currentStepIndex = hasDebugTrace ? effectiveDebugContext?.state.currentStepIndex : -1;
 
   // Compute highlighted paths from changes
   const highlightedPaths = useMemo(() => {
@@ -187,24 +205,40 @@ function VisualizerInner({
 
   return (
     <ErrorBoundary>
-      <div
-        ref={containerRef}
-        className={`df-visualizer-horizontal df-theme-${resolvedTheme} ${isDraggingAny ? 'df-dragging' : ''}`}
-      >
-        {/* Left section: Tree view + Result panel */}
+      <div className={`df-visualizer-container df-theme-${resolvedTheme}`}>
+        {/* Title bar with debug controls */}
+        <div className="df-visualizer-title-bar">
+          <span className="df-visualizer-title">Workflows</span>
+          {debugMode && debugConfig && (
+            <IntegratedDebugToolbar
+              workflows={workflows}
+              payload={debugPayload ?? debugConfig.initialPayload}
+              autoExecute={debugConfig.autoExecute}
+              onExecutionComplete={debugConfig.onExecutionComplete}
+              onExecutionError={debugConfig.onExecutionError}
+            />
+          )}
+        </div>
+
+        {/* Main content area */}
         <div
-          ref={leftPanelRef}
-          className="df-visualizer-left"
-          style={{ width: leftPanelWidth }}
+          ref={containerRef}
+          className={`df-visualizer-horizontal ${isDraggingAny ? 'df-dragging' : ''}`}
         >
-          {/* Tree view section */}
+          {/* Left section: Tree view + Result panel */}
           <div
-            className={`df-visualizer-left-tree ${displayMessage ? 'df-with-result' : ''}`}
-            style={displayMessage ? { height: `${treePanelHeight}%` } : undefined}
+            ref={leftPanelRef}
+            className="df-visualizer-left"
+            style={{ width: leftPanelWidth }}
           >
-            <div className="df-visualizer-left-header">
-              <span className="df-visualizer-left-title">Explorer</span>
-            </div>
+            {/* Tree view section */}
+            <div
+              className={`df-visualizer-left-tree ${displayMessage ? 'df-with-result' : ''}`}
+              style={displayMessage ? { height: `${treePanelHeight}%` } : undefined}
+            >
+              <div className="df-visualizer-left-header">
+                <span className="df-visualizer-left-title">Explorer</span>
+              </div>
             <div className="df-visualizer-left-content">
               {workflows.length === 0 ? (
                 <div className="df-empty-state">
@@ -281,6 +315,7 @@ function VisualizerInner({
           )}
           <DetailsPanel selection={selection} />
         </div>
+        </div>
       </div>
     </ErrorBoundary>
   );
@@ -293,8 +328,34 @@ export function WorkflowVisualizer({
   theme = 'system',
   className = '',
   executionResult,
-  debugMode = false,
+  debugConfig,
+  debugPayload,
 }: WorkflowVisualizerProps) {
+  // When debugConfig.enabled is true, wrap internally with DebuggerProvider
+  if (debugConfig?.enabled) {
+    return (
+      <ThemeProvider defaultTheme={theme}>
+        <DebuggerProvider
+          engineFactory={debugConfig.engineFactory}
+          autoActivate={true}
+          initialPayload={debugPayload ?? debugConfig.initialPayload}
+        >
+          <div className={`df-root ${className}`}>
+            <VisualizerInner
+              workflows={workflows}
+              onTaskSelect={onTaskSelect}
+              onWorkflowSelect={onWorkflowSelect}
+              executionResult={executionResult}
+              debugConfig={debugConfig}
+              debugPayload={debugPayload}
+            />
+          </div>
+        </DebuggerProvider>
+      </ThemeProvider>
+    );
+  }
+
+  // Non-debug mode: render without DebuggerProvider
   return (
     <ThemeProvider defaultTheme={theme}>
       <div className={`df-root ${className}`}>
@@ -303,7 +364,6 @@ export function WorkflowVisualizer({
           onTaskSelect={onTaskSelect}
           onWorkflowSelect={onWorkflowSelect}
           executionResult={executionResult}
-          debugMode={debugMode}
         />
       </div>
     </ThemeProvider>

@@ -2,6 +2,36 @@
    DEBUGGER STYLES
    ============================================ */
 
+/* Visualizer container with title bar */
+.df-visualizer-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.df-visualizer-title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--df-border-color);
+  background: var(--df-bg-secondary);
+  flex-shrink: 0;
+}
+
+.df-visualizer-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--df-text-primary);
+}
+
+/* Make horizontal layout fill remaining space */
+.df-visualizer-container .df-visualizer-horizontal {
+  flex: 1;
+  min-height: 0;
+}
+
 /* Debug mode layout */
 .df-debug-mode {
   display: flex;
@@ -1194,4 +1224,151 @@
 /* Add padding at bottom when status bar is visible */
 .df-debug-mode.df-visualizer-horizontal {
   padding-bottom: 30px;
+}
+
+/* ============================================
+   INTEGRATED DEBUG TOOLBAR
+   Compact toolbar for header integration
+   ============================================ */
+
+.df-debug-toolbar-integrated {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  padding: 2px 0;
+}
+
+.df-debug-toolbar-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--df-text-secondary);
+  min-width: 80px;
+}
+
+.df-debug-toolbar-step-text {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.df-debug-toolbar-status-success {
+  color: var(--df-success);
+}
+
+.df-debug-toolbar-status-error {
+  color: var(--df-error);
+}
+
+.df-debug-toolbar-status-warning {
+  color: var(--df-warning);
+}
+
+.df-debug-toolbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.df-debug-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: 1px solid var(--df-border-color);
+  border-radius: 4px;
+  color: var(--df-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.df-debug-toolbar-btn:hover:not(:disabled) {
+  background: var(--df-bg-hover);
+  border-color: var(--df-border-color-strong);
+  color: var(--df-text-primary);
+}
+
+.df-debug-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.df-debug-toolbar-btn-primary {
+  background: var(--df-accent-primary);
+  border-color: var(--df-accent-primary);
+  color: white;
+}
+
+.df-debug-toolbar-btn-primary:hover:not(:disabled) {
+  background: var(--df-accent-secondary);
+  border-color: var(--df-accent-secondary);
+  color: white;
+}
+
+.df-debug-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--df-border-color);
+}
+
+.df-debug-toolbar-btn-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.df-debug-toolbar-btn-run {
+  color: white;
+  background: var(--df-success);
+}
+
+.df-debug-toolbar-btn-run:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--df-success) 85%, black);
+}
+
+.df-debug-toolbar-btn-run:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.df-debug-toolbar-btn-reset {
+  color: var(--df-text-secondary);
+  background: var(--df-bg-secondary);
+  border: 1px solid var(--df-border-color);
+}
+
+.df-debug-toolbar-btn-reset:hover:not(:disabled) {
+  color: var(--df-text-primary);
+  background: var(--df-bg-hover);
+  border-color: var(--df-border-color-strong);
+}
+
+.df-debug-toolbar-btn-reset:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Header with integrated debug controls */
+.df-header-with-debug {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.df-header-with-debug .df-visualizer-left-title {
+  flex-shrink: 0;
 }

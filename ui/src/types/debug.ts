@@ -1,4 +1,4 @@
-import type { Workflow, Task, JsonLogicValue } from './workflow';
+import type { JsonLogicValue } from './workflow';
 
 /**
  * Message structure for workflow execution
@@ -110,52 +110,6 @@ export interface ConditionResult {
   result: boolean;
   /** Data context used for evaluation */
   context: Record<string, unknown>;
-}
-
-/**
- * Legacy execution step type (for backwards compatibility)
- * @deprecated Use ExecutionStep instead
- */
-export interface LegacyExecutionStep {
-  /** Unique ID for this step */
-  id: string;
-  /** Type of step */
-  type: 'workflow-condition' | 'workflow-start' | 'workflow-end' | 'task-condition' | 'task-start' | 'task-end';
-  /** Associated workflow */
-  workflow: Workflow;
-  /** Associated task (if applicable) */
-  task?: Task;
-  /** Result of condition evaluation (if applicable) */
-  conditionResult?: ConditionResult;
-  /** Message state before this step */
-  messageBefore: Message;
-  /** Message state after this step */
-  messageAfter: Message;
-  /** State of this node */
-  state: DebugNodeState;
-  /** Timestamp when this step occurred */
-  timestamp: number;
-  /** Duration of this step in ms (for task-end) */
-  duration?: number;
-  /** Error if this step failed */
-  error?: ErrorInfo;
-}
-
-/**
- * Legacy trace type (for backwards compatibility)
- * @deprecated Use ExecutionTrace instead
- */
-export interface LegacyWorkflowExecutionTrace {
-  /** All execution steps */
-  steps: LegacyExecutionStep[];
-  /** Initial message before any processing */
-  initialMessage: Message;
-  /** Final message after all processing */
-  finalMessage: Message;
-  /** Total execution duration in ms */
-  totalDuration: number;
-  /** Whether execution completed successfully */
-  success: boolean;
 }
 
 /**
