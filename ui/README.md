@@ -82,33 +82,52 @@ interface WorkflowVisualizerProps {
   theme?: 'light' | 'dark' | 'system';
   className?: string;
   executionResult?: Message | null;
-  debugMode?: boolean;
+  debugConfig?: DebugConfig;
+  debugPayload?: Record<string, unknown>;
+}
+
+interface DebugConfig {
+  enabled: boolean;
+  engineFactory?: EngineFactory;
+  initialPayload?: Record<string, unknown>;
+  autoExecute?: boolean;
+  onExecutionComplete?: (trace: ExecutionTrace) => void;
+  onExecutionError?: (error: string) => void;
 }
 ```
 
 ### Debug Mode
 
-Enable step-by-step execution visualization:
+Enable step-by-step execution visualization with integrated debug controls:
 
 ```tsx
-import { WorkflowVisualizer, DebuggerProvider, DebuggerControls, defaultEngineFactory } from '@goplasmatic/dataflow-ui';
+import { WorkflowVisualizer, defaultEngineFactory } from '@goplasmatic/dataflow-ui';
 
 function DebugView() {
+  const payload = { data: { input: 'hello' } };
+
   return (
-    <DebuggerProvider engineFactory={defaultEngineFactory}>
-      <WorkflowVisualizer workflows={workflows} debugMode={true} />
-      <DebuggerControls />
-    </DebuggerProvider>
+    <WorkflowVisualizer
+      workflows={workflows}
+      debugConfig={{
+        enabled: true,
+        engineFactory: defaultEngineFactory,
+        autoExecute: true,
+      }}
+      debugPayload={payload}
+    />
   );
 }
 ```
+
+The debug controls (play, pause, step forward/backward) are automatically displayed in the visualizer header when `debugConfig.enabled` is true.
 
 ### Custom WASM Engine
 
 Use a custom WASM engine with plugins or custom functions:
 
 ```tsx
-import { WorkflowVisualizer, DebuggerProvider, DataflowEngine } from '@goplasmatic/dataflow-ui';
+import { WorkflowVisualizer, DataflowEngine, EngineFactory } from '@goplasmatic/dataflow-ui';
 import { MyCustomWasmEngine } from './my-custom-wasm';
 
 // Implement the DataflowEngine interface
@@ -129,11 +148,19 @@ class MyEngineAdapter implements DataflowEngine {
   }
 }
 
+const customEngineFactory: EngineFactory = (workflows) => new MyEngineAdapter(workflows);
+
 function CustomDebugView() {
   return (
-    <DebuggerProvider engineFactory={(workflows) => new MyEngineAdapter(workflows)}>
-      <WorkflowVisualizer workflows={workflows} debugMode={true} />
-    </DebuggerProvider>
+    <WorkflowVisualizer
+      workflows={workflows}
+      debugConfig={{
+        enabled: true,
+        engineFactory: customEngineFactory,
+        autoExecute: true,
+      }}
+      debugPayload={{ data: { input: 'test' } }}
+    />
   );
 }
 ```
@@ -141,10 +168,9 @@ function CustomDebugView() {
 ## Exports
 
 ### Components
-- `WorkflowVisualizer` - Main visualization component
+- `WorkflowVisualizer` - Main visualization component with integrated debug controls
 - `TreeView` - Standalone tree view
-- `DebuggerControls` - Debug playback controls
-- `DebuggerProvider` - Debug state context provider
+- `DebuggerProvider` - Debug state context provider (for advanced use cases)
 
 ### Hooks
 - `useTheme` - Access theme state
@@ -158,7 +184,9 @@ function CustomDebugView() {
 - `EngineFactory` - Type for engine factory functions
 
 ### Types
-All TypeScript types are exported for workflow definitions, tasks, messages, and execution traces.
+- `Workflow`, `Task`, `Message` - Core workflow types
+- `ExecutionTrace`, `ExecutionStep` - Execution trace types
+- `DebugConfig` - Debug mode configuration
 
 ## Peer Dependencies
 
