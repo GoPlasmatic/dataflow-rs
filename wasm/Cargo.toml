@@ -13,7 +13,7 @@ categories = ["wasm", "development-tools"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-dataflow-rs = { version = "2.0.4", path = ".." }
+dataflow-rs = { version = "2.0.14", path = ".." }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

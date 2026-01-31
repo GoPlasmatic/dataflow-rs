@@ -62,6 +62,8 @@ jobs:
         run: |
           cd ui
           npm ci
+          cp ../wasm/pkg/dataflow_wasm.js node_modules/@goplasmatic/dataflow-wasm/
+          cp ../wasm/pkg/dataflow_wasm_bg.wasm node_modules/@goplasmatic/dataflow-wasm/
           npm run build
           mkdir -p ../docs/book/debugger
           cp -r dist/* ../docs/book/debugger/
