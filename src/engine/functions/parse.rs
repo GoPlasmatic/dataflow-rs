@@ -127,6 +127,12 @@ pub fn execute_parse_json(
     // Extract source data
     let source_data = config.extract_source(message);
 
+    // If source is a JSON string, parse it into a structured value
+    let source_data = match &source_data {
+        Value::String(s) => serde_json::from_str(s).unwrap_or(source_data),
+        _ => source_data,
+    };
+
     // Get old value for change tracking
     let old_value = message
         .data()
@@ -421,5 +427,27 @@ mod tests {
 
         let json = result.unwrap();
         assert!(json.is_object());
+    }
+
+    #[test]
+    fn test_execute_parse_json_from_string_payload() {
+        // Simulate WASM layer storing payload as a raw JSON string
+        let payload = Value::String(r#"{"name":"John","age":30}"#.to_string());
+        let mut message = Message::new(Arc::new(payload));
+
+        let config = ParseConfig {
+            source: "payload".to_string(),
+            target: "input".to_string(),
+        };
+
+        let result = execute_parse_json(&mut message, &config);
+        assert!(result.is_ok());
+
+        let (status, _) = result.unwrap();
+        assert_eq!(status, 200);
+
+        // Verify the JSON string was parsed into a structured value
+        assert_eq!(message.data()["input"]["name"], json!("John"));
+        assert_eq!(message.data()["input"]["age"], json!(30));
     }
 }

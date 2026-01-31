@@ -6,26 +6,41 @@ set -e
 echo "Building WASM package..."
 wasm-pack build --target web --out-dir pkg
 
+echo "Extracting metadata from Cargo.toml..."
+CARGO_TOML="Cargo.toml"
+
+VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$CARGO_TOML")
+DESCRIPTION=$(sed -n 's/^description = "\(.*\)"/\1/p' "$CARGO_TOML")
+LICENSE=$(sed -n 's/^license = "\(.*\)"/\1/p' "$CARGO_TOML")
+REPOSITORY=$(sed -n 's/^repository = "\(.*\)"/\1/p' "$CARGO_TOML")
+AUTHOR=$(sed -n 's/^authors = \["\(.*\)"\]/\1/p' "$CARGO_TOML")
+# Extract keywords from Cargo.toml and append npm-specific ones
+CARGO_KEYWORDS=$(sed -n 's/^keywords = \[\(.*\)\]/\1/p' "$CARGO_TOML")
+KEYWORDS="${CARGO_KEYWORDS}, \"dataflow\", \"rust\""
+
+echo "  Version: $VERSION"
+echo "  Description: $DESCRIPTION"
+
 echo "Patching package.json for npm..."
 cd pkg
 
-# Update package.json with correct npm configuration
-cat > package.json << 'EOF'
+# Generate package.json from Cargo.toml metadata
+cat > package.json << EOF
 {
   "name": "@goplasmatic/dataflow-wasm",
   "type": "module",
-  "author": "Plasmatic Engineering <shankar@goplasmatic.io>",
-  "description": "WebAssembly bindings for dataflow-rs workflow engine",
-  "version": "2.0.7",
-  "license": "Apache-2.0",
-  "homepage": "https://github.com/GoPlasmatic/dataflow-rs",
+  "author": "$AUTHOR",
+  "description": "$DESCRIPTION",
+  "version": "$VERSION",
+  "license": "$LICENSE",
+  "homepage": "$REPOSITORY",
   "repository": {
     "type": "git",
-    "url": "https://github.com/GoPlasmatic/dataflow-rs",
+    "url": "$REPOSITORY",
     "directory": "wasm"
   },
   "bugs": {
-    "url": "https://github.com/GoPlasmatic/dataflow-rs/issues"
+    "url": "${REPOSITORY}/issues"
   },
   "files": [
     "dataflow_wasm_bg.wasm",
@@ -38,14 +53,7 @@ cat > package.json << 'EOF'
   "sideEffects": [
     "./snippets/*"
   ],
-  "keywords": [
-    "workflow",
-    "engine",
-    "wasm",
-    "webassembly",
-    "dataflow",
-    "rust"
-  ]
+  "keywords": [${KEYWORDS}]
 }
 EOF
 
