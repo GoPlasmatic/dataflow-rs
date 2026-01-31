@@ -1,4 +1,5 @@
 import type { Workflow } from '../../../types';
+import { NODE_IDS } from '../constants';
 
 /**
  * Represents a folder node in the tree hierarchy
@@ -121,7 +122,7 @@ export function buildFolderTree(workflows: Workflow[]): FolderTree {
  * Gets the IDs of first-level folders for default expansion
  */
 export function getFirstLevelFolderIds(tree: FolderTree): string[] {
-  return Array.from(tree.folders.keys()).map(name => `folder-${name}`);
+  return Array.from(tree.folders.keys()).map(name => NODE_IDS.folder(name));
 }
 
 /**
@@ -136,7 +137,7 @@ export function getParentFolderIds(path: string | undefined): string[] {
 
   for (const segment of segments) {
     currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-    ids.push(`folder-${currentPath}`);
+    ids.push(NODE_IDS.folder(currentPath));
   }
 
   return ids;

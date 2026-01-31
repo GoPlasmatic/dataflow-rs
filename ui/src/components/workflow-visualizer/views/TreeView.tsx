@@ -5,6 +5,7 @@ import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useDebuggerOptional } from '../context';
 import { TreeNode, WorkflowNode, FolderNode, TREE_COLORS } from '../components';
 import { buildFolderTree, getFirstLevelFolderIds, getParentFolderIds } from '../utils/folderTree';
+import { NODE_IDS, PLAYBACK } from '../constants';
 
 interface TreeViewProps {
   workflows: Workflow[];
@@ -34,7 +35,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
 
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
     // Initially expand the root "Workflows" node and first-level folders
-    const initial = new Set(['workflows-root']);
+    const initial = new Set<string>([NODE_IDS.ROOT]);
     getFirstLevelFolderIds(folderTree).forEach(id => initial.add(id));
     return initial;
   });
@@ -43,7 +44,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
   useEffect(() => {
     setExpandedNodes((prev) => {
       const next = new Set(prev);
-      next.add('workflows-root');
+      next.add(NODE_IDS.ROOT);
       // Expand first-level folders by default
       getFirstLevelFolderIds(folderTree).forEach(id => next.add(id));
       return next;
@@ -67,7 +68,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
       allWorkflows.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
       setExpandedNodes((prev) => {
         const next = new Set(prev);
-        next.add(`workflow-${allWorkflows[0].id}`);
+        next.add(NODE_IDS.workflow(allWorkflows[0].id));
         // Also expand parent folders if needed
         getParentFolderIds(allWorkflows[0].path).forEach(id => next.add(id));
         return next;
@@ -103,14 +104,14 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
     // Auto-expand nodes to show current step
     setExpandedNodes((prev) => {
       const next = new Set(prev);
-      next.add('workflows-root');
+      next.add(NODE_IDS.ROOT);
       // Expand parent folders if workflow has a path
       if (workflow?.path) {
         getParentFolderIds(workflow.path).forEach(id => next.add(id));
       }
-      next.add(`workflow-${workflow_id}`);
+      next.add(NODE_IDS.workflow(workflow_id));
       if (task_id) {
-        next.add(`task-${workflow_id}-${task_id}`);
+        next.add(NODE_IDS.task(workflow_id, task_id));
       }
       return next;
     });
@@ -135,7 +136,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
           block: 'nearest',
         });
       }
-    }, 50);
+    }, PLAYBACK.AUTO_SCROLL_DELAY_MS);
   }, [debugMode, effectiveDebugContext?.currentStep, effectiveDebugContext?.state.currentStepIndex, workflows, onSelect]);
 
   const toggleNode = (id: string) => {
@@ -150,7 +151,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
     });
   };
 
-  const isRootExpanded = expandedNodes.has('workflows-root');
+  const isRootExpanded = expandedNodes.has(NODE_IDS.ROOT);
   const totalWorkflowCount = workflows.length;
 
   return (
@@ -162,8 +163,8 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
         isExpanded={isRootExpanded}
         hasChildren={totalWorkflowCount > 0}
         level={0}
-        onToggle={() => toggleNode('workflows-root')}
-        onClick={() => toggleNode('workflows-root')}
+        onToggle={() => toggleNode(NODE_IDS.ROOT)}
+        onClick={() => toggleNode(NODE_IDS.ROOT)}
       >
         {/* Render folders first (alphabetically) */}
         {sortedRootFolders.map((folder) => (

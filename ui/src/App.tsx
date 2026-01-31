@@ -4,32 +4,16 @@ import { WorkflowVisualizer } from './components/workflow-visualizer';
 import { JsonEditor, StatusBar } from './components/common';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { defaultEngineFactory } from './engines';
+import { useResizable } from './components/workflow-visualizer/hooks';
+import { LAYOUT } from './components/workflow-visualizer/constants';
+import { ThemeProvider, useTheme } from './components/workflow-visualizer/context';
 import initWasm from '@goplasmatic/dataflow-wasm';
 import type { Workflow, EngineFactory } from './types';
 import { SAMPLE_WORKFLOWS } from './data/sampleWorkflows';
 import './App.css';
 
-function useTheme() {
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    if (typeof window !== 'undefined') {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    }
-    return 'light';
-  });
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
-
-  const toggleTheme = useCallback(() => {
-    setTheme((t) => (t === 'light' ? 'dark' : 'light'));
-  }, []);
-
-  return { theme, toggleTheme };
-}
-
 function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefined }) {
-  const { theme, toggleTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
 
   const [workflowsText, setWorkflowsText] = useState('');
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -42,12 +26,31 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const [panelWidth, setPanelWidth] = useState(400);
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLElement>(null);
 
   const [cursorPosition, setCursorPosition] = useState({ line: 1, column: 1 });
+
+  const {
+    size: panelWidth,
+    isDragging,
+    onMouseDown: handleMouseDown,
+  } = useResizable({
+    containerRef,
+    direction: 'horizontal',
+    min: LAYOUT.APP_PANEL.MIN,
+    max: LAYOUT.APP_PANEL.MAX,
+    initial: LAYOUT.APP_PANEL.DEFAULT,
+  });
+
+  // Set data-theme on document for App-level styling
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', resolvedTheme);
+  }, [resolvedTheme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(resolvedTheme === 'light' ? 'dark' : 'light');
+  }, [resolvedTheme, setTheme]);
 
   // Handle workflows text change
   const handleWorkflowsChange = useCallback((text: string) => {
@@ -119,29 +122,6 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Divider dragging
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  useEffect(() => {
-    if (!isDragging) return;
-    const handleMouseMove = (e: MouseEvent) => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setPanelWidth(Math.max(250, Math.min(600, e.clientX - rect.left)));
-      }
-    };
-    const handleMouseUp = () => setIsDragging(false);
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging]);
-
   // Toggle panel
   const togglePanel = useCallback(() => {
     setIsPanelCollapsed((prev) => !prev);
@@ -176,7 +156,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
 
   return (
     <>
-      <div className="app" data-theme={theme}>
+      <div className="app" data-theme={resolvedTheme}>
         <header className="app-header">
           <div className="header-title">
             <h1>Dataflow Visualizer</h1>
@@ -242,7 +222,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
               )}
             </div>
             <button className="theme-toggle" onClick={toggleTheme} title="Toggle Theme">
-              {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+              {resolvedTheme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
             </button>
           </div>
         </header>
@@ -262,7 +242,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
                 <JsonEditor
                   value={workflowsText}
                   onChange={handleWorkflowsChange}
-                  theme={theme}
+                  theme={resolvedTheme}
                   onCursorChange={handleCursorChange}
                 />
               </div>
@@ -276,7 +256,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
                 <JsonEditor
                   value={payloadText}
                   onChange={handlePayloadChange}
-                  theme={theme}
+                  theme={resolvedTheme}
                   onCursorChange={handleCursorChange}
                 />
               </div>
@@ -297,7 +277,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
               <WorkflowVisualizer
                 key={workflowsText}
                 workflows={workflows}
-                theme={theme}
+                theme={resolvedTheme}
                 debugConfig={{
                   enabled: true,
                   engineFactory: engineFactory!,
@@ -348,7 +328,11 @@ function App() {
     [wasmReady]
   );
 
-  return <AppContent engineFactory={engineFactory} />;
+  return (
+    <ThemeProvider defaultTheme="system">
+      <AppContent engineFactory={engineFactory} />
+    </ThemeProvider>
+  );
 }
 
 export default App;

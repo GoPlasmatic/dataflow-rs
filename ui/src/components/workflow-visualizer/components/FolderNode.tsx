@@ -4,6 +4,7 @@ import type { FolderTreeNode } from '../utils/folderTree';
 import { TreeNode } from './TreeNode';
 import { WorkflowNode } from './WorkflowNode';
 import { TREE_COLORS } from './colors';
+import { NODE_IDS } from '../constants';
 
 interface FolderNodeProps {
   folder: FolderTreeNode;
@@ -24,7 +25,7 @@ export function FolderNode({
   toggleNode,
   debugMode = false,
 }: FolderNodeProps) {
-  const folderId = `folder-${folder.fullPath}`;
+  const folderId = NODE_IDS.folder(folder.fullPath);
   const isExpanded = expandedNodes.has(folderId);
   const hasChildren = folder.folders.size > 0 || folder.workflows.length > 0;
 

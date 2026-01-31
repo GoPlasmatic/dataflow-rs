@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useCallback, useEffect, useRef, ReactNode } from 'react';
+import { createContext, useContext, useReducer, useCallback, useEffect, useRef, useMemo, ReactNode } from 'react';
 import type {
   DebuggerState,
   DebuggerAction,
@@ -11,6 +11,7 @@ import type {
 } from '../../../types';
 import { getMessageAtStep, getChangesAtStep } from '../../../types';
 import type { Change } from '../../../types';
+import { PLAYBACK } from '../constants';
 
 /**
  * Initial debugger state
@@ -20,7 +21,7 @@ const initialState: DebuggerState = {
   trace: null,
   currentStepIndex: -1,
   playbackState: 'stopped',
-  playbackSpeed: 500, // 500ms between steps
+  playbackSpeed: PLAYBACK.DEFAULT_SPEED_MS,
   inputPayload: null,
   isExecuting: false,
   executionError: null,
@@ -203,7 +204,7 @@ function debuggerReducer(state: DebuggerState, action: DebuggerAction): Debugger
     case 'SET_SPEED':
       return {
         ...state,
-        playbackSpeed: Math.max(100, Math.min(2000, action.speed)),
+        playbackSpeed: Math.max(PLAYBACK.MIN_SPEED_MS, Math.min(PLAYBACK.MAX_SPEED_MS, action.speed)),
       };
 
     case 'SET_SKIP_FAILED_CONDITIONS': {
@@ -403,67 +404,114 @@ export function DebuggerProvider({
     };
   }, [state.playbackState, state.playbackSpeed]);
 
-  // Computed values
-  const currentStep = state.trace && state.currentStepIndex >= 0
-    ? state.trace.steps[state.currentStepIndex]
-    : null;
+  // Memoize computed values to avoid unnecessary re-renders of consumers
+  const currentStep = useMemo(
+    () => state.trace && state.currentStepIndex >= 0
+      ? state.trace.steps[state.currentStepIndex]
+      : null,
+    [state.trace, state.currentStepIndex]
+  );
 
-  const currentMessage = state.trace && state.currentStepIndex >= 0
-    ? getMessageAtStep(state.trace, state.currentStepIndex)
-    : null;
+  const currentMessage = useMemo(
+    () => state.trace && state.currentStepIndex >= 0
+      ? getMessageAtStep(state.trace, state.currentStepIndex)
+      : null,
+    [state.trace, state.currentStepIndex]
+  );
 
-  const currentChanges = state.trace && state.currentStepIndex >= 0
-    ? getChangesAtStep(state.trace, state.currentStepIndex)
-    : [];
+  const currentChanges = useMemo(
+    () => state.trace && state.currentStepIndex >= 0
+      ? getChangesAtStep(state.trace, state.currentStepIndex)
+      : [],
+    [state.trace, state.currentStepIndex]
+  );
 
-  // Compute filtered indices for accurate step counting
-  const filteredStepIndices = getFilteredStepIndices(state.trace, state.skipFailedConditions);
+  const filteredStepIndices = useMemo(
+    () => getFilteredStepIndices(state.trace, state.skipFailedConditions),
+    [state.trace, state.skipFailedConditions]
+  );
+
   const totalSteps = filteredStepIndices.length;
 
-  // Find current position within filtered steps
-  const currentFilteredPos = state.currentStepIndex >= 0
-    ? filteredStepIndices.findIndex(i => i === state.currentStepIndex)
-    : -1;
+  const currentFilteredPos = useMemo(
+    () => state.currentStepIndex >= 0
+      ? filteredStepIndices.findIndex(i => i === state.currentStepIndex)
+      : -1,
+    [state.currentStepIndex, filteredStepIndices]
+  );
 
-  const isAtStart = state.currentStepIndex <= -1; // -1 is "ready" state (before step 0)
+  const isAtStart = state.currentStepIndex <= -1;
   const isAtEnd = currentFilteredPos >= totalSteps - 1 && currentFilteredPos >= 0;
   const hasTrace = state.trace !== null && totalSteps > 0;
   const progress = totalSteps > 0 && currentFilteredPos >= 0
     ? (currentFilteredPos + 1) / totalSteps
     : 0;
 
-  const value: DebuggerContextValue = {
-    state,
-    dispatch,
-    activate,
-    deactivate,
-    setInputPayload,
-    executeTrace,
-    startExecution,
-    setExecutionError,
-    play,
-    pause,
-    stop,
-    reset,
-    stepForward,
-    stepBackward,
-    goToStep,
-    setSpeed,
-    setSkipFailedConditions,
-    runExecution,
-    currentStep,
-    currentMessage,
-    currentChanges,
-    isAtStart,
-    isAtEnd,
-    hasTrace,
-    progress,
-    totalSteps,
-    currentFilteredPosition: currentFilteredPos,
-    filteredStepIndices,
-    isEngineReady,
-    skipFailedConditions: state.skipFailedConditions,
-  };
+  const value = useMemo<DebuggerContextValue>(
+    () => ({
+      state,
+      dispatch,
+      activate,
+      deactivate,
+      setInputPayload,
+      executeTrace,
+      startExecution,
+      setExecutionError,
+      play,
+      pause,
+      stop,
+      reset,
+      stepForward,
+      stepBackward,
+      goToStep,
+      setSpeed,
+      setSkipFailedConditions,
+      runExecution,
+      currentStep,
+      currentMessage,
+      currentChanges,
+      isAtStart,
+      isAtEnd,
+      hasTrace,
+      progress,
+      totalSteps,
+      currentFilteredPosition: currentFilteredPos,
+      filteredStepIndices,
+      isEngineReady,
+      skipFailedConditions: state.skipFailedConditions,
+    }),
+    [
+      state,
+      dispatch,
+      activate,
+      deactivate,
+      setInputPayload,
+      executeTrace,
+      startExecution,
+      setExecutionError,
+      play,
+      pause,
+      stop,
+      reset,
+      stepForward,
+      stepBackward,
+      goToStep,
+      setSpeed,
+      setSkipFailedConditions,
+      runExecution,
+      currentStep,
+      currentMessage,
+      currentChanges,
+      isAtStart,
+      isAtEnd,
+      hasTrace,
+      progress,
+      totalSteps,
+      currentFilteredPos,
+      filteredStepIndices,
+      isEngineReady,
+    ]
+  );
 
   return <DebuggerContext.Provider value={value}>{children}</DebuggerContext.Provider>;
 }

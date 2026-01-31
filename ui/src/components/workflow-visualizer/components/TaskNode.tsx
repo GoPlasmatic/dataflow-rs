@@ -4,6 +4,7 @@ import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useTaskDebugState, useTaskConditionDebugState } from '../hooks';
 import { TreeNode } from './TreeNode';
 import { TREE_COLORS } from './colors';
+import { NODE_IDS } from '../constants';
 
 interface TaskNodeProps {
   task: Task;
@@ -26,7 +27,7 @@ export function TaskNode({
   toggleNode,
   debugMode = false,
 }: TaskNodeProps) {
-  const taskId = `task-${workflow.id}-${task.id}`;
+  const taskId = NODE_IDS.task(workflow.id, task.id);
   const isExpanded = expandedNodes.has(taskId);
   const functionName = task.function.name;
   const input = task.function.input as Record<string, unknown> | undefined;

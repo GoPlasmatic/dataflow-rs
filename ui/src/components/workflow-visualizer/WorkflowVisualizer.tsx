@@ -1,10 +1,12 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import type { Workflow, Task, JsonLogicValue, Message, Change, MappingItem, ValidationRule } from '../../types';
+import { useState, useRef } from 'react';
+import type { Workflow, Task, JsonLogicValue, Message, MappingItem, ValidationRule } from '../../types';
 import type { DebugConfig } from '../../types/debugConfig';
 import { ThemeProvider, useTheme, useDebuggerOptional, DebuggerProvider } from './context';
-import { TreeView, DetailsPanel } from './views';
+import { TreeView, DetailsPanel, ResultPanel } from './views';
 import { IntegratedDebugToolbar } from './debug';
-import { ErrorBoundary, JsonEditor } from '../common';
+import { ErrorBoundary } from '../common';
+import { useResizable } from './hooks';
+import { LAYOUT } from './constants';
 import type { Theme } from './context';
 
 import './styles/index.css';
@@ -103,12 +105,32 @@ function VisualizerInner({
   const debuggerContext = useDebuggerOptional();
   const effectiveDebugContext = debugMode ? debuggerContext : null;
   const [selection, setSelection] = useState<TreeSelectionType>({ type: 'none' });
-  const [leftPanelWidth, setLeftPanelWidth] = useState(280);
-  const [isDragging, setIsDragging] = useState(false);
-  const [treePanelHeight, setTreePanelHeight] = useState(50); // percentage
-  const [isVerticalDragging, setIsVerticalDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const leftPanelRef = useRef<HTMLDivElement>(null);
+
+  const {
+    size: leftPanelWidth,
+    isDragging,
+    onMouseDown: handleMouseDown,
+  } = useResizable({
+    containerRef,
+    direction: 'horizontal',
+    min: LAYOUT.LEFT_PANEL.MIN,
+    max: LAYOUT.LEFT_PANEL.MAX,
+    initial: LAYOUT.LEFT_PANEL.DEFAULT,
+  });
+
+  const {
+    size: treePanelHeight,
+    isDragging: isVerticalDragging,
+    onMouseDown: handleVerticalMouseDown,
+  } = useResizable({
+    containerRef: leftPanelRef,
+    direction: 'vertical',
+    min: LAYOUT.TREE_HEIGHT_PCT.MIN,
+    max: LAYOUT.TREE_HEIGHT_PCT.MAX,
+    initial: LAYOUT.TREE_HEIGHT_PCT.DEFAULT,
+  });
 
   const handleSelection = (newSelection: TreeSelectionType) => {
     setSelection(newSelection);
@@ -126,65 +148,6 @@ function VisualizerInner({
     }
   };
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  const handleVerticalMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsVerticalDragging(true);
-  }, []);
-
-  useEffect(() => {
-    if (!isDragging) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const newWidth = e.clientX - rect.left;
-        setLeftPanelWidth(Math.max(200, Math.min(450, newWidth)));
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsDragging(false);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging]);
-
-  useEffect(() => {
-    if (!isVerticalDragging) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (leftPanelRef.current) {
-        const rect = leftPanelRef.current.getBoundingClientRect();
-        const relativeY = e.clientY - rect.top;
-        const percentage = (relativeY / rect.height) * 100;
-        setTreePanelHeight(Math.max(20, Math.min(80, percentage)));
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsVerticalDragging(false);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isVerticalDragging]);
-
   const selectionInfo = getSelectionInfo(selection);
 
   // Determine which message to display in result panel
@@ -194,12 +157,6 @@ function VisualizerInner({
     : executionResult;
   const currentChanges = hasDebugTrace ? effectiveDebugContext?.currentChanges : [];
   const currentStepIndex = hasDebugTrace ? effectiveDebugContext?.state.currentStepIndex : -1;
-
-  // Compute highlighted paths from changes
-  const highlightedPaths = useMemo(() => {
-    if (!currentChanges || currentChanges.length === 0) return undefined;
-    return currentChanges.map((change: Change) => change.path);
-  }, [currentChanges]);
 
   const isDraggingAny = isDragging || isVerticalDragging;
 
@@ -269,30 +226,13 @@ function VisualizerInner({
               className="df-visualizer-result-panel"
               style={{ height: `${100 - treePanelHeight}%` }}
             >
-              <div className="df-visualizer-result-header">
-                <span className="df-visualizer-result-title">
-                  {hasDebugTrace
-                    ? (currentStepIndex !== undefined && currentStepIndex >= 0
-                        ? `Step ${currentStepIndex + 1}`
-                        : 'Ready')
-                    : 'Result'}
-                </span>
-                {hasDebugTrace && currentChanges && currentChanges.length > 0 && (
-                  <span className="df-visualizer-result-changes">
-                    {currentChanges.length} change{currentChanges.length !== 1 ? 's' : ''}
-                  </span>
-                )}
-              </div>
-
-              <div className="df-visualizer-result-content">
-                <JsonEditor
-                  value={JSON.stringify(displayMessage, null, 2)}
-                  onChange={() => {}}
-                  readOnly={true}
-                  theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
-                  highlightedPaths={highlightedPaths}
-                />
-              </div>
+              <ResultPanel
+                displayMessage={displayMessage}
+                currentStepIndex={currentStepIndex ?? -1}
+                currentChanges={currentChanges ?? []}
+                theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+                hasDebugTrace={!!hasDebugTrace}
+              />
             </div>
           )}
         </div>

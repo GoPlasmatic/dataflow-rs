@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useDebugger } from '../context';
 import type { Workflow } from '../../../types';
+import { PLAYBACK } from '../constants';
 
 interface IntegratedDebugToolbarProps {
   /** Workflows to execute */
@@ -138,7 +139,7 @@ export function IntegratedDebugToolbar({
 
     const timeoutId = setTimeout(() => {
       handleExecute();
-    }, 500); // 500ms debounce
+    }, PLAYBACK.AUTO_EXECUTE_DEBOUNCE_MS);
 
     return () => clearTimeout(timeoutId);
   }, [autoExecute, isEngineReady, workflows, payload]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -5,6 +5,7 @@ import { useWorkflowDebugState, useWorkflowConditionDebugState } from '../hooks'
 import { TreeNode } from './TreeNode';
 import { TaskNode } from './TaskNode';
 import { TREE_COLORS } from './colors';
+import { NODE_IDS } from '../constants';
 
 interface WorkflowNodeProps {
   workflow: Workflow;
@@ -25,7 +26,7 @@ export function WorkflowNode({
   toggleNode,
   debugMode = false,
 }: WorkflowNodeProps) {
-  const workflowId = `workflow-${workflow.id}`;
+  const workflowId = NODE_IDS.workflow(workflow.id);
   const isExpanded = expandedNodes.has(workflowId);
   const hasCondition = workflow.condition !== undefined && workflow.condition !== null && workflow.condition !== true;
   const hasTasks = workflow.tasks.length > 0;
