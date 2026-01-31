@@ -21,7 +21,6 @@ export function MappingContent({ selection }: MappingContentProps) {
       <div className="df-details-logic-editor">
         <DataLogicEditor
           value={visualData}
-          mode="visualize"
           theme={resolvedTheme}
           preserveStructure={true}
           className="df-datalogic-viewer"

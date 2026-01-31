@@ -15,7 +15,6 @@ export function ValidationRuleContent({ selection }: ValidationRuleContentProps)
       <div className="df-details-logic-editor">
         <DataLogicEditor
           value={rule.logic}
-          mode="visualize"
           theme={resolvedTheme}
           preserveStructure={true}
           className="df-datalogic-viewer"

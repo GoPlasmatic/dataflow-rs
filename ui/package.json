@@ -53,7 +53,7 @@
   },
   "dependencies": {
     "@goplasmatic/dataflow-wasm": "^2.0.7",
-    "@goplasmatic/datalogic-ui": "^4.0.11",
+    "@goplasmatic/datalogic-ui": "^4.0.12",
     "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.0.0",
     "lucide-react": "^0.462.0"

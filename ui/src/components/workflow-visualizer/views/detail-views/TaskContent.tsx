@@ -23,7 +23,6 @@ export function TaskContent({ selection }: TaskContentProps) {
         <div className="df-details-logic-editor">
           <DataLogicEditor
             value={visualData}
-            mode="visualize"
             theme={resolvedTheme}
             preserveStructure={true}
             className="df-datalogic-viewer"
@@ -33,19 +32,17 @@ export function TaskContent({ selection }: TaskContentProps) {
     );
   }
 
-  // For validation function, show all rules
+  // For validation function, show all rules as AND expression
   if (functionName === 'validation') {
     const rules = (input?.rules as ValidationRule[]) || [];
-    const rulesVisualization: Record<string, JsonLogicValue> = {};
-    rules.forEach((rule, index) => {
-      rulesVisualization[`Rule #${index + 1}: ${rule.message}`] = rule.logic;
-    });
+    const andExpression: JsonLogicValue = {
+      and: rules.map((rule) => rule.logic),
+    };
     return (
       <div className="df-details-content">
         <div className="df-details-logic-editor">
           <DataLogicEditor
-            value={rulesVisualization}
-            mode="visualize"
+            value={andExpression}
             theme={resolvedTheme}
             preserveStructure={true}
             className="df-datalogic-viewer"
@@ -61,7 +58,6 @@ export function TaskContent({ selection }: TaskContentProps) {
       <div className="df-details-logic-editor">
         <DataLogicEditor
           value={task.function.input as JsonLogicValue}
-          mode="visualize"
           theme={resolvedTheme}
           preserveStructure={true}
           className="df-datalogic-viewer"

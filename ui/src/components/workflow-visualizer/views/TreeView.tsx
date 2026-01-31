@@ -109,7 +109,6 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
         getParentFolderIds(workflow.path).forEach(id => next.add(id));
       }
       next.add(`workflow-${workflow_id}`);
-      next.add(`tasks-${workflow_id}`);
       if (task_id) {
         next.add(`task-${workflow_id}-${task_id}`);
       }

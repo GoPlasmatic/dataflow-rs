@@ -36,6 +36,11 @@ export function TreeNode({
   conditionResult,
   isCurrent,
 }: TreeNodeProps) {
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // Prevent text selection on click/double-click
+    e.preventDefault();
+  };
+
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onClick?.();
@@ -57,6 +62,7 @@ export function TreeNode({
       <div
         className={`df-tree-node-content ${isSelected ? 'df-tree-node-selected' : ''}`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
+        onMouseDown={handleMouseDown}
         onClick={handleClick}
       >
         <span

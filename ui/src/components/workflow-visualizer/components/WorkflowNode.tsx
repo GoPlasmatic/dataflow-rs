@@ -1,4 +1,4 @@
-import { Layers, GitBranch, ListTree } from 'lucide-react';
+import { Layers, GitBranch } from 'lucide-react';
 import type { Workflow, JsonLogicValue } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useWorkflowDebugState, useWorkflowConditionDebugState } from '../hooks';
@@ -14,54 +14,6 @@ interface WorkflowNodeProps {
   expandedNodes: Set<string>;
   toggleNode: (id: string) => void;
   debugMode?: boolean;
-}
-
-function TasksNode({
-  workflow,
-  level,
-  selection,
-  onSelect,
-  expandedNodes,
-  toggleNode,
-  debugMode = false,
-}: {
-  workflow: Workflow;
-  level: number;
-  selection: TreeSelectionType;
-  onSelect: (selection: TreeSelectionType) => void;
-  expandedNodes: Set<string>;
-  toggleNode: (id: string) => void;
-  debugMode?: boolean;
-}) {
-  const nodeId = `tasks-${workflow.id}`;
-  const isExpanded = expandedNodes.has(nodeId);
-
-  return (
-    <TreeNode
-      label={`Tasks (${workflow.tasks.length})`}
-      icon={<ListTree size={14} />}
-      iconColor={TREE_COLORS.tasks}
-      isExpanded={isExpanded}
-      hasChildren={workflow.tasks.length > 0}
-      level={level}
-      onToggle={() => toggleNode(nodeId)}
-      onClick={() => toggleNode(nodeId)}
-    >
-      {workflow.tasks.map((task) => (
-        <TaskNode
-          key={task.id}
-          task={task}
-          workflow={workflow}
-          level={level + 1}
-          selection={selection}
-          onSelect={onSelect}
-          expandedNodes={expandedNodes}
-          toggleNode={toggleNode}
-          debugMode={debugMode}
-        />
-      ))}
-    </TreeNode>
-  );
 }
 
 export function WorkflowNode({
@@ -119,9 +71,11 @@ export function WorkflowNode({
         />
       )}
 
-      {/* Tasks */}
-      {hasTasks && (
-        <TasksNode
+      {/* Tasks - directly under workflow */}
+      {workflow.tasks.map((task) => (
+        <TaskNode
+          key={task.id}
+          task={task}
           workflow={workflow}
           level={level + 1}
           selection={selection}
@@ -130,7 +84,7 @@ export function WorkflowNode({
           toggleNode={toggleNode}
           debugMode={debugMode}
         />
-      )}
+      ))}
     </TreeNode>
   );
 }
