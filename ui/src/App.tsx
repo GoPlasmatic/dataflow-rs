@@ -180,7 +180,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
             </button>
             <div className="header-divider" />
             <a
-              href="https://github.com/AkshitVadodariya1201/dataflow-rs"
+              href="https://github.com/GoPlasmatic/dataflow-rs"
               target="_blank"
               rel="noopener noreferrer"
               className="header-link"
