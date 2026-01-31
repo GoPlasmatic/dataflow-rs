@@ -260,7 +260,7 @@ Rule-based data validation.
 For browser/JavaScript usage.
 
 ```javascript
-import init, { WasmEngine, create_message } from 'dataflow-wasm';
+import init, { WasmEngine, process_message } from 'dataflow-wasm';
 
 // Initialize
 await init();
@@ -268,11 +268,11 @@ await init();
 // Create engine
 const engine = new WasmEngine(workflowsJson);
 
-// Create message
-const message = create_message(dataJson, metadataJson);
+// Process with payload string (returns Promise)
+const result = await engine.process(payloadStr);
 
-// Process (returns Promise)
-const result = await engine.process(message);
+// One-off convenience function (no engine needed)
+const result2 = await process_message(workflowsJson, payloadStr);
 
 // Get workflow info
 const count = engine.workflow_count();

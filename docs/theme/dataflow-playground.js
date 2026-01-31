@@ -58,22 +58,12 @@ async function initWasm() {
 }
 
 // Process message through workflows
-async function processMessage(workflowsJson, messageJson) {
+async function processMessage(workflowsJson, payloadStr) {
     if (!wasmReady || !wasmModule) {
         throw new Error('WASM module not initialized');
     }
 
-    // Parse the message to extract data and metadata
-    const msg = JSON.parse(messageJson);
-    const data = JSON.stringify(msg.data || {});
-    const metadata = JSON.stringify(msg.metadata || {});
-
-    // Create a message using the WASM helper
-    const fullMessage = wasmModule.create_message(data, metadata);
-
-    // Process using one-off convenience function
-    const result = await wasmModule.process_message(workflowsJson, fullMessage);
-    return result;
+    return await wasmModule.process_message(workflowsJson, payloadStr);
 }
 
 // Format JSON for display
@@ -132,12 +122,12 @@ function syncScroll(textarea, highlight) {
 // Create an inline "Try It" widget
 function createWidget(container) {
     const workflows = container.dataset.workflows || '[]';
-    const message = container.dataset.message || '{"data":{},"metadata":{}}';
+    const payload = container.dataset.payload || '{}';
     const originalWorkflows = workflows;
-    const originalMessage = message;
+    const originalPayload = payload;
 
     const formattedWorkflows = formatJson(workflows);
-    const formattedMessage = formatJson(message);
+    const formattedPayload = formatJson(payload);
 
     container.innerHTML = `
         <div class="playground-widget-inner">
@@ -158,10 +148,10 @@ function createWidget(container) {
                         </div>
                     </div>
                     <div class="playground-editor-section">
-                        <label>Message</label>
+                        <label>Payload</label>
                         <div class="playground-editor-container">
-                            <div class="playground-highlight playground-message-highlight" aria-hidden="true">${highlightJson(formattedMessage)}</div>
-                            <textarea class="playground-message" spellcheck="false">${formattedMessage}</textarea>
+                            <div class="playground-highlight playground-payload-highlight" aria-hidden="true">${highlightJson(formattedPayload)}</div>
+                            <textarea class="playground-payload" spellcheck="false">${formattedPayload}</textarea>
                         </div>
                     </div>
                 </div>
@@ -175,8 +165,8 @@ function createWidget(container) {
 
     const workflowsInput = container.querySelector('.playground-workflows');
     const workflowsHighlight = container.querySelector('.playground-workflows-highlight');
-    const messageInput = container.querySelector('.playground-message');
-    const messageHighlight = container.querySelector('.playground-message-highlight');
+    const payloadInput = container.querySelector('.playground-payload');
+    const payloadHighlight = container.querySelector('.playground-payload-highlight');
     const resultDiv = container.querySelector('.playground-result');
     const runBtn = container.querySelector('.playground-run');
     const resetBtn = container.querySelector('.playground-reset');
@@ -186,14 +176,14 @@ function createWidget(container) {
         workflowsHighlight.innerHTML = highlightJson(workflowsInput.value);
     }
 
-    function updateMessageHighlight() {
-        messageHighlight.innerHTML = highlightJson(messageInput.value);
+    function updatePayloadHighlight() {
+        payloadHighlight.innerHTML = highlightJson(payloadInput.value);
     }
 
     // Run processing
     async function run() {
         const workflowsStr = workflowsInput.value.trim();
-        const messageStr = messageInput.value.trim();
+        const payloadStr = payloadInput.value.trim();
 
         // Validate JSON
         if (!isValidJson(workflowsStr)) {
@@ -201,9 +191,9 @@ function createWidget(container) {
             resultDiv.textContent = 'Invalid workflows JSON';
             return;
         }
-        if (!isValidJson(messageStr)) {
+        if (!isValidJson(payloadStr)) {
             resultDiv.className = 'playground-result error';
-            resultDiv.textContent = 'Invalid message JSON';
+            resultDiv.textContent = 'Invalid payload JSON';
             return;
         }
 
@@ -211,7 +201,7 @@ function createWidget(container) {
             resultDiv.className = 'playground-result loading';
             resultDiv.textContent = 'Processing...';
 
-            const result = await processMessage(workflowsStr, messageStr);
+            const result = await processMessage(workflowsStr, payloadStr);
             resultDiv.className = 'playground-result success';
             resultDiv.innerHTML = formatResultWithSections(result);
         } catch (error) {
@@ -223,9 +213,9 @@ function createWidget(container) {
     // Reset to original values
     function reset() {
         workflowsInput.value = formatJson(originalWorkflows);
-        messageInput.value = formatJson(originalMessage);
+        payloadInput.value = formatJson(originalPayload);
         updateWorkflowsHighlight();
-        updateMessageHighlight();
+        updatePayloadHighlight();
         resultDiv.className = 'playground-result';
         resultDiv.textContent = '';
     }
@@ -236,11 +226,11 @@ function createWidget(container) {
 
     // Input events for highlighting
     workflowsInput.addEventListener('input', updateWorkflowsHighlight);
-    messageInput.addEventListener('input', updateMessageHighlight);
+    payloadInput.addEventListener('input', updatePayloadHighlight);
 
     // Scroll sync
     workflowsInput.addEventListener('scroll', () => syncScroll(workflowsInput, workflowsHighlight));
-    messageInput.addEventListener('scroll', () => syncScroll(messageInput, messageHighlight));
+    payloadInput.addEventListener('scroll', () => syncScroll(payloadInput, payloadHighlight));
 
     // Keyboard shortcut: Ctrl/Cmd + Enter to run
     function handleKeydown(e) {
@@ -251,7 +241,7 @@ function createWidget(container) {
         }
     }
     workflowsInput.addEventListener('keydown', handleKeydown);
-    messageInput.addEventListener('keydown', handleKeydown);
+    payloadInput.addEventListener('keydown', handleKeydown);
 
     // Auto-run on initial load
     if (wasmReady) {
@@ -317,52 +307,53 @@ function initFullPlayground() {
     if (!container) return;
 
     // Example templates
+    const parseTask = '{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}}';
     const examples = {
         'Simple Workflow': {
-            workflows: '[{"id":"simple","name":"Simple Workflow","tasks":[{"id":"greet","name":"Greet","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.name"},"!"]}}]}}}]}]',
-            message: '{"data":{"name":"World"},"metadata":{}}'
+            workflows: '[{"id":"simple","name":"Simple Workflow","tasks":[' + parseTask + ',{"id":"greet","name":"Greet","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}}]}}}]}]',
+            payload: '{"name":"World"}'
         },
         'Data Mapping': {
-            workflows: '[{"id":"mapping","name":"Data Mapping","tasks":[{"id":"map_fields","name":"Map Fields","function":{"name":"map","input":{"mappings":[{"path":"data.full_name","logic":{"cat":[{"var":"data.first_name"}," ",{"var":"data.last_name"}]}},{"path":"data.is_valid_email","logic":{"in":["@",{"var":"data.email"}]}}]}}}]}]',
-            message: '{"data":{"first_name":"John","last_name":"Doe","email":"john@example.com"},"metadata":{}}'
+            workflows: '[{"id":"mapping","name":"Data Mapping","tasks":[' + parseTask + ',{"id":"map_fields","name":"Map Fields","function":{"name":"map","input":{"mappings":[{"path":"data.full_name","logic":{"cat":[{"var":"data.input.first_name"}," ",{"var":"data.input.last_name"}]}},{"path":"data.is_valid_email","logic":{"in":["@",{"var":"data.input.email"}]}}]}}}]}]',
+            payload: '{"first_name":"John","last_name":"Doe","email":"john@example.com"}'
         },
         'Validation Rules': {
-            workflows: '[{"id":"validate","name":"Validation","tasks":[{"id":"check","name":"Check Data","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.email"}]},"message":"Email is required"},{"logic":{">":[{"var":"data.age"},0]},"message":"Age must be positive"},{"logic":{"in":[{"var":"data.status"},["active","pending"]]},"message":"Invalid status"}]}}}]}]',
-            message: '{"data":{"name":"John","age":-5,"status":"unknown"},"metadata":{}}'
+            workflows: '[{"id":"validate","name":"Validation","tasks":[' + parseTask + ',{"id":"check","name":"Check Data","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.email"}]},"message":"Email is required"},{"logic":{">":[{"var":"data.input.age"},0]},"message":"Age must be positive"},{"logic":{"in":[{"var":"data.input.status"},["active","pending"]]},"message":"Invalid status"}]}}}]}]',
+            payload: '{"name":"John","age":-5,"status":"unknown"}'
         },
         'Conditional Task': {
-            workflows: '[{"id":"conditional","name":"Conditional Workflow","tasks":[{"id":"premium_greeting","name":"Premium Greeting","condition":{"==":[{"var":"data.tier"},"premium"]},"function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":"Welcome, VIP member!"},{"path":"data.discount","logic":20}]}}},{"id":"standard_greeting","name":"Standard Greeting","condition":{"==":[{"var":"data.tier"},"standard"]},"function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":"Welcome!"},{"path":"data.discount","logic":5}]}}}]}]',
-            message: '{"data":{"name":"John","tier":"premium"},"metadata":{}}'
+            workflows: '[{"id":"conditional","name":"Conditional Workflow","tasks":[' + parseTask + ',{"id":"premium_greeting","name":"Premium Greeting","condition":{"==":[{"var":"data.input.tier"},"premium"]},"function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":"Welcome, VIP member!"},{"path":"data.discount","logic":20}]}}},{"id":"standard_greeting","name":"Standard Greeting","condition":{"==":[{"var":"data.input.tier"},"standard"]},"function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":"Welcome!"},{"path":"data.discount","logic":5}]}}}]}]',
+            payload: '{"name":"John","tier":"premium"}'
         },
         'Multi-Workflow': {
-            workflows: '[{"id":"enrich","name":"Enrich Data","priority":1,"tasks":[{"id":"add_timestamp","name":"Add Timestamp","function":{"name":"map","input":{"mappings":[{"path":"temp_data.processed_at","logic":"2024-01-01T00:00:00Z"}]}}}]},{"id":"transform","name":"Transform Data","priority":2,"tasks":[{"id":"build_output","name":"Build Output","function":{"name":"map","input":{"mappings":[{"path":"data.output","logic":{"cat":["Processed: ",{"var":"data.input"}," at ",{"var":"temp_data.processed_at"}]}}]}}}]}]',
-            message: '{"data":{"input":"test data"},"metadata":{}}'
+            workflows: '[{"id":"enrich","name":"Enrich Data","priority":1,"tasks":[' + parseTask + ',{"id":"add_timestamp","name":"Add Timestamp","function":{"name":"map","input":{"mappings":[{"path":"temp_data.processed_at","logic":"2024-01-01T00:00:00Z"}]}}}]},{"id":"transform","name":"Transform Data","priority":2,"tasks":[{"id":"build_output","name":"Build Output","function":{"name":"map","input":{"mappings":[{"path":"data.output","logic":{"cat":["Processed: ",{"var":"data.input.value"}," at ",{"var":"temp_data.processed_at"}]}}]}}}]}]',
+            payload: '{"value":"test data"}'
         },
         'Error Handling': {
-            workflows: '[{"id":"resilient","name":"Resilient Workflow","continue_on_error":true,"tasks":[{"id":"validate","name":"Validate","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.required_field"}]},"message":"Required field missing"}]}}},{"id":"process","name":"Process Anyway","function":{"name":"map","input":{"mappings":[{"path":"data.processed","logic":true}]}}}]}]',
-            message: '{"data":{"other_field":"value"},"metadata":{}}'
+            workflows: '[{"id":"resilient","name":"Resilient Workflow","continue_on_error":true,"tasks":[' + parseTask + ',{"id":"validate","name":"Validate","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.required_field"}]},"message":"Required field missing"}]}}},{"id":"process","name":"Process Anyway","function":{"name":"map","input":{"mappings":[{"path":"data.processed","logic":true}]}}}]}]',
+            payload: '{"other_field":"value"}'
         },
         'Arithmetic': {
-            workflows: '[{"id":"calc","name":"Calculations","tasks":[{"id":"compute","name":"Compute","function":{"name":"map","input":{"mappings":[{"path":"data.subtotal","logic":{"*":[{"var":"data.price"},{"var":"data.quantity"}]}},{"path":"data.tax","logic":{"*":[{"var":"data.subtotal"},0.1]}},{"path":"data.total","logic":{"+":[{"var":"data.subtotal"},{"var":"data.tax"}]}}]}}}]}]',
-            message: '{"data":{"price":25,"quantity":4},"metadata":{}}'
+            workflows: '[{"id":"calc","name":"Calculations","tasks":[' + parseTask + ',{"id":"compute","name":"Compute","function":{"name":"map","input":{"mappings":[{"path":"data.subtotal","logic":{"*":[{"var":"data.input.price"},{"var":"data.input.quantity"}]}},{"path":"data.tax","logic":{"*":[{"var":"data.subtotal"},0.1]}},{"path":"data.total","logic":{"+":[{"var":"data.subtotal"},{"var":"data.tax"}]}}]}}}]}]',
+            payload: '{"price":25,"quantity":4}'
         },
         'Array Processing': {
-            workflows: '[{"id":"arrays","name":"Array Processing","tasks":[{"id":"process","name":"Process Arrays","function":{"name":"map","input":{"mappings":[{"path":"data.count","logic":{"reduce":[{"var":"data.items"},{"+": [{"var":"accumulator"},1]},0]}},{"path":"data.sum","logic":{"reduce":[{"var":"data.values"},{"+": [{"var":"accumulator"},{"var":"current"}]},0]}},{"path":"data.has_special","logic":{"some":[{"var":"data.items"},{"==":[{"var":""},"special"]}]}}]}}}]}]',
-            message: '{"data":{"items":["a","special","b"],"values":[10,20,30]},"metadata":{}}'
+            workflows: '[{"id":"arrays","name":"Array Processing","tasks":[' + parseTask + ',{"id":"process","name":"Process Arrays","function":{"name":"map","input":{"mappings":[{"path":"data.count","logic":{"reduce":[{"var":"data.input.items"},{"+": [{"var":"accumulator"},1]},0]}},{"path":"data.sum","logic":{"reduce":[{"var":"data.input.values"},{"+": [{"var":"accumulator"},{"var":"current"}]},0]}},{"path":"data.has_special","logic":{"some":[{"var":"data.input.items"},{"==":[{"var":""},"special"]}]}}]}}}]}]',
+            payload: '{"items":["a","special","b"],"values":[10,20,30]}'
         },
-        'Workflow Condition': {
-            workflows: '[{"id":"user_only","name":"User Workflow","condition":{"==":[{"var":"metadata.type"},"user"]},"tasks":[{"id":"greet","function":{"name":"map","input":{"mappings":[{"path":"data.message","logic":"This is a user message"}]}}}]},{"id":"system_only","name":"System Workflow","condition":{"==":[{"var":"metadata.type"},"system"]},"tasks":[{"id":"log","function":{"name":"map","input":{"mappings":[{"path":"data.message","logic":"This is a system message"}]}}}]}]',
-            message: '{"data":{},"metadata":{"type":"user"}}'
+        'Conditional Workflow': {
+            workflows: '[{"id":"parse_input","name":"Parse Input","priority":1,"tasks":[' + parseTask + ']},{"id":"high_value","name":"High Value Order","priority":2,"condition":{">":[{"var":"data.input.amount"},100]},"tasks":[{"id":"flag","function":{"name":"map","input":{"mappings":[{"path":"data.message","logic":"High value order detected!"},{"path":"data.priority","logic":"high"}]}}}]},{"id":"standard","name":"Standard Order","priority":2,"condition":{"<=":[{"var":"data.input.amount"},100]},"tasks":[{"id":"flag","function":{"name":"map","input":{"mappings":[{"path":"data.message","logic":"Standard order"},{"path":"data.priority","logic":"normal"}]}}}]}]',
+            payload: '{"amount":150,"item":"widget"}'
         },
         'Complete Example': {
-            workflows: '[{"id":"process_order","name":"Process Order","priority":1,"tasks":[{"id":"validate_order","name":"Validate Order","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.customer_id"}]},"message":"Customer ID required"},{"logic":{">":[{"var":"data.amount"},0]},"message":"Amount must be positive"}]}}},{"id":"calculate_total","name":"Calculate Total","function":{"name":"map","input":{"mappings":[{"path":"data.tax","logic":{"*":[{"var":"data.amount"},0.1]}},{"path":"data.total","logic":{"+":[{"var":"data.amount"},{"var":"data.tax"}]}},{"path":"data.status","logic":"processed"},{"path":"temp_data.order_time","logic":"2024-01-01T12:00:00Z"}]}}},{"id":"set_metadata","name":"Set Metadata","function":{"name":"map","input":{"mappings":[{"path":"metadata.processed_at","logic":{"var":"temp_data.order_time"}},{"path":"metadata.processor","logic":"workflow-engine"}]}}}]}]',
-            message: '{"data":{"customer_id":"cust-123","amount":99.99,"items":["item1","item2"]},"metadata":{"source":"api"}}'
+            workflows: '[{"id":"process_order","name":"Process Order","priority":1,"tasks":[' + parseTask + ',{"id":"validate_order","name":"Validate Order","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.customer_id"}]},"message":"Customer ID required"},{"logic":{">":[{"var":"data.input.amount"},0]},"message":"Amount must be positive"}]}}},{"id":"calculate_total","name":"Calculate Total","function":{"name":"map","input":{"mappings":[{"path":"data.tax","logic":{"*":[{"var":"data.input.amount"},0.1]}},{"path":"data.total","logic":{"+":[{"var":"data.input.amount"},{"var":"data.tax"}]}},{"path":"data.status","logic":"processed"},{"path":"temp_data.order_time","logic":"2024-01-01T12:00:00Z"}]}}},{"id":"set_metadata","name":"Set Metadata","function":{"name":"map","input":{"mappings":[{"path":"metadata.processed_at","logic":{"var":"temp_data.order_time"}},{"path":"metadata.processor","logic":"workflow-engine"}]}}}]}]',
+            payload: '{"customer_id":"cust-123","amount":99.99,"items":["item1","item2"]}'
         }
     };
 
     const firstExample = Object.keys(examples)[0];
     const formattedWorkflows = formatJson(examples[firstExample].workflows);
-    const formattedMessage = formatJson(examples[firstExample].message);
+    const formattedPayload = formatJson(examples[firstExample].payload);
 
     container.innerHTML = `
         <div class="full-playground-container">
@@ -388,10 +379,10 @@ function initFullPlayground() {
                         </div>
                     </div>
                     <div class="full-playground-editor-section">
-                        <label>Message</label>
+                        <label>Payload</label>
                         <div class="full-playground-editor-container">
-                            <div class="full-playground-highlight full-playground-message-highlight" aria-hidden="true">${highlightJson(formattedMessage)}</div>
-                            <textarea class="full-playground-message" spellcheck="false" placeholder='{"data": {}, "metadata": {}}'>${formattedMessage}</textarea>
+                            <div class="full-playground-highlight full-playground-payload-highlight" aria-hidden="true">${highlightJson(formattedPayload)}</div>
+                            <textarea class="full-playground-payload" spellcheck="false" placeholder='{"key": "value"}'>${formattedPayload}</textarea>
                         </div>
                     </div>
                 </div>
@@ -405,8 +396,8 @@ function initFullPlayground() {
 
     const workflowsInput = container.querySelector('.full-playground-workflows');
     const workflowsHighlight = container.querySelector('.full-playground-workflows-highlight');
-    const messageInput = container.querySelector('.full-playground-message');
-    const messageHighlight = container.querySelector('.full-playground-message-highlight');
+    const payloadInput = container.querySelector('.full-playground-payload');
+    const payloadHighlight = container.querySelector('.full-playground-payload-highlight');
     const resultDiv = container.querySelector('.full-playground-result');
     const runBtn = container.querySelector('.playground-run');
     const formatBtn = container.querySelector('.playground-reset:not(.playground-clear)');
@@ -418,18 +409,18 @@ function initFullPlayground() {
         workflowsHighlight.innerHTML = highlightJson(workflowsInput.value);
     }
 
-    function updateMessageHighlight() {
-        messageHighlight.innerHTML = highlightJson(messageInput.value);
+    function updatePayloadHighlight() {
+        payloadHighlight.innerHTML = highlightJson(payloadInput.value);
     }
 
     // Run processing
     async function run() {
         const workflowsStr = workflowsInput.value.trim();
-        const messageStr = messageInput.value.trim();
+        const payloadStr = payloadInput.value.trim();
 
-        if (!workflowsStr || !messageStr) {
+        if (!workflowsStr || !payloadStr) {
             resultDiv.className = 'full-playground-result error';
-            resultDiv.textContent = 'Please enter workflows and message';
+            resultDiv.textContent = 'Please enter workflows and payload';
             return;
         }
 
@@ -439,9 +430,9 @@ function initFullPlayground() {
             return;
         }
 
-        if (!isValidJson(messageStr)) {
+        if (!isValidJson(payloadStr)) {
             resultDiv.className = 'full-playground-result error';
-            resultDiv.textContent = 'Invalid message JSON';
+            resultDiv.textContent = 'Invalid payload JSON';
             return;
         }
 
@@ -449,7 +440,7 @@ function initFullPlayground() {
             resultDiv.className = 'full-playground-result loading';
             resultDiv.textContent = 'Processing...';
 
-            const result = await processMessage(workflowsStr, messageStr);
+            const result = await processMessage(workflowsStr, payloadStr);
             resultDiv.className = 'full-playground-result success';
             resultDiv.innerHTML = formatResultWithSections(result);
         } catch (error) {
@@ -465,17 +456,17 @@ function initFullPlayground() {
             updateWorkflowsHighlight();
         } catch {}
         try {
-            messageInput.value = formatJson(messageInput.value);
-            updateMessageHighlight();
+            payloadInput.value = formatJson(payloadInput.value);
+            updatePayloadHighlight();
         } catch {}
     }
 
     // Clear all
     function clear() {
         workflowsInput.value = '[]';
-        messageInput.value = '{"data": {}, "metadata": {}}';
+        payloadInput.value = '{}';
         updateWorkflowsHighlight();
-        updateMessageHighlight();
+        updatePayloadHighlight();
         resultDiv.className = 'full-playground-result';
         resultDiv.textContent = '';
         examplesSelect.value = '';
@@ -486,9 +477,9 @@ function initFullPlayground() {
         const name = examplesSelect.value;
         if (name && examples[name]) {
             workflowsInput.value = formatJson(examples[name].workflows);
-            messageInput.value = formatJson(examples[name].message);
+            payloadInput.value = formatJson(examples[name].payload);
             updateWorkflowsHighlight();
-            updateMessageHighlight();
+            updatePayloadHighlight();
             run();
         }
     }
@@ -501,11 +492,11 @@ function initFullPlayground() {
 
     // Input events for highlighting
     workflowsInput.addEventListener('input', updateWorkflowsHighlight);
-    messageInput.addEventListener('input', updateMessageHighlight);
+    payloadInput.addEventListener('input', updatePayloadHighlight);
 
     // Scroll sync
     workflowsInput.addEventListener('scroll', () => syncScroll(workflowsInput, workflowsHighlight));
-    messageInput.addEventListener('scroll', () => syncScroll(messageInput, messageHighlight));
+    payloadInput.addEventListener('scroll', () => syncScroll(payloadInput, payloadHighlight));
 
     // Keyboard shortcut
     function handleKeydown(e) {
@@ -516,7 +507,7 @@ function initFullPlayground() {
         }
     }
     workflowsInput.addEventListener('keydown', handleKeydown);
-    messageInput.addEventListener('keydown', handleKeydown);
+    payloadInput.addEventListener('keydown', handleKeydown);
 
     // Auto-run on initial load
     if (wasmReady) {

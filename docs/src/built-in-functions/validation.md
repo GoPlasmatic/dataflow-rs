@@ -165,7 +165,7 @@ Error structure:
 
 > **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
 
-<div class="playground-widget" data-workflows='[{"id":"validation_demo","name":"Validation Demo","tasks":[{"id":"validate","name":"Validate","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.email"}]},"message":"Email is required"},{"logic":{">":[{"var":"data.age"},0]},"message":"Age must be positive"},{"logic":{"in":[{"var":"data.status"},["active","pending","suspended"]]},"message":"Invalid status"}]}}}]}]' data-message='{"data":{"name":"John","age":0,"status":"unknown"},"metadata":{}}'>
+<div class="playground-widget" data-workflows='[{"id":"validation_demo","name":"Validation Demo","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"validate","name":"Validate","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.email"}]},"message":"Email is required"},{"logic":{">":[{"var":"data.input.age"},0]},"message":"Age must be positive"},{"logic":{"in":[{"var":"data.input.status"},["active","pending","suspended"]]},"message":"Invalid status"}]}}}]}]' data-payload='{"name":"John","age":0,"status":"unknown"}'>
 </div>
 
 Notice the validation errors in the output.

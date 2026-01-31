@@ -196,7 +196,7 @@ Tasks within a workflow execute sequentially, allowing later tasks to depend on 
 
 > **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
 
-<div class="playground-widget" data-workflows='[{"id":"conditional_workflow","name":"Conditional Workflow","condition":{"==":[{"var":"metadata.type"},"user"]},"tasks":[{"id":"greet","name":"Greet User","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Welcome, ",{"var":"data.name"},"!"]}}]}}}]}]' data-message='{"data":{"name":"Alice"},"metadata":{"type":"user"}}'>
+<div class="playground-widget" data-workflows='[{"id":"parse_workflow","name":"Parse Input","priority":1,"tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}}]},{"id":"conditional_workflow","name":"Conditional Workflow","priority":2,"condition":{"==":[{"var":"data.input.role"},"admin"]},"tasks":[{"id":"greet","name":"Greet User","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Welcome, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"Alice","role":"admin"}'>
 </div>
 
-Try changing `metadata.type` to something other than "user" to see the workflow skip.
+Try changing `role` to something other than "admin" to see the conditional workflow skip.

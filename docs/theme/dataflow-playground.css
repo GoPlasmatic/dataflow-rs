@@ -292,7 +292,7 @@
 
 /* Textarea layer */
 .playground-workflows,
-.playground-message {
+.playground-payload {
     width: 100%;
     min-height: 100px;
     padding: 0.75rem;
@@ -310,7 +310,7 @@
 }
 
 .playground-workflows:focus,
-.playground-message:focus {
+.playground-payload:focus {
     outline: none;
 }
 
@@ -566,7 +566,7 @@
 }
 
 .full-playground-workflows,
-.full-playground-message {
+.full-playground-payload {
     width: 100%;
     min-height: 200px;
     padding: 0.875rem;
@@ -583,7 +583,7 @@
 }
 
 .full-playground-workflows:focus,
-.full-playground-message:focus {
+.full-playground-payload:focus {
     outline: none;
 }
 
@@ -669,11 +669,11 @@
    ======================================== */
 
 .playground-workflows::-webkit-scrollbar,
-.playground-message::-webkit-scrollbar,
+.playground-payload::-webkit-scrollbar,
 .playground-result::-webkit-scrollbar,
 .playground-highlight::-webkit-scrollbar,
 .full-playground-workflows::-webkit-scrollbar,
-.full-playground-message::-webkit-scrollbar,
+.full-playground-payload::-webkit-scrollbar,
 .full-playground-result::-webkit-scrollbar,
 .full-playground-highlight::-webkit-scrollbar {
     width: 8px;
@@ -681,22 +681,22 @@
 }
 
 .playground-workflows::-webkit-scrollbar-track,
-.playground-message::-webkit-scrollbar-track,
+.playground-payload::-webkit-scrollbar-track,
 .playground-result::-webkit-scrollbar-track,
 .playground-highlight::-webkit-scrollbar-track,
 .full-playground-workflows::-webkit-scrollbar-track,
-.full-playground-message::-webkit-scrollbar-track,
+.full-playground-payload::-webkit-scrollbar-track,
 .full-playground-result::-webkit-scrollbar-track,
 .full-playground-highlight::-webkit-scrollbar-track {
     background: transparent;
 }
 
 .playground-workflows::-webkit-scrollbar-thumb,
-.playground-message::-webkit-scrollbar-thumb,
+.playground-payload::-webkit-scrollbar-thumb,
 .playground-result::-webkit-scrollbar-thumb,
 .playground-highlight::-webkit-scrollbar-thumb,
 .full-playground-workflows::-webkit-scrollbar-thumb,
-.full-playground-message::-webkit-scrollbar-thumb,
+.full-playground-payload::-webkit-scrollbar-thumb,
 .full-playground-result::-webkit-scrollbar-thumb,
 .full-playground-highlight::-webkit-scrollbar-thumb {
     background: var(--playground-border);
@@ -704,11 +704,11 @@
 }
 
 .playground-workflows::-webkit-scrollbar-thumb:hover,
-.playground-message::-webkit-scrollbar-thumb:hover,
+.playground-payload::-webkit-scrollbar-thumb:hover,
 .playground-result::-webkit-scrollbar-thumb:hover,
 .playground-highlight::-webkit-scrollbar-thumb:hover,
 .full-playground-workflows::-webkit-scrollbar-thumb:hover,
-.full-playground-message::-webkit-scrollbar-thumb:hover,
+.full-playground-payload::-webkit-scrollbar-thumb:hover,
 .full-playground-result::-webkit-scrollbar-thumb:hover,
 .full-playground-highlight::-webkit-scrollbar-thumb:hover {
     background: var(--playground-text-muted);

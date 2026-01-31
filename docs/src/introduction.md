@@ -36,7 +36,7 @@ Experience the power of dataflow-rs directly in your browser. Define a workflow 
 
 > **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution, breakpoints, and workflow visualization.
 
-<div class="playground-widget" data-workflows='[{"id":"transform","name":"Transform Workflow","tasks":[{"id":"map_data","name":"Map Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.name"},"!"]}},{"path":"data.processed","logic":true}]}}}]}]' data-message='{"data":{"name":"World"},"metadata":{"source":"playground"}}'>
+<div class="playground-widget" data-workflows='[{"id":"transform","name":"Transform Workflow","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"map_data","name":"Map Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}},{"path":"data.processed","logic":true}]}}}]}]' data-payload='{"name":"World"}'>
 </div>
 
 ## How It Works
