@@ -8,12 +8,14 @@ import {
   MappingContent,
   ValidationRuleContent,
 } from './detail-views';
+import { WorkflowFlowDiagram, GroupFlowDiagram } from './flow-diagram';
 
 interface DetailsPanelProps {
   selection: TreeSelectionType;
+  onSelect?: (selection: TreeSelectionType) => void;
 }
 
-export function DetailsPanel({ selection }: DetailsPanelProps) {
+export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
   if (selection.type === 'none') {
     return (
       <div className="df-details-panel df-details-empty">
@@ -21,6 +23,26 @@ export function DetailsPanel({ selection }: DetailsPanelProps) {
           <Layers size={40} className="df-details-empty-icon" />
           <p>Select an item from the explorer to view its details and logic visualization</p>
         </div>
+      </div>
+    );
+  }
+
+  if (selection.type === 'folder' && onSelect) {
+    return (
+      <div className="df-details-panel">
+        <GroupFlowDiagram
+          workflows={selection.workflows}
+          name={selection.name}
+          onSelect={onSelect}
+        />
+      </div>
+    );
+  }
+
+  if (selection.type === 'workflow' && onSelect) {
+    return (
+      <div className="df-details-panel">
+        <WorkflowFlowDiagram workflow={selection.workflow} onSelect={onSelect} />
       </div>
     );
   }

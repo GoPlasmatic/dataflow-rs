@@ -14,6 +14,8 @@ import './styles/index.css';
 // Extended selection types for tree view
 export type TreeSelectionType =
   | { type: 'none' }
+  | { type: 'folder'; workflows: Workflow[]; name: string }
+  | { type: 'workflow'; workflow: Workflow }
   | { type: 'workflow-condition'; workflow: Workflow; condition: JsonLogicValue }
   | { type: 'task'; task: Task; workflow: Workflow }
   | { type: 'task-condition'; task: Task; workflow: Workflow; condition: JsonLogicValue }
@@ -49,6 +51,16 @@ export interface WorkflowVisualizerProps {
 // Get display info for the current selection
 function getSelectionInfo(selection: TreeSelectionType): { title: string; subtitle: string } | null {
   switch (selection.type) {
+    case 'folder':
+      return {
+        title: selection.name,
+        subtitle: `${selection.workflows.length} Workflows`,
+      };
+    case 'workflow':
+      return {
+        title: selection.workflow.name,
+        subtitle: 'Workflow Flow',
+      };
     case 'workflow-condition':
       return {
         title: 'Workflow Condition',
@@ -136,7 +148,9 @@ function VisualizerInner({
     setSelection(newSelection);
 
     // Fire callbacks for external consumers
-    if (newSelection.type === 'workflow-condition') {
+    if (newSelection.type === 'workflow') {
+      onWorkflowSelect?.(newSelection.workflow);
+    } else if (newSelection.type === 'workflow-condition') {
       onWorkflowSelect?.(newSelection.workflow);
     } else if (
       newSelection.type === 'task' ||
@@ -253,7 +267,7 @@ function VisualizerInner({
               </div>
             </div>
           )}
-          <DetailsPanel selection={selection} />
+          <DetailsPanel selection={selection} onSelect={handleSelection} />
         </div>
         </div>
       </div>

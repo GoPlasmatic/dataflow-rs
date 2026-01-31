@@ -42,10 +42,14 @@ export function WorkflowNode({
       icon={<Layers size={14} />}
       iconColor={TREE_COLORS.workflow}
       isExpanded={isExpanded}
+      isSelected={selection.type === 'workflow' && selection.workflow.id === workflow.id}
       hasChildren={hasChildren}
       level={level}
       onToggle={() => toggleNode(workflowId)}
-      onClick={() => toggleNode(workflowId)}
+      onClick={() => {
+        onSelect({ type: 'workflow', workflow });
+        if (!isExpanded) toggleNode(workflowId);
+      }}
       debugState={debugMode ? workflowDebugState.state : null}
     >
       {/* Workflow Condition */}

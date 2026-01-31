@@ -161,10 +161,11 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
         icon={<Layers size={14} />}
         iconColor={TREE_COLORS.workflow}
         isExpanded={isRootExpanded}
+        isSelected={selection.type === 'folder' && selection.name === 'Workflows'}
         hasChildren={totalWorkflowCount > 0}
         level={0}
         onToggle={() => toggleNode(NODE_IDS.ROOT)}
-        onClick={() => toggleNode(NODE_IDS.ROOT)}
+        onClick={() => onSelect({ type: 'folder', workflows, name: 'Workflows' })}
       >
         {/* Render folders first (alphabetically) */}
         {sortedRootFolders.map((folder) => (

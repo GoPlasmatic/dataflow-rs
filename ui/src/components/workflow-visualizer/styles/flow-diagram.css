@@ -1,0 +1,332 @@
+/* ============================================
+   Flow Diagram Styles
+   Aligned with DataLogic UI ReactFlow styling
+   ============================================ */
+
+.df-flow-diagram {
+  width: 100%;
+  height: 100%;
+  min-height: 300px;
+}
+
+/* ---- ReactFlow Background ---- */
+
+[data-theme="dark"] .df-flow-diagram .react-flow__background {
+  background: var(--bg-tertiary);
+}
+
+/* ---- ReactFlow Controls ---- */
+
+.df-flow-diagram .react-flow__controls {
+  box-shadow: 0 2px 8px var(--node-shadow);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.df-flow-diagram .react-flow__controls-button {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-light);
+  fill: var(--text-secondary);
+  color: var(--text-secondary);
+}
+
+.df-flow-diagram .react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+
+.df-flow-diagram .react-flow__controls-button:hover {
+  background: var(--bg-hover);
+}
+
+/* ---- Edges ---- */
+
+.df-flow-diagram .react-flow__edge-path {
+  stroke: #b1b1b7;
+  stroke-width: 2;
+}
+
+[data-theme="dark"] .df-flow-diagram .react-flow__edge-path {
+  stroke: #6b7280;
+}
+
+.df-flow-diagram .react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--accent-blue);
+  stroke-width: 3;
+}
+
+.df-flow-diagram .react-flow__edge.df-flow-edge-true .react-flow__edge-path {
+  stroke: var(--df-success);
+  stroke-width: 2;
+}
+
+.df-flow-diagram .react-flow__edge.df-flow-edge-false .react-flow__edge-path {
+  stroke: #b1b1b7;
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+}
+
+[data-theme="dark"] .df-flow-diagram .react-flow__edge.df-flow-edge-false .react-flow__edge-path {
+  stroke: #6b7280;
+}
+
+.df-flow-diagram .react-flow__edge-text {
+  font-size: 11px;
+  fill: var(--text-secondary);
+}
+
+.df-flow-diagram .react-flow__edge-textbg {
+  fill: var(--bg-secondary);
+}
+
+.df-flow-diagram .react-flow__arrowhead polyline {
+  stroke: #b1b1b7;
+  fill: #b1b1b7;
+}
+
+[data-theme="dark"] .df-flow-diagram .react-flow__arrowhead polyline {
+  stroke: #6b7280;
+  fill: #6b7280;
+}
+
+/* ---- Attribution ---- */
+
+.df-flow-diagram .react-flow__attribution {
+  display: none;
+}
+
+/* ---- Handles - hidden but functional ---- */
+
+.df-flow-handle {
+  width: 6px !important;
+  height: 6px !important;
+  background: var(--border-primary) !important;
+  border: none !important;
+  opacity: 0;
+}
+
+/* ---- Start/End Pill Node ---- */
+
+.df-flow-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: default;
+  user-select: none;
+  min-width: 100px;
+}
+
+.df-flow-pill-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.df-flow-pill-start {
+  background: var(--bg-primary);
+  border: 2px solid var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.df-flow-pill-end {
+  background: var(--bg-primary);
+  border: 2px solid var(--df-success);
+  color: var(--df-success);
+}
+
+/* ---- Condition Diamond Node ---- */
+
+.df-flow-diamond-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  position: relative;
+}
+
+.df-flow-diamond {
+  width: 64px;
+  height: 64px;
+  background: var(--bg-primary);
+  border: 2px solid var(--accent-amber);
+  transform: rotate(45deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.df-flow-diamond:hover {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-amber) 25%, transparent);
+}
+
+.df-flow-diamond-content {
+  transform: rotate(-45deg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent-amber);
+}
+
+.df-flow-diamond-label {
+  font-size: 9px;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1.2;
+  white-space: pre-line;
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Diamond handles positioned at bottom-left and bottom-right */
+.df-flow-diamond-wrapper .df-flow-handle-true {
+  left: 15% !important;
+}
+
+.df-flow-diamond-wrapper .df-flow-handle-false {
+  left: 85% !important;
+}
+
+/* ---- Task Node ---- */
+
+.df-flow-task-node {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  padding: 10px 14px;
+  min-width: 160px;
+  max-width: 220px;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.df-flow-task-node:hover {
+  border-color: var(--accent-blue);
+  box-shadow: 0 4px 12px var(--node-shadow-hover);
+}
+
+.df-flow-task-node-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.df-flow-task-node-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-flow-task-node-coe {
+  color: var(--accent-amber);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.df-flow-task-node-badge {
+  margin-bottom: 4px;
+}
+
+.df-flow-task-node-desc {
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Skip Node ---- */
+
+.df-flow-skip-node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+  border: 1px dashed var(--border-primary);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  cursor: default;
+  user-select: none;
+}
+
+/* ---- Workflow Group Node (for group diagrams) ---- */
+
+.df-flow-wf-group-node {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  padding: 12px 16px;
+  min-width: 200px;
+  max-width: 280px;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.df-flow-wf-group-node:hover {
+  border-color: var(--accent-blue);
+  box-shadow: 0 4px 12px var(--node-shadow-hover);
+}
+
+.df-flow-wf-group-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.df-flow-wf-group-node-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-flow-wf-group-node-priority {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-blue-light);
+  color: var(--accent-blue);
+  flex-shrink: 0;
+}
+
+.df-flow-wf-group-node-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.df-flow-wf-group-node-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.df-flow-wf-group-node-condition {
+  color: var(--accent-amber);
+}
+
+.df-flow-wf-group-node-always {
+  color: var(--df-success);
+}

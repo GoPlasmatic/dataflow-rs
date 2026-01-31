@@ -13,3 +13,6 @@
 
 /* Debug mode styles */
 @import './debug.css';
+
+/* Flow diagram styles */
+@import './flow-diagram.css';
