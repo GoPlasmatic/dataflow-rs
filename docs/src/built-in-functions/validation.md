@@ -81,7 +81,7 @@ The validation function:
 ```json
 {
     "logic": {">=": [
-        {"strlen": {"var": "data.password"}},
+        {"length": {"var": "data.password"}},
         8
     ]},
     "message": "Password must be at least 8 characters"

@@ -78,7 +78,7 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
                 rules: [
                   { logic: { '>=': [{ var: 'data.input.age' }, 18] }, message: 'Must be at least 18 years old' },
                   { logic: { '!!': { var: 'data.input.email' } }, message: 'Email is required' },
-                  { logic: { '>=': [{ strlen: { var: 'data.input.username' } }, 3] }, message: 'Username must be at least 3 characters' },
+                  { logic: { '>=': [{ length: { var: 'data.input.username' } }, 3] }, message: 'Username must be at least 3 characters' },
                 ],
               },
             },
