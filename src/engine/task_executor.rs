@@ -11,6 +11,7 @@ use crate::engine::message::{Change, Message};
 use crate::engine::task::Task;
 use datalogic_rs::DataLogic;
 use log::{debug, error};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -97,6 +98,34 @@ impl TaskExecutor {
                 // Execute custom function handler
                 self.execute_custom_function(name, message, &task.function)
                     .await
+            }
+        }
+    }
+
+    /// Execute a single task with trace support
+    ///
+    /// Same as `execute()` but for map tasks, captures per-mapping context snapshots.
+    /// Returns `Option<Vec<Value>>` which is `Some` only for map tasks.
+    pub async fn execute_with_trace(
+        &self,
+        task: &Task,
+        message: &mut Message,
+    ) -> Result<(usize, Vec<Change>, Option<Vec<Value>>)> {
+        debug!(
+            "Executing task (trace): {} with function: {:?}",
+            task.id,
+            task.function.function_name()
+        );
+
+        match &task.function {
+            FunctionConfig::Map { input, .. } => {
+                let (status, changes, contexts) =
+                    self.executor.execute_map_with_trace(message, input)?;
+                Ok((status, changes, Some(contexts)))
+            }
+            _ => {
+                let (status, changes) = self.execute(task, message).await?;
+                Ok((status, changes, None))
             }
         }
     }

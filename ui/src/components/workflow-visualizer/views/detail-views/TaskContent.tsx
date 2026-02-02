@@ -1,7 +1,8 @@
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
 import type { JsonLogicValue, MappingItem, ValidationRule } from '../../../../types';
+import { getMappingContext } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
-import { useTheme } from '../../context';
+import { useTheme, useDebuggerOptional } from '../../context';
 import { convertMappingsToObject } from '../../../../utils/dataUtils';
 
 interface TaskContentProps {
@@ -11,8 +12,28 @@ interface TaskContentProps {
 export function TaskContent({ selection }: TaskContentProps) {
   const { task } = selection;
   const { resolvedTheme } = useTheme();
+  const dbgContext = useDebuggerOptional();
   const functionName = task.function.name;
   const input = task.function.input as Record<string, unknown> | undefined;
+
+  // Compute debug data context when debugger is active and step matches
+  let debugData: Record<string, unknown> | undefined;
+  if (dbgContext?.state.isActive && dbgContext.currentStep) {
+    const step = dbgContext.currentStep;
+    if (
+      step.workflow_id === selection.workflow.id &&
+      step.task_id === task.id &&
+      step.result === 'executed'
+    ) {
+      if (functionName === 'map') {
+        // For aggregate map view, use context before first mapping
+        debugData = getMappingContext(step, 0);
+      } else if (functionName === 'validation' && step.message) {
+        // Validation is read-only, use task-level context
+        debugData = step.message.context;
+      }
+    }
+  }
 
   // For map function, show all mappings
   if (functionName === 'map') {
@@ -26,6 +47,7 @@ export function TaskContent({ selection }: TaskContentProps) {
             theme={resolvedTheme}
             preserveStructure={true}
             className="df-datalogic-viewer"
+            data={debugData}
           />
         </div>
       </div>
@@ -46,6 +68,7 @@ export function TaskContent({ selection }: TaskContentProps) {
             theme={resolvedTheme}
             preserveStructure={true}
             className="df-datalogic-viewer"
+            data={debugData}
           />
         </div>
       </div>

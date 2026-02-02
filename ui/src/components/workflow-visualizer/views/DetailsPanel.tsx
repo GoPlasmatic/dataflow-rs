@@ -2,6 +2,8 @@ import { Layers } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import '@goplasmatic/datalogic-ui/styles.css';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
+import { useDebuggerOptional } from '../context';
+import { getMessageAtStep } from '../../../types';
 import {
   DataLogicView,
   TaskContent,
@@ -16,6 +18,8 @@ interface DetailsPanelProps {
 }
 
 export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
+  const dbgContext = useDebuggerOptional();
+
   if (selection.type === 'none') {
     return (
       <div className="df-details-panel df-details-empty">
@@ -47,14 +51,31 @@ export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
     );
   }
 
+  // Compute condition debug data: use the message from the step before the condition was evaluated
+  let conditionDebugData: Record<string, unknown> | undefined;
+  if (dbgContext?.state.isActive && dbgContext.state.trace && dbgContext.state.currentStepIndex >= 0) {
+    const { trace, currentStepIndex } = dbgContext.state;
+
+    if (selection.type === 'workflow-condition' || selection.type === 'task-condition') {
+      // For conditions, the context used for evaluation is from the previous step's message
+      // (the state just before the condition was checked)
+      const prevMessage = currentStepIndex > 0
+        ? getMessageAtStep(trace, currentStepIndex - 1)
+        : null;
+      if (prevMessage) {
+        conditionDebugData = prevMessage.context;
+      }
+    }
+  }
+
   return (
     <div className="df-details-panel">
       {selection.type === 'workflow-condition' && (
-        <DataLogicView value={selection.condition} />
+        <DataLogicView value={selection.condition} data={conditionDebugData} />
       )}
 
       {selection.type === 'task-condition' && (
-        <DataLogicView value={selection.condition} />
+        <DataLogicView value={selection.condition} data={conditionDebugData} />
       )}
 
       {selection.type === 'task' && (

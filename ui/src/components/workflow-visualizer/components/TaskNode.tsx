@@ -1,7 +1,7 @@
 import { Box, GitBranch, ArrowRightLeft, CheckCircle } from 'lucide-react';
 import type { Workflow, Task, JsonLogicValue, MappingItem, ValidationRule } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
-import { useTaskDebugState, useTaskConditionDebugState } from '../hooks';
+import { useTaskDebugState, useTaskConditionDebugState, useMappingDebugState, useValidationRuleDebugState } from '../hooks';
 import { TreeNode } from './TreeNode';
 import { TREE_COLORS } from './colors';
 import { NODE_IDS } from '../constants';
@@ -15,6 +15,88 @@ interface TaskNodeProps {
   expandedNodes: Set<string>;
   toggleNode: (id: string) => void;
   debugMode?: boolean;
+}
+
+interface MappingTreeNodeProps {
+  mapping: MappingItem;
+  index: number;
+  task: Task;
+  workflow: Workflow;
+  level: number;
+  selection: TreeSelectionType;
+  onSelect: (selection: TreeSelectionType) => void;
+  debugMode: boolean;
+}
+
+function MappingTreeNode({ mapping, index, task, workflow, level, selection, onSelect, debugMode }: MappingTreeNodeProps) {
+  const debugState = useMappingDebugState(task, workflow, index);
+
+  return (
+    <TreeNode
+      label={mapping.path}
+      icon={<ArrowRightLeft size={14} />}
+      iconColor={TREE_COLORS.mapping}
+      level={level}
+      isSelected={
+        selection.type === 'mapping' &&
+        selection.task.id === task.id &&
+        selection.workflow.id === workflow.id &&
+        selection.mappingIndex === index
+      }
+      onClick={() =>
+        onSelect({
+          type: 'mapping',
+          task,
+          workflow,
+          mapping,
+          mappingIndex: index,
+        })
+      }
+      debugState={debugMode ? debugState.state : null}
+      isCurrent={debugMode && debugState.isCurrent}
+    />
+  );
+}
+
+interface ValidationRuleTreeNodeProps {
+  rule: ValidationRule;
+  index: number;
+  task: Task;
+  workflow: Workflow;
+  level: number;
+  selection: TreeSelectionType;
+  onSelect: (selection: TreeSelectionType) => void;
+  debugMode: boolean;
+}
+
+function ValidationRuleTreeNode({ rule, index, task, workflow, level, selection, onSelect, debugMode }: ValidationRuleTreeNodeProps) {
+  const debugState = useValidationRuleDebugState(task, workflow, index);
+
+  return (
+    <TreeNode
+      label={rule.message}
+      icon={<CheckCircle size={14} />}
+      iconColor={TREE_COLORS.validation}
+      level={level}
+      isSelected={
+        selection.type === 'validation-rule' &&
+        selection.task.id === task.id &&
+        selection.workflow.id === workflow.id &&
+        selection.ruleIndex === index
+      }
+      onClick={() =>
+        onSelect({
+          type: 'validation-rule',
+          task,
+          workflow,
+          rule,
+          ruleIndex: index,
+        })
+      }
+      debugState={debugMode ? debugState.state : null}
+      isCurrent={debugMode && debugState.isCurrent}
+    />
+  );
 }
 
 export function TaskNode({
@@ -85,55 +167,33 @@ export function TaskNode({
         />
       )}
 
-      {/* Mappings for map function - directly show each mapping */}
+      {/* Mappings for map function - using wrapper component for hook support */}
       {mappings.map((mapping, index) => (
-        <TreeNode
+        <MappingTreeNode
           key={`mapping-${index}`}
-          label={mapping.path}
-          icon={<ArrowRightLeft size={14} />}
-          iconColor={TREE_COLORS.mapping}
+          mapping={mapping}
+          index={index}
+          task={task}
+          workflow={workflow}
           level={level + 1}
-          isSelected={
-            selection.type === 'mapping' &&
-            selection.task.id === task.id &&
-            selection.workflow.id === workflow.id &&
-            selection.mappingIndex === index
-          }
-          onClick={() =>
-            onSelect({
-              type: 'mapping',
-              task,
-              workflow,
-              mapping,
-              mappingIndex: index,
-            })
-          }
+          selection={selection}
+          onSelect={onSelect}
+          debugMode={debugMode}
         />
       ))}
 
-      {/* Validations for validation function - directly show each rule */}
+      {/* Validations for validation function - using wrapper component for hook support */}
       {rules.map((rule, index) => (
-        <TreeNode
+        <ValidationRuleTreeNode
           key={`rule-${index}`}
-          label={rule.message}
-          icon={<CheckCircle size={14} />}
-          iconColor={TREE_COLORS.validation}
+          rule={rule}
+          index={index}
+          task={task}
+          workflow={workflow}
           level={level + 1}
-          isSelected={
-            selection.type === 'validation-rule' &&
-            selection.task.id === task.id &&
-            selection.workflow.id === workflow.id &&
-            selection.ruleIndex === index
-          }
-          onClick={() =>
-            onSelect({
-              type: 'validation-rule',
-              task,
-              workflow,
-              rule,
-              ruleIndex: index,
-            })
-          }
+          selection={selection}
+          onSelect={onSelect}
+          debugMode={debugMode}
         />
       ))}
     </TreeNode>

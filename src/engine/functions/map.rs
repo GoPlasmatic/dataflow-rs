@@ -262,6 +262,119 @@ impl MapConfig {
         let status = if errors_encountered { 500 } else { 200 };
         Ok((status, changes))
     }
+
+    /// Executes all map transformations with trace support.
+    ///
+    /// Same as `execute()` but captures a context snapshot before each mapping
+    /// for sub-step debugging. Returns the snapshots alongside the normal results.
+    ///
+    /// # Returns
+    /// * `Ok((status, changes, context_snapshots))` - Status, changes, and per-mapping context snapshots
+    pub fn execute_with_trace(
+        &self,
+        message: &mut Message,
+        datalogic: &Arc<DataLogic>,
+        logic_cache: &[Arc<CompiledLogic>],
+    ) -> Result<(usize, Vec<Change>, Vec<Value>)> {
+        let mut changes = Vec::new();
+        let mut errors_encountered = false;
+        let mut context_snapshots = Vec::with_capacity(self.mappings.len());
+
+        debug!("Map (trace): Executing {} mappings", self.mappings.len());
+
+        for mapping in &self.mappings {
+            // Capture context snapshot before this mapping executes
+            context_snapshots.push(message.context.clone());
+
+            let context_arc = message.get_context_arc();
+            debug!("Processing mapping to path: {}", mapping.path);
+
+            let compiled_logic = match mapping.logic_index {
+                Some(index) => {
+                    if index >= logic_cache.len() {
+                        error!(
+                            "Map: Logic index {} out of bounds (cache size: {}) for mapping to {}",
+                            index,
+                            logic_cache.len(),
+                            mapping.path
+                        );
+                        errors_encountered = true;
+                        continue;
+                    }
+                    &logic_cache[index]
+                }
+                None => {
+                    error!(
+                        "Map: Logic not compiled (no index) for mapping to {}",
+                        mapping.path
+                    );
+                    errors_encountered = true;
+                    continue;
+                }
+            };
+
+            let result = datalogic.evaluate(compiled_logic, Arc::clone(&context_arc));
+
+            match result {
+                Ok(transformed_value) => {
+                    debug!(
+                        "Map: Evaluated logic for path {} resulted in: {:?}",
+                        mapping.path, transformed_value
+                    );
+
+                    if transformed_value.is_null() {
+                        debug!(
+                            "Map: Skipping mapping for path {} as result is null",
+                            mapping.path
+                        );
+                        continue;
+                    }
+
+                    let old_value = get_nested_value(&message.context, &mapping.path);
+
+                    let old_value_arc = Arc::new(old_value.cloned().unwrap_or(Value::Null));
+                    let new_value_arc = Arc::new(transformed_value.clone());
+
+                    changes.push(Change {
+                        path: Arc::from(mapping.path.as_str()),
+                        old_value: old_value_arc,
+                        new_value: Arc::clone(&new_value_arc),
+                    });
+
+                    if mapping.path == "data"
+                        || mapping.path == "metadata"
+                        || mapping.path == "temp_data"
+                    {
+                        if let Value::Object(new_map) = transformed_value {
+                            if let Value::Object(existing_map) = &mut message.context[&mapping.path]
+                            {
+                                for (key, value) in new_map {
+                                    existing_map.insert(key, value);
+                                }
+                            } else {
+                                message.context[&mapping.path] = Value::Object(new_map);
+                            }
+                        } else {
+                            message.context[&mapping.path] = transformed_value;
+                        }
+                    } else {
+                        set_nested_value(&mut message.context, &mapping.path, transformed_value);
+                    }
+                    message.invalidate_context_cache();
+                }
+                Err(e) => {
+                    error!(
+                        "Map: Error evaluating logic for path {}: {:?}",
+                        mapping.path, e
+                    );
+                    errors_encountered = true;
+                }
+            }
+        }
+
+        let status = if errors_encountered { 500 } else { 200 };
+        Ok((status, changes, context_snapshots))
+    }
 }
 
 #[cfg(test)]
@@ -445,6 +558,55 @@ mod tests {
         assert_eq!(
             message.context["data"].get("actual_field"),
             Some(&json!("actual_value"))
+        );
+    }
+
+    #[test]
+    fn test_map_execute_with_trace_captures_context_snapshots() {
+        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+
+        let mut message = Message::new(Arc::new(json!({})));
+        message.context["data"] = json!({
+            "first": "Alice",
+            "last": "Smith"
+        });
+
+        let mut config = MapConfig {
+            mappings: vec![
+                MapMapping {
+                    path: "data.full_name".to_string(),
+                    logic: json!({"cat": [{"var": "data.first"}, " ", {"var": "data.last"}]}),
+                    logic_index: None,
+                },
+                MapMapping {
+                    path: "data.greeting".to_string(),
+                    logic: json!({"cat": ["Hello, ", {"var": "data.full_name"}]}),
+                    logic_index: None,
+                },
+            ],
+        };
+
+        let mut logic_cache = Vec::new();
+        for (i, mapping) in config.mappings.iter_mut().enumerate() {
+            logic_cache.push(datalogic.compile(&mapping.logic).unwrap());
+            mapping.logic_index = Some(i);
+        }
+
+        let result = config.execute_with_trace(&mut message, &datalogic, &logic_cache);
+        assert!(result.is_ok());
+
+        let (status, changes, context_snapshots) = result.unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(changes.len(), 2);
+        assert_eq!(context_snapshots.len(), 2);
+
+        // First snapshot: before any mapping, no full_name
+        assert!(context_snapshots[0]["data"].get("full_name").is_none());
+
+        // Second snapshot: after first mapping, full_name should exist
+        assert_eq!(
+            context_snapshots[1]["data"].get("full_name"),
+            Some(&json!("Alice Smith"))
         );
     }
 

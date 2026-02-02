@@ -58,6 +58,15 @@ impl InternalExecutor {
         config.execute(message, &self.datalogic, &self.logic_cache)
     }
 
+    /// Execute the internal map function with trace support (captures per-mapping context snapshots)
+    pub fn execute_map_with_trace(
+        &self,
+        message: &mut Message,
+        config: &MapConfig,
+    ) -> Result<(usize, Vec<Change>, Vec<Value>)> {
+        config.execute_with_trace(message, &self.datalogic, &self.logic_cache)
+    }
+
     /// Execute the internal validation function
     pub fn execute_validation(
         &self,

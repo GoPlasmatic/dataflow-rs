@@ -80,6 +80,8 @@ export interface ExecutionStep {
   result: StepResult;
   /** Message snapshot after this step (only for executed steps) */
   message?: Message;
+  /** Context snapshots before each mapping (map tasks only, trace mode) */
+  mapping_contexts?: Record<string, unknown>[];
 }
 
 /**
@@ -231,6 +233,18 @@ export function isStepForWorkflow(step: ExecutionStep, workflowId: string): bool
  */
 export function isStepForTask(step: ExecutionStep, workflowId: string, taskId: string): boolean {
   return step.workflow_id === workflowId && step.task_id === taskId;
+}
+
+/**
+ * Get the context snapshot for a specific mapping within a step.
+ * For map tasks, returns the context before that mapping executed.
+ * Falls back to the step's message context if mapping_contexts is not available.
+ */
+export function getMappingContext(
+  step: ExecutionStep,
+  mappingIndex: number
+): Record<string, unknown> | undefined {
+  return (step.mapping_contexts?.[mappingIndex] as Record<string, unknown>) ?? step.message?.context;
 }
 
 /**

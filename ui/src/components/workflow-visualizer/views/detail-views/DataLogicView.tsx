@@ -4,9 +4,10 @@ import { useTheme } from '../../context';
 
 interface DataLogicViewProps {
   value: JsonLogicValue;
+  data?: Record<string, unknown>;
 }
 
-export function DataLogicView({ value }: DataLogicViewProps) {
+export function DataLogicView({ value, data }: DataLogicViewProps) {
   const { resolvedTheme } = useTheme();
 
   return (
@@ -17,6 +18,7 @@ export function DataLogicView({ value }: DataLogicViewProps) {
           theme={resolvedTheme}
           preserveStructure={true}
           className="df-datalogic-viewer"
+          data={data}
         />
       </div>
     </div>

@@ -7,5 +7,7 @@ export {
   useWorkflowConditionDebugState,
   useTaskDebugState,
   useTaskConditionDebugState,
+  useMappingDebugState,
+  useValidationRuleDebugState,
 } from './useTreeNodeDebugState';
 export type { TreeNodeDebugState } from './useTreeNodeDebugState';

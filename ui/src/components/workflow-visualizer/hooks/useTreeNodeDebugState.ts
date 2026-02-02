@@ -228,6 +228,105 @@ export function useTaskConditionDebugState(task: Task, workflow: Workflow): Tree
 }
 
 /**
+ * Hook to get debug state for a mapping node within a task
+ */
+export function useMappingDebugState(task: Task, workflow: Workflow, _mappingIndex: number): TreeNodeDebugState {
+  const dbgContext = useDebuggerOptional();
+
+  return useMemo(() => {
+    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.hasTrace || !dbgContext.state.trace) {
+      return nullState;
+    }
+
+    if (dbgContext.state.currentStepIndex < 0) {
+      return nullState;
+    }
+
+    const state = getTaskState(
+      dbgContext.state.trace,
+      dbgContext.state.currentStepIndex,
+      workflow.id,
+      task.id
+    );
+
+    const isCurrent = isTaskCurrent(
+      dbgContext.state.trace,
+      dbgContext.state.currentStepIndex,
+      workflow.id,
+      task.id
+    );
+
+    return {
+      state,
+      isCurrent,
+      isExecuted: state === 'executed',
+      isSkipped: state === 'skipped',
+      hasError: state === 'error',
+    };
+  }, [dbgContext, task.id, workflow.id, _mappingIndex]);
+}
+
+/**
+ * Hook to get debug state for a validation rule node within a task
+ */
+export function useValidationRuleDebugState(task: Task, workflow: Workflow, ruleIndex: number): TreeNodeDebugState {
+  const dbgContext = useDebuggerOptional();
+
+  return useMemo(() => {
+    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.hasTrace || !dbgContext.state.trace) {
+      return nullState;
+    }
+
+    if (dbgContext.state.currentStepIndex < 0) {
+      return nullState;
+    }
+
+    const { trace, currentStepIndex } = dbgContext.state;
+
+    const taskStepIndex = trace.steps.findIndex(
+      s => s.workflow_id === workflow.id && s.task_id === task.id
+    );
+
+    if (taskStepIndex === -1 || taskStepIndex > currentStepIndex) {
+      return { ...nullState, state: 'pending' as DebugNodeState };
+    }
+
+    const taskStep = trace.steps[taskStepIndex];
+
+    if (taskStep.result === 'skipped') {
+      return {
+        state: 'skipped' as DebugNodeState,
+        isCurrent: false,
+        isExecuted: false,
+        isSkipped: true,
+        hasError: false,
+      };
+    }
+
+    // Check if this specific rule produced an error
+    const isCurrent = taskStepIndex === currentStepIndex;
+    let hasError = false;
+    if (taskStep.message && taskStep.message.errors.length > 0) {
+      // Validation errors include the rule message; check if any error matches
+      const rules = (task.function?.input as Record<string, unknown> | undefined);
+      const rulesList = (rules?.rules as Array<{ message: string }>) || [];
+      const rule = rulesList[ruleIndex];
+      if (rule) {
+        hasError = taskStep.message.errors.some(e => e.message.includes(rule.message));
+      }
+    }
+
+    return {
+      state: hasError ? 'error' as DebugNodeState : 'executed' as DebugNodeState,
+      isCurrent,
+      isExecuted: !hasError,
+      isSkipped: false,
+      hasError,
+    };
+  }, [dbgContext, task.id, task.function, workflow.id, ruleIndex]);
+}
+
+/**
  * Generic hook to get debug state for any node type
  */
 export function useTreeNodeDebugState(options: {

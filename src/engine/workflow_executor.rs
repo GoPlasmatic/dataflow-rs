@@ -211,20 +211,33 @@ impl WorkflowExecutor {
                 continue;
             }
 
-            // Execute the task
-            let result = self.task_executor.execute(task, message).await;
+            // Execute the task with trace support
+            let result = self.task_executor.execute_with_trace(task, message).await;
+
+            // Extract mapping_contexts before passing result to handle_task_result
+            let mapping_contexts = match &result {
+                Ok((_, _, contexts)) => contexts.clone(),
+                Err(_) => None,
+            };
+
+            // Convert to the standard result format for handle_task_result
+            let standard_result = result.map(|(status, changes, _)| (status, changes));
 
             // Handle task result
             self.handle_task_result(
-                result,
+                standard_result,
                 &workflow.id,
                 &task.id,
                 task.continue_on_error,
                 message,
             )?;
 
-            // Record executed step with message snapshot
-            trace.add_step(ExecutionStep::executed(&workflow.id, &task.id, message));
+            // Record executed step with message snapshot and optional mapping contexts
+            let mut step = ExecutionStep::executed(&workflow.id, &task.id, message);
+            if let Some(contexts) = mapping_contexts {
+                step = step.with_mapping_contexts(contexts);
+            }
+            trace.add_step(step);
         }
 
         Ok(())

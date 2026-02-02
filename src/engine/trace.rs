@@ -6,6 +6,7 @@
 
 use crate::engine::message::Message;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Result of executing a step (workflow or task)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -29,6 +30,10 @@ pub struct ExecutionStep {
     /// Message snapshot after this step (only for Executed steps)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<Message>,
+    /// Context snapshots before each mapping (map tasks only, trace mode only).
+    /// mapping_contexts[i] = message.context before mapping[i] executed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapping_contexts: Option<Vec<Value>>,
 }
 
 impl ExecutionStep {
@@ -39,6 +44,7 @@ impl ExecutionStep {
             task_id: Some(task_id.to_string()),
             result: StepResult::Executed,
             message: Some(message.clone()),
+            mapping_contexts: None,
         }
     }
 
@@ -49,6 +55,7 @@ impl ExecutionStep {
             task_id: Some(task_id.to_string()),
             result: StepResult::Skipped,
             message: None,
+            mapping_contexts: None,
         }
     }
 
@@ -59,7 +66,14 @@ impl ExecutionStep {
             task_id: None,
             result: StepResult::Skipped,
             message: None,
+            mapping_contexts: None,
         }
+    }
+
+    /// Set mapping context snapshots (for map tasks in trace mode)
+    pub fn with_mapping_contexts(mut self, contexts: Vec<Value>) -> Self {
+        self.mapping_contexts = Some(contexts);
+        self
     }
 }
 
@@ -166,6 +180,32 @@ mod tests {
         assert_eq!(step.task_id, None);
         assert_eq!(step.result, StepResult::Skipped);
         assert!(step.message.is_none());
+    }
+
+    #[test]
+    fn test_execution_step_with_mapping_contexts() {
+        let message = Message::from_value(&json!({"test": "data"}));
+        let contexts = vec![json!({"data": {"a": 1}}), json!({"data": {"a": 1, "b": 2}})];
+
+        let step = ExecutionStep::executed("workflow1", "task1", &message)
+            .with_mapping_contexts(contexts.clone());
+
+        assert_eq!(step.mapping_contexts, Some(contexts));
+
+        // Verify serialization includes mapping_contexts
+        let serialized = serde_json::to_value(&step).unwrap();
+        assert!(serialized.get("mapping_contexts").is_some());
+        assert_eq!(serialized["mapping_contexts"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_execution_step_without_mapping_contexts_serialization() {
+        let message = Message::from_value(&json!({"test": "data"}));
+        let step = ExecutionStep::executed("workflow1", "task1", &message);
+
+        // mapping_contexts is None, should be omitted in serialization
+        let serialized = serde_json::to_value(&step).unwrap();
+        assert!(serialized.get("mapping_contexts").is_none());
     }
 
     #[test]
