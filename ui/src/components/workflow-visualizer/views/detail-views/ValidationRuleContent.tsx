@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
 import { useTheme, useDebuggerOptional } from '../../context';
@@ -10,6 +11,7 @@ export function ValidationRuleContent({ selection }: ValidationRuleContentProps)
   const { rule } = selection;
   const { resolvedTheme } = useTheme();
   const dbgContext = useDebuggerOptional();
+  const [preserveStructure, setPreserveStructure] = useState(true);
 
   // When debugger is active, pass the task-level message context (validation is read-only)
   let debugData: Record<string, unknown> | undefined;
@@ -31,7 +33,8 @@ export function ValidationRuleContent({ selection }: ValidationRuleContentProps)
         <DataLogicEditor
           value={rule.logic}
           theme={resolvedTheme}
-          preserveStructure={true}
+          preserveStructure={preserveStructure}
+          onPreserveStructureChange={setPreserveStructure}
           className="df-datalogic-viewer"
           data={debugData}
         />

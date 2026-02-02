@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
 import type { JsonLogicValue, MappingItem, ValidationRule } from '../../../../types';
 import { getMappingContext } from '../../../../types';
@@ -13,6 +14,7 @@ export function TaskContent({ selection }: TaskContentProps) {
   const { task } = selection;
   const { resolvedTheme } = useTheme();
   const dbgContext = useDebuggerOptional();
+  const [preserveStructure, setPreserveStructure] = useState(true);
   const functionName = task.function.name;
   const input = task.function.input as Record<string, unknown> | undefined;
 
@@ -45,7 +47,8 @@ export function TaskContent({ selection }: TaskContentProps) {
           <DataLogicEditor
             value={visualData}
             theme={resolvedTheme}
-            preserveStructure={true}
+            preserveStructure={preserveStructure}
+            onPreserveStructureChange={setPreserveStructure}
             className="df-datalogic-viewer"
             data={debugData}
           />
@@ -66,7 +69,8 @@ export function TaskContent({ selection }: TaskContentProps) {
           <DataLogicEditor
             value={andExpression}
             theme={resolvedTheme}
-            preserveStructure={true}
+            preserveStructure={preserveStructure}
+            onPreserveStructureChange={setPreserveStructure}
             className="df-datalogic-viewer"
             data={debugData}
           />
@@ -82,7 +86,8 @@ export function TaskContent({ selection }: TaskContentProps) {
         <DataLogicEditor
           value={task.function.input as JsonLogicValue}
           theme={resolvedTheme}
-          preserveStructure={true}
+          preserveStructure={preserveStructure}
+          onPreserveStructureChange={setPreserveStructure}
           className="df-datalogic-viewer"
         />
       </div>
