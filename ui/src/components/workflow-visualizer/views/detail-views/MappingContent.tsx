@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
 import type { JsonLogicValue } from '../../../../types';
 import { getMappingContext } from '../../../../types';
@@ -13,7 +12,6 @@ export function MappingContent({ selection }: MappingContentProps) {
   const { mapping } = selection;
   const { resolvedTheme } = useTheme();
   const dbgContext = useDebuggerOptional();
-  const [preserveStructure, setPreserveStructure] = useState(true);
 
   // Show the mapping as { path: logic }
   const visualData: Record<string, JsonLogicValue> = {
@@ -39,8 +37,7 @@ export function MappingContent({ selection }: MappingContentProps) {
         <DataLogicEditor
           value={visualData}
           theme={resolvedTheme}
-          preserveStructure={preserveStructure}
-          onPreserveStructureChange={setPreserveStructure}
+          preserveStructure={true}
           className="df-datalogic-viewer"
           data={debugData}
         />

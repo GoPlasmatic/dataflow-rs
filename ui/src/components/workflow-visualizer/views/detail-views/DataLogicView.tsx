@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
 import type { JsonLogicValue } from '../../../../types';
 import { useTheme } from '../../context';
@@ -10,7 +9,6 @@ interface DataLogicViewProps {
 
 export function DataLogicView({ value, data }: DataLogicViewProps) {
   const { resolvedTheme } = useTheme();
-  const [preserveStructure, setPreserveStructure] = useState(true);
 
   return (
     <div className="df-details-content">
@@ -18,8 +16,7 @@ export function DataLogicView({ value, data }: DataLogicViewProps) {
         <DataLogicEditor
           value={value}
           theme={resolvedTheme}
-          preserveStructure={preserveStructure}
-          onPreserveStructureChange={setPreserveStructure}
+          preserveStructure={true}
           className="df-datalogic-viewer"
           data={data}
         />
