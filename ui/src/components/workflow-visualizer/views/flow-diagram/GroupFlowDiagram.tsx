@@ -46,26 +46,31 @@ export function GroupFlowDiagram({ workflows, name: _name, onSelect }: GroupFlow
   }, [workflows, onSelect]);
 
   return (
-    <div className="df-flow-diagram" data-theme={resolvedTheme}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodeClick={onNodeClick}
-        fitView
-        fitViewOptions={{ padding: 0.2, maxZoom: 0.75 }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        panOnDrag
-        zoomOnScroll
-        minZoom={0.3}
-        maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background gap={20} size={1} />
-        <Controls showInteractive={false} />
-      </ReactFlow>
+    <div className="df-details-content">
+      <div className="df-details-logic-editor" data-theme={resolvedTheme}>
+        <div className="df-flow-diagram" data-theme={resolvedTheme}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodeClick={onNodeClick}
+            colorMode={resolvedTheme}
+            fitView
+            fitViewOptions={{ padding: 0.2, maxZoom: 0.75 }}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            elementsSelectable={false}
+            panOnDrag
+            zoomOnScroll
+            minZoom={0.3}
+            maxZoom={2}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background gap={20} size={1} />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        </div>
+      </div>
     </div>
   );
 }

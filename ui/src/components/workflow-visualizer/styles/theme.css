@@ -39,23 +39,23 @@
   --df-function-validation: #bf8803;
   --df-function-custom: #6e6e6e;
 
-  /* DataLogic UI theme variables (for diagram visualizer) */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f8f9fa;
-  --bg-tertiary: #f3f4f6;
-  --bg-hover: #e5e7eb;
-  --text-primary: #1f2937;
-  --text-secondary: #6b7280;
-  --text-tertiary: #9ca3af;
-  --text-muted: #d1d5db;
-  --border-primary: #e5e7eb;
-  --border-light: #f3f4f6;
+  /* DataLogic UI theme variables (for diagram visualizer) - must match @goplasmatic/datalogic-ui :root */
+  --bg-primary: #f5f5f5;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #fafafa;
+  --bg-hover: #f0f0f0;
+  --text-primary: #333333;
+  --text-secondary: #555555;
+  --text-tertiary: #666666;
+  --text-muted: #999999;
+  --border-primary: #e0e0e0;
+  --border-light: #eeeeee;
   --accent-blue: #3b82f6;
   --accent-blue-hover: #2563eb;
-  --accent-blue-light: rgba(59, 130, 246, 0.1);
+  --accent-blue-light: #dbeafe;
   --accent-amber: #f59e0b;
-  --node-shadow: rgba(0, 0, 0, 0.08);
-  --node-shadow-hover: rgba(0, 0, 0, 0.12);
+  --node-shadow: rgba(0, 0, 0, 0.1);
+  --node-shadow-hover: rgba(0, 0, 0, 0.15);
   --node-bg: #ffffff;
 }
 
@@ -96,22 +96,22 @@
   --df-function-validation: #dcdcaa;
   --df-function-custom: #9d9d9d;
 
-  /* DataLogic UI theme variables (for diagram visualizer) */
-  --bg-primary: #1e1e1e;
-  --bg-secondary: #252526;
-  --bg-tertiary: #2d2d30;
-  --bg-hover: #3c3c3c;
-  --text-primary: #d4d4d4;
-  --text-secondary: #9d9d9d;
-  --text-tertiary: #6b6b6b;
-  --text-muted: #4d4d4d;
-  --border-primary: #3c3c3c;
-  --border-light: #2d2d30;
-  --accent-blue: #0078d4;
-  --accent-blue-hover: #1c97ea;
-  --accent-blue-light: rgba(0, 120, 212, 0.15);
-  --accent-amber: #f59e0b;
-  --node-shadow: rgba(0, 0, 0, 0.2);
-  --node-shadow-hover: rgba(0, 0, 0, 0.3);
-  --node-bg: #252526;
+  /* DataLogic UI theme variables (for diagram visualizer) - must match @goplasmatic/datalogic-ui [data-theme="dark"] */
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #242424;
+  --bg-tertiary: #2a2a2a;
+  --bg-hover: #333333;
+  --text-primary: #e5e5e5;
+  --text-secondary: #cccccc;
+  --text-tertiary: #b3b3b3;
+  --text-muted: #888888;
+  --border-primary: #404040;
+  --border-light: #333333;
+  --accent-blue: #60a5fa;
+  --accent-blue-hover: #3b82f6;
+  --accent-blue-light: #1e3a5f;
+  --accent-amber: #fbbf24;
+  --node-shadow: rgba(0, 0, 0, 0.3);
+  --node-shadow-hover: rgba(0, 0, 0, 0.4);
+  --node-bg: #2d2d2d;
 }

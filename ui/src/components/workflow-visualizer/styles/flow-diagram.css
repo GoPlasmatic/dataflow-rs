@@ -7,12 +7,14 @@
   width: 100%;
   height: 100%;
   min-height: 300px;
-}
-
-/* ---- ReactFlow Background ---- */
-
-[data-theme="dark"] .df-flow-diagram .react-flow__background {
   background: var(--bg-tertiary);
+  border-radius: 8px;
+  overflow: hidden;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
 /* ---- ReactFlow Controls ---- */
@@ -41,12 +43,7 @@
 /* ---- Edges ---- */
 
 .df-flow-diagram .react-flow__edge-path {
-  stroke: #b1b1b7;
   stroke-width: 2;
-}
-
-[data-theme="dark"] .df-flow-diagram .react-flow__edge-path {
-  stroke: #6b7280;
 }
 
 .df-flow-diagram .react-flow__edge.selected .react-flow__edge-path {
@@ -55,18 +52,14 @@
 }
 
 .df-flow-diagram .react-flow__edge.df-flow-edge-true .react-flow__edge-path {
-  stroke: var(--df-success);
+  stroke: #22C55E;
   stroke-width: 2;
 }
 
 .df-flow-diagram .react-flow__edge.df-flow-edge-false .react-flow__edge-path {
-  stroke: #b1b1b7;
+  stroke: #EF4444;
   stroke-width: 2;
   stroke-dasharray: 6 3;
-}
-
-[data-theme="dark"] .df-flow-diagram .react-flow__edge.df-flow-edge-false .react-flow__edge-path {
-  stroke: #6b7280;
 }
 
 .df-flow-diagram .react-flow__edge-text {
@@ -78,16 +71,6 @@
   fill: var(--bg-secondary);
 }
 
-.df-flow-diagram .react-flow__arrowhead polyline {
-  stroke: #b1b1b7;
-  fill: #b1b1b7;
-}
-
-[data-theme="dark"] .df-flow-diagram .react-flow__arrowhead polyline {
-  stroke: #6b7280;
-  fill: #6b7280;
-}
-
 /* ---- Attribution ---- */
 
 .df-flow-diagram .react-flow__attribution {
@@ -97,11 +80,15 @@
 /* ---- Handles - hidden but functional ---- */
 
 .df-flow-handle {
-  width: 6px !important;
-  height: 6px !important;
+  width: 10px !important;
+  height: 10px !important;
   background: var(--border-primary) !important;
-  border: none !important;
-  opacity: 0;
+  border: 2px solid white !important;
+  opacity: 1;
+}
+
+[data-theme="dark"] .df-flow-handle {
+  border-color: var(--bg-primary) !important;
 }
 
 /* ---- Start/End Pill Node ---- */
@@ -126,13 +113,13 @@
 }
 
 .df-flow-pill-start {
-  background: var(--bg-primary);
+  background: var(--node-bg);
   border: 2px solid var(--accent-blue);
   color: var(--accent-blue);
 }
 
 .df-flow-pill-end {
-  background: var(--bg-primary);
+  background: var(--node-bg);
   border: 2px solid var(--df-success);
   color: var(--df-success);
 }
@@ -151,13 +138,14 @@
 .df-flow-diamond {
   width: 64px;
   height: 64px;
-  background: var(--bg-primary);
+  background: var(--node-bg);
   border: 2px solid var(--accent-amber);
   transform: rotate(45deg);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  box-shadow: 0 2px 6px var(--node-shadow);
 }
 
 .df-flow-diamond:hover {
@@ -196,14 +184,15 @@
 /* ---- Task Node ---- */
 
 .df-flow-task-node {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-primary);
+  background: var(--node-bg);
+  border: 2px solid var(--border-primary);
   border-radius: 8px;
   padding: 10px 14px;
   min-width: 160px;
   max-width: 220px;
   cursor: pointer;
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 2px 6px var(--node-shadow);
 }
 
 .df-flow-task-node:hover {
@@ -267,14 +256,15 @@
 /* ---- Workflow Group Node (for group diagrams) ---- */
 
 .df-flow-wf-group-node {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-primary);
+  background: var(--node-bg);
+  border: 2px solid var(--border-primary);
   border-radius: 10px;
   padding: 12px 16px;
   min-width: 200px;
   max-width: 280px;
   cursor: pointer;
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 2px 6px var(--node-shadow);
 }
 
 .df-flow-wf-group-node:hover {
