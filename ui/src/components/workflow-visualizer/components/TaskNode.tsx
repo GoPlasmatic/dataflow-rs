@@ -116,7 +116,7 @@ export function TaskNode({
 
   const hasCondition = task.condition !== undefined && task.condition !== null && task.condition !== true;
   const mappings = functionName === 'map' ? (input?.mappings as MappingItem[]) || [] : [];
-  const rules = functionName === 'validation' ? (input?.rules as ValidationRule[]) || [] : [];
+  const rules = (functionName === 'validation' || functionName === 'validate') ? (input?.rules as ValidationRule[]) || [] : [];
   const hasChildren = hasCondition || mappings.length > 0 || rules.length > 0;
 
   const isTaskSelected = selection.type === 'task' &&

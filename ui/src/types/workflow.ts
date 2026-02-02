@@ -91,6 +91,8 @@ export interface ValidationRule {
   logic: JsonLogicValue;
   /** Error message if validation fails */
   message: string;
+  /** Optional path for the validation target */
+  path?: string;
 }
 
 /**
@@ -103,13 +105,13 @@ export interface ValidationFunctionInput {
 /**
  * Built-in function types
  */
-export type BuiltinFunctionType = 'map' | 'validation';
+export type BuiltinFunctionType = 'map' | 'validation' | 'validate';
 
 /**
  * Check if a function is a built-in type
  */
 export function isBuiltinFunction(name: string): name is BuiltinFunctionType {
-  return name === 'map' || name === 'validation';
+  return name === 'map' || name === 'validation' || name === 'validate';
 }
 
 /**
@@ -123,6 +125,7 @@ export function getFunctionDisplayInfo(name: string): {
   switch (name) {
     case 'map':
       return { label: 'Map', colorClass: 'df-function-badge-map', Icon: ArrowRightLeft };
+    case 'validate':
     case 'validation':
       return { label: 'Validation', colorClass: 'df-function-badge-validation', Icon: CheckCircle };
     default:

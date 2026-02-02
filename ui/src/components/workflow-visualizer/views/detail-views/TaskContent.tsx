@@ -28,7 +28,7 @@ export function TaskContent({ selection }: TaskContentProps) {
       if (functionName === 'map') {
         // For aggregate map view, use context before first mapping
         debugData = getMappingContext(step, 0);
-      } else if (functionName === 'validation' && step.message) {
+      } else if ((functionName === 'validation' || functionName === 'validate') && step.message) {
         // Validation is read-only, use task-level context
         debugData = step.message.context;
       }
@@ -55,7 +55,7 @@ export function TaskContent({ selection }: TaskContentProps) {
   }
 
   // For validation function, show all rules as AND expression
-  if (functionName === 'validation') {
+  if (functionName === 'validation' || functionName === 'validate') {
     const rules = (input?.rules as ValidationRule[]) || [];
     const andExpression: JsonLogicValue = {
       and: rules.map((rule) => rule.logic),

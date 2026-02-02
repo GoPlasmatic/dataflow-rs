@@ -22,7 +22,7 @@ function getTaskSubtitle(task: Task): string | null {
     }
   }
 
-  if (fn.name === 'validation' && fn.input) {
+  if ((fn.name === 'validation' || fn.name === 'validate') && fn.input) {
     const input = fn.input as unknown as ValidationFunctionInput;
     if (input.rules) {
       const count = input.rules.length;
