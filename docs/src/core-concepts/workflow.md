@@ -1,34 +1,34 @@
-# Workflow
+# Rules (Workflows)
 
-A Workflow is a collection of tasks that execute sequentially to process data.
+A Rule (also called Workflow) is a collection of actions that execute sequentially when a condition is met. This is the core **IF → THEN** unit: **IF** condition matches, **THEN** execute actions.
 
 ## Overview
 
-Workflows provide:
+Rules provide:
 
-- **Task Organization** - Group related processing steps
-- **Priority Ordering** - Control execution order across workflows
-- **Conditional Execution** - Only run when conditions are met
+- **Conditional Execution** - Only run when JSONLogic conditions are met (against full context: `data`, `metadata`, `temp_data`)
+- **Priority Ordering** - Control execution order across rules
+- **Action Organization** - Group related processing steps
 - **Error Handling** - Continue or stop on errors
 
-## Workflow Structure
+## Rule Structure
 
 ```json
 {
-    "id": "user_processor",
-    "name": "User Processor",
+    "id": "premium_order",
+    "name": "Premium Order Processing",
     "priority": 1,
-    "condition": { "==": [{"var": "metadata.type"}, "user"] },
+    "condition": { ">=": [{"var": "data.order.total"}, 1000] },
     "continue_on_error": false,
     "tasks": [
         {
-            "id": "validate_user",
-            "name": "Validate User",
+            "id": "apply_discount",
+            "name": "Apply Discount",
             "function": { ... }
         },
         {
-            "id": "enrich_user",
-            "name": "Enrich User Data",
+            "id": "notify_manager",
+            "name": "Notify Manager",
             "function": { ... }
         }
     ]
@@ -39,53 +39,67 @@ Workflows provide:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | Yes | Unique workflow identifier |
+| `id` | string | Yes | Unique rule identifier |
 | `name` | string | No | Human-readable name |
-| `priority` | number | No | Execution order (default: 0) |
-| `condition` | JSONLogic | No | When to execute workflow |
-| `continue_on_error` | boolean | No | Continue on task failure (default: false) |
-| `tasks` | array | Yes | Tasks to execute |
+| `priority` | number | No | Execution order (default: 0, lower = first) |
+| `condition` | JSONLogic | No | When to execute rule (evaluated against full context) |
+| `continue_on_error` | boolean | No | Continue on action failure (default: false) |
+| `tasks` | array | Yes | Actions to execute |
 
-## Creating Workflows
+## Creating Rules
 
 ### From JSON String
 
 ```rust
 use dataflow_rs::Workflow;
 
-let workflow = Workflow::from_json(r#"{
-    "id": "my_workflow",
-    "name": "My Workflow",
+let rule = Workflow::from_json(r#"{
+    "id": "my_rule",
+    "name": "My Rule",
     "tasks": [...]
 }"#)?;
+```
+
+### Using the Convenience Constructor
+
+```rust
+use dataflow_rs::{Rule, Task};
+use serde_json::json;
+
+let rule = Rule::rule(
+    "premium_discount",
+    "Premium Discount",
+    json!({">=": [{"var": "data.order.total"}, 1000]}),
+    vec![/* actions */],
+);
 ```
 
 ### From File
 
 ```rust
-let workflow = Workflow::from_file("workflows/my_workflow.json")?;
+let rule = Workflow::from_file("rules/my_rule.json")?;
 ```
 
 ## Priority Ordering
 
-Workflows execute in priority order (lowest first):
+Rules execute in priority order (lowest first). This enables the **THAT** (chaining) in the IF → THEN → THAT model:
 
 ```json
-// Executes first (priority 1)
+// Executes first (priority 1) — validate input
 {
     "id": "validation",
     "priority": 1,
     "tasks": [...]
 }
 
-// Executes second (priority 2)
+// Executes second (priority 2) — transform data
 {
     "id": "transformation",
     "priority": 2,
     "tasks": [...]
 }
 
-// Executes last (priority 10)
+// Executes last (priority 10) — send notifications
 {
     "id": "notification",
     "priority": 10,
@@ -95,15 +109,15 @@ Workflows execute in priority order (lowest first):
 
 ## Conditional Execution
 
-Use JSONLogic conditions to control when workflows run:
+Use JSONLogic conditions to control when rules run. Conditions evaluate against the **full message context** — `data`, `metadata`, and `temp_data`:
 
 ```json
 {
-    "id": "premium_user_workflow",
+    "id": "premium_user_rule",
     "condition": {
         "and": [
-            {"==": [{"var": "metadata.type"}, "user"]},
-            {"==": [{"var": "data.premium"}, true]}
+            {">=": [{"var": "data.order.total"}, 500]},
+            {"==": [{"var": "data.user.is_vip"}, true]}
         ]
     },
     "tasks": [...]
@@ -113,8 +127,8 @@ Use JSONLogic conditions to control when workflows run:
 ### Common Condition Patterns
 
 ```json
-// Match metadata type
-{"==": [{"var": "metadata.type"}, "order"]}
+// Match on data fields
+{">=": [{"var": "data.order.total"}, 1000]}
 
 // Check data exists
 {"!!": {"var": "data.email"}}
@@ -138,29 +152,29 @@ Use JSONLogic conditions to control when workflows run:
 
 ```json
 {
-    "id": "strict_workflow",
+    "id": "strict_rule",
     "continue_on_error": false,
     "tasks": [...]
 }
 ```
 
-If any task fails, the workflow stops and the error is recorded.
+If any action fails, the rule stops and the error is recorded.
 
 ### Continue on Error
 
 ```json
 {
-    "id": "resilient_workflow",
+    "id": "resilient_rule",
     "continue_on_error": true,
     "tasks": [...]
 }
 ```
 
-Tasks continue executing even if previous tasks fail. Errors are collected in `message.errors`.
+Actions continue executing even if previous actions fail. Errors are collected in `message.errors`.
 
-## Task Dependencies
+## Action Dependencies
 
-Tasks within a workflow execute sequentially, allowing later tasks to depend on earlier results:
+Actions within a rule execute sequentially, allowing later actions to depend on earlier results:
 
 ```json
 {
@@ -194,9 +208,9 @@ Tasks within a workflow execute sequentially, allowing later tasks to depend on 
 
 ## Try It
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
+> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and rule visualization.
 
-<div class="playground-widget" data-workflows='[{"id":"parse_workflow","name":"Parse Input","priority":1,"tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}}]},{"id":"conditional_workflow","name":"Conditional Workflow","priority":2,"condition":{"==":[{"var":"data.input.role"},"admin"]},"tasks":[{"id":"greet","name":"Greet User","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Welcome, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"Alice","role":"admin"}'>
+<div class="playground-widget" data-workflows='[{"id":"parse_workflow","name":"Parse Input","priority":1,"tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}}]},{"id":"conditional_workflow","name":"Conditional Rule","priority":2,"condition":{"==":[{"var":"data.input.role"},"admin"]},"tasks":[{"id":"greet","name":"Greet User","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Welcome, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"Alice","role":"admin"}'>
 </div>
 
-Try changing `role` to something other than "admin" to see the conditional workflow skip.
+Try changing `role` to something other than "admin" to see the conditional rule skip.

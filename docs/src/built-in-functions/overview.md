@@ -1,6 +1,6 @@
 # Built-in Functions Overview
 
-Dataflow-rs comes with built-in functions for common data processing tasks, covering the complete lifecycle from parsing input to publishing output.
+Dataflow-rs comes with built-in action functions for common data processing tasks, covering the complete lifecycle from parsing input to publishing output.
 
 ## Available Functions
 
@@ -74,7 +74,7 @@ Dataflow-rs comes with built-in functions for common data processing tasks, cove
     "tasks": [
         {
             "id": "conditional_map",
-            "condition": {"==": [{"var": "metadata.type"}, "premium"]},
+            "condition": {"==": [{"var": "data.tier"}, "premium"]},
             "function": {
                 "name": "map",
                 "input": {

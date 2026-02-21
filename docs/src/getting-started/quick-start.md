@@ -1,10 +1,10 @@
 # Quick Start
 
-Build your first data processing workflow in minutes.
+Build your first rule in minutes.
 
-## Create a Simple Workflow
+## Create a Simple Rule
 
-Workflows are defined in JSON and consist of tasks that process data sequentially.
+Rules are defined in JSON and consist of actions (tasks) that process data sequentially.
 
 ```rust
 use dataflow_rs::{Engine, Workflow};
@@ -14,10 +14,10 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Define a workflow that transforms data
-    let workflow_json = r#"{
-        "id": "greeting_workflow",
-        "name": "Greeting Workflow",
+    // Define a rule that transforms data
+    let rule_json = r#"{
+        "id": "greeting_rule",
+        "name": "Greeting Rule",
         "tasks": [
             {
                 "id": "create_greeting",
@@ -37,11 +37,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ]
     }"#;
 
-    // Parse the workflow
-    let workflow = Workflow::from_json(workflow_json)?;
+    // Parse the rule
+    let rule = Workflow::from_json(rule_json)?;
 
     // Create the engine (compiles all logic at startup)
-    let engine = Engine::new(vec![workflow], None);
+    let engine = Engine::new(vec![rule], None);
 
     // Create a message with payload
     let payload = Arc::new(json!({"name": "World"}));
@@ -62,27 +62,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Try It Interactively
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
+> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and rule visualization.
 
-<div class="playground-widget" data-workflows='[{"id":"greeting_workflow","name":"Greeting Workflow","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"create_greeting","name":"Create Greeting","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"World"}'>
+<div class="playground-widget" data-workflows='[{"id":"greeting_rule","name":"Greeting Rule","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"create_greeting","name":"Create Greeting","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"World"}'>
 </div>
 
 ## Understanding the Code
 
-1. **Workflow Definition** - JSON structure defining tasks to execute
+1. **Rule Definition** - JSON structure defining actions (tasks) to execute
 2. **Engine Creation** - Compiles all JSONLogic expressions at startup
 3. **Message Creation** - Input data wrapped in a Message structure
-4. **Processing** - Engine runs the message through all matching workflows
+4. **Processing** - Engine evaluates each rule's condition and executes matching actions
 5. **Result** - Modified message with transformed data and audit trail
 
 ## Add Validation
 
-Extend your workflow with data validation:
+Extend your rule with data validation:
 
 ```json
 {
-    "id": "validated_workflow",
-    "name": "Validated Workflow",
+    "id": "validated_rule",
+    "name": "Validated Rule",
     "tasks": [
         {
             "id": "validate_input",

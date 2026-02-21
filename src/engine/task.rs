@@ -8,7 +8,7 @@ use crate::engine::functions::FunctionConfig;
 use serde::Deserialize;
 use serde_json::Value;
 
-/// A single processing unit within a workflow.
+/// A single processing unit within a workflow (also known as an Action in rules-engine terminology).
 ///
 /// Tasks execute functions with optional conditions and error handling.
 /// They are processed sequentially within a workflow, allowing later tasks
@@ -21,7 +21,7 @@ use serde_json::Value;
 ///     "id": "validate_user",
 ///     "name": "Validate User Data",
 ///     "description": "Ensures user data meets requirements",
-///     "condition": {"==": [{"var": "metadata.type"}, "user"]},
+///     "condition": {">=": [{"var": "data.order.total"}, 1000]},
 ///     "function": {
 ///         "name": "validation",
 ///         "input": { "rules": [...] }
@@ -41,7 +41,7 @@ pub struct Task {
     pub description: Option<String>,
 
     /// JSONLogic condition that determines if the task should execute.
-    /// Conditions can only access `metadata` fields, not `data` fields.
+    /// Conditions can access any context field (`data`, `metadata`, `temp_data`).
     /// Defaults to `true` (always execute).
     #[serde(default = "default_condition")]
     pub condition: Value,
@@ -60,6 +60,29 @@ pub struct Task {
     /// Defaults to `false`.
     #[serde(default)]
     pub continue_on_error: bool,
+}
+
+impl Task {
+    /// Create a task (action) with default settings.
+    ///
+    /// This is a convenience constructor for the IFTTT-style rules engine pattern,
+    /// creating an action that always executes (condition defaults to `true`).
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for the action
+    /// * `name` - Human-readable name
+    /// * `function` - The function configuration to execute
+    pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self {
+        Task {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: None,
+            condition: Value::Bool(true),
+            condition_index: None,
+            function,
+            continue_on_error: false,
+        }
+    }
 }
 
 /// Returns the default condition value (always true).

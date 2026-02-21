@@ -1,6 +1,6 @@
 # WebAssembly Package
 
-The `@goplasmatic/dataflow-wasm` package provides WebAssembly bindings for dataflow-rs, enabling you to run the same workflow engine in the browser that powers your Rust backend.
+The `@goplasmatic/dataflow-wasm` package provides WebAssembly bindings for dataflow-rs, enabling you to run the same rules engine in the browser that powers your Rust backend.
 
 ## Installation
 
@@ -55,13 +55,13 @@ console.log(result.data.output); // 'hello world'
 
 ### WasmEngine
 
-The main class for executing workflows.
+The main class for executing rules.
 
 ```typescript
 class WasmEngine {
   constructor(workflows: Workflow[]);
 
-  // Process a message through all matching workflows
+  // Process a message through all matching rules
   process(message: Message): Promise<Message>;
 
   // Process with execution trace for debugging
@@ -75,14 +75,14 @@ class WasmEngine {
 interface Workflow {
   id: string;
   name: string;
-  condition?: JsonLogicValue;  // Optional condition to run this workflow
+  condition?: JsonLogicValue;  // Optional condition (evaluated against full context)
   tasks: Task[];
 }
 
 interface Task {
   id: string;
   name: string;
-  condition?: JsonLogicValue;  // Optional condition to run this task
+  condition?: JsonLogicValue;  // Optional condition (evaluated against full context)
   function: FunctionConfig;
 }
 
@@ -140,4 +140,4 @@ The WASM package works in all modern browsers that support WebAssembly:
 ## Next Steps
 
 - [UI Package](../ui/overview.md) - React visualization components
-- [Built-in Functions](../built-in-functions/overview.md) - Map and validation functions
+- [Built-in Functions](../built-in-functions/overview.md) - Map, validation, and more

@@ -17,7 +17,7 @@ The engine features a clean async-first architecture with DataLogic v4:
 - **Engine**: Async engine optimized for Tokio runtime with mixed I/O and CPU workloads
 - **LogicCompiler**: Compiles and caches JSONLogic expressions during initialization
 - **InternalExecutor**: Executes built-in map and validation functions with compiled logic
-- **Workflow**: Collection of tasks with JSONLogic conditions (metadata-only access)
+- **Workflow**: Collection of tasks with JSONLogic conditions (can access data, metadata, temp_data)
 - **Task**: Individual processing unit that performs a specific function on a message
 - **AsyncFunctionHandler**: Trait for custom async processing logic
 - **Message**: Data structure flowing through the engine with audit trail

@@ -1,20 +1,27 @@
 /*!
 # Dataflow-rs
 
-A lightweight, rule-driven workflow engine for building powerful data processing pipelines and nanoservices in Rust.
+A lightweight rules engine for building IFTTT-style automation and data processing pipelines in Rust.
 
 ## Overview
 
-Dataflow-rs provides a flexible and extensible framework for processing data through a series of tasks organized in workflows.
-The engine automatically routes messages through appropriate workflows based on configurable rules, and each workflow can
-contain multiple tasks that transform, validate, or enrich the data.
+Dataflow-rs provides a high-performance rules engine that follows the **IF → THEN → THAT** model:
+
+- **IF** — Define conditions using JSONLogic expressions (evaluated against `data`, `metadata`, `temp_data`)
+- **THEN** — Execute actions: data transformation, validation, or custom async logic
+- **THAT** — Chain multiple actions and rules with priority ordering
+
+Rules are defined declaratively in JSON and compiled once at startup for zero-overhead evaluation at runtime.
 
 ## Key Components
 
-* **Engine**: The central component that processes messages through workflows
-* **Workflow**: A collection of tasks with conditions that determine when they should be applied
-* **Task**: An individual processing unit that performs a specific function on a message
-* **AsyncFunctionHandler**: A trait implemented by task handlers to define custom async processing logic
+| Rules Engine | Workflow Engine | Description |
+|---|---|---|
+| **RulesEngine** | **Engine** | Central async component that evaluates rules and executes actions |
+| **Rule** | **Workflow** | A condition + actions bundle — IF condition THEN execute actions |
+| **Action** | **Task** | An individual processing step that performs a function on a message |
+
+* **AsyncFunctionHandler**: A trait implemented by action handlers to define custom async processing logic
 * **Message**: The data structure that flows through the engine, containing payload, metadata, and processing results
 
 ## Built-in Functions
@@ -192,3 +199,12 @@ pub use engine::functions::{
 pub use engine::message::{AuditTrail, Change, Message};
 pub use engine::trace::{ExecutionStep, ExecutionTrace, StepResult};
 pub use engine::{Engine, Task, Workflow};
+
+/// Type alias for `Workflow` — a Rule represents an IF-THEN unit: IF condition THEN execute actions.
+pub type Rule = Workflow;
+
+/// Type alias for `Task` — an Action is an individual processing step within a rule.
+pub type Action = Task;
+
+/// Type alias for `Engine` — the RulesEngine evaluates rules and executes their actions.
+pub type RulesEngine = Engine;

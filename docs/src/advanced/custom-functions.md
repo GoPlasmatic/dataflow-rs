@@ -79,14 +79,14 @@ custom_functions.insert(
 let engine = Engine::new(workflows, Some(custom_functions));
 ```
 
-## Using Custom Functions in Workflows
+## Using Custom Functions in Rules
 
 ```json
 {
-    "id": "custom_workflow",
+    "id": "custom_rule",
     "tasks": [
         {
-            "id": "custom_task",
+            "id": "custom_action",
             "function": {
                 "name": "my_custom_function",
                 "input": {

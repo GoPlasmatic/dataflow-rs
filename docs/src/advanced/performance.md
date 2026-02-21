@@ -1,6 +1,6 @@
 # Performance
 
-Dataflow-rs is designed for high-performance data processing with minimal overhead.
+Dataflow-rs is designed for high-performance rule evaluation and data processing with minimal overhead.
 
 ## Architecture for Performance
 
@@ -98,13 +98,13 @@ Skip unnecessary processing with conditions:
 }
 ```
 
-### 3. Order Workflows by Frequency
+### 3. Order Rules by Frequency
 
-Put frequently-executed workflows earlier (lower priority):
+Put frequently-executed rules earlier (lower priority):
 
 ```json
-{"id": "common_workflow", "priority": 1, ...}
-{"id": "rare_workflow", "priority": 100, ...}
+{"id": "common_rule", "priority": 1, ...}
+{"id": "rare_rule", "priority": 100, ...}
 ```
 
 ### 4. Use temp_data
@@ -186,13 +186,13 @@ For very large messages, consider:
 2. **Selective Loading** - Load only needed fields
 3. **Cleanup temp_data** - Clear intermediate results when done
 
-### Many Workflows
+### Many Rules
 
-For many workflows:
+For many rules:
 
-1. **Organize by Domain** - Group related workflows
-2. **Use Conditions** - Skip irrelevant workflows early
-3. **Profile** - Identify bottleneck workflows
+1. **Organize by Domain** - Group related rules
+2. **Use Conditions** - Skip irrelevant rules early
+3. **Profile** - Identify bottleneck rules
 
 ## Profiling
 
@@ -221,5 +221,5 @@ metrics::histogram!("dataflow.processing_time", duration);
 1. **Build with --release** - Debug builds are significantly slower
 2. **Pre-warm** - Process a few messages at startup to warm caches
 3. **Monitor** - Track processing times and error rates
-4. **Profile** - Identify slow workflows in production
+4. **Profile** - Identify slow rules in production
 5. **Scale Horizontally** - Engine is stateless, scale with instances

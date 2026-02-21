@@ -9,7 +9,7 @@ Dataflow-rs is a lightweight, rule-driven workflow engine for building data proc
 ### Core Architecture
 
 - **Engine**: Central async component that processes messages through workflows sequentially
-- **Workflow**: Collection of tasks with JSONLogic conditions (can only access metadata fields)
+- **Workflow (Rule)**: Collection of tasks with JSONLogic conditions (can access data, metadata, temp_data)
 - **Task**: Individual processing units that implement `AsyncFunctionHandler` trait
 - **Message**: Data structure containing `data`, `payload`, `metadata`, `temp_data`, audit trail, and errors
 - **Built-in Functions**: Data mapping/transformation and validation
@@ -77,7 +77,7 @@ The project uses GitHub Actions for automated releases via `cargo-release` when 
 
 ### Key Implementation Details
 
-- **Workflow Conditions**: Can ONLY access `metadata` fields, not `data` fields
+- **Workflow/Rule Conditions**: Can access any context field (`data`, `metadata`, `temp_data`)
 - **Task Dependencies**: Tasks within workflows execute sequentially, allowing later tasks to depend on earlier results
 - **Error Handling**: Workflows can continue processing despite individual task failures when `continue_on_error` is enabled
 - **Custom Functions**: Implement `AsyncFunctionHandler` trait with async `execute()` returning `Result<(usize, Vec<Change>)>`

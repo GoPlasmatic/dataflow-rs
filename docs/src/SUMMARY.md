@@ -12,9 +12,9 @@
 # Core Concepts
 
 - [Overview](./core-concepts/overview.md)
-- [Engine](./core-concepts/engine.md)
-- [Workflow](./core-concepts/workflow.md)
-- [Task](./core-concepts/task.md)
+- [Rules Engine](./core-concepts/engine.md)
+- [Rules (Workflows)](./core-concepts/workflow.md)
+- [Actions (Tasks)](./core-concepts/task.md)
 - [Message](./core-concepts/message.md)
 - [Error Handling](./core-concepts/error-handling.md)
 

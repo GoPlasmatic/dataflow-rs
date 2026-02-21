@@ -8,7 +8,7 @@ Every change to message data is recorded in the audit trail:
 
 - **What changed** - Path and values (old and new)
 - **When it changed** - Timestamp
-- **Which task** - Workflow and task identifiers
+- **Which action** - Rule (workflow) and action (task) identifiers
 
 ## Audit Trail Structure
 

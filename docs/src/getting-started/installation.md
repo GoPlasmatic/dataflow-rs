@@ -11,7 +11,7 @@ Add dataflow-rs to your Rust project using Cargo.
 
 ```toml
 [dependencies]
-dataflow-rs = "2.0"
+dataflow-rs = "2.1"
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 ```
@@ -24,9 +24,9 @@ Create a simple test to verify the installation:
 use dataflow_rs::Engine;
 
 fn main() {
-    // Create an empty engine
+    // Create an empty rules engine
     let engine = Engine::new(vec![], None);
-    println!("Engine created with {} workflows", engine.workflows().len());
+    println!("Rules engine created with {} rules", engine.workflows().len());
 }
 ```
 
@@ -39,7 +39,7 @@ cargo run
 You should see:
 
 ```
-Engine created with 0 workflows
+Rules engine created with 0 rules
 ```
 
 ## Optional Dependencies
@@ -61,5 +61,5 @@ env_logger = "0.11"
 
 ## Next Steps
 
-- [Quick Start](./quick-start.md) - Build your first workflow
+- [Quick Start](./quick-start.md) - Build your first rule
 - [Basic Concepts](./basic-concepts.md) - Understand the core architecture

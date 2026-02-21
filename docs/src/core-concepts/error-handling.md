@@ -1,74 +1,74 @@
 # Error Handling
 
-Dataflow-rs provides flexible error handling at multiple levels to build resilient data pipelines.
+Dataflow-rs provides flexible error handling at multiple levels to build resilient automation rules.
 
 ## Error Levels
 
 Errors can be handled at three levels:
 
-1. **Task Level** - Individual task error handling
-2. **Workflow Level** - Workflow-wide error policy
+1. **Action Level** - Individual action (task) error handling
+2. **Rule Level** - Rule-wide (workflow) error policy
 3. **Engine Level** - Processing errors
 
-## Task-Level Error Handling
+## Action-Level Error Handling
 
 ### Stop on Error (Default)
 
 ```json
 {
-    "id": "critical_task",
+    "id": "critical_action",
     "continue_on_error": false,
     "function": { ... }
 }
 ```
 
-If the task fails:
+If the action fails:
 - Error is recorded in `message.errors`
-- Workflow execution stops
-- No further tasks execute
+- Rule execution stops
+- No further actions execute
 
 ### Continue on Error
 
 ```json
 {
-    "id": "optional_task",
+    "id": "optional_action",
     "continue_on_error": true,
     "function": { ... }
 }
 ```
 
-If the task fails:
+If the action fails:
 - Error is recorded in `message.errors`
-- Workflow continues to next task
+- Rule continues to next action
 
-## Workflow-Level Error Handling
+## Rule-Level Error Handling
 
-The workflow's `continue_on_error` applies to all tasks by default:
+The rule's `continue_on_error` applies to all actions by default:
 
 ```json
 {
-    "id": "resilient_workflow",
+    "id": "resilient_rule",
     "continue_on_error": true,
     "tasks": [
-        {"id": "task1", "function": { ... }},
-        {"id": "task2", "function": { ... }},
-        {"id": "task3", "function": { ... }}
+        {"id": "action1", "function": { ... }},
+        {"id": "action2", "function": { ... }},
+        {"id": "action3", "function": { ... }}
     ]
 }
 ```
 
-All tasks will continue even if earlier tasks fail.
+All actions will continue even if earlier actions fail.
 
-### Override at Task Level
+### Override at Action Level
 
 ```json
 {
-    "id": "mixed_workflow",
+    "id": "mixed_rule",
     "continue_on_error": true,
     "tasks": [
-        {"id": "optional_task", "function": { ... }},
+        {"id": "optional_action", "function": { ... }},
         {
-            "id": "critical_task",
+            "id": "critical_action",
             "continue_on_error": false,
             "function": { ... }
         }
@@ -209,7 +209,7 @@ Validate data before critical operations:
 }
 ```
 
-If validation fails, the workflow stops before processing.
+If validation fails, the rule stops before further processing.
 
 ## Try It
 
@@ -223,11 +223,11 @@ Notice the validation error is recorded but processing continues.
 ## Best Practices
 
 1. **Validate Early**
-   - Add validation tasks at the start of workflows
+   - Add validation actions at the start of rules
    - Fail fast on invalid data
 
 2. **Use continue_on_error Wisely**
-   - Only for truly optional operations
+   - Only for truly optional actions
    - Critical operations should stop on error
 
 3. **Check Errors**

@@ -2,12 +2,24 @@
 
 Quick reference for the main dataflow-rs types and methods.
 
-## Engine
+## Type Aliases
 
-The central component that processes messages through workflows.
+Dataflow-rs provides rules-engine aliases alongside the original workflow terminology:
+
+| Rules Engine | Workflow Engine | Import |
+|---|---|---|
+| `RulesEngine` | `Engine` | `use dataflow_rs::RulesEngine;` |
+| `Rule` | `Workflow` | `use dataflow_rs::Rule;` |
+| `Action` | `Task` | `use dataflow_rs::Action;` |
+
+Both names refer to the same types — use whichever fits your mental model.
+
+## Engine (RulesEngine)
+
+The central component that evaluates rules and processes messages.
 
 ```rust
-use dataflow_rs::Engine;
+use dataflow_rs::Engine;  // or: use dataflow_rs::RulesEngine;
 ```
 
 ### Constructor
@@ -19,24 +31,27 @@ pub fn new(
 ) -> Engine
 ```
 
-Creates a new engine with the given workflows. All JSONLogic is compiled at creation.
+Creates a new engine with the given rules. All JSONLogic is compiled at creation.
 
 ### Methods
 
 ```rust
-// Process a message through all matching workflows
+// Process a message through all matching rules
 pub async fn process_message(&self, message: &mut Message) -> Result<()>
 
-// Get registered workflows
+// Process with execution trace for debugging
+pub async fn process_message_with_trace(&self, message: &mut Message) -> Result<ExecutionTrace>
+
+// Get registered rules
 pub fn workflows(&self) -> &HashMap<String, Workflow>
 ```
 
-## Workflow
+## Workflow (Rule)
 
-A collection of tasks with optional conditions and priority.
+A collection of actions with optional conditions and priority.
 
 ```rust
-use dataflow_rs::Workflow;
+use dataflow_rs::Workflow;  // or: use dataflow_rs::Rule;
 ```
 
 ### Constructors
@@ -47,6 +62,9 @@ pub fn from_json(json: &str) -> Result<Workflow>
 
 // Load from file
 pub fn from_file(path: &str) -> Result<Workflow>
+
+// Convenience constructor for rules-engine pattern
+pub fn rule(id: &str, name: &str, condition: Value, tasks: Vec<Task>) -> Self
 ```
 
 ### JSON Schema
@@ -56,15 +74,26 @@ pub fn from_file(path: &str) -> Result<Workflow>
     "id": "string (required)",
     "name": "string (optional)",
     "priority": "number (optional, default: 0)",
-    "condition": "JSONLogic (optional)",
+    "condition": "JSONLogic (optional, evaluated against full context)",
     "continue_on_error": "boolean (optional, default: false)",
     "tasks": "array of Task (required)"
 }
 ```
 
-## Task
+## Task (Action)
 
-An individual processing unit within a workflow.
+An individual processing unit within a rule.
+
+```rust
+use dataflow_rs::Task;  // or: use dataflow_rs::Action;
+```
+
+### Constructor
+
+```rust
+// Convenience constructor for rules-engine pattern
+pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self
+```
 
 ### JSON Schema
 
@@ -72,7 +101,7 @@ An individual processing unit within a workflow.
 {
     "id": "string (required)",
     "name": "string (optional)",
-    "condition": "JSONLogic (optional)",
+    "condition": "JSONLogic (optional, evaluated against full context)",
     "continue_on_error": "boolean (optional)",
     "function": {
         "name": "string (required)",
@@ -83,7 +112,7 @@ An individual processing unit within a workflow.
 
 ## Message
 
-The data container that flows through workflows.
+The data container that flows through rules.
 
 ```rust
 use dataflow_rs::Message;
@@ -123,7 +152,7 @@ pub fn invalidate_context_cache(&mut self)
 
 ## AsyncFunctionHandler
 
-Trait for implementing custom functions.
+Trait for implementing custom action handlers.
 
 ```rust
 use dataflow_rs::engine::AsyncFunctionHandler;
@@ -173,7 +202,7 @@ pub struct Change {
 
 ## AuditTrail
 
-Records changes made by a task.
+Records changes made by an action.
 
 ```rust
 pub struct AuditTrail {
@@ -274,7 +303,7 @@ const result = await engine.process(payloadStr);
 // One-off convenience function (no engine needed)
 const result2 = await process_message(workflowsJson, payloadStr);
 
-// Get workflow info
+// Get rule info
 const count = engine.workflow_count();
 const ids = engine.workflow_ids();
 ```

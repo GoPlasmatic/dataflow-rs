@@ -1,16 +1,16 @@
 [package]
 name = "dataflow-rs"
-version = "2.0.15"
+version = "2.1.0"
 edition = "2024"
 exclude = [".DS_Store", "/target", ".vscode"]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
 license = "Apache-2.0"
-description = "A lightweight, rule-driven workflow engine for building powerful data processing pipelines and nanoservices in Rust. Extend it with your custom tasks to create robust, maintainable services."
+description = "A lightweight rules engine for building IFTTT-style automation and data processing pipelines in Rust. Define rules with JSONLogic conditions, execute actions, and chain workflows."
 readme = "README.md"
 homepage = "https://github.com/GoPlasmatic/dataflow-rs"
 repository = "https://github.com/GoPlasmatic/dataflow-rs"
-keywords = ["workflow", "engine", "rule-engine", "orchestration", "nanoservice"]
-categories = ["data-structures", "development-tools", "parsing"]
+keywords = ["rules-engine", "ifttt", "automation", "jsonlogic", "workflow"]
+categories = ["data-structures", "development-tools", "config"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }

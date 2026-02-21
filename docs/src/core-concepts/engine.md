@@ -1,15 +1,16 @@
-# Engine
+# Rules Engine
 
-The Engine is the central component that orchestrates message processing through workflows.
+The Engine (also available as `RulesEngine` type alias) is the central component that evaluates rules and orchestrates action execution.
 
 ## Overview
 
 The Engine is responsible for:
 
 - Compiling all JSONLogic expressions at initialization
-- Managing workflow execution order
-- Processing messages through matching workflows
-- Coordinating task execution
+- Managing rule execution order by priority
+- Evaluating rule conditions against the full message context
+- Processing messages through matching rules
+- Coordinating action execution
 
 ## Creating an Engine
 
@@ -17,29 +18,37 @@ The Engine is responsible for:
 use dataflow_rs::{Engine, Workflow};
 use std::collections::HashMap;
 
-// Parse workflows from JSON
-let workflow1 = Workflow::from_json(r#"{
-    "id": "workflow1",
-    "name": "First Workflow",
+// Parse rules from JSON
+let rule1 = Workflow::from_json(r#"{
+    "id": "rule1",
+    "name": "First Rule",
     "priority": 1,
     "tasks": [...]
 }"#)?;
 
-let workflow2 = Workflow::from_json(r#"{
-    "id": "workflow2",
-    "name": "Second Workflow",
+let rule2 = Workflow::from_json(r#"{
+    "id": "rule2",
+    "name": "Second Rule",
     "priority": 2,
     "tasks": [...]
 }"#)?;
 
-// Create engine with workflows
+// Create engine with rules
 let engine = Engine::new(
-    vec![workflow1, workflow2],
+    vec![rule1, rule2],
     None  // Optional custom functions
 );
 
 // Engine is now ready - all logic compiled
-println!("Loaded {} workflows", engine.workflows().len());
+println!("Loaded {} rules", engine.workflows().len());
+```
+
+You can also use the `RulesEngine` type alias:
+
+```rust
+use dataflow_rs::RulesEngine;
+
+let engine = RulesEngine::new(vec![rule1, rule2], None);
 ```
 
 ## Processing Messages
@@ -56,7 +65,7 @@ let payload = Arc::new(json!({
 }));
 let mut message = Message::new(payload);
 
-// Process through all matching workflows
+// Process through all matching rules
 engine.process_message(&mut message).await?;
 
 // Access results
@@ -75,14 +84,14 @@ println!("Steps executed: {}", trace.executed_count());
 println!("Steps skipped: {}", trace.skipped_count());
 
 for step in &trace.steps {
-    println!("Workflow: {}, Task: {:?}, Result: {:?}",
+    println!("Rule: {}, Action: {:?}, Result: {:?}",
         step.workflow_id, step.task_id, step.result);
 }
 ```
 
-## Workflow Execution Order
+## Rule Execution Order
 
-Workflows execute in priority order (lowest priority number first):
+Rules execute in priority order (lowest priority number first):
 
 ```rust
 // Priority 1 executes first
@@ -100,24 +109,24 @@ let low_priority = Workflow::from_json(r#"{
 }"#)?;
 ```
 
-## Workflow Conditions
+## Rule Conditions
 
-Workflows can have conditions that determine if they should execute:
+Rules have conditions that determine if they should execute. Conditions are evaluated against the **full message context** — `data`, `metadata`, and `temp_data`:
 
 ```json
 {
-    "id": "user_workflow",
-    "name": "User Workflow",
-    "condition": { "==": [{"var": "metadata.type"}, "user"] },
+    "id": "premium_order",
+    "name": "Premium Order Processing",
+    "condition": { ">=": [{"var": "data.order.total"}, 1000] },
     "tasks": [...]
 }
 ```
 
-The workflow only executes if the condition evaluates to true.
+The rule only executes if the condition evaluates to true.
 
 ## Custom Functions
 
-Register custom functions when creating the engine:
+Register custom action handlers when creating the engine:
 
 ```rust
 use dataflow_rs::engine::AsyncFunctionHandler;
@@ -126,14 +135,14 @@ use std::collections::HashMap;
 let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> = HashMap::new();
 custom_functions.insert("my_function".to_string(), Box::new(MyCustomFunction));
 
-let engine = Engine::new(workflows, Some(custom_functions));
+let engine = Engine::new(rules, Some(custom_functions));
 ```
 
 ## Thread Safety
 
 The Engine is designed for concurrent use:
 
-- Workflows are immutable after creation
+- Rules are immutable after creation
 - Compiled logic is shared via `Arc`
 - Each message is processed independently
 
@@ -141,7 +150,7 @@ The Engine is designed for concurrent use:
 use std::sync::Arc;
 use tokio::task;
 
-let engine = Arc::new(Engine::new(workflows, None));
+let engine = Arc::new(Engine::new(rules, None));
 
 // Process multiple messages concurrently
 let handles: Vec<_> = messages.into_iter().map(|mut msg| {
@@ -161,14 +170,14 @@ for handle in handles {
 
 ### `Engine::new(workflows, custom_functions)`
 
-Creates a new engine with the given workflows and optional custom functions.
+Creates a new engine with the given rules and optional custom functions.
 
-- `workflows: Vec<Workflow>` - Workflows to register
-- `custom_functions: Option<HashMap<String, Box<dyn AsyncFunctionHandler>>>` - Custom function implementations
+- `workflows: Vec<Workflow>` - Rules to register
+- `custom_functions: Option<HashMap<String, Box<dyn AsyncFunctionHandler>>>` - Custom action implementations
 
 ### `engine.process_message(&mut message)`
 
-Processes a message through all matching workflows.
+Processes a message through all matching rules.
 
 - Returns `Result<()>` - Ok if processing succeeded
 - Message is modified in place with results and audit trail
@@ -182,8 +191,8 @@ Processes a message and returns an execution trace for debugging.
 
 ### `engine.workflows()`
 
-Returns a reference to the registered workflows.
+Returns a reference to the registered rules.
 
 ```rust
-let workflow_ids: Vec<&String> = engine.workflows().keys().collect();
+let rule_ids: Vec<&String> = engine.workflows().keys().collect();
 ```

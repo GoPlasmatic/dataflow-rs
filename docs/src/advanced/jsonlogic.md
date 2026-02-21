@@ -6,8 +6,8 @@ Dataflow-rs uses [JSONLogic](https://jsonlogic.com/) for conditions and data tra
 
 JSONLogic is a way to write rules as JSON. It's used in dataflow-rs for:
 
-- **Workflow Conditions** - Control when workflows execute
-- **Task Conditions** - Control when tasks execute
+- **Rule Conditions** - Control when rules (workflows) execute, evaluated against the full context (`data`, `metadata`, `temp_data`)
+- **Action Conditions** - Control when actions (tasks) execute
 - **Map Function** - Transform and copy data
 
 ## Basic Syntax

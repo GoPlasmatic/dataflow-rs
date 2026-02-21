@@ -31,7 +31,7 @@ export interface Task {
   name: string;
   /** Optional description */
   description?: string;
-  /** JSONLogic condition (evaluated against metadata only) */
+  /** JSONLogic condition (evaluated against full context: data, metadata, temp_data) */
   condition?: JsonLogicValue;
   /** Function to execute */
   function: FunctionConfig;
@@ -53,7 +53,7 @@ export interface Workflow {
   description?: string;
   /** Optional folder path for grouping (e.g., "orders/processing") */
   path?: string;
-  /** JSONLogic condition (evaluated against metadata only) */
+  /** JSONLogic condition (evaluated against full context: data, metadata, temp_data) */
   condition?: JsonLogicValue;
   /** Tasks in this workflow */
   tasks: Task[];

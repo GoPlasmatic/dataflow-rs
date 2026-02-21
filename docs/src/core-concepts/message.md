@@ -1,6 +1,6 @@
 # Message
 
-A Message is the data container that flows through workflows, carrying data, metadata, and an audit trail.
+A Message is the data container that flows through rules, carrying data, metadata, and an audit trail.
 
 ## Overview
 
@@ -94,7 +94,7 @@ let name = &message.context["data"]["name"];
 
 Information about the message itself (not the data). Commonly used for:
 
-- Routing decisions (workflow conditions)
+- Routing decisions (rule conditions)
 - Source tracking
 - Timestamps
 - Message type classification
@@ -167,7 +167,7 @@ for error in &message.errors {
 
 ## JSONLogic Access
 
-In workflow conditions and mappings, access message fields using JSONLogic:
+In rule conditions and mappings, access message fields using JSONLogic:
 
 ```json
 // Access data fields
@@ -195,7 +195,7 @@ Notice how `temp_data` is used to store an intermediate result.
 
 1. **Separate Concerns**
    - Use `data` for business data
-   - Use `metadata` for routing and tracking
+   - Use `metadata` for routing and rule conditions
    - Use `temp_data` for intermediate results
 
 2. **Don't Modify metadata in Tasks**

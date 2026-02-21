@@ -1,6 +1,6 @@
 # UI Package
 
-The `@goplasmatic/dataflow-ui` package provides React components for visualizing and debugging dataflow-rs workflows.
+The `@goplasmatic/dataflow-ui` package provides React components for visualizing and debugging dataflow-rs rules and workflows.
 
 ## Installation
 
@@ -60,7 +60,7 @@ function App() {
 
 ### WorkflowVisualizer
 
-The main component for displaying workflows in an interactive tree view.
+The main component for displaying rules (workflows) in an interactive tree view.
 
 ```tsx
 interface WorkflowVisualizerProps {
@@ -266,5 +266,5 @@ Output will be in `ui/dist/`.
 
 ## Next Steps
 
-- [WASM Package](../wasm/overview.md) - Run workflows in the browser
-- [Core Concepts](../core-concepts/overview.md) - Understand workflows and tasks
+- [WASM Package](../wasm/overview.md) - Run rules in the browser
+- [Core Concepts](../core-concepts/overview.md) - Understand rules and actions

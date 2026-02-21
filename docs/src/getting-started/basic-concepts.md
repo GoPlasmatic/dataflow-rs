@@ -2,6 +2,14 @@
 
 Understanding the core components of dataflow-rs.
 
+## The IF → THEN → THAT Model
+
+Dataflow-rs follows an IFTTT-style rules engine pattern:
+
+- **IF** — Define conditions using JSONLogic (evaluated against `data`, `metadata`, `temp_data`)
+- **THEN** — Execute actions: data transformation, validation, or custom async logic
+- **THAT** — Chain multiple actions and rules with priority ordering
+
 ## Architecture Overview
 
 Dataflow-rs follows a two-phase architecture:
@@ -13,7 +21,7 @@ Dataflow-rs follows a two-phase architecture:
 ┌─────────────────────────────────────────────────────────────┐
 │                    Compilation Phase                         │
 │  ┌──────────┐    ┌──────────────┐    ┌──────────────────┐  │
-│  │ Workflows│ -> │ LogicCompiler│ -> │ Compiled Cache   │  │
+│  │  Rules   │ -> │ LogicCompiler│ -> │ Compiled Cache   │  │
 │  └──────────┘    └──────────────┘    └──────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -29,40 +37,48 @@ Dataflow-rs follows a two-phase architecture:
 
 ## Core Components
 
-### Engine
+| Rules Engine | Workflow Engine | Description |
+|---|---|---|
+| **RulesEngine** | **Engine** | Central async component that evaluates rules and executes actions |
+| **Rule** | **Workflow** | A condition + actions bundle — IF condition THEN execute actions |
+| **Action** | **Task** | An individual processing step (map, validate, or custom function) |
 
-The central orchestrator that processes messages through workflows.
+Both naming conventions work — use whichever fits your mental model.
+
+### Engine (RulesEngine)
+
+The central orchestrator that processes messages through rules.
 
 ```rust
 use dataflow_rs::Engine;
 
-// Create engine with workflows (compiled at creation)
-let engine = Engine::new(workflows, custom_functions);
+// Create engine with rules (compiled at creation)
+let engine = Engine::new(rules, custom_functions);
 
 // Process messages (uses pre-compiled logic)
 engine.process_message(&mut message).await?;
 ```
 
-### Workflow
+### Rule (Workflow)
 
-A collection of tasks executed sequentially. Workflows can have:
+A collection of actions executed sequentially. Rules can have:
 
 - **Priority** - Determines execution order (lower = first)
-- **Conditions** - JSONLogic expression to control when workflow runs
+- **Conditions** - JSONLogic expression evaluated against the full context (`data`, `metadata`, `temp_data`)
 
 ```json
 {
-    "id": "my_workflow",
-    "name": "My Workflow",
+    "id": "premium_order",
+    "name": "Premium Order Processing",
     "priority": 1,
-    "condition": { "==": [{"var": "metadata.type"}, "user"] },
+    "condition": { ">=": [{"var": "data.order.total"}, 1000] },
     "tasks": [...]
 }
 ```
 
-### Task
+### Action (Task)
 
-An individual processing unit within a workflow. Tasks can:
+An individual processing unit within a rule. Actions can:
 
 - Execute built-in functions (map, validation)
 - Execute custom functions
@@ -70,9 +86,9 @@ An individual processing unit within a workflow. Tasks can:
 
 ```json
 {
-    "id": "transform_data",
-    "name": "Transform Data",
-    "condition": { "!!": {"var": "data.name"} },
+    "id": "apply_discount",
+    "name": "Apply Discount",
+    "condition": { "!!": {"var": "data.order.total"} },
     "function": {
         "name": "map",
         "input": { ... }
@@ -82,7 +98,7 @@ An individual processing unit within a workflow. Tasks can:
 
 ### Message
 
-The data structure that flows through workflows. Contains:
+The data structure that flows through rules. Contains:
 
 - **context.data** - Main data payload
 - **context.metadata** - Message metadata
@@ -107,8 +123,8 @@ println!("Audit: {:?}", message.audit_trail);
 ## Data Flow
 
 1. **Input** - Message created with initial data
-2. **Workflow Selection** - Engine selects matching workflows by condition
-3. **Task Execution** - Tasks run sequentially within each workflow
+2. **Rule Selection** - Engine evaluates each rule's condition
+3. **Action Execution** - Actions run sequentially within each matching rule
 4. **Output** - Message contains transformed data and audit trail
 
 ```
@@ -116,14 +132,14 @@ Message (input)
     │
     v
 ┌─────────────────────────────────────────┐
-│ Workflow 1 (priority: 1)                │
-│   Task 1 -> Task 2 -> Task 3            │
+│ Rule 1 (priority: 1)                    │
+│   Action 1 -> Action 2 -> Action 3     │
 └─────────────────────────────────────────┘
     │
     v
 ┌─────────────────────────────────────────┐
-│ Workflow 2 (priority: 2)                │
-│   Task 1 -> Task 2                      │
+│ Rule 2 (priority: 2)                    │
+│   Action 1 -> Action 2                 │
 └─────────────────────────────────────────┘
     │
     v
@@ -134,7 +150,7 @@ Message (output with audit trail)
 
 Dataflow-rs uses [JSONLogic](https://jsonlogic.com/) for:
 
-- **Conditions** - Control when workflows/tasks execute
+- **Conditions** - Control when rules/actions execute (can access any context field)
 - **Data Access** - Read values from message context
 - **Transformations** - Transform and combine data
 
@@ -151,11 +167,11 @@ Common operations:
 {"if": [{"var": "data.premium"}, "VIP", "Standard"]}
 
 // Comparisons
-{"==": [{"var": "metadata.type"}, "user"]}
+{">=": [{"var": "data.order.total"}, 1000]}
 ```
 
 ## Next Steps
 
-- [Engine](../core-concepts/engine.md) - Deep dive into the engine
+- [Rules Engine](../core-concepts/engine.md) - Deep dive into the engine
 - [JSONLogic](../advanced/jsonlogic.md) - Advanced JSONLogic usage
 - [Custom Functions](../advanced/custom-functions.md) - Extend with custom logic

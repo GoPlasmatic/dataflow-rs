@@ -5,7 +5,9 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-/// Workflow represents a collection of tasks that execute sequentially
+/// Workflow represents a collection of tasks that execute sequentially (also known as a Rule in rules-engine terminology).
+///
+/// Conditions are evaluated against the full message context, including `data`, `metadata`, and `temp_data` fields.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Workflow {
     pub id: String,
@@ -42,6 +44,29 @@ impl Workflow {
             condition: Value::Bool(true),
             condition_index: None,
             tasks: Vec::new(),
+            continue_on_error: false,
+        }
+    }
+
+    /// Create a workflow (rule) with a condition and tasks.
+    ///
+    /// This is a convenience constructor for the IFTTT-style rules engine pattern:
+    /// **IF** `condition` **THEN** execute `tasks`.
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for the rule
+    /// * `name` - Human-readable name
+    /// * `condition` - JSONLogic condition evaluated against the full context (data, metadata, temp_data)
+    /// * `tasks` - Actions to execute when the condition is met
+    pub fn rule(id: &str, name: &str, condition: Value, tasks: Vec<Task>) -> Self {
+        Workflow {
+            id: id.to_string(),
+            name: name.to_string(),
+            priority: 0,
+            description: None,
+            condition,
+            condition_index: None,
+            tasks,
             continue_on_error: false,
         }
     }
