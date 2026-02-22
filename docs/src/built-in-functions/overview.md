@@ -10,6 +10,8 @@ Dataflow-rs comes with built-in action functions for common data processing task
 | `parse_xml` | Parse XML string into JSON data structure | Yes |
 | `map` | Data transformation and field mapping | Yes |
 | `validation` | Rule-based data validation | No (read-only) |
+| `filter` | Pipeline control flow — halt workflow or skip task | No |
+| `log` | Structured logging with JSONLogic expressions | No |
 | `publish_json` | Serialize data to JSON string | Yes |
 | `publish_xml` | Serialize data to XML string | Yes |
 
@@ -153,4 +155,6 @@ For operations beyond built-in functions, implement the `AsyncFunctionHandler` t
 - [Parse Functions](./parse.md) - JSON and XML parsing
 - [Map Function](./map.md) - Data transformation
 - [Validation Function](./validation.md) - Rule-based validation
+- [Filter Function](./filter.md) - Pipeline control flow (halt/skip)
+- [Log Function](./log.md) - Structured logging
 - [Publish Functions](./publish.md) - JSON and XML serialization

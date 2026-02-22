@@ -122,8 +122,13 @@ let engine = RulesEngine::new(vec![rule], None);
 - **Full Context Access:** Conditions can access any field — `data`, `metadata`, `temp_data`.
 - **Async-First Architecture:** Native async/await support with Tokio for high-throughput processing.
 - **Execution Tracing:** Step-by-step debugging with message snapshots after each action.
-- **Built-in Functions:** Parse (JSON/XML), Map, Validate, and Publish (JSON/XML) for complete data pipelines.
+- **Built-in Functions:** Parse, Map, Validate, Filter, Log, and Publish for complete data pipelines.
+- **Pipeline Control Flow:** Filter/gate function to halt workflows or skip tasks based on conditions.
+- **Channel Routing:** Route messages to specific workflow channels with O(1) lookup.
+- **Workflow Lifecycle:** Manage workflow status (active/paused/archived), versioning, and tagging.
+- **Hot Reload:** Swap workflows at runtime without re-registering custom functions.
 - **Extensible:** Add custom async actions by implementing the `AsyncFunctionHandler` trait.
+- **Typed Integration Configs:** Pre-validated configs for HTTP, Enrich, and Kafka integrations.
 - **WebAssembly Support:** Run rules in the browser with `@goplasmatic/dataflow-wasm`.
 - **React UI Components:** Visualize and debug rules with `@goplasmatic/dataflow-ui`.
 - **Auditing:** Full audit trail of all changes as data flows through the pipeline.
@@ -200,8 +205,103 @@ let engine = Engine::new(workflows, Some(custom_functions));
 | `parse_xml` | Parse XML string into JSON data structure | Yes |
 | `map` | Data transformation using JSONLogic | Yes |
 | `validation` | Rule-based data validation | No (read-only) |
+| `filter` | Pipeline control flow — halt workflow or skip task | No |
+| `log` | Structured logging with JSONLogic expressions | No |
 | `publish_json` | Serialize data to JSON string | Yes |
 | `publish_xml` | Serialize data to XML string | Yes |
+
+### Filter (Pipeline Control Flow)
+
+The `filter` function evaluates a JSONLogic condition and controls pipeline execution:
+
+```json
+{
+    "function": {
+        "name": "filter",
+        "input": {
+            "condition": {"==": [{"var": "data.status"}, "active"]},
+            "on_reject": "halt"
+        }
+    }
+}
+```
+
+- `on_reject: "halt"` — stops the entire workflow when the condition is false
+- `on_reject: "skip"` — skips just the current task and continues
+
+### Log (Structured Logging)
+
+The `log` function outputs structured log messages using the `log` crate:
+
+```json
+{
+    "function": {
+        "name": "log",
+        "input": {
+            "level": "info",
+            "message": {"cat": ["Processing order ", {"var": "data.order.id"}]},
+            "fields": {
+                "total": {"var": "data.order.total"},
+                "user": {"var": "data.user.name"}
+            }
+        }
+    }
+}
+```
+
+Log levels: `trace`, `debug`, `info`, `warn`, `error`. Messages and fields support JSONLogic expressions.
+
+## Channel Routing
+
+Route messages to specific workflow channels for efficient O(1) dispatch:
+
+```rust
+// Workflows define their channel
+// { "id": "order_rule", "channel": "orders", "status": "active", ... }
+
+// Process only workflows on a specific channel
+engine.process_message_for_channel("orders", &mut message).await?;
+```
+
+Only `active` workflows are included in channel routing. Workflows default to the `"default"` channel.
+
+## Workflow Lifecycle
+
+Workflows support lifecycle management fields:
+
+```json
+{
+    "id": "my_rule",
+    "channel": "orders",
+    "version": 2,
+    "status": "active",
+    "tags": ["premium", "high-priority"],
+    "created_at": "2025-01-15T10:00:00Z",
+    "updated_at": "2025-06-01T14:30:00Z",
+    "tasks": [...]
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `channel` | string | `"default"` | Channel for message routing |
+| `version` | number | `1` | Workflow version |
+| `status` | string | `"active"` | `active`, `paused`, or `archived` |
+| `tags` | array | `[]` | Arbitrary tags for organization |
+| `created_at` | datetime | `null` | Creation timestamp (ISO 8601) |
+| `updated_at` | datetime | `null` | Last update timestamp (ISO 8601) |
+
+All fields are optional and backward-compatible with existing configurations.
+
+## Engine Hot Reload
+
+Swap workflows at runtime without losing custom function registrations:
+
+```rust
+let new_workflows = vec![Workflow::from_json(r#"{ ... }"#)?];
+let new_engine = engine.with_new_workflows(new_workflows);
+// Old engine remains valid for in-flight messages
+```
 
 ## Related Packages
 

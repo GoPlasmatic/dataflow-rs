@@ -42,8 +42,20 @@ pub async fn process_message(&self, message: &mut Message) -> Result<()>
 // Process with execution trace for debugging
 pub async fn process_message_with_trace(&self, message: &mut Message) -> Result<ExecutionTrace>
 
-// Get registered rules
-pub fn workflows(&self) -> &HashMap<String, Workflow>
+// Process only workflows on a specific channel (O(1) lookup)
+pub async fn process_message_for_channel(&self, channel: &str, message: &mut Message) -> Result<()>
+
+// Channel routing with execution trace
+pub async fn process_message_for_channel_with_trace(&self, channel: &str, message: &mut Message) -> Result<ExecutionTrace>
+
+// Get registered rules (sorted by priority)
+pub fn workflows(&self) -> &Arc<Vec<Workflow>>
+
+// Find a workflow by ID
+pub fn workflow_by_id(&self, id: &str) -> Option<&Workflow>
+
+// Create a new engine with different workflows, preserving custom functions
+pub fn with_new_workflows(&self, workflows: Vec<Workflow>) -> Self
 ```
 
 ## Workflow (Rule)
@@ -76,7 +88,13 @@ pub fn rule(id: &str, name: &str, condition: Value, tasks: Vec<Task>) -> Self
     "priority": "number (optional, default: 0)",
     "condition": "JSONLogic (optional, evaluated against full context)",
     "continue_on_error": "boolean (optional, default: false)",
-    "tasks": "array of Task (required)"
+    "tasks": "array of Task (required)",
+    "channel": "string (optional, default: 'default')",
+    "version": "number (optional, default: 1)",
+    "status": "'active' | 'paused' | 'archived' (optional, default: 'active')",
+    "tags": "array of string (optional, default: [])",
+    "created_at": "ISO 8601 datetime (optional)",
+    "updated_at": "ISO 8601 datetime (optional)"
 }
 ```
 
@@ -246,6 +264,24 @@ pub enum DataflowError {
 }
 ```
 
+## WorkflowStatus
+
+Lifecycle status for workflows.
+
+```rust
+use dataflow_rs::WorkflowStatus;
+```
+
+### Variants
+
+```rust
+pub enum WorkflowStatus {
+    Active,    // Default — workflow executes normally
+    Paused,    // Excluded from channel routing
+    Archived,  // Permanently retired
+}
+```
+
 ## Built-in Functions
 
 ### map
@@ -283,6 +319,41 @@ Rule-based data validation.
     }
 }
 ```
+
+### filter
+
+Pipeline control flow — halt workflow or skip task.
+
+```json
+{
+    "name": "filter",
+    "input": {
+        "condition": "JSONLogic expression",
+        "on_reject": "halt | skip (default: halt)"
+    }
+}
+```
+
+Status codes: 200 (pass), 298 (skip), 299 (halt).
+
+### log
+
+Structured logging with JSONLogic expressions.
+
+```json
+{
+    "name": "log",
+    "input": {
+        "level": "trace | debug | info | warn | error (default: info)",
+        "message": "JSONLogic expression",
+        "fields": {
+            "key": "JSONLogic expression"
+        }
+    }
+}
+```
+
+Always returns (200, []) — never modifies the message.
 
 ## WASM API (dataflow-wasm)
 

@@ -7,10 +7,12 @@ The Engine (also available as `RulesEngine` type alias) is the central component
 The Engine is responsible for:
 
 - Compiling all JSONLogic expressions at initialization
-- Managing rule execution order by priority
+- Pre-sorting rules by priority at startup (no per-message sorting)
 - Evaluating rule conditions against the full message context
 - Processing messages through matching rules
+- Channel-based routing with O(1) lookup
 - Coordinating action execution
+- Hot-reloading workflows without losing custom functions
 
 ## Creating an Engine
 
@@ -191,8 +193,48 @@ Processes a message and returns an execution trace for debugging.
 
 ### `engine.workflows()`
 
-Returns a reference to the registered rules.
+Returns a reference to the registered rules (sorted by priority).
 
 ```rust
-let rule_ids: Vec<&String> = engine.workflows().keys().collect();
+let count = engine.workflows().len();
+```
+
+### `engine.workflow_by_id(id)`
+
+Find a specific workflow by its ID.
+
+```rust
+if let Some(workflow) = engine.workflow_by_id("my_rule") {
+    println!("Found: {}", workflow.name.as_deref().unwrap_or("unnamed"));
+}
+```
+
+### `engine.process_message_for_channel(channel, message)`
+
+Processes a message through only the active workflows on a specific channel. Uses O(1) channel index lookup.
+
+```rust
+engine.process_message_for_channel("orders", &mut message).await?;
+```
+
+Only workflows with `status: "active"` are included in channel routing.
+
+### `engine.process_message_for_channel_with_trace(channel, message)`
+
+Same as `process_message_for_channel` but returns an execution trace for debugging.
+
+```rust
+let trace = engine.process_message_for_channel_with_trace("orders", &mut message).await?;
+```
+
+### `engine.with_new_workflows(workflows)`
+
+Creates a new engine with different workflows while preserving custom function registrations. Useful for hot-reloading workflow definitions at runtime.
+
+```rust
+let new_workflows = vec![Workflow::from_json(r#"{ ... }"#)?];
+let new_engine = engine.with_new_workflows(new_workflows);
+
+// Old engine is still valid for in-flight messages
+// New engine has freshly compiled logic + same custom functions
 ```

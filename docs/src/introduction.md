@@ -25,8 +25,13 @@ Whether you're routing events, validating data, building REST APIs, or creating 
 - **Zero Runtime Compilation** - All JSONLogic expressions pre-compiled at startup for optimal performance
 - **Full Context Access** - Conditions can access any field: `data`, `metadata`, `temp_data`
 - **Execution Tracing** - Step-by-step debugging with message snapshots after each action
-- **Built-in Functions** - Parse (JSON/XML), Map, Validate, and Publish (JSON/XML) for complete data pipelines
+- **Built-in Functions** - Parse, Map, Validate, Filter, Log, and Publish for complete data pipelines
+- **Pipeline Control Flow** - Filter/gate function to halt workflows or skip tasks based on conditions
+- **Channel Routing** - Route messages to specific workflow channels with O(1) lookup
+- **Workflow Lifecycle** - Manage workflow status (active/paused/archived), versioning, and tagging
+- **Hot Reload** - Swap workflows at runtime without re-registering custom functions
 - **Extensible** - Easily add custom async actions to the engine
+- **Typed Integration Configs** - Pre-validated configs for HTTP, Enrich, and Kafka integrations
 - **WebAssembly Support** - Run rules in the browser with `@goplasmatic/dataflow-wasm`
 - **React UI Components** - Visualize and debug rules with `@goplasmatic/dataflow-ui`
 - **Auditing** - Track all changes to your data as it moves through the pipeline

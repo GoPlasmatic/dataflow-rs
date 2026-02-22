@@ -74,6 +74,8 @@ The `function` object specifies what the action does:
 |----------|---------|
 | `map` | Data transformation and field mapping |
 | `validation` | Data validation with custom error messages |
+| `filter` | Pipeline control flow — halt workflow or skip task |
+| `log` | Structured logging with JSONLogic expressions |
 | `parse_json` | Parse JSON from payload into data context |
 | `parse_xml` | Parse XML string into JSON data structure |
 | `publish_json` | Serialize data to JSON string |

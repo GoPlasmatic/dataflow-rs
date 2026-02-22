@@ -24,6 +24,8 @@
 - [Parse](./built-in-functions/parse.md)
 - [Map](./built-in-functions/map.md)
 - [Validation](./built-in-functions/validation.md)
+- [Filter](./built-in-functions/filter.md)
+- [Log](./built-in-functions/log.md)
 - [Publish](./built-in-functions/publish.md)
 
 # JavaScript/TypeScript
