@@ -1,9 +1,20 @@
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::task::Task;
-use serde::Deserialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+
+/// Workflow lifecycle status
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkflowStatus {
+    #[default]
+    Active,
+    Paused,
+    Archived,
+}
 
 /// Workflow represents a collection of tasks that execute sequentially (also known as a Rule in rules-engine terminology).
 ///
@@ -22,10 +33,36 @@ pub struct Workflow {
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub continue_on_error: bool,
+    /// Channel for routing (default: "default")
+    #[serde(default = "default_channel")]
+    pub channel: String,
+    /// Version number for rule versioning (default: 1)
+    #[serde(default = "default_version")]
+    pub version: u32,
+    /// Workflow status — Active, Paused, or Archived (default: Active)
+    #[serde(default)]
+    pub status: WorkflowStatus,
+    /// Tags for categorization and filtering
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Creation timestamp
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    /// Last update timestamp
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 fn default_condition() -> Value {
     Value::Bool(true)
+}
+
+fn default_channel() -> String {
+    "default".to_string()
+}
+
+fn default_version() -> u32 {
+    1
 }
 
 impl Default for Workflow {
@@ -45,6 +82,12 @@ impl Workflow {
             condition_index: None,
             tasks: Vec::new(),
             continue_on_error: false,
+            channel: default_channel(),
+            version: 1,
+            status: WorkflowStatus::Active,
+            tags: Vec::new(),
+            created_at: None,
+            updated_at: None,
         }
     }
 
@@ -68,6 +111,12 @@ impl Workflow {
             condition_index: None,
             tasks,
             continue_on_error: false,
+            channel: default_channel(),
+            version: 1,
+            status: WorkflowStatus::Active,
+            tags: Vec::new(),
+            created_at: None,
+            updated_at: None,
         }
     }
 

@@ -196,7 +196,12 @@ impl WasmEngine {
     /// JSON array of workflow IDs as a string
     #[wasm_bindgen]
     pub fn workflow_ids(&self) -> String {
-        let ids: Vec<&String> = self.inner.workflows().keys().collect();
+        let ids: Vec<&str> = self
+            .inner
+            .workflows()
+            .iter()
+            .map(|w| w.id.as_str())
+            .collect();
         serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string())
     }
 }

@@ -72,7 +72,7 @@ pub use functions::{AsyncFunctionHandler, FunctionConfig};
 pub use message::Message;
 pub use task::Task;
 pub use trace::{ExecutionStep, ExecutionTrace, StepResult};
-pub use workflow::Workflow;
+pub use workflow::{Workflow, WorkflowStatus};
 
 use chrono::Utc;
 use datalogic_rs::{CompiledLogic, DataLogic};
@@ -102,14 +102,28 @@ use workflow_executor::WorkflowExecutor;
 /// - **Optimal for Mixed Workloads**: Async I/O with blocking CPU evaluation
 /// - **Thread-Safe by Design**: All components safe to share across Tokio tasks
 pub struct Engine {
-    /// Registry of available workflows (immutable after initialization)
-    workflows: Arc<HashMap<String, Workflow>>,
+    /// Registry of available workflows, pre-sorted by priority (immutable after initialization)
+    workflows: Arc<Vec<Workflow>>,
+    /// Channel index: maps channel name -> indices into workflows vec (only Active workflows)
+    channel_index: Arc<HashMap<String, Vec<usize>>>,
     /// Workflow executor for orchestrating workflow execution
     workflow_executor: Arc<WorkflowExecutor>,
     /// Shared DataLogic instance for JSONLogic evaluation
     datalogic: Arc<DataLogic>,
     /// Compiled logic cache with Arc for zero-copy sharing
     logic_cache: Vec<Arc<CompiledLogic>>,
+}
+
+/// Build a channel index from pre-sorted workflows.
+/// Maps channel name -> indices into workflows vec, only for Active workflows.
+fn build_channel_index(workflows: &[Workflow]) -> HashMap<String, Vec<usize>> {
+    let mut index: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, workflow) in workflows.iter().enumerate() {
+        if workflow.status == WorkflowStatus::Active {
+            index.entry(workflow.channel.clone()).or_default().push(i);
+        }
+    }
+    index
 }
 
 impl Engine {
@@ -133,9 +147,9 @@ impl Engine {
         workflows: Vec<Workflow>,
         custom_functions: Option<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
     ) -> Self {
-        // Compile workflows with DataLogic v4
+        // Compile workflows with DataLogic v4 (sorted by priority at compile time)
         let mut compiler = LogicCompiler::new();
-        let workflow_map = compiler.compile_workflows(workflows);
+        let sorted_workflows = compiler.compile_workflows(workflows);
         let (datalogic, logic_cache) = compiler.into_parts();
 
         let mut task_functions = custom_functions.unwrap_or_default();
@@ -161,8 +175,56 @@ impl Engine {
         // Create workflow executor
         let workflow_executor = Arc::new(WorkflowExecutor::new(task_executor, internal_executor));
 
+        // Build channel index for O(1) channel-based routing
+        let channel_index = build_channel_index(&sorted_workflows);
+
         Self {
-            workflows: Arc::new(workflow_map),
+            workflows: Arc::new(sorted_workflows),
+            channel_index: Arc::new(channel_index),
+            workflow_executor,
+            datalogic,
+            logic_cache,
+        }
+    }
+
+    /// Creates a new Engine with different workflows but the same custom function handlers.
+    ///
+    /// This is the hot-reload path. The existing engine remains valid for any
+    /// in-flight `process_message` calls. The returned engine shares the same
+    /// function registry (zero-copy Arc bump) but has freshly compiled logic
+    /// for the new workflow set.
+    ///
+    /// # Arguments
+    /// * `workflows` - The new set of workflows to compile and use
+    pub fn with_new_workflows(&self, workflows: Vec<Workflow>) -> Self {
+        // Extract the shared function registry from the existing executor
+        let task_functions = self.workflow_executor.task_functions();
+
+        // Compile new workflows with a fresh DataLogic instance
+        let mut compiler = LogicCompiler::new();
+        let sorted_workflows = compiler.compile_workflows(workflows);
+        let (datalogic, logic_cache) = compiler.into_parts();
+
+        // Rebuild the executor stack, reusing the existing function registry
+        let internal_executor = Arc::new(InternalExecutor::new(
+            Arc::clone(&datalogic),
+            logic_cache.clone(),
+        ));
+
+        let task_executor = Arc::new(TaskExecutor::new(
+            task_functions,
+            Arc::clone(&internal_executor),
+            Arc::clone(&datalogic),
+        ));
+
+        let workflow_executor = Arc::new(WorkflowExecutor::new(task_executor, internal_executor));
+
+        // Build channel index for O(1) channel-based routing
+        let channel_index = build_channel_index(&sorted_workflows);
+
+        Self {
+            workflows: Arc::new(sorted_workflows),
+            channel_index: Arc::new(channel_index),
             workflow_executor,
             datalogic,
             logic_cache,
@@ -172,7 +234,7 @@ impl Engine {
     /// Processes a message through workflows that match their conditions.
     ///
     /// This async method:
-    /// 1. Iterates through workflows sequentially in deterministic order (sorted by ID)
+    /// 1. Iterates through workflows sequentially in priority order (pre-sorted at construction)
     /// 2. Delegates workflow execution to the WorkflowExecutor
     /// 3. Updates message metadata
     ///
@@ -187,13 +249,8 @@ impl Engine {
         message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
         message.invalidate_context_cache();
 
-        // Sort workflows by priority for proper execution order
-        let mut workflows: Vec<_> = self.workflows.values().collect();
-        workflows.sort_by_key(|w| w.priority);
-
-        // Process each workflow in priority order
-        for workflow in workflows {
-            // Execute workflow through the workflow executor
+        // Process each workflow in priority order (pre-sorted at construction)
+        for workflow in self.workflows.iter() {
             self.workflow_executor.execute(workflow, message).await?;
         }
 
@@ -223,13 +280,8 @@ impl Engine {
 
         let mut trace = ExecutionTrace::new();
 
-        // Sort workflows by priority for proper execution order
-        let mut workflows: Vec<_> = self.workflows.values().collect();
-        workflows.sort_by_key(|w| w.priority);
-
-        // Process each workflow in priority order
-        for workflow in workflows {
-            // Execute workflow through the workflow executor with trace collection
+        // Process each workflow in priority order (pre-sorted at construction)
+        for workflow in self.workflows.iter() {
             self.workflow_executor
                 .execute_with_trace(workflow, message, &mut trace)
                 .await?;
@@ -238,9 +290,73 @@ impl Engine {
         Ok(trace)
     }
 
-    /// Get a reference to the workflows
-    pub fn workflows(&self) -> &Arc<HashMap<String, Workflow>> {
+    /// Processes a message through only the Active workflows registered for a given channel.
+    ///
+    /// Workflows are processed in priority order (lowest first), same as process_message().
+    /// If the channel does not exist or has no Active workflows, this is a no-op.
+    ///
+    /// # Arguments
+    /// * `channel` - The channel name to route the message through
+    /// * `message` - The message to process
+    pub async fn process_message_for_channel(
+        &self,
+        channel: &str,
+        message: &mut Message,
+    ) -> Result<()> {
+        message.context["metadata"]["processed_at"] = json!(Utc::now().to_rfc3339());
+        message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
+        message.context["metadata"]["channel"] = json!(channel);
+        message.invalidate_context_cache();
+
+        if let Some(indices) = self.channel_index.get(channel) {
+            for &idx in indices {
+                self.workflow_executor
+                    .execute(&self.workflows[idx], message)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Processes a message through a channel with step-by-step tracing.
+    ///
+    /// # Arguments
+    /// * `channel` - The channel name to route the message through
+    /// * `message` - The message to process
+    pub async fn process_message_for_channel_with_trace(
+        &self,
+        channel: &str,
+        message: &mut Message,
+    ) -> Result<ExecutionTrace> {
+        use trace::ExecutionTrace;
+
+        message.context["metadata"]["processed_at"] = json!(Utc::now().to_rfc3339());
+        message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
+        message.context["metadata"]["channel"] = json!(channel);
+        message.invalidate_context_cache();
+
+        let mut trace = ExecutionTrace::new();
+
+        if let Some(indices) = self.channel_index.get(channel) {
+            for &idx in indices {
+                self.workflow_executor
+                    .execute_with_trace(&self.workflows[idx], message, &mut trace)
+                    .await?;
+            }
+        }
+
+        Ok(trace)
+    }
+
+    /// Get a reference to the workflows (pre-sorted by priority)
+    pub fn workflows(&self) -> &Arc<Vec<Workflow>> {
         &self.workflows
+    }
+
+    /// Look up a workflow by its ID
+    pub fn workflow_by_id(&self, id: &str) -> Option<&Workflow> {
+        self.workflows.iter().find(|w| w.id == id)
     }
 
     /// Get a reference to the DataLogic instance

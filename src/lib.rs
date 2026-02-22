@@ -194,11 +194,12 @@ pub mod engine;
 // Re-export all public APIs for easier access
 pub use engine::error::{DataflowError, ErrorInfo, Result};
 pub use engine::functions::{
-    AsyncFunctionHandler, FunctionConfig, MapConfig, MapMapping, ValidationConfig, ValidationRule,
+    AsyncFunctionHandler, EnrichConfig, FilterConfig, FunctionConfig, HttpCallConfig, LogConfig,
+    MapConfig, MapMapping, PublishKafkaConfig, ValidationConfig, ValidationRule,
 };
 pub use engine::message::{AuditTrail, Change, Message};
 pub use engine::trace::{ExecutionStep, ExecutionTrace, StepResult};
-pub use engine::{Engine, Task, Workflow};
+pub use engine::{Engine, Task, Workflow, WorkflowStatus};
 
 /// Type alias for `Workflow` — a Rule represents an IF-THEN unit: IF condition THEN execute actions.
 pub type Rule = Workflow;

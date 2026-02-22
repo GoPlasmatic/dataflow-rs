@@ -9,7 +9,7 @@
 //! - Thread-safe execution using Arc<CompiledLogic>
 
 use crate::engine::error::Result;
-use crate::engine::functions::{MapConfig, ValidationConfig};
+use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
 use crate::engine::message::{Change, Message};
 use datalogic_rs::{CompiledLogic, DataLogic};
 use log::error;
@@ -72,6 +72,24 @@ impl InternalExecutor {
         &self,
         message: &mut Message,
         config: &ValidationConfig,
+    ) -> Result<(usize, Vec<Change>)> {
+        config.execute(message, &self.datalogic, &self.logic_cache)
+    }
+
+    /// Execute the internal log function
+    pub fn execute_log(
+        &self,
+        message: &mut Message,
+        config: &LogConfig,
+    ) -> Result<(usize, Vec<Change>)> {
+        config.execute(message, &self.datalogic, &self.logic_cache)
+    }
+
+    /// Execute the internal filter function
+    pub fn execute_filter(
+        &self,
+        message: &mut Message,
+        config: &FilterConfig,
     ) -> Result<(usize, Vec<Change>)> {
         config.execute(message, &self.datalogic, &self.logic_cache)
     }

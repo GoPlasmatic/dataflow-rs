@@ -8,12 +8,12 @@
 //! - Early validation of logic expressions
 //! - Efficient memory sharing across async tasks
 
-use crate::engine::functions::{MapConfig, ValidationConfig};
+use crate::engine::functions::integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
+use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
 use crate::engine::{FunctionConfig, Workflow};
 use datalogic_rs::{CompiledLogic, DataLogic};
 use log::{debug, error};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Compiles and caches JSONLogic expressions for optimal runtime performance.
@@ -60,9 +60,9 @@ impl LogicCompiler {
         (self.datalogic, self.logic_cache)
     }
 
-    /// Compile all workflows and their tasks
-    pub fn compile_workflows(&mut self, workflows: Vec<Workflow>) -> HashMap<String, Workflow> {
-        let mut workflow_map = HashMap::new();
+    /// Compile all workflows and their tasks, returning them sorted by priority
+    pub fn compile_workflows(&mut self, workflows: Vec<Workflow>) -> Vec<Workflow> {
+        let mut compiled_workflows = Vec::new();
 
         for mut workflow in workflows {
             if let Err(e) = workflow.validate() {
@@ -86,7 +86,7 @@ impl LogicCompiler {
                     // Compile task conditions and function logic
                     self.compile_workflow_tasks(&mut workflow);
 
-                    workflow_map.insert(workflow.id.clone(), workflow);
+                    compiled_workflows.push(workflow);
                 }
                 Err(e) => {
                     error!(
@@ -97,7 +97,9 @@ impl LogicCompiler {
             }
         }
 
-        workflow_map
+        // Sort by priority once at construction time
+        compiled_workflows.sort_by_key(|w| w.priority);
+        compiled_workflows
     }
 
     /// Compile task conditions and function logic for a workflow
@@ -140,8 +142,23 @@ impl LogicCompiler {
             FunctionConfig::Validation { input, .. } => {
                 self.compile_validation_logic(input, task_id, workflow_id);
             }
+            FunctionConfig::Filter { input, .. } => {
+                self.compile_filter_logic(input, task_id, workflow_id);
+            }
+            FunctionConfig::Log { input, .. } => {
+                self.compile_log_logic(input, task_id, workflow_id);
+            }
+            FunctionConfig::HttpCall { input, .. } => {
+                self.compile_http_call_logic(input, task_id, workflow_id);
+            }
+            FunctionConfig::Enrich { input, .. } => {
+                self.compile_enrich_logic(input, task_id, workflow_id);
+            }
+            FunctionConfig::PublishKafka { input, .. } => {
+                self.compile_publish_kafka_logic(input, task_id, workflow_id);
+            }
             _ => {
-                // Custom functions don't need pre-compilation
+                // Custom and other functions don't need pre-compilation
             }
         }
     }
@@ -197,6 +214,155 @@ impl LogicCompiler {
                         task_id, workflow_id, e
                     );
                 }
+            }
+        }
+    }
+
+    /// Compile log message and field expressions
+    fn compile_log_logic(&mut self, config: &mut LogConfig, task_id: &str, workflow_id: &str) {
+        // Compile the message expression
+        debug!(
+            "Compiling log message for task {} in workflow {}: {:?}",
+            task_id, workflow_id, config.message
+        );
+        match self.compile_logic(&config.message) {
+            Ok(index) => {
+                config.message_index = index;
+                debug!(
+                    "Log message for task {} compiled at index {:?}",
+                    task_id, index
+                );
+            }
+            Err(e) => {
+                error!(
+                    "Failed to compile log message for task {} in workflow {}: {:?}",
+                    task_id, workflow_id, e
+                );
+            }
+        }
+
+        // Compile each field expression
+        config.field_indices = config
+            .fields
+            .iter()
+            .map(|(key, logic)| {
+                let idx = match self.compile_logic(logic) {
+                    Ok(index) => {
+                        debug!(
+                            "Log field '{}' for task {} compiled at index {:?}",
+                            key, task_id, index
+                        );
+                        index
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to compile log field '{}' for task {} in workflow {}: {:?}",
+                            key, task_id, workflow_id, e
+                        );
+                        None
+                    }
+                };
+                (key.clone(), idx)
+            })
+            .collect();
+    }
+
+    /// Compile filter condition logic
+    fn compile_filter_logic(
+        &mut self,
+        config: &mut FilterConfig,
+        task_id: &str,
+        workflow_id: &str,
+    ) {
+        debug!(
+            "Compiling filter condition for task {} in workflow {}: {:?}",
+            task_id, workflow_id, config.condition
+        );
+        match self.compile_logic(&config.condition) {
+            Ok(index) => {
+                config.condition_index = index;
+                debug!(
+                    "Filter condition for task {} compiled at index {:?}",
+                    task_id, index
+                );
+            }
+            Err(e) => {
+                error!(
+                    "Failed to compile filter condition for task {} in workflow {}: {:?}",
+                    task_id, workflow_id, e
+                );
+            }
+        }
+    }
+
+    /// Compile http_call JSONLogic expressions (path_logic, body_logic)
+    fn compile_http_call_logic(
+        &mut self,
+        config: &mut HttpCallConfig,
+        task_id: &str,
+        workflow_id: &str,
+    ) {
+        if let Some(ref logic) = config.path_logic.clone() {
+            match self.compile_logic(logic) {
+                Ok(index) => config.path_logic_index = index,
+                Err(e) => error!(
+                    "Failed to compile http_call path_logic for task {} in workflow {}: {:?}",
+                    task_id, workflow_id, e
+                ),
+            }
+        }
+        if let Some(ref logic) = config.body_logic.clone() {
+            match self.compile_logic(logic) {
+                Ok(index) => config.body_logic_index = index,
+                Err(e) => error!(
+                    "Failed to compile http_call body_logic for task {} in workflow {}: {:?}",
+                    task_id, workflow_id, e
+                ),
+            }
+        }
+    }
+
+    /// Compile enrich JSONLogic expressions (path_logic)
+    fn compile_enrich_logic(
+        &mut self,
+        config: &mut EnrichConfig,
+        task_id: &str,
+        workflow_id: &str,
+    ) {
+        if let Some(ref logic) = config.path_logic.clone() {
+            match self.compile_logic(logic) {
+                Ok(index) => config.path_logic_index = index,
+                Err(e) => error!(
+                    "Failed to compile enrich path_logic for task {} in workflow {}: {:?}",
+                    task_id, workflow_id, e
+                ),
+            }
+        }
+    }
+
+    /// Compile publish_kafka JSONLogic expressions (key_logic, value_logic)
+    fn compile_publish_kafka_logic(
+        &mut self,
+        config: &mut PublishKafkaConfig,
+        task_id: &str,
+        workflow_id: &str,
+    ) {
+        if let Some(ref logic) = config.key_logic.clone() {
+            match self.compile_logic(logic) {
+                Ok(index) => config.key_logic_index = index,
+                Err(e) => error!(
+                    "Failed to compile publish_kafka key_logic for task {} in workflow {}: {:?}",
+                    task_id, workflow_id, e
+                ),
+            }
+        }
+        if let Some(ref logic) = config.value_logic.clone() {
+            match self.compile_logic(logic) {
+                Ok(index) => config.value_logic_index = index,
+                Err(e) => error!(
+                    "Failed to compile publish_kafka value_logic for task {} in workflow {}: {:?}",
+                    task_id, workflow_id, e
+                ),
             }
         }
     }

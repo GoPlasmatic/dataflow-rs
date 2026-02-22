@@ -85,6 +85,7 @@ async fn test_workflow_execution() {
         condition: json!(true),
         condition_index: None,
         continue_on_error: false,
+        ..Default::default()
     };
 
     // Create custom functions using AsyncFunctionHandler
@@ -146,6 +147,7 @@ async fn test_async_workflow_execution() {
         condition: json!(true),
         condition_index: None,
         continue_on_error: false,
+        ..Default::default()
     };
 
     // Create custom async functions

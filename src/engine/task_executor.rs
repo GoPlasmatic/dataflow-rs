@@ -94,6 +94,29 @@ impl TaskExecutor {
                 // Execute built-in publish_xml function
                 crate::engine::functions::publish::execute_publish_xml(message, input)
             }
+            FunctionConfig::Filter { input, .. } => {
+                // Execute built-in filter function
+                self.executor.execute_filter(message, input)
+            }
+            FunctionConfig::Log { input, .. } => {
+                // Execute built-in log function
+                self.executor.execute_log(message, input)
+            }
+            FunctionConfig::HttpCall { .. } => {
+                // Route to async handler registered as "http_call"
+                self.execute_custom_function("http_call", message, &task.function)
+                    .await
+            }
+            FunctionConfig::Enrich { .. } => {
+                // Route to async handler registered as "enrich"
+                self.execute_custom_function("enrich", message, &task.function)
+                    .await
+            }
+            FunctionConfig::PublishKafka { .. } => {
+                // Route to async handler registered as "publish_kafka"
+                self.execute_custom_function("publish_kafka", message, &task.function)
+                    .await
+            }
             FunctionConfig::Custom { name, .. } => {
                 // Execute custom function handler
                 self.execute_custom_function(name, message, &task.function)
@@ -151,9 +174,16 @@ impl TaskExecutor {
     pub fn has_function(&self, name: &str) -> bool {
         match name {
             "map" | "validation" | "validate" | "parse_json" | "parse_xml" | "publish_json"
-            | "publish_xml" => true,
+            | "publish_xml" | "filter" | "log" | "http_call" | "enrich" | "publish_kafka" => true,
             custom_name => self.task_functions.contains_key(custom_name),
         }
+    }
+
+    /// Get a clone of the task_functions Arc for reuse in new engines
+    pub fn task_functions(
+        &self,
+    ) -> Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>> {
+        Arc::clone(&self.task_functions)
     }
 
     /// Get the count of registered custom functions

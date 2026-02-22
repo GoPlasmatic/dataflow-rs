@@ -5,6 +5,7 @@
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::executor::InternalExecutor;
+use crate::engine::functions::{AsyncFunctionHandler, FILTER_STATUS_HALT, FILTER_STATUS_SKIP};
 use crate::engine::message::{AuditTrail, Change, Message};
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::trace::{ExecutionStep, ExecutionTrace};
@@ -12,7 +13,16 @@ use crate::engine::workflow::Workflow;
 use chrono::Utc;
 use log::{debug, error, info, warn};
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Result of handling a task, including possible control flow signals
+enum TaskControlFlow {
+    /// Continue executing the next task
+    Continue,
+    /// Stop executing further tasks in this workflow (filter halt)
+    HaltWorkflow,
+}
 
 /// Handles the execution of workflows and their tasks
 ///
@@ -35,6 +45,13 @@ impl WorkflowExecutor {
             task_executor,
             internal_executor,
         }
+    }
+
+    /// Get a clone of the task_functions Arc for reuse in new engines
+    pub fn task_functions(
+        &self,
+    ) -> Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>> {
+        self.task_executor.task_functions()
     }
 
     /// Execute a workflow if its condition is met
@@ -175,14 +192,17 @@ impl WorkflowExecutor {
             // Execute the task
             let result = self.task_executor.execute(task, message).await;
 
-            // Handle task result
-            self.handle_task_result(
+            // Handle task result with control flow
+            match self.handle_task_result(
                 result,
                 &workflow.id,
                 &task.id,
                 task.continue_on_error,
                 message,
-            )?;
+            )? {
+                TaskControlFlow::HaltWorkflow => break,
+                TaskControlFlow::Continue => {}
+            }
         }
 
         Ok(())
@@ -223,8 +243,8 @@ impl WorkflowExecutor {
             // Convert to the standard result format for handle_task_result
             let standard_result = result.map(|(status, changes, _)| (status, changes));
 
-            // Handle task result
-            self.handle_task_result(
+            // Handle task result with control flow
+            let control_flow = self.handle_task_result(
                 standard_result,
                 &workflow.id,
                 &task.id,
@@ -238,6 +258,10 @@ impl WorkflowExecutor {
                 step = step.with_mapping_contexts(contexts);
             }
             trace.add_step(step);
+
+            if let TaskControlFlow::HaltWorkflow = control_flow {
+                break;
+            }
         }
 
         Ok(())
@@ -251,9 +275,15 @@ impl WorkflowExecutor {
         task_id: &str,
         continue_on_error: bool,
         message: &mut Message,
-    ) -> Result<()> {
+    ) -> Result<TaskControlFlow> {
         match result {
             Ok((status, changes)) => {
+                // Handle filter skip — no audit trail, just continue
+                if status == FILTER_STATUS_SKIP {
+                    debug!("Task {} signaled skip (filter gate)", task_id);
+                    return Ok(TaskControlFlow::Continue);
+                }
+
                 // Record audit trail
                 message.audit_trail.push(AuditTrail {
                     timestamp: Utc::now(),
@@ -285,6 +315,15 @@ impl WorkflowExecutor {
                 }
                 message.invalidate_context_cache();
 
+                // Handle filter halt — audit trail is recorded, halt the workflow
+                if status == FILTER_STATUS_HALT {
+                    info!(
+                        "Task {} halted workflow {} (filter gate)",
+                        task_id, workflow_id
+                    );
+                    return Ok(TaskControlFlow::HaltWorkflow);
+                }
+
                 // Check status code
                 if (400..500).contains(&status) {
                     warn!("Task {} returned client error status: {}", task_id, status);
@@ -297,7 +336,7 @@ impl WorkflowExecutor {
                         )));
                     }
                 }
-                Ok(())
+                Ok(TaskControlFlow::Continue)
             }
             Err(e) => {
                 error!("Task {} failed: {:?}", task_id, e);
@@ -319,7 +358,11 @@ impl WorkflowExecutor {
                         .build(),
                 );
 
-                if !continue_on_error { Err(e) } else { Ok(()) }
+                if !continue_on_error {
+                    Err(e)
+                } else {
+                    Ok(TaskControlFlow::Continue)
+                }
             }
         }
     }
@@ -354,7 +397,7 @@ mod tests {
 
         // Compile the workflow condition
         let workflows = compiler.compile_workflows(vec![workflow.clone()]);
-        if let Some(compiled_workflow) = workflows.get("test_workflow") {
+        if let Some(compiled_workflow) = workflows.iter().find(|w| w.id == "test_workflow") {
             workflow = compiled_workflow.clone();
         }
 
@@ -400,7 +443,7 @@ mod tests {
 
         // Compile the workflow
         let workflows = compiler.compile_workflows(vec![workflow.clone()]);
-        if let Some(compiled_workflow) = workflows.get("test_workflow") {
+        if let Some(compiled_workflow) = workflows.iter().find(|w| w.id == "test_workflow") {
             workflow = compiled_workflow.clone();
         }
 

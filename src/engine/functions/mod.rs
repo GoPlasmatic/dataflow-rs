@@ -19,6 +19,15 @@ pub use parse::ParseConfig;
 pub mod publish;
 pub use publish::PublishConfig;
 
+pub mod filter;
+pub use filter::{FILTER_STATUS_HALT, FILTER_STATUS_SKIP, FilterConfig, RejectAction};
+
+pub mod log;
+pub use log::{LogConfig, LogLevel};
+
+pub mod integration;
+pub use integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
+
 // Re-export all built-in functions for easier access
 pub mod builtins {
     use super::*;
