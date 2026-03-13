@@ -1,6 +1,6 @@
 {
   "name": "@goplasmatic/dataflow-ui",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "type": "module",
   "description": "React visualization library for dataflow-rs workflow engine",
   "author": "Plasmatic Engineering <shankar@goplasmatic.io>",
@@ -52,22 +52,22 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
-    "@goplasmatic/dataflow-wasm": "^2.0.15",
-    "@goplasmatic/datalogic-ui": "^4.0.14",
+    "@goplasmatic/dataflow-wasm": "^2.1.2",
+    "@goplasmatic/datalogic-ui": "^4.0.19",
     "@monaco-editor/react": "^4.7.0",
-    "@xyflow/react": "^12.0.0",
-    "lucide-react": "^0.462.0"
+    "@xyflow/react": "^12.10.1",
+    "lucide-react": "^0.577.0"
   },
   "devDependencies": {
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.0",
     "monaco-editor": "^0.55.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "typescript": "^5.7.3",
-    "vite": "^6.0.7",
-    "vite-plugin-dts": "^4.4.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vite-plugin-dts": "^4.5.4",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.5.0"
   }
