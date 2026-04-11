@@ -218,10 +218,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Collect all results
     let latencies = join_all(handles).await;
-    for result in latencies {
-        if let Ok(duration) = result {
-            latency_stats.add(duration);
-        }
+    for duration in latencies.into_iter().flatten() {
+        latency_stats.add(duration);
     }
 
     let total_time = benchmark_start.elapsed();
