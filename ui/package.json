@@ -1,15 +1,15 @@
 {
   "name": "@goplasmatic/dataflow-ui",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "type": "module",
   "description": "React visualization library for dataflow-rs workflow engine",
   "author": "Plasmatic Engineering <shankar@goplasmatic.io>",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./dist/lib.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./dist/lib.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
