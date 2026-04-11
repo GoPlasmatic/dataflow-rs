@@ -1,0 +1,276 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Cargo.toml version: $VERSION"
+
+      - name: Validate tag matches version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ "$TAG_VERSION" != "$VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $VERSION"
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches Cargo.toml version $VERSION"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
+  publish-crate:
+    name: Publish to crates.io
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check if version exists on crates.io
+        id: check
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          PUBLISHED=$(cargo search dataflow-rs --limit 1 2>/dev/null | grep "^dataflow-rs" | sed 's/.*= "\(.*\)".*/\1/' || echo "")
+          if [ "$VERSION" = "$PUBLISHED" ]; then
+            echo "Version $VERSION already published to crates.io, skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Publishing version $VERSION to crates.io"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish
+        if: steps.check.outputs.skip != 'true'
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
+  publish-wasm:
+    name: Publish WASM to npm
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install binaryen
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            wasm/target/
+          key: ${{ runner.os }}-wasm-${{ hashFiles('wasm/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-wasm-
+
+      - name: Build WASM
+        run: |
+          cd wasm
+          wasm-pack build --target web --out-dir pkg --release
+
+      - name: Optimize WASM binary
+        run: |
+          WASM_FILE="wasm/pkg/dataflow_wasm_bg.wasm"
+          ORIGINAL_SIZE=$(stat -c%s "$WASM_FILE")
+          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext "$WASM_FILE" -o "$WASM_FILE.opt"
+          mv "$WASM_FILE.opt" "$WASM_FILE"
+          NEW_SIZE=$(stat -c%s "$WASM_FILE")
+          echo "WASM optimized: $ORIGINAL_SIZE -> $NEW_SIZE bytes (saved $((ORIGINAL_SIZE - NEW_SIZE)) bytes)"
+
+      - name: Generate package.json
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          cd wasm/pkg
+          cat > package.json << EOF
+          {
+            "name": "@goplasmatic/dataflow-wasm",
+            "type": "module",
+            "author": "Plasmatic Engineering <shankar@goplasmatic.io>",
+            "description": "WebAssembly bindings for the dataflow-rs rules engine",
+            "version": "$VERSION",
+            "license": "Apache-2.0",
+            "homepage": "https://github.com/GoPlasmatic/dataflow-rs",
+            "repository": {
+              "type": "git",
+              "url": "https://github.com/GoPlasmatic/dataflow-rs",
+              "directory": "wasm"
+            },
+            "bugs": {
+              "url": "https://github.com/GoPlasmatic/dataflow-rs/issues"
+            },
+            "files": [
+              "dataflow_wasm_bg.wasm",
+              "dataflow_wasm.js",
+              "dataflow_wasm.d.ts",
+              "README.md"
+            ],
+            "main": "dataflow_wasm.js",
+            "types": "dataflow_wasm.d.ts",
+            "sideEffects": [
+              "./snippets/*"
+            ],
+            "keywords": ["rules-engine", "ifttt", "wasm", "webassembly", "dataflow", "rust"]
+          }
+          EOF
+          cp ../../README.md ./README.md
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Check if version exists on npm
+        id: check
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          if npm view "@goplasmatic/dataflow-wasm@$VERSION" version 2>/dev/null; then
+            echo "Version $VERSION already published to npm, skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Publishing version $VERSION to npm"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.skip != 'true'
+        run: cd wasm/pkg && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Upload wasm-pkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: wasm/pkg/
+
+  publish-ui:
+    name: Publish UI to npm
+    needs: [validate, publish-wasm]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download wasm-pkg artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: wasm/pkg/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Sync UI version from Cargo.toml
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          cd ui && npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Install dependencies
+        run: cd ui && npm ci
+
+      - name: Copy local WASM build
+        run: |
+          cp wasm/pkg/dataflow_wasm.js ui/node_modules/@goplasmatic/dataflow-wasm/
+          cp wasm/pkg/dataflow_wasm_bg.wasm ui/node_modules/@goplasmatic/dataflow-wasm/
+
+      - name: Build UI library
+        run: cd ui && npm run build:lib
+
+      - name: Check if version exists on npm
+        id: check
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          if npm view "@goplasmatic/dataflow-ui@$VERSION" version 2>/dev/null; then
+            echo "Version $VERSION already published to npm, skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Publishing version $VERSION to npm"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.skip != 'true'
+        run: cd ui && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    name: Create GitHub Release
+    needs: [validate, publish-crate, publish-wasm, publish-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes \
+            --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
