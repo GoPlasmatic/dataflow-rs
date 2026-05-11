@@ -1,7 +1,6 @@
 use crate::engine::error::Result;
 use crate::engine::executor::eval_to_owned;
 use crate::engine::message::{Change, Message};
-use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
 use log::{debug, error, info, trace, warn};
@@ -53,13 +52,11 @@ impl LogConfig {
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
-        arena: &Bump,
-    ) -> Result<(usize, Vec<Change>)> {
+        logic_cache: &[Arc<Logic>]) -> Result<(usize, Vec<Change>)> {
         // Evaluate message expression
         let log_message = match self.message_index {
             Some(idx) if idx < logic_cache.len() => {
-                match eval_to_owned(engine, &logic_cache[idx], &message.context, arena) {
+                match eval_to_owned(engine, &logic_cache[idx], &message.context) {
                     Ok(OwnedDataValue::String(s)) => s,
                     Ok(other) => other.to_json_string(),
                     Err(e) => {
@@ -76,7 +73,7 @@ impl LogConfig {
         for (key, idx_opt) in &self.field_indices {
             let val = match idx_opt {
                 Some(idx) if *idx < logic_cache.len() => {
-                    match eval_to_owned(engine, &logic_cache[*idx], &message.context, arena) {
+                    match eval_to_owned(engine, &logic_cache[*idx], &message.context) {
                         Ok(OwnedDataValue::String(s)) => s,
                         Ok(v) => v.to_json_string(),
                         Err(_) => "<eval error>".to_string(),

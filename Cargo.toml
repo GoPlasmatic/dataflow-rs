@@ -45,7 +45,16 @@ members = [".", "wasm"]
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
-# Optimized WASM release builds
+# Native release profile: maximize throughput. `lto = "fat"` plus
+# `codegen-units = 1` lets the compiler propagate inlining across crate
+# boundaries — load-bearing for the JSONLogic eval hot path.
 [profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+# WASM-specific override: keep the size-optimized build for `dataflow-wasm`
+# (the cdylib produces a smaller `.wasm` artifact with `opt-level = "s"`).
+# Native consumers of `dataflow-rs` get `opt-level = 3` above.
+[profile.release.package.dataflow-wasm]
 opt-level = "s"
-lto = true

@@ -1,7 +1,6 @@
 use crate::engine::error::Result;
 use crate::engine::executor::eval_to_owned;
 use crate::engine::message::{Change, Message};
-use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
 use log::{debug, info};
@@ -51,12 +50,10 @@ impl FilterConfig {
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
-        arena: &Bump,
-    ) -> Result<(usize, Vec<Change>)> {
+        logic_cache: &[Arc<Logic>]) -> Result<(usize, Vec<Change>)> {
         let condition_met = match self.condition_index {
             Some(idx) if idx < logic_cache.len() => {
-                match eval_to_owned(engine, &logic_cache[idx], &message.context, arena) {
+                match eval_to_owned(engine, &logic_cache[idx], &message.context) {
                     Ok(OwnedDataValue::Bool(true)) => true,
                     Ok(_) => false,
                     Err(e) => {

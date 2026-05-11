@@ -5,11 +5,13 @@
 //! the datalogic v5 `Engine::evaluate` API directly against an `&OwnedDataValue`
 //! context — no `serde_json::Value` intermediate on the hot path.
 //!
-//! The bump arena is owned per-call: each `InternalExecutor::execute_*` entry
-//! constructs a fresh `Bump::with_capacity(16 * 1024)` and passes it down to
-//! the underlying function config. The arena drops at end of call, returning
-//! its chunks to the global allocator's free-list. Sized to cover a typical
-//! workflow's per-call high-water mark without an early growth event.
+//! The bump arena is held in a thread-local cell on each Tokio worker. Per
+//! call, the arena is rewound via `Bump::reset` (constant-time, retains chunks)
+//! before the eval, then evaluated against. Chunks accumulate to fit the
+//! workload's high-water mark and persist across calls — no per-task
+//! malloc/free churn. Profiling showed per-task `Bump::with_capacity` malloc
+//! was the dominant cost when arena sizing was tuned for realistic workloads;
+//! thread-local reuse amortizes that to zero in steady state.
 
 use crate::engine::error::Result;
 use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
@@ -19,22 +21,40 @@ use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
 use log::error;
 use serde_json::Value;
+use std::cell::RefCell;
 use std::sync::Arc;
 
-/// Default pre-allocated arena capacity for one task call.
-const ARENA_CAPACITY: usize = 16 * 1024;
+/// Initial bump arena capacity per worker thread. Sized to cover a realistic
+/// ISO-20022-shaped payload's `to_arena` deep-clone in one shot, so the first
+/// few calls on each thread don't trigger `Bump::new_chunk`. After that the
+/// chunks persist across calls and the capacity is irrelevant.
+const ARENA_INITIAL_CAPACITY: usize = 128 * 1024;
 
-/// Evaluate `compiled` against `context` using the supplied arena, returning
-/// the result as an owned `OwnedDataValue` (no `serde_json::Value` round-trip).
+thread_local! {
+    /// Per-worker-thread bump arena. `Engine` and `Arc<Logic>` are `Send + Sync`
+    /// and shared across threads; `Bump` is `!Send` so it lives here for
+    /// zero-contention scratch space. Chunks accumulate over the thread's
+    /// lifetime and `reset()` rewinds the pointer without freeing chunks back
+    /// to the OS — steady-state allocator pressure is zero.
+    static EVAL_ARENA: RefCell<Bump> = RefCell::new(Bump::with_capacity(ARENA_INITIAL_CAPACITY));
+}
+
+/// Evaluate `compiled` against `context` using the worker thread's bump
+/// arena, returning the result as an owned `OwnedDataValue`. The arena is
+/// rewound before the call so peak memory is bounded by the single largest
+/// evaluation; chunks persist across calls so steady-state allocation is zero.
 #[inline]
 pub(crate) fn eval_to_owned(
     engine: &Engine,
     compiled: &Logic,
     context: &OwnedDataValue,
-    arena: &Bump,
 ) -> std::result::Result<OwnedDataValue, datalogic_rs::Error> {
-    let r = engine.evaluate(compiled, context, arena)?;
-    Ok(r.to_owned())
+    EVAL_ARENA.with(|cell| {
+        let mut arena = cell.borrow_mut();
+        arena.reset();
+        let r = engine.evaluate(compiled, context, &arena)?;
+        Ok(r.to_owned())
+    })
 }
 
 /// Executes internal functions using pre-compiled logic for optimal performance.
@@ -70,8 +90,7 @@ impl InternalExecutor {
         message: &mut Message,
         config: &MapConfig,
     ) -> Result<(usize, Vec<Change>)> {
-        let arena = Bump::with_capacity(ARENA_CAPACITY);
-        config.execute(message, &self.engine, &self.logic_cache, &arena)
+        config.execute(message, &self.engine, &self.logic_cache)
     }
 
     /// Execute the internal map function with trace support.
@@ -80,8 +99,7 @@ impl InternalExecutor {
         message: &mut Message,
         config: &MapConfig,
     ) -> Result<(usize, Vec<Change>, Vec<Value>)> {
-        let arena = Bump::with_capacity(ARENA_CAPACITY);
-        config.execute_with_trace(message, &self.engine, &self.logic_cache, &arena)
+        config.execute_with_trace(message, &self.engine, &self.logic_cache)
     }
 
     /// Execute the internal validation function.
@@ -90,8 +108,7 @@ impl InternalExecutor {
         message: &mut Message,
         config: &ValidationConfig,
     ) -> Result<(usize, Vec<Change>)> {
-        let arena = Bump::with_capacity(ARENA_CAPACITY);
-        config.execute(message, &self.engine, &self.logic_cache, &arena)
+        config.execute(message, &self.engine, &self.logic_cache)
     }
 
     /// Execute the internal log function.
@@ -100,8 +117,7 @@ impl InternalExecutor {
         message: &mut Message,
         config: &LogConfig,
     ) -> Result<(usize, Vec<Change>)> {
-        let arena = Bump::with_capacity(ARENA_CAPACITY);
-        config.execute(message, &self.engine, &self.logic_cache, &arena)
+        config.execute(message, &self.engine, &self.logic_cache)
     }
 
     /// Execute the internal filter function.
@@ -110,8 +126,7 @@ impl InternalExecutor {
         message: &mut Message,
         config: &FilterConfig,
     ) -> Result<(usize, Vec<Change>)> {
-        let arena = Bump::with_capacity(ARENA_CAPACITY);
-        config.execute(message, &self.engine, &self.logic_cache, &arena)
+        config.execute(message, &self.engine, &self.logic_cache)
     }
 
     /// Evaluate a workflow or task condition using the cached compiled logic.
@@ -124,8 +139,7 @@ impl InternalExecutor {
         match condition_index {
             Some(index) if index < self.logic_cache.len() => {
                 let compiled = &self.logic_cache[index];
-                let arena = Bump::with_capacity(ARENA_CAPACITY);
-                match eval_to_owned(&self.engine, compiled, context, &arena) {
+                match eval_to_owned(&self.engine, compiled, context) {
                     Ok(value) => Ok(matches!(value, OwnedDataValue::Bool(true))),
                     Err(e) => {
                         error!("Failed to evaluate condition: {:?}", e);

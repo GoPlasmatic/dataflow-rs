@@ -34,7 +34,6 @@
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::executor::eval_to_owned;
 use crate::engine::message::{Change, Message};
-use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
 use log::{debug, error};
@@ -141,9 +140,7 @@ impl ValidationConfig {
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
-        arena: &Bump,
-    ) -> Result<(usize, Vec<Change>)> {
+        logic_cache: &[Arc<Logic>]) -> Result<(usize, Vec<Change>)> {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
 
@@ -190,7 +187,7 @@ impl ValidationConfig {
 
             // Evaluate via datalogic v5 against `message.context` directly.
             // The caller-owned arena is shared across every rule in this call.
-            let result = eval_to_owned(engine, compiled_logic, &message.context, arena);
+            let result = eval_to_owned(engine, compiled_logic, &message.context);
 
             match result {
                 Ok(value) => {
@@ -339,9 +336,7 @@ mod tests {
             logic_cache.push(engine.compile_arc(&rule.logic).unwrap());
             rule.logic_index = Some(i);
         }
-
-        let arena = Bump::new();
-        let result = config.execute(&mut message, &engine, &logic_cache, &arena);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
@@ -376,9 +371,7 @@ mod tests {
             logic_cache.push(engine.compile_arc(&rule.logic).unwrap());
             rule.logic_index = Some(i);
         }
-
-        let arena = Bump::new();
-        let result = config.execute(&mut message, &engine, &logic_cache, &arena);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, _changes) = result.unwrap();
@@ -407,8 +400,7 @@ mod tests {
         };
 
         let logic_cache = Vec::new();
-        let arena = Bump::new();
-        let result = config.execute(&mut message, &engine, &logic_cache, &arena);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, _) = result.unwrap();

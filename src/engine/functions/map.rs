@@ -17,7 +17,6 @@ use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::eval_to_owned;
 use crate::engine::message::{Change, Message};
 use crate::engine::utils::{get_nested_value, set_nested_value};
-use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
 use log::{debug, error};
@@ -91,13 +90,11 @@ impl MapConfig {
     /// * `message` - The message to transform (modified in place)
     /// * `engine` - Datalogic v5 engine for evaluation
     /// * `logic_cache` - Pre-compiled logic expressions
-    /// * `arena` - Caller-owned arena reused across every mapping in this call
     pub fn execute(
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
         logic_cache: &[Arc<Logic>],
-        arena: &Bump,
     ) -> Result<(usize, Vec<Change>)> {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
@@ -115,7 +112,7 @@ impl MapConfig {
                 }
             };
 
-            match eval_to_owned(engine, compiled_logic, &message.context, arena) {
+            match eval_to_owned(engine, compiled_logic, &message.context) {
                 Ok(transformed_value) => {
                     debug!(
                         "Map: Evaluated logic for path {} resulted in: {:?}",
@@ -166,7 +163,6 @@ impl MapConfig {
         message: &mut Message,
         engine: &Arc<Engine>,
         logic_cache: &[Arc<Logic>],
-        arena: &Bump,
     ) -> Result<(usize, Vec<Change>, Vec<Value>)> {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
@@ -187,7 +183,7 @@ impl MapConfig {
                 }
             };
 
-            match eval_to_owned(engine, compiled_logic, &message.context, arena) {
+            match eval_to_owned(engine, compiled_logic, &message.context) {
                 Ok(transformed_value) => {
                     debug!(
                         "Map: Evaluated logic for path {} resulted in: {:?}",
@@ -377,9 +373,7 @@ mod tests {
         };
 
         let logic_cache = vec![engine.compile_arc(&config.mappings[0].logic).unwrap()];
-
-        let arena = Bump::new();
-        let result = config.execute(&mut message, &engine, &logic_cache, &arena);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
@@ -430,9 +424,7 @@ mod tests {
             engine.compile_arc(&config.mappings[1].logic).unwrap(),
             engine.compile_arc(&config.mappings[2].logic).unwrap(),
         ];
-
-        let arena = Bump::new();
-        let result = config.execute(&mut message, &engine, &logic_cache, &arena);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
@@ -484,9 +476,7 @@ mod tests {
             logic_cache.push(engine.compile_arc(&mapping.logic).unwrap());
             mapping.logic_index = Some(i);
         }
-
-        let arena = Bump::new();
-        let result = config.execute_with_trace(&mut message, &engine, &logic_cache, &arena);
+        let result = config.execute_with_trace(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes, context_snapshots) = result.unwrap();
@@ -542,9 +532,7 @@ mod tests {
             logic_cache.push(engine.compile_arc(&mapping.logic).unwrap());
             mapping.logic_index = Some(i);
         }
-
-        let arena = Bump::new();
-        let result = config.execute(&mut message, &engine, &logic_cache, &arena);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
