@@ -79,6 +79,7 @@ async fn test_workflow_execution() {
         description: Some("A test workflow".to_string()),
         tasks: vec![Task {
             id: "log_task".to_string(),
+            id_arc: std::sync::Arc::from("log_task"),
             name: "Log Task".to_string(),
             description: Some("A test task".to_string()),
             condition: json!(true),
@@ -141,6 +142,7 @@ async fn test_async_workflow_execution() {
         description: Some("An async test workflow".to_string()),
         tasks: vec![Task {
             id: "async_log_task".to_string(),
+            id_arc: std::sync::Arc::from("async_log_task"),
             name: "Async Log Task".to_string(),
             description: Some("An async test task".to_string()),
             condition: json!(true),

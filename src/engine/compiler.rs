@@ -62,6 +62,13 @@ impl LogicCompiler {
                 continue;
             }
 
+            // Populate the cached Arc<str> ids so audit emission can refcount-bump
+            // rather than reallocate per AuditTrail entry.
+            workflow.id_arc = Arc::from(workflow.id.as_str());
+            for task in &mut workflow.tasks {
+                task.id_arc = Arc::from(task.id.as_str());
+            }
+
             // Parse and cache workflow condition
             debug!(
                 "Compiling condition for workflow {}: {:?}",

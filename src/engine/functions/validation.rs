@@ -32,7 +32,7 @@
 //! ```
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
-use crate::engine::executor::with_arena;
+use crate::engine::executor::{with_arena, ArenaContext};
 use crate::engine::message::{Change, Message};
 use datalogic_rs::{Engine, Logic};
 use datavalue::DataValue;
@@ -142,17 +142,46 @@ impl ValidationConfig {
         engine: &Arc<Engine>,
         logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
+        // Default path: open the arena and convert context once for this
+        // task call. When called from the workflow-level sync-stretch
+        // executor (`execute_in_arena`), the conversion is reused across
+        // multiple tasks in the same stretch.
+        with_arena(|arena| {
+            let ctx_av: DataValue<'_> = message.context.to_arena(arena);
+            self.run_rules(message, ctx_av, arena, engine, logic_cache)
+        })
+    }
+
+    /// Run validation rules against an externally-provided `ArenaContext`.
+    /// Reuses the cached arena form built by an earlier task in the same
+    /// workflow sync stretch — the heavy `data.input` subtree stays cached
+    /// across the parse_json → map → validation pipeline.
+    pub(crate) fn execute_in_arena(
+        &self,
+        message: &mut Message,
+        arena_ctx: &mut ArenaContext<'_>,
+        engine: &Arc<Engine>,
+        logic_cache: &[Arc<Logic>],
+    ) -> Result<(usize, Vec<Change>)> {
+        let arena = arena_ctx.arena();
+        let ctx_av = arena_ctx.as_data_value();
+        self.run_rules(message, ctx_av, arena, engine, logic_cache)
+    }
+
+    /// Shared inner loop: evaluate each rule against `ctx_av` and record
+    /// `ErrorInfo` entries for any failures.
+    fn run_rules(
+        &self,
+        message: &mut Message,
+        ctx_av: DataValue<'_>,
+        arena: &bumpalo::Bump,
+        engine: &Arc<Engine>,
+        logic_cache: &[Arc<Logic>],
+    ) -> Result<(usize, Vec<Change>)> {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
 
-        // Validation is read-only across the entire task call: convert the
-        // message context to its arena form ONCE, then loop the rules. This
-        // amortizes the `to_arena` deep-clone across all N rules (vs. paying
-        // it N times in the previous per-eval `eval_to_owned` design). The
-        // arena is rewound inside `with_arena` before this block runs.
-        with_arena(|arena| {
-            let ctx_av: DataValue<'_> = message.context.to_arena(arena);
-
+        {
             for (idx, rule) in self.rules.iter().enumerate() {
                 debug!("Processing validation rule {}: {}", idx, rule.message);
 
@@ -218,7 +247,7 @@ impl ValidationConfig {
                     }
                 }
             }
-        });
+        }
 
         if !validation_errors.is_empty() {
             message.errors.extend(validation_errors);

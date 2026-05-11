@@ -26,9 +26,17 @@ pub struct Message {
     pub audit_trail: Vec<AuditTrail>,
     /// Errors that occurred during message processing
     pub errors: Vec<ErrorInfo>,
+    /// When `true` (default), built-in functions emit per-write `Change`
+    /// entries into `audit_trail`, capturing `old_value` and `new_value` deep
+    /// clones. When `false`, `AuditTrail` entries are still recorded
+    /// (workflow_id, task_id, status, timestamp) but `changes` is empty —
+    /// the bulk-pipeline fast path. UI debug consumers should leave this at
+    /// `true`. Wire shape is unchanged either way.
+    pub capture_changes: bool,
 }
 
 // Custom Serialize: stable wire format ({id, payload, context, audit_trail, errors}).
+// `capture_changes` is an in-memory hint only — never serialized.
 impl Serialize for Message {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -46,6 +54,7 @@ impl Serialize for Message {
 }
 
 // Custom Deserialize: mirrors the Serialize shape; no cache field to seed.
+// `capture_changes` defaults to `true` for back-compat.
 impl<'de> Deserialize<'de> for Message {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -67,6 +76,7 @@ impl<'de> Deserialize<'de> for Message {
             context: data.context,
             audit_trail: data.audit_trail,
             errors: data.errors,
+            capture_changes: true,
         })
     }
 }
@@ -79,7 +89,30 @@ impl Message {
             context: empty_context(),
             audit_trail: vec![],
             errors: vec![],
+            capture_changes: true,
         }
+    }
+
+    /// Construct a message with a caller-supplied `id`, bypassing the per-call
+    /// `Uuid::new_v4().to_string()` allocation. Useful for benchmarks and for
+    /// pipelines that already carry an upstream request/correlation id.
+    pub fn with_id(id: impl Into<String>, payload: Arc<OwnedDataValue>) -> Self {
+        Self {
+            id: id.into(),
+            payload,
+            context: empty_context(),
+            audit_trail: vec![],
+            errors: vec![],
+            capture_changes: true,
+        }
+    }
+
+    /// Builder method: disable per-write `Change` capture for this message.
+    /// Audit trail entries are still recorded but their `changes` lists are
+    /// empty — the bulk-pipeline fast path.
+    pub fn without_change_capture(mut self) -> Self {
+        self.capture_changes = false;
+        self
     }
 
     /// Construct a message from a `serde_json::Value` payload. Convenience

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Workflow lifecycle status
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +23,11 @@ pub enum WorkflowStatus {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Workflow {
     pub id: String,
+    /// `Arc<str>` mirror of `id`, populated by `LogicCompiler::compile_workflows`.
+    /// Cloning this is a refcount bump; per-message `AuditTrail` entries reuse
+    /// it instead of allocating a fresh `Arc<str>` from `&id` each time.
+    #[serde(skip)]
+    pub id_arc: Arc<str>,
     pub name: String,
     #[serde(default)]
     pub priority: u32,
@@ -75,6 +81,7 @@ impl Workflow {
     pub fn new() -> Self {
         Workflow {
             id: String::new(),
+            id_arc: Arc::from(""),
             name: String::new(),
             priority: 0,
             description: None,
@@ -104,6 +111,7 @@ impl Workflow {
     pub fn rule(id: &str, name: &str, condition: Value, tasks: Vec<Task>) -> Self {
         Workflow {
             id: id.to_string(),
+            id_arc: Arc::from(id),
             name: name.to_string(),
             priority: 0,
             description: None,

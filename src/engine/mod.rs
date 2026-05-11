@@ -113,6 +113,10 @@ pub struct Engine {
     datalogic: Arc<DatalogicEngine>,
     /// Compiled logic cache with Arc<Logic> for zero-copy cross-thread sharing
     logic_cache: Vec<Arc<Logic>>,
+    /// Pre-built `OwnedDataValue::String` of the engine version. Built once;
+    /// stamped into `metadata.engine_version` per message via a single clone
+    /// rather than allocating from `env!` + `String::to_string` every call.
+    engine_version: OwnedDataValue,
 }
 
 /// Build a channel index from pre-sorted workflows.
@@ -185,7 +189,13 @@ impl Engine {
             workflow_executor,
             datalogic,
             logic_cache,
+            engine_version: OwnedDataValue::String(env!("CARGO_PKG_VERSION").to_string()),
         }
+    }
+
+    /// Cached `OwnedDataValue::String` of the engine version.
+    pub fn engine_version_value(&self) -> &OwnedDataValue {
+        &self.engine_version
     }
 
     /// Creates a new Engine with different workflows but the same custom function handlers.
@@ -229,6 +239,7 @@ impl Engine {
             workflow_executor,
             datalogic,
             logic_cache,
+            engine_version: self.engine_version.clone(),
         }
     }
 
@@ -245,12 +256,18 @@ impl Engine {
     /// # Returns
     /// * `Result<()>` - Ok(()) if processing succeeded, Err if a fatal error occurred
     pub async fn process_message(&self, message: &mut Message) -> Result<()> {
-        // Set processing metadata
-        set_processing_metadata(&mut message.context, None);
+        // Capture a single timestamp for the entire process_message call. The
+        // workflow executor reads it back via Message metadata if it needs to
+        // emit AuditTrail entries; this caps the number of `Utc::now()` syscalls
+        // at 1 per message (down from 3+ — one stamp here, one per AuditTrail).
+        let now = Utc::now();
+        set_processing_metadata(&mut message.context, &self.engine_version, now, None);
 
         // Process each workflow in priority order (pre-sorted at construction)
         for workflow in self.workflows.iter() {
-            self.workflow_executor.execute(workflow, message).await?;
+            self.workflow_executor
+                .execute(workflow, message, now)
+                .await?;
         }
 
         Ok(())
@@ -272,15 +289,15 @@ impl Engine {
     ) -> Result<ExecutionTrace> {
         use trace::ExecutionTrace;
 
-        // Set processing metadata
-        set_processing_metadata(&mut message.context, None);
+        let now = Utc::now();
+        set_processing_metadata(&mut message.context, &self.engine_version, now, None);
 
         let mut trace = ExecutionTrace::new();
 
         // Process each workflow in priority order (pre-sorted at construction)
         for workflow in self.workflows.iter() {
             self.workflow_executor
-                .execute_with_trace(workflow, message, &mut trace)
+                .execute_with_trace(workflow, message, &mut trace, now)
                 .await?;
         }
 
@@ -300,12 +317,13 @@ impl Engine {
         channel: &str,
         message: &mut Message,
     ) -> Result<()> {
-        set_processing_metadata(&mut message.context, Some(channel));
+        let now = Utc::now();
+        set_processing_metadata(&mut message.context, &self.engine_version, now, Some(channel));
 
         if let Some(indices) = self.channel_index.get(channel) {
             for &idx in indices {
                 self.workflow_executor
-                    .execute(&self.workflows[idx], message)
+                    .execute(&self.workflows[idx], message, now)
                     .await?;
             }
         }
@@ -325,14 +343,15 @@ impl Engine {
     ) -> Result<ExecutionTrace> {
         use trace::ExecutionTrace;
 
-        set_processing_metadata(&mut message.context, Some(channel));
+        let now = Utc::now();
+        set_processing_metadata(&mut message.context, &self.engine_version, now, Some(channel));
 
         let mut trace = ExecutionTrace::new();
 
         if let Some(indices) = self.channel_index.get(channel) {
             for &idx in indices {
                 self.workflow_executor
-                    .execute_with_trace(&self.workflows[idx], message, &mut trace)
+                    .execute_with_trace(&self.workflows[idx], message, &mut trace, now)
                     .await?;
             }
         }
@@ -362,20 +381,25 @@ impl Engine {
 }
 
 /// Stamp the standard processing metadata (`processed_at`, `engine_version`,
-/// and optionally `channel`) into the message context. Uses
-/// `set_nested_value` so callers can stay agnostic of the OwnedDataValue
-/// mutation surface.
-fn set_processing_metadata(context: &mut OwnedDataValue, channel: Option<&str>) {
+/// and optionally `channel`) into the message context.
+///
+/// `now` is captured once at the top of `process_message` and reused so the
+/// timestamp on `metadata.processed_at` matches the one used for every
+/// `AuditTrail` entry within the same call.
+/// `engine_version` is the cached `OwnedDataValue::String` owned by `Engine`;
+/// cloning it is one `String` clone, not an `env!` + `to_string` allocation.
+fn set_processing_metadata(
+    context: &mut OwnedDataValue,
+    engine_version: &OwnedDataValue,
+    now: chrono::DateTime<Utc>,
+    channel: Option<&str>,
+) {
     set_nested_value(
         context,
         "metadata.processed_at",
-        OwnedDataValue::String(Utc::now().to_rfc3339()),
+        OwnedDataValue::String(now.to_rfc3339()),
     );
-    set_nested_value(
-        context,
-        "metadata.engine_version",
-        OwnedDataValue::String(env!("CARGO_PKG_VERSION").to_string()),
-    );
+    set_nested_value(context, "metadata.engine_version", engine_version.clone());
     if let Some(channel) = channel {
         set_nested_value(
             context,

@@ -4,14 +4,17 @@
 //! It provides a clean separation between workflow orchestration and task execution.
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
-use crate::engine::executor::InternalExecutor;
-use crate::engine::functions::{AsyncFunctionHandler, FILTER_STATUS_HALT, FILTER_STATUS_SKIP};
+use crate::engine::executor::{with_arena, ArenaContext, InternalExecutor};
+use crate::engine::functions::{
+    AsyncFunctionHandler, FunctionConfig, FILTER_STATUS_HALT, FILTER_STATUS_SKIP,
+};
 use crate::engine::message::{AuditTrail, Change, Message};
+use crate::engine::task::Task;
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::trace::{ExecutionStep, ExecutionTrace};
 use crate::engine::utils::set_nested_value;
 use crate::engine::workflow::Workflow;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use datavalue::OwnedDataValue;
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
@@ -23,6 +26,17 @@ enum TaskControlFlow {
     Continue,
     /// Stop executing further tasks in this workflow (filter halt)
     HaltWorkflow,
+}
+
+/// Return the index of the first task at or after `start` that is *not* a
+/// synchronous built-in. Used to chunk `workflow.tasks` into sync-only
+/// stretches that can share a single `ArenaContext`.
+fn next_async_boundary(tasks: &[Task], start: usize) -> usize {
+    let mut i = start;
+    while i < tasks.len() && tasks[i].function.is_sync_builtin() {
+        i += 1;
+    }
+    i
 }
 
 /// Handles the execution of workflows and their tasks
@@ -69,7 +83,12 @@ impl WorkflowExecutor {
     ///
     /// # Returns
     /// * `Result<bool>` - Ok(true) if workflow was executed, Ok(false) if skipped, Err on failure
-    pub async fn execute(&self, workflow: &Workflow, message: &mut Message) -> Result<bool> {
+    pub async fn execute(
+        &self,
+        workflow: &Workflow,
+        message: &mut Message,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
         // Evaluate workflow condition directly against the OwnedDataValue context
         let should_execute = self
             .internal_executor
@@ -81,7 +100,7 @@ impl WorkflowExecutor {
         }
 
         // Execute workflow tasks
-        match self.execute_tasks(workflow, message).await {
+        match self.execute_tasks(workflow, message, now).await {
             Ok(_) => {
                 info!("Successfully completed workflow: {}", workflow.id);
                 Ok(true)
@@ -124,6 +143,7 @@ impl WorkflowExecutor {
         workflow: &Workflow,
         message: &mut Message,
         trace: &mut ExecutionTrace,
+        now: DateTime<Utc>,
     ) -> Result<bool> {
         // Evaluate workflow condition directly against the OwnedDataValue context
         let should_execute = self
@@ -139,7 +159,7 @@ impl WorkflowExecutor {
 
         // Execute workflow tasks with trace collection
         match self
-            .execute_tasks_with_trace(workflow, message, trace)
+            .execute_tasks_with_trace(workflow, message, trace, now)
             .await
         {
             Ok(_) => {
@@ -168,36 +188,180 @@ impl WorkflowExecutor {
         }
     }
 
-    /// Execute all tasks in a workflow
-    async fn execute_tasks(&self, workflow: &Workflow, message: &mut Message) -> Result<()> {
-        for task in &workflow.tasks {
-            // Evaluate task condition directly against the OwnedDataValue context
-            let should_execute = self
-                .internal_executor
-                .evaluate_condition(task.condition_index, &message.context)?;
+    /// Execute all tasks in a workflow.
+    ///
+    /// Groups consecutive synchronous built-in tasks into a single
+    /// `with_arena` scope so the arena form of `message.context` is built
+    /// once at the start of the stretch and reused across `parse_json`,
+    /// `map`, `validation`, `log`, and `filter`. Async tasks (HTTP, Kafka,
+    /// custom handlers) break the stretch — the arena flushes any pending
+    /// state back to `OwnedDataValue` automatically (since each sync task
+    /// already mutates `message.context` in place) and the next stretch
+    /// rebuilds the arena form.
+    async fn execute_tasks(
+        &self,
+        workflow: &Workflow,
+        message: &mut Message,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let tasks = &workflow.tasks;
+        let mut idx = 0;
+        while idx < tasks.len() {
+            let stretch_end = next_async_boundary(tasks, idx);
 
-            if !should_execute {
-                debug!("Skipping task {} - condition not met", task.id);
-                continue;
+            if stretch_end > idx {
+                // Run [idx, stretch_end) as a sync stretch inside one arena.
+                let halt = self.run_sync_stretch(
+                    &tasks[idx..stretch_end],
+                    workflow,
+                    message,
+                    now,
+                )?;
+                if halt {
+                    return Ok(());
+                }
+                idx = stretch_end;
             }
 
-            // Execute the task
-            let result = self.task_executor.execute(task, message).await;
+            if idx < tasks.len() {
+                // Single async task (or non-sync-builtin) at `idx`.
+                let task = &tasks[idx];
+                let should_execute = self
+                    .internal_executor
+                    .evaluate_condition(task.condition_index, &message.context)?;
 
-            // Handle task result with control flow
-            match self.handle_task_result(
-                result,
-                &workflow.id,
-                &task.id,
-                task.continue_on_error,
-                message,
-            )? {
-                TaskControlFlow::HaltWorkflow => break,
-                TaskControlFlow::Continue => {}
+                if !should_execute {
+                    debug!("Skipping task {} - condition not met", task.id);
+                    idx += 1;
+                    continue;
+                }
+
+                let result = self.task_executor.execute(task, message).await;
+                match self.handle_task_result(
+                    result,
+                    &workflow.id_arc,
+                    &task.id_arc,
+                    task.continue_on_error,
+                    message,
+                    now,
+                )? {
+                    TaskControlFlow::HaltWorkflow => return Ok(()),
+                    TaskControlFlow::Continue => {}
+                }
+                idx += 1;
             }
         }
 
         Ok(())
+    }
+
+    /// Execute a contiguous run of sync-builtin tasks inside one
+    /// `with_arena` scope. The arena context is built once at the start and
+    /// refreshed in place after each mutating task. Returns `Ok(true)` if a
+    /// filter task halted the workflow.
+    fn run_sync_stretch(
+        &self,
+        tasks: &[Task],
+        workflow: &Workflow,
+        message: &mut Message,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
+        let outcome = with_arena(|arena| -> Result<bool> {
+            let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
+
+            for task in tasks {
+                // Task condition — evaluate against the arena form so we don't
+                // re-borrow the thread-local `RefCell`.
+                let ctx_av = arena_ctx.as_data_value();
+                let should_execute = self
+                    .internal_executor
+                    .evaluate_condition_in_arena(task.condition_index, ctx_av, arena)?;
+
+                if !should_execute {
+                    debug!("Skipping task {} - condition not met", task.id);
+                    continue;
+                }
+
+                let result = self.execute_sync_task_in_arena(task, message, &mut arena_ctx);
+
+                let control_flow = self.handle_task_result(
+                    result,
+                    &workflow.id_arc,
+                    &task.id_arc,
+                    task.continue_on_error,
+                    message,
+                    now,
+                )?;
+
+                // The audit-trail / progress-metadata writes performed by
+                // `handle_task_result` mutate `message.context`. Refresh the
+                // arena cache so the next task in the stretch sees them.
+                arena_ctx.refresh_for_path(&message.context, "metadata");
+
+                if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })?;
+        Ok(outcome)
+    }
+
+    /// Dispatch a single sync-builtin task to its `execute_in_arena` variant.
+    /// All variants in `is_sync_builtin()` must be handled here.
+    fn execute_sync_task_in_arena(
+        &self,
+        task: &Task,
+        message: &mut Message,
+        arena_ctx: &mut ArenaContext<'_>,
+    ) -> Result<(usize, Vec<Change>)> {
+        debug!(
+            "Executing sync task in arena: {} ({})",
+            task.id,
+            task.function.function_name()
+        );
+        let executor = &self.internal_executor;
+        let engine = executor.engine();
+        let logic_cache = executor.logic_cache();
+
+        match &task.function {
+            FunctionConfig::Map { input, .. } => {
+                input.execute_in_arena(message, arena_ctx, engine, logic_cache)
+            }
+            FunctionConfig::Validation { input, .. } => {
+                input.execute_in_arena(message, arena_ctx, engine, logic_cache)
+            }
+            FunctionConfig::ParseJson { input, .. } => {
+                crate::engine::functions::parse::execute_parse_json_in_arena(
+                    message, input, arena_ctx,
+                )
+            }
+            FunctionConfig::ParseXml { input, .. } => {
+                let r = crate::engine::functions::parse::execute_parse_xml(message, input)?;
+                arena_ctx.refresh_for_path(&message.context, "data");
+                Ok(r)
+            }
+            FunctionConfig::PublishJson { input, .. } => {
+                // Publish is read-only on the OwnedDataValue context (it writes
+                // to `payload`). No arena refresh needed.
+                crate::engine::functions::publish::execute_publish_json(message, input)
+            }
+            FunctionConfig::PublishXml { input, .. } => {
+                crate::engine::functions::publish::execute_publish_xml(message, input)
+            }
+            FunctionConfig::Filter { input, .. } => {
+                input.execute(message, engine, logic_cache)
+            }
+            FunctionConfig::Log { input, .. } => {
+                input.execute(message, engine, logic_cache)
+            }
+            // Async or non-builtin variants should never reach this dispatch —
+            // `next_async_boundary` guarantees stretch contents are sync builtins.
+            _ => unreachable!(
+                "execute_sync_task_in_arena called with non-sync-builtin task: {}",
+                task.function.function_name()
+            ),
+        }
     }
 
     /// Execute all tasks in a workflow with trace collection
@@ -206,6 +370,7 @@ impl WorkflowExecutor {
         workflow: &Workflow,
         message: &mut Message,
         trace: &mut ExecutionTrace,
+        now: DateTime<Utc>,
     ) -> Result<()> {
         for task in &workflow.tasks {
             // Evaluate task condition directly against the OwnedDataValue context
@@ -235,10 +400,11 @@ impl WorkflowExecutor {
             // Handle task result with control flow
             let control_flow = self.handle_task_result(
                 standard_result,
-                &workflow.id,
-                &task.id,
+                &workflow.id_arc,
+                &task.id_arc,
                 task.continue_on_error,
                 message,
+                now,
             )?;
 
             // Record executed step with message snapshot and optional mapping contexts
@@ -256,15 +422,22 @@ impl WorkflowExecutor {
         Ok(())
     }
 
-    /// Handle the result of a task execution
+    /// Handle the result of a task execution.
+    ///
+    /// `workflow_id_arc` and `task_id_arc` are the compile-time cached
+    /// `Arc<str>` mirrors of `workflow.id` / `task.id`; we Arc-clone them into
+    /// each `AuditTrail` rather than reallocating from the `&str` form.
     fn handle_task_result(
         &self,
         result: Result<(usize, Vec<Change>)>,
-        workflow_id: &str,
-        task_id: &str,
+        workflow_id_arc: &Arc<str>,
+        task_id_arc: &Arc<str>,
         continue_on_error: bool,
         message: &mut Message,
+        now: DateTime<Utc>,
     ) -> Result<TaskControlFlow> {
+        let workflow_id: &str = workflow_id_arc;
+        let task_id: &str = task_id_arc;
         match result {
             Ok((status, changes)) => {
                 // Handle filter skip — no audit trail, just continue
@@ -273,11 +446,14 @@ impl WorkflowExecutor {
                     return Ok(TaskControlFlow::Continue);
                 }
 
-                // Record audit trail
+                // Record audit trail. workflow_id_arc/task_id_arc are populated
+                // by LogicCompiler at engine construction; cloning them is a
+                // refcount bump, not a string copy. `now` is shared with all
+                // other AuditTrails in this process_message call.
                 message.audit_trail.push(AuditTrail {
-                    timestamp: Utc::now(),
-                    workflow_id: Arc::from(workflow_id),
-                    task_id: Arc::from(task_id),
+                    timestamp: now,
+                    workflow_id: Arc::clone(workflow_id_arc),
+                    task_id: Arc::clone(task_id_arc),
                     status,
                     changes,
                 });
@@ -327,11 +503,11 @@ impl WorkflowExecutor {
             Err(e) => {
                 error!("Task {} failed: {:?}", task_id, e);
 
-                // Record error in audit trail
+                // Record error in audit trail (Arc clones are refcount bumps).
                 message.audit_trail.push(AuditTrail {
-                    timestamp: Utc::now(),
-                    workflow_id: Arc::from(workflow_id),
-                    task_id: Arc::from(task_id),
+                    timestamp: now,
+                    workflow_id: Arc::clone(workflow_id_arc),
+                    task_id: Arc::clone(task_id_arc),
                     status: 500,
                     changes: vec![],
                 });
@@ -400,7 +576,7 @@ mod tests {
 
         // Execute workflow - should be skipped due to false condition
         let executed = workflow_executor
-            .execute(&workflow, &mut message)
+            .execute(&workflow, &mut message, Utc::now())
             .await
             .unwrap();
         assert!(!executed);
@@ -446,7 +622,7 @@ mod tests {
 
         // Execute workflow - should succeed with empty task list
         let executed = workflow_executor
-            .execute(&workflow, &mut message)
+            .execute(&workflow, &mut message, Utc::now())
             .await
             .unwrap();
         assert!(executed);

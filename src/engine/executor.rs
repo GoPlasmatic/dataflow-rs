@@ -12,13 +12,18 @@
 //! malloc/free churn. Profiling showed per-task `Bump::with_capacity` malloc
 //! was the dominant cost when arena sizing was tuned for realistic workloads;
 //! thread-local reuse amortizes that to zero in steady state.
+//!
+//! `ArenaContext` (below) extends this further for **mutating** tasks (map):
+//! the message context is `to_arena`'d once per task call into a depth‑2
+//! cache, and subsequent writes only re‑arena the dirtied subtree — typically
+//! `data.MT103` while the heavy `data.input` stays cached.
 
 use crate::engine::error::Result;
 use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
 use crate::engine::message::{Change, Message};
 use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
-use datavalue::OwnedDataValue;
+use datavalue::{DataValue, OwnedDataValue};
 use log::error;
 use serde_json::Value;
 use std::cell::RefCell;
@@ -76,6 +81,261 @@ pub(crate) fn with_arena<R>(f: impl FnOnce(&Bump) -> R) -> R {
         arena.reset();
         f(&arena)
     })
+}
+
+/// Depth‑2 arena cache for a `Message.context` (always an
+/// `OwnedDataValue::Object`).
+///
+/// Built once at the top of a mutating task call, then mutated in place as
+/// the task writes back into `message.context`. Writes at path `a.b.X`
+/// invalidate only the `(a, b)` arena slot — `data.input` stays cached
+/// across the entire map task even while `data.MT103.*` is being written.
+///
+/// **Lifetime model.** All arena allocations come out of the borrowed `Bump`.
+/// `top_keys` / `top_values` / `depth2` are owned `Vec`s so we can mutate
+/// them freely; the `DataValue<'a>` slice handed to `engine.evaluate` is a
+/// fresh `arena.alloc_slice_copy` per call, so it stays valid for that eval
+/// regardless of subsequent mutations.
+pub(crate) struct ArenaContext<'a> {
+    arena: &'a Bump,
+    /// Top-level slot keys, arena-allocated `&'a str`.
+    top_keys: Vec<&'a str>,
+    /// Top-level slot values. When a slot's owned value is an `Object`, the
+    /// corresponding `top_values[i]` is `DataValue::Object(&'a [...])` whose
+    /// slice was minted from `depth2[i]` via `alloc_slice_copy`. When not an
+    /// Object, `depth2[i] = None` and `top_values[i]` is the full arena form.
+    top_values: Vec<DataValue<'a>>,
+    /// Depth‑2 cache, parallel to `top_keys`. `None` for non‑Object top slots.
+    depth2: Vec<Option<Depth2Cache<'a>>>,
+}
+
+struct Depth2Cache<'a> {
+    keys: Vec<&'a str>,
+    values: Vec<DataValue<'a>>,
+}
+
+impl<'a> ArenaContext<'a> {
+    /// Build from an `OwnedDataValue` context (which should be the canonical
+    /// `Object { data, metadata, temp_data }` shape). Deep-walks the owned
+    /// tree exactly once; subsequent reads / mutations are O(touched slot).
+    pub fn from_owned(ctx: &OwnedDataValue, arena: &'a Bump) -> Self {
+        let mut top_keys: Vec<&'a str> = Vec::with_capacity(4);
+        let mut top_values: Vec<DataValue<'a>> = Vec::with_capacity(4);
+        let mut depth2: Vec<Option<Depth2Cache<'a>>> = Vec::with_capacity(4);
+
+        if let OwnedDataValue::Object(pairs) = ctx {
+            for (k, v) in pairs {
+                top_keys.push(arena.alloc_str(k));
+                match v {
+                    OwnedDataValue::Object(children) => {
+                        let mut d2_keys: Vec<&'a str> = Vec::with_capacity(children.len());
+                        let mut d2_vals: Vec<DataValue<'a>> = Vec::with_capacity(children.len());
+                        for (ck, cv) in children {
+                            d2_keys.push(arena.alloc_str(ck));
+                            d2_vals.push(cv.to_arena(arena));
+                        }
+                        let slice = build_object_slice(arena, &d2_keys, &d2_vals);
+                        top_values.push(DataValue::Object(slice));
+                        depth2.push(Some(Depth2Cache {
+                            keys: d2_keys,
+                            values: d2_vals,
+                        }));
+                    }
+                    _ => {
+                        top_values.push(v.to_arena(arena));
+                        depth2.push(None);
+                    }
+                }
+            }
+        }
+
+        Self {
+            arena,
+            top_keys,
+            top_values,
+            depth2,
+        }
+    }
+
+    /// Build an arena `DataValue::Object` for the current state. The returned
+    /// slice is freshly allocated in the arena and stays valid for the caller
+    /// to pass into `engine.evaluate`; later mutations on `self` allocate a
+    /// new slice on the next call.
+    pub fn as_data_value(&self) -> DataValue<'a> {
+        let slice = build_object_slice(self.arena, &self.top_keys, &self.top_values);
+        DataValue::Object(slice)
+    }
+
+    /// Borrow the underlying arena — needed by callers that want to allocate
+    /// or evaluate into the same `Bump` (e.g. `engine.evaluate(...)`).
+    #[inline]
+    pub fn arena(&self) -> &'a Bump {
+        self.arena
+    }
+
+    /// Apply an owned write at `path` to *both* the underlying `OwnedDataValue`
+    /// context (via the supplied closure that performs the in-place mutation)
+    /// and the arena cache. `path` is the original dot path — only the first
+    /// segment is used for top-slot lookup; the second segment (if any)
+    /// indexes the depth‑2 cache.
+    pub fn apply_mutation(
+        &mut self,
+        owned_ctx: &mut OwnedDataValue,
+        path: &str,
+        apply: impl FnOnce(&mut OwnedDataValue),
+    ) {
+        apply(owned_ctx);
+        self.refresh_after_write(owned_ctx, path);
+    }
+
+    /// Refresh the arena slot(s) for `path` from the current `owned_ctx`,
+    /// without applying any new write. Used when a sync task mutated
+    /// `message.context` directly (e.g. `parse_json` going through legacy
+    /// helpers) and we need the arena to catch up.
+    pub fn refresh_for_path(&mut self, owned_ctx: &OwnedDataValue, path: &str) {
+        self.refresh_after_write(owned_ctx, path);
+    }
+
+    /// Refresh the arena cache after `owned_ctx` was mutated at `path`.
+    fn refresh_after_write(&mut self, owned_ctx: &OwnedDataValue, path: &str) {
+        let mut parts = path.split('.');
+        let top = match parts.next() {
+            Some(p) if !p.is_empty() => p,
+            _ => {
+                self.rebuild_all_from(owned_ctx);
+                return;
+            }
+        };
+        let depth2_key = parts.next();
+
+        let OwnedDataValue::Object(owned_pairs) = owned_ctx else {
+            self.rebuild_all_from(owned_ctx);
+            return;
+        };
+
+        let owned_top_val = owned_pairs.iter().find(|(k, _)| k == top).map(|(_, v)| v);
+
+        let top_idx = self.top_keys.iter().position(|k| *k == top);
+
+        match (owned_top_val, top_idx) {
+            (None, Some(idx)) => {
+                // Top slot was removed from owned ctx — remove from cache.
+                self.top_keys.remove(idx);
+                self.top_values.remove(idx);
+                self.depth2.remove(idx);
+            }
+            (Some(new_val), idx_opt) => {
+                let idx = match idx_opt {
+                    Some(i) => i,
+                    None => {
+                        self.top_keys.push(self.arena.alloc_str(top));
+                        self.top_values.push(DataValue::Null);
+                        self.depth2.push(None);
+                        self.top_keys.len() - 1
+                    }
+                };
+
+                match (new_val, depth2_key, &mut self.depth2[idx]) {
+                    // Depth-2 write into an existing Object top slot that already
+                    // has a depth-2 cache → refresh only the child.
+                    (
+                        OwnedDataValue::Object(new_children),
+                        Some(child_key),
+                        Some(d2),
+                    ) => {
+                        if let Some(new_child) = new_children
+                            .iter()
+                            .find(|(k, _)| k == child_key)
+                            .map(|(_, v)| v)
+                        {
+                            // Replace or insert the single child slot.
+                            let child_arena = new_child.to_arena(self.arena);
+                            if let Some(pos) =
+                                d2.keys.iter().position(|k| *k == child_key)
+                            {
+                                d2.values[pos] = child_arena;
+                            } else {
+                                d2.keys.push(self.arena.alloc_str(child_key));
+                                d2.values.push(child_arena);
+                            }
+                            // Also reflect deletions of *other* depth-2 keys
+                            // (rare but possible if the write replaced the
+                            // whole top object). Cheap O(n) scan.
+                            if d2.keys.len() != new_children.len() {
+                                // Owned children diverged from our cache —
+                                // rebuild the depth-2 cache from owned.
+                                self.rebuild_top_slot(owned_top_val.unwrap(), idx);
+                                return;
+                            }
+                        } else {
+                            // child_key not found in new owned object — child
+                            // was removed. Drop from cache.
+                            if let Some(pos) =
+                                d2.keys.iter().position(|k| *k == child_key)
+                            {
+                                d2.keys.remove(pos);
+                                d2.values.remove(pos);
+                            }
+                        }
+                        let slice =
+                            build_object_slice(self.arena, &d2.keys, &d2.values);
+                        self.top_values[idx] = DataValue::Object(slice);
+                    }
+                    // Top-level (depth-1) write or shape change → rebuild
+                    // the whole top slot (cheap relative to a full ctx walk).
+                    _ => {
+                        self.rebuild_top_slot(new_val, idx);
+                    }
+                }
+            }
+            (None, None) => { /* no-op */ }
+        }
+    }
+
+    fn rebuild_top_slot(&mut self, owned: &OwnedDataValue, idx: usize) {
+        match owned {
+            OwnedDataValue::Object(children) => {
+                let mut d2_keys: Vec<&'a str> = Vec::with_capacity(children.len());
+                let mut d2_vals: Vec<DataValue<'a>> = Vec::with_capacity(children.len());
+                for (ck, cv) in children {
+                    d2_keys.push(self.arena.alloc_str(ck));
+                    d2_vals.push(cv.to_arena(self.arena));
+                }
+                let slice = build_object_slice(self.arena, &d2_keys, &d2_vals);
+                self.top_values[idx] = DataValue::Object(slice);
+                self.depth2[idx] = Some(Depth2Cache {
+                    keys: d2_keys,
+                    values: d2_vals,
+                });
+            }
+            _ => {
+                self.top_values[idx] = owned.to_arena(self.arena);
+                self.depth2[idx] = None;
+            }
+        }
+    }
+
+    /// Last-resort: ditch all cached state and rebuild from scratch. Should be
+    /// rare on normal flows — only triggered if the context shape changes in
+    /// a way the depth-2 cache can't track.
+    fn rebuild_all_from(&mut self, ctx: &OwnedDataValue) {
+        let rebuilt = ArenaContext::from_owned(ctx, self.arena);
+        self.top_keys = rebuilt.top_keys;
+        self.top_values = rebuilt.top_values;
+        self.depth2 = rebuilt.depth2;
+    }
+}
+
+/// Allocate a fresh `(key, value)` slice in the arena. Each
+/// `engine.evaluate` call gets its own slice; subsequent mutations to the
+/// underlying Vecs are independent.
+fn build_object_slice<'a>(
+    arena: &'a Bump,
+    keys: &[&'a str],
+    values: &[DataValue<'a>],
+) -> &'a [(&'a str, DataValue<'a>)] {
+    debug_assert_eq!(keys.len(), values.len());
+    arena.alloc_slice_fill_iter(keys.iter().zip(values.iter()).map(|(k, v)| (*k, *v)))
 }
 
 /// Executes internal functions using pre-compiled logic for optimal performance.
@@ -169,6 +429,31 @@ impl InternalExecutor {
                 }
             }
             _ => Ok(true), // No condition means always true
+        }
+    }
+
+    /// Same as `evaluate_condition` but evaluates against an arena-resident
+    /// `DataValue` and an existing `Bump`. Used inside a `with_arena` block
+    /// (the workflow sync-stretch path) to avoid re-entering the
+    /// thread-local arena `RefCell::borrow_mut`.
+    pub fn evaluate_condition_in_arena(
+        &self,
+        condition_index: Option<usize>,
+        ctx: DataValue<'_>,
+        arena: &Bump,
+    ) -> Result<bool> {
+        match condition_index {
+            Some(index) if index < self.logic_cache.len() => {
+                let compiled = &self.logic_cache[index];
+                match self.engine.evaluate(compiled, ctx, arena) {
+                    Ok(value) => Ok(matches!(value, DataValue::Bool(true))),
+                    Err(e) => {
+                        error!("Failed to evaluate condition: {:?}", e);
+                        Ok(false)
+                    }
+                }
+            }
+            _ => Ok(true),
         }
     }
 }

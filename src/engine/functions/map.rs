@@ -14,7 +14,7 @@
 //! - Audit-trail change tracking
 
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::executor::eval_to_owned;
+use crate::engine::executor::{eval_to_owned, with_arena, ArenaContext};
 use crate::engine::message::{Change, Message};
 use crate::engine::utils::{get_nested_value, set_nested_value};
 use datalogic_rs::{Engine, Logic};
@@ -96,11 +96,32 @@ impl MapConfig {
         engine: &Arc<Engine>,
         logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
+        // Default path: open the arena, build a fresh ArenaContext from the
+        // current `message.context`, run mappings. Used when no outer
+        // workflow-level arena session is available.
+        with_arena(|arena| {
+            let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
+            self.execute_in_arena(message, &mut arena_ctx, engine, logic_cache)
+        })
+    }
+
+    /// Mappings-loop run against an externally-provided `ArenaContext`.
+    /// Used by the workflow-level sync-stretch executor so the
+    /// `OwnedDataValue → arena` conversion done by an earlier task in the
+    /// same workflow stretch is reused.
+    pub(crate) fn execute_in_arena(
+        &self,
+        message: &mut Message,
+        arena_ctx: &mut ArenaContext<'_>,
+        engine: &Arc<Engine>,
+        logic_cache: &[Arc<Logic>],
+    ) -> Result<(usize, Vec<Change>)> {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
 
         debug!("Map: Executing {} mappings", self.mappings.len());
 
+        let arena = arena_ctx.arena();
         for mapping in &self.mappings {
             debug!("Processing mapping to path: {}", mapping.path);
 
@@ -112,43 +133,56 @@ impl MapConfig {
                 }
             };
 
-            match eval_to_owned(engine, compiled_logic, &message.context) {
-                Ok(transformed_value) => {
-                    debug!(
-                        "Map: Evaluated logic for path {} resulted in: {:?}",
-                        mapping.path, transformed_value
-                    );
-
-                    if matches!(transformed_value, OwnedDataValue::Null) {
-                        debug!(
-                            "Map: Skipping mapping for path {} as result is null",
-                            mapping.path
-                        );
-                        continue;
-                    }
-
-                    let old_value = get_nested_value(&message.context, &mapping.path)
-                        .cloned()
-                        .unwrap_or(OwnedDataValue::Null);
-                    let new_value_arc = Arc::new(transformed_value.clone());
-
-                    changes.push(Change {
-                        path: Arc::from(mapping.path.as_str()),
-                        old_value: Arc::new(old_value),
-                        new_value: Arc::clone(&new_value_arc),
-                    });
-
-                    apply_mapping(&mut message.context, &mapping.path, transformed_value);
-                    debug!("Successfully mapped to path: {}", mapping.path);
-                }
+            let ctx_av = arena_ctx.as_data_value();
+            let result_av = match engine.evaluate(compiled_logic, ctx_av, arena) {
+                Ok(av) => av,
                 Err(e) => {
                     error!(
                         "Map: Error evaluating logic for path {}: {:?}",
                         mapping.path, e
                     );
                     errors_encountered = true;
+                    continue;
                 }
+            };
+
+            let transformed_value = result_av.to_owned();
+            debug!(
+                "Map: Evaluated logic for path {} resulted in: {:?}",
+                mapping.path, transformed_value
+            );
+
+            if matches!(transformed_value, OwnedDataValue::Null) {
+                debug!(
+                    "Map: Skipping mapping for path {} as result is null",
+                    mapping.path
+                );
+                continue;
             }
+
+            if message.capture_changes {
+                let old_value = get_nested_value(&message.context, &mapping.path)
+                    .cloned()
+                    .unwrap_or(OwnedDataValue::Null);
+                let new_value_arc = Arc::new(transformed_value.clone());
+
+                changes.push(Change {
+                    path: Arc::from(mapping.path.as_str()),
+                    old_value: Arc::new(old_value),
+                    new_value: Arc::clone(&new_value_arc),
+                });
+
+                let path = mapping.path.clone();
+                arena_ctx.apply_mutation(&mut message.context, &path, |ctx| {
+                    apply_mapping(ctx, &path, transformed_value);
+                });
+            } else {
+                let path = mapping.path.clone();
+                arena_ctx.apply_mutation(&mut message.context, &path, |ctx| {
+                    apply_mapping(ctx, &path, transformed_value);
+                });
+            }
+            debug!("Successfully mapped to path: {}", mapping.path);
         }
 
         let status = if errors_encountered { 500 } else { 200 };
@@ -194,18 +228,22 @@ impl MapConfig {
                         continue;
                     }
 
-                    let old_value = get_nested_value(&message.context, &mapping.path)
-                        .cloned()
-                        .unwrap_or(OwnedDataValue::Null);
-                    let new_value_arc = Arc::new(transformed_value.clone());
+                    if message.capture_changes {
+                        let old_value = get_nested_value(&message.context, &mapping.path)
+                            .cloned()
+                            .unwrap_or(OwnedDataValue::Null);
+                        let new_value_arc = Arc::new(transformed_value.clone());
 
-                    changes.push(Change {
-                        path: Arc::from(mapping.path.as_str()),
-                        old_value: Arc::new(old_value),
-                        new_value: Arc::clone(&new_value_arc),
-                    });
+                        changes.push(Change {
+                            path: Arc::from(mapping.path.as_str()),
+                            old_value: Arc::new(old_value),
+                            new_value: Arc::clone(&new_value_arc),
+                        });
 
-                    apply_mapping(&mut message.context, &mapping.path, transformed_value);
+                        apply_mapping(&mut message.context, &mapping.path, transformed_value);
+                    } else {
+                        apply_mapping(&mut message.context, &mapping.path, transformed_value);
+                    }
                 }
                 Err(e) => {
                     error!(

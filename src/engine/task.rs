@@ -7,6 +7,7 @@
 use crate::engine::functions::FunctionConfig;
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::Arc;
 
 /// A single processing unit within a workflow (also known as an Action in rules-engine terminology).
 ///
@@ -33,6 +34,11 @@ use serde_json::Value;
 pub struct Task {
     /// Unique identifier for the task within the workflow.
     pub id: String,
+
+    /// `Arc<str>` mirror of `id`, populated by `LogicCompiler::compile_workflows`.
+    /// Audit-trail emission clones this instead of allocating a fresh `Arc<str>`.
+    #[serde(skip)]
+    pub id_arc: Arc<str>,
 
     /// Human-readable name for the task.
     pub name: String,
@@ -75,6 +81,7 @@ impl Task {
     pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self {
         Task {
             id: id.to_string(),
+            id_arc: Arc::from(id),
             name: name.to_string(),
             description: None,
             condition: Value::Bool(true),

@@ -149,4 +149,21 @@ impl FunctionConfig {
             FunctionConfig::Custom { name, .. } => name,
         }
     }
+
+    /// Whether this is a synchronous built-in. Synchronous built-ins can share
+    /// a single `ArenaContext` lifetime across consecutive tasks within a
+    /// workflow without crossing any `.await` point.
+    pub fn is_sync_builtin(&self) -> bool {
+        matches!(
+            self,
+            FunctionConfig::Map { .. }
+                | FunctionConfig::Validation { .. }
+                | FunctionConfig::ParseJson { .. }
+                | FunctionConfig::ParseXml { .. }
+                | FunctionConfig::PublishJson { .. }
+                | FunctionConfig::PublishXml { .. }
+                | FunctionConfig::Filter { .. }
+                | FunctionConfig::Log { .. }
+        )
+    }
 }
