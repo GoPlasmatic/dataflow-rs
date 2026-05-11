@@ -32,10 +32,10 @@
 //! ```
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
-use crate::engine::executor::eval_to_owned;
+use crate::engine::executor::with_arena;
 use crate::engine::message::{Change, Message};
 use datalogic_rs::{Engine, Logic};
-use datavalue::OwnedDataValue;
+use datavalue::DataValue;
 use log::{debug, error};
 use serde::Deserialize;
 use serde_json::Value;
@@ -140,84 +140,89 @@ impl ValidationConfig {
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>]) -> Result<(usize, Vec<Change>)> {
+        logic_cache: &[Arc<Logic>],
+    ) -> Result<(usize, Vec<Change>)> {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
 
-        // Process each validation rule against the message context directly.
-        for (idx, rule) in self.rules.iter().enumerate() {
-            debug!("Processing validation rule {}: {}", idx, rule.message);
+        // Validation is read-only across the entire task call: convert the
+        // message context to its arena form ONCE, then loop the rules. This
+        // amortizes the `to_arena` deep-clone across all N rules (vs. paying
+        // it N times in the previous per-eval `eval_to_owned` design). The
+        // arena is rewound inside `with_arena` before this block runs.
+        with_arena(|arena| {
+            let ctx_av: DataValue<'_> = message.context.to_arena(arena);
 
-            // Get the compiled logic from cache with proper bounds checking
-            let compiled_logic = match rule.logic_index {
-                Some(index) => {
-                    // Ensure index is valid before accessing
-                    if index >= logic_cache.len() {
+            for (idx, rule) in self.rules.iter().enumerate() {
+                debug!("Processing validation rule {}: {}", idx, rule.message);
+
+                let compiled_logic = match rule.logic_index {
+                    Some(index) => {
+                        if index >= logic_cache.len() {
+                            error!(
+                                "Validation: Logic index {} out of bounds (cache size: {}) for rule at index {}",
+                                index,
+                                logic_cache.len(),
+                                idx
+                            );
+                            validation_errors.push(ErrorInfo::simple_ref(
+                                "COMPILATION_ERROR",
+                                &format!(
+                                    "Logic index {} out of bounds for rule at index {}",
+                                    index, idx
+                                ),
+                                None,
+                            ));
+                            continue;
+                        }
+                        &logic_cache[index]
+                    }
+                    None => {
                         error!(
-                            "Validation: Logic index {} out of bounds (cache size: {}) for rule at index {}",
-                            index,
-                            logic_cache.len(),
+                            "Validation: Logic not compiled (no index) for rule at index {}",
                             idx
                         );
                         validation_errors.push(ErrorInfo::simple_ref(
                             "COMPILATION_ERROR",
-                            &format!(
-                                "Logic index {} out of bounds for rule at index {}",
-                                index, idx
-                            ),
+                            &format!("Logic not compiled for rule at index: {}", idx),
                             None,
                         ));
                         continue;
                     }
-                    &logic_cache[index]
-                }
-                None => {
-                    error!(
-                        "Validation: Logic not compiled (no index) for rule at index {}",
-                        idx
-                    );
-                    validation_errors.push(ErrorInfo::simple_ref(
-                        "COMPILATION_ERROR",
-                        &format!("Logic not compiled for rule at index: {}", idx),
-                        None,
-                    ));
-                    continue;
-                }
-            };
+                };
 
-            // Evaluate via datalogic v5 against `message.context` directly.
-            // The caller-owned arena is shared across every rule in this call.
-            let result = eval_to_owned(engine, compiled_logic, &message.context);
-
-            match result {
-                Ok(value) => {
-                    // Check if validation passed (must be explicitly true)
-                    if !matches!(value, OwnedDataValue::Bool(true)) {
-                        debug!("Validation failed for rule {}: {}", idx, rule.message);
+                // Reuse the pre-converted `ctx_av` (DataValue is Copy). The
+                // result is `&DataValue<'_>` borrowed from the arena — we
+                // only need to peek at the discriminant so we skip the
+                // `to_owned()` deep-clone too.
+                match engine.evaluate(compiled_logic, ctx_av, arena) {
+                    Ok(value) => {
+                        if !matches!(value, DataValue::Bool(true)) {
+                            debug!("Validation failed for rule {}: {}", idx, rule.message);
+                            validation_errors.push(ErrorInfo::simple_ref(
+                                "VALIDATION_ERROR",
+                                &rule.message,
+                                None,
+                            ));
+                        } else {
+                            debug!("Validation passed for rule {}", idx);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Validation: Error evaluating rule {}: {:?}", idx, e);
                         validation_errors.push(ErrorInfo::simple_ref(
-                            "VALIDATION_ERROR",
-                            &rule.message,
+                            "EVALUATION_ERROR",
+                            &format!("Failed to evaluate rule {}: {}", idx, e),
                             None,
                         ));
-                    } else {
-                        debug!("Validation passed for rule {}", idx);
                     }
                 }
-                Err(e) => {
-                    error!("Validation: Error evaluating rule {}: {:?}", idx, e);
-                    validation_errors.push(ErrorInfo::simple_ref(
-                        "EVALUATION_ERROR",
-                        &format!("Failed to evaluate rule {}: {}", idx, e),
-                        None,
-                    ));
-                }
             }
-        }
+        });
 
-        // Add validation errors to message if any
         if !validation_errors.is_empty() {
             message.errors.extend(validation_errors);
-            Ok((400, changes)) // Return 400 for validation failures
+            Ok((400, changes))
         } else {
             Ok((200, changes))
         }
@@ -227,6 +232,7 @@ impl ValidationConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datavalue::OwnedDataValue;
     use serde_json::json;
 
     #[test]

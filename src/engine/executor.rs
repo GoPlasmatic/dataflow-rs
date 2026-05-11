@@ -43,6 +43,12 @@ thread_local! {
 /// arena, returning the result as an owned `OwnedDataValue`. The arena is
 /// rewound before the call so peak memory is bounded by the single largest
 /// evaluation; chunks persist across calls so steady-state allocation is zero.
+///
+/// Use this for one-shot evals where the context isn't reused across
+/// multiple JSONLogic calls (e.g. a single condition check). For batches of
+/// read-only evals against the same context (validation, log) use
+/// [`with_arena`] and convert the context once via
+/// [`datavalue::OwnedDataValue::to_arena`].
 #[inline]
 pub(crate) fn eval_to_owned(
     engine: &Engine,
@@ -54,6 +60,21 @@ pub(crate) fn eval_to_owned(
         arena.reset();
         let r = engine.evaluate(compiled, context, &arena)?;
         Ok(r.to_owned())
+    })
+}
+
+/// Run `f` with the worker thread's bump arena rewound. The closure receives
+/// the `Bump` and can amortize work across multiple `engine.evaluate` calls
+/// by converting the input context to `DataValue` once and reusing it. Use
+/// this for batches of read-only evals against the same context (validation,
+/// log) — it skips the per-eval `to_arena` deep-clone that dominates
+/// realistic profile.
+#[inline]
+pub(crate) fn with_arena<R>(f: impl FnOnce(&Bump) -> R) -> R {
+    EVAL_ARENA.with(|cell| {
+        let mut arena = cell.borrow_mut();
+        arena.reset();
+        f(&arena)
     })
 }
 
