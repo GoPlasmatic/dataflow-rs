@@ -17,7 +17,9 @@
 //! Run with: `cargo run --example async_migration`
 
 use async_trait::async_trait;
+use dataflow_rs::engine::utils::set_nested_value;
 use dataflow_rs::{AsyncFunctionHandler, Engine, FunctionConfig, Message, Workflow};
+use datavalue::OwnedDataValue;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,10 +39,14 @@ impl AsyncFunctionHandler for AsyncHttpHandler {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Update message data
-        message.context["data"]["http_response"] = json!({
-            "status": "success",
-            "data": "Response from API"
-        });
+        set_nested_value(
+            &mut message.context,
+            "data.http_response",
+            OwnedDataValue::from(&json!({
+                "status": "success",
+                "data": "Response from API"
+            })),
+        );
 
         Ok((200, vec![]))
     }
@@ -58,7 +64,11 @@ impl AsyncFunctionHandler for SimpleAsyncHandler {
         _engine: Arc<datalogic_rs::Engine>,
     ) -> dataflow_rs::Result<(usize, Vec<dataflow_rs::engine::message::Change>)> {
         // Simple processing - no need for spawn_blocking
-        message.context["data"]["processed"] = json!(true);
+        set_nested_value(
+            &mut message.context,
+            "data.processed",
+            OwnedDataValue::Bool(true),
+        );
         Ok((200, vec![]))
     }
 }

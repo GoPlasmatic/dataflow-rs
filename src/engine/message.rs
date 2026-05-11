@@ -1,25 +1,34 @@
 use crate::engine::error::ErrorInfo;
 use chrono::{DateTime, Utc};
+use datavalue::OwnedDataValue;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// A message flowing through the dataflow engine.
+///
+/// `context` is held as an [`OwnedDataValue`] tree (not `serde_json::Value`)
+/// so the JSONLogic evaluator can borrow it into its arena via
+/// `OwnedDataValue::to_arena` with a single deep walk in, and project the
+/// result back via `DataValue::to_owned` with a single deep walk out — no
+/// `serde_json::Value` round-trip in the hot path. The on-the-wire JSON
+/// shape is preserved by datavalue's native `Serialize` / `Deserialize`
+/// impls.
 #[derive(Debug, Clone)]
 pub struct Message {
     pub id: String,
-    pub payload: Arc<Value>,
-    /// Unified context containing data, metadata, and temp_data
-    pub context: Value,
+    pub payload: Arc<OwnedDataValue>,
+    /// Unified context containing `data`, `metadata`, and `temp_data` keys.
+    /// Always an `OwnedDataValue::Object`; the engine populates the three
+    /// top-level keys at construction.
+    pub context: OwnedDataValue,
     pub audit_trail: Vec<AuditTrail>,
     /// Errors that occurred during message processing
     pub errors: Vec<ErrorInfo>,
-    /// Cached Arc of the context to avoid repeated cloning
-    /// This is invalidated (set to None) whenever context is modified
-    context_arc_cache: Option<Arc<Value>>,
 }
 
-// Custom Serialize implementation to exclude context_arc_cache
+// Custom Serialize: stable wire format ({id, payload, context, audit_trail, errors}).
 impl Serialize for Message {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -36,7 +45,7 @@ impl Serialize for Message {
     }
 }
 
-// Custom Deserialize implementation to initialize context_arc_cache as None
+// Custom Deserialize: mirrors the Serialize shape; no cache field to seed.
 impl<'de> Deserialize<'de> for Message {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -45,8 +54,8 @@ impl<'de> Deserialize<'de> for Message {
         #[derive(Deserialize)]
         struct MessageData {
             id: String,
-            payload: Arc<Value>,
-            context: Value,
+            payload: Arc<OwnedDataValue>,
+            context: OwnedDataValue,
             audit_trail: Vec<AuditTrail>,
             errors: Vec<ErrorInfo>,
         }
@@ -58,53 +67,39 @@ impl<'de> Deserialize<'de> for Message {
             context: data.context,
             audit_trail: data.audit_trail,
             errors: data.errors,
-            context_arc_cache: None,
         })
     }
 }
 
 impl Message {
-    pub fn new(payload: Arc<Value>) -> Self {
+    pub fn new(payload: Arc<OwnedDataValue>) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             payload,
-            context: json!({
-                "data": {},
-                "metadata": {},
-                "temp_data": {}
-            }),
+            context: empty_context(),
             audit_trail: vec![],
             errors: vec![],
-            context_arc_cache: None,
         }
     }
 
-    /// Get or create an Arc reference to the context
-    /// This method returns a cached Arc if available, or creates and caches a new one
-    pub fn get_context_arc(&mut self) -> Arc<Value> {
-        if let Some(ref arc) = self.context_arc_cache {
-            Arc::clone(arc)
-        } else {
-            let arc = Arc::new(self.context.clone());
-            self.context_arc_cache = Some(Arc::clone(&arc));
-            arc
-        }
+    /// Construct a message from a `serde_json::Value` payload. Convenience
+    /// for code that already speaks serde_json; goes through the
+    /// `OwnedDataValue::from(&Value)` bridge.
+    pub fn from_value(payload: &JsonValue) -> Self {
+        Self::new(Arc::new(OwnedDataValue::from(payload)))
     }
 
-    /// Invalidate the cached context Arc
-    /// Call this whenever the context is modified
-    pub fn invalidate_context_cache(&mut self) {
-        self.context_arc_cache = None;
+    /// Construct a message from an already-owned `OwnedDataValue` payload —
+    /// the native zero-conversion entry point.
+    pub fn from_owned(payload: Arc<OwnedDataValue>) -> Self {
+        Self::new(payload)
     }
 
-    /// Convenience method for creating a message from a Value reference
-    /// Note: This clones the entire Value. Use from_arc() to avoid cloning when possible.
-    pub fn from_value(payload: &Value) -> Self {
-        Self::new(Arc::new(payload.clone()))
-    }
-
-    /// Create a message from an Arc<Value> directly, avoiding cloning
-    pub fn from_arc(payload: Arc<Value>) -> Self {
+    /// Construct a message from an `Arc<OwnedDataValue>` directly. Same as
+    /// `from_owned`; kept as an alias for compatibility with the v4-style
+    /// `from_arc` naming.
+    #[inline]
+    pub fn from_arc(payload: Arc<OwnedDataValue>) -> Self {
         Self::new(payload)
     }
 
@@ -118,35 +113,31 @@ impl Message {
         !self.errors.is_empty()
     }
 
-    /// Get a reference to the data field in context
-    pub fn data(&self) -> &Value {
+    /// Get a reference to the `data` field in context. Returns
+    /// `&OwnedDataValue::Null` if missing (matches `serde_json::Value`'s
+    /// `Index` fallback semantics).
+    pub fn data(&self) -> &OwnedDataValue {
         &self.context["data"]
     }
 
-    /// Get a mutable reference to the data field in context
-    pub fn data_mut(&mut self) -> &mut Value {
-        &mut self.context["data"]
-    }
-
-    /// Get a reference to the metadata field in context
-    pub fn metadata(&self) -> &Value {
+    /// Get a reference to the `metadata` field in context.
+    pub fn metadata(&self) -> &OwnedDataValue {
         &self.context["metadata"]
     }
 
-    /// Get a mutable reference to the metadata field in context
-    pub fn metadata_mut(&mut self) -> &mut Value {
-        &mut self.context["metadata"]
-    }
-
-    /// Get a reference to the temp_data field in context
-    pub fn temp_data(&self) -> &Value {
+    /// Get a reference to the `temp_data` field in context.
+    pub fn temp_data(&self) -> &OwnedDataValue {
         &self.context["temp_data"]
     }
+}
 
-    /// Get a mutable reference to the temp_data field in context
-    pub fn temp_data_mut(&mut self) -> &mut Value {
-        &mut self.context["temp_data"]
-    }
+/// Build the canonical empty context shape used by `Message::new`.
+fn empty_context() -> OwnedDataValue {
+    OwnedDataValue::Object(vec![
+        ("data".to_string(), OwnedDataValue::Object(Vec::new())),
+        ("metadata".to_string(), OwnedDataValue::Object(Vec::new())),
+        ("temp_data".to_string(), OwnedDataValue::Object(Vec::new())),
+    ])
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -161,6 +152,6 @@ pub struct AuditTrail {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Change {
     pub path: Arc<str>,
-    pub old_value: Arc<Value>,
-    pub new_value: Arc<Value>,
+    pub old_value: Arc<OwnedDataValue>,
+    pub new_value: Arc<OwnedDataValue>,
 }

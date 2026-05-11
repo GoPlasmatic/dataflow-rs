@@ -1,123 +1,85 @@
 //! # Utility Functions Module
 //!
-//! This module contains common utility functions used throughout the engine.
-//! These utilities provide helper functionality for:
-//! - JSON value manipulation and path navigation
-//! - Value truthiness evaluation
-//! - Nested data structure access and modification
+//! Path-based read/write helpers for the [`datavalue::OwnedDataValue`] tree
+//! that backs `Message::context`. The same dot-path syntax that worked on
+//! `serde_json::Value` works here unchanged — including `#`-prefix escapes
+//! for numeric object keys.
 
-use serde_json::Value;
+use datavalue::OwnedDataValue;
 
-/// Get nested value from JSON using dot notation path
+/// Get a reference to the value at `path`, walking the tree.
 ///
-/// Supports both object property access and array indexing:
-/// - `"user.name"` - Access object property
-/// - `"items.0"` - Access array element by index
-/// - `"user.addresses.0.city"` - Combined object and array access
-/// - `"data.#20"` - Access field named "20" (# prefix removed)
-/// - `"data.##"` - Access field named "#" (first # removed, second # kept)
+/// Path syntax:
+/// - `"user.name"` — object property
+/// - `"items.0"` — array index
+/// - `"user.addresses.0.city"` — mixed
+/// - `"data.#20"` — object key literally named `"20"` (strip one leading `#`)
+/// - `"data.##"` — object key literally named `"#"` (strip one leading `#`)
 ///
-/// # Arguments
-/// * `data` - The JSON value to navigate
-/// * `path` - Dot-separated path to the target value
-///
-/// # Returns
-/// * `Option<&Value>` - Reference to the value if found, None otherwise
-///
-/// # Safety
-/// Returns None for invalid array indices or missing keys rather than panicking
-pub fn get_nested_value<'b>(data: &'b Value, path: &str) -> Option<&'b Value> {
+/// Returns `None` for missing keys, out-of-bounds indices, invalid index
+/// formats, or attempts to descend through a non-container.
+pub fn get_nested_value<'b>(data: &'b OwnedDataValue, path: &str) -> Option<&'b OwnedDataValue> {
     if path.is_empty() {
         return Some(data);
     }
 
-    let parts: Vec<&str> = path.split('.').collect();
     let mut current = data;
 
-    for part in parts {
+    for part in path.split('.') {
         match current {
-            Value::Object(map) => {
-                // Handle # prefix for numeric or special field names
-                let field_name = if let Some(stripped) = part.strip_prefix('#') {
-                    stripped // Remove the first # character
-                } else {
-                    part
-                };
-                current = map.get(field_name)?;
+            OwnedDataValue::Object(pairs) => {
+                let key = strip_hash_prefix(part);
+                let slot = pairs.iter().find(|(k, _)| k == key)?;
+                current = &slot.1;
             }
-            Value::Array(arr) => {
-                // For arrays, try to parse as index (no # prefix handling needed)
-                let index = match part.parse::<usize>() {
-                    Ok(idx) => idx,
-                    Err(_) => return None, // Invalid index format
-                };
-
-                // Bounds check before access
-                if index >= arr.len() {
-                    return None; // Index out of bounds
-                }
-
-                current = arr.get(index)?;
+            OwnedDataValue::Array(items) => {
+                let idx: usize = part.parse().ok()?;
+                current = items.get(idx)?;
             }
-            _ => return None, // Can't navigate further
+            _ => return None,
         }
     }
 
     Some(current)
 }
 
-/// Set nested value in JSON using dot notation path
+/// Set the value at `path`, creating intermediate containers as needed.
 ///
-/// Creates intermediate objects or arrays as needed when navigating the path.
-/// Supports setting values in nested objects and arrays with automatic expansion.
-///
-/// # Path Syntax
-/// - `"user.name"` - Set object property
-/// - `"items.0"` - Set array element
-/// - `"data.#20"` - Set field named "20" (# prefix removed)
-/// - `"data.##"` - Set field named "#" (first # removed)
-///
-/// # Arguments
-/// * `data` - The JSON value to modify
-/// * `path` - Dot-separated path to the target location
-/// * `value` - The value to set at the target location
-///
-/// # Example
-/// ```
-/// use serde_json::json;
-/// use dataflow_rs::engine::utils::set_nested_value;
-///
-/// let mut data = json!({});
-/// set_nested_value(&mut data, "user.name", json!("Alice"));
-/// assert_eq!(data, json!({"user": {"name": "Alice"}}));
-/// ```
-pub fn set_nested_value(data: &mut Value, path: &str, value: Value) {
+/// Mirrors the original `serde_json::Value` flavour:
+/// - intermediate containers are created on demand; the next path part
+///   determines whether to create an `Object` (string key) or `Array`
+///   (numeric index);
+/// - arrays grow with `OwnedDataValue::Null` padding when an index past
+///   the current end is assigned;
+/// - `#`-prefix escape applies inside object contexts only;
+/// - silently no-ops when traversing through a non-container in a non-
+///   terminal hop or when an array path part isn't a valid `usize`.
+pub fn set_nested_value(data: &mut OwnedDataValue, path: &str, value: OwnedDataValue) {
+    if path.is_empty() {
+        return;
+    }
+
     let parts: Vec<&str> = path.split('.').collect();
+    let last = parts.len() - 1;
     let mut current = data;
 
     for (i, part) in parts.iter().enumerate() {
-        if i == parts.len() - 1 {
-            // Last part - set the value
+        if i == last {
             match current {
-                Value::Object(map) => {
-                    // Handle # prefix for field names
-                    let field_name = if let Some(stripped) = part.strip_prefix('#') {
-                        stripped // Remove the first # character
+                OwnedDataValue::Object(pairs) => {
+                    let key = strip_hash_prefix(part);
+                    if let Some(slot) = pairs.iter_mut().find(|(k, _)| k == key) {
+                        slot.1 = value;
                     } else {
-                        part
-                    };
-                    map.insert(field_name.to_string(), value);
+                        pairs.push((key.to_string(), value));
+                    }
                 }
-                Value::Array(arr) => {
-                    // Try to parse as array index (no # prefix for arrays)
-                    if let Ok(index) = part.parse::<usize>() {
-                        // Expand array if necessary (fill with nulls)
-                        while arr.len() <= index {
-                            arr.push(Value::Null);
+                OwnedDataValue::Array(items) => {
+                    if let Ok(idx) = part.parse::<usize>() {
+                        while items.len() <= idx {
+                            items.push(OwnedDataValue::Null);
                         }
-                        if index < arr.len() {
-                            arr[index] = value;
-                        }
+                        items[idx] = value;
                     }
                 }
                 _ => {}
@@ -125,79 +87,60 @@ pub fn set_nested_value(data: &mut Value, path: &str, value: Value) {
             return;
         }
 
-        // Navigate to the next level
-        // Check if next part is a number (array index)
-        let next_is_array = parts
-            .get(i + 1)
-            .and_then(|p| p.parse::<usize>().ok())
-            .is_some();
+        // Non-terminal hop: locate-or-create the child and descend.
+        // Use the next part to decide whether the child container is an Array
+        // (next part parses as usize) or an Object (anything else).
+        let next_is_array = parts[i + 1].parse::<usize>().is_ok();
 
         match current {
-            Value::Object(map) => {
-                // Handle # prefix for field names
-                let field_name = if let Some(stripped) = part.strip_prefix('#') {
-                    stripped // Remove the first # character
-                } else {
-                    // Check if current part is meant to be an array index
-                    if let Ok(_index) = part.parse::<usize>() {
-                        // This shouldn't happen in a well-formed path for objects
-                        return;
-                    }
-                    part
-                };
-
-                // Create the appropriate structure for the next level
-                current = map.entry(field_name.to_string()).or_insert_with(|| {
-                    if next_is_array {
-                        Value::Array(Vec::new())
-                    } else {
-                        Value::Object(serde_json::Map::new())
-                    }
-                });
-            }
-            Value::Array(arr) => {
-                // Parse current part as array index
-                if let Ok(index) = part.parse::<usize>() {
-                    // Expand array if necessary
-                    while arr.len() <= index {
-                        arr.push(Value::Null);
-                    }
-
-                    // Ensure the element at index exists and is the right type
-                    if arr[index].is_null() {
-                        arr[index] = if next_is_array {
-                            Value::Array(Vec::new())
+            OwnedDataValue::Object(pairs) => {
+                let key = strip_hash_prefix(part);
+                let idx = match pairs.iter().position(|(k, _)| k == key) {
+                    Some(idx) => idx,
+                    None => {
+                        let child = if next_is_array {
+                            OwnedDataValue::Array(Vec::new())
                         } else {
-                            Value::Object(serde_json::Map::new())
+                            OwnedDataValue::Object(Vec::new())
                         };
+                        pairs.push((key.to_string(), child));
+                        pairs.len() - 1
                     }
-
-                    current = &mut arr[index];
-                } else {
-                    // Can't use string key on array
-                    return;
+                };
+                current = &mut pairs[idx].1;
+            }
+            OwnedDataValue::Array(items) => {
+                let Ok(idx) = part.parse::<usize>() else {
+                    return; // can't use a non-numeric key on an Array
+                };
+                while items.len() <= idx {
+                    items.push(OwnedDataValue::Null);
                 }
+                if matches!(items[idx], OwnedDataValue::Null) {
+                    items[idx] = if next_is_array {
+                        OwnedDataValue::Array(Vec::new())
+                    } else {
+                        OwnedDataValue::Object(Vec::new())
+                    };
+                }
+                current = &mut items[idx];
             }
-            _ => {
-                // Current value is neither object nor array, can't navigate
-                return;
-            }
+            _ => return,
         }
     }
 }
 
-/// Clone a value at a nested path
-///
-/// Combines `get_nested_value` with cloning for convenience.
-///
-/// # Arguments
-/// * `data` - The JSON value to read from
-/// * `path` - Dot-separated path to the target value
-///
-/// # Returns
-/// * `Option<Value>` - Cloned value if found, None otherwise
-pub fn get_nested_value_cloned(data: &Value, path: &str) -> Option<Value> {
+/// Clone the value at `path`, returning `None` if the path is unresolvable.
+#[inline]
+pub fn get_nested_value_cloned(data: &OwnedDataValue, path: &str) -> Option<OwnedDataValue> {
     get_nested_value(data, path).cloned()
+}
+
+/// Strip exactly one leading `#` from an object-key path component.
+/// `"#20"` → `"20"`, `"##"` → `"#"`, `"foo"` → `"foo"`.
+#[inline]
+fn strip_hash_prefix(part: &str) -> &str {
+    part.strip_prefix('#').unwrap_or(part)
 }
 
 #[cfg(test)]
@@ -205,9 +148,14 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Test-only helper: build OwnedDataValue from a `json!` literal.
+    fn dv(v: serde_json::Value) -> OwnedDataValue {
+        OwnedDataValue::from(&v)
+    }
+
     #[test]
     fn test_get_nested_value() {
-        let data = json!({
+        let data = dv(json!({
             "user": {
                 "name": "John",
                 "age": 30,
@@ -221,37 +169,32 @@ mod tests {
                 }
             },
             "items": [1, 2, 3]
-        });
+        }));
 
-        // Object property access
-        assert_eq!(get_nested_value(&data, "user.name"), Some(&json!("John")));
-        assert_eq!(get_nested_value(&data, "user.age"), Some(&json!(30)));
+        assert_eq!(get_nested_value(&data, "user.name"), Some(&dv(json!("John"))));
+        assert_eq!(get_nested_value(&data, "user.age"), Some(&dv(json!(30))));
 
-        // Nested object access
         assert_eq!(
             get_nested_value(&data, "user.preferences.theme"),
-            Some(&json!("dark"))
+            Some(&dv(json!("dark")))
         );
         assert_eq!(
             get_nested_value(&data, "user.preferences.notifications"),
-            Some(&json!(true))
+            Some(&dv(json!(true)))
         );
 
-        // Array element access
-        assert_eq!(get_nested_value(&data, "items.0"), Some(&json!(1)));
-        assert_eq!(get_nested_value(&data, "items.2"), Some(&json!(3)));
+        assert_eq!(get_nested_value(&data, "items.0"), Some(&dv(json!(1))));
+        assert_eq!(get_nested_value(&data, "items.2"), Some(&dv(json!(3))));
 
-        // Combined object and array access
         assert_eq!(
             get_nested_value(&data, "user.addresses.0.city"),
-            Some(&json!("New York"))
+            Some(&dv(json!("New York")))
         );
         assert_eq!(
             get_nested_value(&data, "user.addresses.1.zip"),
-            Some(&json!("94102"))
+            Some(&dv(json!("94102")))
         );
 
-        // Non-existent paths
         assert_eq!(get_nested_value(&data, "user.missing"), None);
         assert_eq!(get_nested_value(&data, "items.10"), None);
         assert_eq!(get_nested_value(&data, "user.addresses.2.city"), None);
@@ -260,122 +203,94 @@ mod tests {
 
     #[test]
     fn test_set_nested_value() {
-        let mut data = json!({});
+        let mut data = dv(json!({}));
 
-        // Set simple property
-        set_nested_value(&mut data, "name", json!("Alice"));
-        assert_eq!(data, json!({"name": "Alice"}));
+        set_nested_value(&mut data, "name", dv(json!("Alice")));
+        assert_eq!(data, dv(json!({"name": "Alice"})));
 
-        // Set nested property (creates intermediate objects)
-        set_nested_value(&mut data, "user.email", json!("alice@example.com"));
+        set_nested_value(&mut data, "user.email", dv(json!("alice@example.com")));
         assert_eq!(
             data,
-            json!({
+            dv(json!({
                 "name": "Alice",
                 "user": {"email": "alice@example.com"}
-            })
+            }))
         );
 
-        // Overwrite existing value
-        set_nested_value(&mut data, "name", json!("Bob"));
+        set_nested_value(&mut data, "name", dv(json!("Bob")));
         assert_eq!(
             data,
-            json!({
+            dv(json!({
                 "name": "Bob",
                 "user": {"email": "alice@example.com"}
-            })
+            }))
         );
 
-        // Set deeply nested property
-        set_nested_value(&mut data, "settings.theme.mode", json!("dark"));
-        assert_eq!(data["settings"]["theme"]["mode"], json!("dark"));
+        set_nested_value(&mut data, "settings.theme.mode", dv(json!("dark")));
+        assert_eq!(data["settings"]["theme"]["mode"], dv(json!("dark")));
 
-        // Add to existing nested object
-        set_nested_value(&mut data, "user.age", json!(25));
-        assert_eq!(data["user"]["age"], json!(25));
-        assert_eq!(data["user"]["email"], json!("alice@example.com"));
+        set_nested_value(&mut data, "user.age", dv(json!(25)));
+        assert_eq!(data["user"]["age"], dv(json!(25)));
+        assert_eq!(data["user"]["email"], dv(json!("alice@example.com")));
     }
 
     #[test]
     fn test_set_nested_value_with_arrays() {
-        let mut data = json!({
-            "items": [1, 2, 3]
-        });
+        let mut data = dv(json!({ "items": [1, 2, 3] }));
 
-        // Test setting existing array element
-        set_nested_value(&mut data, "items.0", json!(10));
-        assert_eq!(data["items"], json!([10, 2, 3]));
+        set_nested_value(&mut data, "items.0", dv(json!(10)));
+        assert_eq!(data["items"], dv(json!([10, 2, 3])));
 
-        // Test setting array element beyond current length (should expand)
-        set_nested_value(&mut data, "items.5", json!(50));
-        assert_eq!(data["items"], json!([10, 2, 3, null, null, 50]));
+        set_nested_value(&mut data, "items.5", dv(json!(50)));
+        assert_eq!(data["items"], dv(json!([10, 2, 3, null, null, 50])));
 
-        // Test creating nested array structure
-        let mut data2 = json!({});
-        set_nested_value(&mut data2, "matrix.0.0", json!(1));
-        set_nested_value(&mut data2, "matrix.0.1", json!(2));
-        set_nested_value(&mut data2, "matrix.1.0", json!(3));
-        assert_eq!(
-            data2,
-            json!({
-                "matrix": [[1, 2], [3]]
-            })
-        );
+        let mut data2 = dv(json!({}));
+        set_nested_value(&mut data2, "matrix.0.0", dv(json!(1)));
+        set_nested_value(&mut data2, "matrix.0.1", dv(json!(2)));
+        set_nested_value(&mut data2, "matrix.1.0", dv(json!(3)));
+        assert_eq!(data2, dv(json!({ "matrix": [[1, 2], [3]] })));
     }
 
     #[test]
     fn test_set_nested_value_array_expansion() {
-        let mut data = json!({});
+        let mut data = dv(json!({}));
 
-        // Create array and set element at index 2 (should create nulls for 0 and 1)
-        set_nested_value(&mut data, "array.2", json!("value"));
-        assert_eq!(
-            data,
-            json!({
-                "array": [null, null, "value"]
-            })
-        );
+        set_nested_value(&mut data, "array.2", dv(json!("value")));
+        assert_eq!(data, dv(json!({ "array": [null, null, "value"] })));
 
-        // Test deeply nested array creation
-        let mut data2 = json!({});
-        set_nested_value(&mut data2, "deep.nested.0.field", json!("test"));
+        let mut data2 = dv(json!({}));
+        set_nested_value(&mut data2, "deep.nested.0.field", dv(json!("test")));
         assert_eq!(
             data2,
-            json!({
-                "deep": {
-                    "nested": [{"field": "test"}]
-                }
-            })
+            dv(json!({ "deep": { "nested": [{ "field": "test" }] } }))
         );
     }
 
     #[test]
     fn test_get_nested_value_cloned() {
-        let data = json!({
+        let data = dv(json!({
             "user": {
                 "profile": {
                     "name": "Alice",
                     "settings": {"theme": "dark"}
                 }
             }
-        });
+        }));
 
-        // Test successful cloning
-        let cloned = get_nested_value_cloned(&data, "user.profile.name");
-        assert_eq!(cloned, Some(json!("Alice")));
-
-        // Test cloning complex object
-        let cloned = get_nested_value_cloned(&data, "user.profile.settings");
-        assert_eq!(cloned, Some(json!({"theme": "dark"})));
-
-        // Test non-existent path
-        let cloned = get_nested_value_cloned(&data, "user.missing");
-        assert_eq!(cloned, None);
+        assert_eq!(
+            get_nested_value_cloned(&data, "user.profile.name"),
+            Some(dv(json!("Alice")))
+        );
+        assert_eq!(
+            get_nested_value_cloned(&data, "user.profile.settings"),
+            Some(dv(json!({ "theme": "dark" })))
+        );
+        assert_eq!(get_nested_value_cloned(&data, "user.missing"), None);
     }
 
     #[test]
     fn test_get_nested_value_bounds_checking() {
-        let data = json!({
+        let data = dv(json!({
             "items": [1, 2, 3],
             "nested": {
                 "array": [
@@ -383,166 +298,134 @@ mod tests {
                     {"id": 2}
                 ]
             }
-        });
+        }));
 
-        // Test valid array access
-        assert_eq!(get_nested_value(&data, "items.0"), Some(&json!(1)));
-        assert_eq!(get_nested_value(&data, "items.2"), Some(&json!(3)));
+        assert_eq!(get_nested_value(&data, "items.0"), Some(&dv(json!(1))));
+        assert_eq!(get_nested_value(&data, "items.2"), Some(&dv(json!(3))));
 
-        // Test out-of-bounds array access (should return None, not panic)
         assert_eq!(get_nested_value(&data, "items.10"), None);
         assert_eq!(get_nested_value(&data, "items.999999"), None);
 
-        // Test invalid array index format
         assert_eq!(get_nested_value(&data, "items.abc"), None);
         assert_eq!(get_nested_value(&data, "items.-1"), None);
         assert_eq!(get_nested_value(&data, "items.2.5"), None);
 
-        // Test nested array bounds
-        assert_eq!(
-            get_nested_value(&data, "nested.array.0.id"),
-            Some(&json!(1))
-        );
+        assert_eq!(get_nested_value(&data, "nested.array.0.id"), Some(&dv(json!(1))));
         assert_eq!(get_nested_value(&data, "nested.array.5.id"), None);
 
-        // Test empty path
         assert_eq!(get_nested_value(&data, ""), Some(&data));
     }
 
     #[test]
     fn test_set_nested_value_bounds_safety() {
-        let mut data = json!({});
+        let mut data = dv(json!({}));
 
-        // Test creating arrays with large indices (should create nulls in between)
-        set_nested_value(&mut data, "large.10", json!("value"));
+        set_nested_value(&mut data, "large.10", dv(json!("value")));
         assert_eq!(data["large"].as_array().unwrap().len(), 11);
-        assert_eq!(data["large"][10], json!("value"));
-        for i in 0..10 {
-            assert_eq!(data["large"][i], json!(null));
+        assert_eq!(data["large"][10], dv(json!("value")));
+        for i in 0..10usize {
+            assert_eq!(data["large"][i], dv(json!(null)));
         }
 
-        // Test setting nested array values
-        let mut data2 = json!({"matrix": []});
-        set_nested_value(&mut data2, "matrix.2.1", json!(5));
-        assert_eq!(data2["matrix"][0], json!(null));
-        assert_eq!(data2["matrix"][1], json!(null));
-        assert_eq!(data2["matrix"][2][0], json!(null));
-        assert_eq!(data2["matrix"][2][1], json!(5));
+        let mut data2 = dv(json!({ "matrix": [] }));
+        set_nested_value(&mut data2, "matrix.2.1", dv(json!(5)));
+        assert_eq!(data2["matrix"][0], dv(json!(null)));
+        assert_eq!(data2["matrix"][1], dv(json!(null)));
+        assert_eq!(data2["matrix"][2][0], dv(json!(null)));
+        assert_eq!(data2["matrix"][2][1], dv(json!(5)));
 
-        // Test overwriting array elements
-        let mut data3 = json!({"arr": [1, 2, 3]});
-        set_nested_value(&mut data3, "arr.1", json!("replaced"));
-        assert_eq!(data3["arr"], json!([1, "replaced", 3]));
+        let mut data3 = dv(json!({ "arr": [1, 2, 3] }));
+        set_nested_value(&mut data3, "arr.1", dv(json!("replaced")));
+        assert_eq!(data3["arr"], dv(json!([1, "replaced", 3])));
     }
 
     #[test]
     fn test_hash_prefix_in_paths() {
-        // Test getting values with # prefix
-        let data = json!({
+        let data = dv(json!({
             "fields": {
                 "20": "numeric field name",
                 "#": "hash field",
                 "##": "double hash field",
                 "normal": "normal field"
             }
-        });
+        }));
 
-        // Access field named "20" using #20
         assert_eq!(
             get_nested_value(&data, "fields.#20"),
-            Some(&json!("numeric field name"))
+            Some(&dv(json!("numeric field name")))
         );
-
-        // Access field named "#" using ##
         assert_eq!(
             get_nested_value(&data, "fields.##"),
-            Some(&json!("hash field"))
+            Some(&dv(json!("hash field")))
         );
-
-        // Access field named "##" using ###
         assert_eq!(
             get_nested_value(&data, "fields.###"),
-            Some(&json!("double hash field"))
+            Some(&dv(json!("double hash field")))
         );
-
-        // Normal field access still works
         assert_eq!(
             get_nested_value(&data, "fields.normal"),
-            Some(&json!("normal field"))
+            Some(&dv(json!("normal field")))
         );
-
-        // Non-existent field with # prefix
         assert_eq!(get_nested_value(&data, "fields.#999"), None);
     }
 
     #[test]
     fn test_set_hash_prefix_in_paths() {
-        let mut data = json!({});
+        let mut data = dv(json!({}));
 
-        // Set field named "20" using #20
-        set_nested_value(&mut data, "fields.#20", json!("value for 20"));
-        assert_eq!(data["fields"]["20"], json!("value for 20"));
+        set_nested_value(&mut data, "fields.#20", dv(json!("value for 20")));
+        assert_eq!(data["fields"]["20"], dv(json!("value for 20")));
 
-        // Set field named "#" using ##
-        set_nested_value(&mut data, "fields.##", json!("hash value"));
-        assert_eq!(data["fields"]["#"], json!("hash value"));
+        set_nested_value(&mut data, "fields.##", dv(json!("hash value")));
+        assert_eq!(data["fields"]["#"], dv(json!("hash value")));
 
-        // Set field named "##" using ###
-        set_nested_value(&mut data, "fields.###", json!("double hash value"));
-        assert_eq!(data["fields"]["##"], json!("double hash value"));
+        set_nested_value(&mut data, "fields.###", dv(json!("double hash value")));
+        assert_eq!(data["fields"]["##"], dv(json!("double hash value")));
 
-        // Normal field setting still works
-        set_nested_value(&mut data, "fields.normal", json!("normal value"));
-        assert_eq!(data["fields"]["normal"], json!("normal value"));
+        set_nested_value(&mut data, "fields.normal", dv(json!("normal value")));
+        assert_eq!(data["fields"]["normal"], dv(json!("normal value")));
 
-        // Verify the complete structure
         assert_eq!(
             data,
-            json!({
+            dv(json!({
                 "fields": {
                     "20": "value for 20",
                     "#": "hash value",
                     "##": "double hash value",
                     "normal": "normal value"
                 }
-            })
+            }))
         );
     }
 
     #[test]
     fn test_hash_prefix_with_arrays() {
-        let mut data = json!({
+        let mut data = dv(json!({
             "items": [
                 {"0": "field named zero", "id": 1},
                 {"1": "field named one", "id": 2}
             ]
-        });
+        }));
 
-        // Access array element, then field named "0" using #0
         assert_eq!(
             get_nested_value(&data, "items.0.#0"),
-            Some(&json!("field named zero"))
+            Some(&dv(json!("field named zero")))
         );
-
-        // Access array element, then field named "1" using #1
         assert_eq!(
             get_nested_value(&data, "items.1.#1"),
-            Some(&json!("field named one"))
+            Some(&dv(json!("field named one")))
         );
 
-        // Set a field named "2" in array element using #2
-        set_nested_value(&mut data, "items.0.#2", json!("field named two"));
-        assert_eq!(data["items"][0]["2"], json!("field named two"));
+        set_nested_value(&mut data, "items.0.#2", dv(json!("field named two")));
+        assert_eq!(data["items"][0]["2"], dv(json!("field named two")));
 
-        // Array indices still work normally (without # prefix)
-        assert_eq!(get_nested_value(&data, "items.0.id"), Some(&json!(1)));
-        assert_eq!(get_nested_value(&data, "items.1.id"), Some(&json!(2)));
+        assert_eq!(get_nested_value(&data, "items.0.id"), Some(&dv(json!(1))));
+        assert_eq!(get_nested_value(&data, "items.1.id"), Some(&dv(json!(2))));
     }
 
     #[test]
     fn test_hash_prefix_field_with_array_value() {
-        // Test case: "data.fields.#72.0" should access field named "72" then array index 0
-        let data = json!({
+        let data = dv(json!({
             "data": {
                 "fields": {
                     "72": ["first", "second", "third"],
@@ -550,88 +433,76 @@ mod tests {
                     "normal": ["one", "two", "three"]
                 }
             }
-        });
+        }));
 
-        // Access field named "72" (using #72) then array index 0
         assert_eq!(
             get_nested_value(&data, "data.fields.#72.0"),
-            Some(&json!("first"))
+            Some(&dv(json!("first")))
         );
-
-        // Access field named "72" then array index 1
         assert_eq!(
             get_nested_value(&data, "data.fields.#72.1"),
-            Some(&json!("second"))
+            Some(&dv(json!("second")))
         );
-
-        // Access field named "72" then array index 2
         assert_eq!(
             get_nested_value(&data, "data.fields.#72.2"),
-            Some(&json!("third"))
+            Some(&dv(json!("third")))
         );
 
-        // Access field named "100" then array indices
         assert_eq!(
             get_nested_value(&data, "data.fields.#100.0"),
-            Some(&json!("alpha"))
+            Some(&dv(json!("alpha")))
         );
         assert_eq!(
             get_nested_value(&data, "data.fields.#100.1"),
-            Some(&json!("beta"))
+            Some(&dv(json!("beta")))
         );
 
-        // Normal field access still works
         assert_eq!(
             get_nested_value(&data, "data.fields.normal.0"),
-            Some(&json!("one"))
+            Some(&dv(json!("one")))
         );
 
-        // Test setting values in arrays accessed via # prefix
         let mut data_mut = data.clone();
-        set_nested_value(&mut data_mut, "data.fields.#72.0", json!("modified"));
-        assert_eq!(data_mut["data"]["fields"]["72"][0], json!("modified"));
+        set_nested_value(&mut data_mut, "data.fields.#72.0", dv(json!("modified")));
+        assert_eq!(data_mut["data"]["fields"]["72"][0], dv(json!("modified")));
 
-        // Test creating new field with numeric name containing array
-        set_nested_value(&mut data_mut, "data.fields.#999.0", json!("new value"));
-        assert_eq!(data_mut["data"]["fields"]["999"][0], json!("new value"));
+        set_nested_value(&mut data_mut, "data.fields.#999.0", dv(json!("new value")));
+        assert_eq!(data_mut["data"]["fields"]["999"][0], dv(json!("new value")));
 
-        // Test nested objects in arrays accessed via # prefix
-        let complex_data = json!({
+        let complex_data = dv(json!({
             "fields": {
                 "42": [
                     {"name": "item1", "value": 100},
                     {"name": "item2", "value": 200}
                 ]
             }
-        });
+        }));
 
         assert_eq!(
             get_nested_value(&complex_data, "fields.#42.0.name"),
-            Some(&json!("item1"))
+            Some(&dv(json!("item1")))
         );
         assert_eq!(
             get_nested_value(&complex_data, "fields.#42.1.value"),
-            Some(&json!(200))
+            Some(&dv(json!(200)))
         );
 
-        // Test multiple # prefixes in path
-        let multi_hash_data = json!({
+        let multi_hash_data = dv(json!({
             "data": {
                 "#fields": {
                     "##": ["hash array"],
                     "10": ["numeric array"]
                 }
             }
-        });
+        }));
 
-        // Access field named "#fields" using ##fields
         assert_eq!(
             get_nested_value(&multi_hash_data, "data.##fields.###.0"),
-            Some(&json!("hash array"))
+            Some(&dv(json!("hash array")))
         );
         assert_eq!(
             get_nested_value(&multi_hash_data, "data.##fields.#10.0"),
-            Some(&json!("numeric array"))
+            Some(&dv(json!("numeric array")))
         );
     }
 }

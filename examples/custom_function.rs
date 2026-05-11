@@ -18,9 +18,11 @@ use dataflow_rs::{
         AsyncFunctionHandler, FunctionConfig,
         error::DataflowError,
         message::{Change, Message},
+        utils::set_nested_value,
     },
 };
 use datalogic_rs::Engine as DatalogicEngine;
+use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -74,12 +76,13 @@ impl AsyncFunctionHandler for StatisticsFunction {
         self.set_value_at_path(message, output_path, stats.clone())?;
 
         // Return success with changes
+        let stats_owned = OwnedDataValue::from(&stats);
         Ok((
             200,
             vec![Change {
                 path: Arc::from(output_path),
-                old_value: Arc::new(Value::Null),
-                new_value: Arc::new(stats),
+                old_value: Arc::new(OwnedDataValue::Null),
+                new_value: Arc::new(stats_owned),
             }],
         ))
     }
@@ -97,28 +100,13 @@ impl StatisticsFunction {
     }
 
     fn extract_numbers_from_path(&self, message: &Message, path: &str) -> Result<Vec<f64>> {
-        let parts: Vec<&str> = path.split('.').collect();
-        let mut current = &message.context["data"];
-
-        // Navigate to the target location
-        for part in parts {
-            current = current.get(part).unwrap_or(&Value::Null);
-        }
-
-        // Extract numbers from the value
-        match current {
-            Value::Array(arr) => {
-                let mut numbers = Vec::new();
-                for val in arr {
-                    if let Some(num) = val.as_f64() {
-                        numbers.push(num);
-                    }
-                }
-                Ok(numbers)
-            }
-            _ => Err(DataflowError::Validation(format!(
+        use dataflow_rs::engine::utils::get_nested_value;
+        let target = get_nested_value(message.data(), path);
+        match target.and_then(|v| v.as_array()) {
+            Some(arr) => Ok(arr.iter().filter_map(|v| v.as_f64()).collect()),
+            None => Err(DataflowError::Validation(format!(
                 "Expected array at path '{}', found {:?}",
-                path, current
+                path, target
             ))),
         }
     }
@@ -154,31 +142,14 @@ impl StatisticsFunction {
     }
 
     fn set_value_at_path(&self, message: &mut Message, path: &str, value: Value) -> Result<()> {
-        let parts: Vec<&str> = path.split('.').collect();
-        let mut current = &mut message.context["data"];
-
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last part - set the value
-                if let Value::Object(map) = current {
-                    map.insert(part.to_string(), value);
-                    return Ok(());
-                }
-            } else {
-                // Navigate or create intermediate objects
-                if !current.is_object() {
-                    *current = json!({});
-                }
-                if let Value::Object(map) = current {
-                    current = map.entry(part.to_string()).or_insert_with(|| json!({}));
-                }
-            }
-        }
-
-        Err(DataflowError::Validation(format!(
-            "Failed to set value at path '{}'",
-            path
-        )))
+        // Use the engine's helper; it understands the OwnedDataValue shape and
+        // auto-creates intermediate objects/arrays along the path.
+        set_nested_value(
+            &mut message.context,
+            &format!("data.{}", path),
+            OwnedDataValue::from(&value),
+        );
+        Ok(())
     }
 }
 
@@ -210,10 +181,12 @@ impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
             .and_then(Value::as_str)
             .unwrap_or("user_id");
 
-        let user_id_value = message.context["data"]
+        let user_id_value = message
+            .data()
             .get(user_id)
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
 
         // Simulate async API call
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -232,18 +205,21 @@ impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
             },
             "enrichment_timestamp": chrono::Utc::now().to_rfc3339()
         });
+        let enriched_owned = OwnedDataValue::from(&enriched_data);
 
         // Add enriched data to message
-        if let Value::Object(ref mut map) = message.context["data"] {
-            map.insert("enriched".to_string(), enriched_data.clone());
-        }
+        set_nested_value(
+            &mut message.context,
+            "data.enriched",
+            enriched_owned.clone(),
+        );
 
         Ok((
             200,
             vec![Change {
                 path: Arc::from("enriched"),
-                old_value: Arc::new(Value::Null),
-                new_value: Arc::new(enriched_data),
+                old_value: Arc::new(OwnedDataValue::Null),
+                new_value: Arc::new(enriched_owned),
             }],
         ))
     }

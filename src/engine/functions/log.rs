@@ -1,7 +1,9 @@
 use crate::engine::error::Result;
-use crate::engine::executor::eval_to_json;
+use crate::engine::executor::eval_to_owned;
 use crate::engine::message::{Change, Message};
+use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
+use datavalue::OwnedDataValue;
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
 use serde_json::Value;
@@ -52,15 +54,14 @@ impl LogConfig {
         message: &mut Message,
         engine: &Arc<Engine>,
         logic_cache: &[Arc<Logic>],
+        arena: &Bump,
     ) -> Result<(usize, Vec<Change>)> {
-        let context_arc = message.get_context_arc();
-
         // Evaluate message expression
         let log_message = match self.message_index {
             Some(idx) if idx < logic_cache.len() => {
-                match eval_to_json(engine, &logic_cache[idx], &context_arc) {
-                    Ok(Value::String(s)) => s,
-                    Ok(other) => other.to_string(),
+                match eval_to_owned(engine, &logic_cache[idx], &message.context, arena) {
+                    Ok(OwnedDataValue::String(s)) => s,
+                    Ok(other) => other.to_json_string(),
                     Err(e) => {
                         error!("Log: Failed to evaluate message expression: {:?}", e);
                         "<message eval error>".to_string()
@@ -75,9 +76,9 @@ impl LogConfig {
         for (key, idx_opt) in &self.field_indices {
             let val = match idx_opt {
                 Some(idx) if *idx < logic_cache.len() => {
-                    match eval_to_json(engine, &logic_cache[*idx], &context_arc) {
-                        Ok(Value::String(s)) => s,
-                        Ok(v) => v.to_string(),
+                    match eval_to_owned(engine, &logic_cache[*idx], &message.context, arena) {
+                        Ok(OwnedDataValue::String(s)) => s,
+                        Ok(v) => v.to_json_string(),
                         Err(_) => "<eval error>".to_string(),
                     }
                 }

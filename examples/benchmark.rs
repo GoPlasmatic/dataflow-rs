@@ -6,7 +6,9 @@
 //!
 //! Run with: `cargo run --example benchmark --release`
 
+use dataflow_rs::engine::utils::set_nested_value;
 use dataflow_rs::{Engine, Message, Workflow};
+use datavalue::OwnedDataValue;
 use futures::future::join_all;
 use serde_json::json;
 use std::sync::Arc;
@@ -206,7 +208,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let msg_start = Instant::now();
 
             let mut message = Message::from_value(&data);
-            message.context["metadata"] = json!({ "iteration": i });
+            set_nested_value(
+                &mut message.context,
+                "metadata",
+                OwnedDataValue::from(&json!({ "iteration": i })),
+            );
 
             engine.process_message(&mut message).await.unwrap();
 

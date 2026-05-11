@@ -9,10 +9,11 @@ use crate::engine::functions::{AsyncFunctionHandler, FILTER_STATUS_HALT, FILTER_
 use crate::engine::message::{AuditTrail, Change, Message};
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::trace::{ExecutionStep, ExecutionTrace};
+use crate::engine::utils::set_nested_value;
 use crate::engine::workflow::Workflow;
 use chrono::Utc;
+use datavalue::OwnedDataValue;
 use log::{debug, error, info, warn};
-use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -69,13 +70,10 @@ impl WorkflowExecutor {
     /// # Returns
     /// * `Result<bool>` - Ok(true) if workflow was executed, Ok(false) if skipped, Err on failure
     pub async fn execute(&self, workflow: &Workflow, message: &mut Message) -> Result<bool> {
-        // Use cached context Arc for condition evaluation
-        let context_arc = message.get_context_arc();
-
-        // Evaluate workflow condition
+        // Evaluate workflow condition directly against the OwnedDataValue context
         let should_execute = self
             .internal_executor
-            .evaluate_condition(workflow.condition_index, context_arc)?;
+            .evaluate_condition(workflow.condition_index, &message.context)?;
 
         if !should_execute {
             debug!("Skipping workflow {} - condition not met", workflow.id);
@@ -127,13 +125,10 @@ impl WorkflowExecutor {
         message: &mut Message,
         trace: &mut ExecutionTrace,
     ) -> Result<bool> {
-        // Use cached context Arc for condition evaluation
-        let context_arc = message.get_context_arc();
-
-        // Evaluate workflow condition
+        // Evaluate workflow condition directly against the OwnedDataValue context
         let should_execute = self
             .internal_executor
-            .evaluate_condition(workflow.condition_index, context_arc)?;
+            .evaluate_condition(workflow.condition_index, &message.context)?;
 
         if !should_execute {
             debug!("Skipping workflow {} - condition not met", workflow.id);
@@ -176,13 +171,10 @@ impl WorkflowExecutor {
     /// Execute all tasks in a workflow
     async fn execute_tasks(&self, workflow: &Workflow, message: &mut Message) -> Result<()> {
         for task in &workflow.tasks {
-            // Use cached context Arc - it will be fresh if previous task modified it
-            let context_arc = message.get_context_arc();
-
-            // Evaluate task condition
+            // Evaluate task condition directly against the OwnedDataValue context
             let should_execute = self
                 .internal_executor
-                .evaluate_condition(task.condition_index, context_arc)?;
+                .evaluate_condition(task.condition_index, &message.context)?;
 
             if !should_execute {
                 debug!("Skipping task {} - condition not met", task.id);
@@ -216,13 +208,10 @@ impl WorkflowExecutor {
         trace: &mut ExecutionTrace,
     ) -> Result<()> {
         for task in &workflow.tasks {
-            // Use cached context Arc - it will be fresh if previous task modified it
-            let context_arc = message.get_context_arc();
-
-            // Evaluate task condition
+            // Evaluate task condition directly against the OwnedDataValue context
             let should_execute = self
                 .internal_executor
-                .evaluate_condition(task.condition_index, context_arc)?;
+                .evaluate_condition(task.condition_index, &message.context)?;
 
             if !should_execute {
                 debug!("Skipping task {} - condition not met", task.id);
@@ -293,27 +282,24 @@ impl WorkflowExecutor {
                     changes,
                 });
 
-                // Update progress metadata for workflow chaining
-                if let Some(metadata) = message.context["metadata"].as_object_mut() {
-                    // Update existing progress or create new one
-                    if let Some(progress) = metadata.get_mut("progress") {
-                        if let Some(progress_obj) = progress.as_object_mut() {
-                            progress_obj.insert("workflow_id".to_string(), json!(workflow_id));
-                            progress_obj.insert("task_id".to_string(), json!(task_id));
-                            progress_obj.insert("status_code".to_string(), json!(status));
-                        }
-                    } else {
-                        metadata.insert(
-                            "progress".to_string(),
-                            json!({
-                                "workflow_id": workflow_id,
-                                "task_id": task_id,
-                                "status_code": status
-                            }),
-                        );
-                    }
-                }
-                message.invalidate_context_cache();
+                // Update progress metadata for workflow chaining. set_nested_value
+                // auto-creates the intermediate "progress" object on first write
+                // and overwrites individual keys on subsequent writes.
+                set_nested_value(
+                    &mut message.context,
+                    "metadata.progress.workflow_id",
+                    OwnedDataValue::String(workflow_id.to_string()),
+                );
+                set_nested_value(
+                    &mut message.context,
+                    "metadata.progress.task_id",
+                    OwnedDataValue::String(task_id.to_string()),
+                );
+                set_nested_value(
+                    &mut message.context,
+                    "metadata.progress.status_code",
+                    OwnedDataValue::from(status as u64),
+                );
 
                 // Handle filter halt — audit trail is recorded, halt the workflow
                 if status == FILTER_STATUS_HALT {

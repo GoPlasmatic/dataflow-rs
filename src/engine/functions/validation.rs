@@ -32,9 +32,11 @@
 //! ```
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
-use crate::engine::executor::eval_to_json;
+use crate::engine::executor::eval_to_owned;
 use crate::engine::message::{Change, Message};
+use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
+use datavalue::OwnedDataValue;
 use log::{debug, error};
 use serde::Deserialize;
 use serde_json::Value;
@@ -140,14 +142,12 @@ impl ValidationConfig {
         message: &mut Message,
         engine: &Arc<Engine>,
         logic_cache: &[Arc<Logic>],
+        arena: &Bump,
     ) -> Result<(usize, Vec<Change>)> {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
 
-        // Use the cached context Arc from the message (validation is read-only)
-        let context_arc = message.get_context_arc();
-
-        // Process each validation rule
+        // Process each validation rule against the message context directly.
         for (idx, rule) in self.rules.iter().enumerate() {
             debug!("Processing validation rule {}: {}", idx, rule.message);
 
@@ -188,15 +188,14 @@ impl ValidationConfig {
                 }
             };
 
-            // Evaluate via datalogic v5 against the same shared context_arc
-            // (validation is read-only). Arena reuse is handled inside
-            // `eval_to_json` via a thread-local Bump.
-            let result = eval_to_json(engine, compiled_logic, &context_arc);
+            // Evaluate via datalogic v5 against `message.context` directly.
+            // The caller-owned arena is shared across every rule in this call.
+            let result = eval_to_owned(engine, compiled_logic, &message.context, arena);
 
             match result {
                 Ok(value) => {
                     // Check if validation passed (must be explicitly true)
-                    if value != Value::Bool(true) {
+                    if !matches!(value, OwnedDataValue::Bool(true)) {
                         debug!("Validation failed for rule {}: {}", idx, rule.message);
                         validation_errors.push(ErrorInfo::simple_ref(
                             "VALIDATION_ERROR",
@@ -299,20 +298,27 @@ mod tests {
         assert_eq!(config.rules[0].message, "Validation failed");
     }
 
+    fn dv(v: serde_json::Value) -> OwnedDataValue {
+        OwnedDataValue::from(&v)
+    }
+
+    fn message_with_data(initial: serde_json::Value) -> crate::engine::message::Message {
+        use crate::engine::message::Message;
+        use crate::engine::utils::set_nested_value;
+        let mut m = Message::new(Arc::new(dv(json!({}))));
+        set_nested_value(&mut m.context, "data", dv(initial));
+        m
+    }
+
     #[test]
     fn test_validation_execute_passes() {
-        use crate::engine::message::Message;
-
         let engine = Arc::new(Engine::builder().with_templating(true).build());
 
-        // Create test message with valid data
-        let mut message = Message::new(Arc::new(json!({})));
-        message.context["data"] = json!({
+        let mut message = message_with_data(json!({
             "email": "test@example.com",
             "age": 25
-        });
+        }));
 
-        // Create validation rules that should pass
         let mut config = ValidationConfig {
             rules: vec![
                 ValidationRule {
@@ -328,36 +334,28 @@ mod tests {
             ],
         };
 
-        // Compile the logic and set indices
         let mut logic_cache = Vec::new();
         for (i, rule) in config.rules.iter_mut().enumerate() {
             logic_cache.push(engine.compile_arc(&rule.logic).unwrap());
             rule.logic_index = Some(i);
         }
 
-        // Execute validation
-        let result = config.execute(&mut message, &engine, &logic_cache);
+        let arena = Bump::new();
+        let result = config.execute(&mut message, &engine, &logic_cache, &arena);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
         assert_eq!(status, 200);
-        assert!(changes.is_empty()); // Validation doesn't create changes
-        assert!(message.errors.is_empty()); // No validation errors
+        assert!(changes.is_empty());
+        assert!(message.errors.is_empty());
     }
 
     #[test]
     fn test_validation_execute_fails() {
-        use crate::engine::message::Message;
-
         let engine = Arc::new(Engine::builder().with_templating(true).build());
 
-        // Create test message with invalid data
-        let mut message = Message::new(Arc::new(json!({})));
-        message.context["data"] = json!({
-            "age": 15  // Missing email and age under 18
-        });
+        let mut message = message_with_data(json!({ "age": 15 }));
 
-        // Create validation rules
         let mut config = ValidationConfig {
             rules: vec![
                 ValidationRule {
@@ -373,22 +371,20 @@ mod tests {
             ],
         };
 
-        // Compile the logic and set indices
         let mut logic_cache = Vec::new();
         for (i, rule) in config.rules.iter_mut().enumerate() {
             logic_cache.push(engine.compile_arc(&rule.logic).unwrap());
             rule.logic_index = Some(i);
         }
 
-        // Execute validation
-        let result = config.execute(&mut message, &engine, &logic_cache);
+        let arena = Bump::new();
+        let result = config.execute(&mut message, &engine, &logic_cache, &arena);
         assert!(result.is_ok());
 
         let (status, _changes) = result.unwrap();
-        assert_eq!(status, 400); // Validation failure returns 400
-        assert_eq!(message.errors.len(), 2); // Two validation errors
+        assert_eq!(status, 400);
+        assert_eq!(message.errors.len(), 2);
 
-        // Check error messages
         let error_messages: Vec<&str> = message.errors.iter().map(|e| e.message.as_str()).collect();
         assert!(error_messages.contains(&"Email is required"));
         assert!(error_messages.contains(&"Must be over 18"));
@@ -400,23 +396,23 @@ mod tests {
 
         let engine = Arc::new(Engine::builder().with_templating(true).build());
 
-        let mut message = Message::new(Arc::new(json!({})));
+        let mut message = Message::new(Arc::new(dv(json!({}))));
 
-        // Config with no logic_index set (uncompiled)
         let config = ValidationConfig {
             rules: vec![ValidationRule {
                 logic: json!(true),
                 message: "Test".to_string(),
-                logic_index: None, // Not compiled
+                logic_index: None,
             }],
         };
 
         let logic_cache = Vec::new();
-        let result = config.execute(&mut message, &engine, &logic_cache);
+        let arena = Bump::new();
+        let result = config.execute(&mut message, &engine, &logic_cache, &arena);
         assert!(result.is_ok());
 
         let (status, _) = result.unwrap();
-        assert_eq!(status, 400); // Should fail due to compilation error
+        assert_eq!(status, 400);
         assert!(!message.errors.is_empty());
         assert!(message.errors[0].code == "COMPILATION_ERROR");
     }

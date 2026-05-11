@@ -76,13 +76,14 @@ pub use workflow::{Workflow, WorkflowStatus};
 
 use chrono::Utc;
 use datalogic_rs::{Engine as DatalogicEngine, Logic};
-use serde_json::json;
+use datavalue::OwnedDataValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use compiler::LogicCompiler;
 use executor::InternalExecutor;
 use task_executor::TaskExecutor;
+use utils::set_nested_value;
 use workflow_executor::WorkflowExecutor;
 
 /// High-performance async workflow engine for message processing.
@@ -245,9 +246,7 @@ impl Engine {
     /// * `Result<()>` - Ok(()) if processing succeeded, Err if a fatal error occurred
     pub async fn process_message(&self, message: &mut Message) -> Result<()> {
         // Set processing metadata
-        message.context["metadata"]["processed_at"] = json!(Utc::now().to_rfc3339());
-        message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
-        message.invalidate_context_cache();
+        set_processing_metadata(&mut message.context, None);
 
         // Process each workflow in priority order (pre-sorted at construction)
         for workflow in self.workflows.iter() {
@@ -274,9 +273,7 @@ impl Engine {
         use trace::ExecutionTrace;
 
         // Set processing metadata
-        message.context["metadata"]["processed_at"] = json!(Utc::now().to_rfc3339());
-        message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
-        message.invalidate_context_cache();
+        set_processing_metadata(&mut message.context, None);
 
         let mut trace = ExecutionTrace::new();
 
@@ -303,10 +300,7 @@ impl Engine {
         channel: &str,
         message: &mut Message,
     ) -> Result<()> {
-        message.context["metadata"]["processed_at"] = json!(Utc::now().to_rfc3339());
-        message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
-        message.context["metadata"]["channel"] = json!(channel);
-        message.invalidate_context_cache();
+        set_processing_metadata(&mut message.context, Some(channel));
 
         if let Some(indices) = self.channel_index.get(channel) {
             for &idx in indices {
@@ -331,10 +325,7 @@ impl Engine {
     ) -> Result<ExecutionTrace> {
         use trace::ExecutionTrace;
 
-        message.context["metadata"]["processed_at"] = json!(Utc::now().to_rfc3339());
-        message.context["metadata"]["engine_version"] = json!(env!("CARGO_PKG_VERSION"));
-        message.context["metadata"]["channel"] = json!(channel);
-        message.invalidate_context_cache();
+        set_processing_metadata(&mut message.context, Some(channel));
 
         let mut trace = ExecutionTrace::new();
 
@@ -367,5 +358,29 @@ impl Engine {
     /// Get a reference to the compiled logic cache (Arc<Logic> entries).
     pub fn logic_cache(&self) -> &Vec<Arc<Logic>> {
         &self.logic_cache
+    }
+}
+
+/// Stamp the standard processing metadata (`processed_at`, `engine_version`,
+/// and optionally `channel`) into the message context. Uses
+/// `set_nested_value` so callers can stay agnostic of the OwnedDataValue
+/// mutation surface.
+fn set_processing_metadata(context: &mut OwnedDataValue, channel: Option<&str>) {
+    set_nested_value(
+        context,
+        "metadata.processed_at",
+        OwnedDataValue::String(Utc::now().to_rfc3339()),
+    );
+    set_nested_value(
+        context,
+        "metadata.engine_version",
+        OwnedDataValue::String(env!("CARGO_PKG_VERSION").to_string()),
+    );
+    if let Some(channel) = channel {
+        set_nested_value(
+            context,
+            "metadata.channel",
+            OwnedDataValue::String(channel.to_string()),
+        );
     }
 }

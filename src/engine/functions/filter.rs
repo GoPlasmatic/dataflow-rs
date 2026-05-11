@@ -1,7 +1,9 @@
 use crate::engine::error::Result;
-use crate::engine::executor::eval_to_json;
+use crate::engine::executor::eval_to_owned;
 use crate::engine::message::{Change, Message};
+use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
+use datavalue::OwnedDataValue;
 use log::{debug, info};
 use serde::Deserialize;
 use serde_json::Value;
@@ -50,13 +52,12 @@ impl FilterConfig {
         message: &mut Message,
         engine: &Arc<Engine>,
         logic_cache: &[Arc<Logic>],
+        arena: &Bump,
     ) -> Result<(usize, Vec<Change>)> {
-        let context_arc = message.get_context_arc();
-
         let condition_met = match self.condition_index {
             Some(idx) if idx < logic_cache.len() => {
-                match eval_to_json(engine, &logic_cache[idx], &context_arc) {
-                    Ok(Value::Bool(true)) => true,
+                match eval_to_owned(engine, &logic_cache[idx], &message.context, arena) {
+                    Ok(OwnedDataValue::Bool(true)) => true,
                     Ok(_) => false,
                     Err(e) => {
                         debug!("Filter: condition evaluation error: {:?}", e);

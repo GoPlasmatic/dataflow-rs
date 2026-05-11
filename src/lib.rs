@@ -128,6 +128,7 @@ You can extend the engine with your own custom function handlers:
 use dataflow_rs::{Engine, AsyncFunctionHandler, Result, Workflow};
 use dataflow_rs::engine::{FunctionConfig, message::{Change, Message}, error::DataflowError};
 use datalogic_rs::Engine as DatalogicEngine;
+use datavalue::OwnedDataValue;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -161,8 +162,8 @@ impl AsyncFunctionHandler for CustomFunction {
         let changes = vec![
             Change {
                 path: Arc::from("data.custom_field"),
-                old_value: Arc::new(Value::Null),
-                new_value: Arc::new(json!("custom value")),
+                old_value: Arc::new(OwnedDataValue::Null),
+                new_value: Arc::new(OwnedDataValue::from(&json!("custom value"))),
             }
         ];
 
