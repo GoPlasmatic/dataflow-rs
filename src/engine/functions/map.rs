@@ -33,9 +33,10 @@
 //! ```
 
 use crate::engine::error::{DataflowError, Result};
+use crate::engine::executor::eval_to_json;
 use crate::engine::message::{Change, Message};
 use crate::engine::utils::{get_nested_value, set_nested_value};
-use datalogic_rs::{CompiledLogic, DataLogic};
+use datalogic_rs::{Engine, Logic};
 use log::{debug, error};
 use serde::Deserialize;
 use serde_json::Value;
@@ -125,7 +126,7 @@ impl MapConfig {
     ///
     /// # Arguments
     /// * `message` - The message to transform (modified in place)
-    /// * `datalogic` - DataLogic instance for evaluation
+    /// * `engine` - Datalogic v5 engine for evaluation
     /// * `logic_cache` - Pre-compiled logic expressions
     ///
     /// # Returns
@@ -136,11 +137,13 @@ impl MapConfig {
     /// - Null evaluation results are skipped (no assignment made)
     /// - Root field assignments (data, metadata, temp_data) merge objects instead of replacing
     /// - Each successful assignment invalidates the context cache for subsequent mappings
+    /// - All evaluations share the per-worker-thread arena from
+    ///   `executor::eval_to_json`; no per-mapping OS allocations in steady state.
     pub fn execute(
         &self,
         message: &mut Message,
-        datalogic: &Arc<DataLogic>,
-        logic_cache: &[Arc<CompiledLogic>],
+        engine: &Arc<Engine>,
+        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
@@ -180,9 +183,10 @@ impl MapConfig {
                 }
             };
 
-            // Evaluate the transformation logic using DataLogic v4
-            // DataLogic v4 is thread-safe with Arc<CompiledLogic>, no spawn_blocking needed
-            let result = datalogic.evaluate(compiled_logic, Arc::clone(&context_arc));
+            // Evaluate via datalogic v5. Engine + Arc<Logic> are Send+Sync;
+            // the arena is local to this `execute` call so the call site is
+            // trivially thread-safe without locks or per-call OS allocations.
+            let result = eval_to_json(engine, compiled_logic, &context_arc);
 
             match result {
                 Ok(transformed_value) => {
@@ -273,8 +277,8 @@ impl MapConfig {
     pub fn execute_with_trace(
         &self,
         message: &mut Message,
-        datalogic: &Arc<DataLogic>,
-        logic_cache: &[Arc<CompiledLogic>],
+        engine: &Arc<Engine>,
+        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>, Vec<Value>)> {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
@@ -313,7 +317,7 @@ impl MapConfig {
                 }
             };
 
-            let result = datalogic.evaluate(compiled_logic, Arc::clone(&context_arc));
+            let result = eval_to_json(engine, compiled_logic, &context_arc);
 
             match result {
                 Ok(transformed_value) => {
@@ -449,7 +453,7 @@ mod tests {
     #[test]
     fn test_map_metadata_assignment() {
         // Test that metadata field assignments work correctly
-        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+        let engine = Arc::new(Engine::builder().with_templating(true).build());
 
         // Create test message
         let mut message = Message::new(Arc::new(json!({})));
@@ -469,10 +473,10 @@ mod tests {
         };
 
         // Compile the logic
-        let logic_cache = vec![datalogic.compile(&config.mappings[0].logic).unwrap()];
+        let logic_cache = vec![engine.compile_arc(&config.mappings[0].logic).unwrap()];
 
         // Execute the mapping
-        let result = config.execute(&mut message, &datalogic, &logic_cache);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
@@ -491,7 +495,7 @@ mod tests {
     #[test]
     fn test_map_null_values_skip_assignment() {
         // Test that null evaluation results skip the mapping entirely
-        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+        let engine = Arc::new(Engine::builder().with_templating(true).build());
 
         // Create test message with existing values
         let mut message = Message::new(Arc::new(json!({})));
@@ -525,13 +529,13 @@ mod tests {
 
         // Compile the logic
         let logic_cache = vec![
-            datalogic.compile(&config.mappings[0].logic).unwrap(),
-            datalogic.compile(&config.mappings[1].logic).unwrap(),
-            datalogic.compile(&config.mappings[2].logic).unwrap(),
+            engine.compile_arc(&config.mappings[0].logic).unwrap(),
+            engine.compile_arc(&config.mappings[1].logic).unwrap(),
+            engine.compile_arc(&config.mappings[2].logic).unwrap(),
         ];
 
         // Execute the mapping
-        let result = config.execute(&mut message, &datalogic, &logic_cache);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
@@ -563,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_map_execute_with_trace_captures_context_snapshots() {
-        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+        let engine = Arc::new(Engine::builder().with_templating(true).build());
 
         let mut message = Message::new(Arc::new(json!({})));
         message.context["data"] = json!({
@@ -588,11 +592,11 @@ mod tests {
 
         let mut logic_cache = Vec::new();
         for (i, mapping) in config.mappings.iter_mut().enumerate() {
-            logic_cache.push(datalogic.compile(&mapping.logic).unwrap());
+            logic_cache.push(engine.compile_arc(&mapping.logic).unwrap());
             mapping.logic_index = Some(i);
         }
 
-        let result = config.execute_with_trace(&mut message, &datalogic, &logic_cache);
+        let result = config.execute_with_trace(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes, context_snapshots) = result.unwrap();
@@ -613,7 +617,7 @@ mod tests {
     #[test]
     fn test_map_multiple_fields_including_metadata() {
         // Test mapping to data, metadata, and temp_data in one task
-        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+        let engine = Arc::new(Engine::builder().with_templating(true).build());
 
         // Create test message
         let mut message = Message::new(Arc::new(json!({})));
@@ -656,12 +660,12 @@ mod tests {
         // Compile the logic and set indices
         let mut logic_cache = Vec::new();
         for (i, mapping) in config.mappings.iter_mut().enumerate() {
-            logic_cache.push(datalogic.compile(&mapping.logic).unwrap());
+            logic_cache.push(engine.compile_arc(&mapping.logic).unwrap());
             mapping.logic_index = Some(i);
         }
 
         // Execute the mapping
-        let result = config.execute(&mut message, &datalogic, &logic_cache);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();

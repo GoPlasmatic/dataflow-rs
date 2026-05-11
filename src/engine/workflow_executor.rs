@@ -401,12 +401,12 @@ mod tests {
             workflow = compiled_workflow.clone();
         }
 
-        let (datalogic, logic_cache) = compiler.into_parts();
-        let internal_executor = Arc::new(InternalExecutor::new(datalogic.clone(), logic_cache));
+        let (engine, logic_cache) = compiler.into_parts();
+        let internal_executor = Arc::new(InternalExecutor::new(engine.clone(), logic_cache));
         let task_executor = Arc::new(TaskExecutor::new(
             Arc::new(HashMap::new()),
             internal_executor.clone(),
-            datalogic,
+            engine,
         ));
         let workflow_executor = WorkflowExecutor::new(task_executor, internal_executor);
 
@@ -447,12 +447,12 @@ mod tests {
             workflow = compiled_workflow.clone();
         }
 
-        let (datalogic, logic_cache) = compiler.into_parts();
-        let internal_executor = Arc::new(InternalExecutor::new(datalogic.clone(), logic_cache));
+        let (engine, logic_cache) = compiler.into_parts();
+        let internal_executor = Arc::new(InternalExecutor::new(engine.clone(), logic_cache));
         let task_executor = Arc::new(TaskExecutor::new(
             Arc::new(HashMap::new()),
             internal_executor.clone(),
-            datalogic,
+            engine,
         ));
         let workflow_executor = WorkflowExecutor::new(task_executor, internal_executor);
 

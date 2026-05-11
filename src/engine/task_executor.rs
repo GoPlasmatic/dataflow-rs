@@ -9,7 +9,7 @@ use crate::engine::executor::InternalExecutor;
 use crate::engine::functions::{AsyncFunctionHandler, FunctionConfig};
 use crate::engine::message::{Change, Message};
 use crate::engine::task::Task;
-use datalogic_rs::DataLogic;
+use datalogic_rs::Engine;
 use log::{debug, error};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -27,8 +27,8 @@ pub struct TaskExecutor {
     task_functions: Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
     /// Internal executor for built-in functions
     executor: Arc<InternalExecutor>,
-    /// Shared DataLogic instance
-    datalogic: Arc<DataLogic>,
+    /// Shared datalogic v5 Engine (Send + Sync; Arc-shared across tasks)
+    engine: Arc<Engine>,
 }
 
 impl TaskExecutor {
@@ -36,12 +36,12 @@ impl TaskExecutor {
     pub fn new(
         task_functions: Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
         executor: Arc<InternalExecutor>,
-        datalogic: Arc<DataLogic>,
+        engine: Arc<Engine>,
     ) -> Self {
         Self {
             task_functions,
             executor,
-            datalogic,
+            engine,
         }
     }
 
@@ -162,7 +162,7 @@ impl TaskExecutor {
     ) -> Result<(usize, Vec<Change>)> {
         if let Some(handler) = self.task_functions.get(name) {
             handler
-                .execute(message, config, Arc::clone(&self.datalogic))
+                .execute(message, config, Arc::clone(&self.engine))
                 .await
         } else {
             error!("Function handler not found: {}", name);
@@ -200,9 +200,9 @@ mod tests {
     #[test]
     fn test_has_function() {
         let compiler = LogicCompiler::new();
-        let (datalogic, logic_cache) = compiler.into_parts();
-        let executor = Arc::new(InternalExecutor::new(datalogic.clone(), logic_cache));
-        let task_executor = TaskExecutor::new(Arc::new(HashMap::new()), executor, datalogic);
+        let (engine, logic_cache) = compiler.into_parts();
+        let executor = Arc::new(InternalExecutor::new(engine.clone(), logic_cache));
+        let task_executor = TaskExecutor::new(Arc::new(HashMap::new()), executor, engine);
 
         // Test built-in functions
         assert!(task_executor.has_function("map"));
@@ -223,9 +223,9 @@ mod tests {
         );
 
         let compiler = LogicCompiler::new();
-        let (datalogic, logic_cache) = compiler.into_parts();
-        let executor = Arc::new(InternalExecutor::new(datalogic.clone(), logic_cache));
-        let task_executor = TaskExecutor::new(Arc::new(custom_functions), executor, datalogic);
+        let (engine, logic_cache) = compiler.into_parts();
+        let executor = Arc::new(InternalExecutor::new(engine.clone(), logic_cache));
+        let task_executor = TaskExecutor::new(Arc::new(custom_functions), executor, engine);
 
         assert_eq!(task_executor.custom_function_count(), 1);
     }
@@ -239,7 +239,7 @@ mod tests {
             &self,
             _message: &mut Message,
             _config: &FunctionConfig,
-            _datalogic: Arc<DataLogic>,
+            _engine: Arc<Engine>,
         ) -> Result<(usize, Vec<Change>)> {
             Ok((200, vec![]))
         }

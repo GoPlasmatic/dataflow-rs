@@ -127,7 +127,7 @@ You can extend the engine with your own custom function handlers:
 ```rust,no_run
 use dataflow_rs::{Engine, AsyncFunctionHandler, Result, Workflow};
 use dataflow_rs::engine::{FunctionConfig, message::{Change, Message}, error::DataflowError};
-use datalogic_rs::DataLogic;
+use datalogic_rs::Engine as DatalogicEngine;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -141,7 +141,7 @@ impl AsyncFunctionHandler for CustomFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        datalogic: Arc<DataLogic>,
+        engine: Arc<DatalogicEngine>,
     ) -> Result<(usize, Vec<Change>)> {
         // Implement your custom logic here
 

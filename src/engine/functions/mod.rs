@@ -1,7 +1,7 @@
 use crate::engine::error::Result;
 use crate::engine::message::{Change, Message};
 use async_trait::async_trait;
-use datalogic_rs::DataLogic;
+use datalogic_rs::Engine;
 use std::sync::Arc;
 
 pub mod config;
@@ -64,7 +64,9 @@ pub trait AsyncFunctionHandler: Send + Sync {
     ///
     /// * `message` - The message to process (mutable reference, no cloning)
     /// * `config` - Pre-parsed function configuration
-    /// * `datalogic` - Reference to DataLogic instance for JSONLogic evaluation
+    /// * `engine` - Shared datalogic v5 `Engine` (`Send + Sync`) for ad-hoc
+    ///   JSONLogic evaluation inside the handler. Custom handlers that do not
+    ///   evaluate JSONLogic can simply ignore this argument.
     ///
     /// # Returns
     ///
@@ -73,6 +75,6 @@ pub trait AsyncFunctionHandler: Send + Sync {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        datalogic: Arc<DataLogic>,
+        engine: Arc<Engine>,
     ) -> Result<(usize, Vec<Change>)>;
 }

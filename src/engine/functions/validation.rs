@@ -32,8 +32,9 @@
 //! ```
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
+use crate::engine::executor::eval_to_json;
 use crate::engine::message::{Change, Message};
-use datalogic_rs::{CompiledLogic, DataLogic};
+use datalogic_rs::{Engine, Logic};
 use log::{debug, error};
 use serde::Deserialize;
 use serde_json::Value;
@@ -122,7 +123,7 @@ impl ValidationConfig {
     ///
     /// # Arguments
     /// * `message` - The message to validate (errors are added to its error list)
-    /// * `datalogic` - DataLogic instance for evaluation
+    /// * `engine` - Datalogic v5 engine for evaluation
     /// * `logic_cache` - Pre-compiled logic expressions
     ///
     /// # Returns
@@ -137,8 +138,8 @@ impl ValidationConfig {
     pub fn execute(
         &self,
         message: &mut Message,
-        datalogic: &Arc<DataLogic>,
-        logic_cache: &[Arc<CompiledLogic>],
+        engine: &Arc<Engine>,
+        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
@@ -187,9 +188,10 @@ impl ValidationConfig {
                 }
             };
 
-            // Evaluate the validation rule using DataLogic v4
-            // Reuse the same Arc for all rules - validation is read-only
-            let result = datalogic.evaluate(compiled_logic, Arc::clone(&context_arc));
+            // Evaluate via datalogic v5 against the same shared context_arc
+            // (validation is read-only). Arena reuse is handled inside
+            // `eval_to_json` via a thread-local Bump.
+            let result = eval_to_json(engine, compiled_logic, &context_arc);
 
             match result {
                 Ok(value) => {
@@ -301,7 +303,7 @@ mod tests {
     fn test_validation_execute_passes() {
         use crate::engine::message::Message;
 
-        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+        let engine = Arc::new(Engine::builder().with_templating(true).build());
 
         // Create test message with valid data
         let mut message = Message::new(Arc::new(json!({})));
@@ -329,12 +331,12 @@ mod tests {
         // Compile the logic and set indices
         let mut logic_cache = Vec::new();
         for (i, rule) in config.rules.iter_mut().enumerate() {
-            logic_cache.push(datalogic.compile(&rule.logic).unwrap());
+            logic_cache.push(engine.compile_arc(&rule.logic).unwrap());
             rule.logic_index = Some(i);
         }
 
         // Execute validation
-        let result = config.execute(&mut message, &datalogic, &logic_cache);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
@@ -347,7 +349,7 @@ mod tests {
     fn test_validation_execute_fails() {
         use crate::engine::message::Message;
 
-        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+        let engine = Arc::new(Engine::builder().with_templating(true).build());
 
         // Create test message with invalid data
         let mut message = Message::new(Arc::new(json!({})));
@@ -374,12 +376,12 @@ mod tests {
         // Compile the logic and set indices
         let mut logic_cache = Vec::new();
         for (i, rule) in config.rules.iter_mut().enumerate() {
-            logic_cache.push(datalogic.compile(&rule.logic).unwrap());
+            logic_cache.push(engine.compile_arc(&rule.logic).unwrap());
             rule.logic_index = Some(i);
         }
 
         // Execute validation
-        let result = config.execute(&mut message, &datalogic, &logic_cache);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, _changes) = result.unwrap();
@@ -396,7 +398,7 @@ mod tests {
     fn test_validation_uncompiled_logic() {
         use crate::engine::message::Message;
 
-        let datalogic = Arc::new(DataLogic::with_preserve_structure());
+        let engine = Arc::new(Engine::builder().with_templating(true).build());
 
         let mut message = Message::new(Arc::new(json!({})));
 
@@ -410,7 +412,7 @@ mod tests {
         };
 
         let logic_cache = Vec::new();
-        let result = config.execute(&mut message, &datalogic, &logic_cache);
+        let result = config.execute(&mut message, &engine, &logic_cache);
         assert!(result.is_ok());
 
         let (status, _) = result.unwrap();

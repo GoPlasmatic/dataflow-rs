@@ -19,7 +19,8 @@ wasm-web = ["chrono/wasmbind", "getrandom/wasm_js", "uuid/js"]
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-datalogic-rs = "4.0"
+datalogic-rs = { path = "../datalogic-rs/crates/datalogic-rs", features = ["serde_json", "templating"] }
+bumpalo = "3.14"
 uuid = { version = "1.23", default-features = false, features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 thiserror = "2.0"

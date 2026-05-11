@@ -1,6 +1,7 @@
 use crate::engine::error::Result;
+use crate::engine::executor::eval_to_json;
 use crate::engine::message::{Change, Message};
-use datalogic_rs::{CompiledLogic, DataLogic};
+use datalogic_rs::{Engine, Logic};
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
 use serde_json::Value;
@@ -49,15 +50,15 @@ impl LogConfig {
     pub fn execute(
         &self,
         message: &mut Message,
-        datalogic: &Arc<DataLogic>,
-        logic_cache: &[Arc<CompiledLogic>],
+        engine: &Arc<Engine>,
+        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
         let context_arc = message.get_context_arc();
 
         // Evaluate message expression
         let log_message = match self.message_index {
             Some(idx) if idx < logic_cache.len() => {
-                match datalogic.evaluate(&logic_cache[idx], Arc::clone(&context_arc)) {
+                match eval_to_json(engine, &logic_cache[idx], &context_arc) {
                     Ok(Value::String(s)) => s,
                     Ok(other) => other.to_string(),
                     Err(e) => {
@@ -74,7 +75,7 @@ impl LogConfig {
         for (key, idx_opt) in &self.field_indices {
             let val = match idx_opt {
                 Some(idx) if *idx < logic_cache.len() => {
-                    match datalogic.evaluate(&logic_cache[*idx], Arc::clone(&context_arc)) {
+                    match eval_to_json(engine, &logic_cache[*idx], &context_arc) {
                         Ok(Value::String(s)) => s,
                         Ok(v) => v.to_string(),
                         Err(_) => "<eval error>".to_string(),

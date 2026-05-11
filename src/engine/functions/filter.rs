@@ -1,6 +1,7 @@
 use crate::engine::error::Result;
+use crate::engine::executor::eval_to_json;
 use crate::engine::message::{Change, Message};
-use datalogic_rs::{CompiledLogic, DataLogic};
+use datalogic_rs::{Engine, Logic};
 use log::{debug, info};
 use serde::Deserialize;
 use serde_json::Value;
@@ -47,14 +48,14 @@ impl FilterConfig {
     pub fn execute(
         &self,
         message: &mut Message,
-        datalogic: &Arc<DataLogic>,
-        logic_cache: &[Arc<CompiledLogic>],
+        engine: &Arc<Engine>,
+        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
         let context_arc = message.get_context_arc();
 
         let condition_met = match self.condition_index {
             Some(idx) if idx < logic_cache.len() => {
-                match datalogic.evaluate(&logic_cache[idx], Arc::clone(&context_arc)) {
+                match eval_to_json(engine, &logic_cache[idx], &context_arc) {
                     Ok(Value::Bool(true)) => true,
                     Ok(_) => false,
                     Err(e) => {

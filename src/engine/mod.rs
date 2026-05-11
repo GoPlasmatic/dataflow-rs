@@ -75,7 +75,7 @@ pub use trace::{ExecutionStep, ExecutionTrace, StepResult};
 pub use workflow::{Workflow, WorkflowStatus};
 
 use chrono::Utc;
-use datalogic_rs::{CompiledLogic, DataLogic};
+use datalogic_rs::{Engine as DatalogicEngine, Logic};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -108,10 +108,10 @@ pub struct Engine {
     channel_index: Arc<HashMap<String, Vec<usize>>>,
     /// Workflow executor for orchestrating workflow execution
     workflow_executor: Arc<WorkflowExecutor>,
-    /// Shared DataLogic instance for JSONLogic evaluation
-    datalogic: Arc<DataLogic>,
-    /// Compiled logic cache with Arc for zero-copy sharing
-    logic_cache: Vec<Arc<CompiledLogic>>,
+    /// Shared datalogic v5 engine for JSONLogic evaluation (Send + Sync)
+    datalogic: Arc<DatalogicEngine>,
+    /// Compiled logic cache with Arc<Logic> for zero-copy cross-thread sharing
+    logic_cache: Vec<Arc<Logic>>,
 }
 
 /// Build a channel index from pre-sorted workflows.
@@ -359,13 +359,13 @@ impl Engine {
         self.workflows.iter().find(|w| w.id == id)
     }
 
-    /// Get a reference to the DataLogic instance
-    pub fn datalogic(&self) -> &Arc<DataLogic> {
+    /// Get a reference to the underlying datalogic v5 engine.
+    pub fn datalogic(&self) -> &Arc<DatalogicEngine> {
         &self.datalogic
     }
 
-    /// Get a reference to the compiled logic cache
-    pub fn logic_cache(&self) -> &Vec<Arc<CompiledLogic>> {
+    /// Get a reference to the compiled logic cache (Arc<Logic> entries).
+    pub fn logic_cache(&self) -> &Vec<Arc<Logic>> {
         &self.logic_cache
     }
 }

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use dataflow_rs::engine::functions::{AsyncFunctionHandler, FunctionConfig};
 use dataflow_rs::engine::message::{Change, Message};
 use dataflow_rs::{Engine, Result, Task, Workflow};
-use datalogic_rs::DataLogic;
+use datalogic_rs::Engine as DatalogicEngine;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ impl AsyncFunctionHandler for LoggingTask {
         &self,
         message: &mut Message,
         _config: &FunctionConfig,
-        _datalogic: Arc<DataLogic>,
+        _engine: Arc<DatalogicEngine>,
     ) -> Result<(usize, Vec<Change>)> {
         println!("Executed task for message: {}", &message.id);
         Ok((200, vec![]))
@@ -33,7 +33,7 @@ impl AsyncFunctionHandler for AsyncLoggingTask {
         &self,
         message: &mut Message,
         _config: &FunctionConfig,
-        _datalogic: Arc<DataLogic>,
+        _engine: Arc<DatalogicEngine>,
     ) -> Result<(usize, Vec<Change>)> {
         println!("Executed async task for message: {}", &message.id);
         // Simulate async work
@@ -55,8 +55,8 @@ async fn test_async_task_execution() {
         name: "log".to_string(),
         input: json!({}),
     };
-    let datalogic = Arc::new(DataLogic::with_preserve_structure());
-    let result = task.execute(&mut message, &config, datalogic).await;
+    let engine = Arc::new(DatalogicEngine::builder().with_templating(true).build());
+    let result = task.execute(&mut message, &config, engine).await;
 
     // Verify the execution was successful
     assert!(result.is_ok(), "Task execution should succeed");

@@ -1,33 +1,24 @@
 //! # Workflow Compilation Module
 //!
-//! This module handles the pre-compilation of JSONLogic expressions used throughout
-//! the engine. By compiling all logic at initialization time with DataLogic v4, we achieve:
-//!
-//! - Zero runtime compilation overhead
-//! - Thread-safe compiled logic via Arc
-//! - Early validation of logic expressions
-//! - Efficient memory sharing across async tasks
+//! Pre-compiles all JSONLogic expressions used by workflows and tasks at engine
+//! initialization. Compiled logic is stored as `Arc<Logic>` for zero-copy
+//! sharing across async tasks; the `Engine` is wrapped in `Arc` and is `Send + Sync`
+//! so the entire stack is safe to share across Tokio worker threads.
 
 use crate::engine::functions::integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
 use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
 use crate::engine::{FunctionConfig, Workflow};
-use datalogic_rs::{CompiledLogic, DataLogic};
+use datalogic_rs::{Engine, Logic};
 use log::{debug, error};
 use serde_json::Value;
 use std::sync::Arc;
 
 /// Compiles and caches JSONLogic expressions for optimal runtime performance.
-///
-/// The `LogicCompiler` is responsible for:
-/// - Pre-compiling all workflow conditions using DataLogic v4
-/// - Pre-compiling task-specific logic (map transformations, validation rules)
-/// - Maintaining Arc-wrapped compiled logic for thread-safe sharing
-/// - Providing early validation of logic expressions
 pub struct LogicCompiler {
-    /// Shared DataLogic instance for compilation
-    datalogic: Arc<DataLogic>,
-    /// Cache of compiled logic expressions indexed by their position
-    logic_cache: Vec<Arc<CompiledLogic>>,
+    /// Shared datalogic Engine used both for compilation and (later) evaluation.
+    engine: Arc<Engine>,
+    /// Cache of compiled logic expressions indexed by their position.
+    logic_cache: Vec<Arc<Logic>>,
 }
 
 impl Default for LogicCompiler {
@@ -37,27 +28,28 @@ impl Default for LogicCompiler {
 }
 
 impl LogicCompiler {
-    /// Create a new LogicCompiler with DataLogic v4
+    /// Create a new LogicCompiler with a fresh v5 Engine configured for templating
+    /// mode (the v5 successor of v4's `with_preserve_structure`).
     pub fn new() -> Self {
         Self {
-            datalogic: Arc::new(DataLogic::with_preserve_structure()),
+            engine: Arc::new(Engine::builder().with_templating(true).build()),
             logic_cache: Vec::new(),
         }
     }
 
-    /// Get the DataLogic instance
-    pub fn datalogic(&self) -> Arc<DataLogic> {
-        Arc::clone(&self.datalogic)
+    /// Get the Engine instance
+    pub fn engine(&self) -> Arc<Engine> {
+        Arc::clone(&self.engine)
     }
 
     /// Get the logic cache
-    pub fn logic_cache(&self) -> &Vec<Arc<CompiledLogic>> {
+    pub fn logic_cache(&self) -> &Vec<Arc<Logic>> {
         &self.logic_cache
     }
 
     /// Consume the compiler and return its components
-    pub fn into_parts(self) -> (Arc<DataLogic>, Vec<Arc<CompiledLogic>>) {
-        (self.datalogic, self.logic_cache)
+    pub fn into_parts(self) -> (Arc<Engine>, Vec<Arc<Logic>>) {
+        (self.engine, self.logic_cache)
     }
 
     /// Compile all workflows and their tasks, returning them sorted by priority
@@ -369,8 +361,9 @@ impl LogicCompiler {
 
     /// Compile a logic expression and cache it
     fn compile_logic(&mut self, logic: &Value) -> Result<Option<usize>, String> {
-        // DataLogic v4: compile returns Arc<CompiledLogic>
-        match self.datalogic.compile(logic) {
+        // v5: `compile_arc` returns `Arc<Logic>` directly, matching the v4
+        // `Arc<CompiledLogic>` shape used by downstream evaluation paths.
+        match self.engine.compile_arc(logic) {
             Ok(compiled) => {
                 let index = self.logic_cache.len();
                 self.logic_cache.push(compiled);

@@ -31,7 +31,7 @@ impl AsyncFunctionHandler for AsyncHttpHandler {
         &self,
         message: &mut Message,
         _config: &FunctionConfig,
-        _datalogic: Arc<datalogic_rs::DataLogic>,
+        _engine: Arc<datalogic_rs::Engine>,
     ) -> dataflow_rs::Result<(usize, Vec<dataflow_rs::engine::message::Change>)> {
         // Simulate async HTTP call
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -55,7 +55,7 @@ impl AsyncFunctionHandler for SimpleAsyncHandler {
         &self,
         message: &mut Message,
         _config: &FunctionConfig,
-        _datalogic: Arc<datalogic_rs::DataLogic>,
+        _engine: Arc<datalogic_rs::Engine>,
     ) -> dataflow_rs::Result<(usize, Vec<dataflow_rs::engine::message::Change>)> {
         // Simple processing - no need for spawn_blocking
         message.context["data"]["processed"] = json!(true);
