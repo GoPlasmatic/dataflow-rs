@@ -173,19 +173,18 @@ impl<'a> ArenaContext<'a> {
         self.arena
     }
 
-    /// Apply an owned write at `path` to *both* the underlying `OwnedDataValue`
-    /// context (via the supplied closure that performs the in-place mutation)
-    /// and the arena cache. `path` is the original dot path — only the first
-    /// segment is used for top-slot lookup; the second segment (if any)
-    /// indexes the depth‑2 cache.
-    pub fn apply_mutation(
+    /// Apply an owned write at `path` (pre-split into `parts`) to *both* the
+    /// underlying `OwnedDataValue` context (via the supplied closure that
+    /// performs the in-place mutation) and the arena cache. Skips the runtime
+    /// `str::split` that shows up in profiles as `CharSearcher::next_match`.
+    pub fn apply_mutation_parts(
         &mut self,
         owned_ctx: &mut OwnedDataValue,
-        path: &str,
+        parts: &[Arc<str>],
         apply: impl FnOnce(&mut OwnedDataValue),
     ) {
         apply(owned_ctx);
-        self.refresh_after_write(owned_ctx, path);
+        self.refresh_after_write_parts(owned_ctx, parts);
     }
 
     /// Refresh the arena slot(s) for `path` from the current `owned_ctx`,
@@ -196,17 +195,55 @@ impl<'a> ArenaContext<'a> {
         self.refresh_after_write(owned_ctx, path);
     }
 
-    /// Refresh the arena cache after `owned_ctx` was mutated at `path`.
-    fn refresh_after_write(&mut self, owned_ctx: &OwnedDataValue, path: &str) {
-        let mut parts = path.split('.');
-        let top = match parts.next() {
+    /// Pre-split variant of `refresh_after_write` — same algorithm, no
+    /// per-call `str::split` walk. `parts` retains the original `#` prefix;
+    /// the hash strip is applied here at lookup so the cache key matches
+    /// what `set_nested_value_parts` actually wrote.
+    fn refresh_after_write_parts(&mut self, owned_ctx: &OwnedDataValue, parts: &[Arc<str>]) {
+        let top_raw: &str = match parts.first() {
             Some(p) if !p.is_empty() => p,
             _ => {
                 self.rebuild_all_from(owned_ctx);
                 return;
             }
         };
-        let depth2_key = parts.next();
+        let top = top_raw.strip_prefix('#').unwrap_or(top_raw);
+        fn strip<'p>(p: &'p Arc<str>) -> &'p str {
+            let s: &'p str = p;
+            s.strip_prefix('#').unwrap_or(s)
+        }
+        let depth2_key: Option<&str> = parts.get(1).map(strip);
+        let depth3_key: Option<&str> = parts.get(2).map(strip);
+        self.refresh_after_write_inner(owned_ctx, top, depth2_key, depth3_key);
+    }
+
+    /// Refresh the arena cache after `owned_ctx` was mutated at `path`.
+    fn refresh_after_write(&mut self, owned_ctx: &OwnedDataValue, path: &str) {
+        let mut parts = path.split('.');
+        let top_raw = match parts.next() {
+            Some(p) if !p.is_empty() => p,
+            _ => {
+                self.rebuild_all_from(owned_ctx);
+                return;
+            }
+        };
+        let top = top_raw.strip_prefix('#').unwrap_or(top_raw);
+        let depth2_key = parts.next().map(|p| p.strip_prefix('#').unwrap_or(p));
+        let depth3_key = parts.next().map(|p| p.strip_prefix('#').unwrap_or(p));
+        self.refresh_after_write_inner(owned_ctx, top, depth2_key, depth3_key);
+    }
+
+    /// Shared body: walk the cache for `top` and optional `depth2_key`,
+    /// rebuilding only the dirtied slot. `depth3_key` is ignored (the
+    /// depth-3 sub-cache was tried but regressed on the realistic workload —
+    /// per-write d3 cache thrashing exceeded the savings).
+    fn refresh_after_write_inner(
+        &mut self,
+        owned_ctx: &OwnedDataValue,
+        top: &str,
+        depth2_key: Option<&str>,
+        _depth3_key: Option<&str>,
+    ) {
 
         let OwnedDataValue::Object(owned_pairs) = owned_ctx else {
             self.rebuild_all_from(owned_ctx);

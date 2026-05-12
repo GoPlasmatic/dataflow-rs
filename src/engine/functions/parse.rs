@@ -12,7 +12,7 @@
 
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::ArenaContext;
-use crate::engine::message::{Change, Message};
+use crate::engine::message::{null_arc, Change, Message};
 use crate::engine::utils::{get_nested_value, set_nested_value};
 use datavalue::OwnedDataValue;
 use log::debug;
@@ -93,9 +93,11 @@ pub fn execute_parse_json(
         config.source == "payload" && !matches!(*message.payload, OwnedDataValue::String(_));
 
     if message.capture_changes {
-        let old_value = get_nested_value(&message.context, &target_path)
-            .cloned()
-            .unwrap_or(OwnedDataValue::Null);
+        let old_value_arc: Arc<OwnedDataValue> =
+            match get_nested_value(&message.context, &target_path) {
+                Some(v) => Arc::new(v.clone()),
+                None => null_arc(),
+            };
 
         let (new_value_arc, source_data_for_context) = if payload_fast_path {
             let arc = Arc::clone(&message.payload);
@@ -123,7 +125,7 @@ pub fn execute_parse_json(
             200,
             vec![Change {
                 path: Arc::from(target_path),
-                old_value: Arc::new(old_value),
+                old_value: old_value_arc,
                 new_value: new_value_arc,
             }],
         ));
@@ -197,9 +199,11 @@ pub fn execute_parse_xml(
     let parsed_owned = OwnedDataValue::from(&parsed_json);
 
     let target_path = format!("data.{}", config.target);
-    let old_value = get_nested_value(&message.context, &target_path)
-        .cloned()
-        .unwrap_or(OwnedDataValue::Null);
+    let old_value_arc: Arc<OwnedDataValue> =
+        match get_nested_value(&message.context, &target_path) {
+            Some(v) => Arc::new(v.clone()),
+            None => null_arc(),
+        };
 
     set_nested_value(&mut message.context, &target_path, parsed_owned.clone());
 
@@ -212,7 +216,7 @@ pub fn execute_parse_xml(
         200,
         vec![Change {
             path: Arc::from(target_path),
-            old_value: Arc::new(old_value),
+            old_value: old_value_arc,
             new_value: Arc::new(parsed_owned),
         }],
     ))

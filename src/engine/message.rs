@@ -3,8 +3,22 @@ use chrono::{DateTime, Utc};
 use datavalue::OwnedDataValue;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use uuid::Uuid;
+
+/// Process-wide singleton for `Arc<OwnedDataValue::Null>`. The audit-on path
+/// captures `old_value` as an `Arc` for every `Change`; on first write to a
+/// path the old value is `Null`. Sharing one `Arc` saves the per-mapping
+/// `Arc::new(OwnedDataValue::Null)` heap allocation that showed up in the
+/// allocator-pressure portion of the flamegraph.
+static NULL_ARC: LazyLock<Arc<OwnedDataValue>> =
+    LazyLock::new(|| Arc::new(OwnedDataValue::Null));
+
+/// Cheap clone of the shared null `Arc`.
+#[inline]
+pub fn null_arc() -> Arc<OwnedDataValue> {
+    Arc::clone(&NULL_ARC)
+}
 
 /// A message flowing through the dataflow engine.
 ///
@@ -84,7 +98,10 @@ impl<'de> Deserialize<'de> for Message {
 impl Message {
     pub fn new(payload: Arc<OwnedDataValue>) -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
+            // UUID v7: ms-precision timestamp in the high bits, random tail.
+            // Time-ordered and sortable — better for databases/logs than v4
+            // and the same `rng` backend cost.
+            id: Uuid::now_v7().to_string(),
             payload,
             context: empty_context(),
             audit_trail: vec![],

@@ -6,6 +6,7 @@
 //! for numeric object keys.
 
 use datavalue::OwnedDataValue;
+use std::sync::Arc;
 
 /// Get a reference to the value at `path`, walking the tree.
 ///
@@ -134,6 +135,115 @@ pub fn set_nested_value(data: &mut OwnedDataValue, path: &str, value: OwnedDataV
 #[inline]
 pub fn get_nested_value_cloned(data: &OwnedDataValue, path: &str) -> Option<OwnedDataValue> {
     get_nested_value(data, path).cloned()
+}
+
+/// Same as `get_nested_value` but consumes a pre-split slice of path parts.
+/// Parts retain the original `#` prefix; `strip_hash_prefix` is applied at
+/// lookup time so the `#20` → "force object key 20" semantics still hold.
+pub fn get_nested_value_parts<'b>(
+    data: &'b OwnedDataValue,
+    parts: &[Arc<str>],
+) -> Option<&'b OwnedDataValue> {
+    if parts.is_empty() {
+        return Some(data);
+    }
+    let mut current = data;
+    for part in parts {
+        match current {
+            OwnedDataValue::Object(pairs) => {
+                let key = strip_hash_prefix(part);
+                let slot = pairs.iter().find(|(k, _)| k == key)?;
+                current = &slot.1;
+            }
+            OwnedDataValue::Array(items) => {
+                let idx: usize = part.parse().ok()?;
+                current = items.get(idx)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(current)
+}
+
+/// Same as `set_nested_value` but consumes a pre-split slice of path parts.
+/// Parts retain the original `#` prefix; `strip_hash_prefix` is applied at
+/// use time. Crucially, the "is the NEXT segment an array index?" decision
+/// looks at the raw (unstripped) `parts[i+1]` — `#20` parses as non-numeric,
+/// so the child container is an Object (key "20"), not an Array.
+pub fn set_nested_value_parts(
+    data: &mut OwnedDataValue,
+    parts: &[Arc<str>],
+    value: OwnedDataValue,
+) {
+    if parts.is_empty() {
+        return;
+    }
+    let last = parts.len() - 1;
+    let mut current = data;
+
+    for (i, part) in parts.iter().enumerate() {
+        if i == last {
+            match current {
+                OwnedDataValue::Object(pairs) => {
+                    let key = strip_hash_prefix(part);
+                    if let Some(slot) = pairs.iter_mut().find(|(k, _)| k == key) {
+                        slot.1 = value;
+                    } else {
+                        pairs.push((key.to_string(), value));
+                    }
+                }
+                OwnedDataValue::Array(items) => {
+                    if let Ok(idx) = part.parse::<usize>() {
+                        while items.len() <= idx {
+                            items.push(OwnedDataValue::Null);
+                        }
+                        items[idx] = value;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        let next_part: &str = &parts[i + 1];
+        let next_is_array = next_part.parse::<usize>().is_ok();
+
+        match current {
+            OwnedDataValue::Object(pairs) => {
+                let key = strip_hash_prefix(part);
+                let idx = match pairs.iter().position(|(k, _)| k == key) {
+                    Some(idx) => idx,
+                    None => {
+                        let child = if next_is_array {
+                            OwnedDataValue::Array(Vec::new())
+                        } else {
+                            OwnedDataValue::Object(Vec::new())
+                        };
+                        pairs.push((key.to_string(), child));
+                        pairs.len() - 1
+                    }
+                };
+                current = &mut pairs[idx].1;
+            }
+            OwnedDataValue::Array(items) => {
+                let Ok(idx) = part.parse::<usize>() else {
+                    return;
+                };
+                while items.len() <= idx {
+                    items.push(OwnedDataValue::Null);
+                }
+                if matches!(items[idx], OwnedDataValue::Null) {
+                    items[idx] = if next_is_array {
+                        OwnedDataValue::Array(Vec::new())
+                    } else {
+                        OwnedDataValue::Object(Vec::new())
+                    };
+                }
+                current = &mut items[idx];
+            }
+            _ => return,
+        }
+    }
 }
 
 /// Strip exactly one leading `#` from an object-key path component.

@@ -13,6 +13,7 @@
 //! Run with: `cargo run --example realistic_benchmark --release`
 
 use dataflow_rs::{Engine, Message, Workflow};
+use datavalue::OwnedDataValue;
 use futures::future::join_all;
 use serde_json::json;
 use std::sync::Arc;
@@ -81,7 +82,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Arc::new(Engine::new(vec![workflow], None));
 
     // -- Sample payload: pacs.008-shaped, ~80 fields, 4-5 levels deep ---------
-    let sample_payload = build_sample_payload();
+    // Convert to `OwnedDataValue` ONCE at startup and share via `Arc`. Per-
+    // message construction goes through `Message::from_arc(Arc::clone(...))`
+    // — a refcount bump, no serde_json clone or `OwnedDataValue::from(&Value)`
+    // walk. This is what callers with already-parsed inputs (e.g. an HTTP
+    // server holding parsed payloads) actually pay; the prior
+    // `Message::from_value(&data)` path measured the harness's serde_json
+    // churn as part of the engine cost.
+    let sample_payload_json = build_sample_payload();
+    let sample_payload: Arc<OwnedDataValue> =
+        Arc::new(OwnedDataValue::from(&sample_payload_json));
 
     // Warmup
     println!("Running warmup ({} messages)...", WARMUP_MESSAGES);
@@ -89,9 +99,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let warmup_handles: Vec<_> = (0..WARMUP_MESSAGES)
         .map(|_| {
             let engine = Arc::clone(&engine);
-            let data = sample_payload.clone();
+            let payload = Arc::clone(&sample_payload);
             tokio::spawn(async move {
-                let mut message = Message::from_value(&data);
+                let mut message = Message::from_arc(payload);
                 engine.process_message(&mut message).await.unwrap();
             })
         })
@@ -116,10 +126,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for _ in 0..TOTAL_MESSAGES {
         let engine = Arc::clone(&engine);
-        let data = sample_payload.clone();
+        let payload = Arc::clone(&sample_payload);
         handles.push(tokio::spawn(async move {
             let msg_start = Instant::now();
-            let mut message = Message::from_value(&data);
+            let mut message = Message::from_arc(payload);
             engine.process_message(&mut message).await.unwrap();
             msg_start.elapsed()
         }));

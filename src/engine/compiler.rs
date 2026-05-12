@@ -169,6 +169,19 @@ impl LogicCompiler {
                 "Compiling map logic for task {} in workflow {}: {:?}",
                 task_id, workflow_id, mapping.logic
             );
+            // Pre-split the dot path so the hot path doesn't re-split per
+            // write. The `#` prefix is preserved here — it's the explicit
+            // "treat this as an object key, not an array index" hint that
+            // `set_nested_value` consumes when deciding container shape; the
+            // strip happens at lookup time inside `*_parts` helpers.
+            let parts: Vec<Arc<str>> = mapping
+                .path
+                .split('.')
+                .map(Arc::from)
+                .collect();
+            mapping.path_parts = Arc::from(parts.into_boxed_slice());
+            mapping.path_arc = Arc::from(mapping.path.as_str());
+
             match self.compile_logic(&mapping.logic) {
                 Ok(index) => {
                     mapping.logic_index = index;

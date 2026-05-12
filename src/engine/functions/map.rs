@@ -15,8 +15,10 @@
 
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::{eval_to_owned, with_arena, ArenaContext};
-use crate::engine::message::{Change, Message};
-use crate::engine::utils::{get_nested_value, set_nested_value};
+use crate::engine::message::{null_arc, Change, Message};
+use crate::engine::utils::{
+    get_nested_value, get_nested_value_parts, set_nested_value, set_nested_value_parts,
+};
 use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
 use log::{debug, error};
@@ -32,7 +34,7 @@ pub struct MapConfig {
 }
 
 /// A single mapping that transforms and assigns data.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct MapMapping {
     /// Target path where the result will be stored (e.g., "data.user.name").
     /// Supports dot notation for nested paths and `#` prefix for numeric field names.
@@ -45,6 +47,19 @@ pub struct MapMapping {
     /// Index into the compiled logic cache. Set during workflow compilation.
     #[serde(skip)]
     pub logic_index: Option<usize>,
+
+    /// `Arc<str>` mirror of `path`, populated by `LogicCompiler`. Cloned
+    /// (refcount bump) into `Change.path` per audit emission so the hot path
+    /// avoids `Arc::from(&path)` allocations.
+    #[serde(skip)]
+    pub path_arc: Arc<str>,
+
+    /// Pre-split path segments (with the `#`-prefix escape already applied,
+    /// matching `utils::strip_hash_prefix`). Populated by `LogicCompiler`.
+    /// The hot path consumes this directly instead of running `path.split('.')`
+    /// — saves ~3% on `CharSearcher::next_match` per the flamegraph.
+    #[serde(skip)]
+    pub path_parts: Arc<[Arc<str>]>,
 }
 
 impl MapConfig {
@@ -73,6 +88,8 @@ impl MapConfig {
                 .clone();
 
             parsed_mappings.push(MapMapping {
+                path_arc: Arc::from(path.as_str()),
+                path_parts: Arc::from(Vec::<Arc<str>>::new().into_boxed_slice()),
                 path,
                 logic,
                 logic_index: None,
@@ -160,26 +177,50 @@ impl MapConfig {
                 continue;
             }
 
+            // Compiler populates `path_parts`. For callers that build a
+            // `MapConfig` directly (the test surface and a few in-tree
+            // helpers) fall back to splitting on the fly — same semantics,
+            // one extra allocation per mapping per call.
+            let fallback_parts: Vec<Arc<str>>;
+            let parts: &[Arc<str>] = if mapping.path_parts.is_empty()
+                && !mapping.path.is_empty()
+            {
+                fallback_parts = mapping.path.split('.').map(Arc::from).collect();
+                &fallback_parts
+            } else {
+                &mapping.path_parts
+            };
+            let path_arc: Arc<str> = if mapping.path_arc.is_empty()
+                && !mapping.path.is_empty()
+            {
+                Arc::from(mapping.path.as_str())
+            } else {
+                Arc::clone(&mapping.path_arc)
+            };
+
             if message.capture_changes {
-                let old_value = get_nested_value(&message.context, &mapping.path)
-                    .cloned()
-                    .unwrap_or(OwnedDataValue::Null);
+                // First write to a fresh path is the common case (`old_value`
+                // is None → singleton `Arc<Null>`). Only allocate a new Arc
+                // when an actual prior value exists.
+                let old_value_arc: Arc<OwnedDataValue> =
+                    match get_nested_value_parts(&message.context, parts) {
+                        Some(v) => Arc::new(v.clone()),
+                        None => null_arc(),
+                    };
                 let new_value_arc = Arc::new(transformed_value.clone());
 
                 changes.push(Change {
-                    path: Arc::from(mapping.path.as_str()),
-                    old_value: Arc::new(old_value),
+                    path: path_arc,
+                    old_value: old_value_arc,
                     new_value: Arc::clone(&new_value_arc),
                 });
 
-                let path = mapping.path.clone();
-                arena_ctx.apply_mutation(&mut message.context, &path, |ctx| {
-                    apply_mapping(ctx, &path, transformed_value);
+                arena_ctx.apply_mutation_parts(&mut message.context, parts, |ctx| {
+                    apply_mapping_parts(ctx, parts, &mapping.path, transformed_value);
                 });
             } else {
-                let path = mapping.path.clone();
-                arena_ctx.apply_mutation(&mut message.context, &path, |ctx| {
-                    apply_mapping(ctx, &path, transformed_value);
+                arena_ctx.apply_mutation_parts(&mut message.context, parts, |ctx| {
+                    apply_mapping_parts(ctx, parts, &mapping.path, transformed_value);
                 });
             }
             debug!("Successfully mapped to path: {}", mapping.path);
@@ -301,6 +342,24 @@ fn apply_mapping(context: &mut OwnedDataValue, path: &str, new_value: OwnedDataV
     }
 }
 
+/// Pre-split variant of `apply_mapping`. Consumes `parts` for the
+/// `set_nested_value` walk; `full_path` is only needed for the root-merge
+/// detection (which checks the exact, un-split string).
+fn apply_mapping_parts(
+    context: &mut OwnedDataValue,
+    parts: &[Arc<str>],
+    full_path: &str,
+    new_value: OwnedDataValue,
+) {
+    if parts.len() == 1
+        && matches!(full_path, "data" | "metadata" | "temp_data")
+    {
+        merge_root_field(context, full_path, new_value);
+    } else {
+        set_nested_value_parts(context, parts, new_value);
+    }
+}
+
 /// Merge `new_value` into the existing root-field slot named `path` on the
 /// context object. If both sides are objects, merge keys (new wins for
 /// collisions). Otherwise, overwrite.
@@ -407,6 +466,7 @@ mod tests {
                 path: "metadata.SwiftMT.message_type".to_string(),
                 logic: json!({"var": "data.SwiftMT.message_type"}),
                 logic_index: Some(0),
+                ..Default::default()
             }],
         };
 
@@ -443,16 +503,19 @@ mod tests {
                     path: "data.new_field".to_string(),
                     logic: json!({"var": "data.non_existent_field"}),
                     logic_index: Some(0),
+                    ..Default::default()
                 },
                 MapMapping {
                     path: "metadata.new_meta".to_string(),
                     logic: json!({"var": "data.another_non_existent"}),
                     logic_index: Some(1),
+                    ..Default::default()
                 },
                 MapMapping {
                     path: "data.actual_field".to_string(),
                     logic: json!("actual_value"),
                     logic_index: Some(2),
+                    ..Default::default()
                 },
             ],
         };
@@ -500,11 +563,13 @@ mod tests {
                     path: "data.full_name".to_string(),
                     logic: json!({"cat": [{"var": "data.first"}, " ", {"var": "data.last"}]}),
                     logic_index: None,
+                    ..Default::default()
                 },
                 MapMapping {
                     path: "data.greeting".to_string(),
                     logic: json!({"cat": ["Hello, ", {"var": "data.full_name"}]}),
                     logic_index: None,
+                    ..Default::default()
                 },
             ],
         };
@@ -551,16 +616,19 @@ mod tests {
                     path: "data.SwiftMT.message_type".to_string(),
                     logic: json!("103"),
                     logic_index: None,
+                    ..Default::default()
                 },
                 MapMapping {
                     path: "metadata.SwiftMT.message_type".to_string(),
                     logic: json!({"var": "data.SwiftMT.message_type"}),
                     logic_index: None,
+                    ..Default::default()
                 },
                 MapMapping {
                     path: "temp_data.original_msg_type".to_string(),
                     logic: json!({"var": "data.ISO20022_MX.document.TxInf.OrgnlGrpInf.OrgnlMsgNmId"}),
                     logic_index: None,
+                    ..Default::default()
                 },
             ],
         };
