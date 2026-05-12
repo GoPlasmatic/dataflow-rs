@@ -13,6 +13,7 @@
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::ArenaContext;
 use crate::engine::message::{Change, Message};
+use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::utils::{get_nested_value, set_nested_value};
 use datavalue::OwnedDataValue;
 use log::debug;
@@ -77,7 +78,7 @@ impl ParseConfig {
 pub fn execute_parse_json(
     message: &mut Message,
     config: &ParseConfig,
-) -> Result<(usize, Vec<Change>)> {
+) -> Result<(TaskOutcome, Vec<Change>)> {
     debug!(
         "ParseJson: Extracting from '{}' to 'data.{}'",
         config.source, config.target
@@ -123,7 +124,7 @@ pub fn execute_parse_json(
             config.target
         );
         return Ok((
-            200,
+            TaskOutcome::Success,
             vec![Change {
                 path: Arc::from(target_path),
                 old_value,
@@ -151,7 +152,7 @@ pub fn execute_parse_json(
         config.target
     );
 
-    Ok((200, Vec::new()))
+    Ok((TaskOutcome::Success, Vec::new()))
 }
 
 /// Same as `execute_parse_json` but also refreshes the supplied
@@ -161,7 +162,7 @@ pub(crate) fn execute_parse_json_in_arena(
     message: &mut Message,
     config: &ParseConfig,
     arena_ctx: &mut ArenaContext<'_>,
-) -> Result<(usize, Vec<Change>)> {
+) -> Result<(TaskOutcome, Vec<Change>)> {
     // Resolve the write target before calling execute_parse_json so we can
     // refresh the arena slot afterwards using the same path.
     let target_path = format!("data.{}", config.target);
@@ -180,7 +181,7 @@ pub(crate) fn execute_parse_json_in_arena(
 pub fn execute_parse_xml(
     message: &mut Message,
     config: &ParseConfig,
-) -> Result<(usize, Vec<Change>)> {
+) -> Result<(TaskOutcome, Vec<Change>)> {
     debug!(
         "ParseXml: Extracting from '{}' to 'data.{}'",
         config.source, config.target
@@ -214,7 +215,7 @@ pub fn execute_parse_xml(
     );
 
     Ok((
-        200,
+        TaskOutcome::Success,
         vec![Change {
             path: Arc::from(target_path),
             old_value,
@@ -273,8 +274,8 @@ mod tests {
         let result = execute_parse_json(&mut message, &config);
         assert!(result.is_ok());
 
-        let (status, changes) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, changes) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].path.as_ref(), "data.input");
 
@@ -295,8 +296,8 @@ mod tests {
         let result = execute_parse_json(&mut message, &config);
         assert!(result.is_ok());
 
-        let (status, _) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, _) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
         assert_eq!(message.data()["user_data"]["name"], dv(json!("Alice")));
     }
 
@@ -333,8 +334,8 @@ mod tests {
         let result = execute_parse_xml(&mut message, &config);
         assert!(result.is_ok());
 
-        let (status, _) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, _) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
 
         let parsed = &message.data()["parsed"];
         assert!(parsed.is_object());
@@ -396,8 +397,8 @@ mod tests {
         let result = execute_parse_json(&mut message, &config);
         assert!(result.is_ok());
 
-        let (status, _) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, _) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
 
         assert_eq!(message.data()["input"]["name"], dv(json!("John")));
         assert_eq!(message.data()["input"]["age"], dv(json!(30)));

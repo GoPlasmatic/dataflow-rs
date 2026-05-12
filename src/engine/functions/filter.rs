@@ -1,19 +1,13 @@
 use crate::engine::error::Result;
 use crate::engine::executor::{ArenaContext, with_arena};
 use crate::engine::message::{Change, Message};
+use crate::engine::task_outcome::TaskOutcome;
 use datalogic_rs::{Engine, Logic};
 use datavalue::DataValue;
 use log::{debug, info};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
-
-/// Status code: filter condition passed, continue normally
-pub const FILTER_STATUS_PASS: usize = 200;
-/// Status code: skip this task, continue with next task
-pub const FILTER_STATUS_SKIP: usize = 298;
-/// Status code: halt the current workflow, no further tasks execute
-pub const FILTER_STATUS_HALT: usize = 299;
 
 /// What to do when the filter condition evaluates to false
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -51,12 +45,13 @@ impl FilterConfig {
     /// through [`Self::execute_in_arena`] to reuse the cached arena form of
     /// `message.context` and avoid a redundant `to_arena` deep walk.
     ///
-    /// Returns status 200 if condition passes, 299 for halt, 298 for skip.
+    /// Returns `TaskOutcome::Success` when the condition passes,
+    /// `TaskOutcome::Halt` / `TaskOutcome::Skip` per `on_reject` otherwise.
     pub fn execute(
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         with_arena(|arena| {
             let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
             self.execute_in_arena(message, &mut arena_ctx, engine)
@@ -73,7 +68,7 @@ impl FilterConfig {
         _message: &mut Message,
         arena_ctx: &mut ArenaContext<'_>,
         engine: &Arc<Engine>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         let condition_met = match &self.compiled_condition {
             Some(compiled) => {
                 let ctx_av = arena_ctx.as_data_value();
@@ -94,16 +89,16 @@ impl FilterConfig {
 
         if condition_met {
             debug!("Filter: condition passed");
-            Ok((FILTER_STATUS_PASS, vec![]))
+            Ok((TaskOutcome::Success, vec![]))
         } else {
             match self.on_reject {
                 RejectAction::Halt => {
                     info!("Filter: condition not met, halting workflow");
-                    Ok((FILTER_STATUS_HALT, vec![]))
+                    Ok((TaskOutcome::Halt, vec![]))
                 }
                 RejectAction::Skip => {
                     debug!("Filter: condition not met, skipping");
-                    Ok((FILTER_STATUS_SKIP, vec![]))
+                    Ok((TaskOutcome::Skip, vec![]))
                 }
             }
         }

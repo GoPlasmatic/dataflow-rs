@@ -7,10 +7,11 @@ use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::executor::{
     ArenaContext, evaluate_condition, evaluate_condition_in_arena, with_arena,
 };
-use crate::engine::functions::{AsyncFunctionHandler, FILTER_STATUS_HALT, FILTER_STATUS_SKIP};
+use crate::engine::functions::BoxedFunctionHandler;
 use crate::engine::message::{AuditTrail, Change, Message};
 use crate::engine::task::Task;
 use crate::engine::task_executor::TaskExecutor;
+use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::trace::{ExecutionStep, ExecutionTrace};
 use crate::engine::utils::set_nested_value;
 use crate::engine::workflow::Workflow;
@@ -65,9 +66,7 @@ impl WorkflowExecutor {
     }
 
     /// Get a clone of the task_functions Arc for reuse in new engines
-    pub fn task_functions(
-        &self,
-    ) -> Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>> {
+    pub fn task_functions(&self) -> Arc<HashMap<String, BoxedFunctionHandler>> {
         self.task_executor.task_functions()
     }
 
@@ -336,7 +335,7 @@ impl WorkflowExecutor {
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'_>,
         map_snapshot_buf: Option<&mut Vec<Value>>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         debug!(
             "Executing sync task in arena: {} ({})",
             task.id,
@@ -364,7 +363,7 @@ impl WorkflowExecutor {
     /// each `AuditTrail` rather than reallocating from the `&str` form.
     fn handle_task_result(
         &self,
-        result: Result<(usize, Vec<Change>)>,
+        result: Result<(TaskOutcome, Vec<Change>)>,
         workflow_id_arc: &Arc<str>,
         task_id_arc: &Arc<str>,
         continue_on_error: bool,
@@ -374,12 +373,20 @@ impl WorkflowExecutor {
         let workflow_id: &str = workflow_id_arc;
         let task_id: &str = task_id_arc;
         match result {
-            Ok((status, changes)) => {
-                // Handle filter skip — no audit trail, just continue
-                if status == FILTER_STATUS_SKIP {
-                    debug!("Task {} signaled skip (filter gate)", task_id);
-                    return Ok(TaskControlFlow::Continue);
-                }
+            Ok((TaskOutcome::Skip, _)) => {
+                // No audit trail, no progress write — task has explicitly opted
+                // out (filter gate set to `Skip`).
+                debug!("Task {} signaled skip", task_id);
+                Ok(TaskControlFlow::Continue)
+            }
+            Ok((outcome, changes)) => {
+                // `Skip` already returned above; the remaining variants all
+                // record an audit entry. `audit_status()` is `Some` for
+                // Success/Status/Halt — expect is for documentation only.
+                let status = outcome
+                    .audit_status()
+                    .expect("Skip handled above; remaining variants emit audit status");
+                let halt = outcome.halts_workflow();
 
                 // Record audit trail. workflow_id_arc/task_id_arc are populated
                 // by LogicCompiler at engine construction; cloning them is a
@@ -389,7 +396,7 @@ impl WorkflowExecutor {
                     timestamp: now,
                     workflow_id: Arc::clone(workflow_id_arc),
                     task_id: Arc::clone(task_id_arc),
-                    status,
+                    status: status as usize,
                     changes,
                 });
 
@@ -420,12 +427,8 @@ impl WorkflowExecutor {
                     ]),
                 );
 
-                // Handle filter halt — audit trail is recorded, halt the workflow
-                if status == FILTER_STATUS_HALT {
-                    info!(
-                        "Task {} halted workflow {} (filter gate)",
-                        task_id, workflow_id
-                    );
+                if halt {
+                    info!("Task {} halted workflow {}", task_id, workflow_id);
                     return Ok(TaskControlFlow::HaltWorkflow);
                 }
 
@@ -501,9 +504,7 @@ mod tests {
         let mut workflow = Workflow::from_json(workflow_json).unwrap();
 
         // Compile the workflow condition
-        let workflows = compiler
-            .compile_workflows(vec![workflow.clone()])
-            .unwrap();
+        let workflows = compiler.compile_workflows(vec![workflow.clone()]).unwrap();
         if let Some(compiled_workflow) = workflows.iter().find(|w| w.id == "test_workflow") {
             workflow = compiled_workflow.clone();
         }
@@ -547,9 +548,7 @@ mod tests {
         let mut workflow = Workflow::from_json(workflow_json).unwrap();
 
         // Compile the workflow
-        let workflows = compiler
-            .compile_workflows(vec![workflow.clone()])
-            .unwrap();
+        let workflows = compiler.compile_workflows(vec![workflow.clone()]).unwrap();
         if let Some(compiled_workflow) = workflows.iter().find(|w| w.id == "test_workflow") {
             workflow = compiled_workflow.clone();
         }

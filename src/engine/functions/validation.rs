@@ -34,6 +34,7 @@
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::executor::{ArenaContext, with_arena};
 use crate::engine::message::{Change, Message};
+use crate::engine::task_outcome::TaskOutcome;
 use datalogic_rs::{Engine, Logic};
 use datavalue::DataValue;
 use log::{debug, error};
@@ -128,13 +129,14 @@ impl ValidationConfig {
     /// * `engine` - Datalogic v5 engine for evaluation
     ///
     /// # Returns
-    /// * `Ok((200, []))` - All rules passed, no changes made
-    /// * `Ok((400, []))` - One or more rules failed, errors added to message
+    /// * `Ok((TaskOutcome::Success, []))` — all rules passed
+    /// * `Ok((TaskOutcome::Status(400), []))` — one or more rules failed,
+    ///   `ErrorInfo` entries pushed onto `message.errors`
     pub fn execute(
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         // Default path: open the arena and convert context once for this
         // task call. When called from the workflow-level sync-stretch
         // executor (`execute_in_arena`), the conversion is reused across
@@ -154,7 +156,7 @@ impl ValidationConfig {
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'_>,
         engine: &Arc<Engine>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         let arena = arena_ctx.arena();
         let ctx_av = arena_ctx.as_data_value();
         self.run_rules(message, ctx_av, arena, engine)
@@ -168,7 +170,7 @@ impl ValidationConfig {
         ctx_av: DataValue<'_>,
         arena: &bumpalo::Bump,
         engine: &Arc<Engine>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
 
@@ -178,10 +180,7 @@ impl ValidationConfig {
             let compiled_logic = match &rule.compiled_logic {
                 Some(logic) => logic,
                 None => {
-                    error!(
-                        "Validation: Logic not compiled for rule at index {}",
-                        idx
-                    );
+                    error!("Validation: Logic not compiled for rule at index {}", idx);
                     validation_errors.push(ErrorInfo::simple_ref(
                         "COMPILATION_ERROR",
                         &format!("Logic not compiled for rule at index: {}", idx),
@@ -221,9 +220,9 @@ impl ValidationConfig {
 
         if !validation_errors.is_empty() {
             message.errors.extend(validation_errors);
-            Ok((400, changes))
+            Ok((TaskOutcome::Status(400), changes))
         } else {
-            Ok((200, changes))
+            Ok((TaskOutcome::Success, changes))
         }
     }
 }
@@ -348,8 +347,8 @@ mod tests {
         let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
-        let (status, changes) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, changes) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
         assert!(changes.is_empty());
         assert!(message.errors.is_empty());
     }
@@ -379,8 +378,8 @@ mod tests {
         let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
-        let (status, _changes) = result.unwrap();
-        assert_eq!(status, 400);
+        let (outcome, _changes) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Status(400));
         assert_eq!(message.errors.len(), 2);
 
         let error_messages: Vec<&str> = message.errors.iter().map(|e| e.message.as_str()).collect();
@@ -407,8 +406,8 @@ mod tests {
         let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
-        let (status, _) = result.unwrap();
-        assert_eq!(status, 400);
+        let (outcome, _) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Status(400));
         assert!(!message.errors.is_empty());
         assert!(message.errors[0].code == "COMPILATION_ERROR");
     }

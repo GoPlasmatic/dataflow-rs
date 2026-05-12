@@ -60,7 +60,9 @@ pub mod executor;
 pub mod functions;
 pub mod message;
 pub mod task;
+pub mod task_context;
 pub mod task_executor;
+pub mod task_outcome;
 pub mod trace;
 pub mod utils;
 pub mod workflow;
@@ -68,9 +70,14 @@ pub mod workflow_executor;
 
 // Re-export key types for easier access
 pub use error::{DataflowError, ErrorInfo, Result};
-pub use functions::{AsyncFunctionHandler, FunctionConfig};
+pub use functions::{
+    AsyncFunctionHandler, BoxedFunctionHandler, CompiledCustomInput, DynAsyncFunctionHandler,
+    FunctionConfig,
+};
 pub use message::Message;
 pub use task::Task;
+pub use task_context::TaskContext;
+pub use task_outcome::TaskOutcome;
 pub use trace::{ExecutionStep, ExecutionTrace, StepResult};
 pub use workflow::{Workflow, WorkflowStatus};
 
@@ -154,13 +161,13 @@ impl Engine {
     /// ```
     pub fn new(
         workflows: Vec<Workflow>,
-        custom_functions: Option<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
+        custom_functions: Option<HashMap<String, BoxedFunctionHandler>>,
     ) -> Result<Self> {
         // Compile workflows (sorted by priority at compile time). Each
         // workflow/task/config owns its own `Arc<Logic>` slots — no central
         // cache to return. Any compile failure bubbles up immediately.
         let compiler = LogicCompiler::new();
-        let sorted_workflows = compiler.compile_workflows(workflows)?;
+        let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
 
         let mut task_functions = custom_functions.unwrap_or_default();
@@ -170,15 +177,21 @@ impl Engine {
             task_functions.insert(name, handler);
         }
 
+        // Pre-parse `FunctionConfig::Custom { input }` JSON into the
+        // registered handler's typed `Self::Input`, caching the boxed value
+        // on the task. Misshapen Custom configs fail here, not on first
+        // message — matches the "fail loud at startup" stance for compiled
+        // logic. Built-in async configs (HttpCall/Enrich/PublishKafka) are
+        // already typed by serde and need no second pass.
+        precompile_custom_inputs(&mut sorted_workflows, &task_functions)?;
+
         let task_executor = Arc::new(TaskExecutor::new(
             Arc::new(task_functions),
             Arc::clone(&datalogic),
         ));
 
-        let workflow_executor = Arc::new(WorkflowExecutor::new(
-            task_executor,
-            Arc::clone(&datalogic),
-        ));
+        let workflow_executor =
+            Arc::new(WorkflowExecutor::new(task_executor, Arc::clone(&datalogic)));
 
         // Build channel index for O(1) channel-based routing
         let channel_index = build_channel_index(&sorted_workflows);
@@ -214,16 +227,19 @@ impl Engine {
 
         // Compile new workflows with a fresh datalogic engine instance.
         let compiler = LogicCompiler::new();
-        let sorted_workflows = compiler.compile_workflows(workflows)?;
+        let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
+
+        // Pre-parse Custom inputs against the existing handler registry —
+        // hot-reload still validates the new workflow set against the
+        // already-registered handlers.
+        precompile_custom_inputs(&mut sorted_workflows, &task_functions)?;
 
         // Rebuild the executor stack, reusing the existing function registry
         let task_executor = Arc::new(TaskExecutor::new(task_functions, Arc::clone(&datalogic)));
 
-        let workflow_executor = Arc::new(WorkflowExecutor::new(
-            task_executor,
-            Arc::clone(&datalogic),
-        ));
+        let workflow_executor =
+            Arc::new(WorkflowExecutor::new(task_executor, Arc::clone(&datalogic)));
 
         // Build channel index for O(1) channel-based routing
         let channel_index = build_channel_index(&sorted_workflows);
@@ -377,6 +393,41 @@ impl Engine {
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {
         &self.datalogic
     }
+}
+
+/// Walk every task in every workflow; for each `FunctionConfig::Custom`,
+/// look up the registered handler and ask it to parse the raw `input` JSON
+/// into its typed `Self::Input` (boxed as `dyn Any`). The cached result is
+/// stored on the task — dispatch then hands the handler a `&dyn Any` it
+/// downcasts in O(1).
+///
+/// Built-in async configs (`HttpCall`, `Enrich`, `PublishKafka`) are already
+/// parsed by serde's `untagged` representation on `FunctionConfig`; they
+/// need no second pass.
+///
+/// Returns `FunctionNotFound` when a Custom task references an unregistered
+/// handler — moves the failure from "first message" to engine construction.
+fn precompile_custom_inputs(
+    workflows: &mut [Workflow],
+    handlers: &HashMap<String, BoxedFunctionHandler>,
+) -> Result<()> {
+    for workflow in workflows {
+        for task in &mut workflow.tasks {
+            if let FunctionConfig::Custom {
+                name,
+                input,
+                compiled_input,
+            } = &mut task.function
+            {
+                let handler = handlers
+                    .get(name)
+                    .ok_or_else(|| DataflowError::FunctionNotFound(name.clone()))?;
+                let parsed = handler.parse_input_box(input)?;
+                *compiled_input = Some(CompiledCustomInput(Arc::from(parsed)));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Stamp the standard processing metadata (`processed_at`, `engine_version`,

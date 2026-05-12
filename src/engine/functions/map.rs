@@ -16,6 +16,7 @@
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::{ArenaContext, with_arena};
 use crate::engine::message::{Change, Message};
+use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::utils::{get_nested_value_parts, set_nested_value_parts};
 use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
@@ -109,7 +110,7 @@ impl MapConfig {
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         // Default path: open the arena, build a fresh ArenaContext from the
         // current `message.context`, run mappings. Used when no outer
         // workflow-level arena session is available.
@@ -134,7 +135,7 @@ impl MapConfig {
         arena_ctx: &mut ArenaContext<'_>,
         engine: &Arc<Engine>,
         mut trace_snapshots: Option<&mut Vec<Value>>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
 
@@ -158,10 +159,7 @@ impl MapConfig {
             let compiled_logic = match &mapping.compiled_logic {
                 Some(logic) => logic,
                 None => {
-                    error!(
-                        "Map: Logic not compiled for mapping to {}",
-                        mapping.path
-                    );
+                    error!("Map: Logic not compiled for mapping to {}", mapping.path);
                     errors_encountered = true;
                     continue;
                 }
@@ -232,8 +230,12 @@ impl MapConfig {
             debug!("Successfully mapped to path: {}", mapping.path);
         }
 
-        let status = if errors_encountered { 500 } else { 200 };
-        Ok((status, changes))
+        let outcome = if errors_encountered {
+            TaskOutcome::Status(500)
+        } else {
+            TaskOutcome::Success
+        };
+        Ok((outcome, changes))
     }
 }
 
@@ -376,8 +378,8 @@ mod tests {
         let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
-        let (status, changes) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, changes) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
         assert_eq!(changes.len(), 1);
 
         assert_eq!(
@@ -423,8 +425,8 @@ mod tests {
         let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
-        let (status, changes) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, changes) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].path.as_ref(), "data.actual_field");
 
@@ -480,8 +482,8 @@ mod tests {
         });
         assert!(result.is_ok());
 
-        let (status, changes) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, changes) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
         assert_eq!(changes.len(), 2);
         assert_eq!(context_snapshots.len(), 2);
 
@@ -532,8 +534,8 @@ mod tests {
         let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
-        let (status, changes) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, changes) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
         assert_eq!(changes.len(), 3);
 
         assert_eq!(

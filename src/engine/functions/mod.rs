@@ -1,11 +1,13 @@
-use crate::engine::error::Result;
-use crate::engine::message::{Change, Message};
+use crate::engine::error::{DataflowError, Result};
+use crate::engine::task_context::TaskContext;
+use crate::engine::task_outcome::TaskOutcome;
 use async_trait::async_trait;
-use datalogic_rs::Engine;
-use std::sync::Arc;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+use std::any::Any;
 
 pub mod config;
-pub use config::FunctionConfig;
+pub use config::{CompiledCustomInput, FunctionConfig};
 
 pub mod validation;
 pub use validation::{ValidationConfig, ValidationRule};
@@ -20,7 +22,7 @@ pub mod publish;
 pub use publish::PublishConfig;
 
 pub mod filter;
-pub use filter::{FILTER_STATUS_HALT, FILTER_STATUS_SKIP, FilterConfig, RejectAction};
+pub use filter::{FilterConfig, RejectAction};
 
 pub mod log;
 pub use log::{LogConfig, LogLevel};
@@ -33,48 +35,139 @@ pub mod builtins {
     use super::*;
 
     // Get all built-in functions with their standard names
-    pub fn get_all_functions() -> Vec<(String, Box<dyn AsyncFunctionHandler + Send + Sync>)> {
+    pub fn get_all_functions() -> Vec<(String, BoxedFunctionHandler)> {
         // Map and Validate are now internal to the Engine for better performance
-        // They can directly access compiled logic cache
+        // They can directly access compiled logic cache.
         // Add other built-in functions here as needed (HTTP, File I/O, etc.)
         vec![]
     }
 }
 
-/// Async interface for task functions that operate on messages
+/// Async interface for task functions that operate on messages.
 ///
-/// ## Usage
+/// Implement this trait for custom processing logic. The trait associates a
+/// typed `Input` deserialized from the task's `FunctionConfig` so that
+/// handlers receive their config already parsed — no `match
+/// FunctionConfig::Custom { input, .. }` boilerplate, no per-call
+/// `serde_json::from_value` cost in the hot path. The engine deserializes the
+/// `Custom.input` JSON exactly once at `Engine::new()` time and caches the
+/// typed value alongside the task; mismatched config shapes therefore fail
+/// at startup rather than on first message.
 ///
-/// Implement this trait for custom processing logic.
-/// The function receives:
-/// - Mutable access to the message being processed (no cloning needed!)
-/// - Pre-parsed function configuration
-/// - Shared `datalogic_rs::Engine` for JSONLogic evaluation
+/// Handlers mutate the message via [`TaskContext`] — its `set` family records
+/// changes on the audit trail automatically when `message.capture_changes`
+/// is enabled, so handlers don't have to hand-build [`crate::engine::message::Change`]
+/// entries.
 ///
-/// ## Performance Note
+/// ## Example
 ///
-/// This trait works directly with `&mut Message` without any cloning.
-/// The message is passed by mutable reference throughout the async execution,
-/// ensuring zero-copy operation for optimal performance.
+/// ```rust,no_run
+/// use async_trait::async_trait;
+/// use dataflow_rs::{
+///     AsyncFunctionHandler, Result, TaskContext, TaskOutcome,
+/// };
+/// use datavalue::OwnedDataValue;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct StatsInput {
+///     data_path: String,
+///     output_path: String,
+/// }
+///
+/// struct StatisticsFunction;
+///
+/// #[async_trait]
+/// impl AsyncFunctionHandler for StatisticsFunction {
+///     type Input = StatsInput;
+///
+///     async fn execute(
+///         &self,
+///         ctx: &mut TaskContext<'_>,
+///         input: &StatsInput,
+///     ) -> Result<TaskOutcome> {
+///         let count = ctx.data()
+///             .get(input.data_path.as_str())
+///             .and_then(|v| v.as_array())
+///             .map(|a| a.len())
+///             .unwrap_or(0);
+///         ctx.set(
+///             &format!("data.{}.count", input.output_path),
+///             OwnedDataValue::from(&serde_json::json!(count)),
+///         );
+///         Ok(TaskOutcome::Success)
+///     }
+/// }
+/// ```
 #[async_trait]
-pub trait AsyncFunctionHandler: Send + Sync {
-    /// Execute the function on a message with pre-parsed configuration
+pub trait AsyncFunctionHandler: Send + Sync + 'static {
+    /// Typed configuration shape for this handler. Use
+    /// `serde_json::Value` for handlers that take freeform JSON.
+    type Input: DeserializeOwned + Send + Sync + 'static;
+
+    /// Parse the raw `FunctionConfig::Custom { input }` JSON into
+    /// `Self::Input`. Default impl uses `serde_json::from_value`. Override
+    /// only if you need custom validation beyond what serde provides.
     ///
-    /// # Arguments
-    ///
-    /// * `message` - The message to process (mutable reference, no cloning)
-    /// * `config` - Pre-parsed function configuration
-    /// * `engine` - Shared datalogic v5 `Engine` (`Send + Sync`) for ad-hoc
-    ///   JSONLogic evaluation inside the handler. Custom handlers that do not
-    ///   evaluate JSONLogic can simply ignore this argument.
-    ///
-    /// # Returns
-    ///
-    /// * `Result<(usize, Vec<Change>)>` - Result containing status code and changes, or error
-    async fn execute(
-        &self,
-        message: &mut Message,
-        config: &FunctionConfig,
-        engine: Arc<Engine>,
-    ) -> Result<(usize, Vec<Change>)>;
+    /// Built-in async function variants (`HttpCall`, `Enrich`,
+    /// `PublishKafka`) bypass this method — their typed configs are already
+    /// parsed by `serde(untagged)` on `FunctionConfig` and dispatched
+    /// directly to the registered handler.
+    fn parse_input(input: &Value) -> Result<Self::Input> {
+        serde_json::from_value(input.clone()).map_err(DataflowError::from_serde)
+    }
+
+    /// Execute the handler. The `ctx` accumulates audit-trail changes
+    /// pushed via its `set` family; the workflow executor folds them into
+    /// the audit trail when this method returns.
+    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Self::Input) -> Result<TaskOutcome>;
 }
+
+/// Object-safe sibling of [`AsyncFunctionHandler`]. Engine-internal — users
+/// should not implement this directly; the blanket impl below derives it
+/// for any `AsyncFunctionHandler`. Exposed (rather than `pub(crate)`) only
+/// because [`BoxedFunctionHandler`] mentions it in its public type alias.
+#[doc(hidden)]
+#[async_trait]
+pub trait DynAsyncFunctionHandler: Send + Sync + 'static {
+    /// Pre-parse the raw JSON input into the handler's typed shape and box
+    /// it as `dyn Any`. Called once per task at `Engine::new()` time.
+    fn parse_input_box(&self, input: &Value) -> Result<Box<dyn Any + Send + Sync>>;
+
+    /// Execute against an already-parsed typed input. The implementation
+    /// downcasts `input` to `<Self as AsyncFunctionHandler>::Input`; the
+    /// downcast is infallible in the engine's call paths because
+    /// `parse_input_box` produced the very same type.
+    async fn dyn_execute(
+        &self,
+        ctx: &mut TaskContext<'_>,
+        input: &(dyn Any + Send + Sync),
+    ) -> Result<TaskOutcome>;
+}
+
+#[async_trait]
+impl<F: AsyncFunctionHandler> DynAsyncFunctionHandler for F {
+    fn parse_input_box(&self, input: &Value) -> Result<Box<dyn Any + Send + Sync>> {
+        let typed = <F as AsyncFunctionHandler>::parse_input(input)?;
+        Ok(Box::new(typed))
+    }
+
+    async fn dyn_execute(
+        &self,
+        ctx: &mut TaskContext<'_>,
+        input: &(dyn Any + Send + Sync),
+    ) -> Result<TaskOutcome> {
+        let typed = input.downcast_ref::<F::Input>().ok_or_else(|| {
+            DataflowError::Validation(format!(
+                "Handler input type mismatch (expected {})",
+                std::any::type_name::<F::Input>()
+            ))
+        })?;
+        AsyncFunctionHandler::execute(self, ctx, typed).await
+    }
+}
+
+/// Boxed handler stored in the engine's function registry. Users construct
+/// these with `Box::new(MyHandler)` — the blanket impl above auto-coerces
+/// any `AsyncFunctionHandler` into `Box<dyn DynAsyncFunctionHandler + Send + Sync>`.
+pub type BoxedFunctionHandler = Box<dyn DynAsyncFunctionHandler + Send + Sync>;

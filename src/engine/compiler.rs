@@ -131,9 +131,9 @@ impl LogicCompiler {
     /// surfaced as `DataflowError::LogicEvaluation` with the supplied
     /// context label for debugging.
     fn compile(&self, logic: &Value, ctx_label: &str) -> Result<Arc<Logic>> {
-        self.engine.compile_arc(logic).map_err(|e| {
-            DataflowError::LogicEvaluation(format!("{}: {}", ctx_label, e))
-        })
+        self.engine
+            .compile_arc(logic)
+            .map_err(|e| DataflowError::LogicEvaluation(format!("{}: {}", ctx_label, e)))
     }
 
     /// Compile map transformation logic

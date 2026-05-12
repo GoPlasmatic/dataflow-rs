@@ -1,189 +1,128 @@
 //! # Custom Function Example
 //!
-//! This example demonstrates how to create and use custom async functions
-//! with the dataflow-rs engine.
-//!
-//! The workflow follows the recommended pattern:
-//! 1. parse_json - Load payload into data context
-//! 2. Custom functions - Process the data
-//! 3. validation - Validate results
+//! Demonstrates the v3 typed-handler API: each `AsyncFunctionHandler`
+//! declares its `Input` shape with serde, the engine deserializes the
+//! `FunctionConfig::Custom { input }` JSON exactly once at `Engine::new()`
+//! time, and the handler reads/writes through `TaskContext` (which records
+//! audit-trail changes automatically). No more `match FunctionConfig::Custom
+//! { input, .. } => ... | _ => Err(...)` boilerplate.
 //!
 //! Run with: `cargo run --example custom_function`
 
 use async_trait::async_trait;
-use dataflow_rs::Result;
 use dataflow_rs::{
-    Engine, Workflow,
-    engine::{
-        AsyncFunctionHandler, FunctionConfig,
-        error::DataflowError,
-        message::{Change, Message},
-        utils::set_nested_value,
-    },
+    AsyncFunctionHandler, BoxedFunctionHandler, Engine, Result, TaskContext, TaskOutcome, Workflow,
 };
-use datalogic_rs::Engine as DatalogicEngine;
 use datavalue::OwnedDataValue;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::Arc;
 
-/// Custom async function that calculates statistics from numeric data
+/// Typed input for the statistics function: which `data` array to summarize
+/// and where to write the resulting object. Misshapen JSON config now fails
+/// at engine construction, not on first message.
+#[derive(Debug, Deserialize)]
+pub struct StatisticsInput {
+    /// Dot-path inside `data` to the array of numbers.
+    #[serde(default = "default_data_path")]
+    data_path: String,
+    /// Dot-path inside `data` for the result object.
+    #[serde(default = "default_output_path")]
+    output_path: String,
+}
+
+fn default_data_path() -> String {
+    "numbers".to_string()
+}
+fn default_output_path() -> String {
+    "statistics".to_string()
+}
+
+/// Custom async function that calculates statistics from numeric data.
 pub struct StatisticsFunction;
 
 #[async_trait]
 impl AsyncFunctionHandler for StatisticsFunction {
+    type Input = StatisticsInput;
+
     async fn execute(
         &self,
-        message: &mut Message,
-        config: &FunctionConfig,
-        _engine: Arc<DatalogicEngine>,
-    ) -> Result<(usize, Vec<Change>)> {
-        // Extract the raw input from config
-        let input = match config {
-            FunctionConfig::Custom { input, .. } => input,
-            _ => {
-                return Err(DataflowError::Validation(
-                    "Invalid configuration type for statistics function".to_string(),
-                ));
-            }
+        ctx: &mut TaskContext<'_>,
+        input: &StatisticsInput,
+    ) -> Result<TaskOutcome> {
+        let numbers: Vec<f64> = match ctx.data().get(input.data_path.as_str()) {
+            Some(v) => v
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
+                .unwrap_or_default(),
+            None => Vec::new(),
         };
-
-        // Extract the data path to analyze
-        let data_path = input
-            .get("data_path")
-            .and_then(Value::as_str)
-            .unwrap_or("numbers");
-
-        // Extract the output path where to store results
-        let output_path = input
-            .get("output_path")
-            .and_then(Value::as_str)
-            .unwrap_or("statistics");
-
-        // Get the numbers from the specified path
-        let numbers = self.extract_numbers_from_path(message, data_path)?;
 
         if numbers.is_empty() {
-            return Err(DataflowError::Validation(
-                "No numeric data found to analyze".to_string(),
-            ));
+            return Ok(TaskOutcome::Status(204));
         }
 
-        // Calculate statistics
-        let stats = self.calculate_statistics(&numbers);
-
-        // Store the results in the message
-        self.set_value_at_path(message, output_path, stats.clone())?;
-
-        // Return success with changes
-        let stats_owned = OwnedDataValue::from(&stats);
-        Ok((
-            200,
-            vec![Change {
-                path: Arc::from(output_path),
-                old_value: OwnedDataValue::Null,
-                new_value: stats_owned,
-            }],
-        ))
-    }
-}
-
-impl Default for StatisticsFunction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StatisticsFunction {
-    pub fn new() -> Self {
-        Self
-    }
-
-    fn extract_numbers_from_path(&self, message: &Message, path: &str) -> Result<Vec<f64>> {
-        use dataflow_rs::engine::utils::get_nested_value;
-        let target = get_nested_value(message.data(), path);
-        match target.and_then(|v| v.as_array()) {
-            Some(arr) => Ok(arr.iter().filter_map(|v| v.as_f64()).collect()),
-            None => Err(DataflowError::Validation(format!(
-                "Expected array at path '{}', found {:?}",
-                path, target
-            ))),
-        }
-    }
-
-    fn calculate_statistics(&self, numbers: &[f64]) -> Value {
-        let count = numbers.len() as f64;
-        let sum: f64 = numbers.iter().sum();
-        let mean = sum / count;
-
-        let mut sorted = numbers.to_vec();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-        let median = if sorted.len().is_multiple_of(2) {
-            let mid = sorted.len() / 2;
-            (sorted[mid - 1] + sorted[mid]) / 2.0
-        } else {
-            sorted[sorted.len() / 2]
-        };
-
-        let variance: f64 = numbers.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / count;
-        let std_dev = variance.sqrt();
-
-        json!({
-            "count": count,
-            "sum": sum,
-            "mean": mean,
-            "median": median,
-            "min": sorted[0],
-            "max": sorted[sorted.len() - 1],
-            "std_dev": std_dev,
-            "variance": variance
-        })
-    }
-
-    fn set_value_at_path(&self, message: &mut Message, path: &str, value: Value) -> Result<()> {
-        // Use the engine's helper; it understands the OwnedDataValue shape and
-        // auto-creates intermediate objects/arrays along the path.
-        set_nested_value(
-            &mut message.context,
-            &format!("data.{}", path),
-            OwnedDataValue::from(&value),
+        let stats = compute(&numbers);
+        ctx.set(
+            &format!("data.{}", input.output_path),
+            OwnedDataValue::from(&stats),
         );
-        Ok(())
+        Ok(TaskOutcome::Success)
     }
 }
 
-/// Custom async function that enriches data with external information
-/// This demonstrates a native async handler
+fn compute(numbers: &[f64]) -> Value {
+    let count = numbers.len() as f64;
+    let sum: f64 = numbers.iter().sum();
+    let mean = sum / count;
+
+    let mut sorted = numbers.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let median = if sorted.len().is_multiple_of(2) {
+        let mid = sorted.len() / 2;
+        (sorted[mid - 1] + sorted[mid]) / 2.0
+    } else {
+        sorted[sorted.len() / 2]
+    };
+
+    let variance: f64 = numbers.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / count;
+
+    json!({
+        "count": count,
+        "sum": sum,
+        "mean": mean,
+        "median": median,
+        "min": sorted[0],
+        "max": sorted[sorted.len() - 1],
+        "std_dev": variance.sqrt(),
+        "variance": variance,
+    })
+}
+
+/// Typed input for the async enrichment function.
+#[derive(Debug, Deserialize)]
+pub struct EnrichInput {
+    /// Field on `data` whose string value identifies the user to enrich.
+    #[serde(default = "default_user_id_path")]
+    user_id_path: String,
+}
+
+fn default_user_id_path() -> String {
+    "user_id".to_string()
+}
+
+/// Custom async function that enriches data with external information.
 pub struct AsyncDataEnrichmentFunction;
 
 #[async_trait]
 impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
-    async fn execute(
-        &self,
-        message: &mut Message,
-        config: &FunctionConfig,
-        _engine: Arc<DatalogicEngine>,
-    ) -> Result<(usize, Vec<Change>)> {
-        // Extract the raw input from config
-        let input = match config {
-            FunctionConfig::Custom { input, .. } => input,
-            _ => {
-                return Err(DataflowError::Validation(
-                    "Invalid configuration type for enrichment function".to_string(),
-                ));
-            }
-        };
+    type Input = EnrichInput;
 
-        // Get user ID to enrich
-        let user_id = input
-            .get("user_id_path")
-            .and_then(Value::as_str)
-            .unwrap_or("user_id");
-
-        let user_id_value = message
+    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &EnrichInput) -> Result<TaskOutcome> {
+        let user_id = ctx
             .data()
-            .get(user_id)
+            .get(input.user_id_path.as_str())
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
@@ -191,37 +130,19 @@ impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
         // Simulate async API call
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        // Create enriched data (simulated)
-        let enriched_data = json!({
+        let enriched = json!({
             "user_profile": {
-                "id": user_id_value,
-                "name": format!("User {}", user_id_value),
-                "email": format!("{}@example.com", user_id_value),
+                "id": user_id,
+                "name": format!("User {}", user_id),
+                "email": format!("{}@example.com", user_id),
                 "created_at": "2024-01-15T10:30:00Z",
-                "preferences": {
-                    "theme": "dark",
-                    "notifications": true
-                }
+                "preferences": { "theme": "dark", "notifications": true }
             },
-            "enrichment_timestamp": chrono::Utc::now().to_rfc3339()
+            "enrichment_timestamp": chrono::Utc::now().to_rfc3339(),
         });
-        let enriched_owned = OwnedDataValue::from(&enriched_data);
 
-        // Add enriched data to message
-        set_nested_value(
-            &mut message.context,
-            "data.enriched",
-            enriched_owned.clone(),
-        );
-
-        Ok((
-            200,
-            vec![Change {
-                path: Arc::from("enriched"),
-                old_value: OwnedDataValue::Null,
-                new_value: enriched_owned,
-            }],
-        ))
+        ctx.set("data.enriched", OwnedDataValue::from(&enriched));
+        Ok(TaskOutcome::Success)
     }
 }
 
@@ -232,7 +153,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Custom Function Example");
     println!("==========================\n");
 
-    // Define workflow with parse_json as first task, followed by custom functions
     let workflow_json = r#"
     {
         "id": "statistics_workflow",
@@ -241,31 +161,20 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             {
                 "id": "load_payload",
                 "name": "Load Payload",
-                "description": "Parse JSON payload into data context",
                 "function": {
                     "name": "parse_json",
-                    "input": {
-                        "source": "payload",
-                        "target": "input"
-                    }
+                    "input": { "source": "payload", "target": "input" }
                 }
             },
             {
                 "id": "prepare_data",
                 "name": "Prepare Data",
-                "description": "Extract fields from parsed input",
                 "function": {
                     "name": "map",
                     "input": {
                         "mappings": [
-                            {
-                                "path": "data.numbers",
-                                "logic": { "var": "data.input.measurements" }
-                            },
-                            {
-                                "path": "data.user_id",
-                                "logic": { "var": "data.input.user_id" }
-                            }
+                            { "path": "data.numbers", "logic": { "var": "data.input.measurements" } },
+                            { "path": "data.user_id", "logic": { "var": "data.input.user_id" } }
                         ]
                     }
                 }
@@ -275,10 +184,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 "name": "Calculate Statistics",
                 "function": {
                     "name": "statistics",
-                    "input": {
-                        "data_path": "numbers",
-                        "output_path": "statistics"
-                    }
+                    "input": { "data_path": "numbers", "output_path": "statistics" }
                 }
             },
             {
@@ -286,9 +192,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 "name": "Enrich User Data",
                 "function": {
                     "name": "enrich_data",
-                    "input": {
-                        "user_id_path": "user_id"
-                    }
+                    "input": { "user_id_path": "user_id" }
                 }
             },
             {
@@ -298,14 +202,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     "name": "validation",
                     "input": {
                         "rules": [
-                            {
-                                "logic": { ">": [{ "var": "data.statistics.count" }, 0] },
-                                "message": "Statistics must have at least one data point"
-                            },
-                            {
-                                "logic": { "!!": { "var": "data.enriched.user_profile" } },
-                                "message": "User profile enrichment is required"
-                            }
+                            { "logic": { ">": [{ "var": "data.statistics.count" }, 0] },
+                              "message": "Statistics must have at least one data point" },
+                            { "logic": { "!!": { "var": "data.enriched.user_profile" } },
+                              "message": "User profile enrichment is required" }
                         ]
                     }
                 }
@@ -316,38 +216,30 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let workflow = Workflow::from_json(workflow_json)?;
 
-    // Prepare custom functions
-    let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
-        HashMap::new();
-
-    // Add statistics function
-    custom_functions.insert(
-        "statistics".to_string(),
-        Box::new(StatisticsFunction::new()),
-    );
-
-    // Add native async function
+    // Register typed handlers. The HashMap holds `BoxedFunctionHandler` (=
+    // `Box<dyn DynAsyncFunctionHandler + Send + Sync>`); `Box::new(MyHandler)`
+    // auto-coerces via the engine's blanket impl.
+    let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
+    custom_functions.insert("statistics".to_string(), Box::new(StatisticsFunction));
     custom_functions.insert(
         "enrich_data".to_string(),
         Box::new(AsyncDataEnrichmentFunction),
     );
 
-    // Create engine with custom functions
-    let engine = Engine::new(vec![workflow], Some(custom_functions)).unwrap();
+    // Engine::new pre-parses each Custom task's `input` JSON into the
+    // matching handler's typed `Input` — config-shape errors fail here.
+    let engine = Engine::new(vec![workflow], Some(custom_functions))?;
 
-    // Create sample data
     let sample_data = json!({
         "measurements": [10.5, 15.2, 8.7, 22.1, 18.9, 12.3, 25.6, 14.8, 19.4, 16.7],
         "user_id": "user_123",
         "timestamp": "2024-01-15T10:30:00Z"
     });
 
-    // Create and process message
-    let mut message = Message::from_value(&sample_data);
+    let mut message = dataflow_rs::Message::from_value(&sample_data);
 
     println!("Processing message with custom functions...\n");
 
-    // Process the message through our custom workflow
     match engine.process_message(&mut message).await {
         Ok(_) => {
             println!("Message processed successfully!\n");

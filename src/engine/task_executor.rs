@@ -1,29 +1,36 @@
 //! # Task Execution Module
 //!
-//! Dispatches a single `Task` to its function implementation. Built-in
-//! function variants of `FunctionConfig` are dispatched directly to the
-//! config's `execute(...)` (sync) or to the registered async handler under
-//! the matching name (async).
+//! Dispatches a single `Task` to its function implementation. Built-in sync
+//! variants of `FunctionConfig` are dispatched in `workflow_executor`'s sync
+//! stretch via [`FunctionConfig::try_execute_in_arena`]; this module owns
+//! the async path — `HttpCall`, `Enrich`, `PublishKafka`, and `Custom` —
+//! routed to the matching registered handler.
 
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::functions::{AsyncFunctionHandler, FunctionConfig};
+use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig};
 use crate::engine::message::{Change, Message};
 use crate::engine::task::Task;
+use crate::engine::task_context::TaskContext;
+use crate::engine::task_outcome::TaskOutcome;
 use datalogic_rs::Engine;
 use log::{debug, error};
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Handles the execution of tasks with their associated functions
+/// Handles the execution of tasks with their associated functions.
 ///
 /// The `TaskExecutor` is responsible for:
-/// - Dispatching built-in functions (map, validation, …) directly to their config
 /// - Routing async functions (http_call, enrich, publish_kafka, custom) to
-///   the matching registered `AsyncFunctionHandler`
+///   the matching registered handler via [`crate::engine::functions::DynAsyncFunctionHandler`]
 /// - Owning the function registry
+///
+/// Sync built-ins are *not* routed through `execute` — `workflow_executor`
+/// calls [`FunctionConfig::try_execute_in_arena`] inside its sync stretch
+/// for those, sharing one arena across consecutive sync tasks.
 pub struct TaskExecutor {
     /// Registry of async function handlers
-    task_functions: Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
+    task_functions: Arc<HashMap<String, BoxedFunctionHandler>>,
     /// Shared datalogic Engine (Send + Sync; Arc-shared across tasks)
     engine: Arc<Engine>,
 }
@@ -31,7 +38,7 @@ pub struct TaskExecutor {
 impl TaskExecutor {
     /// Create a new TaskExecutor
     pub fn new(
-        task_functions: Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
+        task_functions: Arc<HashMap<String, BoxedFunctionHandler>>,
         engine: Arc<Engine>,
     ) -> Self {
         Self {
@@ -40,13 +47,14 @@ impl TaskExecutor {
         }
     }
 
-    /// Execute a single task. Built-in variants run on the calling thread;
-    /// async variants are awaited.
+    /// Execute a single task. Sync built-ins reach here only when called from
+    /// outside the workflow executor's sync-stretch path — they fall back to
+    /// their `execute()` methods (which open a fresh thread-local arena).
     pub async fn execute(
         &self,
         task: &Task,
         message: &mut Message,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         debug!(
             "Executing task: {} with function: {:?}",
             task.id,
@@ -54,6 +62,8 @@ impl TaskExecutor {
         );
 
         match &task.function {
+            // Sync built-ins — only hit here when called outside the workflow
+            // sync stretch (test harness, direct `TaskExecutor::execute`).
             FunctionConfig::Map { input, .. } => input.execute(message, &self.engine),
             FunctionConfig::Validation { input, .. } => input.execute(message, &self.engine),
             FunctionConfig::ParseJson { input, .. } => {
@@ -70,40 +80,67 @@ impl TaskExecutor {
             }
             FunctionConfig::Filter { input, .. } => input.execute(message, &self.engine),
             FunctionConfig::Log { input, .. } => input.execute(message, &self.engine),
-            FunctionConfig::HttpCall { .. } => {
-                self.execute_custom_function("http_call", message, &task.function)
-                    .await
+            // Async / user-registered handlers
+            FunctionConfig::HttpCall { input, .. } => {
+                self.dispatch_handler("http_call", message, input).await
             }
-            FunctionConfig::Enrich { .. } => {
-                self.execute_custom_function("enrich", message, &task.function)
-                    .await
+            FunctionConfig::Enrich { input, .. } => {
+                self.dispatch_handler("enrich", message, input).await
             }
-            FunctionConfig::PublishKafka { .. } => {
-                self.execute_custom_function("publish_kafka", message, &task.function)
-                    .await
+            FunctionConfig::PublishKafka { input, .. } => {
+                self.dispatch_handler("publish_kafka", message, input).await
             }
-            FunctionConfig::Custom { name, .. } => {
-                self.execute_custom_function(name, message, &task.function)
+            FunctionConfig::Custom {
+                name,
+                compiled_input,
+                ..
+            } => {
+                let any_input = compiled_input.as_ref().ok_or_else(|| {
+                    DataflowError::Validation(format!(
+                        "Custom function '{}' has no precompiled input — \
+                         was the workflow built outside Engine::new?",
+                        name
+                    ))
+                })?;
+                self.dispatch_handler_any(name, message, any_input.as_any())
                     .await
             }
         }
     }
 
-    /// Execute a custom function handler
-    async fn execute_custom_function(
+    /// Generic-Input flavour: takes any `T: Any + Send + Sync`, hands it to
+    /// the registered handler as `&dyn Any`. Used by the built-in async
+    /// dispatch (`HttpCallConfig`, `EnrichConfig`, `PublishKafkaConfig`)
+    /// where the typed config is already on the `FunctionConfig` enum.
+    async fn dispatch_handler<T>(
         &self,
         name: &str,
         message: &mut Message,
-        config: &FunctionConfig,
-    ) -> Result<(usize, Vec<Change>)> {
-        if let Some(handler) = self.task_functions.get(name) {
-            handler
-                .execute(message, config, Arc::clone(&self.engine))
-                .await
-        } else {
+        input: &T,
+    ) -> Result<(TaskOutcome, Vec<Change>)>
+    where
+        T: Any + Send + Sync,
+    {
+        let any_input: &(dyn Any + Send + Sync) = input;
+        self.dispatch_handler_any(name, message, any_input).await
+    }
+
+    /// Inner dispatch: build a `TaskContext`, invoke the handler, drain the
+    /// accumulated `Change` buffer.
+    async fn dispatch_handler_any(
+        &self,
+        name: &str,
+        message: &mut Message,
+        any_input: &(dyn Any + Send + Sync),
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
+        let handler = self.task_functions.get(name).ok_or_else(|| {
             error!("Function handler not found: {}", name);
-            Err(DataflowError::FunctionNotFound(name.to_string()))
-        }
+            DataflowError::FunctionNotFound(name.to_string())
+        })?;
+        let mut ctx = TaskContext::new(message, &self.engine);
+        let outcome = handler.dyn_execute(&mut ctx, any_input).await?;
+        let changes = ctx.into_changes();
+        Ok((outcome, changes))
     }
 
     /// Check if a function handler exists
@@ -116,9 +153,7 @@ impl TaskExecutor {
     }
 
     /// Get a clone of the task_functions Arc for reuse in new engines
-    pub fn task_functions(
-        &self,
-    ) -> Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>> {
+    pub fn task_functions(&self) -> Arc<HashMap<String, BoxedFunctionHandler>> {
         Arc::clone(&self.task_functions)
     }
 
@@ -131,6 +166,7 @@ impl TaskExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::AsyncFunctionHandler;
     use crate::engine::compiler::LogicCompiler;
 
     #[test]
@@ -149,11 +185,8 @@ mod tests {
 
     #[test]
     fn test_custom_function_count() {
-        let mut custom_functions = HashMap::new();
-        custom_functions.insert(
-            "custom_test".to_string(),
-            Box::new(MockAsyncFunction) as Box<dyn AsyncFunctionHandler + Send + Sync>,
-        );
+        let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
+        custom_functions.insert("custom_test".to_string(), Box::new(MockAsyncFunction));
 
         let engine = LogicCompiler::new().into_engine();
         let task_executor = TaskExecutor::new(Arc::new(custom_functions), engine);
@@ -166,13 +199,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl AsyncFunctionHandler for MockAsyncFunction {
+        type Input = serde_json::Value;
+
         async fn execute(
             &self,
-            _message: &mut Message,
-            _config: &FunctionConfig,
-            _engine: Arc<Engine>,
-        ) -> Result<(usize, Vec<Change>)> {
-            Ok((200, vec![]))
+            _ctx: &mut TaskContext<'_>,
+            _input: &serde_json::Value,
+        ) -> Result<TaskOutcome> {
+            Ok(TaskOutcome::Success)
         }
     }
 }

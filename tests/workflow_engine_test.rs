@@ -1,11 +1,10 @@
 use async_trait::async_trait;
-use dataflow_rs::engine::functions::{AsyncFunctionHandler, FunctionConfig};
-use dataflow_rs::engine::message::{Change, Message};
+use dataflow_rs::engine::functions::{AsyncFunctionHandler, BoxedFunctionHandler, FunctionConfig};
+use dataflow_rs::engine::message::Message;
 use dataflow_rs::engine::utils::set_nested_value;
-use dataflow_rs::{Engine, Result, Task, Workflow};
-use datalogic_rs::Engine as DatalogicEngine;
+use dataflow_rs::{Engine, Result, Task, TaskContext, TaskOutcome, Workflow};
 use datavalue::OwnedDataValue;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -20,14 +19,11 @@ struct LoggingTask;
 
 #[async_trait]
 impl AsyncFunctionHandler for LoggingTask {
-    async fn execute(
-        &self,
-        message: &mut Message,
-        _config: &FunctionConfig,
-        _engine: Arc<DatalogicEngine>,
-    ) -> Result<(usize, Vec<Change>)> {
-        println!("Executed task for message: {}", &message.id);
-        Ok((200, vec![]))
+    type Input = Value;
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        println!("Executed task for message: {}", &ctx.message().id);
+        Ok(TaskOutcome::Success)
     }
 }
 
@@ -36,37 +32,34 @@ struct AsyncLoggingTask;
 
 #[async_trait]
 impl AsyncFunctionHandler for AsyncLoggingTask {
-    async fn execute(
-        &self,
-        message: &mut Message,
-        _config: &FunctionConfig,
-        _engine: Arc<DatalogicEngine>,
-    ) -> Result<(usize, Vec<Change>)> {
-        println!("Executed async task for message: {}", &message.id);
+    type Input = Value;
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        println!("Executed async task for message: {}", &ctx.message().id);
         // Simulate async work
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-        Ok((200, vec![]))
+        Ok(TaskOutcome::Success)
     }
 }
 
 #[tokio::test]
 async fn test_async_task_execution() {
-    // This test only tests the task implementation
+    // Drive the handler directly via `TaskContext` — exercises the trait
+    // surface without going through `Engine::process_message`.
     let task = LoggingTask;
 
-    // Create a dummy message
     let mut message = Message::from_value(&json!({}));
+    let datalogic = Arc::new(
+        datalogic_rs::Engine::builder()
+            .with_templating(true)
+            .build(),
+    );
 
-    // Execute the task directly
-    let config = FunctionConfig::Custom {
-        name: "log".to_string(),
-        input: json!({}),
-    };
-    let engine = Arc::new(DatalogicEngine::builder().with_templating(true).build());
-    let result = task.execute(&mut message, &config, engine).await;
+    let mut ctx = TaskContext::new(&mut message, &datalogic);
+    let outcome = task.execute(&mut ctx, &json!({})).await;
 
-    // Verify the execution was successful
-    assert!(result.is_ok(), "Task execution should succeed");
+    assert!(outcome.is_ok(), "Task execution should succeed");
+    assert_eq!(outcome.unwrap(), TaskOutcome::Success);
 }
 
 #[tokio::test]
@@ -88,6 +81,7 @@ async fn test_workflow_execution() {
             function: FunctionConfig::Custom {
                 name: "log".to_string(),
                 input: json!({}),
+                compiled_input: None,
             },
         }],
         condition: json!(true),
@@ -97,8 +91,7 @@ async fn test_workflow_execution() {
     };
 
     // Create custom functions using AsyncFunctionHandler
-    let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
-        HashMap::new();
+    let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
 
     // Add async logging handler
     custom_functions.insert("log".to_string(), Box::new(LoggingTask));
@@ -151,6 +144,7 @@ async fn test_async_workflow_execution() {
             function: FunctionConfig::Custom {
                 name: "async_log".to_string(),
                 input: json!({}),
+                compiled_input: None,
             },
         }],
         condition: json!(true),
@@ -160,8 +154,7 @@ async fn test_async_workflow_execution() {
     };
 
     // Create custom async functions
-    let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> =
-        HashMap::new();
+    let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
     custom_functions.insert("async_log".to_string(), Box::new(AsyncLoggingTask));
 
     // Create engine with the workflow and custom function

@@ -162,36 +162,51 @@ cargo run --example complete_workflow   # Parse → Transform → Validate pipel
 
 ## Custom Functions
 
-Extend the engine with your own async actions:
+Extend the engine with your own async actions. Each handler declares a typed
+`Input` (deserialized once at engine init), receives a `TaskContext` that
+records audit-trail changes automatically, and returns a `TaskOutcome`:
 
 ```rust
 use async_trait::async_trait;
-use dataflow_rs::engine::{
-    AsyncFunctionHandler, FunctionConfig,
-    error::Result, message::{Change, Message}
+use dataflow_rs::{
+    AsyncFunctionHandler, BoxedFunctionHandler, Engine, Result,
+    TaskContext, TaskOutcome,
 };
-use datalogic_rs::Engine as DatalogicEngine;
+use datavalue::OwnedDataValue;
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::Arc;
+
+/// Typed config for the handler — fails at `Engine::new()` if malformed,
+/// not on first message.
+#[derive(Deserialize)]
+pub struct NotifyInput {
+    pub channel: String,
+}
 
 pub struct NotifyManager;
 
 #[async_trait]
 impl AsyncFunctionHandler for NotifyManager {
+    type Input = NotifyInput;
+
     async fn execute(
         &self,
-        message: &mut Message,
-        config: &FunctionConfig,
-        engine: Arc<DatalogicEngine>,
-    ) -> Result<(usize, Vec<Change>)> {
+        ctx: &mut TaskContext<'_>,
+        input: &NotifyInput,
+    ) -> Result<TaskOutcome> {
         // Your custom async logic here (HTTP calls, DB writes, etc.)
-        Ok((200, vec![]))
+        ctx.set(
+            "data.notified_channel",
+            OwnedDataValue::from(&json!(input.channel)),
+        );
+        Ok(TaskOutcome::Success)
     }
 }
 
-// Register when creating the engine:
-let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> = HashMap::new();
+// Register when creating the engine. `Box::new(NotifyManager)` auto-coerces
+// to `BoxedFunctionHandler` via the engine's blanket impl.
+let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
 custom_functions.insert("notify_manager".to_string(), Box::new(NotifyManager));
 
 let engine = Engine::new(workflows, Some(custom_functions));

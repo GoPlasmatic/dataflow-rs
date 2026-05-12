@@ -1,6 +1,7 @@
 use crate::engine::error::Result;
 use crate::engine::executor::{ArenaContext, with_arena};
 use crate::engine::message::{Change, Message};
+use crate::engine::task_outcome::TaskOutcome;
 use datalogic_rs::{Engine, Logic};
 use datavalue::DataValue;
 use log::{debug, error, info, trace, warn};
@@ -59,7 +60,7 @@ impl LogConfig {
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         with_arena(|arena| {
             let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
             self.execute_in_arena(message, &mut arena_ctx, engine)
@@ -74,7 +75,7 @@ impl LogConfig {
         _message: &mut Message,
         arena_ctx: &mut ArenaContext<'_>,
         engine: &Arc<Engine>,
-    ) -> Result<(usize, Vec<Change>)> {
+    ) -> Result<(TaskOutcome, Vec<Change>)> {
         let arena = arena_ctx.arena();
         let ctx_av = arena_ctx.as_data_value();
 
@@ -121,6 +122,6 @@ impl LogConfig {
         }
 
         // Log function never modifies message, never fails
-        Ok((200, vec![]))
+        Ok((TaskOutcome::Success, vec![]))
     }
 }

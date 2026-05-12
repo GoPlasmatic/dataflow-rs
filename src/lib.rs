@@ -22,6 +22,8 @@ Rules are defined declaratively in JSON and compiled once at startup for zero-ov
 | **Action** | **Task** | An individual processing step that performs a function on a message |
 
 * **AsyncFunctionHandler**: A trait implemented by action handlers to define custom async processing logic
+* **TaskContext**: Per-call context handed to handlers — typed data accessors, audit-trail-aware setters
+* **TaskOutcome**: Return value of a handler — `Success`, `Status(code)`, `Skip`, or `Halt`
 * **Message**: The data structure that flows through the engine, containing payload, metadata, and processing results
 
 ## Built-in Functions
@@ -122,69 +124,60 @@ async fn main() -> Result<()> {
 
 ## Extending with Custom Functions
 
-You can extend the engine with your own custom function handlers:
+Implement `AsyncFunctionHandler` with a typed `Input` so the engine deserializes
+your config once at startup; handlers then receive typed input and a
+`TaskContext` that records audit-trail changes automatically.
 
 ```rust,no_run
-use dataflow_rs::{Engine, AsyncFunctionHandler, Result, Workflow};
-use dataflow_rs::engine::{FunctionConfig, message::{Change, Message}, error::DataflowError};
-use datalogic_rs::Engine as DatalogicEngine;
+use dataflow_rs::{
+    AsyncFunctionHandler, BoxedFunctionHandler, Engine, Result, TaskContext, TaskOutcome, Workflow,
+};
 use datavalue::OwnedDataValue;
-use serde_json::{json, Value};
+use serde::Deserialize;
+use serde_json::json;
 use std::collections::HashMap;
-use std::sync::Arc;
 use async_trait::async_trait;
 
-struct CustomFunction;
+#[derive(Deserialize)]
+struct StatsInput {
+    /// Path inside `data` whose array of numbers to summarize.
+    source: String,
+    /// Path inside `data` to write the result to.
+    target: String,
+}
+
+struct Statistics;
 
 #[async_trait]
-impl AsyncFunctionHandler for CustomFunction {
+impl AsyncFunctionHandler for Statistics {
+    type Input = StatsInput;
+
     async fn execute(
         &self,
-        message: &mut Message,
-        config: &FunctionConfig,
-        engine: Arc<DatalogicEngine>,
-    ) -> Result<(usize, Vec<Change>)> {
-        // Implement your custom logic here
+        ctx: &mut TaskContext<'_>,
+        input: &StatsInput,
+    ) -> Result<TaskOutcome> {
+        let count = ctx.data()
+            .get(input.source.as_str())
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.len())
+            .unwrap_or(0);
 
-        // Extract the custom configuration from config
-        let input = match config {
-            FunctionConfig::Custom { input, .. } => input,
-            _ => return Err(DataflowError::Validation("Invalid configuration type".to_string())),
-        };
-
-        // Validate input
-        let required_field = input.get("field")
-            .ok_or_else(|| DataflowError::Validation("Missing required field".to_string()))?
-            .as_str()
-            .ok_or_else(|| DataflowError::Validation("Field must be a string".to_string()))?;
-
-        // Record changes for audit trail
-        let changes = vec![
-            Change {
-                path: Arc::from("data.custom_field"),
-                old_value: OwnedDataValue::Null,
-                new_value: OwnedDataValue::from(&json!("custom value")),
-            }
-        ];
-
-        // Return success code (200) and changes
-        Ok((200, changes))
+        ctx.set(
+            &format!("data.{}", input.target),
+            OwnedDataValue::from(&json!({ "count": count })),
+        );
+        Ok(TaskOutcome::Success)
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Create custom functions
-    let mut custom_functions = HashMap::new();
-    custom_functions.insert(
-        "custom".to_string(),
-        Box::new(CustomFunction) as Box<dyn AsyncFunctionHandler + Send + Sync>
-    );
+    let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
+    custom_functions.insert("statistics".to_string(), Box::new(Statistics));
 
-    // Create engine with workflows and custom functions
     let engine = Engine::new(vec![/* workflows */], Some(custom_functions))?;
-
-    // Now it can be used in workflows...
+    // ...
     Ok(())
 }
 ```
@@ -195,10 +188,13 @@ pub mod engine;
 // Re-export all public APIs for easier access
 pub use engine::error::{DataflowError, ErrorInfo, Result};
 pub use engine::functions::{
-    AsyncFunctionHandler, EnrichConfig, FilterConfig, FunctionConfig, HttpCallConfig, LogConfig,
-    MapConfig, MapMapping, PublishKafkaConfig, ValidationConfig, ValidationRule,
+    AsyncFunctionHandler, BoxedFunctionHandler, EnrichConfig, FilterConfig, FunctionConfig,
+    HttpCallConfig, LogConfig, MapConfig, MapMapping, PublishKafkaConfig, ValidationConfig,
+    ValidationRule,
 };
 pub use engine::message::{AuditTrail, Change, Message};
+pub use engine::task_context::TaskContext;
+pub use engine::task_outcome::TaskOutcome;
 pub use engine::trace::{ExecutionStep, ExecutionTrace, StepResult};
 pub use engine::{Engine, Task, Workflow, WorkflowStatus};
 

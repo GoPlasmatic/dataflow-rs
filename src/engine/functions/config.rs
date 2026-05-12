@@ -10,10 +10,38 @@ use crate::engine::functions::parse::{
 use crate::engine::functions::publish::{PublishConfig, execute_publish_json, execute_publish_xml};
 use crate::engine::functions::validation::ValidationConfig;
 use crate::engine::message::{Change, Message};
+use crate::engine::task_outcome::TaskOutcome;
 use datalogic_rs::Engine;
 use serde::Deserialize;
 use serde_json::Value;
+use std::any::Any;
 use std::sync::Arc;
+
+/// Pre-parsed typed input for a `FunctionConfig::Custom` task. Populated by
+/// the engine at `Engine::new()` time by calling the registered
+/// `AsyncFunctionHandler::parse_input` for the named function. Cached as
+/// `Arc<dyn Any>` so the dispatch path can hand it to the handler with a
+/// single `downcast_ref` (O(1)) and zero per-message deserialization cost.
+///
+/// The wrapper exists because `dyn Any` does not implement `Debug`, which
+/// would otherwise prevent `#[derive(Debug)]` on `FunctionConfig`.
+#[derive(Clone)]
+pub struct CompiledCustomInput(pub Arc<dyn Any + Send + Sync>);
+
+impl CompiledCustomInput {
+    /// Borrow the inner value as `&(dyn Any + Send + Sync)` for handoff to
+    /// `DynAsyncFunctionHandler::dyn_execute`.
+    #[inline]
+    pub fn as_any(&self) -> &(dyn Any + Send + Sync) {
+        &*self.0
+    }
+}
+
+impl std::fmt::Debug for CompiledCustomInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CompiledCustomInput(<opaque>)")
+    }
+}
 
 /// Enum containing all possible function configurations
 /// Uses internally tagged representation for clean deserialization
@@ -64,10 +92,17 @@ pub enum FunctionConfig {
         name: PublishKafkaName,
         input: PublishKafkaConfig,
     },
-    /// For custom or unknown functions, store raw input
+    /// For custom or unknown functions, store raw input and a slot for the
+    /// pre-parsed typed value populated at engine construction time.
     Custom {
         name: String,
         input: Value,
+        /// Pre-parsed `<RegisteredHandler as AsyncFunctionHandler>::Input`,
+        /// boxed as `dyn Any`. Set by the engine after handler registration;
+        /// `None` until then. Skipped by serde — round-tripping a workflow
+        /// through JSON re-parses on the next `Engine::new()` call.
+        #[serde(skip)]
+        compiled_input: Option<CompiledCustomInput>,
     },
 }
 
@@ -196,14 +231,11 @@ impl FunctionConfig {
         arena_ctx: &mut ArenaContext<'_>,
         engine: &Arc<Engine>,
         map_snapshot_buf: Option<&mut Vec<Value>>,
-    ) -> Option<Result<(usize, Vec<Change>)>> {
+    ) -> Option<Result<(TaskOutcome, Vec<Change>)>> {
         match self {
-            FunctionConfig::Map { input, .. } => Some(input.execute_in_arena(
-                message,
-                arena_ctx,
-                engine,
-                map_snapshot_buf,
-            )),
+            FunctionConfig::Map { input, .. } => {
+                Some(input.execute_in_arena(message, arena_ctx, engine, map_snapshot_buf))
+            }
             FunctionConfig::Validation { input, .. } => {
                 Some(input.execute_in_arena(message, arena_ctx, engine))
             }

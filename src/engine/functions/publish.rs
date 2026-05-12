@@ -7,6 +7,7 @@
 
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::message::{Change, Message};
+use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::utils::{get_nested_value, set_nested_value};
 use datavalue::OwnedDataValue;
 use log::debug;
@@ -101,7 +102,7 @@ impl PublishConfig {
 pub fn execute_publish_json(
     message: &mut Message,
     config: &PublishConfig,
-) -> Result<(usize, Vec<Change>)> {
+) -> Result<(TaskOutcome, Vec<Change>)> {
     debug!(
         "PublishJson: Serializing 'data.{}' to 'data.{}'",
         config.source, config.target
@@ -136,7 +137,7 @@ pub fn execute_publish_json(
     set_nested_value(&mut message.context, &target_path, new_value.clone());
 
     Ok((
-        200,
+        TaskOutcome::Success,
         vec![Change {
             path: Arc::from(target_path),
             old_value,
@@ -151,7 +152,7 @@ pub fn execute_publish_json(
 pub fn execute_publish_xml(
     message: &mut Message,
     config: &PublishConfig,
-) -> Result<(usize, Vec<Change>)> {
+) -> Result<(TaskOutcome, Vec<Change>)> {
     debug!(
         "PublishXml: Serializing 'data.{}' to 'data.{}'",
         config.source, config.target
@@ -178,7 +179,7 @@ pub fn execute_publish_xml(
     set_nested_value(&mut message.context, &target_path, new_value.clone());
 
     Ok((
-        200,
+        TaskOutcome::Success,
         vec![Change {
             path: Arc::from(target_path),
             old_value,
@@ -371,8 +372,8 @@ mod tests {
         let result = execute_publish_json(&mut message, &config);
         assert!(result.is_ok());
 
-        let (status, changes) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, changes) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
         assert_eq!(changes.len(), 1);
 
         let json_string = message.data()["user_json"].as_str().unwrap();
@@ -426,8 +427,8 @@ mod tests {
         let result = execute_publish_xml(&mut message, &config);
         assert!(result.is_ok());
 
-        let (status, _) = result.unwrap();
-        assert_eq!(status, 200);
+        let (outcome, _) = result.unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
 
         let xml_string = message.data()["user_xml"].as_str().unwrap();
         assert!(xml_string.contains("<user>"));
