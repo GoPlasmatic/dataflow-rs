@@ -40,6 +40,10 @@
 - [Audit Trails](./advanced/audit-trails.md)
 - [Performance](./advanced/performance.md)
 
+# Migration
+
+- [v3 → v4](./migrating-to-v4.md)
+
 # Reference
 
 - [API Reference](./api/reference.md)
