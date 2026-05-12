@@ -284,11 +284,29 @@ impl Engine {
     /// 2. Delegates workflow execution to the WorkflowExecutor
     /// 3. Updates message metadata
     ///
+    /// # Error contract
+    ///
+    /// Errors flow through two complementary channels:
+    /// - `message.errors()` — **always** contains every error encountered
+    ///   (validation failures, task panics, 5xx-status outcomes, workflow
+    ///   wrappers). Callers that want a uniform view inspect this list.
+    /// - `Result::Err` — signals **only** that the engine stopped before
+    ///   processing every workflow. Callers that want fail-fast match on
+    ///   this. The error pushed to `message.errors` for the same failure
+    ///   carries the workflow context (id) that the bare `Err` doesn't.
+    ///
+    /// In particular: a workflow with `continue_on_error: true` records its
+    /// errors to `message.errors` and returns `Ok(())` here. A workflow
+    /// with `continue_on_error: false` records to `message.errors` *and*
+    /// returns `Result::Err` (which short-circuits the rest of this call).
+    ///
     /// # Arguments
     /// * `message` - The message to process through workflows
     ///
     /// # Returns
-    /// * `Result<()>` - Ok(()) if processing succeeded, Err if a fatal error occurred
+    /// * `Result<()>` — `Ok(())` if every workflow completed (each may have
+    ///   pushed errors to `message.errors`); `Err(e)` if the engine
+    ///   stopped early on a hard failure.
     pub async fn process_message(&self, message: &mut Message) -> Result<()> {
         // Capture a single timestamp for the entire process_message call. The
         // workflow executor reads it back via Message metadata if it needs to

@@ -26,6 +26,32 @@ impl AsyncFunctionHandler for LoggingTask {
     }
 }
 
+// Handler that always returns Err — used by the single-error-channel
+// regression tests below.
+struct FailingTask;
+
+#[async_trait]
+impl AsyncFunctionHandler for FailingTask {
+    type Input = Value;
+
+    async fn execute(&self, _ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        Err(dataflow_rs::DataflowError::Task("boom".to_string()))
+    }
+}
+
+// Handler that returns a 500 status — used by the single-error-channel
+// regression tests below.
+struct FivehundredTask;
+
+#[async_trait]
+impl AsyncFunctionHandler for FivehundredTask {
+    type Input = Value;
+
+    async fn execute(&self, _ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        Ok(TaskOutcome::Status(500))
+    }
+}
+
 // An async task implementation
 struct AsyncLoggingTask;
 
@@ -1574,4 +1600,115 @@ async fn log_filter_chained_with_map_share_one_arena() {
         task_ids,
         vec!["set_amount", "gate", "double_amount", "log_result"]
     );
+}
+
+// =============================================================================
+// Single error channel — regression coverage
+// =============================================================================
+//
+// `process_message` now always pushes errors to `message.errors()`, even when
+// it returns `Result::Err`. The `Err` only signals "the engine stopped early";
+// the `errors` list is the unified channel.
+
+#[tokio::test]
+async fn task_err_with_continue_on_error_false_pushes_wrapper_to_errors() {
+    let workflow = Workflow {
+        id: "fail_workflow".to_string(),
+        id_arc: std::sync::Arc::from("fail_workflow"),
+        name: "Fail Workflow".to_string(),
+        priority: 0,
+        description: None,
+        tasks: vec![Task {
+            id: "boom".to_string(),
+            id_arc: std::sync::Arc::from("boom"),
+            name: "Boom".to_string(),
+            description: None,
+            condition: json!(true),
+            compiled_condition: None,
+            continue_on_error: false,
+            function: FunctionConfig::Custom {
+                name: "fail".to_string(),
+                input: json!({}),
+                compiled_input: None,
+            },
+        }],
+        condition: json!(true),
+        compiled_condition: None,
+        continue_on_error: false,
+        ..Default::default()
+    };
+
+    let engine = Engine::builder()
+        .with_workflow(workflow)
+        .register("fail", FailingTask)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    let result = engine.process_message(&mut message).await;
+
+    // `Err` channel — engine stopped early.
+    assert!(result.is_err(), "process_message should bubble the error");
+
+    // `message.errors` channel — both the task error and the workflow
+    // wrapper are recorded, so callers reading `errors()` see the failure
+    // even without inspecting `Result`.
+    let codes: Vec<&str> = message.errors().iter().map(|e| e.code.as_str()).collect();
+    assert!(
+        codes.contains(&"TASK_ERROR"),
+        "expected TASK_ERROR in {codes:?}"
+    );
+    assert!(
+        codes.contains(&"WORKFLOW_ERROR"),
+        "expected WORKFLOW_ERROR in {codes:?}"
+    );
+}
+
+#[tokio::test]
+async fn task_status_500_pushes_status_error_to_message() {
+    let workflow = Workflow {
+        id: "five_hundred".to_string(),
+        id_arc: std::sync::Arc::from("five_hundred"),
+        name: "Five Hundred".to_string(),
+        priority: 0,
+        description: None,
+        tasks: vec![Task {
+            id: "task_500".to_string(),
+            id_arc: std::sync::Arc::from("task_500"),
+            name: "Task 500".to_string(),
+            description: None,
+            condition: json!(true),
+            compiled_condition: None,
+            // Continue past the 500 so we can assert on the *push*
+            // independently of the `Result::Err` path.
+            continue_on_error: true,
+            function: FunctionConfig::Custom {
+                name: "five_hundred".to_string(),
+                input: json!({}),
+                compiled_input: None,
+            },
+        }],
+        condition: json!(true),
+        compiled_condition: None,
+        continue_on_error: true,
+        ..Default::default()
+    };
+
+    let engine = Engine::builder()
+        .with_workflow(workflow)
+        .register("five_hundred", FivehundredTask)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    let result = engine.process_message(&mut message).await;
+    assert!(result.is_ok(), "continue_on_error keeps the Result Ok");
+
+    let codes: Vec<&str> = message.errors().iter().map(|e| e.code.as_str()).collect();
+    assert!(
+        codes.contains(&"TASK_STATUS_ERROR"),
+        "expected TASK_STATUS_ERROR in {codes:?}"
+    );
+    assert_eq!(message.audit_trail().len(), 1);
+    assert_eq!(message.audit_trail()[0].status, 500);
 }

@@ -138,11 +138,12 @@ impl WorkflowExecutor {
                 info!("Successfully completed workflow: {}", workflow.id);
                 Ok(true)
             }
-            Err(e) if workflow.continue_on_error => {
-                warn!(
-                    "Workflow {} encountered error but continuing: {:?}",
-                    workflow.id, e
-                );
+            Err(e) => {
+                // Single-channel contract: every error appears in
+                // `message.errors`. The `Result::Err` return only signals to
+                // the caller that we stopped before processing further
+                // workflows. The workflow-level wrapper records workflow
+                // context that the underlying task error doesn't carry.
                 message.errors.push(
                     ErrorInfo::builder(
                         "WORKFLOW_ERROR",
@@ -151,11 +152,17 @@ impl WorkflowExecutor {
                     .workflow_id(&workflow.id)
                     .build(),
                 );
-                Ok(true)
-            }
-            Err(e) => {
-                error!("Workflow {} failed: {:?}", workflow.id, e);
-                Err(e)
+
+                if workflow.continue_on_error {
+                    warn!(
+                        "Workflow {} encountered error but continuing: {:?}",
+                        workflow.id, e
+                    );
+                    Ok(true)
+                } else {
+                    error!("Workflow {} failed: {:?}", workflow.id, e);
+                    Err(e)
+                }
             }
         }
     }
@@ -437,6 +444,19 @@ impl WorkflowExecutor {
                     warn!("Task {} returned client error status: {}", task_id, status);
                 } else if status >= 500 {
                     error!("Task {} returned server error status: {}", task_id, status);
+                    // Single-channel contract: surface 5xx outcomes through
+                    // `message.errors` as well as the audit trail, so callers
+                    // that scan `errors()` see a 5xx-status task even when
+                    // the workflow continues past it.
+                    message.errors.push(
+                        ErrorInfo::builder(
+                            "TASK_STATUS_ERROR",
+                            format!("Task {} returned status {}", task_id, status),
+                        )
+                        .workflow_id(workflow_id)
+                        .task_id(task_id)
+                        .build(),
+                    );
                     if !continue_on_error {
                         return Err(DataflowError::Task(format!(
                             "Task {} failed with status {}",
