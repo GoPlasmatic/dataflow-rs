@@ -24,9 +24,11 @@ pub enum WorkflowStatus {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Workflow {
     pub id: String,
-    /// `Arc<str>` mirror of `id`, populated by `LogicCompiler::compile_workflows`.
-    /// Cloning this is a refcount bump; per-message `AuditTrail` entries reuse
-    /// it instead of allocating a fresh `Arc<str>` from `&id` each time.
+    /// Engine-internal: `Arc<str>` mirror of `id`, populated by
+    /// `LogicCompiler::compile_workflows`. Cloning is a refcount bump; per-message
+    /// `AuditTrail` entries reuse it instead of allocating from `&id` each time.
+    /// Not part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub id_arc: Arc<str>,
     pub name: String,
@@ -35,9 +37,10 @@ pub struct Workflow {
     pub description: Option<String>,
     #[serde(default = "default_condition")]
     pub condition: Value,
-    /// Pre-compiled JSONLogic for `condition`, populated by `LogicCompiler`.
-    /// `None` is treated as "no condition / always run" by the executor —
-    /// the same semantics as the previous `condition_index: None`.
+    /// Engine-internal: pre-compiled JSONLogic for `condition`, populated by
+    /// `LogicCompiler`. `None` is treated as "no condition / always run" by
+    /// the executor. Not part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub compiled_condition: Option<Arc<Logic>>,
     pub tasks: Vec<Task>,

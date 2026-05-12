@@ -15,6 +15,12 @@ Dataflow-rs comes with built-in action functions for common data processing task
 | `publish_json` | Serialize data to JSON string | Yes |
 | `publish_xml` | Serialize data to XML string | Yes |
 
+In addition, dataflow-rs ships **typed config schemas** for three common
+service-layer integrations — `http_call`, `enrich`, and `publish_kafka`.
+These are not pre-registered: register an `AsyncFunctionHandler` under the
+matching name and the engine handles config validation and JSONLogic
+pre-compilation for you. See [Integrations](./integrations.md).
+
 ## Common Patterns
 
 ### Complete Pipeline: Parse → Transform → Validate → Publish
@@ -158,3 +164,4 @@ For operations beyond built-in functions, implement the `AsyncFunctionHandler` t
 - [Filter Function](./filter.md) - Pipeline control flow (halt/skip)
 - [Log Function](./log.md) - Structured logging
 - [Publish Functions](./publish.md) - JSON and XML serialization
+- [Integrations](./integrations.md) - Typed config for `http_call`, `enrich`, `publish_kafka`

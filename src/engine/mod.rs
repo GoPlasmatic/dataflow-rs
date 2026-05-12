@@ -177,12 +177,7 @@ impl Engine {
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
 
-        let mut task_functions = custom_functions;
-
-        // Add built-in async function handlers
-        for (name, handler) in functions::builtins::get_all_functions() {
-            task_functions.insert(name, handler);
-        }
+        let task_functions = custom_functions;
 
         // Pre-parse `FunctionConfig::Custom { input }` JSON into the
         // registered handler's typed `Self::Input`, caching the boxed value
@@ -542,13 +537,34 @@ fn precompile_custom_inputs(
             {
                 let handler = handlers
                     .get(name)
-                    .ok_or_else(|| DataflowError::FunctionNotFound(name.clone()))?;
+                    .ok_or_else(|| function_not_found_error(name, handlers))?;
                 let parsed = handler.parse_input_box(input)?;
                 *compiled_input = Some(CompiledCustomInput(Arc::from(parsed)));
             }
         }
     }
     Ok(())
+}
+
+/// Build a `FunctionNotFound` error that lists both the registered custom
+/// handlers and the names of built-in functions, so a user with a typo
+/// (e.g. `htttp_call`) can immediately spot the intended name.
+fn function_not_found_error(
+    name: &str,
+    handlers: &HashMap<String, BoxedFunctionHandler>,
+) -> DataflowError {
+    use crate::engine::functions::config::BUILTIN_FUNCTION_NAMES;
+    let mut registered: Vec<&str> = handlers.keys().map(String::as_str).collect();
+    registered.sort_unstable();
+    let registered_part = if registered.is_empty() {
+        String::from("none")
+    } else {
+        registered.join(", ")
+    };
+    DataflowError::FunctionNotFound(format!(
+        "{name} (registered handlers: {registered_part}; built-ins: {})",
+        BUILTIN_FUNCTION_NAMES.join(", ")
+    ))
 }
 
 /// Stamp the standard processing metadata (`processed_at`, `engine_version`,

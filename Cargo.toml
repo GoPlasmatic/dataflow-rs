@@ -2,6 +2,7 @@
 name = "dataflow-rs"
 version = "3.0.0"
 edition = "2024"
+rust-version = "1.85"
 exclude = [".DS_Store", "/target", ".vscode"]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
 license = "Apache-2.0"

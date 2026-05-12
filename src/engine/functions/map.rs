@@ -43,21 +43,27 @@ pub struct MapMapping {
     /// shape the compiler accepts; not runtime data).
     pub logic: Value,
 
-    /// Pre-compiled JSONLogic, populated by `LogicCompiler`. `None` is logged
-    /// as an error during execute (the compiler should always populate it).
+    /// Engine-internal: pre-compiled JSONLogic, populated by `LogicCompiler`.
+    /// `None` is logged as an error during execute (the compiler should always
+    /// populate it). Not part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub compiled_logic: Option<Arc<Logic>>,
 
-    /// `Arc<str>` mirror of `path`, populated by `LogicCompiler`. Cloned
-    /// (refcount bump) into `Change.path` per audit emission so the hot path
-    /// avoids `Arc::from(&path)` allocations.
+    /// Engine-internal: `Arc<str>` mirror of `path`, populated by
+    /// `LogicCompiler`. Cloned (refcount bump) into `Change.path` per audit
+    /// emission so the hot path avoids `Arc::from(&path)` allocations.
+    /// Not part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub path_arc: Arc<str>,
 
-    /// Pre-split path segments (with the `#`-prefix escape already applied,
-    /// matching `utils::strip_hash_prefix`). Populated by `LogicCompiler`.
-    /// The hot path consumes this directly instead of running `path.split('.')`
-    /// — saves ~3% on `CharSearcher::next_match` per the flamegraph.
+    /// Engine-internal: pre-split path segments (with the `#`-prefix escape
+    /// already applied, matching `utils::strip_hash_prefix`). Populated by
+    /// `LogicCompiler`. The hot path consumes this directly instead of running
+    /// `path.split('.')` — saves ~3% on `CharSearcher::next_match` per the
+    /// flamegraph. Not part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub path_parts: Arc<[Arc<str>]>,
 }

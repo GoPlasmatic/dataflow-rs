@@ -44,7 +44,7 @@ Both naming conventions are fully supported — use whichever fits your mental m
 
 ```toml
 [dependencies]
-dataflow-rs = "2.1"
+dataflow-rs = "3.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1.0"
 ```
@@ -101,6 +101,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.process_message(&mut message).await?;
 
     println!("Discount: {}", message.data()["order"]["discount"]); // 150
+    Ok(())
+}
+```
+
+### Handling Errors — Two Channels
+
+`process_message` reports errors through **two complementary channels**:
+
+- `Result::Err` signals that the engine **stopped early** (a task failed without
+  `continue_on_error`, or an engine-level error occurred).
+- `message.errors()` **always** contains every error encountered, including
+  errors from tasks that ran with `continue_on_error = true` and so didn't
+  short-circuit the workflow.
+
+A short-circuit `?` will surface only the first kind. For full coverage:
+
+```rust
+use dataflow_rs::{Engine, Workflow};
+use dataflow_rs::engine::message::Message;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(r#"{ ... }"#)?)
+        .build()?;
+
+    let mut message = Message::from_value(&json!({"order": {"total": 1500}}));
+
+    // `continue_on_error` tasks may record errors here without returning Err.
+    if let Err(e) = engine.process_message(&mut message).await {
+        eprintln!("engine halted: {e}");
+    }
+
+    // Always iterate `message.errors()` to see everything that went wrong.
+    for err in message.errors() {
+        eprintln!(
+            "[{workflow_id}/{task_id}] {msg}",
+            workflow_id = err.workflow_id.as_deref().unwrap_or("-"),
+            task_id = err.task_id.as_deref().unwrap_or("-"),
+            msg = err.message,
+        );
+    }
+
     Ok(())
 }
 ```

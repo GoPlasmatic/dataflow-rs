@@ -36,8 +36,11 @@ pub struct Task {
     /// Unique identifier for the task within the workflow.
     pub id: String,
 
-    /// `Arc<str>` mirror of `id`, populated by `LogicCompiler::compile_workflows`.
-    /// Audit-trail emission clones this instead of allocating a fresh `Arc<str>`.
+    /// Engine-internal: `Arc<str>` mirror of `id`, populated by
+    /// `LogicCompiler::compile_workflows`. Audit-trail emission clones this
+    /// instead of allocating a fresh `Arc<str>`. Public for crate-internal
+    /// access from the compiler and tests; not part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub id_arc: Arc<str>,
 
@@ -53,8 +56,10 @@ pub struct Task {
     #[serde(default = "default_condition")]
     pub condition: Value,
 
-    /// Pre-compiled JSONLogic for `condition`, populated by `LogicCompiler`.
-    /// `None` is treated as "always run" by the executor.
+    /// Engine-internal: pre-compiled JSONLogic for `condition`, populated by
+    /// `LogicCompiler`. `None` is treated as "always run" by the executor.
+    /// Not part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub compiled_condition: Option<Arc<Logic>>,
 

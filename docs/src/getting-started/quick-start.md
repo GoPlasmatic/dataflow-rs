@@ -2,6 +2,11 @@
 
 Build your first rule in minutes.
 
+> **Prerequisite reading:** rules and mappings are written in
+> [JSONLogic](../advanced/jsonlogic.md). If you've never used it, skim the
+> *Data Access*, *Comparison Operators*, and *Conditionals* sections first —
+> they cover everything in the examples below.
+
 ## Create a Simple Rule
 
 Rules are defined in JSON and consist of actions (tasks) that process data sequentially.
@@ -126,5 +131,6 @@ Extend your rule with data validation:
 ## Next Steps
 
 - [Basic Concepts](./basic-concepts.md) - Understand the core architecture
+- [JSONLogic Reference](../advanced/jsonlogic.md) - Complete operator reference
 - [Map Function](../built-in-functions/map.md) - Learn about data transformation
 - [Validation](../built-in-functions/validation.md) - Learn about data validation

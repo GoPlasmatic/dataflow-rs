@@ -76,7 +76,7 @@ fn compute(numbers: &[f64]) -> Value {
     let mut sorted = numbers.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-    let median = if sorted.len().is_multiple_of(2) {
+    let median = if sorted.len() % 2 == 0 {
         let mid = sorted.len() / 2;
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {

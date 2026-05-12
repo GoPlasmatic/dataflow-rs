@@ -27,6 +27,7 @@
 - [Filter](./built-in-functions/filter.md)
 - [Log](./built-in-functions/log.md)
 - [Publish](./built-in-functions/publish.md)
+- [Integrations](./built-in-functions/integrations.md)
 
 # JavaScript/TypeScript
 

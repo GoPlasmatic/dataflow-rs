@@ -1,4 +1,4 @@
-use crate::engine::error::ErrorInfo;
+use crate::engine::error::{DataflowError, ErrorInfo};
 use chrono::{DateTime, Utc};
 use datavalue::OwnedDataValue;
 use serde::{Deserialize, Serialize};
@@ -125,6 +125,14 @@ impl Message {
     /// `OwnedDataValue::from(&Value)` bridge (one deep walk).
     pub fn from_value(payload: &JsonValue) -> Self {
         Self::new(Arc::new(OwnedDataValue::from(payload)))
+    }
+
+    /// Construct a message from a JSON payload string. Parses with
+    /// `serde_json` and bridges into `OwnedDataValue`. Returns
+    /// `DataflowError::Deserialization` on parse failure.
+    pub fn from_json_str(payload: &str) -> crate::engine::error::Result<Self> {
+        let value: JsonValue = serde_json::from_str(payload).map_err(DataflowError::from_serde)?;
+        Ok(Self::from_value(&value))
     }
 
     /// Add an error to the message
@@ -306,4 +314,23 @@ pub struct Change {
     pub path: Arc<str>,
     pub old_value: OwnedDataValue,
     pub new_value: OwnedDataValue,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_json_str_parses_valid_payload() {
+        let msg =
+            Message::from_json_str(r#"{"order": {"total": 42}}"#).expect("valid JSON should parse");
+        let payload_json = serde_json::to_value(msg.payload()).unwrap();
+        assert_eq!(payload_json, serde_json::json!({"order": {"total": 42}}));
+    }
+
+    #[test]
+    fn from_json_str_rejects_malformed_payload() {
+        let err = Message::from_json_str("{ not json").expect_err("malformed input should fail");
+        assert!(matches!(err, DataflowError::Deserialization(_)));
+    }
 }

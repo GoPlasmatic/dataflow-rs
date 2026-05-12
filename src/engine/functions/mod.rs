@@ -30,19 +30,6 @@ pub use log::{LogConfig, LogLevel};
 pub mod integration;
 pub use integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
 
-// Re-export all built-in functions for easier access
-pub mod builtins {
-    use super::*;
-
-    // Get all built-in functions with their standard names
-    pub fn get_all_functions() -> Vec<(String, BoxedFunctionHandler)> {
-        // Map and Validate are now internal to the Engine for better performance
-        // They can directly access compiled logic cache.
-        // Add other built-in functions here as needed (HTTP, File I/O, etc.)
-        vec![]
-    }
-}
-
 /// Async interface for task functions that operate on messages.
 ///
 /// Implement this trait for custom processing logic. The trait associates a

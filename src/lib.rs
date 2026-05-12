@@ -28,10 +28,29 @@ Rules are defined declaratively in JSON and compiled once at startup for zero-ov
 
 ## Built-in Functions
 
-The engine comes with several pre-registered functions:
+The engine ships with the following pre-registered functions, available to
+any workflow without further setup:
 
-* **map**: Maps and transforms data between different parts of a message
-* **validate**: Validates message data against rules using JSONLogic expressions
+| Category | Function | Purpose |
+|---|---|---|
+| **Parse** | `parse_json` | Deserialize a JSON payload string into `data` |
+| **Parse** | `parse_xml` | Deserialize an XML payload string into `data` |
+| **Transform** | `map` | Assign JSONLogic-derived values to dot-paths within the message |
+| **Validate** | `validation` | Apply JSONLogic rules with custom error messages |
+| **Routing** | `filter` | Skip or halt processing based on a JSONLogic predicate |
+| **Routing** | `log` | Emit a log entry at a configurable level |
+| **Publish** | `publish_json` | Render `data` back out as a JSON payload |
+| **Publish** | `publish_xml` | Render `data` back out as an XML payload |
+
+In addition, dataflow-rs provides **typed config schemas** for three common
+service-layer integrations — `http_call`, `enrich`, and `publish_kafka`.
+These are *not* pre-registered: register an `AsyncFunctionHandler` under the
+matching name and the engine handles config validation and JSONLogic
+pre-compilation for you. See [`HttpCallConfig`], [`EnrichConfig`], and
+[`PublishKafkaConfig`].
+
+Custom functions are registered through `Engine::builder().register(...)`;
+see the **Extending with Custom Functions** section below.
 
 ## Usage Example
 
@@ -181,6 +200,20 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+## Ecosystem
+
+Dataflow-rs is part of a small family of crates that share the same workflow
+and JSONLogic shape:
+
+| Crate | Purpose |
+|---|---|
+| [`dataflow-rs`](https://crates.io/crates/dataflow-rs) | This crate — async workflow engine in Rust |
+| [`@goplasmatic/dataflow-wasm`](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm) | WebAssembly bindings — run workflows in the browser or Node |
+| [`@goplasmatic/dataflow-ui`](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) | React components for visualizing and debugging workflows |
+| [`datalogic-rs`](https://crates.io/crates/datalogic-rs) | The JSONLogic compiler/evaluator used internally |
+
+Source for all four lives under <https://github.com/GoPlasmatic>.
 */
 
 pub mod engine;

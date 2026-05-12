@@ -353,14 +353,18 @@ impl WorkflowExecutor {
             "execute_sync_task_in_arena called with non-sync-builtin task: {}",
             task.function.function_name()
         );
+        // In debug builds the assert above catches mis-dispatch; in release
+        // we still surface the invariant violation as a recoverable engine
+        // error rather than panicking via `unreachable!`.
         task.function
             .try_execute_in_arena(message, arena_ctx, &self.engine, map_snapshot_buf)
-            .unwrap_or_else(|| {
-                unreachable!(
-                    "non-sync-builtin reached arena dispatch: {}",
+            .ok_or_else(|| {
+                DataflowError::Task(format!(
+                    "execute_sync_task_in_arena dispatched to non-sync-builtin task '{}' \
+                     (engine bug — sync-stretch should only contain sync-builtin tasks)",
                     task.function.function_name()
-                )
-            })
+                ))
+            })?
     }
 
     /// Handle the result of a task execution.
