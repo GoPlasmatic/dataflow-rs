@@ -71,8 +71,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse the workflow
     let workflow = Workflow::from_json(workflow_json)?;
 
-    // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
-    let engine = Engine::new(vec![workflow], None)?;
+    // Create the workflow engine — builder is the recommended path; built-in
+    // functions are auto-registered.
+    let engine = Engine::builder().with_workflow(workflow).build()?;
 
     // Create a message to process
     let mut message = Message::from_value(&json!({}));
@@ -103,7 +104,7 @@ use serde_json::json;
 #[tokio::main]
 async fn main() -> Result<()> {
     // ... setup workflows ...
-    let engine = Engine::new(vec![/* workflows */], None)?;
+    let engine = Engine::builder().build()?;
 
     let mut message = Message::from_value(&json!({}));
 
@@ -112,7 +113,7 @@ async fn main() -> Result<()> {
 
     // Check if there were any errors during processing
     if message.has_errors() {
-        for error in &message.errors {
+        for error in message.errors() {
             println!("Error in workflow: {:?}, task: {:?}: {:?}",
                      error.workflow_id, error.task_id, error.message);
         }
@@ -130,12 +131,11 @@ your config once at startup; handlers then receive typed input and a
 
 ```rust,no_run
 use dataflow_rs::{
-    AsyncFunctionHandler, BoxedFunctionHandler, Engine, Result, TaskContext, TaskOutcome, Workflow,
+    AsyncFunctionHandler, Engine, Result, TaskContext, TaskOutcome, Workflow,
 };
 use datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
 use async_trait::async_trait;
 
 #[derive(Deserialize)]
@@ -173,10 +173,10 @@ impl AsyncFunctionHandler for Statistics {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
-    custom_functions.insert("statistics".to_string(), Box::new(Statistics));
-
-    let engine = Engine::new(vec![/* workflows */], Some(custom_functions))?;
+    let engine = Engine::builder()
+        .register("statistics", Statistics)
+        // .with_workflow(workflow)
+        .build()?;
     // ...
     Ok(())
 }
@@ -184,6 +184,7 @@ async fn main() -> Result<()> {
 */
 
 pub mod engine;
+pub mod prelude;
 
 // Re-export all public APIs for easier access
 pub use engine::error::{DataflowError, ErrorInfo, Result};
@@ -192,11 +193,11 @@ pub use engine::functions::{
     HttpCallConfig, LogConfig, MapConfig, MapMapping, PublishKafkaConfig, ValidationConfig,
     ValidationRule,
 };
-pub use engine::message::{AuditTrail, Change, Message};
+pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
 pub use engine::task_context::TaskContext;
 pub use engine::task_outcome::TaskOutcome;
 pub use engine::trace::{ExecutionStep, ExecutionTrace, StepResult};
-pub use engine::{Engine, Task, Workflow, WorkflowStatus};
+pub use engine::{Engine, EngineBuilder, Task, Workflow, WorkflowStatus};
 
 /// Type alias for `Workflow` — a Rule represents an IF-THEN unit: IF condition THEN execute actions.
 pub type Rule = Workflow;

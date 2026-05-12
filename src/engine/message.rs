@@ -8,6 +8,10 @@ use uuid::Uuid;
 
 /// A message flowing through the dataflow engine.
 ///
+/// Construct via [`Message::builder`] for the full API, or use the shortcuts
+/// [`Message::new`] (already-owned `Arc<OwnedDataValue>` payload — the perf
+/// path) and [`Message::from_value`] (bridges from `serde_json::Value`).
+///
 /// `context` is held as an [`OwnedDataValue`] tree (not `serde_json::Value`)
 /// so the JSONLogic evaluator can borrow it into its arena via
 /// `OwnedDataValue::to_arena` with a single deep walk in, and project the
@@ -15,24 +19,32 @@ use uuid::Uuid;
 /// `serde_json::Value` round-trip in the hot path. The on-the-wire JSON
 /// shape is preserved by datavalue's native `Serialize` / `Deserialize`
 /// impls.
+///
+/// Every other field is encapsulated — read via `id()`, `payload()`,
+/// `audit_trail()`, `errors()`, `capture_changes()`; mutate `errors` via
+/// [`Message::add_error`]; mutate `context` via [`crate::TaskContext::set`].
+/// Direct mutation of `audit_trail` is engine-internal.
 #[derive(Debug, Clone)]
 pub struct Message {
-    pub id: String,
-    pub payload: Arc<OwnedDataValue>,
+    pub(crate) id: String,
+    pub(crate) payload: Arc<OwnedDataValue>,
     /// Unified context containing `data`, `metadata`, and `temp_data` keys.
     /// Always an `OwnedDataValue::Object`; the engine populates the three
-    /// top-level keys at construction.
+    /// top-level keys at construction. Public for read access (tests do
+    /// `message.context["data"]["x"]` lookups); inside handlers prefer
+    /// [`crate::TaskContext::set`] which records audit-trail changes.
     pub context: OwnedDataValue,
-    pub audit_trail: Vec<AuditTrail>,
-    /// Errors that occurred during message processing
-    pub errors: Vec<ErrorInfo>,
+    pub(crate) audit_trail: Vec<AuditTrail>,
+    /// Errors that occurred during message processing. Read via
+    /// `errors()`, append via `add_error()`.
+    pub(crate) errors: Vec<ErrorInfo>,
     /// When `true` (default), built-in functions emit per-write `Change`
     /// entries into `audit_trail`, capturing `old_value` and `new_value` deep
     /// clones. When `false`, `AuditTrail` entries are still recorded
     /// (workflow_id, task_id, status, timestamp) but `changes` is empty —
     /// the bulk-pipeline fast path. UI debug consumers should leave this at
     /// `true`. Wire shape is unchanged either way.
-    pub capture_changes: bool,
+    pub(crate) capture_changes: bool,
 }
 
 // Custom Serialize: stable wire format ({id, payload, context, audit_trail, errors}).
@@ -82,6 +94,18 @@ impl<'de> Deserialize<'de> for Message {
 }
 
 impl Message {
+    /// Start building a message. The recommended constructor — chains
+    /// `.id(...)`, `.payload(...)` / `.payload_json(...)`, and
+    /// `.capture_changes(...)` calls, then `.build()`.
+    pub fn builder() -> MessageBuilder {
+        MessageBuilder::new()
+    }
+
+    /// Construct a message from an already-owned payload `Arc`. The perf
+    /// path: zero `serde_json::Value` walk, one Arc refcount bump per
+    /// message. Use this from a hot loop with a payload `Arc` shared across
+    /// messages (e.g. a benchmark harness or an HTTP handler that receives
+    /// already-parsed payloads).
     pub fn new(payload: Arc<OwnedDataValue>) -> Self {
         Self {
             // UUID v7: ms-precision timestamp in the high bits, random tail.
@@ -96,31 +120,9 @@ impl Message {
         }
     }
 
-    /// Construct a message with a caller-supplied `id`, bypassing the per-call
-    /// `Uuid::new_v4().to_string()` allocation. Useful for benchmarks and for
-    /// pipelines that already carry an upstream request/correlation id.
-    pub fn with_id(id: impl Into<String>, payload: Arc<OwnedDataValue>) -> Self {
-        Self {
-            id: id.into(),
-            payload,
-            context: empty_context(),
-            audit_trail: vec![],
-            errors: vec![],
-            capture_changes: true,
-        }
-    }
-
-    /// Builder method: disable per-write `Change` capture for this message.
-    /// Audit trail entries are still recorded but their `changes` lists are
-    /// empty — the bulk-pipeline fast path.
-    pub fn without_change_capture(mut self) -> Self {
-        self.capture_changes = false;
-        self
-    }
-
     /// Construct a message from a `serde_json::Value` payload. Convenience
     /// for code that already speaks serde_json; goes through the
-    /// `OwnedDataValue::from(&Value)` bridge.
+    /// `OwnedDataValue::from(&Value)` bridge (one deep walk).
     pub fn from_value(payload: &JsonValue) -> Self {
         Self::new(Arc::new(OwnedDataValue::from(payload)))
     }
@@ -133,6 +135,51 @@ impl Message {
     /// Check if message has errors
     pub fn has_errors(&self) -> bool {
         !self.errors.is_empty()
+    }
+
+    /// Message id (UUID v7 string by default; caller-supplied if set via
+    /// [`MessageBuilder::id`]).
+    #[inline]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Original payload as the engine received it. Immutable for the
+    /// lifetime of the message — the engine reads it through this Arc and
+    /// copies into `context` only as needed by handlers.
+    #[inline]
+    pub fn payload(&self) -> &OwnedDataValue {
+        &self.payload
+    }
+
+    /// The shared payload `Arc` itself. Useful when forwarding the same
+    /// payload to multiple messages without recloning the underlying
+    /// `OwnedDataValue` tree.
+    #[inline]
+    pub fn payload_arc(&self) -> &Arc<OwnedDataValue> {
+        &self.payload
+    }
+
+    /// Audit-trail entries recorded by the engine, one per task that ran
+    /// (skipped tasks are absent unless `Trace` mode is on).
+    #[inline]
+    pub fn audit_trail(&self) -> &[AuditTrail] {
+        &self.audit_trail
+    }
+
+    /// Errors collected while processing — both validation failures and
+    /// task errors that the workflow swallowed via `continue_on_error`.
+    #[inline]
+    pub fn errors(&self) -> &[ErrorInfo] {
+        &self.errors
+    }
+
+    /// Whether per-write `Change` capture is on. When `false`, audit-trail
+    /// entries are still emitted but their `changes` lists are empty —
+    /// the bulk-pipeline fast path.
+    #[inline]
+    pub fn capture_changes(&self) -> bool {
+        self.capture_changes
     }
 
     /// Get a reference to the `data` field in context. Returns
@@ -153,7 +200,83 @@ impl Message {
     }
 }
 
-/// Build the canonical empty context shape used by `Message::new`.
+/// Builder for [`Message`]. Collapses the historical
+/// `new` / `with_id` / `from_value` / `without_change_capture` four-way
+/// constructor split into a single fluent shape.
+///
+/// ```
+/// use dataflow_rs::Message;
+/// use serde_json::json;
+///
+/// // Minimal: serde_json payload, default UUID id, capture on.
+/// let m = Message::builder()
+///     .payload_json(&json!({"order": {"total": 1500}}))
+///     .build();
+/// assert!(m.id().len() > 0);
+/// assert!(m.capture_changes());
+/// ```
+#[must_use = "MessageBuilder must be `.build()` to produce a Message"]
+#[derive(Default)]
+pub struct MessageBuilder {
+    id: Option<String>,
+    payload: Option<Arc<OwnedDataValue>>,
+    capture_changes: Option<bool>,
+}
+
+impl MessageBuilder {
+    /// Create an empty builder. Equivalent to [`MessageBuilder::default`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Caller-supplied id (typically a correlation id from upstream).
+    /// Defaults to a freshly-generated UUID v7.
+    pub fn id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// Already-owned payload `Arc` — zero serde_json walk, refcount-only
+    /// share. Mutually exclusive with [`Self::payload_json`]; whichever is
+    /// called last wins.
+    pub fn payload(mut self, payload: Arc<OwnedDataValue>) -> Self {
+        self.payload = Some(payload);
+        self
+    }
+
+    /// Construct the payload from a `serde_json::Value`. Goes through the
+    /// `OwnedDataValue::from(&Value)` bridge (one deep walk).
+    pub fn payload_json(mut self, payload: &JsonValue) -> Self {
+        self.payload = Some(Arc::new(OwnedDataValue::from(payload)));
+        self
+    }
+
+    /// When `false`, built-in functions skip per-write `Change` capture —
+    /// audit-trail entries are still recorded but their `changes` list is
+    /// empty. Defaults to `true`.
+    pub fn capture_changes(mut self, on: bool) -> Self {
+        self.capture_changes = Some(on);
+        self
+    }
+
+    /// Finalize. Defaults: id = UUID v7, payload = `OwnedDataValue::Null`,
+    /// capture_changes = `true`.
+    pub fn build(self) -> Message {
+        Message {
+            id: self.id.unwrap_or_else(|| Uuid::now_v7().to_string()),
+            payload: self
+                .payload
+                .unwrap_or_else(|| Arc::new(OwnedDataValue::Null)),
+            context: empty_context(),
+            audit_trail: vec![],
+            errors: vec![],
+            capture_changes: self.capture_changes.unwrap_or(true),
+        }
+    }
+}
+
+/// Build the canonical empty context shape used by `Message::new` and
+/// `MessageBuilder::build`.
 fn empty_context() -> OwnedDataValue {
     OwnedDataValue::Object(vec![
         ("data".to_string(), OwnedDataValue::Object(Vec::new())),

@@ -79,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1 validation task: 12 rules
     let workflow = build_workflow();
 
-    let engine = Arc::new(Engine::new(vec![workflow], None).unwrap());
+    let engine = Arc::new(Engine::builder().with_workflow(workflow).build().unwrap());
 
     // -- Sample payload: pacs.008-shaped, ~80 fields, 4-5 levels deep ---------
     // Convert to `OwnedDataValue` ONCE at startup and share via `Arc`. Per-

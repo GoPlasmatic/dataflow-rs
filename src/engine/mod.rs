@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     // Create engine with defaults
-    let engine = Engine::new(workflows, None)?;
+    let engine = Engine::builder().with_workflows(workflows).build()?;
 
     // Process messages asynchronously
     let mut message = Message::from_value(&json!({}));
@@ -80,6 +80,9 @@ pub use task_context::TaskContext;
 pub use task_outcome::TaskOutcome;
 pub use trace::{ExecutionStep, ExecutionTrace, StepResult};
 pub use workflow::{Workflow, WorkflowStatus};
+
+// `EngineBuilder` is defined further down in this file but exposed here so
+// downstream paths can import it via `dataflow_rs::engine::EngineBuilder`.
 
 use chrono::Utc;
 use datalogic_rs::Engine as DatalogicEngine;
@@ -148,7 +151,8 @@ impl Engine {
     ///
     /// # Arguments
     /// * `workflows` - The workflows to use for processing messages
-    /// * `custom_functions` - Optional custom async function handlers
+    /// * `custom_functions` - Custom async function handlers (use
+    ///   `HashMap::new()` for none, or prefer [`Engine::builder`])
     ///
     /// # Example
     ///
@@ -157,11 +161,14 @@ impl Engine {
     ///
     /// let workflows = vec![Workflow::from_json(r#"{"id": "test", "name": "Test", "priority": 0, "tasks": [{"id": "task1", "name": "Task 1", "function": {"name": "map", "input": {"mappings": []}}}]}"#).unwrap()];
     ///
-    /// let engine = Engine::new(workflows, None).unwrap();
+    /// let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     /// ```
+    /// The recommended construction path is [`Engine::builder`]. `Engine::new`
+    /// is the lower-level escape hatch — accepts handlers as a plain
+    /// `HashMap` (use `HashMap::new()` for the no-handler case).
     pub fn new(
         workflows: Vec<Workflow>,
-        custom_functions: Option<HashMap<String, BoxedFunctionHandler>>,
+        custom_functions: HashMap<String, BoxedFunctionHandler>,
     ) -> Result<Self> {
         // Compile workflows (sorted by priority at compile time). Each
         // workflow/task/config owns its own `Arc<Logic>` slots — no central
@@ -170,7 +177,7 @@ impl Engine {
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
 
-        let mut task_functions = custom_functions.unwrap_or_default();
+        let mut task_functions = custom_functions;
 
         // Add built-in async function handlers
         for (name, handler) in functions::builtins::get_all_functions() {
@@ -205,6 +212,23 @@ impl Engine {
                 env!("CARGO_PKG_VERSION").to_string(),
             )),
         })
+    }
+
+    /// Start building an engine. The recommended construction path —
+    /// chains `register("name", handler)` and `with_workflow(w)` calls,
+    /// then `build()` to produce a `Result<Engine>`.
+    ///
+    /// ```no_run
+    /// use dataflow_rs::{Engine, Workflow};
+    /// # let workflow: Workflow = unimplemented!();
+    /// let engine = Engine::builder()
+    ///     .with_workflow(workflow)
+    ///     // .register("my_handler", MyHandler)  // any AsyncFunctionHandler
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn builder() -> EngineBuilder {
+        EngineBuilder::new()
     }
 
     /// Cached `OwnedDataValue::String` of the engine version.
@@ -392,6 +416,85 @@ impl Engine {
     /// Get a reference to the underlying datalogic v5 engine.
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {
         &self.datalogic
+    }
+}
+
+/// Builder for [`Engine`]. The recommended construction path — chain
+/// `register("name", handler)` and `with_workflow(workflow)` calls, then
+/// `build()` to produce a `Result<Engine>`. Empty registration is fine; an
+/// engine with no custom handlers still resolves the built-in functions.
+///
+/// `register` takes any [`AsyncFunctionHandler`] and boxes it internally; the
+/// `Box<dyn DynAsyncFunctionHandler + Send + Sync>` plumbing stays out of
+/// user code.
+///
+/// ```no_run
+/// use dataflow_rs::{Engine, Workflow};
+/// # let workflow: Workflow = unimplemented!();
+/// let engine = Engine::builder()
+///     .with_workflow(workflow)
+///     // .register("my_handler", MyHandler)
+///     .build()
+///     .unwrap();
+/// ```
+#[must_use = "EngineBuilder must be `.build()` to produce an Engine"]
+#[derive(Default)]
+pub struct EngineBuilder {
+    workflows: Vec<Workflow>,
+    handlers: HashMap<String, BoxedFunctionHandler>,
+}
+
+impl EngineBuilder {
+    /// Create an empty builder. Equivalent to [`EngineBuilder::default`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a custom async handler under `name`. Accepts any
+    /// `AsyncFunctionHandler`; boxing happens internally via the engine's
+    /// blanket impl.
+    pub fn register<F>(mut self, name: impl Into<String>, handler: F) -> Self
+    where
+        F: AsyncFunctionHandler,
+    {
+        self.handlers.insert(name.into(), Box::new(handler));
+        self
+    }
+
+    /// Register a pre-boxed handler. Useful when handlers are constructed
+    /// dynamically (e.g. plugin registries) and the concrete type isn't
+    /// known at the call site.
+    pub fn register_boxed(
+        mut self,
+        name: impl Into<String>,
+        handler: BoxedFunctionHandler,
+    ) -> Self {
+        self.handlers.insert(name.into(), handler);
+        self
+    }
+
+    /// Add a single workflow. Subsequent calls append.
+    pub fn with_workflow(mut self, workflow: Workflow) -> Self {
+        self.workflows.push(workflow);
+        self
+    }
+
+    /// Append every workflow in `workflows`. Accepts anything iterable —
+    /// `Vec<Workflow>`, an array, an iterator. Existing workflows on the
+    /// builder are kept; subsequent registers/workflows still chain.
+    pub fn with_workflows<I>(mut self, workflows: I) -> Self
+    where
+        I: IntoIterator<Item = Workflow>,
+    {
+        self.workflows.extend(workflows);
+        self
+    }
+
+    /// Compile the workflows, pre-parse Custom inputs, and produce the
+    /// engine. Compile errors and missing handler references surface here —
+    /// the engine never deserializes Custom config on the hot path.
+    pub fn build(self) -> Result<Engine> {
+        Engine::new(self.workflows, self.handlers)
     }
 }
 

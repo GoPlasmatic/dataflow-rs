@@ -13,13 +13,12 @@
 
 use async_trait::async_trait;
 use dataflow_rs::{
-    AsyncFunctionHandler, BoxedFunctionHandler, Engine, Message, Result, TaskContext, TaskOutcome,
+    AsyncFunctionHandler, Engine, EngineBuilder, Message, Result, TaskContext, TaskOutcome,
     Workflow,
 };
 use datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug, Deserialize, Default)]
@@ -61,11 +60,11 @@ impl AsyncFunctionHandler for SimpleAsyncHandler {
     }
 }
 
-fn make_handlers() -> HashMap<String, BoxedFunctionHandler> {
-    let mut h: HashMap<String, BoxedFunctionHandler> = HashMap::new();
-    h.insert("async_http".to_string(), Box::new(AsyncHttpHandler));
-    h.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
-    h
+/// Apply this example's two custom handlers to an in-progress builder.
+/// Returning the builder keeps the call site fluent.
+fn register_handlers(b: EngineBuilder) -> EngineBuilder {
+    b.register("async_http", AsyncHttpHandler)
+        .register("simple_async", SimpleAsyncHandler)
 }
 
 #[tokio::main]
@@ -131,7 +130,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     println!("Method 1: Using async handlers directly");
     {
-        let engine = Engine::new(vec![workflow.clone()], Some(make_handlers()))?;
+        let engine =
+            register_handlers(Engine::builder().with_workflow(workflow.clone())).build()?;
         let mut message = Message::from_value(&json!({
             "required_field": "present",
             "value": "test data"
@@ -142,7 +142,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     println!("\nMethod 2: CPU-bound async handlers");
     {
-        let engine = Engine::new(vec![workflow.clone()], Some(make_handlers()))?;
+        let engine =
+            register_handlers(Engine::builder().with_workflow(workflow.clone())).build()?;
         let mut message = Message::from_value(&json!({
             "required_field": "present",
             "value": "test data"
@@ -158,7 +159,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     {
         use axum::{Json, Router, routing::post};
 
-        let engine = Arc::new(Engine::new(vec![workflow.clone()], Some(make_handlers()))?);
+        let engine =
+            Arc::new(register_handlers(Engine::builder().with_workflow(workflow.clone())).build()?);
 
         async fn process_handler(
             engine: Arc<Engine>,
@@ -168,7 +170,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 Ok(_) => Json(message),
                 Err(e) => {
                     eprintln!("Processing error: {:?}", e);
-                    message.errors.push(dataflow_rs::ErrorInfo::simple(
+                    message.add_error(dataflow_rs::ErrorInfo::simple(
                         "PROCESSING_ERROR".to_string(),
                         format!("Failed to process: {}", e),
                         None,
@@ -197,7 +199,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     {
         use std::time::Instant;
 
-        let engine = Arc::new(Engine::new(vec![workflow], Some(make_handlers()))?);
+        let engine =
+            Arc::new(register_handlers(Engine::builder().with_workflow(workflow)).build()?);
 
         let mut message = Message::from_value(&json!({
             "required_field": "present",

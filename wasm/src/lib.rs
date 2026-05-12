@@ -103,7 +103,9 @@ impl WasmEngine {
             workflows.push(workflow);
         }
 
-        let engine = Engine::new(workflows, None)
+        let engine = Engine::builder()
+            .with_workflows(workflows)
+            .build()
             .map_err(|e| format!("Engine construction failed: {}", e))?;
         Ok(WasmEngine {
             inner: Arc::new(engine),

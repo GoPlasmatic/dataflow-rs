@@ -1,11 +1,10 @@
 use async_trait::async_trait;
-use dataflow_rs::engine::functions::{AsyncFunctionHandler, BoxedFunctionHandler, FunctionConfig};
+use dataflow_rs::engine::functions::{AsyncFunctionHandler, FunctionConfig};
 use dataflow_rs::engine::message::Message;
 use dataflow_rs::engine::utils::set_nested_value;
 use dataflow_rs::{Engine, Result, Task, TaskContext, TaskOutcome, Workflow};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Bridge helper for tests: build an `OwnedDataValue` from a `json!` literal.
@@ -22,7 +21,7 @@ impl AsyncFunctionHandler for LoggingTask {
     type Input = Value;
 
     async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
-        println!("Executed task for message: {}", &ctx.message().id);
+        println!("Executed task for message: {}", ctx.message().id());
         Ok(TaskOutcome::Success)
     }
 }
@@ -35,7 +34,7 @@ impl AsyncFunctionHandler for AsyncLoggingTask {
     type Input = Value;
 
     async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
-        println!("Executed async task for message: {}", &ctx.message().id);
+        println!("Executed async task for message: {}", ctx.message().id());
         // Simulate async work
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         Ok(TaskOutcome::Success)
@@ -90,14 +89,12 @@ async fn test_workflow_execution() {
         ..Default::default()
     };
 
-    // Create custom functions using AsyncFunctionHandler
-    let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
-
-    // Add async logging handler
-    custom_functions.insert("log".to_string(), Box::new(LoggingTask));
-
     // Create engine with the workflow and custom function
-    let engine = Engine::new(vec![workflow], Some(custom_functions)).unwrap();
+    let engine = Engine::builder()
+        .with_workflow(workflow)
+        .register("log", LoggingTask)
+        .build()
+        .unwrap();
 
     // Create a dummy message
     let mut message = Message::from_value(&json!({}));
@@ -114,12 +111,12 @@ async fn test_workflow_execution() {
 
     // Verify the message was processed correctly
     assert_eq!(
-        message.audit_trail.len(),
+        message.audit_trail().len(),
         1,
         "Message should have one audit trail entry"
     );
     assert_eq!(
-        message.audit_trail[0].task_id.as_ref(),
+        message.audit_trail()[0].task_id.as_ref(),
         "log_task",
         "Audit trail should contain the executed task"
     );
@@ -153,12 +150,12 @@ async fn test_async_workflow_execution() {
         ..Default::default()
     };
 
-    // Create custom async functions
-    let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
-    custom_functions.insert("async_log".to_string(), Box::new(AsyncLoggingTask));
-
     // Create engine with the workflow and custom function
-    let engine = Engine::new(vec![workflow], Some(custom_functions)).unwrap();
+    let engine = Engine::builder()
+        .with_workflow(workflow)
+        .register("async_log", AsyncLoggingTask)
+        .build()
+        .unwrap();
 
     // Create a dummy message
     let mut message = Message::from_value(&json!({}));
@@ -170,12 +167,12 @@ async fn test_async_workflow_execution() {
 
     // Verify the message was processed correctly
     assert_eq!(
-        message.audit_trail.len(),
+        message.audit_trail().len(),
         1,
         "Message should have one audit trail entry"
     );
     assert_eq!(
-        message.audit_trail[0].task_id.as_ref(),
+        message.audit_trail()[0].task_id.as_ref(),
         "async_log_task",
         "Audit trail should contain the executed async task"
     );
@@ -234,7 +231,7 @@ async fn test_temp_data_replacement_behavior() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({"test": "data"}));
 
     // Initially temp_data should be empty
@@ -318,7 +315,7 @@ async fn test_temp_data_nested_path_preservation() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({"test": "data"}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -395,7 +392,7 @@ async fn test_data_field_replacement_behavior() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({}));
     // Initialize the data field with existing data to test merging
     set_nested_value(&mut message.context, "data", dv(json!({"initial": "data"})));
@@ -472,7 +469,7 @@ async fn test_hash_prefix_in_mapping_paths() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -564,7 +561,7 @@ async fn test_hash_prefix_with_array_values_in_mapping() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -665,7 +662,7 @@ async fn test_sequential_mappings_within_same_task() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -765,7 +762,7 @@ async fn test_sequential_mappings_issue_simplified() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -846,7 +843,7 @@ async fn test_temp_data_merge_real_scenario() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -979,14 +976,14 @@ async fn test_nested_temp_data_mappings_preserve_existing_fields() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
 
     // Check the audit trail for the second task
     let settlement_audit = message
-        .audit_trail
+        .audit_trail()
         .iter()
         .find(|a| a.task_id == Arc::from("determine_settlement_method"))
         .expect("Should have audit entry for determine_settlement_method");
@@ -1156,14 +1153,14 @@ async fn test_exact_user_scenario_with_self_reference() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
 
     // Check the audit trail for the second task
     let settlement_audit = message
-        .audit_trail
+        .audit_trail()
         .iter()
         .find(|a| a.task_id == Arc::from("determine_settlement_method"))
         .expect("Should have audit entry for determine_settlement_method");
@@ -1307,14 +1304,14 @@ async fn test_what_if_mappings_aggregated_to_single_object() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
 
     // Check the audit trail for the second task
     let settlement_audit = message
-        .audit_trail
+        .audit_trail()
         .iter()
         .find(|a| a.task_id == Arc::from("determine_settlement_method"))
         .expect("Should have audit entry for determine_settlement_method");
@@ -1419,13 +1416,13 @@ async fn log_builtin_runs_in_sync_stretch() {
     }"#;
 
     let workflow = Workflow::from_json(workflow_json).unwrap();
-    let engine = Engine::new(vec![workflow], None).unwrap();
+    let engine = Engine::builder().with_workflow(workflow).build().unwrap();
     let mut message = Message::from_value(&json!({}));
     engine.process_message(&mut message).await.unwrap();
     // Audit entry recorded with status 200.
-    assert_eq!(message.audit_trail.len(), 1);
-    assert_eq!(message.audit_trail[0].status, 200);
-    assert_eq!(message.audit_trail[0].task_id.as_ref(), "log_task");
+    assert_eq!(message.audit_trail().len(), 1);
+    assert_eq!(message.audit_trail()[0].status, 200);
+    assert_eq!(message.audit_trail()[0].task_id.as_ref(), "log_task");
 }
 
 #[tokio::test]
@@ -1449,12 +1446,12 @@ async fn filter_builtin_runs_in_sync_stretch() {
     }"#;
 
     let workflow = Workflow::from_json(workflow_json).unwrap();
-    let engine = Engine::new(vec![workflow], None).unwrap();
+    let engine = Engine::builder().with_workflow(workflow).build().unwrap();
     let mut message = Message::from_value(&json!({}));
     engine.process_message(&mut message).await.unwrap();
     // Condition was true → status 200 (FILTER_STATUS_PASS).
-    assert_eq!(message.audit_trail.len(), 1);
-    assert_eq!(message.audit_trail[0].status, 200);
+    assert_eq!(message.audit_trail().len(), 1);
+    assert_eq!(message.audit_trail()[0].status, 200);
 }
 
 #[tokio::test]
@@ -1490,15 +1487,15 @@ async fn filter_halt_in_sync_stretch_short_circuits_workflow() {
     }"#;
 
     let workflow = Workflow::from_json(workflow_json).unwrap();
-    let engine = Engine::new(vec![workflow], None).unwrap();
+    let engine = Engine::builder().with_workflow(workflow).build().unwrap();
     let mut message = Message::from_value(&json!({}));
     engine.process_message(&mut message).await.unwrap();
 
     // Only the gate's audit entry should exist (status 299 = HALT). The map
     // task never ran, so `data.should_not_run` must be absent.
-    assert_eq!(message.audit_trail.len(), 1);
-    assert_eq!(message.audit_trail[0].task_id.as_ref(), "gate");
-    assert_eq!(message.audit_trail[0].status, 299);
+    assert_eq!(message.audit_trail().len(), 1);
+    assert_eq!(message.audit_trail()[0].task_id.as_ref(), "gate");
+    assert_eq!(message.audit_trail()[0].status, 299);
     assert!(message.context["data"].get("should_not_run").is_none());
 }
 
@@ -1562,14 +1559,14 @@ async fn log_filter_chained_with_map_share_one_arena() {
     }"#;
 
     let workflow = Workflow::from_json(workflow_json).unwrap();
-    let engine = Engine::new(vec![workflow], None).unwrap();
+    let engine = Engine::builder().with_workflow(workflow).build().unwrap();
     let mut message = Message::from_value(&json!({}));
     engine.process_message(&mut message).await.unwrap();
 
     assert_eq!(message.context["data"]["amount"], dv(json!(200)));
-    assert_eq!(message.audit_trail.len(), 4);
+    assert_eq!(message.audit_trail().len(), 4);
     let task_ids: Vec<&str> = message
-        .audit_trail
+        .audit_trail()
         .iter()
         .map(|a| a.task_id.as_ref())
         .collect();

@@ -10,13 +10,10 @@
 //! Run with: `cargo run --example custom_function`
 
 use async_trait::async_trait;
-use dataflow_rs::{
-    AsyncFunctionHandler, BoxedFunctionHandler, Engine, Result, TaskContext, TaskOutcome, Workflow,
-};
+use dataflow_rs::prelude::*;
 use datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
 
 /// Typed input for the statistics function: which `data` array to summarize
 /// and where to write the resulting object. Misshapen JSON config now fails
@@ -216,19 +213,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let workflow = Workflow::from_json(workflow_json)?;
 
-    // Register typed handlers. The HashMap holds `BoxedFunctionHandler` (=
-    // `Box<dyn DynAsyncFunctionHandler + Send + Sync>`); `Box::new(MyHandler)`
-    // auto-coerces via the engine's blanket impl.
-    let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
-    custom_functions.insert("statistics".to_string(), Box::new(StatisticsFunction));
-    custom_functions.insert(
-        "enrich_data".to_string(),
-        Box::new(AsyncDataEnrichmentFunction),
-    );
-
-    // Engine::new pre-parses each Custom task's `input` JSON into the
-    // matching handler's typed `Input` — config-shape errors fail here.
-    let engine = Engine::new(vec![workflow], Some(custom_functions))?;
+    // Builder pre-parses each Custom task's `input` JSON into the matching
+    // handler's typed `Input` at `.build()` — config-shape errors fail
+    // here, not on first message.
+    let engine = Engine::builder()
+        .with_workflow(workflow)
+        .register("statistics", StatisticsFunction)
+        .register("enrich_data", AsyncDataEnrichmentFunction)
+        .build()?;
 
     let sample_data = json!({
         "measurements": [10.5, 15.2, 8.7, 22.1, 18.9, 12.3, 25.6, 14.8, 19.4, 16.7],
@@ -251,7 +243,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             );
 
             println!("Audit Trail:");
-            for (i, audit) in message.audit_trail.iter().enumerate() {
+            for (i, audit) in message.audit_trail().iter().enumerate() {
                 println!(
                     "{}. Task: {} (Status: {})",
                     i + 1,
@@ -264,7 +256,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
             if message.has_errors() {
                 println!("\nErrors encountered:");
-                for error in &message.errors {
+                for error in message.errors() {
                     println!(
                         "   - {}: {}",
                         error.task_id.as_ref().unwrap_or(&"unknown".to_string()),

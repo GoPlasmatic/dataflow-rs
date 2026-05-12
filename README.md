@@ -93,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow = Workflow::from_json(r#"{ ... }"#)?; // Your rule JSON
 
     // Create engine — all JSONLogic compiled once here
-    let engine = Engine::new(vec![workflow], None);
+    let engine = Engine::builder().with_workflow(workflow).build()?;
 
     // Process a message
     let payload = Arc::new(json!({"order": {"total": 1500}}));
@@ -112,7 +112,7 @@ use dataflow_rs::{RulesEngine, Rule, Action};
 
 // These are type aliases — same types, rules-engine terminology
 let rule = Rule::from_json(r#"{ ... }"#)?;
-let engine = RulesEngine::new(vec![rule], None);
+let engine = RulesEngine::builder().with_workflow(rule).build()?;
 ```
 
 ## Key Features
@@ -168,14 +168,10 @@ records audit-trail changes automatically, and returns a `TaskOutcome`:
 
 ```rust
 use async_trait::async_trait;
-use dataflow_rs::{
-    AsyncFunctionHandler, BoxedFunctionHandler, Engine, Result,
-    TaskContext, TaskOutcome,
-};
+use dataflow_rs::{AsyncFunctionHandler, Engine, Result, TaskContext, TaskOutcome};
 use datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
 
 /// Typed config for the handler — fails at `Engine::new()` if malformed,
 /// not on first message.
@@ -204,12 +200,12 @@ impl AsyncFunctionHandler for NotifyManager {
     }
 }
 
-// Register when creating the engine. `Box::new(NotifyManager)` auto-coerces
-// to `BoxedFunctionHandler` via the engine's blanket impl.
-let mut custom_functions: HashMap<String, BoxedFunctionHandler> = HashMap::new();
-custom_functions.insert("notify_manager".to_string(), Box::new(NotifyManager));
-
-let engine = Engine::new(workflows, Some(custom_functions));
+// Register handlers via the builder. `.register("name", h)` accepts any
+// `AsyncFunctionHandler` and boxes it internally.
+let engine = Engine::builder()
+    .with_workflows(workflows)
+    .register("notify_manager", NotifyManager)
+    .build()?;
 ```
 
 ## Built-in Functions

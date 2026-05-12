@@ -172,11 +172,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Create the rules engine with all rules
-    let engine = RulesEngine::new(
-        vec![premium_discount_rule, standard_discount_rule, vip_rule],
-        None,
-    )
-    .unwrap();
+    let engine = RulesEngine::builder()
+        .with_workflows([premium_discount_rule, standard_discount_rule, vip_rule])
+        .build()
+        .unwrap();
 
     // --- Scenario 1: VIP customer with a large order ---
     println!("Scenario 1: VIP customer, order total = $1500");

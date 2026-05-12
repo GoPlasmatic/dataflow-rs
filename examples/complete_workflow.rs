@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow = Workflow::from_json(workflow_json)?;
 
     // Create the workflow engine with the workflow (built-in functions are auto-registered)
-    let engine = Engine::new(vec![workflow], None).unwrap();
+    let engine = Engine::builder().with_workflow(workflow).build().unwrap();
 
     // Create a message to process with sample user data
     let mut message = Message::from_value(&json!({
@@ -146,9 +146,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("Error executing workflow: {e:?}");
-            if !message.errors.is_empty() {
+            if !message.errors().is_empty() {
                 println!("\nErrors recorded in message:");
-                for err in &message.errors {
+                for err in message.errors() {
                     println!(
                         "- Workflow: {:?}, Task: {:?}, Error: {}",
                         err.workflow_id, err.task_id, err.message
@@ -166,7 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     println!("\nAudit trail:");
-    for audit in &message.audit_trail {
+    for audit in message.audit_trail() {
         println!(
             "  - Task: {} (Status: {}, Changes: {})",
             audit.task_id,
@@ -175,9 +175,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    if !message.errors.is_empty() {
+    if !message.errors().is_empty() {
         println!("\nValidation errors:");
-        for err in &message.errors {
+        for err in message.errors() {
             println!("  - {}", err.message);
         }
     }

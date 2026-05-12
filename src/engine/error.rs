@@ -219,6 +219,7 @@ impl ErrorInfo {
 }
 
 /// Builder for creating ErrorInfo instances with a fluent API
+#[must_use = "ErrorInfoBuilder must be `.build()` to produce an ErrorInfo"]
 pub struct ErrorInfoBuilder {
     code: String,
     message: String,

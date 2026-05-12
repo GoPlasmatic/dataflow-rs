@@ -44,7 +44,7 @@ async fn main() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None).unwrap();
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
 
     // Warmup
     println!("Warming up...");
