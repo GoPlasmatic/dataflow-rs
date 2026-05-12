@@ -5,19 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — v3.0.0 dev
 
-## [4.0.0] — TBD
+The `feature/datalogic-v5` branch is the unreleased v3.0.0 development line.
+Entries below describe the in-flight changes; a full v3.0.0 release notes
+section will be stamped when the version ships to crates.io.
 
-Breaking-change release that overhauls the public API for ergonomics and unifies
-the error-reporting channel. Performance is neutral on the realistic ISO 20022 →
-SwiftMT-103 workload (230K msg/s, P50 23 μs). The new dyn-Any dispatch path for
-custom handlers adds ~1.2 μs/call of framework overhead — well below typical
-handler I/O latency.
-
-**Migration**: see [docs/src/migrating-to-v4.md](docs/src/migrating-to-v4.md)
-for step-by-step recipes. Every change has a mechanical migration; nothing
-requires re-architecting your code.
+Performance is neutral on the realistic ISO 20022 → SwiftMT-103 workload
+(230K msg/s, P50 23 μs). The new dyn-Any dispatch path for custom handlers
+adds ~1.2 μs/call of framework overhead — well below typical handler I/O
+latency.
 
 ### Added
 
@@ -109,13 +106,15 @@ requires re-architecting your code.
 ### Wire compatibility
 
 - `Message`, `AuditTrail`, `Change`, `ErrorInfo`, `Workflow`, `Task`,
-  `FunctionConfig` JSON shapes are **unchanged** — v3 JSON deserializes
-  into v4 structs and vice versa. The `FunctionConfig::Custom.compiled_input`
-  field is `#[serde(skip)]`; it round-trips through JSON as `None` and is
-  re-populated when the workflow is loaded into a v4 engine.
+  `FunctionConfig` JSON shapes are **unchanged** within the v3.0.0 dev
+  line. The `FunctionConfig::Custom.compiled_input` field is
+  `#[serde(skip)]`; it round-trips through JSON as `None` and is
+  re-populated when the workflow is loaded into the engine.
 
-## [3.0.0] — 2026-05 — engine refactor, hot-path perf, fail-loud APIs
+### Earlier v3.0.0 dev work (commit `c375ec6`)
 
-Datalogic v5 integration, sync-stretch arena reuse, hot-path perf work, and
-fail-loud `Engine::new` (compile every JSONLogic at startup, return Err on
-any failure). See commits `c8775fd..c375ec6` for the full set.
+Datalogic v5 integration, sync-stretch arena reuse, hot-path perf work,
+and fail-loud `Engine::new` (compile every JSONLogic at startup, return
+`Err` on any failure). See commits `c8775fd..c375ec6` for the full set.
+These changes will be folded into the v3.0.0 release notes when the
+version ships.

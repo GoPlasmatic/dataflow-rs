@@ -38,10 +38,6 @@ Dataflow-rs is a lightweight rules engine that lets you define **IF → THEN →
 
 Both naming conventions are fully supported — use whichever fits your mental model.
 
-> **Upgrading from v3?** See [CHANGELOG.md](./CHANGELOG.md) for the breaking
-> changes and [docs/src/migrating-to-v4.md](./docs/src/migrating-to-v4.md)
-> for step-by-step migration recipes.
-
 ## Getting Started
 
 ### 1. Add to `Cargo.toml`
