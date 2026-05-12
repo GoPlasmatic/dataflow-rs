@@ -86,7 +86,7 @@ The `function` object specifies what the action does:
 Register custom functions when creating the engine:
 
 ```rust
-let engine = Engine::new(rules, Some(custom_functions));
+let engine = Engine::new(rules, Some(custom_functions))?;
 ```
 
 Then reference them by name in actions:

@@ -1,5 +1,5 @@
 use crate::engine::error::Result;
-use crate::engine::executor::with_arena;
+use crate::engine::executor::{ArenaContext, with_arena};
 use crate::engine::message::{Change, Message};
 use datalogic_rs::{Engine, Logic};
 use datavalue::DataValue;
@@ -37,60 +37,74 @@ pub struct LogConfig {
     #[serde(default)]
     pub fields: HashMap<String, Value>,
 
-    /// Cache index for the compiled message expression
+    /// Pre-compiled `message` JSONLogic, populated by `LogicCompiler`.
     #[serde(skip)]
-    pub message_index: Option<usize>,
+    pub compiled_message: Option<Arc<Logic>>,
 
-    /// Cache indices for the compiled field expressions
+    /// Pre-compiled JSONLogic for each `fields` entry, populated by
+    /// `LogicCompiler`. The inner `Option` is `None` for fields whose logic
+    /// failed to compile (logged at engine construction).
     #[serde(skip)]
-    pub field_indices: Vec<(String, Option<usize>)>,
+    pub compiled_fields: Vec<(String, Option<Arc<Logic>>)>,
 }
 
 impl LogConfig {
-    /// Execute the log function. Always returns Ok((200, [])).
+    /// Execute the log function, opening a fresh thread-local arena scope.
+    ///
+    /// Use this entry point when calling `LogConfig` outside an existing
+    /// `with_arena` scope (direct API users, tests). Inside a workflow sync
+    /// stretch the dispatch goes through [`Self::execute_in_arena`] to reuse
+    /// the cached `ArenaContext` and avoid a redundant `to_arena` walk.
     pub fn execute(
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
-        // Log is read-only across the entire task call: convert the context
-        // to its arena form once, then evaluate the message expression plus
-        // every structured field against the same shared `ctx_av`.
-        let (log_message, field_parts) = with_arena(|arena| {
-            let ctx_av: DataValue<'_> = message.context.to_arena(arena);
+        with_arena(|arena| {
+            let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
+            self.execute_in_arena(message, &mut arena_ctx, engine)
+        })
+    }
 
-            // Stringify a single eval result. Avoids `to_owned()` on the
-            // borrowed arena result: for the common String case we just
-            // copy the str, for everything else we use the JSON emitter
-            // which writes straight from `&DataValue<'_>`.
-            let stringify = |idx: usize| -> String {
-                match engine.evaluate(&logic_cache[idx], ctx_av, arena) {
-                    Ok(DataValue::String(s)) => (*s).to_string(),
-                    Ok(other) => other.to_string(),
-                    Err(e) => {
-                        error!("Log: Failed to evaluate expression: {:?}", e);
-                        "<eval error>".to_string()
-                    }
+    /// Execute against an externally-provided `ArenaContext` so the cached
+    /// arena form of `message.context` (built once at the top of the workflow
+    /// sync stretch) is reused across every JSONLogic eval performed here.
+    pub(crate) fn execute_in_arena(
+        &self,
+        _message: &mut Message,
+        arena_ctx: &mut ArenaContext<'_>,
+        engine: &Arc<Engine>,
+    ) -> Result<(usize, Vec<Change>)> {
+        let arena = arena_ctx.arena();
+        let ctx_av = arena_ctx.as_data_value();
+
+        // Stringify a single eval result. For the common String case we copy
+        // the str directly; otherwise the JSON emitter writes straight from
+        // `&DataValue<'_>` without an intermediate `to_owned()` deep clone.
+        let stringify = |compiled: &Logic| -> String {
+            match engine.evaluate(compiled, ctx_av, arena) {
+                Ok(DataValue::String(s)) => (*s).to_string(),
+                Ok(other) => other.to_string(),
+                Err(e) => {
+                    error!("Log: Failed to evaluate expression: {:?}", e);
+                    "<eval error>".to_string()
                 }
-            };
-
-            let log_message = match self.message_index {
-                Some(idx) if idx < logic_cache.len() => stringify(idx),
-                _ => "<uncompiled message>".to_string(),
-            };
-
-            let mut field_parts = Vec::with_capacity(self.field_indices.len());
-            for (key, idx_opt) in &self.field_indices {
-                let val = match idx_opt {
-                    Some(idx) if *idx < logic_cache.len() => stringify(*idx),
-                    _ => "<uncompiled>".to_string(),
-                };
-                field_parts.push(format!("{}={}", key, val));
             }
+        };
 
-            (log_message, field_parts)
-        });
+        let log_message = match &self.compiled_message {
+            Some(compiled) => stringify(compiled),
+            None => "<uncompiled message>".to_string(),
+        };
+
+        let mut field_parts = Vec::with_capacity(self.compiled_fields.len());
+        for (key, compiled_opt) in &self.compiled_fields {
+            let val = match compiled_opt {
+                Some(compiled) => stringify(compiled),
+                None => "<uncompiled>".to_string(),
+            };
+            field_parts.push(format!("{}={}", key, val));
+        }
 
         let full_message = if field_parts.is_empty() {
             log_message

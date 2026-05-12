@@ -158,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     "#;
 
     let workflow = Workflow::from_json(workflow_json)?;
-    let engine = Arc::new(Engine::new(vec![workflow], None));
+    let engine = Arc::new(Engine::new(vec![workflow], None).unwrap());
 
     let sample_data = json!({
         "input": {

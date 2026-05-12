@@ -1,6 +1,8 @@
+use datalogic_rs::Logic;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Configuration for the http_call integration function.
 ///
@@ -23,9 +25,9 @@ pub struct HttpCallConfig {
     #[serde(default)]
     pub path_logic: Option<Value>,
 
-    /// Cache index for compiled path_logic
+    /// Pre-compiled `path_logic`, populated by `LogicCompiler`.
     #[serde(skip)]
-    pub path_logic_index: Option<usize>,
+    pub compiled_path_logic: Option<Arc<Logic>>,
 
     /// Static headers
     #[serde(default)]
@@ -39,9 +41,9 @@ pub struct HttpCallConfig {
     #[serde(default)]
     pub body_logic: Option<Value>,
 
-    /// Cache index for compiled body_logic
+    /// Pre-compiled `body_logic`, populated by `LogicCompiler`.
     #[serde(skip)]
-    pub body_logic_index: Option<usize>,
+    pub compiled_body_logic: Option<Arc<Logic>>,
 
     /// JSONPath/dot-path to extract from response and merge into context
     #[serde(default)]
@@ -92,9 +94,9 @@ pub struct EnrichConfig {
     #[serde(default)]
     pub path_logic: Option<Value>,
 
-    /// Cache index for compiled path_logic
+    /// Pre-compiled `path_logic`, populated by `LogicCompiler`.
     #[serde(skip)]
-    pub path_logic_index: Option<usize>,
+    pub compiled_path_logic: Option<Arc<Logic>>,
 
     /// Dot-path where enrichment data is merged into the message context
     pub merge_path: String,
@@ -134,15 +136,15 @@ pub struct PublishKafkaConfig {
     #[serde(default)]
     pub key_logic: Option<Value>,
 
-    /// Cache index for compiled key_logic
+    /// Pre-compiled `key_logic`, populated by `LogicCompiler`.
     #[serde(skip)]
-    pub key_logic_index: Option<usize>,
+    pub compiled_key_logic: Option<Arc<Logic>>,
 
     /// JSONLogic expression to compute the message value
     #[serde(default)]
     pub value_logic: Option<Value>,
 
-    /// Cache index for compiled value_logic
+    /// Pre-compiled `value_logic`, populated by `LogicCompiler`.
     #[serde(skip)]
-    pub value_logic_index: Option<usize>,
+    pub compiled_value_logic: Option<Arc<Logic>>,
 }

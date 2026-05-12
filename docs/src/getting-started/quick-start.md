@@ -9,8 +9,9 @@ Rules are defined in JSON and consist of actions (tasks) that process data seque
 ```rust
 use dataflow_rs::{Engine, Workflow};
 use dataflow_rs::engine::message::Message;
+use dataflow_rs::engine::utils::set_nested_value;
+use datavalue::OwnedDataValue;
 use serde_json::json;
-use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,24 +42,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rule = Workflow::from_json(rule_json)?;
 
     // Create the engine (compiles all logic at startup)
-    let engine = Engine::new(vec![rule], None);
+    let engine = Engine::new(vec![rule], None)?;
 
-    // Create a message with payload
-    let payload = Arc::new(json!({"name": "World"}));
-    let mut message = Message::new(payload);
-
-    // Load payload into data context
-    message.context["data"]["name"] = json!("World");
+    // Create a message and seed `data.name`
+    let mut message = Message::from_value(&json!({"name": "World"}));
+    set_nested_value(
+        &mut message.context,
+        "data.name",
+        OwnedDataValue::from(&json!("World")),
+    );
 
     // Process the message
     engine.process_message(&mut message).await?;
 
     // Print the result
-    println!("Greeting: {}", message.data()["greeting"]);
+    println!("Greeting: {:?}", message.data()["greeting"]);
 
     Ok(())
 }
 ```
+
+In a typical pipeline you'd let a `parse_json` task seed `data` from the
+payload rather than calling `set_nested_value` from Rust — see the
+playground widget below for that pattern.
 
 ## Try It Interactively
 

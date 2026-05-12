@@ -170,7 +170,7 @@ use dataflow_rs::engine::{
     AsyncFunctionHandler, FunctionConfig,
     error::Result, message::{Change, Message}
 };
-use datalogic_rs::DataLogic;
+use datalogic_rs::Engine as DatalogicEngine;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -183,7 +183,7 @@ impl AsyncFunctionHandler for NotifyManager {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        datalogic: Arc<DataLogic>,
+        engine: Arc<DatalogicEngine>,
     ) -> Result<(usize, Vec<Change>)> {
         // Your custom async logic here (HTTP calls, DB writes, etc.)
         Ok((200, vec![]))

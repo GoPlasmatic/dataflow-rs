@@ -3,22 +3,8 @@ use chrono::{DateTime, Utc};
 use datavalue::OwnedDataValue;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use uuid::Uuid;
-
-/// Process-wide singleton for `Arc<OwnedDataValue::Null>`. The audit-on path
-/// captures `old_value` as an `Arc` for every `Change`; on first write to a
-/// path the old value is `Null`. Sharing one `Arc` saves the per-mapping
-/// `Arc::new(OwnedDataValue::Null)` heap allocation that showed up in the
-/// allocator-pressure portion of the flamegraph.
-static NULL_ARC: LazyLock<Arc<OwnedDataValue>> =
-    LazyLock::new(|| Arc::new(OwnedDataValue::Null));
-
-/// Cheap clone of the shared null `Arc`.
-#[inline]
-pub fn null_arc() -> Arc<OwnedDataValue> {
-    Arc::clone(&NULL_ARC)
-}
 
 /// A message flowing through the dataflow engine.
 ///
@@ -100,7 +86,7 @@ impl Message {
         Self {
             // UUID v7: ms-precision timestamp in the high bits, random tail.
             // Time-ordered and sortable — better for databases/logs than v4
-            // and the same `rng` backend cost.
+            // (random-only) and the same `rng` backend cost.
             id: Uuid::now_v7().to_string(),
             payload,
             context: empty_context(),
@@ -137,20 +123,6 @@ impl Message {
     /// `OwnedDataValue::from(&Value)` bridge.
     pub fn from_value(payload: &JsonValue) -> Self {
         Self::new(Arc::new(OwnedDataValue::from(payload)))
-    }
-
-    /// Construct a message from an already-owned `OwnedDataValue` payload —
-    /// the native zero-conversion entry point.
-    pub fn from_owned(payload: Arc<OwnedDataValue>) -> Self {
-        Self::new(payload)
-    }
-
-    /// Construct a message from an `Arc<OwnedDataValue>` directly. Same as
-    /// `from_owned`; kept as an alias for compatibility with the v4-style
-    /// `from_arc` naming.
-    #[inline]
-    pub fn from_arc(payload: Arc<OwnedDataValue>) -> Self {
-        Self::new(payload)
     }
 
     /// Add an error to the message
@@ -199,9 +171,16 @@ pub struct AuditTrail {
     pub status: usize,
 }
 
+/// A single recorded mutation in the audit trail.
+///
+/// `old_value` and `new_value` are owned `OwnedDataValue`s rather than
+/// `Arc<OwnedDataValue>` — eliminates one heap allocation per Change on the
+/// hot path. External consumers that need to share a `Change` across threads
+/// can wrap it themselves; in-process pipelines (audit-on map mappings) don't
+/// pay the Arc cost they were never going to use.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Change {
     pub path: Arc<str>,
-    pub old_value: Arc<OwnedDataValue>,
-    pub new_value: Arc<OwnedDataValue>,
+    pub old_value: OwnedDataValue,
+    pub new_value: OwnedDataValue,
 }

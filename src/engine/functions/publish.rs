@@ -121,9 +121,8 @@ pub fn execute_publish_json(
     // hot path and the bridge cost there is irrelevant.
     let json_string = if config.pretty {
         let bridge = Value::from(&source_data);
-        serde_json::to_string_pretty(&bridge).map_err(|e| {
-            DataflowError::Validation(format!("Failed to serialize to JSON: {}", e))
-        })?
+        serde_json::to_string_pretty(&bridge)
+            .map_err(|e| DataflowError::Validation(format!("Failed to serialize to JSON: {}", e)))?
     } else {
         source_data.to_json_string()
     };
@@ -140,8 +139,8 @@ pub fn execute_publish_json(
         200,
         vec![Change {
             path: Arc::from(target_path),
-            old_value: Arc::new(old_value),
-            new_value: Arc::new(new_value),
+            old_value,
+            new_value,
         }],
     ))
 }
@@ -182,8 +181,8 @@ pub fn execute_publish_xml(
         200,
         vec![Change {
             path: Arc::from(target_path),
-            old_value: Arc::new(old_value),
-            new_value: Arc::new(new_value),
+            old_value,
+            new_value,
         }],
     ))
 }

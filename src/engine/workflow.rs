@@ -1,6 +1,7 @@
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::task::Task;
 use chrono::{DateTime, Utc};
+use datalogic_rs::Logic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -34,8 +35,11 @@ pub struct Workflow {
     pub description: Option<String>,
     #[serde(default = "default_condition")]
     pub condition: Value,
+    /// Pre-compiled JSONLogic for `condition`, populated by `LogicCompiler`.
+    /// `None` is treated as "no condition / always run" by the executor —
+    /// the same semantics as the previous `condition_index: None`.
     #[serde(skip)]
-    pub condition_index: Option<usize>,
+    pub compiled_condition: Option<Arc<Logic>>,
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub continue_on_error: bool,
@@ -86,7 +90,7 @@ impl Workflow {
             priority: 0,
             description: None,
             condition: Value::Bool(true),
-            condition_index: None,
+            compiled_condition: None,
             tasks: Vec::new(),
             continue_on_error: false,
             channel: default_channel(),
@@ -116,7 +120,7 @@ impl Workflow {
             priority: 0,
             description: None,
             condition,
-            condition_index: None,
+            compiled_condition: None,
             tasks,
             continue_on_error: false,
             channel: default_channel(),

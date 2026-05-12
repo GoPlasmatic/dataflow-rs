@@ -81,8 +81,8 @@ impl AsyncFunctionHandler for StatisticsFunction {
             200,
             vec![Change {
                 path: Arc::from(output_path),
-                old_value: Arc::new(OwnedDataValue::Null),
-                new_value: Arc::new(stats_owned),
+                old_value: OwnedDataValue::Null,
+                new_value: stats_owned,
             }],
         ))
     }
@@ -218,8 +218,8 @@ impl AsyncFunctionHandler for AsyncDataEnrichmentFunction {
             200,
             vec![Change {
                 path: Arc::from("enriched"),
-                old_value: Arc::new(OwnedDataValue::Null),
-                new_value: Arc::new(enriched_owned),
+                old_value: OwnedDataValue::Null,
+                new_value: enriched_owned,
             }],
         ))
     }
@@ -333,7 +333,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     );
 
     // Create engine with custom functions
-    let engine = Engine::new(vec![workflow], Some(custom_functions));
+    let engine = Engine::new(vec![workflow], Some(custom_functions)).unwrap();
 
     // Create sample data
     let sample_data = json!({

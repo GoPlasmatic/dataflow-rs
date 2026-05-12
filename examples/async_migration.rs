@@ -1,13 +1,13 @@
 //! # Async Migration Example
 //!
-//! This example demonstrates how to use the new async dataflow-rs API with DataLogic v4.
+//! This example demonstrates how to use the async dataflow-rs API on top of datalogic v5.
 //!
-//! ## Key Changes from Previous Versions:
+//! ## Key Properties:
 //!
-//! 1. **Pure Async API**: Engine now provides async `process_message()` method
-//! 2. **No Thread Management**: Removed ThreadedEngine and RayonEngine
-//! 3. **DataLogic v4**: Leverages Arc<CompiledLogic> for zero-copy sharing
-//! 4. **Tokio Integration**: Designed for Tokio runtime with mixed I/O and CPU workloads
+//! 1. **Pure Async API**: Engine provides an async `process_message()` method
+//! 2. **No Thread Management**: No ThreadedEngine / RayonEngine — Tokio owns scheduling
+//! 3. **Pre-compiled `Arc<Logic>`**: Zero-copy sharing of compiled JSONLogic across async tasks
+//! 4. **Tokio Integration**: Designed for the Tokio runtime with mixed I/O and CPU workloads
 //!
 //! ## Recommended Workflow Pattern:
 //! 1. parse_json - Load payload into data context (first task)
@@ -159,7 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add simple async handler
         custom_functions.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
 
-        let engine = Engine::new(vec![workflow.clone()], Some(custom_functions));
+        let engine = Engine::new(vec![workflow.clone()], Some(custom_functions)).unwrap();
 
         let mut message = Message::from_value(&json!({
             "required_field": "present",
@@ -183,7 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         custom_functions.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
 
         // All handlers are now async, even CPU-bound ones
-        let engine = Engine::new(vec![workflow.clone()], Some(custom_functions));
+        let engine = Engine::new(vec![workflow.clone()], Some(custom_functions)).unwrap();
 
         let mut message = Message::from_value(&json!({
             "required_field": "present",
@@ -210,7 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         custom_functions.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
 
         // Create engine once and share across requests
-        let engine = Arc::new(Engine::new(vec![workflow.clone()], Some(custom_functions)));
+        let engine = Arc::new(Engine::new(vec![workflow.clone()], Some(custom_functions)).unwrap());
 
         async fn process_handler(
             engine: Arc<Engine>,
@@ -262,7 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         custom_functions.insert("async_http".to_string(), Box::new(AsyncHttpHandler));
         custom_functions.insert("simple_async".to_string(), Box::new(SimpleAsyncHandler));
 
-        let engine = Arc::new(Engine::new(vec![workflow], Some(custom_functions)));
+        let engine = Arc::new(Engine::new(vec![workflow], Some(custom_functions)).unwrap());
 
         // Single message
         let mut message = Message::from_value(&json!({
@@ -301,7 +301,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nMigration complete! Key benefits:");
     println!("  - Simplified architecture (no custom thread management)");
     println!("  - Better Tokio integration for mixed I/O and CPU workloads");
-    println!("  - Zero-copy sharing with Arc<CompiledLogic>");
+    println!("  - Zero-copy sharing with Arc<Logic>");
     println!("  - Backward compatibility with sync handlers");
     println!("  - parse_json/parse_xml functions for loading payload into context");
 

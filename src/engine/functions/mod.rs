@@ -49,7 +49,7 @@ pub mod builtins {
 /// The function receives:
 /// - Mutable access to the message being processed (no cloning needed!)
 /// - Pre-parsed function configuration
-/// - Reference to the DataLogic instance for JSONLogic evaluation
+/// - Shared `datalogic_rs::Engine` for JSONLogic evaluation
 ///
 /// ## Performance Note
 ///

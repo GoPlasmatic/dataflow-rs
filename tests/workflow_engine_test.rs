@@ -83,7 +83,7 @@ async fn test_workflow_execution() {
             name: "Log Task".to_string(),
             description: Some("A test task".to_string()),
             condition: json!(true),
-            condition_index: None,
+            compiled_condition: None,
             continue_on_error: false,
             function: FunctionConfig::Custom {
                 name: "log".to_string(),
@@ -91,7 +91,7 @@ async fn test_workflow_execution() {
             },
         }],
         condition: json!(true),
-        condition_index: None,
+        compiled_condition: None,
         continue_on_error: false,
         ..Default::default()
     };
@@ -104,7 +104,7 @@ async fn test_workflow_execution() {
     custom_functions.insert("log".to_string(), Box::new(LoggingTask));
 
     // Create engine with the workflow and custom function
-    let engine = Engine::new(vec![workflow], Some(custom_functions));
+    let engine = Engine::new(vec![workflow], Some(custom_functions)).unwrap();
 
     // Create a dummy message
     let mut message = Message::from_value(&json!({}));
@@ -146,7 +146,7 @@ async fn test_async_workflow_execution() {
             name: "Async Log Task".to_string(),
             description: Some("An async test task".to_string()),
             condition: json!(true),
-            condition_index: None,
+            compiled_condition: None,
             continue_on_error: false,
             function: FunctionConfig::Custom {
                 name: "async_log".to_string(),
@@ -154,7 +154,7 @@ async fn test_async_workflow_execution() {
             },
         }],
         condition: json!(true),
-        condition_index: None,
+        compiled_condition: None,
         continue_on_error: false,
         ..Default::default()
     };
@@ -165,7 +165,7 @@ async fn test_async_workflow_execution() {
     custom_functions.insert("async_log".to_string(), Box::new(AsyncLoggingTask));
 
     // Create engine with the workflow and custom function
-    let engine = Engine::new(vec![workflow], Some(custom_functions));
+    let engine = Engine::new(vec![workflow], Some(custom_functions)).unwrap();
 
     // Create a dummy message
     let mut message = Message::from_value(&json!({}));
@@ -241,7 +241,7 @@ async fn test_temp_data_replacement_behavior() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({"test": "data"}));
 
     // Initially temp_data should be empty
@@ -252,10 +252,13 @@ async fn test_temp_data_replacement_behavior() {
 
     // After fix: temp_data is MERGED, not replaced
     // Both field1 and field2 should exist
-    assert_eq!(message.temp_data(), &dv(json!({
+    assert_eq!(
+        message.temp_data(),
+        &dv(json!({
             "field1": "first_value",
             "field2": "second_value"
-        })));
+        }))
+    );
 
     // Verify that both fields are present (demonstrating the merge behavior)
     assert!(
@@ -322,16 +325,19 @@ async fn test_temp_data_nested_path_preservation() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({"test": "data"}));
 
     engine.process_message(&mut message).await.unwrap();
 
     // With nested paths, both fields should be preserved
-    assert_eq!(message.temp_data(), &dv(json!({
+    assert_eq!(
+        message.temp_data(),
+        &dv(json!({
             "field1": "first_value",
             "field2": "second_value"
-        })));
+        }))
+    );
 
     // Both fields should exist when using nested paths
     assert!(
@@ -396,7 +402,7 @@ async fn test_data_field_replacement_behavior() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({}));
     // Initialize the data field with existing data to test merging
     set_nested_value(&mut message.context, "data", dv(json!({"initial": "data"})));
@@ -473,24 +479,39 @@ async fn test_hash_prefix_in_mapping_paths() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
 
     // Verify fields with numeric names were created correctly
-    assert_eq!(message.context["data"]["fields"]["20"], dv(json!("value for field 20")));
-    assert_eq!(message.context["data"]["fields"]["100"], dv(json!("value for field 100")));
-    assert_eq!(message.context["data"]["fields"]["#"], dv(json!("value for hash field")));
-    assert_eq!(message.context["data"]["fields"]["##"], dv(json!("value for double hash")));
+    assert_eq!(
+        message.context["data"]["fields"]["20"],
+        dv(json!("value for field 20"))
+    );
+    assert_eq!(
+        message.context["data"]["fields"]["100"],
+        dv(json!("value for field 100"))
+    );
+    assert_eq!(
+        message.context["data"]["fields"]["#"],
+        dv(json!("value for hash field"))
+    );
+    assert_eq!(
+        message.context["data"]["fields"]["##"],
+        dv(json!("value for double hash"))
+    );
 
     // Verify the complete structure
-    assert_eq!(message.context["data"]["fields"], dv(json!({
+    assert_eq!(
+        message.context["data"]["fields"],
+        dv(json!({
             "20": "value for field 20",
             "100": "value for field 100",
             "#": "value for hash field",
             "##": "value for double hash"
-        })));
+        }))
+    );
 }
 
 #[tokio::test]
@@ -550,22 +571,37 @@ async fn test_hash_prefix_with_array_values_in_mapping() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
 
     // Verify field "72" is an array with modified values
-    assert_eq!(message.context["data"]["fields"]["72"], dv(json!(["modified_first", "initial2", "modified_third"])));
+    assert_eq!(
+        message.context["data"]["fields"]["72"],
+        dv(json!(["modified_first", "initial2", "modified_third"]))
+    );
 
     // Verify field "100" is an array with modified second element
-    assert_eq!(message.context["data"]["fields"]["100"], dv(json!(["alpha", "modified_beta"])));
+    assert_eq!(
+        message.context["data"]["fields"]["100"],
+        dv(json!(["alpha", "modified_beta"]))
+    );
 
     // Verify we can access these via get_nested_value with # prefix
     use dataflow_rs::engine::utils::get_nested_value;
-    assert_eq!(get_nested_value(&message.context["data"], "fields.#72.0"), Some(&dv(json!("modified_first"))));
-    assert_eq!(get_nested_value(&message.context["data"], "fields.#72.2"), Some(&dv(json!("modified_third"))));
-    assert_eq!(get_nested_value(&message.context["data"], "fields.#100.1"), Some(&dv(json!("modified_beta"))));
+    assert_eq!(
+        get_nested_value(&message.context["data"], "fields.#72.0"),
+        Some(&dv(json!("modified_first")))
+    );
+    assert_eq!(
+        get_nested_value(&message.context["data"], "fields.#72.2"),
+        Some(&dv(json!("modified_third")))
+    );
+    assert_eq!(
+        get_nested_value(&message.context["data"], "fields.#100.1"),
+        Some(&dv(json!("modified_beta")))
+    );
 }
 
 #[tokio::test]
@@ -636,7 +672,7 @@ async fn test_sequential_mappings_within_same_task() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -646,23 +682,44 @@ async fn test_sequential_mappings_within_same_task() {
 
     // CRITICAL TEST: Verify second mapping could see the first mapping's result
     // This now works after fixing the evaluation context issue
-    assert_eq!(message.context["data"].get("step2"), Some(&dv(json!("initial_value"))), "Second mapping should see first mapping's result");
+    assert_eq!(
+        message.context["data"].get("step2"),
+        Some(&dv(json!("initial_value"))),
+        "Second mapping should see first mapping's result"
+    );
 
     // Verify third mapping could see both previous mappings (they should be equal)
-    assert_eq!(message.context["data"].get("step3"), Some(&dv(json!(true))), // step1 == step2 should be true
-        "Third mapping should see results from both previous mappings");
+    assert_eq!(
+        message.context["data"].get("step3"),
+        Some(&dv(json!(true))), // step1 == step2 should be true
+        "Third mapping should see results from both previous mappings"
+    );
 
     // Verify temp_data was set
-    assert_eq!(message.context["temp_data"]["temp1"], dv(json!("temp_value")));
+    assert_eq!(
+        message.context["temp_data"]["temp1"],
+        dv(json!("temp_value"))
+    );
 
     // Verify mapping could reference temp_data
-    assert_eq!(message.context["data"].get("from_temp"), Some(&dv(json!("temp_value"))), "Mapping should be able to reference temp_data");
+    assert_eq!(
+        message.context["data"].get("from_temp"),
+        Some(&dv(json!("temp_value"))),
+        "Mapping should be able to reference temp_data"
+    );
 
     // Verify array was created
-    assert_eq!(message.context["data"]["array_test"], dv(json!(["a", "b", "c"])));
+    assert_eq!(
+        message.context["data"]["array_test"],
+        dv(json!(["a", "b", "c"]))
+    );
 
     // Verify array element could be referenced
-    assert_eq!(message.context["data"].get("array_element"), Some(&dv(json!("b"))), "Should be able to reference array element from previous mapping");
+    assert_eq!(
+        message.context["data"].get("array_element"),
+        Some(&dv(json!("b"))),
+        "Should be able to reference array element from previous mapping"
+    );
 
     println!(
         "Final data: {}",
@@ -715,7 +772,7 @@ async fn test_sequential_mappings_issue_simplified() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -727,7 +784,11 @@ async fn test_sequential_mappings_issue_simplified() {
     println!("value2 result: {:?}", message.context["data"].get("value2"));
 
     // This now works correctly after the fix
-    assert_eq!(message.context["data"].get("value2"), Some(&dv(json!(20))), "Second mapping should see first mapping's result and compute 10 * 2 = 20");
+    assert_eq!(
+        message.context["data"].get("value2"),
+        Some(&dv(json!(20))),
+        "Second mapping should see first mapping's result and compute 10 * 2 = 20"
+    );
 }
 
 #[tokio::test]
@@ -792,17 +853,32 @@ async fn test_temp_data_merge_real_scenario() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
 
     // After merge, all fields should be present
-    assert_eq!(message.context["temp_data"]["Receiver"], dv(json!("NQZATAE1")));
-    assert_eq!(message.context["temp_data"]["Sender"], dv(json!("ZSZUBOM1")));
-    assert_eq!(message.context["temp_data"]["UETR"], dv(json!("8e49e852-45a1-42f7-b120-18d232541285")));
-    assert_eq!(message.context["temp_data"]["settlement_method"], dv(json!("INDA")));
-    assert_eq!(message.context["temp_data"]["settlement_account"], dv(json!(null)));
+    assert_eq!(
+        message.context["temp_data"]["Receiver"],
+        dv(json!("NQZATAE1"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["Sender"],
+        dv(json!("ZSZUBOM1"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["UETR"],
+        dv(json!("8e49e852-45a1-42f7-b120-18d232541285"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["settlement_method"],
+        dv(json!("INDA"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["settlement_account"],
+        dv(json!(null))
+    );
 
     // Verify the complete structure has all fields
     assert!(
@@ -910,7 +986,7 @@ async fn test_nested_temp_data_mappings_preserve_existing_fields() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -937,15 +1013,42 @@ async fn test_nested_temp_data_mappings_preserve_existing_fields() {
     println!("Final temp_data: {:?}", message.context["temp_data"]);
 
     // After the second task, ALL fields should still be present
-    assert_eq!(message.context["temp_data"]["Receiver"], dv(json!("YLLUSAW1")));
-    assert_eq!(message.context["temp_data"]["Sender"], dv(json!("VLUIYUR1")));
-    assert_eq!(message.context["temp_data"]["UETR"], dv(json!("3e06e786-1292-48bc-b3f1-0f7cc04330d1")));
-    assert_eq!(message.context["temp_data"]["clearing_channel"], dv(json!(null)));
-    assert_eq!(message.context["temp_data"]["field53b_account_indicator"], dv(json!(null)));
-    assert_eq!(message.context["temp_data"]["field53b_is_account"], dv(json!(false)));
-    assert_eq!(message.context["temp_data"]["has_rtgs_indicator"], dv(json!(null)));
-    assert_eq!(message.context["temp_data"]["settlement_method"], dv(json!("INDA")));
-    assert_eq!(message.context["temp_data"]["settlement_account"], dv(json!(null)));
+    assert_eq!(
+        message.context["temp_data"]["Receiver"],
+        dv(json!("YLLUSAW1"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["Sender"],
+        dv(json!("VLUIYUR1"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["UETR"],
+        dv(json!("3e06e786-1292-48bc-b3f1-0f7cc04330d1"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["clearing_channel"],
+        dv(json!(null))
+    );
+    assert_eq!(
+        message.context["temp_data"]["field53b_account_indicator"],
+        dv(json!(null))
+    );
+    assert_eq!(
+        message.context["temp_data"]["field53b_is_account"],
+        dv(json!(false))
+    );
+    assert_eq!(
+        message.context["temp_data"]["has_rtgs_indicator"],
+        dv(json!(null))
+    );
+    assert_eq!(
+        message.context["temp_data"]["settlement_method"],
+        dv(json!("INDA"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["settlement_account"],
+        dv(json!(null))
+    );
 
     // Verify all fields exist
     assert!(
@@ -1060,7 +1163,7 @@ async fn test_exact_user_scenario_with_self_reference() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -1094,14 +1197,38 @@ async fn test_exact_user_scenario_with_self_reference() {
     );
 
     // After the second task, ALL fields should still be present including the ones not mentioned
-    assert_eq!(message.context["temp_data"]["Receiver"], dv(json!("ZCZEGSG1")));
-    assert_eq!(message.context["temp_data"]["Sender"], dv(json!("KWFUTHQ1")));
-    assert_eq!(message.context["temp_data"]["UETR"], dv(json!("NEW-UETR-VALUE"))); // Changed value
-    assert_eq!(message.context["temp_data"]["clearing_channel"], dv(json!(null))); // Should be preserved!
-    assert_eq!(message.context["temp_data"]["field53b_account_indicator"], dv(json!(null))); // Should be preserved!
-    assert_eq!(message.context["temp_data"]["field53b_is_account"], dv(json!(false))); // Should be preserved!
-    assert_eq!(message.context["temp_data"]["has_rtgs_indicator"], dv(json!(null))); // Should be preserved!
-    assert_eq!(message.context["temp_data"]["settlement_method"], dv(json!("INDA")));
+    assert_eq!(
+        message.context["temp_data"]["Receiver"],
+        dv(json!("ZCZEGSG1"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["Sender"],
+        dv(json!("KWFUTHQ1"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["UETR"],
+        dv(json!("NEW-UETR-VALUE"))
+    ); // Changed value
+    assert_eq!(
+        message.context["temp_data"]["clearing_channel"],
+        dv(json!(null))
+    ); // Should be preserved!
+    assert_eq!(
+        message.context["temp_data"]["field53b_account_indicator"],
+        dv(json!(null))
+    ); // Should be preserved!
+    assert_eq!(
+        message.context["temp_data"]["field53b_is_account"],
+        dv(json!(false))
+    ); // Should be preserved!
+    assert_eq!(
+        message.context["temp_data"]["has_rtgs_indicator"],
+        dv(json!(null))
+    ); // Should be preserved!
+    assert_eq!(
+        message.context["temp_data"]["settlement_method"],
+        dv(json!("INDA"))
+    );
     // settlement_account should not exist since null mapping is skipped
     assert_eq!(message.context["temp_data"].get("settlement_account"), None);
 }
@@ -1187,7 +1314,7 @@ async fn test_what_if_mappings_aggregated_to_single_object() {
         .map(|w| serde_json::from_value(w.clone()).unwrap())
         .collect();
 
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None).unwrap();
     let mut message = Message::from_value(&json!({}));
 
     engine.process_message(&mut message).await.unwrap();
@@ -1231,13 +1358,13 @@ async fn test_what_if_mappings_aggregated_to_single_object() {
     assert_eq!(settlement_audit.changes[0].path.as_ref(), "temp_data");
 
     // The old_value should have all the existing fields
-    let old_value = &*settlement_audit.changes[0].old_value;
+    let old_value = &settlement_audit.changes[0].old_value;
     assert!(object_contains(old_value, "Receiver"));
     assert!(object_contains(old_value, "Sender"));
     assert!(object_contains(old_value, "UETR"));
 
     // The new_value should have only the new fields
-    let new_value = &*settlement_audit.changes[0].new_value;
+    let new_value = &settlement_audit.changes[0].new_value;
     assert!(object_contains(new_value, "settlement_method"));
     assert!(object_contains(new_value, "settlement_account"));
     assert_eq!(
@@ -1251,8 +1378,210 @@ async fn test_what_if_mappings_aggregated_to_single_object() {
         "AGGREGATED test - Final temp_data: {:?}",
         message.context["temp_data"]
     );
-    assert_eq!(message.context["temp_data"]["Receiver"], dv(json!("ZCZEGSG1")));
-    assert_eq!(message.context["temp_data"]["Sender"], dv(json!("KWFUTHQ1")));
-    assert_eq!(message.context["temp_data"]["clearing_channel"], dv(json!(null)));
-    assert_eq!(message.context["temp_data"]["settlement_method"], dv(json!("INDA")));
+    assert_eq!(
+        message.context["temp_data"]["Receiver"],
+        dv(json!("ZCZEGSG1"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["Sender"],
+        dv(json!("KWFUTHQ1"))
+    );
+    assert_eq!(
+        message.context["temp_data"]["clearing_channel"],
+        dv(json!(null))
+    );
+    assert_eq!(
+        message.context["temp_data"]["settlement_method"],
+        dv(json!("INDA"))
+    );
+}
+
+// =============================================================================
+// Log/Filter in sync stretch — regression coverage
+// =============================================================================
+//
+// Both built-ins ship `execute_in_arena` variants that reuse the workflow's
+// outer `ArenaContext` instead of opening their own `with_arena` scope. That
+// fixes the re-entrant `RefCell::borrow_mut` panic that the sync-stretch
+// dispatch previously triggered, and as a side effect lets Log/Filter reuse
+// the depth-2 arena cache (no per-call `to_arena` walk of `data.input`).
+
+#[tokio::test]
+async fn log_builtin_runs_in_sync_stretch() {
+    let workflow_json = r#"{
+        "id": "log_only",
+        "name": "Log Only",
+        "tasks": [
+            {
+                "id": "log_task",
+                "name": "Log",
+                "function": {
+                    "name": "log",
+                    "input": {
+                        "message": "hello"
+                    }
+                }
+            }
+        ]
+    }"#;
+
+    let workflow = Workflow::from_json(workflow_json).unwrap();
+    let engine = Engine::new(vec![workflow], None).unwrap();
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+    // Audit entry recorded with status 200.
+    assert_eq!(message.audit_trail.len(), 1);
+    assert_eq!(message.audit_trail[0].status, 200);
+    assert_eq!(message.audit_trail[0].task_id.as_ref(), "log_task");
+}
+
+#[tokio::test]
+async fn filter_builtin_runs_in_sync_stretch() {
+    let workflow_json = r#"{
+        "id": "filter_only",
+        "name": "Filter Only",
+        "tasks": [
+            {
+                "id": "filter_task",
+                "name": "Filter",
+                "function": {
+                    "name": "filter",
+                    "input": {
+                        "condition": true,
+                        "on_reject": "halt"
+                    }
+                }
+            }
+        ]
+    }"#;
+
+    let workflow = Workflow::from_json(workflow_json).unwrap();
+    let engine = Engine::new(vec![workflow], None).unwrap();
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+    // Condition was true → status 200 (FILTER_STATUS_PASS).
+    assert_eq!(message.audit_trail.len(), 1);
+    assert_eq!(message.audit_trail[0].status, 200);
+}
+
+#[tokio::test]
+async fn filter_halt_in_sync_stretch_short_circuits_workflow() {
+    let workflow_json = r#"{
+        "id": "filter_halt",
+        "name": "Filter Halt",
+        "tasks": [
+            {
+                "id": "gate",
+                "name": "Gate",
+                "function": {
+                    "name": "filter",
+                    "input": {
+                        "condition": false,
+                        "on_reject": "halt"
+                    }
+                }
+            },
+            {
+                "id": "after_halt",
+                "name": "After Halt",
+                "function": {
+                    "name": "map",
+                    "input": {
+                        "mappings": [
+                            { "path": "data.should_not_run", "logic": true }
+                        ]
+                    }
+                }
+            }
+        ]
+    }"#;
+
+    let workflow = Workflow::from_json(workflow_json).unwrap();
+    let engine = Engine::new(vec![workflow], None).unwrap();
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    // Only the gate's audit entry should exist (status 299 = HALT). The map
+    // task never ran, so `data.should_not_run` must be absent.
+    assert_eq!(message.audit_trail.len(), 1);
+    assert_eq!(message.audit_trail[0].task_id.as_ref(), "gate");
+    assert_eq!(message.audit_trail[0].status, 299);
+    assert!(message.context["data"].get("should_not_run").is_none());
+}
+
+#[tokio::test]
+async fn log_filter_chained_with_map_share_one_arena() {
+    // map → filter → map → log in one sync stretch. Pre-fix this would have
+    // panicked at the filter step. Now everything runs in one arena scope.
+    let workflow_json = r#"{
+        "id": "mixed_sync",
+        "name": "Mixed Sync Stretch",
+        "tasks": [
+            {
+                "id": "set_amount",
+                "name": "Set Amount",
+                "function": {
+                    "name": "map",
+                    "input": {
+                        "mappings": [
+                            { "path": "data.amount", "logic": 100 }
+                        ]
+                    }
+                }
+            },
+            {
+                "id": "gate",
+                "name": "Amount > 0",
+                "function": {
+                    "name": "filter",
+                    "input": {
+                        "condition": { ">": [ { "var": "data.amount" }, 0 ] },
+                        "on_reject": "halt"
+                    }
+                }
+            },
+            {
+                "id": "double_amount",
+                "name": "Double Amount",
+                "function": {
+                    "name": "map",
+                    "input": {
+                        "mappings": [
+                            {
+                                "path": "data.amount",
+                                "logic": { "*": [ { "var": "data.amount" }, 2 ] }
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "id": "log_result",
+                "name": "Log Result",
+                "function": {
+                    "name": "log",
+                    "input": {
+                        "message": { "cat": [ "doubled=", { "var": "data.amount" } ] }
+                    }
+                }
+            }
+        ]
+    }"#;
+
+    let workflow = Workflow::from_json(workflow_json).unwrap();
+    let engine = Engine::new(vec![workflow], None).unwrap();
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(message.context["data"]["amount"], dv(json!(200)));
+    assert_eq!(message.audit_trail.len(), 4);
+    let task_ids: Vec<&str> = message
+        .audit_trail
+        .iter()
+        .map(|a| a.task_id.as_ref())
+        .collect();
+    assert_eq!(
+        task_ids,
+        vec!["set_amount", "gate", "double_amount", "log_result"]
+    );
 }

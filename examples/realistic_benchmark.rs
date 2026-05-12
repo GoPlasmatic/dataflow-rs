@@ -79,19 +79,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1 validation task: 12 rules
     let workflow = build_workflow();
 
-    let engine = Arc::new(Engine::new(vec![workflow], None));
+    let engine = Arc::new(Engine::new(vec![workflow], None).unwrap());
 
     // -- Sample payload: pacs.008-shaped, ~80 fields, 4-5 levels deep ---------
     // Convert to `OwnedDataValue` ONCE at startup and share via `Arc`. Per-
-    // message construction goes through `Message::from_arc(Arc::clone(...))`
+    // message construction goes through `Message::new(Arc::clone(...))`
     // — a refcount bump, no serde_json clone or `OwnedDataValue::from(&Value)`
     // walk. This is what callers with already-parsed inputs (e.g. an HTTP
     // server holding parsed payloads) actually pay; the prior
     // `Message::from_value(&data)` path measured the harness's serde_json
     // churn as part of the engine cost.
     let sample_payload_json = build_sample_payload();
-    let sample_payload: Arc<OwnedDataValue> =
-        Arc::new(OwnedDataValue::from(&sample_payload_json));
+    let sample_payload: Arc<OwnedDataValue> = Arc::new(OwnedDataValue::from(&sample_payload_json));
 
     // Warmup
     println!("Running warmup ({} messages)...", WARMUP_MESSAGES);
@@ -101,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let engine = Arc::clone(&engine);
             let payload = Arc::clone(&sample_payload);
             tokio::spawn(async move {
-                let mut message = Message::from_arc(payload);
+                let mut message = Message::new(payload);
                 engine.process_message(&mut message).await.unwrap();
             })
         })
@@ -109,9 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     join_all(warmup_handles).await;
     println!("Warmup completed in {:?}\n", warmup_start.elapsed());
 
-    println!(
-        "Workload per message: 1 parse_json + 25 mappings + 12 validations = 38 ops"
-    );
+    println!("Workload per message: 1 parse_json + 25 mappings + 12 validations = 38 ops");
     println!();
     println!(
         "Configuration | Messages | Concurrency | Throughput (msg/s) | Avg (μs) | P50 (μs) | P90 (μs) | P95 (μs) | P99 (μs) | P99.9 (μs)"
@@ -129,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let payload = Arc::clone(&sample_payload);
         handles.push(tokio::spawn(async move {
             let msg_start = Instant::now();
-            let mut message = Message::from_arc(payload);
+            let mut message = Message::new(payload);
             engine.process_message(&mut message).await.unwrap();
             msg_start.elapsed()
         }));

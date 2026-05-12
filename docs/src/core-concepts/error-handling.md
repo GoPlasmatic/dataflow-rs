@@ -129,15 +129,17 @@ Generated when function execution fails:
 Return errors from custom functions:
 
 ```rust
+use datalogic_rs::Engine as DatalogicEngine;
+
 impl AsyncFunctionHandler for MyFunction {
     async fn execute(
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        datalogic: Arc<DataLogic>,
+        engine: Arc<DatalogicEngine>,
     ) -> Result<(usize, Vec<Change>)> {
         if some_condition {
-            return Err(DataflowError::ExecutionError(
+            return Err(DataflowError::Task(
                 "Custom error message".to_string()
             ));
         }
@@ -145,6 +147,11 @@ impl AsyncFunctionHandler for MyFunction {
     }
 }
 ```
+
+`DataflowError` provides typed variants for the most common cases —
+`Validation`, `Task`, `Workflow`, `FunctionExecution`, `FunctionNotFound`,
+`Http`, `Timeout`, `Io`, `LogicEvaluation`, `Deserialization`, `Unknown`.
+See the [API reference](../api/reference.md#dataflowerror) for the full list.
 
 ## Error Recovery Patterns
 

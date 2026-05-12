@@ -1,33 +1,30 @@
 //! # Task Execution Module
 //!
-//! This module handles the execution of individual tasks within workflows.
-//! It provides a clean separation of concerns by isolating task execution logic
-//! from the main engine orchestration.
+//! Dispatches a single `Task` to its function implementation. Built-in
+//! function variants of `FunctionConfig` are dispatched directly to the
+//! config's `execute(...)` (sync) or to the registered async handler under
+//! the matching name (async).
 
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::executor::InternalExecutor;
 use crate::engine::functions::{AsyncFunctionHandler, FunctionConfig};
 use crate::engine::message::{Change, Message};
 use crate::engine::task::Task;
 use datalogic_rs::Engine;
 use log::{debug, error};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Handles the execution of tasks with their associated functions
 ///
 /// The `TaskExecutor` is responsible for:
-/// - Executing built-in functions (map, validation)
-/// - Executing custom async function handlers
-/// - Managing function registry
-/// - Handling task-level error recovery
+/// - Dispatching built-in functions (map, validation, …) directly to their config
+/// - Routing async functions (http_call, enrich, publish_kafka, custom) to
+///   the matching registered `AsyncFunctionHandler`
+/// - Owning the function registry
 pub struct TaskExecutor {
     /// Registry of async function handlers
     task_functions: Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
-    /// Internal executor for built-in functions
-    executor: Arc<InternalExecutor>,
-    /// Shared datalogic v5 Engine (Send + Sync; Arc-shared across tasks)
+    /// Shared datalogic Engine (Send + Sync; Arc-shared across tasks)
     engine: Arc<Engine>,
 }
 
@@ -35,29 +32,16 @@ impl TaskExecutor {
     /// Create a new TaskExecutor
     pub fn new(
         task_functions: Arc<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
-        executor: Arc<InternalExecutor>,
         engine: Arc<Engine>,
     ) -> Self {
         Self {
             task_functions,
-            executor,
             engine,
         }
     }
 
-    /// Execute a single task
-    ///
-    /// This method:
-    /// 1. Determines the function type (built-in or custom)
-    /// 2. Executes the appropriate handler
-    /// 3. Returns the status code and changes for audit trail
-    ///
-    /// # Arguments
-    /// * `task` - The task to execute
-    /// * `message` - The message being processed
-    ///
-    /// # Returns
-    /// * `Result<(usize, Vec<Change>)>` - Status code and changes, or error
+    /// Execute a single task. Built-in variants run on the calling thread;
+    /// async variants are awaited.
     pub async fn execute(
         &self,
         task: &Task,
@@ -70,85 +54,37 @@ impl TaskExecutor {
         );
 
         match &task.function {
-            FunctionConfig::Map { input, .. } => {
-                // Execute built-in map function
-                self.executor.execute_map(message, input)
-            }
-            FunctionConfig::Validation { input, .. } => {
-                // Execute built-in validation function
-                self.executor.execute_validation(message, input)
-            }
+            FunctionConfig::Map { input, .. } => input.execute(message, &self.engine),
+            FunctionConfig::Validation { input, .. } => input.execute(message, &self.engine),
             FunctionConfig::ParseJson { input, .. } => {
-                // Execute built-in parse_json function
                 crate::engine::functions::parse::execute_parse_json(message, input)
             }
             FunctionConfig::ParseXml { input, .. } => {
-                // Execute built-in parse_xml function
                 crate::engine::functions::parse::execute_parse_xml(message, input)
             }
             FunctionConfig::PublishJson { input, .. } => {
-                // Execute built-in publish_json function
                 crate::engine::functions::publish::execute_publish_json(message, input)
             }
             FunctionConfig::PublishXml { input, .. } => {
-                // Execute built-in publish_xml function
                 crate::engine::functions::publish::execute_publish_xml(message, input)
             }
-            FunctionConfig::Filter { input, .. } => {
-                // Execute built-in filter function
-                self.executor.execute_filter(message, input)
-            }
-            FunctionConfig::Log { input, .. } => {
-                // Execute built-in log function
-                self.executor.execute_log(message, input)
-            }
+            FunctionConfig::Filter { input, .. } => input.execute(message, &self.engine),
+            FunctionConfig::Log { input, .. } => input.execute(message, &self.engine),
             FunctionConfig::HttpCall { .. } => {
-                // Route to async handler registered as "http_call"
                 self.execute_custom_function("http_call", message, &task.function)
                     .await
             }
             FunctionConfig::Enrich { .. } => {
-                // Route to async handler registered as "enrich"
                 self.execute_custom_function("enrich", message, &task.function)
                     .await
             }
             FunctionConfig::PublishKafka { .. } => {
-                // Route to async handler registered as "publish_kafka"
                 self.execute_custom_function("publish_kafka", message, &task.function)
                     .await
             }
             FunctionConfig::Custom { name, .. } => {
-                // Execute custom function handler
                 self.execute_custom_function(name, message, &task.function)
                     .await
-            }
-        }
-    }
-
-    /// Execute a single task with trace support
-    ///
-    /// Same as `execute()` but for map tasks, captures per-mapping context snapshots.
-    /// Returns `Option<Vec<Value>>` which is `Some` only for map tasks.
-    pub async fn execute_with_trace(
-        &self,
-        task: &Task,
-        message: &mut Message,
-    ) -> Result<(usize, Vec<Change>, Option<Vec<Value>>)> {
-        debug!(
-            "Executing task (trace): {} with function: {:?}",
-            task.id,
-            task.function.function_name()
-        );
-
-        match &task.function {
-            FunctionConfig::Map { input, .. } => {
-                let (status, changes, contexts) =
-                    self.executor.execute_map_with_trace(message, input)?;
-                Ok((status, changes, Some(contexts)))
-            }
-            _ => {
-                let (status, changes) = self.execute(task, message).await?;
-                Ok((status, changes, None))
             }
         }
     }
@@ -199,33 +135,28 @@ mod tests {
 
     #[test]
     fn test_has_function() {
-        let compiler = LogicCompiler::new();
-        let (engine, logic_cache) = compiler.into_parts();
-        let executor = Arc::new(InternalExecutor::new(engine.clone(), logic_cache));
-        let task_executor = TaskExecutor::new(Arc::new(HashMap::new()), executor, engine);
+        let engine = LogicCompiler::new().into_engine();
+        let task_executor = TaskExecutor::new(Arc::new(HashMap::new()), engine);
 
-        // Test built-in functions
+        // Built-in functions
         assert!(task_executor.has_function("map"));
         assert!(task_executor.has_function("validation"));
         assert!(task_executor.has_function("validate"));
 
-        // Test non-existent function
+        // Non-existent function
         assert!(!task_executor.has_function("nonexistent"));
     }
 
     #[test]
     fn test_custom_function_count() {
         let mut custom_functions = HashMap::new();
-        // Add a dummy custom function (we'll use a mock for testing)
         custom_functions.insert(
             "custom_test".to_string(),
             Box::new(MockAsyncFunction) as Box<dyn AsyncFunctionHandler + Send + Sync>,
         );
 
-        let compiler = LogicCompiler::new();
-        let (engine, logic_cache) = compiler.into_parts();
-        let executor = Arc::new(InternalExecutor::new(engine.clone(), logic_cache));
-        let task_executor = TaskExecutor::new(Arc::new(custom_functions), executor, engine);
+        let engine = LogicCompiler::new().into_engine();
+        let task_executor = TaskExecutor::new(Arc::new(custom_functions), engine);
 
         assert_eq!(task_executor.custom_function_count(), 1);
     }

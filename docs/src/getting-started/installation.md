@@ -25,7 +25,7 @@ use dataflow_rs::Engine;
 
 fn main() {
     // Create an empty rules engine
-    let engine = Engine::new(vec![], None);
+    let engine = Engine::new(vec![], None)?;
     println!("Rules engine created with {} rules", engine.workflows().len());
 }
 ```

@@ -6,11 +6,11 @@ high-performance, asynchronous message processing through workflows composed of 
 
 ## Architecture
 
-The engine features a clean async-first architecture with DataLogic v4:
-- **Compiler**: Pre-compiles JSONLogic expressions using DataLogic v4's Arc<CompiledLogic>
+The engine features a clean async-first architecture built on datalogic v5:
+- **Compiler**: Pre-compiles JSONLogic expressions into `Arc<Logic>` via `Engine::compile_arc`
 - **Executor**: Handles internal function execution (map, validation) with async support
 - **Engine**: Orchestrates workflow processing with shared compiled logic
-- **Thread-Safe**: Single DataLogic instance with Arc-wrapped compiled logic for zero-copy sharing
+- **Thread-Safe**: Single `datalogic_rs::Engine` shared via `Arc`, with `Arc<Logic>` entries for zero-copy sharing
 
 ## Key Components
 
@@ -26,7 +26,7 @@ The engine features a clean async-first architecture with DataLogic v4:
 
 - **Pre-compilation**: All JSONLogic expressions compiled at startup
 - **Arc-wrapped Logic**: Zero-copy sharing of compiled logic across async tasks
-- **Spawn Blocking**: CPU-intensive JSONLogic evaluation in blocking tasks
+- **Bump-arena evaluation**: Per-worker thread-local `Bump` is rewound (not freed) between evals
 - **True Async**: I/O operations remain fully async
 
 ## Usage
@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     // Create engine with defaults
-    let engine = Engine::new(workflows, None);
+    let engine = Engine::new(workflows, None)?;
 
     // Process messages asynchronously
     let mut message = Message::from_value(&json!({}));
@@ -75,13 +75,12 @@ pub use trace::{ExecutionStep, ExecutionTrace, StepResult};
 pub use workflow::{Workflow, WorkflowStatus};
 
 use chrono::Utc;
-use datalogic_rs::{Engine as DatalogicEngine, Logic};
+use datalogic_rs::Engine as DatalogicEngine;
 use datavalue::OwnedDataValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use compiler::LogicCompiler;
-use executor::InternalExecutor;
 use task_executor::TaskExecutor;
 use utils::set_nested_value;
 use workflow_executor::WorkflowExecutor;
@@ -92,8 +91,8 @@ use workflow_executor::WorkflowExecutor;
 ///
 /// The engine is designed for async-first operation with Tokio:
 /// - **Separation of Concerns**: Distinct executors for workflows and tasks
-/// - **Shared DataLogic**: Single DataLogic instance with Arc for thread-safe sharing
-/// - **Arc<CompiledLogic>**: Pre-compiled logic shared across all async tasks
+/// - **Shared datalogic engine**: Single `datalogic_rs::Engine` wrapped in `Arc` for thread-safe sharing
+/// - **Arc<Logic>**: Pre-compiled logic shared across all async tasks
 /// - **Async Functions**: Native async support for I/O-bound operations
 ///
 /// ## Performance Characteristics
@@ -103,7 +102,9 @@ use workflow_executor::WorkflowExecutor;
 /// - **Optimal for Mixed Workloads**: Async I/O with blocking CPU evaluation
 /// - **Thread-Safe by Design**: All components safe to share across Tokio tasks
 pub struct Engine {
-    /// Registry of available workflows, pre-sorted by priority (immutable after initialization)
+    /// Registry of available workflows, pre-sorted by priority (immutable after initialization).
+    /// Each workflow / task / function-config holds its own `Arc<Logic>` slots
+    /// — there is no central logic cache anymore.
     workflows: Arc<Vec<Workflow>>,
     /// Channel index: maps channel name -> indices into workflows vec (only Active workflows)
     channel_index: Arc<HashMap<String, Vec<usize>>>,
@@ -111,12 +112,11 @@ pub struct Engine {
     workflow_executor: Arc<WorkflowExecutor>,
     /// Shared datalogic v5 engine for JSONLogic evaluation (Send + Sync)
     datalogic: Arc<DatalogicEngine>,
-    /// Compiled logic cache with Arc<Logic> for zero-copy cross-thread sharing
-    logic_cache: Vec<Arc<Logic>>,
-    /// Pre-built `OwnedDataValue::String` of the engine version. Built once;
-    /// stamped into `metadata.engine_version` per message via a single clone
-    /// rather than allocating from `env!` + `String::to_string` every call.
-    engine_version: OwnedDataValue,
+    /// Pre-built `Arc<OwnedDataValue::String>` of the engine version. Built
+    /// once at construction; stamped into `metadata.engine_version` per
+    /// message via an `Arc` refcount bump (the underlying `String` is never
+    /// re-allocated for this stamp).
+    engine_version: Arc<OwnedDataValue>,
 }
 
 /// Build a channel index from pre-sorted workflows.
@@ -132,7 +132,12 @@ fn build_channel_index(workflows: &[Workflow]) -> HashMap<String, Vec<usize>> {
 }
 
 impl Engine {
-    /// Creates a new Engine instance with configurable parameters.
+    /// Creates a new Engine instance.
+    ///
+    /// Compiles every workflow / task / function-config JSONLogic expression
+    /// up-front. Returns `Err(DataflowError)` if any required expression
+    /// fails to compile — fail-loud at construction time instead of silently
+    /// dropping broken workflows at runtime.
     ///
     /// # Arguments
     /// * `workflows` - The workflows to use for processing messages
@@ -145,17 +150,18 @@ impl Engine {
     ///
     /// let workflows = vec![Workflow::from_json(r#"{"id": "test", "name": "Test", "priority": 0, "tasks": [{"id": "task1", "name": "Task 1", "function": {"name": "map", "input": {"mappings": []}}}]}"#).unwrap()];
     ///
-    /// // Simple usage with defaults
-    /// let engine = Engine::new(workflows, None);
+    /// let engine = Engine::new(workflows, None).unwrap();
     /// ```
     pub fn new(
         workflows: Vec<Workflow>,
         custom_functions: Option<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>,
-    ) -> Self {
-        // Compile workflows with DataLogic v4 (sorted by priority at compile time)
-        let mut compiler = LogicCompiler::new();
-        let sorted_workflows = compiler.compile_workflows(workflows);
-        let (datalogic, logic_cache) = compiler.into_parts();
+    ) -> Result<Self> {
+        // Compile workflows (sorted by priority at compile time). Each
+        // workflow/task/config owns its own `Arc<Logic>` slots — no central
+        // cache to return. Any compile failure bubbles up immediately.
+        let compiler = LogicCompiler::new();
+        let sorted_workflows = compiler.compile_workflows(workflows)?;
+        let datalogic = compiler.into_engine();
 
         let mut task_functions = custom_functions.unwrap_or_default();
 
@@ -164,33 +170,28 @@ impl Engine {
             task_functions.insert(name, handler);
         }
 
-        // Create internal executor with shared DataLogic and compiled logic
-        let internal_executor = Arc::new(InternalExecutor::new(
-            Arc::clone(&datalogic),
-            logic_cache.clone(),
-        ));
-
-        // Create task executor
         let task_executor = Arc::new(TaskExecutor::new(
             Arc::new(task_functions),
-            Arc::clone(&internal_executor),
             Arc::clone(&datalogic),
         ));
 
-        // Create workflow executor
-        let workflow_executor = Arc::new(WorkflowExecutor::new(task_executor, internal_executor));
+        let workflow_executor = Arc::new(WorkflowExecutor::new(
+            task_executor,
+            Arc::clone(&datalogic),
+        ));
 
         // Build channel index for O(1) channel-based routing
         let channel_index = build_channel_index(&sorted_workflows);
 
-        Self {
+        Ok(Self {
             workflows: Arc::new(sorted_workflows),
             channel_index: Arc::new(channel_index),
             workflow_executor,
             datalogic,
-            logic_cache,
-            engine_version: OwnedDataValue::String(env!("CARGO_PKG_VERSION").to_string()),
-        }
+            engine_version: Arc::new(OwnedDataValue::String(
+                env!("CARGO_PKG_VERSION").to_string(),
+            )),
+        })
     }
 
     /// Cached `OwnedDataValue::String` of the engine version.
@@ -207,40 +208,33 @@ impl Engine {
     ///
     /// # Arguments
     /// * `workflows` - The new set of workflows to compile and use
-    pub fn with_new_workflows(&self, workflows: Vec<Workflow>) -> Self {
+    pub fn with_new_workflows(&self, workflows: Vec<Workflow>) -> Result<Self> {
         // Extract the shared function registry from the existing executor
         let task_functions = self.workflow_executor.task_functions();
 
-        // Compile new workflows with a fresh DataLogic instance
-        let mut compiler = LogicCompiler::new();
-        let sorted_workflows = compiler.compile_workflows(workflows);
-        let (datalogic, logic_cache) = compiler.into_parts();
+        // Compile new workflows with a fresh datalogic engine instance.
+        let compiler = LogicCompiler::new();
+        let sorted_workflows = compiler.compile_workflows(workflows)?;
+        let datalogic = compiler.into_engine();
 
         // Rebuild the executor stack, reusing the existing function registry
-        let internal_executor = Arc::new(InternalExecutor::new(
-            Arc::clone(&datalogic),
-            logic_cache.clone(),
-        ));
+        let task_executor = Arc::new(TaskExecutor::new(task_functions, Arc::clone(&datalogic)));
 
-        let task_executor = Arc::new(TaskExecutor::new(
-            task_functions,
-            Arc::clone(&internal_executor),
+        let workflow_executor = Arc::new(WorkflowExecutor::new(
+            task_executor,
             Arc::clone(&datalogic),
         ));
-
-        let workflow_executor = Arc::new(WorkflowExecutor::new(task_executor, internal_executor));
 
         // Build channel index for O(1) channel-based routing
         let channel_index = build_channel_index(&sorted_workflows);
 
-        Self {
+        Ok(Self {
             workflows: Arc::new(sorted_workflows),
             channel_index: Arc::new(channel_index),
             workflow_executor,
             datalogic,
-            logic_cache,
-            engine_version: self.engine_version.clone(),
-        }
+            engine_version: Arc::clone(&self.engine_version),
+        })
     }
 
     /// Processes a message through workflows that match their conditions.
@@ -318,7 +312,12 @@ impl Engine {
         message: &mut Message,
     ) -> Result<()> {
         let now = Utc::now();
-        set_processing_metadata(&mut message.context, &self.engine_version, now, Some(channel));
+        set_processing_metadata(
+            &mut message.context,
+            &self.engine_version,
+            now,
+            Some(channel),
+        );
 
         if let Some(indices) = self.channel_index.get(channel) {
             for &idx in indices {
@@ -344,7 +343,12 @@ impl Engine {
         use trace::ExecutionTrace;
 
         let now = Utc::now();
-        set_processing_metadata(&mut message.context, &self.engine_version, now, Some(channel));
+        set_processing_metadata(
+            &mut message.context,
+            &self.engine_version,
+            now,
+            Some(channel),
+        );
 
         let mut trace = ExecutionTrace::new();
 
@@ -373,11 +377,6 @@ impl Engine {
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {
         &self.datalogic
     }
-
-    /// Get a reference to the compiled logic cache (Arc<Logic> entries).
-    pub fn logic_cache(&self) -> &Vec<Arc<Logic>> {
-        &self.logic_cache
-    }
 }
 
 /// Stamp the standard processing metadata (`processed_at`, `engine_version`,
@@ -386,11 +385,12 @@ impl Engine {
 /// `now` is captured once at the top of `process_message` and reused so the
 /// timestamp on `metadata.processed_at` matches the one used for every
 /// `AuditTrail` entry within the same call.
-/// `engine_version` is the cached `OwnedDataValue::String` owned by `Engine`;
-/// cloning it is one `String` clone, not an `env!` + `to_string` allocation.
+/// `engine_version` is the cached `Arc<OwnedDataValue::String>` owned by
+/// `Engine`; the deref-and-clone here is one Arc-bump's worth of work, not
+/// a `String` allocation.
 fn set_processing_metadata(
     context: &mut OwnedDataValue,
-    engine_version: &OwnedDataValue,
+    engine_version: &Arc<OwnedDataValue>,
     now: chrono::DateTime<Utc>,
     channel: Option<&str>,
 ) {
@@ -399,7 +399,11 @@ fn set_processing_metadata(
         "metadata.processed_at",
         OwnedDataValue::String(now.to_rfc3339()),
     );
-    set_nested_value(context, "metadata.engine_version", engine_version.clone());
+    set_nested_value(
+        context,
+        "metadata.engine_version",
+        (**engine_version).clone(),
+    );
     if let Some(channel) = channel {
         set_nested_value(
             context,

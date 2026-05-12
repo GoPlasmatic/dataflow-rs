@@ -15,12 +15,16 @@ The Message structure contains:
 ## Message Structure
 
 ```rust
+use datavalue::OwnedDataValue;
+use std::sync::Arc;
+
 pub struct Message {
-    pub id: Uuid,
-    pub payload: Arc<Value>,
-    pub context: Value,       // Contains data, metadata, temp_data
+    pub id: String,                       // UUID v7 string by default
+    pub payload: Arc<OwnedDataValue>,
+    pub context: OwnedDataValue,          // Always an Object {data, metadata, temp_data}
     pub audit_trail: Vec<AuditTrail>,
     pub errors: Vec<ErrorInfo>,
+    pub capture_changes: bool,            // In-memory only; not serialized
 }
 ```
 
@@ -42,39 +46,53 @@ The context is structured as:
 use dataflow_rs::Message;
 use serde_json::json;
 
-let mut message = Message::new(&json!({
+// `from_value` bridges from serde_json::Value — handiest when you already
+// have JSON literals. The payload lands at `message.payload`; the context
+// starts empty with the canonical {data, metadata, temp_data} shape.
+let mut message = Message::from_value(&json!({
     "name": "John",
     "email": "john@example.com"
 }));
 ```
 
-### With Metadata
+### Native Construction (Zero-Conversion)
 
 ```rust
-let mut message = Message::new(&json!({
+use datavalue::OwnedDataValue;
+use std::sync::Arc;
+
+let payload = Arc::new(OwnedDataValue::from(&json!({
     "name": "John"
-}));
-
-message.context["metadata"] = json!({
-    "source": "api",
-    "type": "user",
-    "timestamp": "2024-01-01T00:00:00Z"
-});
+})));
+let mut message = Message::new(payload);
 ```
 
-### From Full Context
+### Populating the Context
+
+`message.context` is an `OwnedDataValue` tree — it doesn't support
+`serde_json`-style `IndexMut` assignment. Use the path helpers from
+`dataflow_rs::engine::utils`:
 
 ```rust
-let mut message = Message::from_value(&json!({
-    "data": {
-        "name": "John"
-    },
-    "metadata": {
-        "source": "api"
-    },
-    "temp_data": {}
-}));
+use dataflow_rs::engine::utils::set_nested_value;
+use datavalue::OwnedDataValue;
+use serde_json::json;
+
+set_nested_value(
+    &mut message.context,
+    "metadata.source",
+    OwnedDataValue::from(&json!("api")),
+);
+set_nested_value(
+    &mut message.context,
+    "metadata.type",
+    OwnedDataValue::from(&json!("user")),
+);
 ```
+
+In practice you rarely need to mutate the context directly from Rust: the
+`parse_json` / `map` / `validation` built-ins are how your workflows
+populate it.
 
 ## Context Fields
 
@@ -83,11 +101,22 @@ let mut message = Message::from_value(&json!({
 The main data payload. This is where your primary data lives and is transformed.
 
 ```rust
-// Set data
-message.context["data"]["name"] = json!("John");
+use dataflow_rs::engine::utils::{get_nested_value, set_nested_value};
+use datavalue::OwnedDataValue;
+use serde_json::json;
 
-// Read data
-let name = &message.context["data"]["name"];
+// Write a value at data.name
+set_nested_value(
+    &mut message.context,
+    "data.name",
+    OwnedDataValue::from(&json!("John")),
+);
+
+// Read it back (returns Option<&OwnedDataValue>)
+let name = get_nested_value(&message.context, "data.name");
+
+// Or, via the convenience accessor — returns &OwnedDataValue (Null if missing)
+let name = &message.data()["name"];
 ```
 
 ### metadata
@@ -100,12 +129,19 @@ Information about the message itself (not the data). Commonly used for:
 - Message type classification
 
 ```rust
-message.context["metadata"] = json!({
-    "type": "user",
-    "source": "webhook",
-    "received_at": "2024-01-01T00:00:00Z"
-});
+set_nested_value(
+    &mut message.context,
+    "metadata",
+    OwnedDataValue::from(&json!({
+        "type": "user",
+        "source": "webhook",
+        "received_at": "2024-01-01T00:00:00Z"
+    })),
+);
 ```
+
+The engine also stamps `metadata.processed_at` and
+`metadata.engine_version` automatically on every `process_message` call.
 
 ### temp_data
 
@@ -113,9 +149,13 @@ Temporary storage for intermediate processing results. Cleared between processin
 
 ```rust
 // Store intermediate result
-message.context["temp_data"]["calculated_value"] = json!(42);
+set_nested_value(
+    &mut message.context,
+    "temp_data.calculated_value",
+    OwnedDataValue::from(&json!(42)),
+);
 
-// Use in later task
+// Use in a later task
 // {"var": "temp_data.calculated_value"}
 ```
 
@@ -124,20 +164,25 @@ message.context["temp_data"]["calculated_value"] = json!(42);
 Every modification to message data is recorded:
 
 ```rust
-#[derive(Debug)]
 pub struct AuditTrail {
-    pub task_id: String,
-    pub workflow_id: String,
+    pub workflow_id: Arc<str>,
+    pub task_id: Arc<str>,
     pub timestamp: DateTime<Utc>,
     pub changes: Vec<Change>,
+    pub status: usize,
 }
 
 pub struct Change {
     pub path: Arc<str>,
-    pub old_value: Arc<Value>,
-    pub new_value: Arc<Value>,
+    pub old_value: Arc<OwnedDataValue>,
+    pub new_value: Arc<OwnedDataValue>,
 }
 ```
+
+Set `message.capture_changes = false` (or call `.without_change_capture()`
+at construction) to skip per-write `Change` capture — audit-trail entries
+are still recorded, but their `changes: []` is empty. The wire shape is
+unchanged either way.
 
 ### Accessing Audit Trail
 

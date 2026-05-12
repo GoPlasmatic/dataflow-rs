@@ -12,7 +12,7 @@
 
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::ArenaContext;
-use crate::engine::message::{null_arc, Change, Message};
+use crate::engine::message::{Change, Message};
 use crate::engine::utils::{get_nested_value, set_nested_value};
 use datavalue::OwnedDataValue;
 use log::debug;
@@ -93,30 +93,31 @@ pub fn execute_parse_json(
         config.source == "payload" && !matches!(*message.payload, OwnedDataValue::String(_));
 
     if message.capture_changes {
-        let old_value_arc: Arc<OwnedDataValue> =
-            match get_nested_value(&message.context, &target_path) {
-                Some(v) => Arc::new(v.clone()),
-                None => null_arc(),
-            };
+        let old_value = get_nested_value(&message.context, &target_path)
+            .cloned()
+            .unwrap_or(OwnedDataValue::Null);
 
-        let (new_value_arc, source_data_for_context) = if payload_fast_path {
-            let arc = Arc::clone(&message.payload);
-            let cloned: OwnedDataValue = (*arc).clone();
-            (arc, cloned)
+        // Resolve the source value once. For the payload fast-path we clone
+        // out of the shared `Arc<OwnedDataValue>` payload; for the slow path
+        // we extract from a sub-tree and re-parse JSON-string payloads.
+        let source_data = if payload_fast_path {
+            (*message.payload).clone()
         } else {
             let raw = config.extract_source(message);
-            let source_data = match &raw {
+            match &raw {
                 OwnedDataValue::String(s) => {
                     OwnedDataValue::from_json(s).unwrap_or_else(|_| raw.clone())
                 }
                 _ => raw,
-            };
-            let arc = Arc::new(source_data);
-            let cloned: OwnedDataValue = (*arc).clone();
-            (arc, cloned)
+            }
         };
 
-        set_nested_value(&mut message.context, &target_path, source_data_for_context);
+        // Clone the source value once for the audit `new_value`; the original
+        // is moved into the context below. (No `Arc` wrapping in the audit
+        // entry — `Change` owns its values directly.)
+        let new_value = source_data.clone();
+
+        set_nested_value(&mut message.context, &target_path, source_data);
         debug!(
             "ParseJson: Successfully stored data to 'data.{}'",
             config.target
@@ -125,8 +126,8 @@ pub fn execute_parse_json(
             200,
             vec![Change {
                 path: Arc::from(target_path),
-                old_value: old_value_arc,
-                new_value: new_value_arc,
+                old_value,
+                new_value,
             }],
         ));
     }
@@ -137,7 +138,9 @@ pub fn execute_parse_json(
     } else {
         let raw = config.extract_source(message);
         match &raw {
-            OwnedDataValue::String(s) => OwnedDataValue::from_json(s).unwrap_or_else(|_| raw.clone()),
+            OwnedDataValue::String(s) => {
+                OwnedDataValue::from_json(s).unwrap_or_else(|_| raw.clone())
+            }
             _ => raw,
         }
     };
@@ -199,11 +202,9 @@ pub fn execute_parse_xml(
     let parsed_owned = OwnedDataValue::from(&parsed_json);
 
     let target_path = format!("data.{}", config.target);
-    let old_value_arc: Arc<OwnedDataValue> =
-        match get_nested_value(&message.context, &target_path) {
-            Some(v) => Arc::new(v.clone()),
-            None => null_arc(),
-        };
+    let old_value = get_nested_value(&message.context, &target_path)
+        .cloned()
+        .unwrap_or(OwnedDataValue::Null);
 
     set_nested_value(&mut message.context, &target_path, parsed_owned.clone());
 
@@ -216,8 +217,8 @@ pub fn execute_parse_xml(
         200,
         vec![Change {
             path: Arc::from(target_path),
-            old_value: old_value_arc,
-            new_value: Arc::new(parsed_owned),
+            old_value,
+            new_value: parsed_owned,
         }],
     ))
 }

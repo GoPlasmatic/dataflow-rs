@@ -281,7 +281,10 @@ mod tests {
             "items": [1, 2, 3]
         }));
 
-        assert_eq!(get_nested_value(&data, "user.name"), Some(&dv(json!("John"))));
+        assert_eq!(
+            get_nested_value(&data, "user.name"),
+            Some(&dv(json!("John")))
+        );
         assert_eq!(get_nested_value(&data, "user.age"), Some(&dv(json!(30))));
 
         assert_eq!(
@@ -420,7 +423,10 @@ mod tests {
         assert_eq!(get_nested_value(&data, "items.-1"), None);
         assert_eq!(get_nested_value(&data, "items.2.5"), None);
 
-        assert_eq!(get_nested_value(&data, "nested.array.0.id"), Some(&dv(json!(1))));
+        assert_eq!(
+            get_nested_value(&data, "nested.array.0.id"),
+            Some(&dv(json!(1)))
+        );
         assert_eq!(get_nested_value(&data, "nested.array.5.id"), None);
 
         assert_eq!(get_nested_value(&data, ""), Some(&data));

@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow = Workflow::from_json(workflow_json)?;
 
     // Create the workflow engine with the workflow (built-in functions are auto-registered by default)
-    let engine = Engine::new(vec![workflow], None);
+    let engine = Engine::new(vec![workflow], None)?;
 
     // Create a message to process
     let mut message = Message::from_value(&json!({}));
@@ -101,7 +101,7 @@ use serde_json::json;
 #[tokio::main]
 async fn main() -> Result<()> {
     // ... setup workflows ...
-    let engine = Engine::new(vec![/* workflows */], None);
+    let engine = Engine::new(vec![/* workflows */], None)?;
 
     let mut message = Message::from_value(&json!({}));
 
@@ -162,8 +162,8 @@ impl AsyncFunctionHandler for CustomFunction {
         let changes = vec![
             Change {
                 path: Arc::from("data.custom_field"),
-                old_value: Arc::new(OwnedDataValue::Null),
-                new_value: Arc::new(OwnedDataValue::from(&json!("custom value"))),
+                old_value: OwnedDataValue::Null,
+                new_value: OwnedDataValue::from(&json!("custom value")),
             }
         ];
 
@@ -182,7 +182,7 @@ async fn main() -> Result<()> {
     );
 
     // Create engine with workflows and custom functions
-    let engine = Engine::new(vec![/* workflows */], Some(custom_functions));
+    let engine = Engine::new(vec![/* workflows */], Some(custom_functions))?;
 
     // Now it can be used in workflows...
     Ok(())

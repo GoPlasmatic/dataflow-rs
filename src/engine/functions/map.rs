@@ -14,11 +14,9 @@
 //! - Audit-trail change tracking
 
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::executor::{eval_to_owned, with_arena, ArenaContext};
-use crate::engine::message::{null_arc, Change, Message};
-use crate::engine::utils::{
-    get_nested_value, get_nested_value_parts, set_nested_value, set_nested_value_parts,
-};
+use crate::engine::executor::{ArenaContext, with_arena};
+use crate::engine::message::{Change, Message};
+use crate::engine::utils::{get_nested_value_parts, set_nested_value_parts};
 use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
 use log::{debug, error};
@@ -44,9 +42,10 @@ pub struct MapMapping {
     /// shape the compiler accepts; not runtime data).
     pub logic: Value,
 
-    /// Index into the compiled logic cache. Set during workflow compilation.
+    /// Pre-compiled JSONLogic, populated by `LogicCompiler`. `None` is logged
+    /// as an error during execute (the compiler should always populate it).
     #[serde(skip)]
-    pub logic_index: Option<usize>,
+    pub compiled_logic: Option<Arc<Logic>>,
 
     /// `Arc<str>` mirror of `path`, populated by `LogicCompiler`. Cloned
     /// (refcount bump) into `Change.path` per audit emission so the hot path
@@ -92,7 +91,7 @@ impl MapConfig {
                 path_parts: Arc::from(Vec::<Arc<str>>::new().into_boxed_slice()),
                 path,
                 logic,
-                logic_index: None,
+                compiled_logic: None,
             });
         }
 
@@ -106,19 +105,17 @@ impl MapConfig {
     /// # Arguments
     /// * `message` - The message to transform (modified in place)
     /// * `engine` - Datalogic v5 engine for evaluation
-    /// * `logic_cache` - Pre-compiled logic expressions
     pub fn execute(
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
         // Default path: open the arena, build a fresh ArenaContext from the
         // current `message.context`, run mappings. Used when no outer
         // workflow-level arena session is available.
         with_arena(|arena| {
             let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
-            self.execute_in_arena(message, &mut arena_ctx, engine, logic_cache)
+            self.execute_in_arena(message, &mut arena_ctx, engine, None)
         })
     }
 
@@ -126,12 +123,17 @@ impl MapConfig {
     /// Used by the workflow-level sync-stretch executor so the
     /// `OwnedDataValue → arena` conversion done by an earlier task in the
     /// same workflow stretch is reused.
+    ///
+    /// `trace_snapshots` (when `Some`) collects a `serde_json::Value` snapshot
+    /// of `message.context` *before* each mapping runs — the trace
+    /// surface uses this for per-mapping debugging. `None` skips the snapshot
+    /// work entirely (the production path).
     pub(crate) fn execute_in_arena(
         &self,
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'_>,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
+        mut trace_snapshots: Option<&mut Vec<Value>>,
     ) -> Result<(usize, Vec<Change>)> {
         let mut changes = Vec::new();
         let mut errors_encountered = false;
@@ -142,9 +144,24 @@ impl MapConfig {
         for mapping in &self.mappings {
             debug!("Processing mapping to path: {}", mapping.path);
 
-            let compiled_logic = match resolve_logic(&self.mappings, mapping, logic_cache) {
+            // Trace mode: snapshot the context as a serde_json::Value *before*
+            // applying this mapping. Bridge cost is acceptable on the debug
+            // surface; production callers pass `None` and skip it entirely.
+            if let Some(buf) = trace_snapshots.as_deref_mut() {
+                buf.push(Value::from(&message.context));
+            }
+
+            // Pre-compiled `Arc<Logic>` lives on the mapping; the workflow
+            // compiler always populates it. `None` only happens for mappings
+            // constructed directly without compilation (test surface) —
+            // logged and skipped here.
+            let compiled_logic = match &mapping.compiled_logic {
                 Some(logic) => logic,
                 None => {
+                    error!(
+                        "Map: Logic not compiled for mapping to {}",
+                        mapping.path
+                    );
                     errors_encountered = true;
                     continue;
                 }
@@ -182,163 +199,41 @@ impl MapConfig {
             // helpers) fall back to splitting on the fly — same semantics,
             // one extra allocation per mapping per call.
             let fallback_parts: Vec<Arc<str>>;
-            let parts: &[Arc<str>] = if mapping.path_parts.is_empty()
-                && !mapping.path.is_empty()
-            {
+            let parts: &[Arc<str>] = if mapping.path_parts.is_empty() && !mapping.path.is_empty() {
                 fallback_parts = mapping.path.split('.').map(Arc::from).collect();
                 &fallback_parts
             } else {
                 &mapping.path_parts
             };
-            let path_arc: Arc<str> = if mapping.path_arc.is_empty()
-                && !mapping.path.is_empty()
-            {
+            let path_arc: Arc<str> = if mapping.path_arc.is_empty() && !mapping.path.is_empty() {
                 Arc::from(mapping.path.as_str())
             } else {
                 Arc::clone(&mapping.path_arc)
             };
 
             if message.capture_changes {
-                // First write to a fresh path is the common case (`old_value`
-                // is None → singleton `Arc<Null>`). Only allocate a new Arc
-                // when an actual prior value exists.
-                let old_value_arc: Arc<OwnedDataValue> =
-                    match get_nested_value_parts(&message.context, parts) {
-                        Some(v) => Arc::new(v.clone()),
-                        None => null_arc(),
-                    };
-                let new_value_arc = Arc::new(transformed_value.clone());
+                // Audit-on: capture old/new values directly into the `Change`.
+                // `Change` owns `OwnedDataValue`s (not `Arc<…>`) — one fewer
+                // heap allocation per recorded mutation.
+                let old_value = get_nested_value_parts(&message.context, parts)
+                    .cloned()
+                    .unwrap_or(OwnedDataValue::Null);
+                let new_value = transformed_value.clone();
 
                 changes.push(Change {
                     path: path_arc,
-                    old_value: old_value_arc,
-                    new_value: Arc::clone(&new_value_arc),
-                });
-
-                arena_ctx.apply_mutation_parts(&mut message.context, parts, |ctx| {
-                    apply_mapping_parts(ctx, parts, &mapping.path, transformed_value);
-                });
-            } else {
-                arena_ctx.apply_mutation_parts(&mut message.context, parts, |ctx| {
-                    apply_mapping_parts(ctx, parts, &mapping.path, transformed_value);
+                    old_value,
+                    new_value,
                 });
             }
+            arena_ctx.apply_mutation_parts(&mut message.context, parts, |ctx| {
+                apply_mapping_parts(ctx, parts, &mapping.path, transformed_value);
+            });
             debug!("Successfully mapped to path: {}", mapping.path);
         }
 
         let status = if errors_encountered { 500 } else { 200 };
         Ok((status, changes))
-    }
-
-    /// Same as `execute()` but captures a per-mapping context snapshot for
-    /// sub-step debugging. Snapshots are `OwnedDataValue` clones — same wire
-    /// shape as before, just a different in-memory representation.
-    pub fn execute_with_trace(
-        &self,
-        message: &mut Message,
-        engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
-    ) -> Result<(usize, Vec<Change>, Vec<Value>)> {
-        let mut changes = Vec::new();
-        let mut errors_encountered = false;
-        let mut context_snapshots = Vec::with_capacity(self.mappings.len());
-
-        debug!("Map (trace): Executing {} mappings", self.mappings.len());
-
-        for mapping in &self.mappings {
-            // Snapshot the context as a serde_json::Value for the trace surface.
-            // The trace is a debugging tool; the bridge cost here is acceptable.
-            context_snapshots.push(Value::from(&message.context));
-
-            let compiled_logic = match resolve_logic(&self.mappings, mapping, logic_cache) {
-                Some(logic) => logic,
-                None => {
-                    errors_encountered = true;
-                    continue;
-                }
-            };
-
-            match eval_to_owned(engine, compiled_logic, &message.context) {
-                Ok(transformed_value) => {
-                    debug!(
-                        "Map: Evaluated logic for path {} resulted in: {:?}",
-                        mapping.path, transformed_value
-                    );
-
-                    if matches!(transformed_value, OwnedDataValue::Null) {
-                        continue;
-                    }
-
-                    if message.capture_changes {
-                        let old_value = get_nested_value(&message.context, &mapping.path)
-                            .cloned()
-                            .unwrap_or(OwnedDataValue::Null);
-                        let new_value_arc = Arc::new(transformed_value.clone());
-
-                        changes.push(Change {
-                            path: Arc::from(mapping.path.as_str()),
-                            old_value: Arc::new(old_value),
-                            new_value: Arc::clone(&new_value_arc),
-                        });
-
-                        apply_mapping(&mut message.context, &mapping.path, transformed_value);
-                    } else {
-                        apply_mapping(&mut message.context, &mapping.path, transformed_value);
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        "Map: Error evaluating logic for path {}: {:?}",
-                        mapping.path, e
-                    );
-                    errors_encountered = true;
-                }
-            }
-        }
-
-        let status = if errors_encountered { 500 } else { 200 };
-        Ok((status, changes, context_snapshots))
-    }
-}
-
-/// Look up a mapping's compiled logic by `logic_index`, logging and returning
-/// `None` if the index is missing or out of bounds.
-fn resolve_logic<'a>(
-    _mappings: &[MapMapping],
-    mapping: &MapMapping,
-    logic_cache: &'a [Arc<Logic>],
-) -> Option<&'a Arc<Logic>> {
-    match mapping.logic_index {
-        Some(index) => {
-            if index >= logic_cache.len() {
-                error!(
-                    "Map: Logic index {} out of bounds (cache size: {}) for mapping to {}",
-                    index,
-                    logic_cache.len(),
-                    mapping.path
-                );
-                return None;
-            }
-            Some(&logic_cache[index])
-        }
-        None => {
-            error!(
-                "Map: Logic not compiled (no index) for mapping to {}",
-                mapping.path
-            );
-            None
-        }
-    }
-}
-
-/// Apply a mapping result to the context at `path`. Root paths
-/// (`data` / `metadata` / `temp_data`) get object-merge semantics; all other
-/// paths overwrite via `set_nested_value`.
-fn apply_mapping(context: &mut OwnedDataValue, path: &str, new_value: OwnedDataValue) {
-    if matches!(path, "data" | "metadata" | "temp_data") {
-        merge_root_field(context, path, new_value);
-    } else {
-        set_nested_value(context, path, new_value);
     }
 }
 
@@ -351,9 +246,7 @@ fn apply_mapping_parts(
     full_path: &str,
     new_value: OwnedDataValue,
 ) {
-    if parts.len() == 1
-        && matches!(full_path, "data" | "metadata" | "temp_data")
-    {
+    if parts.len() == 1 && matches!(full_path, "data" | "metadata" | "temp_data") {
         merge_root_field(context, full_path, new_value);
     } else {
         set_nested_value_parts(context, parts, new_value);
@@ -403,6 +296,7 @@ fn wrap_root(path: &str, value: OwnedDataValue) -> OwnedDataValue {
 mod tests {
     use super::*;
     use crate::engine::message::Message;
+    use crate::engine::utils::set_nested_value;
     use serde_json::json;
 
     fn dv(v: serde_json::Value) -> OwnedDataValue {
@@ -453,6 +347,15 @@ mod tests {
         assert!(MapConfig::from_json(&input).is_err());
     }
 
+    /// Helper that compiles each mapping's `logic` and stamps the resulting
+    /// `Arc<Logic>` into the `compiled_logic` slot — mirroring what
+    /// `LogicCompiler` does at engine construction.
+    fn compile_mappings(engine: &Arc<Engine>, config: &mut MapConfig) {
+        for mapping in &mut config.mappings {
+            mapping.compiled_logic = Some(engine.compile_arc(&mapping.logic).unwrap());
+        }
+    }
+
     #[test]
     fn test_map_metadata_assignment() {
         let engine = Arc::new(Engine::builder().with_templating(true).build());
@@ -461,17 +364,16 @@ mod tests {
             "SwiftMT": { "message_type": "103" }
         }));
 
-        let config = MapConfig {
+        let mut config = MapConfig {
             mappings: vec![MapMapping {
                 path: "metadata.SwiftMT.message_type".to_string(),
                 logic: json!({"var": "data.SwiftMT.message_type"}),
-                logic_index: Some(0),
                 ..Default::default()
             }],
         };
+        compile_mappings(&engine, &mut config);
 
-        let logic_cache = vec![engine.compile_arc(&config.mappings[0].logic).unwrap()];
-        let result = config.execute(&mut message, &engine, &logic_cache);
+        let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
@@ -497,35 +399,28 @@ mod tests {
             dv(json!({"existing_meta": "should_remain"})),
         );
 
-        let config = MapConfig {
+        let mut config = MapConfig {
             mappings: vec![
                 MapMapping {
                     path: "data.new_field".to_string(),
                     logic: json!({"var": "data.non_existent_field"}),
-                    logic_index: Some(0),
                     ..Default::default()
                 },
                 MapMapping {
                     path: "metadata.new_meta".to_string(),
                     logic: json!({"var": "data.another_non_existent"}),
-                    logic_index: Some(1),
                     ..Default::default()
                 },
                 MapMapping {
                     path: "data.actual_field".to_string(),
                     logic: json!("actual_value"),
-                    logic_index: Some(2),
                     ..Default::default()
                 },
             ],
         };
+        compile_mappings(&engine, &mut config);
 
-        let logic_cache = vec![
-            engine.compile_arc(&config.mappings[0].logic).unwrap(),
-            engine.compile_arc(&config.mappings[1].logic).unwrap(),
-            engine.compile_arc(&config.mappings[2].logic).unwrap(),
-        ];
-        let result = config.execute(&mut message, &engine, &logic_cache);
+        let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
@@ -562,27 +457,30 @@ mod tests {
                 MapMapping {
                     path: "data.full_name".to_string(),
                     logic: json!({"cat": [{"var": "data.first"}, " ", {"var": "data.last"}]}),
-                    logic_index: None,
                     ..Default::default()
                 },
                 MapMapping {
                     path: "data.greeting".to_string(),
                     logic: json!({"cat": ["Hello, ", {"var": "data.full_name"}]}),
-                    logic_index: None,
                     ..Default::default()
                 },
             ],
         };
+        compile_mappings(&engine, &mut config);
 
-        let mut logic_cache = Vec::new();
-        for (i, mapping) in config.mappings.iter_mut().enumerate() {
-            logic_cache.push(engine.compile_arc(&mapping.logic).unwrap());
-            mapping.logic_index = Some(i);
-        }
-        let result = config.execute_with_trace(&mut message, &engine, &logic_cache);
+        let mut context_snapshots: Vec<Value> = Vec::new();
+        let result = with_arena(|arena| {
+            let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
+            config.execute_in_arena(
+                &mut message,
+                &mut arena_ctx,
+                &engine,
+                Some(&mut context_snapshots),
+            )
+        });
         assert!(result.is_ok());
 
-        let (status, changes, context_snapshots) = result.unwrap();
+        let (status, changes) = result.unwrap();
         assert_eq!(status, 200);
         assert_eq!(changes.len(), 2);
         assert_eq!(context_snapshots.len(), 2);
@@ -615,30 +513,23 @@ mod tests {
                 MapMapping {
                     path: "data.SwiftMT.message_type".to_string(),
                     logic: json!("103"),
-                    logic_index: None,
                     ..Default::default()
                 },
                 MapMapping {
                     path: "metadata.SwiftMT.message_type".to_string(),
                     logic: json!({"var": "data.SwiftMT.message_type"}),
-                    logic_index: None,
                     ..Default::default()
                 },
                 MapMapping {
                     path: "temp_data.original_msg_type".to_string(),
                     logic: json!({"var": "data.ISO20022_MX.document.TxInf.OrgnlGrpInf.OrgnlMsgNmId"}),
-                    logic_index: None,
                     ..Default::default()
                 },
             ],
         };
+        compile_mappings(&engine, &mut config);
 
-        let mut logic_cache = Vec::new();
-        for (i, mapping) in config.mappings.iter_mut().enumerate() {
-            logic_cache.push(engine.compile_arc(&mapping.logic).unwrap());
-            mapping.logic_index = Some(i);
-        }
-        let result = config.execute(&mut message, &engine, &logic_cache);
+        let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();

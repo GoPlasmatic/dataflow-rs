@@ -1,17 +1,17 @@
-//! # Internal Function Execution Module
+//! # Evaluation Primitives
 //!
-//! Executes built-in functions (map, validation, filter, log) using pre-compiled
-//! `Arc<Logic>` produced by the workflow compiler. Each evaluation goes through
-//! the datalogic v5 `Engine::evaluate` API directly against an `&OwnedDataValue`
-//! context — no `serde_json::Value` intermediate on the hot path.
+//! Free functions and types that support JSONLogic evaluation in the engine.
+//! Built-in function execution lives on each config type (`MapConfig::execute`,
+//! `ValidationConfig::execute`, …) — this module just provides the shared
+//! evaluation machinery they all build on.
 //!
 //! The bump arena is held in a thread-local cell on each Tokio worker. Per
 //! call, the arena is rewound via `Bump::reset` (constant-time, retains chunks)
-//! before the eval, then evaluated against. Chunks accumulate to fit the
-//! workload's high-water mark and persist across calls — no per-task
-//! malloc/free churn. Profiling showed per-task `Bump::with_capacity` malloc
-//! was the dominant cost when arena sizing was tuned for realistic workloads;
-//! thread-local reuse amortizes that to zero in steady state.
+//! before the eval. Chunks accumulate to fit the workload's high-water mark
+//! and persist across calls — no per-task malloc/free churn. Profiling
+//! showed per-task `Bump::with_capacity` malloc was the dominant cost when
+//! arena sizing was tuned for realistic workloads; thread-local reuse
+//! amortizes that to zero in steady state.
 //!
 //! `ArenaContext` (below) extends this further for **mutating** tasks (map):
 //! the message context is `to_arena`'d once per task call into a depth‑2
@@ -19,13 +19,10 @@
 //! `data.MT103` while the heavy `data.input` stays cached.
 
 use crate::engine::error::Result;
-use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
-use crate::engine::message::{Change, Message};
 use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
 use datavalue::{DataValue, OwnedDataValue};
 use log::error;
-use serde_json::Value;
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -244,7 +241,6 @@ impl<'a> ArenaContext<'a> {
         depth2_key: Option<&str>,
         _depth3_key: Option<&str>,
     ) {
-
         let OwnedDataValue::Object(owned_pairs) = owned_ctx else {
             self.rebuild_all_from(owned_ctx);
             return;
@@ -275,11 +271,7 @@ impl<'a> ArenaContext<'a> {
                 match (new_val, depth2_key, &mut self.depth2[idx]) {
                     // Depth-2 write into an existing Object top slot that already
                     // has a depth-2 cache → refresh only the child.
-                    (
-                        OwnedDataValue::Object(new_children),
-                        Some(child_key),
-                        Some(d2),
-                    ) => {
+                    (OwnedDataValue::Object(new_children), Some(child_key), Some(d2)) => {
                         if let Some(new_child) = new_children
                             .iter()
                             .find(|(k, _)| k == child_key)
@@ -287,9 +279,7 @@ impl<'a> ArenaContext<'a> {
                         {
                             // Replace or insert the single child slot.
                             let child_arena = new_child.to_arena(self.arena);
-                            if let Some(pos) =
-                                d2.keys.iter().position(|k| *k == child_key)
-                            {
+                            if let Some(pos) = d2.keys.iter().position(|k| *k == child_key) {
                                 d2.values[pos] = child_arena;
                             } else {
                                 d2.keys.push(self.arena.alloc_str(child_key));
@@ -307,15 +297,12 @@ impl<'a> ArenaContext<'a> {
                         } else {
                             // child_key not found in new owned object — child
                             // was removed. Drop from cache.
-                            if let Some(pos) =
-                                d2.keys.iter().position(|k| *k == child_key)
-                            {
+                            if let Some(pos) = d2.keys.iter().position(|k| *k == child_key) {
                                 d2.keys.remove(pos);
                                 d2.values.remove(pos);
                             }
                         }
-                        let slice =
-                            build_object_slice(self.arena, &d2.keys, &d2.values);
+                        let slice = build_object_slice(self.arena, &d2.keys, &d2.values);
                         self.top_values[idx] = DataValue::Object(slice);
                     }
                     // Top-level (depth-1) write or shape change → rebuild
@@ -375,122 +362,46 @@ fn build_object_slice<'a>(
     arena.alloc_slice_fill_iter(keys.iter().zip(values.iter()).map(|(k, v)| (*k, *v)))
 }
 
-/// Executes internal functions using pre-compiled logic for optimal performance.
-pub struct InternalExecutor {
-    /// Shared datalogic Engine for evaluation (`Send + Sync`).
-    engine: Arc<Engine>,
-    /// Reference to the compiled logic cache.
-    logic_cache: Vec<Arc<Logic>>,
+/// Evaluate a workflow or task condition using a cached compiled logic
+/// expression. Returns `true` when `condition_index` is `None` (no condition
+/// is treated as "always run"). Evaluation errors are logged and downgraded
+/// to `false` — a condition that fails to evaluate skips its task/workflow
+/// rather than aborting the whole message.
+pub fn evaluate_condition(
+    engine: &Engine,
+    compiled_condition: Option<&Arc<Logic>>,
+    context: &OwnedDataValue,
+) -> Result<bool> {
+    match compiled_condition {
+        Some(compiled) => match eval_to_owned(engine, compiled, context) {
+            Ok(value) => Ok(matches!(value, OwnedDataValue::Bool(true))),
+            Err(e) => {
+                error!("Failed to evaluate condition: {:?}", e);
+                Ok(false)
+            }
+        },
+        None => Ok(true),
+    }
 }
 
-impl InternalExecutor {
-    /// Create a new InternalExecutor wired to a shared v5 Engine.
-    pub fn new(engine: Arc<Engine>, logic_cache: Vec<Arc<Logic>>) -> Self {
-        Self {
-            engine,
-            logic_cache,
-        }
-    }
-
-    /// Get a reference to the datalogic Engine instance
-    pub fn engine(&self) -> &Arc<Engine> {
-        &self.engine
-    }
-
-    /// Get a reference to the logic cache
-    pub fn logic_cache(&self) -> &Vec<Arc<Logic>> {
-        &self.logic_cache
-    }
-
-    /// Execute the internal map function.
-    pub fn execute_map(
-        &self,
-        message: &mut Message,
-        config: &MapConfig,
-    ) -> Result<(usize, Vec<Change>)> {
-        config.execute(message, &self.engine, &self.logic_cache)
-    }
-
-    /// Execute the internal map function with trace support.
-    pub fn execute_map_with_trace(
-        &self,
-        message: &mut Message,
-        config: &MapConfig,
-    ) -> Result<(usize, Vec<Change>, Vec<Value>)> {
-        config.execute_with_trace(message, &self.engine, &self.logic_cache)
-    }
-
-    /// Execute the internal validation function.
-    pub fn execute_validation(
-        &self,
-        message: &mut Message,
-        config: &ValidationConfig,
-    ) -> Result<(usize, Vec<Change>)> {
-        config.execute(message, &self.engine, &self.logic_cache)
-    }
-
-    /// Execute the internal log function.
-    pub fn execute_log(
-        &self,
-        message: &mut Message,
-        config: &LogConfig,
-    ) -> Result<(usize, Vec<Change>)> {
-        config.execute(message, &self.engine, &self.logic_cache)
-    }
-
-    /// Execute the internal filter function.
-    pub fn execute_filter(
-        &self,
-        message: &mut Message,
-        config: &FilterConfig,
-    ) -> Result<(usize, Vec<Change>)> {
-        config.execute(message, &self.engine, &self.logic_cache)
-    }
-
-    /// Evaluate a workflow or task condition using the cached compiled logic.
-    /// The supplied context covers `data`, `metadata`, `temp_data`, and `payload`.
-    pub fn evaluate_condition(
-        &self,
-        condition_index: Option<usize>,
-        context: &OwnedDataValue,
-    ) -> Result<bool> {
-        match condition_index {
-            Some(index) if index < self.logic_cache.len() => {
-                let compiled = &self.logic_cache[index];
-                match eval_to_owned(&self.engine, compiled, context) {
-                    Ok(value) => Ok(matches!(value, OwnedDataValue::Bool(true))),
-                    Err(e) => {
-                        error!("Failed to evaluate condition: {:?}", e);
-                        Ok(false)
-                    }
-                }
+/// Same as `evaluate_condition` but evaluates against an arena-resident
+/// `DataValue` and an existing `Bump`. Used inside a `with_arena` block
+/// (the workflow sync-stretch path) to avoid re-entering the thread-local
+/// arena `RefCell::borrow_mut`.
+pub fn evaluate_condition_in_arena(
+    engine: &Engine,
+    compiled_condition: Option<&Arc<Logic>>,
+    ctx: DataValue<'_>,
+    arena: &Bump,
+) -> Result<bool> {
+    match compiled_condition {
+        Some(compiled) => match engine.evaluate(compiled, ctx, arena) {
+            Ok(value) => Ok(matches!(value, DataValue::Bool(true))),
+            Err(e) => {
+                error!("Failed to evaluate condition: {:?}", e);
+                Ok(false)
             }
-            _ => Ok(true), // No condition means always true
-        }
-    }
-
-    /// Same as `evaluate_condition` but evaluates against an arena-resident
-    /// `DataValue` and an existing `Bump`. Used inside a `with_arena` block
-    /// (the workflow sync-stretch path) to avoid re-entering the
-    /// thread-local arena `RefCell::borrow_mut`.
-    pub fn evaluate_condition_in_arena(
-        &self,
-        condition_index: Option<usize>,
-        ctx: DataValue<'_>,
-        arena: &Bump,
-    ) -> Result<bool> {
-        match condition_index {
-            Some(index) if index < self.logic_cache.len() => {
-                let compiled = &self.logic_cache[index];
-                match self.engine.evaluate(compiled, ctx, arena) {
-                    Ok(value) => Ok(matches!(value, DataValue::Bool(true))),
-                    Err(e) => {
-                        error!("Failed to evaluate condition: {:?}", e);
-                        Ok(false)
-                    }
-                }
-            }
-            _ => Ok(true),
-        }
+        },
+        None => Ok(true),
     }
 }

@@ -10,7 +10,7 @@ All JSONLogic expressions are compiled once at engine startup:
 
 ```rust
 // This compiles all logic at creation time
-let engine = Engine::new(workflows, None);
+let engine = Engine::new(workflows, None)?;
 
 // Runtime processing uses pre-compiled logic
 // No parsing or compilation overhead
@@ -46,14 +46,14 @@ use std::time::Instant;
 
 // Setup
 let workflow = Workflow::from_json(workflow_json)?;
-let engine = Engine::new(vec![workflow], None);
+let engine = Engine::new(vec![workflow], None)?;
 
 // Benchmark
 let iterations = 10_000;
 let start = Instant::now();
 
 for _ in 0..iterations {
-    let mut message = Message::new(&test_data);
+    let mut message = Message::from_value(&test_data);
     engine.process_message(&mut message).await?;
 }
 
@@ -153,7 +153,7 @@ Process multiple messages concurrently:
 use std::sync::Arc;
 use tokio::task;
 
-let engine = Arc::new(Engine::new(workflows, None));
+let engine = Arc::new(Engine::new(workflows, None)?);
 
 let handles: Vec<_> = messages.into_iter()
     .map(|mut msg| {

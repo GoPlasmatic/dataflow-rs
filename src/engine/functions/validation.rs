@@ -32,7 +32,7 @@
 //! ```
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
-use crate::engine::executor::{with_arena, ArenaContext};
+use crate::engine::executor::{ArenaContext, with_arena};
 use crate::engine::message::{Change, Message};
 use datalogic_rs::{Engine, Logic};
 use datavalue::DataValue;
@@ -66,9 +66,10 @@ pub struct ValidationRule {
     /// Defaults to "Validation failed" if not specified.
     pub message: String,
 
-    /// Index into the compiled logic cache. Set during workflow compilation.
+    /// Pre-compiled JSONLogic, populated by `LogicCompiler`. `None` is
+    /// recorded as a `COMPILATION_ERROR` at execute time.
     #[serde(skip)]
-    pub logic_index: Option<usize>,
+    pub compiled_logic: Option<Arc<Logic>>,
 }
 
 impl ValidationConfig {
@@ -108,7 +109,7 @@ impl ValidationConfig {
             parsed_rules.push(ValidationRule {
                 logic,
                 message,
-                logic_index: None,
+                compiled_logic: None,
             });
         }
 
@@ -125,22 +126,14 @@ impl ValidationConfig {
     /// # Arguments
     /// * `message` - The message to validate (errors are added to its error list)
     /// * `engine` - Datalogic v5 engine for evaluation
-    /// * `logic_cache` - Pre-compiled logic expressions
     ///
     /// # Returns
     /// * `Ok((200, []))` - All rules passed, no changes made
     /// * `Ok((400, []))` - One or more rules failed, errors added to message
-    ///
-    /// # Error Types
-    /// Validation errors are recorded with the following codes:
-    /// - `VALIDATION_ERROR` - Rule evaluated to non-true value
-    /// - `EVALUATION_ERROR` - Rule evaluation failed with an error
-    /// - `COMPILATION_ERROR` - Logic was not properly compiled
     pub fn execute(
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
         // Default path: open the arena and convert context once for this
         // task call. When called from the workflow-level sync-stretch
@@ -148,7 +141,7 @@ impl ValidationConfig {
         // multiple tasks in the same stretch.
         with_arena(|arena| {
             let ctx_av: DataValue<'_> = message.context.to_arena(arena);
-            self.run_rules(message, ctx_av, arena, engine, logic_cache)
+            self.run_rules(message, ctx_av, arena, engine)
         })
     }
 
@@ -161,11 +154,10 @@ impl ValidationConfig {
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'_>,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
         let arena = arena_ctx.arena();
         let ctx_av = arena_ctx.as_data_value();
-        self.run_rules(message, ctx_av, arena, engine, logic_cache)
+        self.run_rules(message, ctx_av, arena, engine)
     }
 
     /// Shared inner loop: evaluate each rule against `ctx_av` and record
@@ -176,75 +168,53 @@ impl ValidationConfig {
         ctx_av: DataValue<'_>,
         arena: &bumpalo::Bump,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>],
     ) -> Result<(usize, Vec<Change>)> {
         let changes = Vec::new();
         let mut validation_errors = Vec::new();
 
-        {
-            for (idx, rule) in self.rules.iter().enumerate() {
-                debug!("Processing validation rule {}: {}", idx, rule.message);
+        for (idx, rule) in self.rules.iter().enumerate() {
+            debug!("Processing validation rule {}: {}", idx, rule.message);
 
-                let compiled_logic = match rule.logic_index {
-                    Some(index) => {
-                        if index >= logic_cache.len() {
-                            error!(
-                                "Validation: Logic index {} out of bounds (cache size: {}) for rule at index {}",
-                                index,
-                                logic_cache.len(),
-                                idx
-                            );
-                            validation_errors.push(ErrorInfo::simple_ref(
-                                "COMPILATION_ERROR",
-                                &format!(
-                                    "Logic index {} out of bounds for rule at index {}",
-                                    index, idx
-                                ),
-                                None,
-                            ));
-                            continue;
-                        }
-                        &logic_cache[index]
-                    }
-                    None => {
-                        error!(
-                            "Validation: Logic not compiled (no index) for rule at index {}",
-                            idx
-                        );
+            let compiled_logic = match &rule.compiled_logic {
+                Some(logic) => logic,
+                None => {
+                    error!(
+                        "Validation: Logic not compiled for rule at index {}",
+                        idx
+                    );
+                    validation_errors.push(ErrorInfo::simple_ref(
+                        "COMPILATION_ERROR",
+                        &format!("Logic not compiled for rule at index: {}", idx),
+                        None,
+                    ));
+                    continue;
+                }
+            };
+
+            // Reuse the pre-converted `ctx_av` (DataValue is Copy). The
+            // result is `&DataValue<'_>` borrowed from the arena — we
+            // only need to peek at the discriminant so we skip the
+            // `to_owned()` deep-clone too.
+            match engine.evaluate(compiled_logic, ctx_av, arena) {
+                Ok(value) => {
+                    if !matches!(value, DataValue::Bool(true)) {
+                        debug!("Validation failed for rule {}: {}", idx, rule.message);
                         validation_errors.push(ErrorInfo::simple_ref(
-                            "COMPILATION_ERROR",
-                            &format!("Logic not compiled for rule at index: {}", idx),
+                            "VALIDATION_ERROR",
+                            &rule.message,
                             None,
                         ));
-                        continue;
+                    } else {
+                        debug!("Validation passed for rule {}", idx);
                     }
-                };
-
-                // Reuse the pre-converted `ctx_av` (DataValue is Copy). The
-                // result is `&DataValue<'_>` borrowed from the arena — we
-                // only need to peek at the discriminant so we skip the
-                // `to_owned()` deep-clone too.
-                match engine.evaluate(compiled_logic, ctx_av, arena) {
-                    Ok(value) => {
-                        if !matches!(value, DataValue::Bool(true)) {
-                            debug!("Validation failed for rule {}: {}", idx, rule.message);
-                            validation_errors.push(ErrorInfo::simple_ref(
-                                "VALIDATION_ERROR",
-                                &rule.message,
-                                None,
-                            ));
-                        } else {
-                            debug!("Validation passed for rule {}", idx);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Validation: Error evaluating rule {}: {:?}", idx, e);
-                        validation_errors.push(ErrorInfo::simple_ref(
-                            "EVALUATION_ERROR",
-                            &format!("Failed to evaluate rule {}: {}", idx, e),
-                            None,
-                        ));
-                    }
+                }
+                Err(e) => {
+                    error!("Validation: Error evaluating rule {}: {:?}", idx, e);
+                    validation_errors.push(ErrorInfo::simple_ref(
+                        "EVALUATION_ERROR",
+                        &format!("Failed to evaluate rule {}: {}", idx, e),
+                        None,
+                    ));
                 }
             }
         }
@@ -342,6 +312,14 @@ mod tests {
         m
     }
 
+    /// Compile each rule's `logic` and stamp the resulting `Arc<Logic>` into
+    /// the `compiled_logic` slot — mirroring `LogicCompiler`.
+    fn compile_rules(engine: &Arc<Engine>, config: &mut ValidationConfig) {
+        for rule in &mut config.rules {
+            rule.compiled_logic = Some(engine.compile_arc(&rule.logic).unwrap());
+        }
+    }
+
     #[test]
     fn test_validation_execute_passes() {
         let engine = Arc::new(Engine::builder().with_templating(true).build());
@@ -356,22 +334,18 @@ mod tests {
                 ValidationRule {
                     logic: json!({"!!": [{"var": "data.email"}]}),
                     message: "Email is required".to_string(),
-                    logic_index: None,
+                    compiled_logic: None,
                 },
                 ValidationRule {
                     logic: json!({">": [{"var": "data.age"}, 18]}),
                     message: "Must be over 18".to_string(),
-                    logic_index: None,
+                    compiled_logic: None,
                 },
             ],
         };
+        compile_rules(&engine, &mut config);
 
-        let mut logic_cache = Vec::new();
-        for (i, rule) in config.rules.iter_mut().enumerate() {
-            logic_cache.push(engine.compile_arc(&rule.logic).unwrap());
-            rule.logic_index = Some(i);
-        }
-        let result = config.execute(&mut message, &engine, &logic_cache);
+        let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
         let (status, changes) = result.unwrap();
@@ -391,22 +365,18 @@ mod tests {
                 ValidationRule {
                     logic: json!({"!!": [{"var": "data.email"}]}),
                     message: "Email is required".to_string(),
-                    logic_index: None,
+                    compiled_logic: None,
                 },
                 ValidationRule {
                     logic: json!({">": [{"var": "data.age"}, 18]}),
                     message: "Must be over 18".to_string(),
-                    logic_index: None,
+                    compiled_logic: None,
                 },
             ],
         };
+        compile_rules(&engine, &mut config);
 
-        let mut logic_cache = Vec::new();
-        for (i, rule) in config.rules.iter_mut().enumerate() {
-            logic_cache.push(engine.compile_arc(&rule.logic).unwrap());
-            rule.logic_index = Some(i);
-        }
-        let result = config.execute(&mut message, &engine, &logic_cache);
+        let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
         let (status, _changes) = result.unwrap();
@@ -430,12 +400,11 @@ mod tests {
             rules: vec![ValidationRule {
                 logic: json!(true),
                 message: "Test".to_string(),
-                logic_index: None,
+                compiled_logic: None,
             }],
         };
 
-        let logic_cache = Vec::new();
-        let result = config.execute(&mut message, &engine, &logic_cache);
+        let result = config.execute(&mut message, &engine);
         assert!(result.is_ok());
 
         let (status, _) = result.unwrap();

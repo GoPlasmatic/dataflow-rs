@@ -5,6 +5,7 @@
 //! blocks of data processing pipelines.
 
 use crate::engine::functions::FunctionConfig;
+use datalogic_rs::Logic;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -52,10 +53,10 @@ pub struct Task {
     #[serde(default = "default_condition")]
     pub condition: Value,
 
-    /// Index into the compiled logic cache for this task's condition.
-    /// Set during workflow compilation; not serialized.
+    /// Pre-compiled JSONLogic for `condition`, populated by `LogicCompiler`.
+    /// `None` is treated as "always run" by the executor.
     #[serde(skip)]
-    pub condition_index: Option<usize>,
+    pub compiled_condition: Option<Arc<Logic>>,
 
     /// The function configuration specifying what operation to perform.
     /// Can be a built-in function (map, validation) or a custom function.
@@ -85,7 +86,7 @@ impl Task {
             name: name.to_string(),
             description: None,
             condition: Value::Bool(true),
-            condition_index: None,
+            compiled_condition: None,
             function,
             continue_on_error: false,
         }

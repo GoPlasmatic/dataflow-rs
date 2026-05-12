@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-wasm"
-version = "2.1.4"
+version = "3.0.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "WebAssembly bindings for the dataflow-rs rules engine"
@@ -13,7 +13,7 @@ categories = ["wasm", "development-tools"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-dataflow-rs = { version = "2.1.0", path = "..", features = ["wasm-web"] }
+dataflow-rs = { version = "3.0.0", path = "..", features = ["wasm-web"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

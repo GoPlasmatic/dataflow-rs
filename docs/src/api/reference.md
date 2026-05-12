@@ -130,42 +130,72 @@ pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self
 
 ## Message
 
-The data container that flows through rules.
+The data container that flows through rules. The context tree is held as
+`datavalue::OwnedDataValue` (not `serde_json::Value`) so the JSONLogic
+evaluator can borrow it into its arena without a `serde_json` round-trip.
 
 ```rust
 use dataflow_rs::Message;
+use datavalue::OwnedDataValue;
+use std::sync::Arc;
 ```
 
 ### Constructors
 
 ```rust
-// Create from data (goes to context.data)
-pub fn new(data: &Value) -> Message
+// Native zero-conversion entry point
+pub fn new(payload: Arc<OwnedDataValue>) -> Message
 
-// Create from full context value
-pub fn from_value(context: &Value) -> Message
+// Convenience: bridge from a serde_json::Value payload
+pub fn from_value(payload: &serde_json::Value) -> Message
+
+// Construct with a caller-supplied id (skips the UUID v7 allocation)
+pub fn with_id(id: impl Into<String>, payload: Arc<OwnedDataValue>) -> Message
+
+// Disable per-write Change capture (audit trail still recorded, but
+// `changes: []` — the bulk-pipeline fast path)
+pub fn without_change_capture(self) -> Message
 ```
 
 ### Fields
 
 ```rust
 pub struct Message {
-    pub id: Uuid,
-    pub payload: Arc<Value>,
-    pub context: Value,  // Contains data, metadata, temp_data
+    pub id: String,                       // UUID v7 string by default
+    pub payload: Arc<OwnedDataValue>,
+    pub context: OwnedDataValue,          // Always an Object with keys
+                                          // "data", "metadata", "temp_data"
     pub audit_trail: Vec<AuditTrail>,
     pub errors: Vec<ErrorInfo>,
+    pub capture_changes: bool,            // In-memory only; not serialized
 }
 ```
 
 ### Methods
 
 ```rust
-// Get context as Arc for efficient sharing
-pub fn get_context_arc(&mut self) -> Arc<Value>
+// Convenience accessors into context
+pub fn data(&self) -> &OwnedDataValue
+pub fn metadata(&self) -> &OwnedDataValue
+pub fn temp_data(&self) -> &OwnedDataValue
 
-// Invalidate context cache after modifications
-pub fn invalidate_context_cache(&mut self)
+// Add an error to the message
+pub fn add_error(&mut self, error: ErrorInfo)
+
+// Whether any errors were recorded
+pub fn has_errors(&self) -> bool
+```
+
+To mutate `context`, use the path helpers from `dataflow_rs::engine::utils`:
+
+```rust
+use dataflow_rs::engine::utils::{get_nested_value, set_nested_value};
+
+set_nested_value(
+    &mut message.context,
+    "data.user.name",
+    OwnedDataValue::from(&serde_json::json!("Alice")),
+);
 ```
 
 ## AsyncFunctionHandler
@@ -179,16 +209,23 @@ use dataflow_rs::engine::AsyncFunctionHandler;
 ### Trait Definition
 
 ```rust
+use datalogic_rs::Engine as DatalogicEngine;
+
 #[async_trait]
 pub trait AsyncFunctionHandler: Send + Sync {
     async fn execute(
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        datalogic: Arc<DataLogic>,
+        engine: Arc<DatalogicEngine>,
     ) -> Result<(usize, Vec<Change>)>;
 }
 ```
+
+The supplied `Arc<datalogic_rs::Engine>` is the shared JSONLogic engine —
+custom handlers that need to evaluate ad-hoc JSONLogic can call
+`engine.compile_arc(&logic)` and `engine.evaluate(...)`. Handlers that
+don't need it can simply ignore the argument.
 
 ### Return Value
 
@@ -197,37 +234,56 @@ pub trait AsyncFunctionHandler: Send + Sync {
 
 ## FunctionConfig
 
-Configuration for function execution.
+`FunctionConfig` is an enum: every built-in is a typed variant, and unknown
+function names deserialize into `Custom { name, input }`. Custom handlers
+typically destructure the `Custom` variant to access their config.
 
 ```rust
-pub struct FunctionConfig {
-    pub name: String,
-    pub input: Value,
+pub enum FunctionConfig {
+    Map { input: MapConfig, .. },
+    Validation { input: ValidationConfig, .. },
+    ParseJson { input: ParseConfig, .. },
+    ParseXml { input: ParseConfig, .. },
+    PublishJson { input: PublishConfig, .. },
+    PublishXml { input: PublishConfig, .. },
+    Filter { input: FilterConfig, .. },
+    Log { input: LogConfig, .. },
+    HttpCall { input: HttpCallConfig, .. },
+    Enrich { input: EnrichConfig, .. },
+    PublishKafka { input: PublishKafkaConfig, .. },
+    Custom { name: String, input: serde_json::Value },
 }
 ```
 
 ## Change
 
-Represents a single data modification.
+Represents a single data modification recorded in the audit trail.
 
 ```rust
 pub struct Change {
     pub path: Arc<str>,
-    pub old_value: Arc<Value>,
-    pub new_value: Arc<Value>,
+    pub old_value: OwnedDataValue,
+    pub new_value: OwnedDataValue,
 }
 ```
 
+`old_value` and `new_value` are owned (not `Arc<OwnedDataValue>`) — one
+less heap allocation per recorded mutation. Wrap them yourself if you need
+to share a `Change` across threads.
+
 ## AuditTrail
 
-Records changes made by an action.
+Records changes made by an action. `workflow_id` / `task_id` are
+`Arc<str>` mirrors of the workflow/task ids — the engine clones them by
+refcount bump rather than allocating per audit entry.
 
 ```rust
 pub struct AuditTrail {
-    pub task_id: String,
-    pub workflow_id: String,
+    pub workflow_id: Arc<str>,
+    pub task_id: Arc<str>,
     pub timestamp: DateTime<Utc>,
     pub changes: Vec<Change>,
+    pub status: usize,
 }
 ```
 
@@ -239,8 +295,12 @@ Error information recorded in the message.
 pub struct ErrorInfo {
     pub code: String,
     pub message: String,
+    pub path: Option<String>,
     pub workflow_id: Option<String>,
     pub task_id: Option<String>,
+    pub timestamp: Option<String>,
+    pub retry_attempted: Option<bool>,
+    pub retry_count: Option<u32>,
 }
 ```
 
@@ -257,12 +317,22 @@ use dataflow_rs::engine::error::DataflowError;
 ```rust
 pub enum DataflowError {
     Validation(String),
-    Execution(String),
-    Logic(String),
+    FunctionExecution { context: String, source: Option<Box<DataflowError>> },
+    Workflow(String),
+    Task(String),
+    FunctionNotFound(String),
+    Deserialization(String),
     Io(String),
-    // ... other variants
+    LogicEvaluation(String),
+    Http { status: u16, message: String },
+    Timeout(String),
+    Unknown(String),
 }
 ```
+
+`DataflowError::retryable()` returns `true` for transient infrastructure
+failures (5xx HTTP, 429, 408, timeouts, IO) and `false` for data/logic/
+configuration errors.
 
 ## WorkflowStatus
 

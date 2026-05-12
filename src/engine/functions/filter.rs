@@ -1,8 +1,8 @@
 use crate::engine::error::Result;
-use crate::engine::executor::eval_to_owned;
+use crate::engine::executor::{ArenaContext, with_arena};
 use crate::engine::message::{Change, Message};
 use datalogic_rs::{Engine, Logic};
-use datavalue::OwnedDataValue;
+use datavalue::DataValue;
 use log::{debug, info};
 use serde::Deserialize;
 use serde_json::Value;
@@ -37,24 +37,48 @@ pub struct FilterConfig {
     #[serde(default)]
     pub on_reject: RejectAction,
 
-    /// Cache index for the compiled condition
+    /// Pre-compiled JSONLogic, populated by `LogicCompiler`. `None` is
+    /// treated as "condition not met" (same fallback as before).
     #[serde(skip)]
-    pub condition_index: Option<usize>,
+    pub compiled_condition: Option<Arc<Logic>>,
 }
 
 impl FilterConfig {
-    /// Execute the filter function.
+    /// Execute the filter function, opening a fresh thread-local arena scope.
+    ///
+    /// Use this entry point when calling `FilterConfig` outside an existing
+    /// `with_arena` scope. Inside a workflow sync stretch the dispatch goes
+    /// through [`Self::execute_in_arena`] to reuse the cached arena form of
+    /// `message.context` and avoid a redundant `to_arena` deep walk.
     ///
     /// Returns status 200 if condition passes, 299 for halt, 298 for skip.
     pub fn execute(
         &self,
         message: &mut Message,
         engine: &Arc<Engine>,
-        logic_cache: &[Arc<Logic>]) -> Result<(usize, Vec<Change>)> {
-        let condition_met = match self.condition_index {
-            Some(idx) if idx < logic_cache.len() => {
-                match eval_to_owned(engine, &logic_cache[idx], &message.context) {
-                    Ok(OwnedDataValue::Bool(true)) => true,
+    ) -> Result<(usize, Vec<Change>)> {
+        with_arena(|arena| {
+            let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
+            self.execute_in_arena(message, &mut arena_ctx, engine)
+        })
+    }
+
+    /// Execute against an externally-provided `ArenaContext` so the cached
+    /// arena form of `message.context` is reused. Eliminates the inner
+    /// `with_arena`/`eval_to_owned` call that would re-borrow the
+    /// thread-local arena `RefCell` (panic) when invoked from inside the
+    /// sync stretch.
+    pub(crate) fn execute_in_arena(
+        &self,
+        _message: &mut Message,
+        arena_ctx: &mut ArenaContext<'_>,
+        engine: &Arc<Engine>,
+    ) -> Result<(usize, Vec<Change>)> {
+        let condition_met = match &self.compiled_condition {
+            Some(compiled) => {
+                let ctx_av = arena_ctx.as_data_value();
+                match engine.evaluate(compiled, ctx_av, arena_ctx.arena()) {
+                    Ok(DataValue::Bool(true)) => true,
                     Ok(_) => false,
                     Err(e) => {
                         debug!("Filter: condition evaluation error: {:?}", e);
@@ -62,7 +86,7 @@ impl FilterConfig {
                     }
                 }
             }
-            _ => {
+            None => {
                 debug!("Filter: condition not compiled, treating as not met");
                 false
             }

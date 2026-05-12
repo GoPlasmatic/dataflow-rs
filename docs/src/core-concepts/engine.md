@@ -38,8 +38,8 @@ let rule2 = Workflow::from_json(r#"{
 // Create engine with rules
 let engine = Engine::new(
     vec![rule1, rule2],
-    None  // Optional custom functions
-);
+    None,  // Optional custom functions
+)?;
 
 // Engine is now ready - all logic compiled
 println!("Loaded {} rules", engine.workflows().len());
@@ -50,7 +50,7 @@ You can also use the `RulesEngine` type alias:
 ```rust
 use dataflow_rs::RulesEngine;
 
-let engine = RulesEngine::new(vec![rule1, rule2], None);
+let engine = RulesEngine::new(vec![rule1, rule2], None)?;
 ```
 
 ## Processing Messages
@@ -58,14 +58,12 @@ let engine = RulesEngine::new(vec![rule1, rule2], None);
 ```rust
 use dataflow_rs::engine::message::Message;
 use serde_json::json;
-use std::sync::Arc;
 
-// Create a message with payload
-let payload = Arc::new(json!({
+// Bridge from serde_json::Value — handiest when payloads come from JSON
+let mut message = Message::from_value(&json!({
     "user": "john",
     "action": "login"
 }));
-let mut message = Message::new(payload);
 
 // Process through all matching rules
 engine.process_message(&mut message).await?;
@@ -75,12 +73,23 @@ println!("Processed data: {:?}", message.data());
 println!("Audit trail: {:?}", message.audit_trail);
 ```
 
+If you already have an `Arc<OwnedDataValue>` payload, use `Message::new`
+to skip the `serde_json` bridge:
+
+```rust
+use datavalue::OwnedDataValue;
+use std::sync::Arc;
+
+let payload = Arc::new(OwnedDataValue::from(&json!({"user": "john"})));
+let mut message = Message::new(payload);
+```
+
 ## Execution Tracing
 
 For debugging, use `process_message_with_trace` to capture step-by-step execution:
 
 ```rust
-let (mut message, trace) = engine.process_message_with_trace(&mut message).await?;
+let trace = engine.process_message_with_trace(&mut message).await?;
 
 println!("Steps executed: {}", trace.executed_count());
 println!("Steps skipped: {}", trace.skipped_count());
@@ -137,7 +146,7 @@ use std::collections::HashMap;
 let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> = HashMap::new();
 custom_functions.insert("my_function".to_string(), Box::new(MyCustomFunction));
 
-let engine = Engine::new(rules, Some(custom_functions));
+let engine = Engine::new(rules, Some(custom_functions))?;
 ```
 
 ## Thread Safety
@@ -152,7 +161,7 @@ The Engine is designed for concurrent use:
 use std::sync::Arc;
 use tokio::task;
 
-let engine = Arc::new(Engine::new(rules, None));
+let engine = Arc::new(Engine::new(rules, None)?);
 
 // Process multiple messages concurrently
 let handles: Vec<_> = messages.into_iter().map(|mut msg| {

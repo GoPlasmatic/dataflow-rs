@@ -175,7 +175,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = RulesEngine::new(
         vec![premium_discount_rule, standard_discount_rule, vip_rule],
         None,
-    );
+    )
+    .unwrap();
 
     // --- Scenario 1: VIP customer with a large order ---
     println!("Scenario 1: VIP customer, order total = $1500");

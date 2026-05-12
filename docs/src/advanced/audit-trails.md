@@ -14,18 +14,26 @@ Every change to message data is recorded in the audit trail:
 
 ```rust
 pub struct AuditTrail {
-    pub task_id: String,
-    pub workflow_id: String,
+    pub workflow_id: Arc<str>,
+    pub task_id: Arc<str>,
     pub timestamp: DateTime<Utc>,
     pub changes: Vec<Change>,
+    pub status: usize,
 }
 
 pub struct Change {
     pub path: Arc<str>,
-    pub old_value: Arc<Value>,
-    pub new_value: Arc<Value>,
+    pub old_value: OwnedDataValue,
+    pub new_value: OwnedDataValue,
 }
 ```
+
+`old_value` / `new_value` are owned (not `Arc<OwnedDataValue>`) — one less
+heap allocation per recorded mutation. `workflow_id` / `task_id` are
+`Arc<str>` mirrors of the workflow/task ids
+— the engine clones them by refcount bump rather than allocating per
+audit entry. `status` is the task's return status code (200 success,
+400 validation, 500 execution error, 298/299 for filter skip/halt).
 
 ## Accessing the Audit Trail
 
@@ -104,8 +112,8 @@ Custom functions should track changes for proper auditing:
 ```rust
 let changes = vec![Change {
     path: Arc::from("data.processed"),
-    old_value: Arc::new(old_value),
-    new_value: Arc::new(new_value),
+    old_value,
+    new_value,
 }];
 
 Ok((200, changes))
@@ -180,18 +188,23 @@ if was_field_modified(&message, "data.price") {
 The audit trail can be used to implement rollback:
 
 ```rust
-fn get_original_value(message: &Message, field: &str) -> Option<&Value> {
+use datavalue::OwnedDataValue;
+
+fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a OwnedDataValue> {
     message.audit_trail.iter()
         .flat_map(|e| e.changes.iter())
         .find(|c| c.path.as_ref() == field)
-        .map(|c| c.old_value.as_ref())
+        .map(|c| &c.old_value)
 }
 ```
 
 ## Best Practices
 
 1. **Track All Changes** - Custom functions should record all modifications
-2. **Use Arc** - Use `Arc<str>` and `Arc<Value>` for efficient sharing
+2. **Use Arc<str> for ids** - `workflow_id` / `task_id` clone via refcount bump
 3. **Timestamp Accuracy** - Timestamps are UTC for consistency
 4. **Check Audit Trail** - Review audit trail during development
 5. **Log for Production** - Persist audit trails for production debugging
+6. **Bulk Pipelines** - Set `message.capture_changes = false` to skip
+   per-write change capture in throughput-critical pipelines (audit
+   entries are still recorded with empty `changes`).

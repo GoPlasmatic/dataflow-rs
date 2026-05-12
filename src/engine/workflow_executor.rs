@@ -4,10 +4,10 @@
 //! It provides a clean separation between workflow orchestration and task execution.
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
-use crate::engine::executor::{with_arena, ArenaContext, InternalExecutor};
-use crate::engine::functions::{
-    AsyncFunctionHandler, FunctionConfig, FILTER_STATUS_HALT, FILTER_STATUS_SKIP,
+use crate::engine::executor::{
+    ArenaContext, evaluate_condition, evaluate_condition_in_arena, with_arena,
 };
+use crate::engine::functions::{AsyncFunctionHandler, FILTER_STATUS_HALT, FILTER_STATUS_SKIP};
 use crate::engine::message::{AuditTrail, Change, Message};
 use crate::engine::task::Task;
 use crate::engine::task_executor::TaskExecutor;
@@ -15,8 +15,10 @@ use crate::engine::trace::{ExecutionStep, ExecutionTrace};
 use crate::engine::utils::set_nested_value;
 use crate::engine::workflow::Workflow;
 use chrono::{DateTime, Utc};
+use datalogic_rs::Engine;
 use datavalue::OwnedDataValue;
 use log::{debug, error, info, warn};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -49,16 +51,16 @@ fn next_async_boundary(tasks: &[Task], start: usize) -> usize {
 pub struct WorkflowExecutor {
     /// Task executor for executing individual tasks
     task_executor: Arc<TaskExecutor>,
-    /// Internal executor for condition evaluation
-    internal_executor: Arc<InternalExecutor>,
+    /// Shared datalogic engine for condition evaluation
+    engine: Arc<Engine>,
 }
 
 impl WorkflowExecutor {
     /// Create a new WorkflowExecutor
-    pub fn new(task_executor: Arc<TaskExecutor>, internal_executor: Arc<InternalExecutor>) -> Self {
+    pub fn new(task_executor: Arc<TaskExecutor>, engine: Arc<Engine>) -> Self {
         Self {
             task_executor,
-            internal_executor,
+            engine,
         }
     }
 
@@ -89,55 +91,12 @@ impl WorkflowExecutor {
         message: &mut Message,
         now: DateTime<Utc>,
     ) -> Result<bool> {
-        // Evaluate workflow condition directly against the OwnedDataValue context
-        let should_execute = self
-            .internal_executor
-            .evaluate_condition(workflow.condition_index, &message.context)?;
-
-        if !should_execute {
-            debug!("Skipping workflow {} - condition not met", workflow.id);
-            return Ok(false);
-        }
-
-        // Execute workflow tasks
-        match self.execute_tasks(workflow, message, now).await {
-            Ok(_) => {
-                info!("Successfully completed workflow: {}", workflow.id);
-                Ok(true)
-            }
-            Err(e) if workflow.continue_on_error => {
-                warn!(
-                    "Workflow {} encountered error but continuing: {:?}",
-                    workflow.id, e
-                );
-                message.errors.push(
-                    ErrorInfo::builder(
-                        "WORKFLOW_ERROR",
-                        format!("Workflow {} error: {}", workflow.id, e),
-                    )
-                    .workflow_id(&workflow.id)
-                    .build(),
-                );
-                Ok(true)
-            }
-            Err(e) => {
-                error!("Workflow {} failed: {:?}", workflow.id, e);
-                Err(e)
-            }
-        }
+        self.execute_inner(workflow, message, None, now).await
     }
 
     /// Execute a workflow with step-by-step tracing
     ///
     /// Similar to `execute` but records execution steps for debugging.
-    ///
-    /// # Arguments
-    /// * `workflow` - The workflow to execute
-    /// * `message` - The message being processed
-    /// * `trace` - The execution trace to record steps to
-    ///
-    /// # Returns
-    /// * `Result<bool>` - Ok(true) if workflow was executed, Ok(false) if skipped, Err on failure
     pub async fn execute_with_trace(
         &self,
         workflow: &Workflow,
@@ -145,23 +104,37 @@ impl WorkflowExecutor {
         trace: &mut ExecutionTrace,
         now: DateTime<Utc>,
     ) -> Result<bool> {
+        self.execute_inner(workflow, message, Some(trace), now)
+            .await
+    }
+
+    /// Unified workflow-condition + task-loop driver. `trace` is `None` for
+    /// the production path and `Some(&mut trace)` for the debug path —
+    /// stepping is the only behavioural difference between them.
+    async fn execute_inner(
+        &self,
+        workflow: &Workflow,
+        message: &mut Message,
+        mut trace: Option<&mut ExecutionTrace>,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
         // Evaluate workflow condition directly against the OwnedDataValue context
-        let should_execute = self
-            .internal_executor
-            .evaluate_condition(workflow.condition_index, &message.context)?;
+        let should_execute = evaluate_condition(
+            &self.engine,
+            workflow.compiled_condition.as_ref(),
+            &message.context,
+        )?;
 
         if !should_execute {
             debug!("Skipping workflow {} - condition not met", workflow.id);
-            // Record skipped workflow step
-            trace.add_step(ExecutionStep::workflow_skipped(&workflow.id));
+            if let Some(t) = trace.as_deref_mut() {
+                t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
+            }
             return Ok(false);
         }
 
-        // Execute workflow tasks with trace collection
-        match self
-            .execute_tasks_with_trace(workflow, message, trace, now)
-            .await
-        {
+        // Execute workflow tasks (trace recording happens inside the loop)
+        match self.execute_tasks(workflow, message, trace, now).await {
             Ok(_) => {
                 info!("Successfully completed workflow: {}", workflow.id);
                 Ok(true)
@@ -198,10 +171,15 @@ impl WorkflowExecutor {
     /// state back to `OwnedDataValue` automatically (since each sync task
     /// already mutates `message.context` in place) and the next stretch
     /// rebuilds the arena form.
+    ///
+    /// When `trace` is `Some`, the loop also records `ExecutionStep` entries
+    /// after each task (skipped/executed) including per-mapping snapshots
+    /// for `Map` tasks.
     async fn execute_tasks(
         &self,
         workflow: &Workflow,
         message: &mut Message,
+        mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
     ) -> Result<()> {
         let tasks = &workflow.tasks;
@@ -215,6 +193,7 @@ impl WorkflowExecutor {
                     &tasks[idx..stretch_end],
                     workflow,
                     message,
+                    trace.as_deref_mut(),
                     now,
                 )?;
                 if halt {
@@ -226,27 +205,39 @@ impl WorkflowExecutor {
             if idx < tasks.len() {
                 // Single async task (or non-sync-builtin) at `idx`.
                 let task = &tasks[idx];
-                let should_execute = self
-                    .internal_executor
-                    .evaluate_condition(task.condition_index, &message.context)?;
+                let should_execute = evaluate_condition(
+                    &self.engine,
+                    task.compiled_condition.as_ref(),
+                    &message.context,
+                )?;
 
                 if !should_execute {
                     debug!("Skipping task {} - condition not met", task.id);
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.add_step(ExecutionStep::task_skipped(&workflow.id, &task.id));
+                    }
                     idx += 1;
                     continue;
                 }
 
                 let result = self.task_executor.execute(task, message).await;
-                match self.handle_task_result(
+                let control_flow = self.handle_task_result(
                     result,
                     &workflow.id_arc,
                     &task.id_arc,
                     task.continue_on_error,
                     message,
                     now,
-                )? {
-                    TaskControlFlow::HaltWorkflow => return Ok(()),
-                    TaskControlFlow::Continue => {}
+                )?;
+
+                // Async tasks at the boundary have no per-mapping snapshots —
+                // they're either HTTP/Kafka/Enrich or a custom handler.
+                if let Some(t) = trace.as_deref_mut() {
+                    t.add_step(ExecutionStep::executed(&workflow.id, &task.id, message));
+                }
+
+                if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
+                    return Ok(());
                 }
                 idx += 1;
             }
@@ -264,6 +255,7 @@ impl WorkflowExecutor {
         tasks: &[Task],
         workflow: &Workflow,
         message: &mut Message,
+        mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
     ) -> Result<bool> {
         let outcome = with_arena(|arena| -> Result<bool> {
@@ -273,16 +265,32 @@ impl WorkflowExecutor {
                 // Task condition — evaluate against the arena form so we don't
                 // re-borrow the thread-local `RefCell`.
                 let ctx_av = arena_ctx.as_data_value();
-                let should_execute = self
-                    .internal_executor
-                    .evaluate_condition_in_arena(task.condition_index, ctx_av, arena)?;
+                let should_execute = evaluate_condition_in_arena(
+                    &self.engine,
+                    task.compiled_condition.as_ref(),
+                    ctx_av,
+                    arena,
+                )?;
 
                 if !should_execute {
                     debug!("Skipping task {} - condition not met", task.id);
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.add_step(ExecutionStep::task_skipped(&workflow.id, &task.id));
+                    }
                     continue;
                 }
 
-                let result = self.execute_sync_task_in_arena(task, message, &mut arena_ctx);
+                // Per-task snapshot buffer — only used for Map tasks in trace
+                // mode. Allocating an empty Vec is cheap and the buffer stays
+                // empty for non-Map tasks.
+                let mut mapping_snapshots: Vec<Value> = Vec::new();
+                let snapshot_buf = if trace.is_some() {
+                    Some(&mut mapping_snapshots)
+                } else {
+                    None
+                };
+                let result =
+                    self.execute_sync_task_in_arena(task, message, &mut arena_ctx, snapshot_buf);
 
                 let control_flow = self.handle_task_result(
                     result,
@@ -298,6 +306,14 @@ impl WorkflowExecutor {
                 // arena cache so the next task in the stretch sees them.
                 arena_ctx.refresh_for_path(&message.context, "metadata");
 
+                if let Some(t) = trace.as_deref_mut() {
+                    let mut step = ExecutionStep::executed(&workflow.id, &task.id, message);
+                    if !mapping_snapshots.is_empty() {
+                        step = step.with_mapping_contexts(mapping_snapshots);
+                    }
+                    t.add_step(step);
+                }
+
                 if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
                     return Ok(true);
                 }
@@ -307,119 +323,38 @@ impl WorkflowExecutor {
         Ok(outcome)
     }
 
-    /// Dispatch a single sync-builtin task to its `execute_in_arena` variant.
-    /// All variants in `is_sync_builtin()` must be handled here.
+    /// Dispatch a single sync-builtin task via the consolidated
+    /// `FunctionConfig::try_execute_in_arena`. `next_async_boundary` guarantees
+    /// the stretch contents are sync built-ins, so the `None` arm is
+    /// unreachable in practice.
+    ///
+    /// `map_snapshot_buf` is only consulted by the `Map` variant; non-Map
+    /// sync builtins ignore it. Pass `None` from the production path.
     fn execute_sync_task_in_arena(
         &self,
         task: &Task,
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'_>,
+        map_snapshot_buf: Option<&mut Vec<Value>>,
     ) -> Result<(usize, Vec<Change>)> {
         debug!(
             "Executing sync task in arena: {} ({})",
             task.id,
             task.function.function_name()
         );
-        let executor = &self.internal_executor;
-        let engine = executor.engine();
-        let logic_cache = executor.logic_cache();
-
-        match &task.function {
-            FunctionConfig::Map { input, .. } => {
-                input.execute_in_arena(message, arena_ctx, engine, logic_cache)
-            }
-            FunctionConfig::Validation { input, .. } => {
-                input.execute_in_arena(message, arena_ctx, engine, logic_cache)
-            }
-            FunctionConfig::ParseJson { input, .. } => {
-                crate::engine::functions::parse::execute_parse_json_in_arena(
-                    message, input, arena_ctx,
+        debug_assert!(
+            task.function.is_sync_builtin(),
+            "execute_sync_task_in_arena called with non-sync-builtin task: {}",
+            task.function.function_name()
+        );
+        task.function
+            .try_execute_in_arena(message, arena_ctx, &self.engine, map_snapshot_buf)
+            .unwrap_or_else(|| {
+                unreachable!(
+                    "non-sync-builtin reached arena dispatch: {}",
+                    task.function.function_name()
                 )
-            }
-            FunctionConfig::ParseXml { input, .. } => {
-                let r = crate::engine::functions::parse::execute_parse_xml(message, input)?;
-                arena_ctx.refresh_for_path(&message.context, "data");
-                Ok(r)
-            }
-            FunctionConfig::PublishJson { input, .. } => {
-                // Publish is read-only on the OwnedDataValue context (it writes
-                // to `payload`). No arena refresh needed.
-                crate::engine::functions::publish::execute_publish_json(message, input)
-            }
-            FunctionConfig::PublishXml { input, .. } => {
-                crate::engine::functions::publish::execute_publish_xml(message, input)
-            }
-            FunctionConfig::Filter { input, .. } => {
-                input.execute(message, engine, logic_cache)
-            }
-            FunctionConfig::Log { input, .. } => {
-                input.execute(message, engine, logic_cache)
-            }
-            // Async or non-builtin variants should never reach this dispatch —
-            // `next_async_boundary` guarantees stretch contents are sync builtins.
-            _ => unreachable!(
-                "execute_sync_task_in_arena called with non-sync-builtin task: {}",
-                task.function.function_name()
-            ),
-        }
-    }
-
-    /// Execute all tasks in a workflow with trace collection
-    async fn execute_tasks_with_trace(
-        &self,
-        workflow: &Workflow,
-        message: &mut Message,
-        trace: &mut ExecutionTrace,
-        now: DateTime<Utc>,
-    ) -> Result<()> {
-        for task in &workflow.tasks {
-            // Evaluate task condition directly against the OwnedDataValue context
-            let should_execute = self
-                .internal_executor
-                .evaluate_condition(task.condition_index, &message.context)?;
-
-            if !should_execute {
-                debug!("Skipping task {} - condition not met", task.id);
-                // Record skipped task step
-                trace.add_step(ExecutionStep::task_skipped(&workflow.id, &task.id));
-                continue;
-            }
-
-            // Execute the task with trace support
-            let result = self.task_executor.execute_with_trace(task, message).await;
-
-            // Extract mapping_contexts before passing result to handle_task_result
-            let mapping_contexts = match &result {
-                Ok((_, _, contexts)) => contexts.clone(),
-                Err(_) => None,
-            };
-
-            // Convert to the standard result format for handle_task_result
-            let standard_result = result.map(|(status, changes, _)| (status, changes));
-
-            // Handle task result with control flow
-            let control_flow = self.handle_task_result(
-                standard_result,
-                &workflow.id_arc,
-                &task.id_arc,
-                task.continue_on_error,
-                message,
-                now,
-            )?;
-
-            // Record executed step with message snapshot and optional mapping contexts
-            let mut step = ExecutionStep::executed(&workflow.id, &task.id, message);
-            if let Some(contexts) = mapping_contexts {
-                step = step.with_mapping_contexts(contexts);
-            }
-            trace.add_step(step);
-
-            if let TaskControlFlow::HaltWorkflow = control_flow {
-                break;
-            }
-        }
-
-        Ok(())
+            })
     }
 
     /// Handle the result of a task execution.
@@ -458,23 +393,31 @@ impl WorkflowExecutor {
                     changes,
                 });
 
-                // Update progress metadata for workflow chaining. set_nested_value
-                // auto-creates the intermediate "progress" object on first write
-                // and overwrites individual keys on subsequent writes.
+                // Update progress metadata for workflow chaining. Always
+                // emitted: when multiple workflows are registered in the same
+                // engine, downstream workflows route on
+                // `metadata.progress.{workflow_id,task_id,status_code}` to
+                // advance through linear sequences. One batched write
+                // (single tree walk + single Object alloc) benchmarked ~3%
+                // faster than three separate writes on the realistic
+                // workload — replacing a slot beats find-and-update walks.
                 set_nested_value(
                     &mut message.context,
-                    "metadata.progress.workflow_id",
-                    OwnedDataValue::String(workflow_id.to_string()),
-                );
-                set_nested_value(
-                    &mut message.context,
-                    "metadata.progress.task_id",
-                    OwnedDataValue::String(task_id.to_string()),
-                );
-                set_nested_value(
-                    &mut message.context,
-                    "metadata.progress.status_code",
-                    OwnedDataValue::from(status as u64),
+                    "metadata.progress",
+                    OwnedDataValue::Object(vec![
+                        (
+                            "workflow_id".to_string(),
+                            OwnedDataValue::String(workflow_id.to_string()),
+                        ),
+                        (
+                            "task_id".to_string(),
+                            OwnedDataValue::String(task_id.to_string()),
+                        ),
+                        (
+                            "status_code".to_string(),
+                            OwnedDataValue::from(status as u64),
+                        ),
+                    ]),
                 );
 
                 // Handle filter halt — audit trail is recorded, halt the workflow
@@ -554,23 +497,23 @@ mod tests {
             }]
         }"#;
 
-        let mut compiler = LogicCompiler::new();
+        let compiler = LogicCompiler::new();
         let mut workflow = Workflow::from_json(workflow_json).unwrap();
 
         // Compile the workflow condition
-        let workflows = compiler.compile_workflows(vec![workflow.clone()]);
+        let workflows = compiler
+            .compile_workflows(vec![workflow.clone()])
+            .unwrap();
         if let Some(compiled_workflow) = workflows.iter().find(|w| w.id == "test_workflow") {
             workflow = compiled_workflow.clone();
         }
 
-        let (engine, logic_cache) = compiler.into_parts();
-        let internal_executor = Arc::new(InternalExecutor::new(engine.clone(), logic_cache));
+        let engine = compiler.into_engine();
         let task_executor = Arc::new(TaskExecutor::new(
             Arc::new(HashMap::new()),
-            internal_executor.clone(),
-            engine,
+            Arc::clone(&engine),
         ));
-        let workflow_executor = WorkflowExecutor::new(task_executor, internal_executor);
+        let workflow_executor = WorkflowExecutor::new(task_executor, engine);
 
         let mut message = Message::from_value(&json!({}));
 
@@ -600,23 +543,23 @@ mod tests {
             }]
         }"#;
 
-        let mut compiler = LogicCompiler::new();
+        let compiler = LogicCompiler::new();
         let mut workflow = Workflow::from_json(workflow_json).unwrap();
 
         // Compile the workflow
-        let workflows = compiler.compile_workflows(vec![workflow.clone()]);
+        let workflows = compiler
+            .compile_workflows(vec![workflow.clone()])
+            .unwrap();
         if let Some(compiled_workflow) = workflows.iter().find(|w| w.id == "test_workflow") {
             workflow = compiled_workflow.clone();
         }
 
-        let (engine, logic_cache) = compiler.into_parts();
-        let internal_executor = Arc::new(InternalExecutor::new(engine.clone(), logic_cache));
+        let engine = compiler.into_engine();
         let task_executor = Arc::new(TaskExecutor::new(
             Arc::new(HashMap::new()),
-            internal_executor.clone(),
-            engine,
+            Arc::clone(&engine),
         ));
-        let workflow_executor = WorkflowExecutor::new(task_executor, internal_executor);
+        let workflow_executor = WorkflowExecutor::new(task_executor, engine);
 
         let mut message = Message::from_value(&json!({}));
 

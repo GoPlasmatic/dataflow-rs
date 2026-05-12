@@ -53,7 +53,7 @@ The central orchestrator that processes messages through rules.
 use dataflow_rs::Engine;
 
 // Create engine with rules (compiled at creation)
-let engine = Engine::new(rules, custom_functions);
+let engine = Engine::new(rules, custom_functions)?;
 
 // Process messages (uses pre-compiled logic)
 engine.process_message(&mut message).await?;
@@ -110,13 +110,13 @@ The data structure that flows through rules. Contains:
 use dataflow_rs::Message;
 use serde_json::json;
 
-let mut message = Message::new(&json!({
+let mut message = Message::from_value(&json!({
     "name": "John",
     "email": "john@example.com"
 }));
 
 // Access after processing
-println!("Data: {:?}", message.context["data"]);
+println!("Data: {:?}", message.data());
 println!("Audit: {:?}", message.audit_trail);
 ```
 

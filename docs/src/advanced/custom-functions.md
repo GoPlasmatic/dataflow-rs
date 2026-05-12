@@ -18,10 +18,12 @@ use async_trait::async_trait;
 use dataflow_rs::engine::{
     AsyncFunctionHandler,
     FunctionConfig,
-    error::Result,
-    message::{Change, Message}
+    error::{DataflowError, Result},
+    message::{Change, Message},
+    utils::{get_nested_value, set_nested_value},
 };
-use datalogic_rs::DataLogic;
+use datalogic_rs::Engine as DatalogicEngine;
+use datavalue::OwnedDataValue;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -33,22 +35,29 @@ impl AsyncFunctionHandler for MyCustomFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        datalogic: Arc<DataLogic>,
+        _engine: Arc<DatalogicEngine>,
     ) -> Result<(usize, Vec<Change>)> {
-        // Your custom logic here
+        // Access input configuration (Custom variant)
+        let _input = match config {
+            FunctionConfig::Custom { input, .. } => input,
+            _ => return Err(DataflowError::Validation("Invalid config".into())),
+        };
 
-        // Access input configuration
-        let input = &config.input;
+        // Capture old value before writing
+        let old_value = get_nested_value(&message.context, "data.processed")
+            .cloned()
+            .unwrap_or(OwnedDataValue::Null);
 
-        // Modify message data
-        let old_value = message.context["data"]["processed"].clone();
-        message.context["data"]["processed"] = json!(true);
+        // Mutate message data via the path helper
+        let new_value = OwnedDataValue::from(&json!(true));
+        set_nested_value(&mut message.context, "data.processed", new_value.clone());
 
-        // Track changes for audit trail
+        // Track changes for audit trail (`Change` owns `OwnedDataValue`s
+        // directly — no `Arc::new` wrapping needed)
         let changes = vec![Change {
             path: Arc::from("data.processed"),
-            old_value: Arc::new(old_value),
-            new_value: Arc::new(json!(true)),
+            old_value,
+            new_value,
         }];
 
         // Return status code and changes
@@ -76,7 +85,7 @@ custom_functions.insert(
 );
 
 // Create engine with custom functions
-let engine = Engine::new(workflows, Some(custom_functions));
+let engine = Engine::new(workflows, Some(custom_functions))?;
 ```
 
 ## Using Custom Functions in Rules
@@ -108,7 +117,7 @@ async fn execute(
     &self,
     message: &mut Message,
     config: &FunctionConfig,
-    datalogic: Arc<DataLogic>,
+    _engine: Arc<DatalogicEngine>,
 ) -> Result<(usize, Vec<Change>)> {
     // Extract input from Custom variant
     let input = match config {
@@ -132,29 +141,41 @@ async fn execute(
 }
 ```
 
-## Using DataLogic
+## Evaluating JSONLogic
 
-Evaluate JSONLogic expressions using the provided `datalogic` instance:
+Custom handlers can compile and evaluate ad-hoc JSONLogic against
+`message.context` using the shared engine:
 
 ```rust
+use bumpalo::Bump;
+
 async fn execute(
     &self,
     message: &mut Message,
-    config: &FunctionConfig,
-    datalogic: Arc<DataLogic>,
+    _config: &FunctionConfig,
+    engine: Arc<DatalogicEngine>,
 ) -> Result<(usize, Vec<Change>)> {
-    // Get the context for evaluation
-    let context_arc = message.get_context_arc();
+    // Compile the expression (use Arc<Logic> so it can be cached/shared)
+    let compiled = engine.compile_arc(&json!({"var": "data.input"}))
+        .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))?;
 
-    // Compile and evaluate a JSONLogic expression
-    let logic = json!({"var": "data.input"});
-    let compiled = datalogic.compile(&logic)?;
-    let result = datalogic.evaluate(&compiled, context_arc)?;
+    // Evaluate against the context. `engine.evaluate` takes a borrowed
+    // `DataValue<'_>` plus a Bump arena for any allocations the eval needs.
+    let arena = Bump::new();
+    let ctx = message.context.to_arena(&arena);
+    let result = engine.evaluate(&compiled, ctx, &arena)
+        .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))?;
 
-    // Use the result...
+    // Use the result (DataValue<'_> borrowed from the arena, or call
+    // `result.to_owned()` to lift it into an OwnedDataValue).
+    let _owned = result.to_owned();
     Ok((200, vec![]))
 }
 ```
+
+If your handler evaluates many expressions against the same context,
+build the `DataValue<'_>` once via `to_arena` and reuse it — that skips
+the per-eval deep-walk into the arena.
 
 ## Async Operations
 
@@ -171,7 +192,7 @@ impl AsyncFunctionHandler for HttpFetchFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        _datalogic: Arc<DataLogic>,
+        _engine: Arc<DatalogicEngine>,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract URL from config
         let input = match config {
@@ -187,23 +208,23 @@ impl AsyncFunctionHandler for HttpFetchFunction {
         // Make HTTP request
         let response = reqwest::get(url)
             .await
-            .map_err(|e| DataflowError::Processing(e.to_string()))?;
+            .map_err(|e| DataflowError::http(0, e.to_string()))?;
 
-        let data: Value = response.json()
+        let data_json: Value = response.json()
             .await
-            .map_err(|e| DataflowError::Processing(e.to_string()))?;
+            .map_err(|e| DataflowError::http(0, e.to_string()))?;
 
-        // Store result
-        let old_value = message.data().get("fetched").cloned().unwrap_or(json!(null));
-        if let Some(data_obj) = message.data_mut().as_object_mut() {
-            data_obj.insert("fetched".to_string(), data.clone());
-        }
-        message.invalidate_context_cache();
+        // Bridge into OwnedDataValue and write into the context
+        let new_value = OwnedDataValue::from(&data_json);
+        let old_value = get_nested_value(&message.context, "data.fetched")
+            .cloned()
+            .unwrap_or(OwnedDataValue::Null);
+        set_nested_value(&mut message.context, "data.fetched", new_value.clone());
 
         let changes = vec![Change {
             path: Arc::from("data.fetched"),
-            old_value: Arc::new(old_value),
-            new_value: Arc::new(data),
+            old_value,
+            new_value,
         }];
 
         Ok((200, changes))
@@ -219,22 +240,25 @@ Return appropriate errors for different failure modes:
 use dataflow_rs::engine::error::DataflowError;
 
 async fn execute(&self, ...) -> Result<(usize, Vec<Change>)> {
-    // Validation error
+    // Bad/invalid input — non-retryable
     if some_validation_fails {
         return Err(DataflowError::Validation("Invalid input".to_string()));
     }
 
-    // Processing error
+    // Task-level execution failure — non-retryable
     if some_operation_fails {
-        return Err(DataflowError::Processing("Operation failed".to_string()));
+        return Err(DataflowError::Task("Operation failed".to_string()));
     }
 
-    // Configuration error
-    if config_is_invalid {
-        return Err(DataflowError::Configuration("Invalid config".to_string()));
+    // Wrapping a downstream error — retryability inherited from `source`
+    if downstream_call_failed {
+        return Err(DataflowError::function_execution(
+            "HTTP call failed",
+            Some(DataflowError::http(503, "Service Unavailable")),
+        ));
     }
 
-    // Or return status codes without error
+    // Or return status codes without an error
     // 200 for success
     // 400 for validation failure
     // 500 for processing failure
@@ -249,9 +273,11 @@ use async_trait::async_trait;
 use dataflow_rs::engine::{
     AsyncFunctionHandler, FunctionConfig,
     error::{DataflowError, Result},
-    message::{Change, Message}
+    message::{Change, Message},
+    utils::{get_nested_value, set_nested_value},
 };
-use datalogic_rs::DataLogic;
+use datalogic_rs::Engine as DatalogicEngine;
+use datavalue::OwnedDataValue;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -264,12 +290,12 @@ impl AsyncFunctionHandler for StatisticsFunction {
         &self,
         message: &mut Message,
         config: &FunctionConfig,
-        _datalogic: Arc<DataLogic>,
+        _engine: Arc<DatalogicEngine>,
     ) -> Result<(usize, Vec<Change>)> {
         // Extract config from Custom variant
         let input = match config {
             FunctionConfig::Custom { input, .. } => input,
-            _ => return Err(DataflowError::Configuration("Invalid config".into())),
+            _ => return Err(DataflowError::Validation("Invalid config".into())),
         };
 
         // Get the field to analyze
@@ -280,17 +306,17 @@ impl AsyncFunctionHandler for StatisticsFunction {
                 "Missing 'field' in config".to_string()
             ))?;
 
-        // Get the array from message
-        let data = message.data()
-            .get(field)
-            .and_then(Value::as_array)
-            .ok_or_else(|| DataflowError::Validation(
+        // Pull the array out of `data.<field>`
+        let path = format!("data.{}", field);
+        let array = match get_nested_value(&message.context, &path) {
+            Some(OwnedDataValue::Array(items)) => items.clone(),
+            _ => return Err(DataflowError::Validation(
                 format!("Field '{}' is not an array", field)
-            ))?
-            .clone();
+            )),
+        };
 
-        // Calculate statistics
-        let numbers: Vec<f64> = data.iter()
+        // Calculate statistics. `OwnedDataValue::as_f64()` mirrors serde_json.
+        let numbers: Vec<f64> = array.iter()
             .filter_map(|v| v.as_f64())
             .collect();
 
@@ -306,26 +332,23 @@ impl AsyncFunctionHandler for StatisticsFunction {
         let min = numbers.iter().cloned().fold(f64::INFINITY, f64::min);
         let max = numbers.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
-        // Build result
-        let stats = json!({
+        // Build the result and write it back into the context
+        let stats = OwnedDataValue::from(&json!({
             "count": count,
             "sum": sum,
             "mean": mean,
             "min": min,
             "max": max
-        });
-
-        // Store in message
-        let old_value = message.data().get("statistics").cloned().unwrap_or(json!(null));
-        if let Some(data_obj) = message.data_mut().as_object_mut() {
-            data_obj.insert("statistics".to_string(), stats.clone());
-        }
-        message.invalidate_context_cache();
+        }));
+        let old_value = get_nested_value(&message.context, "data.statistics")
+            .cloned()
+            .unwrap_or(OwnedDataValue::Null);
+        set_nested_value(&mut message.context, "data.statistics", stats.clone());
 
         let changes = vec![Change {
             path: Arc::from("data.statistics"),
-            old_value: Arc::new(old_value),
-            new_value: Arc::new(stats),
+            old_value,
+            new_value: stats,
         }];
 
         Ok((200, changes))
@@ -338,6 +361,8 @@ impl AsyncFunctionHandler for StatisticsFunction {
 1. **Track Changes** - Record all modifications for audit trail
 2. **Validate Input** - Check configuration before processing
 3. **Handle Errors** - Return appropriate error types
-4. **Invalidate Cache** - Call `message.invalidate_context_cache()` after modifications
+4. **Mutate via `set_nested_value`** - It's the canonical way to write
+   into `message.context` (auto-creates intermediates, handles array
+   indexing and `#`-prefix escapes).
 5. **Document** - Add clear documentation for your function
 6. **Test** - Write unit tests for your custom functions

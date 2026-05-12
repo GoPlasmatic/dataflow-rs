@@ -1,12 +1,19 @@
+use crate::engine::error::Result;
+use crate::engine::executor::ArenaContext;
 use crate::engine::functions::filter::FilterConfig;
 use crate::engine::functions::integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
 use crate::engine::functions::log::LogConfig;
 use crate::engine::functions::map::MapConfig;
-use crate::engine::functions::parse::ParseConfig;
-use crate::engine::functions::publish::PublishConfig;
+use crate::engine::functions::parse::{
+    ParseConfig, execute_parse_json_in_arena, execute_parse_xml,
+};
+use crate::engine::functions::publish::{PublishConfig, execute_publish_json, execute_publish_xml};
 use crate::engine::functions::validation::ValidationConfig;
+use crate::engine::message::{Change, Message};
+use datalogic_rs::Engine;
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::Arc;
 
 /// Enum containing all possible function configurations
 /// Uses internally tagged representation for clean deserialization
@@ -153,6 +160,9 @@ impl FunctionConfig {
     /// Whether this is a synchronous built-in. Synchronous built-ins can share
     /// a single `ArenaContext` lifetime across consecutive tasks within a
     /// workflow without crossing any `.await` point.
+    ///
+    /// Must match the variants handled in [`Self::try_execute_in_arena`]; the
+    /// debug assertion below ties the two together so they can't drift.
     pub fn is_sync_builtin(&self) -> bool {
         matches!(
             self,
@@ -165,5 +175,84 @@ impl FunctionConfig {
                 | FunctionConfig::Filter { .. }
                 | FunctionConfig::Log { .. }
         )
+    }
+
+    /// If this config is a sync built-in, execute it against the supplied
+    /// arena context and return `Some(result)`. Otherwise return `None` —
+    /// the workflow executor uses that as the signal to break the sync
+    /// stretch and dispatch the task on the async path instead.
+    ///
+    /// `map_snapshot_buf` is only consulted by the `Map` variant — when
+    /// `Some`, the map function pushes a `serde_json::Value` snapshot of the
+    /// context before each mapping (for the trace surface). All other
+    /// variants ignore it. Pass `None` from the production path.
+    ///
+    /// This is the single source of truth for the sync-stretch dispatch:
+    /// adding a new sync built-in only requires adding an arm here (and the
+    /// matching variant to `is_sync_builtin` above).
+    pub(crate) fn try_execute_in_arena(
+        &self,
+        message: &mut Message,
+        arena_ctx: &mut ArenaContext<'_>,
+        engine: &Arc<Engine>,
+        map_snapshot_buf: Option<&mut Vec<Value>>,
+    ) -> Option<Result<(usize, Vec<Change>)>> {
+        match self {
+            FunctionConfig::Map { input, .. } => Some(input.execute_in_arena(
+                message,
+                arena_ctx,
+                engine,
+                map_snapshot_buf,
+            )),
+            FunctionConfig::Validation { input, .. } => {
+                Some(input.execute_in_arena(message, arena_ctx, engine))
+            }
+            FunctionConfig::ParseJson { input, .. } => {
+                Some(execute_parse_json_in_arena(message, input, arena_ctx))
+            }
+            FunctionConfig::ParseXml { input, .. } => {
+                // Refresh the arena only on success; on error the arena cache
+                // is still in sync with the unchanged context.
+                Some(match execute_parse_xml(message, input) {
+                    Ok(r) => {
+                        arena_ctx.refresh_for_path(&message.context, "data");
+                        Ok(r)
+                    }
+                    Err(e) => Err(e),
+                })
+            }
+            FunctionConfig::PublishJson { input, .. } => {
+                // publish writes to `data.<target>` but goes through
+                // `set_nested_value` on the owned context — refresh the
+                // arena slot afterwards so the next task in the stretch
+                // observes the new value.
+                Some(match execute_publish_json(message, input) {
+                    Ok(r) => {
+                        arena_ctx.refresh_for_path(&message.context, "data");
+                        Ok(r)
+                    }
+                    Err(e) => Err(e),
+                })
+            }
+            FunctionConfig::PublishXml { input, .. } => {
+                Some(match execute_publish_xml(message, input) {
+                    Ok(r) => {
+                        arena_ctx.refresh_for_path(&message.context, "data");
+                        Ok(r)
+                    }
+                    Err(e) => Err(e),
+                })
+            }
+            FunctionConfig::Filter { input, .. } => {
+                Some(input.execute_in_arena(message, arena_ctx, engine))
+            }
+            FunctionConfig::Log { input, .. } => {
+                Some(input.execute_in_arena(message, arena_ctx, engine))
+            }
+            FunctionConfig::HttpCall { .. }
+            | FunctionConfig::Enrich { .. }
+            | FunctionConfig::PublishKafka { .. }
+            | FunctionConfig::Custom { .. } => None,
+        }
     }
 }
