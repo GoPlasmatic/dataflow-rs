@@ -22,16 +22,25 @@ The central component that evaluates rules and processes messages.
 use dataflow_rs::Engine;  // or: use dataflow_rs::RulesEngine;
 ```
 
-### Constructor
+### Constructors
 
 ```rust
+// Recommended path — fluent builder.
+pub fn builder() -> EngineBuilder
+
+// Lower-level entry. Use HashMap::new() for the no-handler case.
 pub fn new(
     workflows: Vec<Workflow>,
-    custom_functions: Option<HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>>>
-) -> Engine
+    custom_functions: HashMap<String, BoxedFunctionHandler>,
+) -> Result<Engine>
 ```
 
-Creates a new engine with the given rules. All JSONLogic is compiled at creation.
+`EngineBuilder` (`#[must_use]`) chains
+`.register("name", handler)`, `.register_boxed(name, boxed)`,
+`.with_workflow(w)`, `.with_workflows(iter)`, then
+`.build() -> Result<Engine>`. All JSONLogic is compiled and Custom
+inputs are pre-parsed into their typed `Self::Input` at `.build()` —
+config-shape errors fail there, not on first message.
 
 ### Methods
 
@@ -143,94 +152,154 @@ use std::sync::Arc;
 ### Constructors
 
 ```rust
-// Native zero-conversion entry point
+// Fluent builder — recommended path for richer cases (custom id,
+// capture_changes off, etc.).
+pub fn builder() -> MessageBuilder
+
+// Native zero-conversion entry point — perf path.
 pub fn new(payload: Arc<OwnedDataValue>) -> Message
 
-// Convenience: bridge from a serde_json::Value payload
+// Convenience: bridge from a serde_json::Value payload.
 pub fn from_value(payload: &serde_json::Value) -> Message
-
-// Construct with a caller-supplied id (skips the UUID v7 allocation)
-pub fn with_id(id: impl Into<String>, payload: Arc<OwnedDataValue>) -> Message
-
-// Disable per-write Change capture (audit trail still recorded, but
-// `changes: []` — the bulk-pipeline fast path)
-pub fn without_change_capture(self) -> Message
 ```
 
-### Fields
+`MessageBuilder` (`#[must_use]`) chains
+`.id(...)`, `.payload(Arc<OwnedDataValue>)` /
+`.payload_json(&serde_json::Value)`, `.capture_changes(bool)`,
+then `.build() -> Message`.
+
+### Structure
 
 ```rust
 pub struct Message {
-    pub id: String,                       // UUID v7 string by default
-    pub payload: Arc<OwnedDataValue>,
-    pub context: OwnedDataValue,          // Always an Object with keys
-                                          // "data", "metadata", "temp_data"
-    pub audit_trail: Vec<AuditTrail>,
-    pub errors: Vec<ErrorInfo>,
-    pub capture_changes: bool,            // In-memory only; not serialized
+    pub context: OwnedDataValue,    // Always Object {data, metadata, temp_data}
+    // ... encapsulated fields ...
 }
 ```
+
+`context` is the only `pub` field — it's the legitimate read surface
+(tests do `message.context["data"]["x"]` lookups). Every other field
+is read via accessors and mutated via `add_error` (errors) or
+`TaskContext::set` (context) so audit-trail changes are recorded.
 
 ### Methods
 
 ```rust
-// Convenience accessors into context
+// Identity + payload
+pub fn id(&self) -> &str
+pub fn payload(&self) -> &OwnedDataValue
+pub fn payload_arc(&self) -> &Arc<OwnedDataValue>
+
+// Context accessors
 pub fn data(&self) -> &OwnedDataValue
 pub fn metadata(&self) -> &OwnedDataValue
 pub fn temp_data(&self) -> &OwnedDataValue
 
-// Add an error to the message
+// Error + audit views
+pub fn errors(&self) -> &[ErrorInfo]
+pub fn audit_trail(&self) -> &[AuditTrail]
+pub fn capture_changes(&self) -> bool
+
+// Mutation (constructive)
 pub fn add_error(&mut self, error: ErrorInfo)
 
-// Whether any errors were recorded
+// Predicates
 pub fn has_errors(&self) -> bool
 ```
 
-To mutate `context`, use the path helpers from `dataflow_rs::engine::utils`:
-
-```rust
-use dataflow_rs::engine::utils::{get_nested_value, set_nested_value};
-
-set_nested_value(
-    &mut message.context,
-    "data.user.name",
-    OwnedDataValue::from(&serde_json::json!("Alice")),
-);
-```
+Inside a custom `AsyncFunctionHandler`, mutate the context via
+[`TaskContext::set`](#taskcontext) — it records audit-trail changes
+automatically.
 
 ## AsyncFunctionHandler
 
-Trait for implementing custom action handlers.
+Trait for implementing custom action handlers. See
+[Custom Functions](../advanced/custom-functions.md) for the full
+walk-through.
 
 ```rust
-use dataflow_rs::engine::AsyncFunctionHandler;
+use dataflow_rs::prelude::*;
 ```
 
 ### Trait Definition
 
 ```rust
-use datalogic_rs::Engine as DatalogicEngine;
+use serde::de::DeserializeOwned;
 
 #[async_trait]
-pub trait AsyncFunctionHandler: Send + Sync {
+pub trait AsyncFunctionHandler: Send + Sync + 'static {
+    /// Typed configuration shape for this handler. Use
+    /// `serde_json::Value` for freeform JSON.
+    type Input: DeserializeOwned + Send + Sync + 'static;
+
+    /// Parse the raw `FunctionConfig::Custom { input }` JSON into
+    /// `Self::Input`. Default impl uses `serde_json::from_value`;
+    /// override only for custom validation beyond what serde provides.
+    fn parse_input(input: &serde_json::Value) -> Result<Self::Input> { ... }
+
+    /// Execute the handler.
     async fn execute(
         &self,
-        message: &mut Message,
-        config: &FunctionConfig,
-        engine: Arc<DatalogicEngine>,
-    ) -> Result<(usize, Vec<Change>)>;
+        ctx: &mut TaskContext<'_>,
+        input: &Self::Input,
+    ) -> Result<TaskOutcome>;
 }
 ```
 
-The supplied `Arc<datalogic_rs::Engine>` is the shared JSONLogic engine —
-custom handlers that need to evaluate ad-hoc JSONLogic can call
-`engine.compile_arc(&logic)` and `engine.evaluate(...)`. Handlers that
-don't need it can simply ignore the argument.
+The engine pre-parses each `FunctionConfig::Custom { input }` JSON into
+the registered handler's typed `Self::Input` at `Engine::builder().build()`
+(or `Engine::new`) — config-shape errors fail there, not on first message.
 
-### Return Value
+### Boxing
 
-- `usize` - Status code (200 = success, 400 = validation error, 500 = execution error)
-- `Vec<Change>` - List of changes for audit trail
+```rust
+pub type BoxedFunctionHandler = Box<dyn DynAsyncFunctionHandler + Send + Sync>;
+```
+
+Stored in the engine's registry. Users construct these via `Box::new(handler)`
+(or via `Engine::builder().register("name", handler)`) — the dyn-trait
+plumbing stays out of user code.
+
+## TaskContext
+
+Per-call context handed to every `AsyncFunctionHandler::execute` call.
+
+```rust
+pub struct TaskContext<'a> { /* ... */ }
+
+impl<'a> TaskContext<'a> {
+    // Read accessors
+    pub fn message(&self) -> &Message
+    pub fn message_mut(&mut self) -> &mut Message
+    pub fn datalogic(&self) -> &Arc<datalogic_rs::Engine>
+    pub fn data(&self) -> &OwnedDataValue
+    pub fn metadata(&self) -> &OwnedDataValue
+    pub fn temp_data(&self) -> &OwnedDataValue
+    pub fn get(&self, path: &str) -> Option<&OwnedDataValue>
+
+    // Audit-trail-aware mutation
+    pub fn set(&mut self, path: &str, value: OwnedDataValue)
+    pub fn set_json(&mut self, path: &str, value: &serde_json::Value)
+    pub fn add_error(&mut self, error: ErrorInfo)
+}
+```
+
+`set` records a `Change` on the audit trail when `message.capture_changes`
+is `true`, then writes through `set_nested_value` (auto-creates
+intermediate objects/arrays, handles `#`-prefix escapes).
+
+## TaskOutcome
+
+Return value of every handler:
+
+```rust
+pub enum TaskOutcome {
+    Success,         // audit status 200, continue
+    Status(u16),     // audit status = code; 5xx pushes TASK_STATUS_ERROR
+    Skip,            // no audit entry, continue
+    Halt,            // audit status 299 (HALT_STATUS_CODE), stop workflow
+}
+```
 
 ## FunctionConfig
 
@@ -251,7 +320,13 @@ pub enum FunctionConfig {
     HttpCall { input: HttpCallConfig, .. },
     Enrich { input: EnrichConfig, .. },
     PublishKafka { input: PublishKafkaConfig, .. },
-    Custom { name: String, input: serde_json::Value },
+    Custom {
+        name: String,
+        input: serde_json::Value,
+        // #[serde(skip)] — populated by the engine at .build() with the
+        // typed Self::Input for the registered handler.
+        compiled_input: Option<CompiledCustomInput>,
+    },
 }
 ```
 
@@ -404,7 +479,9 @@ Pipeline control flow — halt workflow or skip task.
 }
 ```
 
-Status codes: 200 (pass), 298 (skip), 299 (halt).
+Returns `TaskOutcome::Success` (pass), `TaskOutcome::Skip` (no audit
+entry, continue), or `TaskOutcome::Halt` (audit status 299, stop
+workflow) depending on the condition and `on_reject`.
 
 ### log
 
@@ -423,7 +500,7 @@ Structured logging with JSONLogic expressions.
 }
 ```
 
-Always returns (200, []) — never modifies the message.
+Always returns `TaskOutcome::Success` — never modifies the message.
 
 ## WASM API (dataflow-wasm)
 

@@ -180,7 +180,7 @@ If any action fails, the rule stops and the error is recorded.
 }
 ```
 
-Actions continue executing even if previous actions fail. Errors are collected in `message.errors`.
+Actions continue executing even if previous actions fail. Errors are collected in `message.errors()`.
 
 ## Action Dependencies
 

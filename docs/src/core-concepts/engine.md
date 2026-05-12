@@ -18,7 +18,6 @@ The Engine is responsible for:
 
 ```rust
 use dataflow_rs::{Engine, Workflow};
-use std::collections::HashMap;
 
 // Parse rules from JSON
 let rule1 = Workflow::from_json(r#"{
@@ -35,13 +34,14 @@ let rule2 = Workflow::from_json(r#"{
     "tasks": [...]
 }"#)?;
 
-// Create engine with rules
-let engine = Engine::new(
-    vec![rule1, rule2],
-    None,  // Optional custom functions
-)?;
+// Builder is the recommended construction path.
+let engine = Engine::builder()
+    .with_workflow(rule1)
+    .with_workflow(rule2)
+    // .register("my_handler", MyHandler)  // chain custom handlers here
+    .build()?;
 
-// Engine is now ready - all logic compiled
+// Engine is now ready — all JSONLogic compiled, Custom inputs typed.
 println!("Loaded {} rules", engine.workflows().len());
 ```
 
@@ -50,7 +50,9 @@ You can also use the `RulesEngine` type alias:
 ```rust
 use dataflow_rs::RulesEngine;
 
-let engine = RulesEngine::new(vec![rule1, rule2], None)?;
+let engine = RulesEngine::builder()
+    .with_workflows([rule1, rule2])
+    .build()?;
 ```
 
 ## Processing Messages
@@ -70,7 +72,7 @@ engine.process_message(&mut message).await?;
 
 // Access results
 println!("Processed data: {:?}", message.data());
-println!("Audit trail: {:?}", message.audit_trail);
+println!("Audit trail: {:?}", message.audit_trail());
 ```
 
 If you already have an `Arc<OwnedDataValue>` payload, use `Message::new`
@@ -137,16 +139,17 @@ The rule only executes if the condition evaluates to true.
 
 ## Custom Functions
 
-Register custom action handlers when creating the engine:
+Register custom action handlers via the builder. `register("name", handler)`
+accepts any [`AsyncFunctionHandler`](../advanced/custom-functions.md) and
+boxes it internally; the engine pre-parses each `FunctionConfig::Custom`
+input JSON into the handler's typed `Self::Input` at `.build()` time, so
+mis-shaped configs fail at startup, not on first message.
 
 ```rust
-use dataflow_rs::engine::AsyncFunctionHandler;
-use std::collections::HashMap;
-
-let mut custom_functions: HashMap<String, Box<dyn AsyncFunctionHandler + Send + Sync>> = HashMap::new();
-custom_functions.insert("my_function".to_string(), Box::new(MyCustomFunction));
-
-let engine = Engine::new(rules, Some(custom_functions))?;
+let engine = Engine::builder()
+    .with_workflows(rules)
+    .register("my_function", MyCustomFunction)
+    .build()?;
 ```
 
 ## Thread Safety
@@ -161,7 +164,7 @@ The Engine is designed for concurrent use:
 use std::sync::Arc;
 use tokio::task;
 
-let engine = Arc::new(Engine::new(rules, None)?);
+let engine = Arc::new(Engine::builder().with_workflows(rules).build()?);
 
 // Process multiple messages concurrently
 let handles: Vec<_> = messages.into_iter().map(|mut msg| {
@@ -179,12 +182,22 @@ for handle in handles {
 
 ## API Reference
 
+### `Engine::builder()`
+
+Returns an [`EngineBuilder`](../api/reference.md). Chain
+`.register("name", handler)`, `.with_workflow(w)`,
+`.with_workflows(iter)`, then `.build() -> Result<Engine>`. Recommended
+construction path.
+
 ### `Engine::new(workflows, custom_functions)`
 
-Creates a new engine with the given rules and optional custom functions.
+Lower-level escape hatch — accepts rules and a plain handler `HashMap`
+(use `HashMap::new()` for no custom handlers, or — preferred — go
+through the builder).
 
-- `workflows: Vec<Workflow>` - Rules to register
-- `custom_functions: Option<HashMap<String, Box<dyn AsyncFunctionHandler>>>` - Custom action implementations
+- `workflows: Vec<Workflow>` — Rules to register
+- `custom_functions: HashMap<String, BoxedFunctionHandler>` — Custom
+  action implementations
 
 ### `engine.process_message(&mut message)`
 

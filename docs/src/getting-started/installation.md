@@ -23,10 +23,11 @@ Create a simple test to verify the installation:
 ```rust
 use dataflow_rs::Engine;
 
-fn main() {
-    // Create an empty rules engine
-    let engine = Engine::new(vec![], None)?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create an empty rules engine via the builder.
+    let engine = Engine::builder().build()?;
     println!("Rules engine created with {} rules", engine.workflows().len());
+    Ok(())
 }
 ```
 

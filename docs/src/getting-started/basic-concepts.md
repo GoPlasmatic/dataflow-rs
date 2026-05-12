@@ -52,8 +52,13 @@ The central orchestrator that processes messages through rules.
 ```rust
 use dataflow_rs::Engine;
 
-// Create engine with rules (compiled at creation)
-let engine = Engine::new(rules, custom_functions)?;
+// Create engine with rules (compiled at creation). Builder is the
+// recommended path; .register("name", handler) chains in any custom
+// AsyncFunctionHandler implementations.
+let engine = Engine::builder()
+    .with_workflows(rules)
+    // .register("my_handler", MyHandler)
+    .build()?;
 
 // Process messages (uses pre-compiled logic)
 engine.process_message(&mut message).await?;
@@ -117,7 +122,7 @@ let mut message = Message::from_value(&json!({
 
 // Access after processing
 println!("Data: {:?}", message.data());
-println!("Audit: {:?}", message.audit_trail);
+println!("Audit: {:?}", message.audit_trail());
 ```
 
 ## Data Flow

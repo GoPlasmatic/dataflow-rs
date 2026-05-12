@@ -19,12 +19,14 @@ use datavalue::OwnedDataValue;
 use std::sync::Arc;
 
 pub struct Message {
-    pub id: String,                       // UUID v7 string by default
-    pub payload: Arc<OwnedDataValue>,
+    // Read via accessors: id(), payload(), payload_arc(), audit_trail(),
+    // errors(), capture_changes(). Mutate `errors` via add_error(...).
+    // `context` is the only public field — it's the legitimate read
+    // surface for tests (e.g. `message.context["data"]["x"]`); inside a
+    // handler, prefer `TaskContext::set` so audit-trail changes are
+    // recorded automatically.
     pub context: OwnedDataValue,          // Always an Object {data, metadata, temp_data}
-    pub audit_trail: Vec<AuditTrail>,
-    pub errors: Vec<ErrorInfo>,
-    pub capture_changes: bool,            // In-memory only; not serialized
+    // ... encapsulated fields ...
 }
 ```
 
@@ -47,7 +49,7 @@ use dataflow_rs::Message;
 use serde_json::json;
 
 // `from_value` bridges from serde_json::Value — handiest when you already
-// have JSON literals. The payload lands at `message.payload`; the context
+// have JSON literals. The payload lands on the message; the context
 // starts empty with the canonical {data, metadata, temp_data} shape.
 let mut message = Message::from_value(&json!({
     "name": "John",
@@ -67,55 +69,47 @@ let payload = Arc::new(OwnedDataValue::from(&json!({
 let mut message = Message::new(payload);
 ```
 
-### Populating the Context
+### Builder
 
-`message.context` is an `OwnedDataValue` tree — it doesn't support
-`serde_json`-style `IndexMut` assignment. Use the path helpers from
-`dataflow_rs::engine::utils`:
+For the richer cases — caller-supplied id (correlation), capture-off
+fast path — use `Message::builder()`:
 
 ```rust
-use dataflow_rs::engine::utils::set_nested_value;
-use datavalue::OwnedDataValue;
-use serde_json::json;
-
-set_nested_value(
-    &mut message.context,
-    "metadata.source",
-    OwnedDataValue::from(&json!("api")),
-);
-set_nested_value(
-    &mut message.context,
-    "metadata.type",
-    OwnedDataValue::from(&json!("user")),
-);
+let mut message = Message::builder()
+    .id("correlation-123")
+    .payload_json(&json!({"name": "John"}))
+    .capture_changes(false) // skip per-write Change capture
+    .build();
 ```
 
-In practice you rarely need to mutate the context directly from Rust: the
+### Populating the Context
+
+In practice you don't mutate `message.context` directly from Rust — the
 `parse_json` / `map` / `validation` built-ins are how your workflows
-populate it.
+populate it. Inside a custom `AsyncFunctionHandler`, use
+[`TaskContext::set`](../advanced/custom-functions.md) which records
+audit-trail changes automatically:
+
+```rust,ignore
+ctx.set("metadata.source", OwnedDataValue::from(&json!("api")));
+ctx.set("metadata.type",   OwnedDataValue::from(&json!("user")));
+```
 
 ## Context Fields
 
 ### data
 
 The main data payload. This is where your primary data lives and is transformed.
+Workflows populate it via `parse_json` / `map` tasks; handlers read it
+through `ctx.data()`. The example below shows the read accessors:
 
-```rust
-use dataflow_rs::engine::utils::{get_nested_value, set_nested_value};
-use datavalue::OwnedDataValue;
-use serde_json::json;
+```rust,ignore
+// Inside an AsyncFunctionHandler — TaskContext::data() returns
+// &OwnedDataValue (Null if missing, matching serde_json::Value index
+// semantics).
+let name = ctx.data().get("name");
 
-// Write a value at data.name
-set_nested_value(
-    &mut message.context,
-    "data.name",
-    OwnedDataValue::from(&json!("John")),
-);
-
-// Read it back (returns Option<&OwnedDataValue>)
-let name = get_nested_value(&message.context, "data.name");
-
-// Or, via the convenience accessor — returns &OwnedDataValue (Null if missing)
+// Outside a handler (e.g. inspecting a processed message in tests):
 let name = &message.data()["name"];
 ```
 
@@ -128,35 +122,20 @@ Information about the message itself (not the data). Commonly used for:
 - Timestamps
 - Message type classification
 
-```rust
-set_nested_value(
-    &mut message.context,
-    "metadata",
-    OwnedDataValue::from(&json!({
-        "type": "user",
-        "source": "webhook",
-        "received_at": "2024-01-01T00:00:00Z"
-    })),
-);
-```
-
-The engine also stamps `metadata.processed_at` and
+From a handler, `ctx.set("metadata.X", v)` is the canonical write
+path. The engine also stamps `metadata.processed_at` and
 `metadata.engine_version` automatically on every `process_message` call.
 
 ### temp_data
 
-Temporary storage for intermediate processing results. Cleared between processing runs if needed.
+Temporary storage for intermediate processing results — useful for values
+threaded between tasks within the same workflow. From a handler:
 
-```rust
-// Store intermediate result
-set_nested_value(
-    &mut message.context,
-    "temp_data.calculated_value",
-    OwnedDataValue::from(&json!(42)),
-);
+```rust,ignore
+ctx.set("temp_data.calculated_value", OwnedDataValue::from(&json!(42)));
 
-// Use in a later task
-// {"var": "temp_data.calculated_value"}
+// Later tasks read it via JSONLogic:
+//   {"var": "temp_data.calculated_value"}
 ```
 
 ## Audit Trail
@@ -174,21 +153,29 @@ pub struct AuditTrail {
 
 pub struct Change {
     pub path: Arc<str>,
-    pub old_value: Arc<OwnedDataValue>,
-    pub new_value: Arc<OwnedDataValue>,
+    pub old_value: OwnedDataValue,  // owned (not Arc) — one fewer heap alloc per Change
+    pub new_value: OwnedDataValue,
 }
 ```
 
-Set `message.capture_changes = false` (or call `.without_change_capture()`
-at construction) to skip per-write `Change` capture — audit-trail entries
-are still recorded, but their `changes: []` is empty. The wire shape is
-unchanged either way.
+To skip per-write `Change` capture (bulk-pipeline fast path), build the
+message with `capture_changes(false)`:
+
+```rust
+let m = Message::builder()
+    .payload_json(&json!({}))
+    .capture_changes(false)
+    .build();
+```
+
+Audit-trail entries are still recorded — just with empty `changes` lists.
+The wire shape is unchanged either way.
 
 ### Accessing Audit Trail
 
 ```rust
-// After processing
-for entry in &message.audit_trail {
+// After processing — audit_trail() returns &[AuditTrail].
+for entry in message.audit_trail() {
     println!("Workflow: {}, Task: {}", entry.workflow_id, entry.task_id);
     for change in &entry.changes {
         println!("  {} -> {} at {}", change.old_value, change.new_value, change.path);
@@ -198,10 +185,11 @@ for entry in &message.audit_trail {
 
 ## Error Handling
 
-Errors are collected in `message.errors`:
+Errors are collected in `message.errors()` (the always-on channel, even
+when `Engine::process_message` returns `Result::Err`):
 
 ```rust
-for error in &message.errors {
+for error in message.errors() {
     println!("Error in {}/{}: {}",
         error.workflow_id.as_deref().unwrap_or("unknown"),
         error.task_id.as_deref().unwrap_or("unknown"),
@@ -209,6 +197,9 @@ for error in &message.errors {
     );
 }
 ```
+
+See [Error Handling](./error-handling.md) for the unified-channel
+contract in detail.
 
 ## JSONLogic Access
 

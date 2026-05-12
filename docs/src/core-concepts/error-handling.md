@@ -2,6 +2,24 @@
 
 Dataflow-rs provides flexible error handling at multiple levels to build resilient automation rules.
 
+## Two complementary error channels
+
+Every error encountered during `process_message` flows through two
+complementary channels:
+
+- **`message.errors()`** — **always** contains every error encountered:
+  validation failures, task panics, 5xx-status outcomes, workflow
+  wrappers. Callers that want a uniform view scan this list.
+- **`Result::Err` from `process_message`** — signals **only** that the
+  engine stopped before processing every workflow. Callers that want
+  fail-fast match on it; the error pushed to `message.errors()` for the
+  same failure carries the workflow context that the bare `Err` doesn't.
+
+A workflow with `continue_on_error: true` records its errors to
+`message.errors()` and returns `Ok(())`. A workflow with
+`continue_on_error: false` records to `message.errors()` *and* returns
+`Result::Err` (which short-circuits the rest of `process_message`).
+
 ## Error Levels
 
 Errors can be handled at three levels:
@@ -23,7 +41,7 @@ Errors can be handled at three levels:
 ```
 
 If the action fails:
-- Error is recorded in `message.errors`
+- Error is recorded in `message.errors()`
 - Rule execution stops
 - No further actions execute
 
@@ -38,7 +56,7 @@ If the action fails:
 ```
 
 If the action fails:
-- Error is recorded in `message.errors`
+- Error is recorded in `message.errors()`
 - Rule continues to next action
 
 ## Rule-Level Error Handling
@@ -78,21 +96,31 @@ All actions will continue even if earlier actions fail.
 
 ## Accessing Errors
 
-After processing, check `message.errors`:
+After processing, walk `message.errors()`:
 
 ```rust
-engine.process_message(&mut message).await?;
+let result = engine.process_message(&mut message).await;
 
-if !message.errors.is_empty() {
-    for error in &message.errors {
-        println!("Error: {} in {}/{}",
-            error.message,
-            error.workflow_id.as_deref().unwrap_or("unknown"),
-            error.task_id.as_deref().unwrap_or("unknown")
-        );
-    }
+for error in message.errors() {
+    println!("Error: {} in {}/{}",
+        error.message,
+        error.workflow_id.as_deref().unwrap_or("unknown"),
+        error.task_id.as_deref().unwrap_or("unknown")
+    );
+}
+
+// Fail-fast signal — true when the engine stopped before all workflows ran.
+if let Err(e) = result {
+    eprintln!("engine stopped early: {e}");
 }
 ```
+
+Common error codes you'll see:
+
+- `VALIDATION_ERROR` — from the `validation` built-in
+- `TASK_ERROR` — handler returned `Result::Err`
+- `TASK_STATUS_ERROR` — handler returned `TaskOutcome::Status(s)` with `s >= 500`
+- `WORKFLOW_ERROR` — wrapper recording workflow context for the failure above
 
 ## Error Types
 
@@ -126,24 +154,25 @@ Generated when function execution fails:
 
 ### Custom Function Errors
 
-Return errors from custom functions:
+Return errors from custom functions via `Result::Err`:
 
-```rust
-use datalogic_rs::Engine as DatalogicEngine;
+```rust,ignore
+use dataflow_rs::prelude::*;
 
 impl AsyncFunctionHandler for MyFunction {
+    type Input = serde_json::Value;
+
     async fn execute(
         &self,
-        message: &mut Message,
-        config: &FunctionConfig,
-        engine: Arc<DatalogicEngine>,
-    ) -> Result<(usize, Vec<Change>)> {
+        ctx: &mut TaskContext<'_>,
+        _input: &serde_json::Value,
+    ) -> Result<TaskOutcome> {
         if some_condition {
             return Err(DataflowError::Task(
                 "Custom error message".to_string()
             ));
         }
-        Ok((200, vec![]))
+        Ok(TaskOutcome::Success)
     }
 }
 ```
@@ -238,7 +267,7 @@ Notice the validation error is recorded but processing continues.
    - Critical operations should stop on error
 
 3. **Check Errors**
-   - Always check `message.errors` after processing
+   - Always check `message.errors()` after processing
    - Log errors for monitoring
 
 4. **Provide Context**

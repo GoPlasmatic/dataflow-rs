@@ -51,7 +51,7 @@ The validation function:
 1. Each rule's `logic` is evaluated against the message context
 2. If the result is exactly `true`, the rule passes
 3. Any other result (false, null, etc.) is a failure
-4. Failed rules add errors to `message.errors`
+4. Failed rules add errors to `message.errors()`
 
 ## Common Validation Patterns
 
@@ -149,10 +149,10 @@ All rules are evaluated, collecting all errors:
 
 ## Accessing Errors
 
-After processing, check `message.errors`:
+After processing, check `message.errors()`:
 
 ```rust
-for error in &message.errors {
+for error in message.errors() {
     println!("{}: {}", error.code, error.message);
 }
 ```
@@ -231,4 +231,4 @@ If validation fails, subsequent tasks are skipped.
 2. **Clear Messages** - Write specific, actionable error messages
 3. **Check All Rules** - Validation evaluates all rules (doesn't short-circuit)
 4. **Use continue_on_error** - Decide if processing should continue on failure
-5. **Handle Errors** - Always check `message.errors` after processing
+5. **Handle Errors** - Always check `message.errors()` after processing

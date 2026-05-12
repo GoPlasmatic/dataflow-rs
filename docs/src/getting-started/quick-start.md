@@ -7,19 +7,26 @@ Build your first rule in minutes.
 Rules are defined in JSON and consist of actions (tasks) that process data sequentially.
 
 ```rust
-use dataflow_rs::{Engine, Workflow};
-use dataflow_rs::engine::message::Message;
-use dataflow_rs::engine::utils::set_nested_value;
-use datavalue::OwnedDataValue;
+use dataflow_rs::prelude::*;
 use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Define a rule that transforms data
+    // Define a rule that loads the payload into `data.input` and then
+    // transforms it. Letting `parse_json` seed `data` is the idiomatic
+    // pattern — handlers don't have to reach into `message.context`.
     let rule_json = r#"{
         "id": "greeting_rule",
         "name": "Greeting Rule",
         "tasks": [
+            {
+                "id": "load",
+                "name": "Load Payload",
+                "function": {
+                    "name": "parse_json",
+                    "input": { "source": "payload", "target": "input" }
+                }
+            },
             {
                 "id": "create_greeting",
                 "name": "Create Greeting",
@@ -29,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "mappings": [
                             {
                                 "path": "data.greeting",
-                                "logic": { "cat": ["Hello, ", {"var": "data.name"}, "!"] }
+                                "logic": { "cat": ["Hello, ", {"var": "data.input.name"}, "!"] }
                             }
                         ]
                     }
@@ -38,33 +45,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ]
     }"#;
 
-    // Parse the rule
     let rule = Workflow::from_json(rule_json)?;
 
-    // Create the engine (compiles all logic at startup)
-    let engine = Engine::new(vec![rule], None)?;
+    // Builder is the recommended construction path. Compiles all
+    // JSONLogic up-front; fails loud on bad config.
+    let engine = Engine::builder().with_workflow(rule).build()?;
 
-    // Create a message and seed `data.name`
+    // Create a message from a serde_json payload. `parse_json` will copy
+    // it into `data.input` at workflow start.
     let mut message = Message::from_value(&json!({"name": "World"}));
-    set_nested_value(
-        &mut message.context,
-        "data.name",
-        OwnedDataValue::from(&json!("World")),
-    );
 
-    // Process the message
+    // Process the message.
     engine.process_message(&mut message).await?;
 
-    // Print the result
+    // Print the result.
     println!("Greeting: {:?}", message.data()["greeting"]);
 
     Ok(())
 }
 ```
-
-In a typical pipeline you'd let a `parse_json` task seed `data` from the
-payload rather than calling `set_nested_value` from Rust — see the
-playground widget below for that pattern.
 
 ## Try It Interactively
 

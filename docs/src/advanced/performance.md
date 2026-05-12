@@ -9,11 +9,15 @@ Dataflow-rs is designed for high-performance rule evaluation and data processing
 All JSONLogic expressions are compiled once at engine startup:
 
 ```rust
-// This compiles all logic at creation time
-let engine = Engine::new(workflows, None)?;
+// Builder is the recommended construction path; compiles all
+// JSONLogic at .build() and pre-parses Custom-task inputs into
+// their typed Self::Input.
+let engine = Engine::builder()
+    .with_workflows(workflows)
+    .build()?;
 
-// Runtime processing uses pre-compiled logic
-// No parsing or compilation overhead
+// Runtime processing uses pre-compiled logic — no parsing or
+// compilation overhead.
 engine.process_message(&mut message).await?;
 ```
 
@@ -46,7 +50,7 @@ use std::time::Instant;
 
 // Setup
 let workflow = Workflow::from_json(workflow_json)?;
-let engine = Engine::new(vec![workflow], None)?;
+let engine = Engine::builder().with_workflow(workflow).build()?;
 
 // Benchmark
 let iterations = 10_000;
@@ -153,7 +157,7 @@ Process multiple messages concurrently:
 use std::sync::Arc;
 use tokio::task;
 
-let engine = Arc::new(Engine::new(workflows, None)?);
+let engine = Arc::new(Engine::builder().with_workflows(workflows).build()?);
 
 let handles: Vec<_> = messages.into_iter()
     .map(|mut msg| {

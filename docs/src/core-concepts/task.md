@@ -83,10 +83,13 @@ The `function` object specifies what the action does:
 
 ### Custom Functions
 
-Register custom functions when creating the engine:
+Register custom handlers via the engine builder:
 
 ```rust
-let engine = Engine::new(rules, Some(custom_functions))?;
+let engine = Engine::builder()
+    .with_workflows(rules)
+    .register("my_custom_function", MyCustomFunction)
+    .build()?;
 ```
 
 Then reference them by name in actions:
@@ -151,7 +154,7 @@ Actions can have conditions that determine if they should run. Conditions evalua
 ```
 
 When `continue_on_error` is true:
-- Action errors are recorded in `message.errors`
+- Action errors are recorded in `message.errors()`
 - Rule continues to the next action
 
 ### Rule-Level Error Handling

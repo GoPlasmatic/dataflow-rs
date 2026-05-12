@@ -32,8 +32,10 @@ pub struct Change {
 heap allocation per recorded mutation. `workflow_id` / `task_id` are
 `Arc<str>` mirrors of the workflow/task ids
 — the engine clones them by refcount bump rather than allocating per
-audit entry. `status` is the task's return status code (200 success,
-400 validation, 500 execution error, 298/299 for filter skip/halt).
+audit entry. `status` mirrors the `TaskOutcome` variant returned by the
+task: 200 for `Success`, the supplied code for `Status(u16)`, and 299
+(`HALT_STATUS_CODE`) for `Halt`. `TaskOutcome::Skip` is recorded as no
+audit entry at all.
 
 ## Accessing the Audit Trail
 
@@ -42,7 +44,7 @@ After processing, the audit trail is available on the message:
 ```rust
 engine.process_message(&mut message).await?;
 
-for entry in &message.audit_trail {
+for entry in message.audit_trail() {
     println!("Workflow: {}, Task: {}", entry.workflow_id, entry.task_id);
     println!("Timestamp: {}", entry.timestamp);
 
@@ -107,16 +109,13 @@ Creates:
 
 ### Custom Functions
 
-Custom functions should track changes for proper auditing:
+Custom functions don't build `Change` entries by hand — `TaskContext::set`
+records them automatically when `capture_changes` is on. The handler
+just writes the value and returns `TaskOutcome::Success`:
 
-```rust
-let changes = vec![Change {
-    path: Arc::from("data.processed"),
-    old_value,
-    new_value,
-}];
-
-Ok((200, changes))
+```rust,ignore
+ctx.set("data.processed", OwnedDataValue::Bool(true));
+Ok(TaskOutcome::Success)
 ```
 
 ### Validation Function
@@ -140,7 +139,7 @@ Trace exactly how data was transformed:
 
 ```rust
 // Find where a value was set
-for entry in &message.audit_trail {
+for entry in message.audit_trail() {
     for change in &entry.changes {
         if change.path.as_ref() == "data.total" {
             println!("data.total set by {}/{}",
@@ -157,7 +156,7 @@ for entry in &message.audit_trail {
 Log all changes for regulatory compliance:
 
 ```rust
-for entry in &message.audit_trail {
+for entry in message.audit_trail() {
     log_to_audit_system(
         entry.timestamp,
         entry.workflow_id.clone(),
@@ -173,7 +172,7 @@ Detect if specific fields were modified:
 
 ```rust
 fn was_field_modified(message: &Message, field: &str) -> bool {
-    message.audit_trail.iter()
+    message.audit_trail().iter()
         .flat_map(|e| e.changes.iter())
         .any(|c| c.path.as_ref() == field)
 }
@@ -191,7 +190,7 @@ The audit trail can be used to implement rollback:
 use datavalue::OwnedDataValue;
 
 fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a OwnedDataValue> {
-    message.audit_trail.iter()
+    message.audit_trail().iter()
         .flat_map(|e| e.changes.iter())
         .find(|c| c.path.as_ref() == field)
         .map(|c| &c.old_value)
@@ -205,6 +204,7 @@ fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a Owned
 3. **Timestamp Accuracy** - Timestamps are UTC for consistency
 4. **Check Audit Trail** - Review audit trail during development
 5. **Log for Production** - Persist audit trails for production debugging
-6. **Bulk Pipelines** - Set `message.capture_changes = false` to skip
-   per-write change capture in throughput-critical pipelines (audit
-   entries are still recorded with empty `changes`).
+6. **Bulk Pipelines** - Build the message with
+   `Message::builder().capture_changes(false).build()` to skip per-write
+   change capture in throughput-critical pipelines (audit entries are
+   still recorded with empty `changes`).
