@@ -61,9 +61,11 @@ jobs:
       - name: Build Debugger UI
         run: |
           cd ui
-          npm ci
-          cp ../wasm/pkg/dataflow_wasm.js node_modules/@goplasmatic/dataflow-wasm/
-          cp ../wasm/pkg/dataflow_wasm_bg.wasm node_modules/@goplasmatic/dataflow-wasm/
+          # This workflow runs in parallel with Release on a tag push, so the
+          # version of @goplasmatic/dataflow-wasm referenced in package.json
+          # may not yet exist on npm. Use the locally-built wasm/pkg instead.
+          npm pkg set 'dependencies.@goplasmatic/dataflow-wasm'='file:../wasm/pkg'
+          npm install --no-package-lock --no-audit --no-fund
           npm run build
           mkdir -p ../docs/book/debugger
           cp -r dist/* ../docs/book/debugger/
