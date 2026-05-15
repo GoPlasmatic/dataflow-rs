@@ -76,13 +76,18 @@ jobs:
         id: check
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          PUBLISHED=$(cargo search dataflow-rs --limit 1 2>/dev/null | grep "^dataflow-rs" | sed 's/.*= "\(.*\)".*/\1/' || echo "")
-          if [ "$VERSION" = "$PUBLISHED" ]; then
+          HTTP_CODE=$(curl -sS -H 'User-Agent: dataflow-rs-release-check' \
+            -o /dev/null -w '%{http_code}' \
+            "https://crates.io/api/v1/crates/dataflow-rs/$VERSION")
+          if [ "$HTTP_CODE" = "200" ]; then
             echo "Version $VERSION already published to crates.io, skipping"
             echo "skip=true" >> $GITHUB_OUTPUT
-          else
+          elif [ "$HTTP_CODE" = "404" ]; then
             echo "Publishing version $VERSION to crates.io"
             echo "skip=false" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Unexpected HTTP $HTTP_CODE from crates.io API"
+            exit 1
           fi
 
       - name: Publish
