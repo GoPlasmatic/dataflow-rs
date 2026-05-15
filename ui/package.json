@@ -1,6 +1,6 @@
 {
   "name": "@goplasmatic/dataflow-ui",
-  "version": "2.1.5",
+  "version": "3.0.0",
   "type": "module",
   "description": "React visualization library for dataflow-rs workflow engine",
   "author": "Plasmatic Engineering <shankar@goplasmatic.io>",
@@ -52,7 +52,7 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
-    "@goplasmatic/dataflow-wasm": "^2.1.2",
+    "@goplasmatic/dataflow-wasm": "^3.0.0",
     "@goplasmatic/datalogic-ui": "^4.0.21",
     "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.10.2",
