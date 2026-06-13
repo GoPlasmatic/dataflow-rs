@@ -269,14 +269,19 @@ impl WorkflowExecutor {
 
             for task in tasks {
                 // Task condition — evaluate against the arena form so we don't
-                // re-borrow the thread-local `RefCell`.
-                let ctx_av = arena_ctx.as_data_value();
-                let should_execute = evaluate_condition_in_arena(
-                    &self.engine,
-                    task.compiled_condition.as_ref(),
-                    ctx_av,
-                    arena,
-                )?;
+                // re-borrow the thread-local `RefCell`. A `None` compiled
+                // condition (compiler folds the default literal `true` to
+                // `None`) skips both the eval and the per-task arena context
+                // slice build.
+                let should_execute = match task.compiled_condition.as_ref() {
+                    None => true,
+                    Some(compiled) => evaluate_condition_in_arena(
+                        &self.engine,
+                        Some(compiled),
+                        arena_ctx.as_data_value(),
+                        arena,
+                    )?,
+                };
 
                 if !should_execute {
                     debug!("Skipping task {} - condition not met", task.id);

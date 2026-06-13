@@ -65,9 +65,10 @@ impl LogicCompiler {
                 task.id_arc = Arc::from(task.id.as_str());
             }
 
-            // Compile the workflow condition (required — defaults to `true`).
+            // Compile the workflow condition (defaults to `true`, which folds
+            // to `None` so the hot path skips the eval — see `compile_condition`).
             let label = format!("workflow {} condition", workflow.id);
-            workflow.compiled_condition = Some(self.compile(&workflow.condition, &label)?);
+            workflow.compiled_condition = self.compile_condition(&workflow.condition, &label)?;
             debug!("Workflow {} condition compiled", workflow.id);
 
             // Compile task conditions and function-specific logic.
@@ -85,7 +86,7 @@ impl LogicCompiler {
     fn compile_workflow_tasks(&self, workflow: &mut Workflow) -> Result<()> {
         for task in &mut workflow.tasks {
             let label = format!("task {} condition (workflow {})", task.id, workflow.id);
-            task.compiled_condition = Some(self.compile(&task.condition, &label)?);
+            task.compiled_condition = self.compile_condition(&task.condition, &label)?;
 
             // Compile function-specific logic (map transformations, validation rules, …)
             self.compile_function_logic(&mut task.function, &task.id, &workflow.id)?;
@@ -134,6 +135,22 @@ impl LogicCompiler {
         self.engine
             .compile_arc(logic)
             .map_err(|e| DataflowError::LogicEvaluation(format!("{}: {}", ctx_label, e)))
+    }
+
+    /// Compile a workflow/task *condition*, returning `None` when the source is
+    /// the literal `true`. A `None` condition is treated as "always run" by
+    /// `evaluate_condition` / `evaluate_condition_in_arena`, so the hot path
+    /// skips the `engine.evaluate` call — and, in the sync stretch, the
+    /// per-task arena context slice build — entirely for the overwhelmingly
+    /// common default `condition: true`. datalogic already folds a literal
+    /// `true` to a near-free literal-fast-path eval; this avoids even setting
+    /// up the call. Non-literal conditions (including `false` and any real
+    /// expression) compile as normal.
+    fn compile_condition(&self, condition: &Value, ctx_label: &str) -> Result<Option<Arc<Logic>>> {
+        if matches!(condition, Value::Bool(true)) {
+            return Ok(None);
+        }
+        Ok(Some(self.compile(condition, ctx_label)?))
     }
 
     /// Compile map transformation logic
