@@ -310,14 +310,14 @@ impl Engine {
         let now = Utc::now();
         set_processing_metadata(&mut message.context, &self.engine_version, now, None);
 
-        // Process each workflow in priority order (pre-sorted at construction)
-        for workflow in self.workflows.iter() {
-            self.workflow_executor
-                .execute(workflow, message, now)
-                .await?;
-        }
-
-        Ok(())
+        // Process workflows in priority order (pre-sorted at construction).
+        // `run_all` groups consecutive fully-sync workflows into a single
+        // shared-arena scope so the context is deep-walked once per run rather
+        // than once per workflow.
+        let workflows: Vec<&Workflow> = self.workflows.iter().collect();
+        self.workflow_executor
+            .run_all(&workflows, message, None, now)
+            .await
     }
 
     /// Processes a message through workflows with step-by-step tracing.
@@ -341,12 +341,11 @@ impl Engine {
 
         let mut trace = ExecutionTrace::new();
 
-        // Process each workflow in priority order (pre-sorted at construction)
-        for workflow in self.workflows.iter() {
-            self.workflow_executor
-                .execute_with_trace(workflow, message, &mut trace, now)
-                .await?;
-        }
+        // Process workflows in priority order (pre-sorted at construction).
+        let workflows: Vec<&Workflow> = self.workflows.iter().collect();
+        self.workflow_executor
+            .run_all(&workflows, message, Some(&mut trace), now)
+            .await?;
 
         Ok(trace)
     }
@@ -373,11 +372,11 @@ impl Engine {
         );
 
         if let Some(indices) = self.channel_index.get(channel) {
-            for &idx in indices {
-                self.workflow_executor
-                    .execute(&self.workflows[idx], message, now)
-                    .await?;
-            }
+            let workflows: Vec<&Workflow> =
+                indices.iter().map(|&idx| &self.workflows[idx]).collect();
+            self.workflow_executor
+                .run_all(&workflows, message, None, now)
+                .await?;
         }
 
         Ok(())
@@ -406,11 +405,11 @@ impl Engine {
         let mut trace = ExecutionTrace::new();
 
         if let Some(indices) = self.channel_index.get(channel) {
-            for &idx in indices {
-                self.workflow_executor
-                    .execute_with_trace(&self.workflows[idx], message, &mut trace, now)
-                    .await?;
-            }
+            let workflows: Vec<&Workflow> =
+                indices.iter().map(|&idx| &self.workflows[idx]).collect();
+            self.workflow_executor
+                .run_all(&workflows, message, Some(&mut trace), now)
+                .await?;
         }
 
         Ok(trace)

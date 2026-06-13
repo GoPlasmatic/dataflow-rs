@@ -256,24 +256,182 @@ impl WorkflowExecutor {
     /// `with_arena` scope. The arena context is built once at the start and
     /// refreshed in place after each mutating task. Returns `Ok(true)` if a
     /// filter task halted the workflow.
+    ///
+    /// This is the single-workflow entry; the cross-workflow path
+    /// (`execute_sync_workflow_run`) shares the same task loop via
+    /// `run_tasks_slice_in_arena` but carries one `ArenaContext` across several
+    /// workflows.
     fn run_sync_stretch(
         &self,
         tasks: &[Task],
         workflow: &Workflow,
         message: &mut Message,
+        trace: Option<&mut ExecutionTrace>,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
+        with_arena(|arena| -> Result<bool> {
+            let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
+            self.run_tasks_slice_in_arena(tasks, workflow, message, &mut arena_ctx, trace, now)
+        })
+    }
+
+    /// Run `tasks` against an already-built `ArenaContext`, evaluating each
+    /// task's condition in-arena and refreshing the cache after each mutating
+    /// task. Returns `Ok(true)` if a filter task halted the workflow.
+    ///
+    /// Factored out of `run_sync_stretch` so both the single-workflow stretch
+    /// and the cross-workflow shared-arena run (`execute_sync_workflow_run`)
+    /// share one implementation. The caller owns the `ArenaContext` lifetime,
+    /// so the cross-workflow path can reuse the same arena form of
+    /// `message.context` across consecutive workflows instead of rebuilding it.
+    fn run_tasks_slice_in_arena(
+        &self,
+        tasks: &[Task],
+        workflow: &Workflow,
+        message: &mut Message,
+        arena_ctx: &mut ArenaContext<'_>,
         mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
     ) -> Result<bool> {
-        let outcome = with_arena(|arena| -> Result<bool> {
+        let arena = arena_ctx.arena();
+
+        for task in tasks {
+            // Task condition — evaluate against the arena form so we don't
+            // re-borrow the thread-local `RefCell`. A `None` compiled
+            // condition (compiler folds the default literal `true` to
+            // `None`) skips both the eval and the per-task arena context
+            // slice build.
+            let should_execute = match task.compiled_condition.as_ref() {
+                None => true,
+                Some(compiled) => evaluate_condition_in_arena(
+                    &self.engine,
+                    Some(compiled),
+                    arena_ctx.as_data_value(),
+                    arena,
+                )?,
+            };
+
+            if !should_execute {
+                debug!("Skipping task {} - condition not met", task.id);
+                if let Some(t) = trace.as_deref_mut() {
+                    t.add_step(ExecutionStep::task_skipped(&workflow.id, &task.id));
+                }
+                continue;
+            }
+
+            // Per-task snapshot buffer — only used for Map tasks in trace
+            // mode. Allocating an empty Vec is cheap and the buffer stays
+            // empty for non-Map tasks.
+            let mut mapping_snapshots: Vec<Value> = Vec::new();
+            let snapshot_buf = if trace.is_some() {
+                Some(&mut mapping_snapshots)
+            } else {
+                None
+            };
+            let result = self.execute_sync_task_in_arena(task, message, arena_ctx, snapshot_buf);
+
+            let control_flow = self.handle_task_result(
+                result,
+                &workflow.id_arc,
+                &task.id_arc,
+                task.continue_on_error,
+                message,
+                now,
+            )?;
+
+            // The audit-trail / progress-metadata writes performed by
+            // `handle_task_result` mutate `message.context`. Refresh the
+            // arena cache so the next task — and, in the cross-workflow path,
+            // the next workflow's condition — sees them.
+            arena_ctx.refresh_for_path(&message.context, "metadata");
+
+            if let Some(t) = trace.as_deref_mut() {
+                let mut step = ExecutionStep::executed(&workflow.id, &task.id, message);
+                if !mapping_snapshots.is_empty() {
+                    step = step.with_mapping_contexts(mapping_snapshots);
+                }
+                t.add_step(step);
+            }
+
+            if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Drive a message through `workflows` in order, grouping maximal runs of
+    /// consecutive `fully_sync` workflows into a single shared-arena scope
+    /// (`execute_sync_workflow_run`) and falling back to the per-workflow
+    /// `.await` path (`execute_inner`) for any workflow containing an async
+    /// task. This is the single orchestration entry for all four
+    /// `Engine::process_message*` variants.
+    pub async fn run_all(
+        &self,
+        workflows: &[&Workflow],
+        message: &mut Message,
+        mut trace: Option<&mut ExecutionTrace>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let mut i = 0;
+        while i < workflows.len() {
+            if workflows[i].fully_sync {
+                // Extend over the maximal run of consecutive fully-sync
+                // workflows and execute them in one shared arena scope.
+                let mut j = i + 1;
+                while j < workflows.len() && workflows[j].fully_sync {
+                    j += 1;
+                }
+                self.execute_sync_workflow_run(
+                    &workflows[i..j],
+                    message,
+                    trace.as_deref_mut(),
+                    now,
+                )?;
+                i = j;
+            } else {
+                // Mixed sync+async (or fully-async) workflow: the existing
+                // driver interleaves per-stretch arenas with `.await`.
+                self.execute_inner(workflows[i], message, trace.as_deref_mut(), now)
+                    .await?;
+                i += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Execute a maximal run of consecutive fully-sync workflows inside ONE
+    /// shared `with_arena` scope. The message context is deep-walked into the
+    /// arena once for the whole run, then carried — with the existing
+    /// incremental `refresh_for_path` after each mutating task — across
+    /// workflow boundaries, instead of being rebuilt per workflow.
+    ///
+    /// Per-workflow semantics are preserved exactly: each workflow's condition
+    /// is evaluated (in-arena), a false condition skips only that workflow, a
+    /// filter-halt stops only that workflow, and task errors are wrapped with
+    /// the workflow id and honor `continue_on_error` (continue, or propagate
+    /// `Err` out of the run to stop the whole message) — mirroring
+    /// `execute_inner`.
+    ///
+    /// **Tokio safety:** this method is synchronous and the `fully_sync`
+    /// precondition guarantees every task is a sync built-in, so no `.await`
+    /// occurs while the `!Send` arena borrow is live. The borrow checker
+    /// enforces this — the shared `ArenaContext` cannot escape the closure.
+    fn execute_sync_workflow_run(
+        &self,
+        workflows: &[&Workflow],
+        message: &mut Message,
+        mut trace: Option<&mut ExecutionTrace>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        with_arena(|arena| -> Result<()> {
             let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
 
-            for task in tasks {
-                // Task condition — evaluate against the arena form so we don't
-                // re-borrow the thread-local `RefCell`. A `None` compiled
-                // condition (compiler folds the default literal `true` to
-                // `None`) skips both the eval and the per-task arena context
-                // slice build.
-                let should_execute = match task.compiled_condition.as_ref() {
+            for &workflow in workflows {
+                // Workflow condition in-arena: a folded `None` skips the eval;
+                // a real condition reuses the carried context instead of the
+                // owned-path `eval_to_owned` deep-walk.
+                let should_execute = match workflow.compiled_condition.as_ref() {
                     None => true,
                     Some(compiled) => evaluate_condition_in_arena(
                         &self.engine,
@@ -284,54 +442,53 @@ impl WorkflowExecutor {
                 };
 
                 if !should_execute {
-                    debug!("Skipping task {} - condition not met", task.id);
+                    debug!("Skipping workflow {} - condition not met", workflow.id);
                     if let Some(t) = trace.as_deref_mut() {
-                        t.add_step(ExecutionStep::task_skipped(&workflow.id, &task.id));
+                        t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
                     }
                     continue;
                 }
 
-                // Per-task snapshot buffer — only used for Map tasks in trace
-                // mode. Allocating an empty Vec is cheap and the buffer stays
-                // empty for non-Map tasks.
-                let mut mapping_snapshots: Vec<Value> = Vec::new();
-                let snapshot_buf = if trace.is_some() {
-                    Some(&mut mapping_snapshots)
-                } else {
-                    None
-                };
-                let result =
-                    self.execute_sync_task_in_arena(task, message, &mut arena_ctx, snapshot_buf);
-
-                let control_flow = self.handle_task_result(
-                    result,
-                    &workflow.id_arc,
-                    &task.id_arc,
-                    task.continue_on_error,
+                match self.run_tasks_slice_in_arena(
+                    &workflow.tasks,
+                    workflow,
                     message,
+                    &mut arena_ctx,
+                    trace.as_deref_mut(),
                     now,
-                )?;
-
-                // The audit-trail / progress-metadata writes performed by
-                // `handle_task_result` mutate `message.context`. Refresh the
-                // arena cache so the next task in the stretch sees them.
-                arena_ctx.refresh_for_path(&message.context, "metadata");
-
-                if let Some(t) = trace.as_deref_mut() {
-                    let mut step = ExecutionStep::executed(&workflow.id, &task.id, message);
-                    if !mapping_snapshots.is_empty() {
-                        step = step.with_mapping_contexts(mapping_snapshots);
+                ) {
+                    // Filter-halt stops only this workflow; carry on with the
+                    // next one (and keep the shared arena context).
+                    Ok(_halted) => {
+                        info!("Successfully completed workflow: {}", workflow.id);
                     }
-                    t.add_step(step);
-                }
+                    Err(e) => {
+                        // Single-channel contract — mirror `execute_inner`:
+                        // record the workflow-context error to `message.errors`
+                        // and honor `continue_on_error`.
+                        message.errors.push(
+                            ErrorInfo::builder(
+                                "WORKFLOW_ERROR",
+                                format!("Workflow {} error: {}", workflow.id, e),
+                            )
+                            .workflow_id(&workflow.id)
+                            .build(),
+                        );
 
-                if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
-                    return Ok(true);
+                        if workflow.continue_on_error {
+                            warn!(
+                                "Workflow {} encountered error but continuing: {:?}",
+                                workflow.id, e
+                            );
+                        } else {
+                            error!("Workflow {} failed: {:?}", workflow.id, e);
+                            return Err(e);
+                        }
+                    }
                 }
             }
-            Ok(false)
-        })?;
-        Ok(outcome)
+            Ok(())
+        })
     }
 
     /// Dispatch a single sync-builtin task via the consolidated

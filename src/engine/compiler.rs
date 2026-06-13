@@ -74,6 +74,14 @@ impl LogicCompiler {
             // Compile task conditions and function-specific logic.
             self.compile_workflow_tasks(&mut workflow)?;
 
+            // Stamp whether every task is a synchronous built-in. A fully-sync
+            // workflow can be folded into a shared cross-workflow `with_arena`
+            // scope (no `.await`), so the message context is deep-walked into
+            // the arena once per *run* of consecutive fully-sync workflows
+            // instead of once per workflow. Any async/custom task forces the
+            // per-workflow `.await` path.
+            workflow.fully_sync = workflow.tasks.iter().all(|t| t.function.is_sync_builtin());
+
             compiled_workflows.push(workflow);
         }
 

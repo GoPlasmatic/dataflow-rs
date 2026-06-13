@@ -43,6 +43,14 @@ pub struct Workflow {
     #[doc(hidden)]
     #[serde(skip)]
     pub compiled_condition: Option<Arc<Logic>>,
+    /// Engine-internal: `true` when every task is a synchronous built-in
+    /// (`is_sync_builtin`), so the whole workflow can run inside a shared
+    /// `with_arena` scope with no `.await`. Populated by `LogicCompiler`; the
+    /// `false` default means an uncompiled workflow conservatively takes the
+    /// async path. Not part of the stable API.
+    #[doc(hidden)]
+    #[serde(skip, default)]
+    pub fully_sync: bool,
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub continue_on_error: bool,
@@ -94,6 +102,7 @@ impl Workflow {
             description: None,
             condition: Value::Bool(true),
             compiled_condition: None,
+            fully_sync: false,
             tasks: Vec::new(),
             continue_on_error: false,
             channel: default_channel(),
@@ -124,6 +133,7 @@ impl Workflow {
             description: None,
             condition,
             compiled_condition: None,
+            fully_sync: false,
             tasks,
             continue_on_error: false,
             channel: default_channel(),

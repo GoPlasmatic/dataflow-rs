@@ -1712,3 +1712,128 @@ async fn task_status_500_pushes_status_error_to_message() {
     assert_eq!(message.audit_trail().len(), 1);
     assert_eq!(message.audit_trail()[0].status, 500);
 }
+
+// =============================================================================
+// Cross-workflow shared-arena run — regression coverage
+// =============================================================================
+//
+// Consecutive fully-sync workflows execute inside ONE shared `with_arena` scope
+// (`execute_sync_workflow_run`): the arena form of `message.context` is built
+// once and carried across workflow boundaries. These tests pin the observable
+// contract — chained `metadata.progress` conditions and cross-workflow data
+// visibility must behave exactly as if each workflow rebuilt its own arena.
+
+#[tokio::test]
+async fn chained_fully_sync_workflows_advance_through_shared_arena() {
+    // Three fully-sync workflows, each (after the first) gated on the previous
+    // workflow's `metadata.progress.workflow_id`, and each reading the `data.*`
+    // the previous one wrote. If the carried `ArenaContext` failed to reflect
+    // either the `metadata.progress` write or the prior `data` write across a
+    // workflow boundary, a later workflow's condition would not match (skipped)
+    // or its map would read null — both caught below.
+    let wf_a = r#"{
+        "id": "wf_a",
+        "name": "A",
+        "priority": 0,
+        "condition": true,
+        "tasks": [{
+            "id": "map_a", "name": "A",
+            "function": { "name": "map", "input": { "mappings": [ { "path": "data.a", "logic": 1 } ] } }
+        }]
+    }"#;
+    let wf_b = r#"{
+        "id": "wf_b",
+        "name": "B",
+        "priority": 1,
+        "condition": { "==": [ { "var": "metadata.progress.workflow_id" }, "wf_a" ] },
+        "tasks": [{
+            "id": "map_b", "name": "B",
+            "function": { "name": "map", "input": { "mappings": [ { "path": "data.b", "logic": { "+": [ { "var": "data.a" }, 1 ] } } ] } }
+        }]
+    }"#;
+    let wf_c = r#"{
+        "id": "wf_c",
+        "name": "C",
+        "priority": 2,
+        "condition": { "==": [ { "var": "metadata.progress.workflow_id" }, "wf_b" ] },
+        "tasks": [{
+            "id": "map_c", "name": "C",
+            "function": { "name": "map", "input": { "mappings": [ { "path": "data.c", "logic": { "+": [ { "var": "data.b" }, 1 ] } } ] } }
+        }]
+    }"#;
+
+    let workflows = vec![
+        Workflow::from_json(wf_a).unwrap(),
+        Workflow::from_json(wf_b).unwrap(),
+        Workflow::from_json(wf_c).unwrap(),
+    ];
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    // Every workflow ran (condition matched via the carried arena) and each map
+    // saw the previous workflow's write.
+    assert_eq!(message.context["data"]["a"], dv(json!(1)));
+    assert_eq!(message.context["data"]["b"], dv(json!(2)));
+    assert_eq!(message.context["data"]["c"], dv(json!(3)));
+
+    // One audit entry per workflow's single task, in order.
+    let task_ids: Vec<&str> = message
+        .audit_trail()
+        .iter()
+        .map(|a| a.task_id.as_ref())
+        .collect();
+    assert_eq!(task_ids, vec!["map_a", "map_b", "map_c"]);
+
+    // Progress reflects the last workflow to run.
+    assert_eq!(
+        message.context["metadata"]["progress"]["workflow_id"],
+        dv(json!("wf_c"))
+    );
+}
+
+#[tokio::test]
+async fn cross_workflow_false_condition_skips_only_that_workflow() {
+    // A real (non-matching) workflow condition skips only that workflow; the
+    // shared arena stays intact and a later workflow still runs.
+    let wf_x = r#"{
+        "id": "wf_x", "name": "X", "priority": 0, "condition": true,
+        "tasks": [{ "id": "map_x", "name": "X",
+            "function": { "name": "map", "input": { "mappings": [ { "path": "data.x", "logic": 1 } ] } } }]
+    }"#;
+    let wf_y = r#"{
+        "id": "wf_y", "name": "Y", "priority": 1,
+        "condition": { "==": [ { "var": "data.x" }, 999 ] },
+        "tasks": [{ "id": "map_y", "name": "Y",
+            "function": { "name": "map", "input": { "mappings": [ { "path": "data.y", "logic": 1 } ] } } }]
+    }"#;
+    let wf_z = r#"{
+        "id": "wf_z", "name": "Z", "priority": 2, "condition": true,
+        "tasks": [{ "id": "map_z", "name": "Z",
+            "function": { "name": "map", "input": { "mappings": [ { "path": "data.z", "logic": 1 } ] } } }]
+    }"#;
+
+    let workflows = vec![
+        Workflow::from_json(wf_x).unwrap(),
+        Workflow::from_json(wf_y).unwrap(),
+        Workflow::from_json(wf_z).unwrap(),
+    ];
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(message.context["data"]["x"], dv(json!(1)));
+    assert!(
+        message.context["data"].get("y").is_none(),
+        "wf_y condition was false — it must be skipped"
+    );
+    assert_eq!(message.context["data"]["z"], dv(json!(1)));
+
+    // Only wf_x and wf_z executed.
+    let task_ids: Vec<&str> = message
+        .audit_trail()
+        .iter()
+        .map(|a| a.task_id.as_ref())
+        .collect();
+    assert_eq!(task_ids, vec!["map_x", "map_z"]);
+}
