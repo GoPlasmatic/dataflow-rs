@@ -8,11 +8,28 @@
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
   [![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
   [![Crates.io](https://img.shields.io/crates/v/dataflow-rs.svg)](https://crates.io/crates/dataflow-rs)
+  [![docs.rs](https://docs.rs/dataflow-rs/badge.svg)](https://docs.rs/dataflow-rs)
+  [![Crates.io Downloads](https://img.shields.io/crates/d/dataflow-rs.svg)](https://crates.io/crates/dataflow-rs)
 </div>
 
 ---
 
-Dataflow-rs is a lightweight rules engine that lets you define **IF → THEN → THAT** automation in JSON. Rules are evaluated using pre-compiled JSONLogic for zero runtime overhead, and actions execute asynchronously for high throughput. Whether you're routing events, validating data, or building complex automation pipelines, Dataflow-rs gives you enterprise-grade performance with minimal complexity.
+Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. Rules are evaluated using pre-compiled JSONLogic for zero runtime overhead, and actions execute asynchronously for high throughput. Whether you're routing events, validating data, or building complex automation pipelines, Dataflow-rs gives you enterprise-grade performance with minimal complexity.
+
+### ⚡ Blazing Fast Performance
+Dataflow-rs is built for high-throughput hot paths. By compiling all JSONLogic expressions once at engine startup, runtime evaluation runs with zero allocations, zero parsing overhead, and predictable latency. 
+
+A multi-threaded benchmark (1,000,000 concurrent events) on a 10-core machine yields:
+*   **Throughput:** **~600,000 messages/sec**
+*   **Median (P50) Latency:** **7 μs**
+*   **Tail (P99) Latency:** **64 μs**
+*   **Tail (P99.9) Latency:** **131 μs**
+
+### 🧩 Full-Stack Ecosystem
+Go beyond backend microservices. Use the same rule definitions across your entire stack:
+1.  **Rust Backend:** Run natively with maximum speed and concurrency using `dataflow-rs`.
+2.  **Browser & Edge:** Run client-side validations or edge routing using WebAssembly bindings via [@goplasmatic/dataflow-wasm](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm).
+3.  **React UI Admin Portal:** Let users and developers visualize, edit, and step-by-step debug rules using [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui).
 
 ## How It Works: IF → THEN → THAT
 
@@ -37,6 +54,18 @@ Dataflow-rs is a lightweight rules engine that lets you define **IF → THEN →
 | **RulesEngine** | **Engine** | Evaluates rules against messages and executes matching actions |
 
 Both naming conventions are fully supported — use whichever fits your mental model.
+
+## Why dataflow-rs?
+
+If you need dynamic business rules or user-customizable workflows, writing manual `if/else` checks makes your code rigid, while running full orchestrators (like Temporal or Zeebe) adds heavy infrastructure overhead and milliseconds of network latency. Dataflow-rs gives you the best of both worlds:
+
+| Capability | Hardcoded Rust | dataflow-rs | Heavy Orchestrators (Temporal/Zeebe) |
+|---|---|---|---|
+| **Hot Reload Rules** | ❌ Recompile & redeploy |  Instant JSON update | ❌ Deploy new worker code |
+| **Execution Overhead** | None | **Zero (pre-compiled JSONLogic)** | ❌ DB reads/writes (tens of ms) |
+| **Browser execution** | ❌ Compile full app to WASM |  Run same rules in JS via WASM | ❌ Network round-trip required |
+| **Visual Debugger** | ❌ Build your own UI |  Included React UI components |  Included Dashboard |
+| **Infrastructure** | None | **None (embeddable library)** | ❌ Requires server clusters & DBs |
 
 ## Getting Started
 
@@ -86,21 +115,49 @@ serde_json = "1.0"
 use dataflow_rs::{Engine, Workflow};
 use dataflow_rs::engine::message::Message;
 use serde_json::json;
-use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let workflow = Workflow::from_json(r#"{ ... }"#)?; // Your rule JSON
+    // Paste the JSON rule defined in Step 2:
+    let rule_json = r#"{
+        "id": "premium_order",
+        "name": "Premium Order Processing",
+        "condition": {">=": [{"var": "data.order.total"}, 1000]},
+        "tasks": [
+            {
+                "id": "apply_discount",
+                "name": "Apply Premium Discount",
+                "function": {
+                    "name": "map",
+                    "input": {
+                        "mappings": [
+                            {
+                                "path": "data.order.discount",
+                                "logic": {"*": [{"var": "data.order.total"}, 0.1]}
+                            },
+                            {
+                                "path": "data.order.final_total",
+                                "logic": {"-": [{"var": "data.order.total"}, {"*": [{"var": "data.order.total"}, 0.1]}]}
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    }"#;
+
+    let workflow = Workflow::from_json(rule_json)?;
 
     // Create engine — all JSONLogic compiled once here
     let engine = Engine::builder().with_workflow(workflow).build()?;
 
     // Process a message
-    let payload = Arc::new(json!({"order": {"total": 1500}}));
-    let mut message = Message::new(payload);
+    let payload = json!({"order": {"total": 1500}});
+    let mut message = Message::from_value(&payload);
     engine.process_message(&mut message).await?;
 
     println!("Discount: {}", message.data()["order"]["discount"]); // 150
+    println!("Final Total: {}", message.data()["order"]["final_total"]); // 1350
     Ok(())
 }
 ```
@@ -192,16 +249,32 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 
 ## Performance
 
-- **Pre-Compilation:** All JSONLogic compiled at startup, zero runtime overhead
-- **Arc-Wrapped Logic:** Zero-copy sharing of compiled expressions
+On a 10-core machine processing **1,000,000 messages** concurrently (Tokio multi-threaded runtime, `--release`):
+
+| Metric | Value |
+|---|---|
+| **Throughput** | ~600,000 msg/sec |
+| **Avg Latency** | 12 μs |
+| **P50 Latency** | 7 μs |
+| **P99 Latency** | 64 μs |
+| **P99.9 Latency** | 131 μs |
+
+**Why it's fast:**
+- **Pre-Compilation:** All JSONLogic compiled at startup, zero runtime parsing
+- **Arc-Wrapped Logic:** Zero-copy sharing of compiled expressions across threads
 - **Context Arc Caching:** 50% improvement via cached Arc context
-- **Async I/O:** Non-blocking operations for external services
+- **Async I/O:** Non-blocking operations for external services via Tokio
 - **Predictable Latency:** No runtime allocations for logic evaluation
 
+Run the benchmarks and examples yourself:
+
 ```bash
-cargo run --example benchmark           # Performance benchmark
-cargo run --example rules_engine        # IFTTT-style rules engine demo
-cargo run --example complete_workflow   # Parse → Transform → Validate pipeline
+cargo run --example benchmark --release   # Full throughput + latency percentiles
+cargo run --example hello_world           # Minimal getting-started example
+cargo run --example rules_engine          # IFTTT-style rules engine demo
+cargo run --example complete_workflow     # Parse → Transform → Validate pipeline
+cargo run --example custom_function       # Extending the engine with custom handlers
+cargo run --example error_handling        # Error handling patterns
 ```
 
 ## Custom Functions
@@ -358,16 +431,28 @@ let new_engine = engine.with_new_workflows(new_workflows);
 // Old engine remains valid for in-flight messages
 ```
 
-## Related Packages
+## Ecosystem
 
-| Package | Description |
-|---------|-------------|
-| [@goplasmatic/dataflow-wasm](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm) | WebAssembly bindings for browser execution |
-| [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) | React components for rule visualization and debugging |
+| Package | Description | Install |
+|---------|-------------|-------|
+| [dataflow-rs](https://crates.io/crates/dataflow-rs) | Async rules engine in Rust (this crate) | `cargo add dataflow-rs` |
+| [@goplasmatic/dataflow-wasm](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm) | WebAssembly bindings — run rules in browser or Node.js | `npm i @goplasmatic/dataflow-wasm` |
+| [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) | React components for rule visualization, editing, and step-by-step debugging | `npm i @goplasmatic/dataflow-ui` |
+| [datalogic-rs](https://crates.io/crates/datalogic-rs) | JSONLogic compiler/evaluator used internally | `cargo add datalogic-rs` |
+
+📖 **Documentation:** [User Guide & API Reference](https://goplasmatic.github.io/dataflow-rs/) · [Interactive Playground](https://goplasmatic.github.io/dataflow-rs/playground.html) · [Visual Debugger](https://goplasmatic.github.io/dataflow-rs/debugger/)
 
 ## Contributing
 
-We welcome contributions! Feel free to fork the repository, make your changes, and submit a pull request. Please make sure to add tests for any new features.
+We welcome contributions! Here's how to get started:
+
+1. **Fork** the repository and clone your fork
+2. **Run tests:** `cargo test` to ensure everything passes
+3. **Make changes** and add tests for any new features
+4. **Run the benchmark** before and after: `cargo run --example benchmark --release`
+5. **Submit a pull request** with a clear description of your changes
+
+See the [CHANGELOG](CHANGELOG.md) for recent changes and release history.
 
 ## About Plasmatic
 

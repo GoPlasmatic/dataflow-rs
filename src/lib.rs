@@ -64,20 +64,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define a workflow in JSON
     let workflow_json = r#"
     {
-        "id": "data_processor",
-        "name": "Data Processor",
-        "priority": 0,
+        "id": "premium_order",
+        "name": "Premium Order Processing",
+        "condition": {">=": [{"var": "data.order.total"}, 1000]},
         "tasks": [
             {
-                "id": "transform_data",
-                "name": "Transform Data",
+                "id": "apply_discount",
+                "name": "Apply Premium Discount",
                 "function": {
                     "name": "map",
                     "input": {
                         "mappings": [
                             {
-                                "path": "data.result",
-                                "logic": { "var": "temp_data.value" }
+                                "path": "data.order.discount",
+                                "logic": {"*": [{"var": "data.order.total"}, 0.1]}
                             }
                         ]
                     }
@@ -95,12 +95,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::builder().with_workflow(workflow).build()?;
 
     // Create a message to process
-    let mut message = Message::from_value(&json!({}));
+    let mut message = Message::from_value(&json!({
+        "order": {
+            "total": 1500
+        }
+    }));
 
     // Process the message through the workflow
     match engine.process_message(&mut message).await {
         Ok(_) => {
-            println!("Processed result: {}", message.context["data"]["result"]);
+            println!("Discount: {}", message.data()["order"]["discount"]); // 150
         }
         Err(e) => {
             println!("Error in workflow: {:?}", e);

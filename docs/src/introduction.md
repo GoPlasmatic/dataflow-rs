@@ -12,11 +12,29 @@
   [![Crates.io](https://img.shields.io/crates/v/dataflow-rs.svg)](https://crates.io/crates/dataflow-rs)
 </div>
 
----
-
-**Dataflow-rs** is a lightweight rules engine that lets you define **IF → THEN → THAT** automation in JSON. Rules are evaluated using pre-compiled JSONLogic for zero runtime overhead, and actions execute asynchronously for high throughput.
+**Dataflow-rs** is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. Rules are evaluated using pre-compiled JSONLogic for zero runtime overhead, and actions execute asynchronously for high throughput.
 
 Whether you're routing events, validating data, building REST APIs, or creating automation pipelines, Dataflow-rs provides enterprise-grade performance with minimal complexity.
+
+### ⚡ Blazing Fast Performance
+
+Dataflow-rs is built for high-throughput hot paths. By pre-compiling all JSONLogic expressions at startup, execution runs with zero runtime allocations or JSON parsing overhead. On a 10-core machine, the multi-threaded release benchmark yields:
+*   **Throughput:** **~600,000 messages/sec**
+*   **Median (P50) Latency:** **7 μs**
+*   **Tail (P99) Latency:** **64 μs**
+*   **Tail (P99.9) Latency:** **131 μs**
+
+### 🧩 Why Choose dataflow-rs?
+
+If you need dynamic business rules or user-customizable workflows, writing hardcoded `if/else` checks makes your codebase rigid, while running heavy workflow orchestrators (like Temporal or Zeebe) adds complex infrastructure dependencies and milliseconds of database/network latency. Dataflow-rs gives you the best of both worlds:
+
+| Feature | Hardcoded Rust | dataflow-rs | Orchestrators (Temporal/Zeebe) |
+|---|---|---|---|
+| **Hot Reload Rules** | ❌ Recompile & redeploy |  Instant JSON update | ❌ Deploy new worker code |
+| **Execution Overhead** | None | **Zero (pre-compiled)** | ❌ DB reads/writes (tens of ms) |
+| **Browser Execution** | ❌ WASM compile size |  Run rules via WASM | ❌ Server round-trip required |
+| **Visual Debugger** | ❌ Build your own UI |  Included React UI components |  Included Dashboard |
+| **Infrastructure** | None | **None (embeddable library)** | ❌ Server clusters & DBs |
 
 ## Key Features
 
