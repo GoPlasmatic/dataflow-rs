@@ -52,8 +52,8 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
-    "@goplasmatic/dataflow-wasm": "^3.0.0",
-    "@goplasmatic/datalogic-ui": "^4.0.21",
+    "@goplasmatic/dataflow-wasm": "^3.0.1",
+    "@goplasmatic/datalogic-ui": "^5.1.0",
     "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.10.2",
     "lucide-react": "^1.8.0"

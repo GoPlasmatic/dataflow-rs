@@ -156,7 +156,7 @@ export function ConditionBadge({ condition, className = '', onClick }: Condition
             <DataLogicEditor
               value={condition}
               theme="dark"
-              preserveStructure={true}
+              templating={true}
               className="df-condition-tooltip-editor"
             />
           </div>

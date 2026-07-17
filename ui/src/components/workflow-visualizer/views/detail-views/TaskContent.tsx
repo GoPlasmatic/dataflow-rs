@@ -45,7 +45,7 @@ export function TaskContent({ selection }: TaskContentProps) {
           <DataLogicEditor
             value={visualData}
             theme={resolvedTheme}
-            preserveStructure={true}
+            templating={true}
             className="df-datalogic-viewer"
             data={debugData}
           />
@@ -66,7 +66,7 @@ export function TaskContent({ selection }: TaskContentProps) {
           <DataLogicEditor
             value={andExpression}
             theme={resolvedTheme}
-            preserveStructure={true}
+            templating={true}
             className="df-datalogic-viewer"
             data={debugData}
           />
@@ -82,7 +82,7 @@ export function TaskContent({ selection }: TaskContentProps) {
         <DataLogicEditor
           value={task.function.input as JsonLogicValue}
           theme={resolvedTheme}
-          preserveStructure={true}
+          templating={true}
           className="df-datalogic-viewer"
         />
       </div>

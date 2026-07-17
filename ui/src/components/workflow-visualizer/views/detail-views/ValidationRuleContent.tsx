@@ -31,7 +31,7 @@ export function ValidationRuleContent({ selection }: ValidationRuleContentProps)
         <DataLogicEditor
           value={rule.logic}
           theme={resolvedTheme}
-          preserveStructure={true}
+          templating={true}
           className="df-datalogic-viewer"
           data={debugData}
         />

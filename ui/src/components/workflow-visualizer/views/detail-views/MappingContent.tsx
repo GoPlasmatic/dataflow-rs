@@ -37,7 +37,7 @@ export function MappingContent({ selection }: MappingContentProps) {
         <DataLogicEditor
           value={visualData}
           theme={resolvedTheme}
-          preserveStructure={true}
+          templating={true}
           className="df-datalogic-viewer"
           data={debugData}
         />

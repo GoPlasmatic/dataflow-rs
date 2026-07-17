@@ -16,7 +16,7 @@ export function DataLogicView({ value, data }: DataLogicViewProps) {
         <DataLogicEditor
           value={value}
           theme={resolvedTheme}
-          preserveStructure={true}
+          templating={true}
           className="df-datalogic-viewer"
           data={data}
         />
