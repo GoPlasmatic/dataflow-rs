@@ -244,6 +244,16 @@ jobs:
       - name: Build UI library
         run: cd ui && npm run build:lib
 
+      # The repo pins the dataflow-wasm dep at the last *published* version so
+      # `npm ci` above can resolve the lockfile (this release's wasm build is
+      # copied over node_modules instead). Stamp the published package.json
+      # with this release's version so dataflow-ui@X internally refers to
+      # dataflow-wasm@^X — publish-wasm has already published it by now.
+      - name: Sync dataflow-wasm dep to release version
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          cd ui && npm pkg set "dependencies.@goplasmatic/dataflow-wasm=^$VERSION"
+
       - name: Check if version exists on npm
         id: check
         run: |
