@@ -249,15 +249,15 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 
 ## Performance
 
-On a 10-core machine processing **1,000,000 messages** concurrently (Tokio multi-threaded runtime, `--release`):
+On a 10-core machine processing **1,000,000 messages** concurrently (Tokio multi-threaded runtime, `--release`; per message: 1 parse + 6 mappings + 3 validations):
 
 | Metric | Value |
 |---|---|
-| **Throughput** | ~600,000 msg/sec |
+| **Throughput** | ~575,000 msg/sec |
 | **Avg Latency** | 12 μs |
-| **P50 Latency** | 7 μs |
-| **P99 Latency** | 64 μs |
-| **P99.9 Latency** | 131 μs |
+| **P50 Latency** | 8 μs |
+| **P99 Latency** | 66 μs |
+| **P99.9 Latency** | 125 μs |
 
 **Why it's fast:**
 - **Pre-Compilation:** All JSONLogic compiled at startup, zero runtime parsing
@@ -269,7 +269,9 @@ On a 10-core machine processing **1,000,000 messages** concurrently (Tokio multi
 Run the benchmarks and examples yourself:
 
 ```bash
-cargo run --example benchmark --release   # Full throughput + latency percentiles
+cargo run --example benchmark --release             # Full throughput + latency percentiles
+cargo run --example realistic_benchmark --release   # ISO 20022 -> SwiftMT-style workload
+cargo run --example micro_aggregate_bench --release # Aggregate-heavy (reduce/map) workload
 cargo run --example hello_world           # Minimal getting-started example
 cargo run --example rules_engine          # IFTTT-style rules engine demo
 cargo run --example complete_workflow     # Parse → Transform → Validate pipeline

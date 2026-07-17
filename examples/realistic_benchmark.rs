@@ -6,7 +6,7 @@
 //! against ~12 rules. The map task exercises a realistic mix of operators:
 //! `var`, `cat`, `if`, arithmetic, `!!`, `==`, `substr`, `length`.
 //!
-//! Compare numbers against `benchmark.rs` (the 9-eval trivial workload) to
+//! Compare numbers against `benchmark.rs` (the parse + 9-eval trivial workload) to
 //! see how the per-message framework overhead (UUID, audit drop, message
 //! construction) reweights when real eval work is added.
 //!

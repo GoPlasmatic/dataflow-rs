@@ -6,9 +6,10 @@
 //! a tight single-threaded loop so the signal of interest (condition-eval
 //! work) is a measurable fraction of the total.
 //!
-//! Uses the same workflow shape as `benchmark.rs`: one workflow + two tasks,
-//! all with the default `condition: true` — so it directly exercises the
-//! "fold trivially-true condition to None" path (3 folded conditions/message).
+//! Uses the same workflow shape as `benchmark.rs`: one workflow + three tasks
+//! (parse + map + validate), all with the default `condition: true` — so it
+//! directly exercises the "fold trivially-true condition to None" path
+//! (4 folded conditions/message).
 //!
 //! Run with: `cargo run --example micro_cond_bench --release`
 
@@ -28,18 +29,26 @@ async fn main() {
         "name": "Benchmark Workflow",
         "tasks": [
             {
+                "id": "load_payload",
+                "name": "Parse Payload",
+                "function": {
+                    "name": "parse_json",
+                    "input": { "source": "payload", "target": "input" }
+                }
+            },
+            {
                 "id": "transform_data",
                 "name": "Transform Data",
                 "function": {
                     "name": "map",
                     "input": {
                         "mappings": [
-                            { "path": "user.id",   "logic": { "var": "payload.input.id" } },
-                            { "path": "user.name", "logic": { "var": "payload.input.name" } },
-                            { "path": "user.email","logic": { "var": "payload.input.email" } },
-                            { "path": "user.age",  "logic": { "+": [{ "var": "payload.input.age" }, 1] } },
-                            { "path": "user.status","logic": { "if": [ { ">": [{ "var": "payload.input.age" }, 18] }, "adult", "minor" ] } },
-                            { "path": "calculations.total","logic": { "*": [ { "+": [{ "var": "payload.input.age" }, 10] }, { "/": [{ "var": "payload.input.id" }, 100] } ] } }
+                            { "path": "data.user.id",   "logic": { "var": "data.input.id" } },
+                            { "path": "data.user.name", "logic": { "var": "data.input.name" } },
+                            { "path": "data.user.email","logic": { "var": "data.input.email" } },
+                            { "path": "data.user.age",  "logic": { "+": [{ "var": "data.input.age" }, 1] } },
+                            { "path": "data.user.status","logic": { "if": [ { ">": [{ "var": "data.input.age" }, 18] }, "adult", "minor" ] } },
+                            { "path": "data.calculations.total","logic": { "*": [ { "+": [{ "var": "data.input.age" }, 10] }, { "/": [{ "var": "data.input.id" }, 100] } ] } }
                         ]
                     }
                 }
@@ -51,9 +60,9 @@ async fn main() {
                     "name": "validation",
                     "input": {
                         "rules": [
-                            { "path": "user.id",   "logic": { "!!": { "var": "data.user.id" } }, "message": "User ID is required" },
-                            { "path": "user.email","logic": { "!!": { "var": "data.user.email" } }, "message": "User email is required" },
-                            { "path": "calculations.total","logic": { ">": [{ "var": "data.calculations.total" }, 0] }, "message": "Total must be positive" }
+                            { "path": "data.user.id",   "logic": { "!!": { "var": "data.user.id" } }, "message": "User ID is required" },
+                            { "path": "data.user.email","logic": { "!!": { "var": "data.user.email" } }, "message": "User email is required" },
+                            { "path": "data.calculations.total","logic": { ">": [{ "var": "data.calculations.total" }, 0] }, "message": "Total must be positive" }
                         ]
                     }
                 }
@@ -65,9 +74,24 @@ async fn main() {
     let workflow = Workflow::from_json(workflow_json).unwrap();
     let engine = Arc::new(Engine::builder().with_workflow(workflow).build().unwrap());
 
+    // The raw inbound document; the parse_json task loads it at `data.input`.
     let data = json!({
-        "input": { "id": 12345, "name": "John Doe", "email": "john.doe@example.com", "age": 25, "department": "Engineering" }
+        "id": 12345, "name": "John Doe", "email": "john.doe@example.com", "age": 25, "department": "Engineering"
     });
+
+    // Sanity-check once: the workflow must actually compute (payload.* var
+    // references or unprefixed write paths would silently null-skip every
+    // mapping and fail every validation without erroring the run).
+    {
+        let mut m = Message::from_value(&data);
+        engine.process_message(&mut m).await.unwrap();
+        let d = serde_json::to_value(m.data()).unwrap();
+        assert!(
+            d["user"]["id"].as_i64() == Some(12345) && m.errors().is_empty(),
+            "workload is not computing: data={d}, errors={:?}",
+            m.errors()
+        );
+    }
 
     for _ in 0..WARMUP {
         let mut m = Message::from_value(&data);
