@@ -10,7 +10,8 @@ import type { Workflow } from '../types';
  * 2. Form Validation    — validation rules with error accumulation
  * 3. Invoice Calculator — sequential task dependencies & math
  * 4. Message Router     — multiple workflows with metadata conditions
- * 5. E-Commerce Pipeline — full realistic pipeline with folders & audit
+ * 5. Premium Order Perks — rule chaining: condition on data computed by an earlier rule (reduce, if-chain, log)
+ * 6. E-Commerce Pipeline — full realistic pipeline with folders & audit
  */
 export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: object }> = {
   'Hello Transform': {
@@ -282,6 +283,139 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
       },
     ],
     payload: { type: 'alert', severity: 'high', title: 'CPU Overload', body: 'Server cpu-3 at 98% utilization' },
+  },
+
+  'Premium Order Perks': {
+    workflows: [
+      {
+        id: 'order_intake',
+        name: 'Order Intake',
+        priority: 1,
+        tasks: [
+          {
+            id: 'load_order',
+            name: 'Load order from payload',
+            function: {
+              name: 'parse_json',
+              input: {
+                source: 'payload',
+                target: 'order',
+              },
+            },
+          },
+          {
+            id: 'validate_order',
+            name: 'Validate order',
+            function: {
+              name: 'validation',
+              input: {
+                rules: [
+                  { logic: { '!!': { var: 'data.order.customer.email' } }, message: 'Customer email is required' },
+                  { logic: { '!!': { var: 'data.order.items' } }, message: 'Order must contain at least one item' },
+                ],
+              },
+            },
+          },
+          {
+            id: 'compute_totals',
+            name: 'Compute totals',
+            function: {
+              name: 'map',
+              input: {
+                mappings: [
+                  {
+                    path: 'data.order.subtotal',
+                    logic: {
+                      reduce: [
+                        { var: 'data.order.items' },
+                        { '+': [{ var: 'accumulator' }, { '*': [{ var: 'current.price' }, { var: 'current.qty' }] }] },
+                        0,
+                      ],
+                    },
+                  },
+                  {
+                    path: 'data.order.item_count',
+                    logic: {
+                      reduce: [
+                        { var: 'data.order.items' },
+                        { '+': [{ var: 'accumulator' }, { var: 'current.qty' }] },
+                        0,
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+      {
+        id: 'premium_perks',
+        name: 'Premium Perks',
+        priority: 2,
+        condition: { '>=': [{ var: 'data.order.subtotal' }, 100] },
+        tasks: [
+          {
+            id: 'apply_discount',
+            name: 'Apply 10% discount',
+            function: {
+              name: 'map',
+              input: {
+                mappings: [
+                  { path: 'data.order.discount', logic: { '*': [{ var: 'data.order.subtotal' }, 0.1] } },
+                  { path: 'data.order.total', logic: { '-': [{ var: 'data.order.subtotal' }, { var: 'data.order.discount' }] } },
+                ],
+              },
+            },
+          },
+          {
+            id: 'assign_tier',
+            name: 'Assign loyalty tier',
+            function: {
+              name: 'map',
+              input: {
+                mappings: [
+                  {
+                    path: 'data.order.loyalty.tier',
+                    logic: {
+                      if: [
+                        { '>=': [{ var: 'data.order.total' }, 500] }, 'gold',
+                        { '>=': [{ var: 'data.order.total' }, 150] }, 'silver',
+                        'bronze',
+                      ],
+                    },
+                  },
+                  { path: 'data.order.loyalty.points_earned', logic: { var: 'data.order.total' } },
+                ],
+              },
+            },
+          },
+          {
+            id: 'log_confirmation',
+            name: 'Log confirmation',
+            function: {
+              name: 'log',
+              input: {
+                level: 'info',
+                message: { cat: ['Premium order for ', { var: 'data.order.customer.name' }] },
+                fields: {
+                  total: { var: 'data.order.total' },
+                  tier: { var: 'data.order.loyalty.tier' },
+                },
+              },
+            },
+          },
+        ],
+      },
+    ],
+    payload: {
+      customer: { name: 'Ada Lovelace', email: 'ada@example.com' },
+      items: [
+        { sku: 'KB-MECH-87', name: 'Mechanical Keyboard', price: 120, qty: 1 },
+        { sku: 'MS-TRACK-1', name: 'Trackball Mouse', price: 60, qty: 1 },
+        { sku: 'CBL-USBC-2', name: 'USB-C Cable', price: 10, qty: 2 },
+      ],
+    },
   },
 
   'E-Commerce Pipeline': {

@@ -14,6 +14,13 @@
 
 ---
 
+<div align="center">
+  <a href="https://goplasmatic.github.io/dataflow-rs/debugger/">
+    <img src="assets/visual-debugger.png" alt="Dataflow visual debugger showing two chained rules: Order Intake always runs, then a JSONLogic condition gates the Premium Perks rule">
+  </a>
+  <p><em>Two chained rules in the visual debugger — <strong>IF</strong> the condition matches, <strong>THEN</strong> the next rule runs. <a href="https://goplasmatic.github.io/dataflow-rs/debugger/">Try it live in your browser →</a></em></p>
+</div>
+
 Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. Rules are evaluated using pre-compiled JSONLogic for zero runtime overhead, and actions execute asynchronously for high throughput. Whether you're routing events, validating data, or building complex automation pipelines, Dataflow-rs gives you enterprise-grade performance with minimal complexity.
 
 ### ⚡ Blazing Fast Performance
@@ -437,6 +444,16 @@ let new_workflows = vec![Workflow::from_json(r#"{ ... }"#)?];
 let new_engine = engine.with_new_workflows(new_workflows);
 // Old engine remains valid for in-flight messages
 ```
+
+## Visualize & Debug Rules
+
+Because every rule is plain JSON, the [React UI](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) can render it: JSONLogic expressions become readable flow diagrams, and the debugger steps through execution with a message diff after every task.
+
+<div align="center">
+  <a href="https://goplasmatic.github.io/dataflow-rs/debugger/">
+    <img src="assets/jsonlogic-visualizer.png" alt="JSONLogic visualizer rendering an if/else-if chain that assigns gold, silver, or bronze loyalty tiers based on the order total">
+  </a>
+</div>
 
 ## Ecosystem
 
