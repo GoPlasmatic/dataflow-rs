@@ -44,6 +44,11 @@ members = [".", "wasm"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# `fast-rng`: thread-local PRNG seeded once from the OS instead of one
+# `getrandom` syscall per `Uuid::now_v7()` — appropriate for v7 ids
+# (uniqueness, not secrecy). Native-only; features are additive per-target,
+# so the wasm build keeps the lean `v7`+`std` set from the main table.
+uuid = { version = "1.23", default-features = false, features = ["fast-rng"] }
 
 # Native release profile: maximize throughput. `lto = "fat"` plus
 # `codegen-units = 1` lets the compiler propagate inlining across crate
