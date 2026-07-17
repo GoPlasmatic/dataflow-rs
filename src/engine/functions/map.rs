@@ -135,10 +135,14 @@ impl MapConfig {
     /// of `message.context` *before* each mapping runs — the trace
     /// surface uses this for per-mapping debugging. `None` skips the snapshot
     /// work entirely (the production path).
-    pub(crate) fn execute_in_arena(
-        &self,
+    /// The `'arena` lifetime ties `&self` to the arena context: the eval
+    /// result borrows both the compiled logic and the arena
+    /// (`Engine::evaluate` unifies them), and the write-through splice needs
+    /// that result at exactly the cache's lifetime.
+    pub(crate) fn execute_in_arena<'arena>(
+        &'arena self,
         message: &mut Message,
-        arena_ctx: &mut ArenaContext<'_>,
+        arena_ctx: &mut ArenaContext<'arena>,
         engine: &Arc<Engine>,
         mut trace_snapshots: Option<&mut Vec<Value>>,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
@@ -230,9 +234,18 @@ impl MapConfig {
                     new_value,
                 });
             }
-            arena_ctx.apply_mutation_parts(&mut message.context, parts, |ctx| {
-                apply_mapping_parts(ctx, parts, &mapping.path, transformed_value);
-            });
+            // Write-through: the owned context write is the source of truth;
+            // `result_av` (already arena-resident) is spliced into the cache
+            // directly, avoiding the owned→arena re-walk of the whole target
+            // subtree that made k same-subtree mappings O(k²).
+            arena_ctx.apply_mutation_parts_write_through(
+                &mut message.context,
+                parts,
+                *result_av,
+                |ctx| {
+                    apply_mapping_parts(ctx, parts, &mapping.path, transformed_value);
+                },
+            );
             debug!("Successfully mapped to path: {}", mapping.path);
         }
 

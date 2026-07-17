@@ -345,10 +345,10 @@ impl FunctionConfig {
     /// This is the single source of truth for the sync-stretch dispatch:
     /// adding a new sync built-in only requires adding an arm here (and the
     /// matching variant to `is_sync_builtin` above).
-    pub(crate) fn try_execute_in_arena(
-        &self,
+    pub(crate) fn try_execute_in_arena<'arena>(
+        &'arena self,
         message: &mut Message,
-        arena_ctx: &mut ArenaContext<'_>,
+        arena_ctx: &mut ArenaContext<'arena>,
         engine: &Arc<Engine>,
         map_snapshot_buf: Option<&mut Vec<Value>>,
     ) -> Option<Result<(TaskOutcome, Vec<Change>)>> {

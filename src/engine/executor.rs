@@ -172,16 +172,114 @@ impl<'a> ArenaContext<'a> {
 
     /// Apply an owned write at `path` (pre-split into `parts`) to *both* the
     /// underlying `OwnedDataValue` context (via the supplied closure that
-    /// performs the in-place mutation) and the arena cache. Skips the runtime
-    /// `str::split` that shows up in profiles as `CharSearcher::next_match`.
-    pub fn apply_mutation_parts(
+    /// performs the in-place mutation) and the arena cache, using the
+    /// already-arena-resident eval result `value_av` for the cache side.
+    ///
+    /// The cache update splices `value_av` into the depth-2 slot directly
+    /// (rebuilding only the spine of the written path — shallow pair copies,
+    /// no string data copied, no descent into unchanged siblings). The old
+    /// per-write behaviour — `to_arena` of the *entire* owned depth-2
+    /// subtree — made k mappings into the same subtree O(k²); it remains as
+    /// [`Self::refresh_after_write_parts`], the correctness backstop for any
+    /// shape the splice doesn't cover (array segments, missing depth-2 slot,
+    /// non-object hops, root writes).
+    ///
+    /// The owned-context write stays the source of truth; `value_av` must be
+    /// the arena form of the value the closure writes at `parts`.
+    pub fn apply_mutation_parts_write_through(
         &mut self,
         owned_ctx: &mut OwnedDataValue,
         parts: &[Arc<str>],
+        value_av: DataValue<'a>,
         apply: impl FnOnce(&mut OwnedDataValue),
     ) {
         apply(owned_ctx);
-        self.refresh_after_write_parts(owned_ctx, parts);
+        if !self.try_splice_write_parts(parts, value_av) {
+            self.refresh_after_write_parts(owned_ctx, parts);
+        }
+        // Differential check (unit-test builds only): after every write-through
+        // the cache must equal a from-scratch rebuild of the owned context.
+        // This gives every unit test that drives a map task free differential
+        // coverage of the splice against the owned source of truth.
+        #[cfg(test)]
+        self.assert_matches_owned(owned_ctx);
+    }
+
+    /// Attempt the plain-case arena splice for a write of `value_av` at
+    /// `parts`. Covered shape: `parts[0]` resolves to a cached top slot with
+    /// a depth-2 cache; for writes deeper than depth 2, `parts[1]` names an
+    /// *existing* depth-2 child and every deeper segment is a plain
+    /// (non-numeric) object key. Returns `false` when the shape needs the
+    /// owned-rebuild fallback instead.
+    fn try_splice_write_parts(&mut self, parts: &[Arc<str>], value_av: DataValue<'a>) -> bool {
+        if parts.len() < 2 {
+            return false;
+        }
+        // A raw segment that parses as usize takes array-index semantics in
+        // `set_nested_value_parts` — fall back rather than mirror that here.
+        // (`#`-escaped keys never parse: `#20` is the object key "20".)
+        if parts[2..].iter().any(|p| p.parse::<usize>().is_ok()) {
+            return false;
+        }
+
+        let top = strip_hash(&parts[0]);
+        let Some(top_idx) = self.top_keys.iter().position(|k| *k == top) else {
+            // Write created a brand-new top slot — rare; let the fallback
+            // build it from owned.
+            return false;
+        };
+        let arena = self.arena;
+        let Some(d2) = self.depth2[top_idx].as_mut() else {
+            // Top slot isn't an Object (or has no depth-2 cache) — the owned
+            // write may have no-op'd or reshaped it; fall back.
+            return false;
+        };
+
+        let d2_key = strip_hash(&parts[1]);
+        let d2_pos = d2.keys.iter().position(|k| *k == d2_key);
+
+        if parts.len() == 2 {
+            // Whole depth-2 slot replace/insert: the eval result IS the new
+            // child value — no owned round-trip needed.
+            match d2_pos {
+                Some(pos) => d2.values[pos] = value_av,
+                None => {
+                    d2.keys.push(arena.alloc_str(d2_key));
+                    d2.values.push(value_av);
+                }
+            }
+        } else {
+            let Some(pos) = d2_pos else {
+                // First write into a not-yet-cached depth-2 subtree (e.g. the
+                // first mapping into `data.MT103`) — the owned write creates
+                // it; let the fallback arena the fresh subtree once.
+                return false;
+            };
+            let Some(new_subtree) =
+                splice_object_write(arena, d2.values[pos], &parts[2..], value_av)
+            else {
+                // Non-object hop (scalar/array mid-path) — the owned write
+                // no-ops or takes semantics the splice doesn't mirror.
+                return false;
+            };
+            d2.values[pos] = new_subtree;
+        }
+
+        let slice = build_object_slice(arena, &d2.keys, &d2.values);
+        self.top_values[top_idx] = DataValue::Object(slice);
+        true
+    }
+
+    /// Test-only differential check: the live cache must be value- and
+    /// order-identical to a fresh depth-2 rebuild of `owned_ctx`.
+    #[cfg(test)]
+    fn assert_matches_owned(&self, owned_ctx: &OwnedDataValue) {
+        let rebuilt = ArenaContext::from_owned(owned_ctx, self.arena);
+        assert_eq!(
+            self.as_data_value().to_owned(),
+            rebuilt.as_data_value().to_owned(),
+            "arena cache diverged from owned context"
+        );
     }
 
     /// Refresh the arena slot(s) for `path` from the current `owned_ctx`,
@@ -362,6 +460,104 @@ fn build_object_slice<'a>(
     arena.alloc_slice_fill_iter(keys.iter().zip(values.iter()).map(|(k, v)| (*k, *v)))
 }
 
+/// Strip exactly one leading `#` from an object-key path segment — same
+/// semantics as `utils::strip_hash_prefix` (`"#20"` → `"20"`, `"##"` → `"#"`).
+#[inline]
+fn strip_hash(part: &str) -> &str {
+    part.strip_prefix('#').unwrap_or(part)
+}
+
+/// Rebuild only the spine of `current` for a write of `value` at `parts`
+/// (all plain object keys — the caller has excluded numeric segments).
+/// Each level allocates a fresh `(key, value)` slice with the one descended
+/// child replaced: shallow pair copies, no string data copied, no descent
+/// into unchanged siblings. A missing key builds the remaining chain as
+/// nested single-pair Objects, mirroring `set_nested_value_parts`' create
+/// semantics for non-numeric segments. Returns `None` when `current` is not
+/// an Object — those shapes (array hop, scalar overwrite mid-path) take the
+/// owned-rebuild fallback, which mirrors whatever the owned write did.
+fn splice_object_write<'a>(
+    arena: &'a Bump,
+    current: DataValue<'a>,
+    parts: &[Arc<str>],
+    value: DataValue<'a>,
+) -> Option<DataValue<'a>> {
+    let DataValue::Object(pairs) = current else {
+        return None;
+    };
+    let key = strip_hash(&parts[0]);
+    let pos = pairs.iter().position(|(k, _)| *k == key);
+
+    let new_slice = if parts.len() == 1 {
+        // Terminal level: replace the slot, or append a new pair.
+        match pos {
+            Some(p) => alloc_pairs_with_replaced(arena, pairs, p, value),
+            None => alloc_pairs_with_appended(arena, pairs, arena.alloc_str(key), value),
+        }
+    } else {
+        match pos {
+            Some(p) => {
+                let child = splice_object_write(arena, pairs[p].1, &parts[1..], value)?;
+                alloc_pairs_with_replaced(arena, pairs, p, child)
+            }
+            None => {
+                let chain = build_object_chain(arena, &parts[1..], value);
+                alloc_pairs_with_appended(arena, pairs, arena.alloc_str(key), chain)
+            }
+        }
+    };
+    Some(DataValue::Object(new_slice))
+}
+
+/// Wrap `value` in nested single-pair Objects, innermost-last: for parts
+/// `[a, b]` produces `{a: {b: value}}`. Mirrors the container-creation path
+/// of `set_nested_value_parts` when every segment is a non-numeric key.
+fn build_object_chain<'a>(
+    arena: &'a Bump,
+    parts: &[Arc<str>],
+    value: DataValue<'a>,
+) -> DataValue<'a> {
+    let mut acc = value;
+    for part in parts.iter().rev() {
+        let key: &'a str = arena.alloc_str(strip_hash(part));
+        let slice = arena.alloc_slice_fill_iter(std::iter::once((key, acc)));
+        acc = DataValue::Object(slice);
+    }
+    acc
+}
+
+/// Fresh slice with `pairs[replace_idx]`'s value swapped for `new_value`.
+fn alloc_pairs_with_replaced<'a>(
+    arena: &'a Bump,
+    pairs: &'a [(&'a str, DataValue<'a>)],
+    replace_idx: usize,
+    new_value: DataValue<'a>,
+) -> &'a [(&'a str, DataValue<'a>)] {
+    arena.alloc_slice_fill_with(pairs.len(), |i| {
+        if i == replace_idx {
+            (pairs[i].0, new_value)
+        } else {
+            pairs[i]
+        }
+    })
+}
+
+/// Fresh slice of `pairs` plus one appended `(key, value)` pair.
+fn alloc_pairs_with_appended<'a>(
+    arena: &'a Bump,
+    pairs: &'a [(&'a str, DataValue<'a>)],
+    key: &'a str,
+    value: DataValue<'a>,
+) -> &'a [(&'a str, DataValue<'a>)] {
+    arena.alloc_slice_fill_with(pairs.len() + 1, |i| {
+        if i < pairs.len() {
+            pairs[i]
+        } else {
+            (key, value)
+        }
+    })
+}
+
 /// Evaluate a workflow or task condition using a cached compiled logic
 /// expression. Returns `true` when `condition_index` is `None` (no condition
 /// is treated as "always run"). Evaluation errors are logged and downgraded
@@ -403,5 +599,165 @@ pub fn evaluate_condition_in_arena(
             }
         },
         None => Ok(true),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::utils::{set_nested_value, set_nested_value_parts};
+    use serde_json::json;
+
+    fn dv(v: serde_json::Value) -> OwnedDataValue {
+        OwnedDataValue::from(&v)
+    }
+
+    fn parts_of(path: &str) -> Vec<Arc<str>> {
+        path.split('.').map(Arc::from).collect()
+    }
+
+    /// Drive a corpus of writes through the write-through path. Every call
+    /// re-validates the cache against a from-scratch rebuild via the
+    /// `#[cfg(test)]` assertion inside `apply_mutation_parts_write_through`,
+    /// so this test fails on any splice/fallback divergence — splice hits
+    /// (deep object paths, `#`-escaped keys, chain creation, depth-2
+    /// replace/insert) and fallback shapes (array segments, scalar mid-path
+    /// no-ops, new top slots) alike.
+    #[test]
+    fn write_through_differential_corpus() {
+        let mut owned = dv(json!({
+            "data": {
+                "input": {"big": {"nested": [1, 2, 3]}, "flag": true},
+                "MT103": {"20": "REF", "72": "existing"},
+                "items": [{"x": 1}, {"x": 2}],
+                "scalar": "leaf"
+            },
+            "metadata": {"processed_at": "t0"},
+            "temp_data": {}
+        }));
+
+        with_arena(|arena| {
+            let mut ctx = ArenaContext::from_owned(&owned, arena);
+
+            let corpus: &[(&str, serde_json::Value)] = &[
+                // Depth-3 replace of an existing key inside a cached subtree.
+                ("data.MT103.20", json!("NEWREF")),
+                // Depth-3 append of a new key.
+                ("data.MT103.23B", json!("CRED")),
+                // Depth-4 with a missing intermediate — chain creation.
+                ("data.MT103.32A.amount", json!(1500.25)),
+                // Depth-4 into the now-existing intermediate.
+                ("data.MT103.32A.currency", json!("USD")),
+                // Deeper chain creation (three missing levels).
+                ("data.MT103.a.b.c", json!({"deep": [1, {"k": "v"}]})),
+                // Overwrite an entire existing sub-object.
+                ("data.MT103.32A", json!({"replaced": true})),
+                // Depth-2 whole-slot replace with an object.
+                ("data.MT103", json!({"fresh": {"start": 1}})),
+                // Depth-2 whole-slot replace with a scalar (drops d2 cache on
+                // next rebuild; subsequent write through it must no-op).
+                ("data.scalar2", json!("plain")),
+                // New depth-2 key inserted into an existing top slot.
+                ("data.MT202", json!({"20": "REF2"})),
+                // Write into a not-yet-cached depth-2 subtree (fallback).
+                ("data.MT205.20", json!("REF5")),
+                // `#`-escaped keys: object keys "20" and "#".
+                ("data.MT103.#20", json!("HASH20")),
+                ("data.MT103.##", json!("HASHKEY")),
+                // Array index segments — fallback shapes.
+                ("data.items.0.x", json!(10)),
+                ("data.items.3", json!({"x": 4})),
+                // Scalar mid-path — owned write no-ops; cache must stay in sync.
+                ("data.scalar.sub.key", json!("ignored")),
+                // Metadata / temp_data writes.
+                ("metadata.progress.workflow_id", json!("wf1")),
+                ("temp_data.uetr", json!("uuid-here")),
+                // Brand-new top-level slot (fallback creates it).
+                ("other_top.x.y", json!(42)),
+            ];
+
+            for (path, val) in corpus {
+                let parts = parts_of(path);
+                let owned_val = dv(val.clone());
+                let value_av = owned_val.to_arena(arena);
+                ctx.apply_mutation_parts_write_through(&mut owned, &parts, value_av, |c| {
+                    set_nested_value_parts(c, &parts, owned_val.clone());
+                });
+            }
+
+            // Spot-check a few end states against the owned source of truth.
+            assert_eq!(owned["data"]["MT103"]["20"], dv(json!("HASH20")));
+            assert_eq!(owned["data"]["MT103"]["fresh"]["start"], dv(json!(1)));
+            assert_eq!(owned["data"]["items"][3]["x"], dv(json!(4)));
+            assert_eq!(owned["data"]["scalar"], dv(json!("leaf")));
+            assert_eq!(
+                owned["metadata"]["progress"]["workflow_id"],
+                dv(json!("wf1"))
+            );
+        });
+    }
+
+    /// Interleave reads (as_data_value) with write-throughs to make sure a
+    /// previously handed-out slice never aliases a mutated spine.
+    #[test]
+    fn write_through_reads_see_latest_state() {
+        let mut owned = dv(json!({
+            "data": {"doc": {"a": 1}},
+            "metadata": {},
+            "temp_data": {}
+        }));
+
+        with_arena(|arena| {
+            let mut ctx = ArenaContext::from_owned(&owned, arena);
+
+            for i in 0..10u64 {
+                let key = format!("data.doc.f{i}");
+                let parts = parts_of(&key);
+                let owned_val = OwnedDataValue::from(i);
+                let value_av = owned_val.to_arena(arena);
+                ctx.apply_mutation_parts_write_through(&mut owned, &parts, value_av, |c| {
+                    set_nested_value_parts(c, &parts, owned_val.clone());
+                });
+                // A fresh projection after every write must equal owned.
+                assert_eq!(ctx.as_data_value().to_owned(), owned);
+            }
+        });
+    }
+
+    /// The refresh-only path (used by parse_json and the per-task progress
+    /// refresh) must remain consistent when mixed with write-throughs.
+    #[test]
+    fn refresh_and_write_through_interleave() {
+        let mut owned = dv(json!({
+            "data": {},
+            "metadata": {},
+            "temp_data": {}
+        }));
+
+        with_arena(|arena| {
+            let mut ctx = ArenaContext::from_owned(&owned, arena);
+
+            // Simulate parse_json: direct owned write + refresh_for_path.
+            set_nested_value(&mut owned, "data.input", dv(json!({"payload": {"v": 7}})));
+            ctx.refresh_for_path(&owned, "data.input");
+            assert_eq!(ctx.as_data_value().to_owned(), owned);
+
+            // Then map write-throughs landing next to it.
+            let parts = parts_of("data.out.v");
+            let owned_val = dv(json!(7));
+            let value_av = owned_val.to_arena(arena);
+            ctx.apply_mutation_parts_write_through(&mut owned, &parts, value_av, |c| {
+                set_nested_value_parts(c, &parts, owned_val.clone());
+            });
+
+            // Simulate the progress write + narrow refresh.
+            set_nested_value(
+                &mut owned,
+                "metadata.progress",
+                dv(json!({"task_id": "t1"})),
+            );
+            ctx.refresh_for_path(&owned, "metadata.progress");
+            assert_eq!(ctx.as_data_value().to_owned(), owned);
+        });
     }
 }

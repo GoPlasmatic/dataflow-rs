@@ -367,12 +367,12 @@ impl WorkflowExecutor {
     /// share one implementation. The caller owns the `ArenaContext` lifetime,
     /// so the cross-workflow path can reuse the same arena form of
     /// `message.context` across consecutive workflows instead of rebuilding it.
-    fn run_tasks_slice_in_arena(
+    fn run_tasks_slice_in_arena<'arena>(
         &self,
-        tasks: &[Task],
+        tasks: &'arena [Task],
         workflow: &Workflow,
         message: &mut Message,
-        arena_ctx: &mut ArenaContext<'_>,
+        arena_ctx: &mut ArenaContext<'arena>,
         mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
     ) -> Result<bool> {
@@ -583,11 +583,11 @@ impl WorkflowExecutor {
     ///
     /// `map_snapshot_buf` is only consulted by the `Map` variant; non-Map
     /// sync builtins ignore it. Pass `None` from the production path.
-    fn execute_sync_task_in_arena(
+    fn execute_sync_task_in_arena<'arena>(
         &self,
-        task: &Task,
+        task: &'arena Task,
         message: &mut Message,
-        arena_ctx: &mut ArenaContext<'_>,
+        arena_ctx: &mut ArenaContext<'arena>,
         map_snapshot_buf: Option<&mut Vec<Value>>,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
         debug!(
