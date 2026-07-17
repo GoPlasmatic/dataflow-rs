@@ -74,26 +74,28 @@ impl PublishConfig {
         })
     }
 
-    /// Extract the source value as an owned `OwnedDataValue`.
-    fn extract_source(&self, message: &Message) -> OwnedDataValue {
-        // Direct field in `data`.
+    /// Resolve the source value as a borrow into the message context. The
+    /// serializers below only read the value, so no deep clone of the source
+    /// subtree is needed — the borrow ends before the context mutation.
+    /// Returns `None` when the path doesn't resolve.
+    fn resolve_source<'m>(&self, message: &'m Message) -> Option<&'m OwnedDataValue> {
+        // Direct field in `data` (also matches keys containing literal dots,
+        // which the nested walk below would split).
         if let Some(value) = message.data().get(&self.source) {
-            return value.clone();
+            return Some(value);
         }
 
         // Nested path inside `data`.
         if let Some(value) = get_nested_value(message.data(), &self.source) {
-            return value.clone();
+            return Some(value);
         }
 
         // `data.<path>` shorthand pointing back into `data`.
-        if let Some(path) = self.source.strip_prefix("data.")
-            && let Some(value) = get_nested_value(message.data(), path)
-        {
-            return value.clone();
+        if let Some(path) = self.source.strip_prefix("data.") {
+            return get_nested_value(message.data(), path);
         }
 
-        OwnedDataValue::Null
+        None
     }
 }
 
@@ -108,20 +110,25 @@ pub fn execute_publish_json(
         config.source, config.target
     );
 
-    let source_data = config.extract_source(message);
-
-    if matches!(source_data, OwnedDataValue::Null) {
-        return Err(DataflowError::Validation(format!(
-            "PublishJson: Source 'data.{}' not found or is null",
-            config.source
-        )));
-    }
+    // Borrowed resolve — a missing path and an explicit Null both reject,
+    // matching the historical extract_source contract.
+    let source_data = match config.resolve_source(message) {
+        Some(v) if !matches!(v, OwnedDataValue::Null) => v,
+        _ => {
+            return Err(DataflowError::Validation(format!(
+                "PublishJson: Source 'data.{}' not found or is null",
+                config.source
+            )));
+        }
+    };
 
     // For compact JSON, use OwnedDataValue's native emitter (fastest path).
     // For pretty JSON, bridge to serde_json::Value — pretty publish is not a
-    // hot path and the bridge cost there is irrelevant.
+    // hot path and the bridge cost there is irrelevant. Either way the
+    // serializer reads through the borrow; the source subtree is never
+    // deep-cloned.
     let json_string = if config.pretty {
-        let bridge = Value::from(&source_data);
+        let bridge = Value::from(source_data);
         serde_json::to_string_pretty(&bridge)
             .map_err(|e| DataflowError::Validation(format!("Failed to serialize to JSON: {}", e)))?
     } else {
@@ -158,16 +165,19 @@ pub fn execute_publish_xml(
         config.source, config.target
     );
 
-    let source_data = config.extract_source(message);
+    // Borrowed resolve — same contract as the JSON path: missing and
+    // explicit-Null sources both reject, no source deep clone.
+    let source_data = match config.resolve_source(message) {
+        Some(v) if !matches!(v, OwnedDataValue::Null) => v,
+        _ => {
+            return Err(DataflowError::Validation(format!(
+                "PublishXml: Source 'data.{}' not found or is null",
+                config.source
+            )));
+        }
+    };
 
-    if matches!(source_data, OwnedDataValue::Null) {
-        return Err(DataflowError::Validation(format!(
-            "PublishXml: Source 'data.{}' not found or is null",
-            config.source
-        )));
-    }
-
-    let bridge = Value::from(&source_data);
+    let bridge = Value::from(source_data);
     let xml_string = json_to_xml(&bridge, &config.root_element)?;
 
     let target_path = format!("data.{}", config.target);
