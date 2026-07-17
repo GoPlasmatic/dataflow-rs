@@ -42,6 +42,89 @@ fn next_async_boundary(tasks: &[Task], start: usize) -> usize {
     i
 }
 
+/// Build a fresh `metadata.progress` object value.
+fn new_progress_object(workflow_id: &str, task_id: &str, status: u16) -> OwnedDataValue {
+    OwnedDataValue::Object(vec![
+        (
+            "workflow_id".to_string(),
+            OwnedDataValue::String(workflow_id.to_string()),
+        ),
+        (
+            "task_id".to_string(),
+            OwnedDataValue::String(task_id.to_string()),
+        ),
+        (
+            "status_code".to_string(),
+            OwnedDataValue::from(u64::from(status)),
+        ),
+    ])
+}
+
+/// Write `metadata.progress = {workflow_id, task_id, status_code}` with a
+/// single tree walk. From the second task of a message onward the slot
+/// already holds the expected 3-key object, so the three values are
+/// overwritten in place — no Vec/Object/key-`String` allocations, just the
+/// two unavoidable id `String`s. First write (or any shape divergence)
+/// replaces the slot wholesale; a context whose `metadata` is missing or
+/// non-Object falls back to the generic `set_nested_value` writer, which
+/// creates intermediate containers as needed.
+fn write_progress_metadata(
+    context: &mut OwnedDataValue,
+    workflow_id: &str,
+    task_id: &str,
+    status: u16,
+) {
+    if let OwnedDataValue::Object(top) = context
+        && let Some((_, metadata)) = top.iter_mut().find(|(k, _)| k == "metadata")
+        && let OwnedDataValue::Object(meta) = metadata
+    {
+        match meta.iter_mut().find(|(k, _)| k == "progress") {
+            Some((_, slot)) => {
+                if let OwnedDataValue::Object(fields) = slot
+                    && fields.len() == 3
+                {
+                    let mut matched = 0;
+                    for (k, v) in fields.iter_mut() {
+                        match k.as_str() {
+                            "workflow_id" => {
+                                *v = OwnedDataValue::String(workflow_id.to_string());
+                                matched += 1;
+                            }
+                            "task_id" => {
+                                *v = OwnedDataValue::String(task_id.to_string());
+                                matched += 1;
+                            }
+                            "status_code" => {
+                                *v = OwnedDataValue::from(u64::from(status));
+                                matched += 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if matched == 3 {
+                        return;
+                    }
+                }
+                // Unexpected shape (partial overwrites above are harmless —
+                // the whole slot is replaced here).
+                *slot = new_progress_object(workflow_id, task_id, status);
+            }
+            None => {
+                meta.push((
+                    "progress".to_string(),
+                    new_progress_object(workflow_id, task_id, status),
+                ));
+            }
+        }
+        return;
+    }
+    set_nested_value(
+        context,
+        "metadata.progress",
+        new_progress_object(workflow_id, task_id, status),
+    );
+}
+
 /// Handles the execution of workflows and their tasks
 ///
 /// The `WorkflowExecutor` is responsible for:
@@ -339,11 +422,13 @@ impl WorkflowExecutor {
                 now,
             )?;
 
-            // The audit-trail / progress-metadata writes performed by
-            // `handle_task_result` mutate `message.context`. Refresh the
-            // arena cache so the next task — and, in the cross-workflow path,
-            // the next workflow's condition — sees them.
-            arena_ctx.refresh_for_path(&message.context, "metadata");
+            // The only context write `handle_task_result` performs is
+            // `metadata.progress`. Refresh exactly that depth-2 slot so the
+            // next task — and, in the cross-workflow path, the next
+            // workflow's condition — sees it, without re-arenaing unrelated
+            // metadata children (mapped `metadata.routing.*`, chained
+            // workflow state, …) after every task.
+            arena_ctx.refresh_for_path(&message.context, "metadata.progress");
 
             if let Some(t) = trace.as_deref_mut() {
                 let mut step = ExecutionStep::executed(&workflow.id, &task.id, message);
@@ -577,28 +662,13 @@ impl WorkflowExecutor {
                 // emitted: when multiple workflows are registered in the same
                 // engine, downstream workflows route on
                 // `metadata.progress.{workflow_id,task_id,status_code}` to
-                // advance through linear sequences. One batched write
-                // (single tree walk + single Object alloc) benchmarked ~3%
-                // faster than three separate writes on the realistic
-                // workload — replacing a slot beats find-and-update walks.
-                set_nested_value(
-                    &mut message.context,
-                    "metadata.progress",
-                    OwnedDataValue::Object(vec![
-                        (
-                            "workflow_id".to_string(),
-                            OwnedDataValue::String(workflow_id.to_string()),
-                        ),
-                        (
-                            "task_id".to_string(),
-                            OwnedDataValue::String(task_id.to_string()),
-                        ),
-                        (
-                            "status_code".to_string(),
-                            OwnedDataValue::from(status as u64),
-                        ),
-                    ]),
-                );
+                // advance through linear sequences. After the first task the
+                // slot already holds the expected 3-key object, so the write
+                // overwrites the three values in place — only the two id
+                // `String` allocs remain. (This beat both three separate
+                // `set_nested_value` calls and the batched slot replace on
+                // the realistic workload.)
+                write_progress_metadata(&mut message.context, workflow_id, task_id, status);
 
                 if halt {
                     info!("Task {} halted workflow {}", task_id, workflow_id);
