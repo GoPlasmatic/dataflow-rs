@@ -193,6 +193,16 @@ impl WorkflowExecutor {
     /// Unified workflow-condition + task-loop driver. `trace` is `None` for
     /// the production path and `Some(&mut trace)` for the debug path —
     /// stepping is the only behavioural difference between them.
+    ///
+    /// The workflow condition is folded into the *first* sync stretch's arena
+    /// scope: one `ArenaContext::from_owned` walk serves both the condition
+    /// eval and the leading run of sync built-in tasks. The owned path
+    /// (`eval_to_owned`) deep-borrowed the entire context — including the
+    /// heavy `data.input` payload — for the condition, and `execute_tasks`
+    /// then walked the same context again to build the first stretch's arena
+    /// form. Mixed sync+async workflows now pay one walk where they paid two.
+    /// No `.await` occurs inside the scope, preserving the `!Send` arena
+    /// invariant.
     async fn execute_inner(
         &self,
         workflow: &Workflow,
@@ -200,23 +210,79 @@ impl WorkflowExecutor {
         mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
     ) -> Result<bool> {
-        // Evaluate workflow condition directly against the OwnedDataValue context
-        let should_execute = evaluate_condition(
-            &self.engine,
-            workflow.compiled_condition.as_ref(),
-            &message.context,
-        )?;
-
-        if !should_execute {
-            debug!("Skipping workflow {} - condition not met", workflow.id);
-            if let Some(t) = trace.as_deref_mut() {
-                t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
-            }
-            return Ok(false);
+        /// Outcome of the folded condition-plus-first-stretch arena scope.
+        enum FirstStretch {
+            /// Workflow condition evaluated false — skip the workflow.
+            Skipped,
+            /// A filter task halted the workflow inside the first stretch.
+            Halted,
+            /// Continue with the remaining tasks (from the first async
+            /// boundary onward).
+            Continue,
         }
 
-        // Execute workflow tasks (trace recording happens inside the loop)
-        match self.execute_tasks(workflow, message, trace, now).await {
+        let tasks = &workflow.tasks;
+        let first_boundary = next_async_boundary(tasks, 0);
+
+        let first: Result<FirstStretch> =
+            if workflow.compiled_condition.is_none() && first_boundary == 0 {
+                // No condition and the workflow leads with an async task —
+                // nothing to fold; don't build an arena context for nothing.
+                Ok(FirstStretch::Continue)
+            } else {
+                with_arena(|arena| -> Result<FirstStretch> {
+                    let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
+
+                    let should_execute = match workflow.compiled_condition.as_ref() {
+                        None => true,
+                        Some(compiled) => evaluate_condition_in_arena(
+                            &self.engine,
+                            Some(compiled),
+                            arena_ctx.as_data_value(),
+                            arena,
+                        )?,
+                    };
+                    if !should_execute {
+                        return Ok(FirstStretch::Skipped);
+                    }
+                    if first_boundary == 0 {
+                        return Ok(FirstStretch::Continue);
+                    }
+                    let halted = self.run_tasks_slice_in_arena(
+                        &tasks[..first_boundary],
+                        workflow,
+                        message,
+                        &mut arena_ctx,
+                        trace.as_deref_mut(),
+                        now,
+                    )?;
+                    Ok(if halted {
+                        FirstStretch::Halted
+                    } else {
+                        FirstStretch::Continue
+                    })
+                })
+            };
+
+        // Drive the remaining (async-containing) tail, then apply the single
+        // workflow-level error contract to whichever half failed.
+        let run_result: Result<()> = match first {
+            Ok(FirstStretch::Skipped) => {
+                debug!("Skipping workflow {} - condition not met", workflow.id);
+                if let Some(t) = trace.as_deref_mut() {
+                    t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
+                }
+                return Ok(false);
+            }
+            Ok(FirstStretch::Halted) => Ok(()),
+            Ok(FirstStretch::Continue) => {
+                self.execute_tasks(workflow, message, trace, now, first_boundary)
+                    .await
+            }
+            Err(e) => Err(e),
+        };
+
+        match run_result {
             Ok(_) => {
                 info!("Successfully completed workflow: {}", workflow.id);
                 Ok(true)
@@ -250,7 +316,7 @@ impl WorkflowExecutor {
         }
     }
 
-    /// Execute all tasks in a workflow.
+    /// Execute the tasks of a workflow from index `start` onward.
     ///
     /// Groups consecutive synchronous built-in tasks into a single
     /// `with_arena` scope so the arena form of `message.context` is built
@@ -261,6 +327,9 @@ impl WorkflowExecutor {
     /// already mutates `message.context` in place) and the next stretch
     /// rebuilds the arena form.
     ///
+    /// `start` is non-zero when `execute_inner` already ran the leading sync
+    /// stretch inside the folded condition scope.
+    ///
     /// When `trace` is `Some`, the loop also records `ExecutionStep` entries
     /// after each task (skipped/executed) including per-mapping snapshots
     /// for `Map` tasks.
@@ -270,9 +339,10 @@ impl WorkflowExecutor {
         message: &mut Message,
         mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
+        start: usize,
     ) -> Result<()> {
         let tasks = &workflow.tasks;
-        let mut idx = 0;
+        let mut idx = start;
         while idx < tasks.len() {
             let stretch_end = next_async_boundary(tasks, idx);
 
