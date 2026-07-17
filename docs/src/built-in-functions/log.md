@@ -137,5 +137,6 @@ env_logger::Builder::new()
 - The log function **never modifies the message** — it is read-only
 - The log function **never fails** — it always returns status 200 with no changes
 - All JSONLogic expressions in `message` and `fields` are **pre-compiled** at engine startup
+- If the configured level is **filtered out** for the `dataflow::log` target (e.g. via `RUST_LOG`), the task short-circuits before evaluating any expression — disabled log tasks cost effectively nothing
 - If a JSONLogic expression fails to evaluate, the raw expression value is logged instead
 - The `fields` are formatted as `key=value` pairs appended to the log message

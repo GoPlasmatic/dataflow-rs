@@ -5,11 +5,99 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — v3.0.0 dev
+## [Unreleased] — v3.0.2
 
-The `feature/datalogic-v5` branch is the unreleased v3.0.0 development line.
-Entries below describe the in-flight changes; a full v3.0.0 release notes
-section will be stamped when the version ships to crates.io.
+Performance-focused release: adopts datalogic-rs 5.1 and lands a hot-path
+optimization pass. On the 10-core reference machine the `benchmark` example
+runs at ~640K msg/s (P50 6 μs, P99 51 μs); the realistic ISO 20022 →
+SwiftMT-103 workload improved ~242K → ~259K msg/s (+7%) with materially
+tighter tails (P99.9 ~215–270 μs → ~135–155 μs).
+
+### Added
+
+- `examples/micro_aggregate_bench.rs` — end-to-end benchmark for
+  aggregate-heavy (`reduce`/`map`) mappings; quantifies the datalogic 5.1
+  CSE + fusion wins (1.68× on a checkout-style workload).
+- `examples/micro_subtree_write_bench.rs` — scaling benchmark for many map
+  mappings targeting the same subtree (k = 5/25/100 writes).
+
+### Changed
+
+- **deps:** datalogic-rs `5.0 → 5.1` (common-subexpression elimination for
+  repeated pure aggregates, `reduce(map(...))` fusion) and datavalue-rs
+  `0.2.2 → 0.2.3`. API-compatible — no dataflow code changes required;
+  aggregate-heavy mappings improve substantially, scalar pipelines are flat.
+- **deps:** `uuid` enables `fast-rng` on non-wasm targets — default v7
+  message ids draw from a thread-local PRNG seeded once from the OS instead
+  of paying one `getrandom` syscall per message (+3% throughput, tighter
+  P99.9). Appropriate for v7 ids, which need uniqueness, not secrecy. The
+  wasm build keeps the lean `v7`+`std` feature set.
+- **Source compatibility (semver-minor):** `ParseConfig` and `PublishConfig`
+  gained engine-internal precomputed fields (`#[doc(hidden)]`,
+  `#[serde(skip)]`, not part of the stable API). Struct-literal construction
+  must now spread a default — e.g.
+  `ParseConfig { source, target, ..Default::default() }`. `ParseConfig`
+  derives `Default`; `PublishConfig` has a manual `Default` with
+  `root_element = "root"` (matching the serde default). JSON wire shape and
+  `from_json` construction are unchanged.
+
+### Performance
+
+- Map hot loop: arena-side write-through — consecutive mappings writing into
+  the same subtree no longer re-clone it per mapping; k same-subtree writes
+  now do O(k) total work instead of O(k²) (k=100 microbench: −27% ns/msg,
+  and the win grows with written-subtree size).
+- Workflow-condition evaluation folded into the first sync task stretch for
+  mixed sync+async workflows — one context walk instead of two
+  (`async_handler_benchmark`: +5.7% throughput; marginal cost of one custom
+  handler dispatch 0.56 → 0.09 μs/msg).
+- `publish_json` / `publish_xml` serialize from a borrowed source instead of
+  deep-cloning the source subtree first — hundreds of avoided allocations
+  per publish on ISO 20022-shaped payloads.
+- Per-task `metadata.progress` write updates the existing slot in place and
+  refreshes only that arena child instead of re-arenaing the whole
+  `metadata` tree.
+- `log` tasks short-circuit before evaluating any JSONLogic when their level
+  is filtered out for the `dataflow::log` target — filtered log tasks are
+  effectively free in production.
+- `parse_*` / `publish_*` target paths precomputed at engine build time (no
+  per-execution `format!` / path split / `Arc<str>` alloc); default v7
+  message ids stored in an inline buffer instead of a heap `String`.
+
+### Fixed
+
+- `benchmark` and `micro_cond_bench` referenced `{"var": "payload.input.*"}`,
+  which is outside the evaluation context (`data` / `metadata` /
+  `temp_data`) — every mapping silently evaluated to null and the published
+  numbers measured no-op work. Both now use the canonical `parse_json` →
+  `data.input.*` idiom, and every bench asserts at startup that its workload
+  actually computes. README performance numbers restated from the fixed
+  workload.
+
+## [3.0.1] — 2026-06-13
+
+### Performance
+
+- One bump arena shared across consecutive fully-sync workflows instead of
+  one arena rebuild per workflow.
+- Trivially-true workflow conditions fold to `None` at compile time,
+  skipping per-message condition evaluation entirely.
+
+### Changed
+
+- deps: datavalue-rs `0.2.2` and bumpalo `3.20` minimums aligned with the
+  lockfile.
+
+### Added
+
+- `examples/micro_cond_bench.rs` — single-threaded `process_message`
+  microbenchmark.
+- `examples/micro_multiworkflow_bench.rs` — quantifies per-workflow arena
+  rebuild cost.
+
+## [3.0.0] — 2026-05-15
+
+Major redesign of the custom-function API surface on the datalogic v5 core.
 
 Performance is neutral on the realistic ISO 20022 → SwiftMT-103 workload
 (230K msg/s, P50 23 μs). The new dyn-Any dispatch path for custom handlers
@@ -111,10 +199,8 @@ latency.
   `#[serde(skip)]`; it round-trips through JSON as `None` and is
   re-populated when the workflow is loaded into the engine.
 
-### Earlier v3.0.0 dev work (commit `c375ec6`)
+### Earlier v3.0.0 work (commit `c375ec6`)
 
 Datalogic v5 integration, sync-stretch arena reuse, hot-path perf work,
 and fail-loud `Engine::new` (compile every JSONLogic at startup, return
 `Err` on any failure). See commits `c8775fd..c375ec6` for the full set.
-These changes will be folded into the v3.0.0 release notes when the
-version ships.

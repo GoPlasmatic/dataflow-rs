@@ -20,10 +20,10 @@ Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF 
 Dataflow-rs is built for high-throughput hot paths. By compiling all JSONLogic expressions once at engine startup, runtime evaluation runs with zero allocations, zero parsing overhead, and predictable latency. 
 
 A multi-threaded benchmark (1,000,000 concurrent events) on a 10-core machine yields:
-*   **Throughput:** **~600,000 messages/sec**
-*   **Median (P50) Latency:** **7 μs**
-*   **Tail (P99) Latency:** **64 μs**
-*   **Tail (P99.9) Latency:** **131 μs**
+*   **Throughput:** **~640,000 messages/sec**
+*   **Median (P50) Latency:** **6 μs**
+*   **Tail (P99) Latency:** **51 μs**
+*   **Tail (P99.9) Latency:** **93 μs**
 
 ### 🧩 Full-Stack Ecosystem
 Go beyond backend microservices. Use the same rule definitions across your entire stack:
@@ -253,18 +253,23 @@ On a 10-core machine processing **1,000,000 messages** concurrently (Tokio multi
 
 | Metric | Value |
 |---|---|
-| **Throughput** | ~575,000 msg/sec |
-| **Avg Latency** | 12 μs |
-| **P50 Latency** | 8 μs |
-| **P99 Latency** | 66 μs |
-| **P99.9 Latency** | 125 μs |
+| **Throughput** | ~640,000 msg/sec |
+| **Avg Latency** | 10 μs |
+| **P50 Latency** | 6 μs |
+| **P99 Latency** | 51 μs |
+| **P99.9 Latency** | 93 μs |
 
 **Why it's fast:**
 - **Pre-Compilation:** All JSONLogic compiled at startup, zero runtime parsing
 - **Arc-Wrapped Logic:** Zero-copy sharing of compiled expressions across threads
-- **Context Arc Caching:** 50% improvement via cached Arc context
+- **Arena Evaluation:** Consecutive sync tasks evaluate against one bump-arena view of the context; map writes are spliced into it in place instead of re-cloning the written subtree
+- **Precomputed Paths:** Mapping, parse, and publish target paths are split and interned at compile time — the hot path never re-parses a path string
 - **Async I/O:** Non-blocking operations for external services via Tokio
-- **Predictable Latency:** No runtime allocations for logic evaluation
+
+**Tuning tip:** if you never read audit trails, build messages with
+`Message::builder().capture_changes(false)` — skipping the per-mapping
+old/new value snapshots is the largest single lever in mapping-heavy
+workloads. See the [performance guide](https://goplasmatic.github.io/dataflow-rs/advanced/performance.html) for more.
 
 Run the benchmarks and examples yourself:
 

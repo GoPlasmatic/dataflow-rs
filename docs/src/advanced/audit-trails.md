@@ -200,7 +200,7 @@ fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a Owned
 ## Best Practices
 
 1. **Track All Changes** - Custom functions should record all modifications
-2. **Use Arc<str> for ids** - `workflow_id` / `task_id` clone via refcount bump
+2. **Use `Arc<str>` for ids** - `workflow_id` / `task_id` clone via refcount bump
 3. **Timestamp Accuracy** - Timestamps are UTC for consistency
 4. **Check Audit Trail** - Review audit trail during development
 5. **Log for Production** - Persist audit trails for production debugging

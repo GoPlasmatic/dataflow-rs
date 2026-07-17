@@ -19,10 +19,10 @@ Whether you're routing events, validating data, building REST APIs, or creating 
 ### ⚡ Blazing Fast Performance
 
 Dataflow-rs is built for high-throughput hot paths. By pre-compiling all JSONLogic expressions at startup, execution runs with zero runtime allocations or JSON parsing overhead. On a 10-core machine, the multi-threaded release benchmark yields:
-*   **Throughput:** **~600,000 messages/sec**
-*   **Median (P50) Latency:** **7 μs**
-*   **Tail (P99) Latency:** **64 μs**
-*   **Tail (P99.9) Latency:** **131 μs**
+*   **Throughput:** **~640,000 messages/sec**
+*   **Median (P50) Latency:** **6 μs**
+*   **Tail (P99) Latency:** **51 μs**
+*   **Tail (P99.9) Latency:** **93 μs**
 
 ### 🧩 Why Choose dataflow-rs?
 

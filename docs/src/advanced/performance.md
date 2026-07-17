@@ -36,10 +36,12 @@ engine.process_message(&mut message).await?;
 
 ## Benchmarking
 
-Run the included benchmark:
+Run the included benchmarks:
 
 ```bash
-cargo run --example benchmark --release
+cargo run --example benchmark --release             # Throughput + latency percentiles
+cargo run --example realistic_benchmark --release   # ISO 20022 → SwiftMT-style workload
+cargo run --example micro_aggregate_bench --release # Aggregate-heavy (reduce/map) mappings
 ```
 
 ### Sample Benchmark
@@ -134,6 +136,12 @@ Store intermediate results to avoid recomputation:
 }
 ```
 
+> **Note:** since datalogic-rs 5.1, repeated pure subexpressions *within a
+> single mapping's logic* are evaluated once automatically
+> (common-subexpression elimination), and `reduce` over `map` is fused.
+> `temp_data` staging still pays off when the same result is reused across
+> different mappings or tasks.
+
 ### 5. Avoid Unnecessary Validation
 
 Validate only what's necessary:
@@ -148,6 +156,31 @@ Validate only what's necessary:
     ]
 }
 ```
+
+### 6. Disable Change Capture When Unused
+
+When change capture is on (the default), every mapping snapshots the old and
+new value into the audit trail — deep copies that dominate the profile in
+mapping-heavy workloads. If you never read `message.audit_trail()`, turn it
+off per message:
+
+```rust
+let mut message = Message::builder()
+    .payload_json(&payload)
+    .capture_changes(false)
+    .build();
+```
+
+This is the single largest tuning lever in the hot path. See
+[Audit Trails](audit-trails.md) for what you give up.
+
+### 7. Filtered Log Tasks Are Free
+
+`log` tasks check whether their level is enabled for the `dataflow::log`
+target *before* evaluating any JSONLogic or formatting fields. With
+production filtering like `RUST_LOG=dataflow::log=warn`, `debug`/`info` log
+tasks short-circuit at near-zero cost — you can leave diagnostic logging in
+production workflows without paying for it.
 
 ## Concurrent Processing
 
