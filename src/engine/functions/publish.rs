@@ -8,7 +8,7 @@
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::utils::{get_nested_value, set_nested_value};
+use crate::engine::utils::{get_nested_value, get_nested_value_parts, set_nested_value_parts};
 use datavalue::OwnedDataValue;
 use log::debug;
 use serde::Deserialize;
@@ -31,6 +31,36 @@ pub struct PublishConfig {
     /// Root element name for XML output.
     #[serde(default = "default_root_element")]
     pub root_element: String,
+
+    /// Engine-internal: precomputed `"data.{target}"`, populated by
+    /// `LogicCompiler` (and eagerly by [`Self::from_json`]). Cloned
+    /// (refcount bump) into `Change.path` instead of re-allocating per
+    /// call. Not part of the stable API.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub target_path_arc: Arc<str>,
+
+    /// Engine-internal: pre-split segments of the target path, consumed by
+    /// the `*_parts` tree walkers so the hot path never re-splits. Not part
+    /// of the stable API.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub target_path_parts: Arc<[Arc<str>]>,
+}
+
+// Manual impl so `..Default::default()` construction gets the same
+// `root_element` the serde default supplies ("root", not "").
+impl Default for PublishConfig {
+    fn default() -> Self {
+        Self {
+            source: String::new(),
+            target: String::new(),
+            pretty: false,
+            root_element: default_root_element(),
+            target_path_arc: Arc::from(""),
+            target_path_parts: Vec::new().into(),
+        }
+    }
 }
 
 fn default_root_element() -> String {
@@ -66,12 +96,40 @@ impl PublishConfig {
             .map(String::from)
             .unwrap_or_else(default_root_element);
 
-        Ok(PublishConfig {
+        let mut config = PublishConfig {
             source,
             target,
             pretty,
             root_element,
-        })
+            ..Default::default()
+        };
+        config.precompute_target_path();
+        Ok(config)
+    }
+
+    /// Populate the precomputed target-path fields from `target`. Called by
+    /// `LogicCompiler` for serde-built configs and by `from_json`.
+    pub(crate) fn precompute_target_path(&mut self) {
+        let path = format!("data.{}", self.target);
+        let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
+        self.target_path_parts = parts.into();
+        self.target_path_arc = Arc::from(path);
+    }
+
+    /// Precomputed `(path, parts)` for `data.{target}` — falls back to
+    /// computing on the fly for directly-constructed configs (the test
+    /// surface), mirroring the `MapMapping` fallback pattern.
+    fn resolve_target_path(&self) -> (Arc<str>, Arc<[Arc<str>]>) {
+        if self.target_path_parts.is_empty() {
+            let path = format!("data.{}", self.target);
+            let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
+            (Arc::from(path), parts.into())
+        } else {
+            (
+                Arc::clone(&self.target_path_arc),
+                Arc::clone(&self.target_path_parts),
+            )
+        }
     }
 
     /// Resolve the source value as a borrow into the message context. The
@@ -135,18 +193,18 @@ pub fn execute_publish_json(
         source_data.to_json_string()
     };
 
-    let target_path = format!("data.{}", config.target);
-    let old_value = get_nested_value(&message.context, &target_path)
+    let (target_path_arc, target_parts) = config.resolve_target_path();
+    let old_value = get_nested_value_parts(&message.context, &target_parts)
         .cloned()
         .unwrap_or(OwnedDataValue::Null);
     let new_value = OwnedDataValue::String(json_string);
 
-    set_nested_value(&mut message.context, &target_path, new_value.clone());
+    set_nested_value_parts(&mut message.context, &target_parts, new_value.clone());
 
     Ok((
         TaskOutcome::Success,
         vec![Change {
-            path: Arc::from(target_path),
+            path: target_path_arc,
             old_value,
             new_value,
         }],
@@ -180,18 +238,18 @@ pub fn execute_publish_xml(
     let bridge = Value::from(source_data);
     let xml_string = json_to_xml(&bridge, &config.root_element)?;
 
-    let target_path = format!("data.{}", config.target);
-    let old_value = get_nested_value(&message.context, &target_path)
+    let (target_path_arc, target_parts) = config.resolve_target_path();
+    let old_value = get_nested_value_parts(&message.context, &target_parts)
         .cloned()
         .unwrap_or(OwnedDataValue::Null);
     let new_value = OwnedDataValue::String(xml_string);
 
-    set_nested_value(&mut message.context, &target_path, new_value.clone());
+    set_nested_value_parts(&mut message.context, &target_parts, new_value.clone());
 
     Ok((
         TaskOutcome::Success,
         vec![Change {
-            path: Arc::from(target_path),
+            path: target_path_arc,
             old_value,
             new_value,
         }],
@@ -320,6 +378,7 @@ fn sanitize_xml_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::utils::set_nested_value;
     use serde_json::json;
 
     fn dv(v: serde_json::Value) -> OwnedDataValue {
@@ -377,6 +436,7 @@ mod tests {
             target: "user_json".to_string(),
             pretty: false,
             root_element: "root".to_string(),
+            ..Default::default()
         };
 
         let result = execute_publish_json(&mut message, &config);
@@ -400,6 +460,7 @@ mod tests {
             target: "output".to_string(),
             pretty: true,
             root_element: "root".to_string(),
+            ..Default::default()
         };
 
         let result = execute_publish_json(&mut message, &config);
@@ -418,6 +479,7 @@ mod tests {
             target: "output".to_string(),
             pretty: false,
             root_element: "root".to_string(),
+            ..Default::default()
         };
 
         assert!(execute_publish_json(&mut message, &config).is_err());
@@ -432,6 +494,7 @@ mod tests {
             target: "user_xml".to_string(),
             pretty: false,
             root_element: "user".to_string(),
+            ..Default::default()
         };
 
         let result = execute_publish_xml(&mut message, &config);
@@ -455,6 +518,7 @@ mod tests {
             target: "output".to_string(),
             pretty: false,
             root_element: "root".to_string(),
+            ..Default::default()
         };
 
         assert!(execute_publish_xml(&mut message, &config).is_err());
@@ -526,6 +590,7 @@ mod tests {
             target: "output".to_string(),
             pretty: false,
             root_element: "root".to_string(),
+            ..Default::default()
         };
 
         let result = execute_publish_json(&mut message, &config);

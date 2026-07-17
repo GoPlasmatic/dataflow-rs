@@ -131,6 +131,18 @@ impl LogicCompiler {
             FunctionConfig::PublishKafka { input, .. } => {
                 self.compile_publish_kafka_logic(input, task_id, workflow_id)
             }
+            // No JSONLogic to compile, but the `data.{target}` write path is
+            // precomputed here (path string + pre-split parts) so the hot
+            // path never re-formats or re-splits it.
+            FunctionConfig::ParseJson { input, .. } | FunctionConfig::ParseXml { input, .. } => {
+                input.precompute_target_path();
+                Ok(())
+            }
+            FunctionConfig::PublishJson { input, .. }
+            | FunctionConfig::PublishXml { input, .. } => {
+                input.precompute_target_path();
+                Ok(())
+            }
             // Custom and other functions don't need pre-compilation
             _ => Ok(()),
         }

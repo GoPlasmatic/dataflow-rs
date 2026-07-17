@@ -290,6 +290,13 @@ impl<'a> ArenaContext<'a> {
         self.refresh_after_write(owned_ctx, path);
     }
 
+    /// Pre-split variant of [`Self::refresh_for_path`] — callers holding
+    /// compiler-populated path parts (parse/publish target paths) skip the
+    /// per-call `str::split`.
+    pub fn refresh_for_path_parts(&mut self, owned_ctx: &OwnedDataValue, parts: &[Arc<str>]) {
+        self.refresh_after_write_parts(owned_ctx, parts);
+    }
+
     /// Pre-split variant of `refresh_after_write` — same algorithm, no
     /// per-call `str::split` walk. `parts` retains the original `#` prefix;
     /// the hash strip is applied here at lookup so the cache key matches

@@ -24,9 +24,45 @@ use uuid::Uuid;
 /// `audit_trail()`, `errors()`, `capture_changes()`; mutate `errors` via
 /// [`Message::add_error`]; mutate `context` via [`crate::TaskContext::set`].
 /// Direct mutation of `audit_trail` is engine-internal.
+/// Internal id storage for [`Message`]. The default UUID v7 id is written
+/// into a fixed inline buffer (36 hyphenated lowercase ASCII bytes) — no
+/// per-message heap allocation; a caller-supplied id keeps its `String`.
+/// Private repr: every public surface exposes it as `&str` via
+/// [`Message::id`], and the serialized wire shape (a JSON string) is
+/// unchanged.
+#[derive(Clone)]
+pub(crate) enum MessageId {
+    Uuid([u8; 36]),
+    Custom(String),
+}
+
+impl MessageId {
+    /// Generate a fresh UUID v7 id directly into the inline buffer.
+    fn new_uuid_v7() -> Self {
+        let mut buf = [0u8; 36];
+        Uuid::now_v7().hyphenated().encode_lower(&mut buf);
+        Self::Uuid(buf)
+    }
+
+    fn as_str(&self) -> &str {
+        match self {
+            // encode_lower fills all 36 bytes with hyphenated lowercase
+            // ASCII, so the buffer is always valid UTF-8.
+            Self::Uuid(buf) => std::str::from_utf8(buf).expect("uuid ids are ascii"),
+            Self::Custom(s) => s,
+        }
+    }
+}
+
+impl std::fmt::Debug for MessageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Message {
-    pub(crate) id: String,
+    pub(crate) id: MessageId,
     pub(crate) payload: Arc<OwnedDataValue>,
     /// Unified context containing `data`, `metadata`, and `temp_data` keys.
     /// Always an `OwnedDataValue::Object`; the engine populates the three
@@ -56,7 +92,7 @@ impl Serialize for Message {
     {
         use serde::ser::SerializeStruct;
         let mut state = serializer.serialize_struct("Message", 5)?;
-        state.serialize_field("id", &self.id)?;
+        state.serialize_field("id", &self.id.as_str())?;
         state.serialize_field("payload", &self.payload)?;
         state.serialize_field("context", &self.context)?;
         state.serialize_field("audit_trail", &self.audit_trail)?;
@@ -83,7 +119,7 @@ impl<'de> Deserialize<'de> for Message {
 
         let data = MessageData::deserialize(deserializer)?;
         Ok(Message {
-            id: data.id,
+            id: MessageId::Custom(data.id),
             payload: data.payload,
             context: data.context,
             audit_trail: data.audit_trail,
@@ -110,8 +146,9 @@ impl Message {
         Self {
             // UUID v7: ms-precision timestamp in the high bits, random tail.
             // Time-ordered and sortable — better for databases/logs than v4
-            // (random-only) and the same `rng` backend cost.
-            id: Uuid::now_v7().to_string(),
+            // (random-only) and the same `rng` backend cost. Encoded into the
+            // inline id buffer — no `String` allocation per message.
+            id: MessageId::new_uuid_v7(),
             payload,
             context: empty_context(),
             audit_trail: vec![],
@@ -149,7 +186,7 @@ impl Message {
     /// [`MessageBuilder::id`]).
     #[inline]
     pub fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 
     /// Original payload as the engine received it. Immutable for the
@@ -271,7 +308,10 @@ impl MessageBuilder {
     /// capture_changes = `true`.
     pub fn build(self) -> Message {
         Message {
-            id: self.id.unwrap_or_else(|| Uuid::now_v7().to_string()),
+            id: self
+                .id
+                .map(MessageId::Custom)
+                .unwrap_or_else(MessageId::new_uuid_v7),
             payload: self
                 .payload
                 .unwrap_or_else(|| Arc::new(OwnedDataValue::Null)),

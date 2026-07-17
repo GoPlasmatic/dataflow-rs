@@ -92,7 +92,6 @@ use std::sync::Arc;
 
 use compiler::LogicCompiler;
 use task_executor::TaskExecutor;
-use utils::set_nested_value;
 use workflow_executor::WorkflowExecutor;
 
 /// High-performance async workflow engine for message processing.
@@ -122,10 +121,10 @@ pub struct Engine {
     workflow_executor: Arc<WorkflowExecutor>,
     /// Shared datalogic v5 engine for JSONLogic evaluation (Send + Sync)
     datalogic: Arc<DatalogicEngine>,
-    /// Pre-built `Arc<OwnedDataValue::String>` of the engine version. Built
-    /// once at construction; stamped into `metadata.engine_version` per
-    /// message via an `Arc` refcount bump (the underlying `String` is never
-    /// re-allocated for this stamp).
+    /// Pre-built `Arc<OwnedDataValue::String>` of the engine version.
+    /// Built once at construction. Note the per-message stamp still clones
+    /// the inner `String` — the context owns its values, so the cached
+    /// form only saves re-formatting, not the (small) allocation.
     engine_version: Arc<OwnedDataValue>,
 }
 
@@ -311,12 +310,12 @@ impl Engine {
         set_processing_metadata(&mut message.context, &self.engine_version, now, None);
 
         // Process workflows in priority order (pre-sorted at construction).
-        // `run_all` groups consecutive fully-sync workflows into a single
-        // shared-arena scope so the context is deep-walked once per run rather
-        // than once per workflow.
-        let workflows: Vec<&Workflow> = self.workflows.iter().collect();
+        // `run_all_borrowed` groups consecutive fully-sync workflows into a
+        // single shared-arena scope so the context is deep-walked once per
+        // run rather than once per workflow. Passing the registry slice
+        // directly avoids the former per-message `Vec<&Workflow>` collect.
         self.workflow_executor
-            .run_all(&workflows, message, None, now)
+            .run_all_borrowed(&self.workflows[..], message, None, now)
             .await
     }
 
@@ -342,9 +341,8 @@ impl Engine {
         let mut trace = ExecutionTrace::new();
 
         // Process workflows in priority order (pre-sorted at construction).
-        let workflows: Vec<&Workflow> = self.workflows.iter().collect();
         self.workflow_executor
-            .run_all(&workflows, message, Some(&mut trace), now)
+            .run_all_borrowed(&self.workflows[..], message, Some(&mut trace), now)
             .await?;
 
         Ok(trace)
@@ -372,10 +370,12 @@ impl Engine {
         );
 
         if let Some(indices) = self.channel_index.get(channel) {
+            // Channel-selected workflows are non-contiguous in the registry,
+            // so the pointer collect stays on this path.
             let workflows: Vec<&Workflow> =
                 indices.iter().map(|&idx| &self.workflows[idx]).collect();
             self.workflow_executor
-                .run_all(&workflows, message, None, now)
+                .run_all_borrowed(&workflows, message, None, now)
                 .await?;
         }
 
@@ -408,7 +408,7 @@ impl Engine {
             let workflows: Vec<&Workflow> =
                 indices.iter().map(|&idx| &self.workflows[idx]).collect();
             self.workflow_executor
-                .run_all(&workflows, message, Some(&mut trace), now)
+                .run_all_borrowed(&workflows, message, Some(&mut trace), now)
                 .await?;
         }
 
@@ -572,30 +572,46 @@ fn function_not_found_error(
 /// `now` is captured once at the top of `process_message` and reused so the
 /// timestamp on `metadata.processed_at` matches the one used for every
 /// `AuditTrail` entry within the same call.
-/// `engine_version` is the cached `Arc<OwnedDataValue::String>` owned by
-/// `Engine`; the deref-and-clone here is one Arc-bump's worth of work, not
-/// a `String` allocation.
+///
+/// Walks to the `metadata` object once and sets every key in a single pass,
+/// instead of one full `"metadata.*"` path split + tree walk per key.
+/// Mirrors `set_nested_value` semantics for the degenerate shapes: a
+/// non-object context or a non-object existing `metadata` slot no-ops; a
+/// missing `metadata` slot is created.
+///
+/// `(**engine_version).clone()` deep-clones the inner `String` — the
+/// context owns its values, so one small allocation per message is
+/// inherent; the cached `Arc` only saves re-formatting the version.
 fn set_processing_metadata(
     context: &mut OwnedDataValue,
     engine_version: &Arc<OwnedDataValue>,
     now: chrono::DateTime<Utc>,
     channel: Option<&str>,
 ) {
-    set_nested_value(
-        context,
-        "metadata.processed_at",
-        OwnedDataValue::String(now.to_rfc3339()),
-    );
-    set_nested_value(
-        context,
-        "metadata.engine_version",
-        (**engine_version).clone(),
-    );
+    let OwnedDataValue::Object(top) = context else {
+        return;
+    };
+    let metadata = match top.iter().position(|(k, _)| k == "metadata") {
+        Some(i) => &mut top[i].1,
+        None => {
+            top.push(("metadata".to_string(), OwnedDataValue::Object(Vec::new())));
+            &mut top.last_mut().expect("just pushed").1
+        }
+    };
+    let OwnedDataValue::Object(meta) = metadata else {
+        return;
+    };
+
+    let mut set_key = |key: &str, value: OwnedDataValue| {
+        if let Some(slot) = meta.iter_mut().find(|(k, _)| k == key) {
+            slot.1 = value;
+        } else {
+            meta.push((key.to_string(), value));
+        }
+    };
+    set_key("processed_at", OwnedDataValue::String(now.to_rfc3339()));
+    set_key("engine_version", (**engine_version).clone());
     if let Some(channel) = channel {
-        set_nested_value(
-            context,
-            "metadata.channel",
-            OwnedDataValue::String(channel.to_string()),
-        );
+        set_key("channel", OwnedDataValue::String(channel.to_string()));
     }
 }

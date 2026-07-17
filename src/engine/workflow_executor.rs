@@ -525,16 +525,30 @@ impl WorkflowExecutor {
         &self,
         workflows: &[&Workflow],
         message: &mut Message,
+        trace: Option<&mut ExecutionTrace>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        self.run_all_borrowed(workflows, message, trace, now).await
+    }
+
+    /// Generic driver behind [`Self::run_all`]: accepts any slice whose
+    /// elements borrow as `Workflow` — `&[Workflow]` directly from the
+    /// engine's registry (no per-message `Vec<&Workflow>` collect) or the
+    /// `&[&Workflow]` shape the public entry keeps for compatibility.
+    pub(crate) async fn run_all_borrowed<W: std::borrow::Borrow<Workflow>>(
+        &self,
+        workflows: &[W],
+        message: &mut Message,
         mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
     ) -> Result<()> {
         let mut i = 0;
         while i < workflows.len() {
-            if workflows[i].fully_sync {
+            if workflows[i].borrow().fully_sync {
                 // Extend over the maximal run of consecutive fully-sync
                 // workflows and execute them in one shared arena scope.
                 let mut j = i + 1;
-                while j < workflows.len() && workflows[j].fully_sync {
+                while j < workflows.len() && workflows[j].borrow().fully_sync {
                     j += 1;
                 }
                 self.execute_sync_workflow_run(
@@ -547,7 +561,7 @@ impl WorkflowExecutor {
             } else {
                 // Mixed sync+async (or fully-async) workflow: the existing
                 // driver interleaves per-stretch arenas with `.await`.
-                self.execute_inner(workflows[i], message, trace.as_deref_mut(), now)
+                self.execute_inner(workflows[i].borrow(), message, trace.as_deref_mut(), now)
                     .await?;
                 i += 1;
             }
@@ -572,9 +586,9 @@ impl WorkflowExecutor {
     /// precondition guarantees every task is a sync built-in, so no `.await`
     /// occurs while the `!Send` arena borrow is live. The borrow checker
     /// enforces this — the shared `ArenaContext` cannot escape the closure.
-    fn execute_sync_workflow_run(
+    fn execute_sync_workflow_run<W: std::borrow::Borrow<Workflow>>(
         &self,
-        workflows: &[&Workflow],
+        workflows: &[W],
         message: &mut Message,
         mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
@@ -582,7 +596,8 @@ impl WorkflowExecutor {
         with_arena(|arena| -> Result<()> {
             let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
 
-            for &workflow in workflows {
+            for workflow in workflows {
+                let workflow: &Workflow = workflow.borrow();
                 // Workflow condition in-arena: a folded `None` skips the eval;
                 // a real condition reuses the carried context instead of the
                 // owned-path `eval_to_owned` deep-walk.

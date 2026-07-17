@@ -14,7 +14,7 @@ use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::ArenaContext;
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::utils::{get_nested_value, set_nested_value};
+use crate::engine::utils::{get_nested_value, get_nested_value_parts, set_nested_value_parts};
 use datavalue::OwnedDataValue;
 use log::debug;
 use serde::Deserialize;
@@ -22,13 +22,28 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// Configuration for parse functions.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ParseConfig {
     /// Source path to read from.
     pub source: String,
 
     /// Target field name in `data` (stored at `data.{target}`).
     pub target: String,
+
+    /// Engine-internal: precomputed `"data.{target}"`, populated by
+    /// `LogicCompiler` (and eagerly by [`Self::from_json`]). Cloned
+    /// (refcount bump) into `Change.path` instead of re-allocating per
+    /// call. Not part of the stable API.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub target_path_arc: Arc<str>,
+
+    /// Engine-internal: pre-split segments of the target path, consumed by
+    /// the `*_parts` tree walkers so the hot path never re-splits. Not part
+    /// of the stable API.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub target_path_parts: Arc<[Arc<str>]>,
 }
 
 impl ParseConfig {
@@ -49,7 +64,38 @@ impl ParseConfig {
             })?
             .to_string();
 
-        Ok(ParseConfig { source, target })
+        let mut config = ParseConfig {
+            source,
+            target,
+            ..Default::default()
+        };
+        config.precompute_target_path();
+        Ok(config)
+    }
+
+    /// Populate the precomputed target-path fields from `target`. Called by
+    /// `LogicCompiler` for serde-built configs and by `from_json`.
+    pub(crate) fn precompute_target_path(&mut self) {
+        let path = format!("data.{}", self.target);
+        let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
+        self.target_path_parts = parts.into();
+        self.target_path_arc = Arc::from(path);
+    }
+
+    /// Precomputed `(path, parts)` for `data.{target}` — falls back to
+    /// computing on the fly for directly-constructed configs (the test
+    /// surface), mirroring the `MapMapping` fallback pattern.
+    fn resolve_target_path(&self) -> (Arc<str>, Arc<[Arc<str>]>) {
+        if self.target_path_parts.is_empty() {
+            let path = format!("data.{}", self.target);
+            let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
+            (Arc::from(path), parts.into())
+        } else {
+            (
+                Arc::clone(&self.target_path_arc),
+                Arc::clone(&self.target_path_parts),
+            )
+        }
     }
 
     /// Extract the source value as an owned `OwnedDataValue`.
@@ -84,7 +130,7 @@ pub fn execute_parse_json(
         config.source, config.target
     );
 
-    let target_path = format!("data.{}", config.target);
+    let (target_path_arc, target_parts) = config.resolve_target_path();
 
     // Hot path: source == "payload" and not a JSON-string payload. The
     // payload Arc is already on the message; clone-into-context once, reuse
@@ -94,7 +140,7 @@ pub fn execute_parse_json(
         config.source == "payload" && !matches!(*message.payload, OwnedDataValue::String(_));
 
     if message.capture_changes {
-        let old_value = get_nested_value(&message.context, &target_path)
+        let old_value = get_nested_value_parts(&message.context, &target_parts)
             .cloned()
             .unwrap_or(OwnedDataValue::Null);
 
@@ -118,7 +164,7 @@ pub fn execute_parse_json(
         // entry — `Change` owns its values directly.)
         let new_value = source_data.clone();
 
-        set_nested_value(&mut message.context, &target_path, source_data);
+        set_nested_value_parts(&mut message.context, &target_parts, source_data);
         debug!(
             "ParseJson: Successfully stored data to 'data.{}'",
             config.target
@@ -126,7 +172,7 @@ pub fn execute_parse_json(
         return Ok((
             TaskOutcome::Success,
             vec![Change {
-                path: Arc::from(target_path),
+                path: target_path_arc,
                 old_value,
                 new_value,
             }],
@@ -145,7 +191,7 @@ pub fn execute_parse_json(
             _ => raw,
         }
     };
-    set_nested_value(&mut message.context, &target_path, source_data_for_context);
+    set_nested_value_parts(&mut message.context, &target_parts, source_data_for_context);
 
     debug!(
         "ParseJson: Successfully stored data to 'data.{}'",
@@ -163,15 +209,13 @@ pub(crate) fn execute_parse_json_in_arena(
     config: &ParseConfig,
     arena_ctx: &mut ArenaContext<'_>,
 ) -> Result<(TaskOutcome, Vec<Change>)> {
-    // Resolve the write target before calling execute_parse_json so we can
-    // refresh the arena slot afterwards using the same path.
-    let target_path = format!("data.{}", config.target);
     let result = execute_parse_json(message, config)?;
     // Refresh ONLY the affected depth-2 slot in the arena cache. For
     // source == "payload" target = "input", this is `data.input` — the
     // heavy slot — but it's re-arena'd exactly once per workflow stretch
     // here, not once per subsequent map mapping.
-    arena_ctx.refresh_for_path(&message.context, &target_path);
+    let (_, target_parts) = config.resolve_target_path();
+    arena_ctx.refresh_for_path_parts(&message.context, &target_parts);
     Ok(result)
 }
 
@@ -202,12 +246,12 @@ pub fn execute_parse_xml(
     let parsed_json = xml_to_json(&xml_string)?;
     let parsed_owned = OwnedDataValue::from(&parsed_json);
 
-    let target_path = format!("data.{}", config.target);
-    let old_value = get_nested_value(&message.context, &target_path)
+    let (target_path_arc, target_parts) = config.resolve_target_path();
+    let old_value = get_nested_value_parts(&message.context, &target_parts)
         .cloned()
         .unwrap_or(OwnedDataValue::Null);
 
-    set_nested_value(&mut message.context, &target_path, parsed_owned.clone());
+    set_nested_value_parts(&mut message.context, &target_parts, parsed_owned.clone());
 
     debug!(
         "ParseXml: Successfully parsed and stored XML to 'data.{}'",
@@ -217,7 +261,7 @@ pub fn execute_parse_xml(
     Ok((
         TaskOutcome::Success,
         vec![Change {
-            path: Arc::from(target_path),
+            path: target_path_arc,
             old_value,
             new_value: parsed_owned,
         }],
@@ -237,6 +281,7 @@ fn xml_to_json(xml: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::utils::set_nested_value;
     use serde_json::json;
 
     fn dv(v: serde_json::Value) -> OwnedDataValue {
@@ -269,6 +314,7 @@ mod tests {
         let config = ParseConfig {
             source: "payload".to_string(),
             target: "input".to_string(),
+            ..Default::default()
         };
 
         let result = execute_parse_json(&mut message, &config);
@@ -291,6 +337,7 @@ mod tests {
         let config = ParseConfig {
             source: "payload.body.user".to_string(),
             target: "user_data".to_string(),
+            ..Default::default()
         };
 
         let result = execute_parse_json(&mut message, &config);
@@ -313,6 +360,7 @@ mod tests {
         let config = ParseConfig {
             source: "data.existing".to_string(),
             target: "copied".to_string(),
+            ..Default::default()
         };
 
         let result = execute_parse_json(&mut message, &config);
@@ -329,6 +377,7 @@ mod tests {
         let config = ParseConfig {
             source: "payload".to_string(),
             target: "parsed".to_string(),
+            ..Default::default()
         };
 
         let result = execute_parse_xml(&mut message, &config);
@@ -349,6 +398,7 @@ mod tests {
         let config = ParseConfig {
             source: "payload".to_string(),
             target: "parsed".to_string(),
+            ..Default::default()
         };
 
         assert!(execute_parse_xml(&mut message, &config).is_err());
@@ -392,6 +442,7 @@ mod tests {
         let config = ParseConfig {
             source: "payload".to_string(),
             target: "input".to_string(),
+            ..Default::default()
         };
 
         let result = execute_parse_json(&mut message, &config);

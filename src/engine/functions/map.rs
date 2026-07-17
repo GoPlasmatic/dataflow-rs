@@ -146,7 +146,13 @@ impl MapConfig {
         engine: &Arc<Engine>,
         mut trace_snapshots: Option<&mut Vec<Value>>,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
-        let mut changes = Vec::new();
+        // Audit-on runs push one Change per non-null mapping — size for the
+        // common all-mappings-write case up front.
+        let mut changes = if message.capture_changes {
+            Vec::with_capacity(self.mappings.len())
+        } else {
+            Vec::new()
+        };
         let mut errors_encountered = false;
 
         debug!("Map: Executing {} mappings", self.mappings.len());
