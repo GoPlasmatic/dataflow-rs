@@ -22,6 +22,19 @@ pub enum LogLevel {
     Error,
 }
 
+impl LogLevel {
+    /// The `log` crate level this variant emits at.
+    fn as_log_level(&self) -> log::Level {
+        match self {
+            LogLevel::Trace => log::Level::Trace,
+            LogLevel::Debug => log::Level::Debug,
+            LogLevel::Info => log::Level::Info,
+            LogLevel::Warn => log::Level::Warn,
+            LogLevel::Error => log::Level::Error,
+        }
+    }
+}
+
 /// Configuration for the log function.
 ///
 /// The message and field expressions are pre-compiled at startup.
@@ -76,6 +89,13 @@ impl LogConfig {
         arena_ctx: &mut ArenaContext<'_>,
         engine: &Arc<Engine>,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
+        // If the target level is filtered out by the active logger, every
+        // JSONLogic eval and string alloc below would feed a message the
+        // logger drops on arrival. Skip the whole task.
+        if !log::log_enabled!(target: "dataflow::log", self.level.as_log_level()) {
+            return Ok((TaskOutcome::Success, vec![]));
+        }
+
         let arena = arena_ctx.arena();
         let ctx_av = arena_ctx.as_data_value();
 
