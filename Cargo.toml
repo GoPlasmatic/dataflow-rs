@@ -29,7 +29,7 @@ thiserror = "2.0"
 log = "0.4"
 tokio = { version = "1", features = ["rt", "macros"] }
 async-trait = "0.1"
-quick-xml = { version = "0.37", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 getrandom = { version = "0.3", optional = true }
 
 [dev-dependencies]
