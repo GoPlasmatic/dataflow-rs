@@ -15,8 +15,11 @@ Rules are defined in JSON and consist of actions (tasks) that process data seque
 use dataflow_rs::prelude::*;
 use serde_json::json;
 
+// Note: `Result` here is dataflow-rs's own alias, re-exported by the prelude.
+// It takes a single type parameter, so write `Result<()>` — not the two-argument
+// `Result<(), Box<dyn Error>>` you may be used to from std.
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     // Define a rule that loads the payload into `data.input` and then
     // transforms it. Letting `parse_json` seed `data` is the idiomatic
     // pattern — handlers don't have to reach into `message.context`.

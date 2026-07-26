@@ -122,11 +122,15 @@ The log function allows you to:
 
 All log messages are emitted with the target `dataflow::log`, making it easy to filter in your logging configuration:
 
-```rust
-// Using env_logger
-RUST_LOG=dataflow::log=info cargo run
+Filter via `RUST_LOG` when running:
 
-// Or filter specifically for dataflow logs
+```bash
+RUST_LOG=dataflow::log=info cargo run
+```
+
+Or configure the filter in code:
+
+```rust
 env_logger::Builder::new()
     .filter_module("dataflow::log", log::LevelFilter::Debug)
     .init();

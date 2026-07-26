@@ -46,6 +46,8 @@ Actions are the building blocks of rules. Each action:
 ## Creating Actions Programmatically
 
 ```rust
+# use dataflow_rs::FunctionConfig;
+# fn _demo(function_config: FunctionConfig) {
 use dataflow_rs::{Action, FunctionConfig};
 
 let action = Action::action(
@@ -53,6 +55,7 @@ let action = Action::action(
     "Apply Discount",
     function_config,
 );
+# }
 ```
 
 ## Function Configuration
@@ -86,10 +89,21 @@ The `function` object specifies what the action does:
 Register custom handlers via the engine builder:
 
 ```rust
+# use async_trait::async_trait;
+# use dataflow_rs::prelude::*;
+# struct MyCustomFunction;
+# #[async_trait]
+# impl AsyncFunctionHandler for MyCustomFunction {
+#     type Input = ();
+#     async fn execute(&self, _c: &mut TaskContext<'_>, _i: &())
+#         -> Result<TaskOutcome> { Ok(TaskOutcome::Success) }
+# }
+# fn _demo(rules: Vec<Workflow>) -> Result<()> {
 let engine = Engine::builder()
     .with_workflows(rules)
     .register("my_custom_function", MyCustomFunction)
     .build()?;
+# Ok(()) }
 ```
 
 Then reference them by name in actions:

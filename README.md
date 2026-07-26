@@ -5,6 +5,7 @@
 
   **A high-performance rules engine for IFTTT-style automation in Rust with zero-overhead JSONLogic evaluation.**
 
+  [![CI](https://github.com/GoPlasmatic/dataflow-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/GoPlasmatic/dataflow-rs/actions/workflows/ci.yml)
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
   [![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
   [![Crates.io](https://img.shields.io/crates/v/dataflow-rs.svg)](https://crates.io/crates/dataflow-rs)
@@ -40,7 +41,7 @@ Go beyond backend microservices. Use the same rule definitions across your entir
 
 ## How It Works: IF → THEN → THAT
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  Rule (Workflow)                                                │
 │                                                                 │
@@ -87,6 +88,28 @@ serde_json = "1.0"
 
 ### 2. Define Rules in JSON
 
+A message arrives with its body in `payload`. Conditions and mappings are
+evaluated against `data`, so the first rule loads the payload into `data`, and
+the second rule acts on it. This is the **chaining** in IF → THEN → THAT: rules
+run in order, and each one sees what the previous rules wrote.
+
+```json
+{
+    "id": "order_intake",
+    "name": "Order Intake",
+    "tasks": [
+        {
+            "id": "load_order",
+            "name": "Load payload into data.order",
+            "function": {
+                "name": "parse_json",
+                "input": {"source": "payload", "target": "order"}
+            }
+        }
+    ]
+}
+```
+
 ```json
 {
     "id": "premium_order",
@@ -116,6 +139,11 @@ serde_json = "1.0"
 }
 ```
 
+> **A rule's condition is evaluated before any of its own tasks run.** A
+> condition can only read what earlier rules produced — never what its own tasks
+> are about to write. That is why the parse lives in its own rule here rather
+> than as a first task on `premium_order`.
+
 ### 3. Run the Engine
 
 ```rust
@@ -125,8 +153,24 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Paste the JSON rule defined in Step 2:
-    let rule_json = r#"{
+    // Rule 1 from Step 2 — always runs, moves the payload into `data.order`.
+    let intake = Workflow::from_json(r#"{
+        "id": "order_intake",
+        "name": "Order Intake",
+        "tasks": [
+            {
+                "id": "load_order",
+                "name": "Load payload into data.order",
+                "function": {
+                    "name": "parse_json",
+                    "input": {"source": "payload", "target": "order"}
+                }
+            }
+        ]
+    }"#)?;
+
+    // Rule 2 from Step 2 — runs only when the condition matches.
+    let premium = Workflow::from_json(r#"{
         "id": "premium_order",
         "name": "Premium Order Processing",
         "condition": {">=": [{"var": "data.order.total"}, 1000]},
@@ -151,17 +195,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         ]
-    }"#;
-
-    let workflow = Workflow::from_json(rule_json)?;
+    }"#)?;
 
     // Create engine — all JSONLogic compiled once here
-    let engine = Engine::builder().with_workflow(workflow).build()?;
+    let engine = Engine::builder()
+        .with_workflows(vec![intake, premium])
+        .build()?;
 
-    // Process a message
-    let payload = json!({"order": {"total": 1500}});
-    let mut message = Message::from_value(&payload);
+    // Process a message. `from_value` sets the *payload*; `parse_json` in the
+    // first rule is what lands it in `data`.
+    let mut message = Message::from_value(&json!({"total": 1500}));
     engine.process_message(&mut message).await?;
+
+    assert_eq!(message.data()["order"]["discount"].as_f64(), Some(150.0));
+    assert_eq!(message.data()["order"]["final_total"].as_f64(), Some(1350.0));
 
     println!("Discount: {}", message.data()["order"]["discount"]); // 150
     println!("Final Total: {}", message.data()["order"]["final_total"]); // 1350
@@ -181,7 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 A short-circuit `?` will surface only the first kind. For full coverage:
 
-```rust
+```rust,no_run
 use dataflow_rs::{Engine, Workflow};
 use dataflow_rs::engine::message::Message;
 use serde_json::json;
@@ -215,7 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Using Rules Engine Aliases
 
-```rust
+```rust,ignore
 use dataflow_rs::{RulesEngine, Rule, Action};
 
 // These are type aliases — same types, rules-engine terminology
@@ -346,10 +393,12 @@ impl AsyncFunctionHandler for NotifyManager {
 
 // Register handlers via the builder. `.register("name", h)` accepts any
 // `AsyncFunctionHandler` and boxes it internally.
-let engine = Engine::builder()
-    .with_workflows(workflows)
-    .register("notify_manager", NotifyManager)
-    .build()?;
+fn build(workflows: Vec<dataflow_rs::Workflow>) -> dataflow_rs::Result<Engine> {
+    Engine::builder()
+        .with_workflows(workflows)
+        .register("notify_manager", NotifyManager)
+        .build()
+}
 ```
 
 ## Built-in Functions
@@ -410,7 +459,7 @@ Log levels: `trace`, `debug`, `info`, `warn`, `error`. Messages and fields suppo
 
 Route messages to specific workflow channels for efficient O(1) dispatch:
 
-```rust
+```rust,ignore
 // Workflows define their channel
 // { "id": "order_rule", "channel": "orders", "status": "active", ... }
 
@@ -452,7 +501,7 @@ All fields are optional and backward-compatible with existing configurations.
 
 Swap workflows at runtime without losing custom function registrations:
 
-```rust
+```rust,ignore
 let new_workflows = vec![Workflow::from_json(r#"{ ... }"#)?];
 let new_engine = engine.with_new_workflows(new_workflows);
 // Old engine remains valid for in-flight messages

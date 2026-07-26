@@ -74,10 +74,21 @@ Three concrete things the new shape removes:
 ## Registering Custom Functions
 
 ```rust
+# use async_trait::async_trait;
+# use dataflow_rs::prelude::*;
+# struct MyCustomFunction;
+# #[async_trait]
+# impl AsyncFunctionHandler for MyCustomFunction {
+#     type Input = ();
+#     async fn execute(&self, _c: &mut TaskContext<'_>, _i: &())
+#         -> Result<TaskOutcome> { Ok(TaskOutcome::Success) }
+# }
+# fn _demo(workflows: Vec<Workflow>) -> Result<()> {
 let engine = Engine::builder()
     .with_workflows(workflows)
     .register("my_custom_function", MyCustomFunction)
     .build()?;
+# Ok(()) }
 ```
 
 `register("name", handler)` accepts any `AsyncFunctionHandler` and boxes

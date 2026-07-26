@@ -4,17 +4,37 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'docs/**'
-      - '*.md'
+      # Neither README.md nor docs/** appear here on purpose. The Rust blocks in
+      # both are compiled as doctests (ReadmeDoctests in src/lib.rs, and the
+      # dataflow-docs-tests member for the book), so edits to either can break
+      # the build and must run CI. Only files with no compiled content belong
+      # in this list.
+      - 'CHANGELOG.md'
+      - 'CLAUDE.md'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
       - 'LICENSE'
       - '.github/workflows/docs.yml'
   pull_request:
     branches: [main]
     paths-ignore:
-      - 'docs/**'
-      - '*.md'
+      # Neither README.md nor docs/** appear here on purpose. The Rust blocks in
+      # both are compiled as doctests (ReadmeDoctests in src/lib.rs, and the
+      # dataflow-docs-tests member for the book), so edits to either can break
+      # the build and must run CI. Only files with no compiled content belong
+      # in this list.
+      - 'CHANGELOG.md'
+      - 'CLAUDE.md'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
       - 'LICENSE'
       - '.github/workflows/docs.yml'
+  # A new RUSTSEC advisory lands against unchanged code, so the supply-chain
+  # gate needs a trigger that does not depend on someone pushing. This also
+  # catches stable-toolchain regressions in the other jobs.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -51,10 +71,10 @@ jobs:
       # `--workspace` so dataflow-wasm is covered too, and `--all-features` so
       # the `wasm-web` feature gets linted rather than silently skipped.
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --locked
 
   # The native job above builds dataflow-wasm for the host only. This job is
   # what actually exercises the wasm32 target, where uuid/chrono take different
@@ -99,3 +119,102 @@ jobs:
       - name: Run wasm tests
         run: wasm-pack test --node
         working-directory: wasm
+
+  # `rust-version` in Cargo.toml is a promise to downstream consumers, and
+  # nothing else in CI verifies it — the other jobs run stable. This caught the
+  # crate having silently required 1.88 (let-chains) while advertising 1.85.
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust 1.85
+        uses: dtolnay/rust-toolchain@1.85
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-msrv-
+
+      # `--locked` so this checks the MSRV of the dependency versions we
+      # actually ship, not whatever the resolver picks today. `--all-targets`
+      # so examples and tests are held to the same bar as the library.
+      - name: Check against MSRV
+        run: cargo check --workspace --all-targets --all-features --locked
+
+  # `ui/` is published to npm by release.yml, which runs `build:lib` for the
+  # first time at publish time. Without this job a broken build (or a broken
+  # type bundle, as in dataflow-ui v2.1.3) is only discovered after it ships.
+  ui:
+    name: UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # Resolves @goplasmatic/dataflow-wasm from npm at the version pinned in
+      # package.json rather than building it locally. That is enough to catch
+      # UI-side build and typing regressions; release.yml is what validates the
+      # UI against this release's freshly-built wasm.
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Lint
+        run: npm run lint
+        working-directory: ui
+
+      # `build:lib` is `tsc && vite build`, so this type-checks the whole
+      # package as well as producing the artifact.
+      - name: Type-check and build library
+        run: npm run build:lib
+        working-directory: ui
+
+      # `vite-dts` has silently emitted an empty declaration file before. A
+      # successful build is not sufficient evidence that the types are usable.
+      - name: Verify type declarations are non-empty
+        working-directory: ui
+        run: |
+          DTS="dist/lib.d.ts"
+          if [ ! -s "$DTS" ]; then
+            echo "::error::$DTS is missing or empty"
+            exit 1
+          fi
+          if ! grep -q 'export' "$DTS"; then
+            echo "::error::$DTS contains no export declarations:"
+            cat "$DTS"
+            exit 1
+          fi
+          echo "$DTS OK ($(wc -c < "$DTS") bytes, $(grep -c 'export' "$DTS") export lines)"
+
+  # Supply-chain gate: RUSTSEC advisories, license policy, and source policy.
+  # See deny.toml. v3.0.3 was a hand-rolled response to RUSTSEC-2026-0194/0195;
+  # the scheduled run below is what surfaces the next one without a human
+  # noticing first.
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          arguments: --all-features
+          command: check advisories licenses sources bans

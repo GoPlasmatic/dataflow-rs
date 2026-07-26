@@ -24,7 +24,7 @@ use dataflow_rs::Engine;  // or: use dataflow_rs::RulesEngine;
 
 ### Constructors
 
-```rust
+```rust,ignore
 // Recommended path — fluent builder.
 pub fn builder() -> EngineBuilder
 
@@ -44,7 +44,7 @@ config-shape errors fail there, not on first message.
 
 ### Methods
 
-```rust
+```rust,ignore
 // Process a message through all matching rules
 pub async fn process_message(&self, message: &mut Message) -> Result<()>
 
@@ -77,7 +77,7 @@ use dataflow_rs::Workflow;  // or: use dataflow_rs::Rule;
 
 ### Constructors
 
-```rust
+```rust,ignore
 // Parse from JSON string
 pub fn from_json(json: &str) -> Result<Workflow>
 
@@ -117,7 +117,7 @@ use dataflow_rs::Task;  // or: use dataflow_rs::Action;
 
 ### Constructor
 
-```rust
+```rust,ignore
 // Convenience constructor for rules-engine pattern
 pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self
 ```
@@ -151,7 +151,7 @@ use std::sync::Arc;
 
 ### Constructors
 
-```rust
+```rust,ignore
 // Fluent builder — recommended path for richer cases (custom id,
 // capture_changes off, etc.).
 pub fn builder() -> MessageBuilder
@@ -170,7 +170,7 @@ then `.build() -> Message`.
 
 ### Structure
 
-```rust
+```rust,ignore
 pub struct Message {
     pub context: OwnedDataValue,    // Always Object {data, metadata, temp_data}
     // ... encapsulated fields ...
@@ -184,7 +184,7 @@ is read via accessors and mutated via `add_error` (errors) or
 
 ### Methods
 
-```rust
+```rust,ignore
 // Identity + payload
 pub fn id(&self) -> &str
 pub fn payload(&self) -> &OwnedDataValue
@@ -223,7 +223,7 @@ use dataflow_rs::prelude::*;
 
 ### Trait Definition
 
-```rust
+```rust,ignore
 use serde::de::DeserializeOwned;
 
 #[async_trait]
@@ -252,7 +252,7 @@ the registered handler's typed `Self::Input` at `Engine::builder().build()`
 
 ### Boxing
 
-```rust
+```rust,ignore
 pub type BoxedFunctionHandler = Box<dyn DynAsyncFunctionHandler + Send + Sync>;
 ```
 
@@ -264,7 +264,7 @@ plumbing stays out of user code.
 
 Per-call context handed to every `AsyncFunctionHandler::execute` call.
 
-```rust
+```rust,ignore
 pub struct TaskContext<'a> { /* ... */ }
 
 impl<'a> TaskContext<'a> {
@@ -307,7 +307,7 @@ pub enum TaskOutcome {
 function names deserialize into `Custom { name, input }`. Custom handlers
 typically destructure the `Custom` variant to access their config.
 
-```rust
+```rust,ignore
 pub enum FunctionConfig {
     Map { input: MapConfig, .. },
     Validation { input: ValidationConfig, .. },
@@ -334,7 +334,7 @@ pub enum FunctionConfig {
 
 Represents a single data modification recorded in the audit trail.
 
-```rust
+```rust,ignore
 pub struct Change {
     pub path: Arc<str>,
     pub old_value: OwnedDataValue,
@@ -352,7 +352,7 @@ Records changes made by an action. `workflow_id` / `task_id` are
 `Arc<str>` mirrors of the workflow/task ids — the engine clones them by
 refcount bump rather than allocating per audit entry.
 
-```rust
+```rust,ignore
 pub struct AuditTrail {
     pub workflow_id: Arc<str>,
     pub task_id: Arc<str>,

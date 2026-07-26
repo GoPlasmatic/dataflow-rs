@@ -113,8 +113,12 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
     }
   }, []);
 
-  // Load first sample on mount
+  // Load first sample on mount.
+  // TODO(react-hooks): mount-time data seeding via setState. Could move into
+  // lazy `useState` initialisers. Dev demo app only — not part of the
+  // published library entry point (`src/lib.ts`).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadSample(Object.keys(SAMPLE_WORKFLOWS)[0]);
   }, [loadSample]);
 

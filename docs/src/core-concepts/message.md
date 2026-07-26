@@ -60,6 +60,9 @@ let mut message = Message::from_value(&json!({
 ### Native Construction (Zero-Conversion)
 
 ```rust
+# use dataflow_rs::Message;
+# use serde_json::json;
+# fn _demo() {
 use datavalue::OwnedDataValue;
 use std::sync::Arc;
 
@@ -67,6 +70,7 @@ let payload = Arc::new(OwnedDataValue::from(&json!({
     "name": "John"
 })));
 let mut message = Message::new(payload);
+# }
 ```
 
 ### Builder
@@ -75,11 +79,15 @@ For the richer cases — caller-supplied id (correlation), capture-off
 fast path — use `Message::builder()`:
 
 ```rust
+# use dataflow_rs::Message;
+# use serde_json::json;
+# fn _demo() {
 let mut message = Message::builder()
     .id("correlation-123")
     .payload_json(&json!({"name": "John"}))
     .capture_changes(false) // skip per-write Change capture
     .build();
+# }
 ```
 
 ### Populating the Context
@@ -142,7 +150,7 @@ ctx.set("temp_data.calculated_value", OwnedDataValue::from(&json!(42)));
 
 Every modification to message data is recorded:
 
-```rust
+```rust,ignore
 pub struct AuditTrail {
     pub workflow_id: Arc<str>,
     pub task_id: Arc<str>,
@@ -162,10 +170,14 @@ To skip per-write `Change` capture (bulk-pipeline fast path), build the
 message with `capture_changes(false)`:
 
 ```rust
+# use dataflow_rs::Message;
+# use serde_json::json;
+# fn _demo() {
 let m = Message::builder()
     .payload_json(&json!({}))
     .capture_changes(false)
     .build();
+# }
 ```
 
 Audit-trail entries are still recorded — just with empty `changes` lists.
@@ -174,6 +186,7 @@ The wire shape is unchanged either way.
 ### Accessing Audit Trail
 
 ```rust
+# fn _demo(message: dataflow_rs::Message) {
 // After processing — audit_trail() returns &[AuditTrail].
 for entry in message.audit_trail() {
     println!("Workflow: {}, Task: {}", entry.workflow_id, entry.task_id);
@@ -181,6 +194,7 @@ for entry in message.audit_trail() {
         println!("  {} -> {} at {}", change.old_value, change.new_value, change.path);
     }
 }
+# }
 ```
 
 ## Error Handling
@@ -189,6 +203,7 @@ Errors are collected in `message.errors()` (the always-on channel, even
 when `Engine::process_message` returns `Result::Err`):
 
 ```rust
+# fn _demo(message: dataflow_rs::Message) {
 for error in message.errors() {
     println!("Error in {}/{}: {}",
         error.workflow_id.as_deref().unwrap_or("unknown"),
@@ -196,6 +211,7 @@ for error in message.errors() {
         error.message
     );
 }
+# }
 ```
 
 See [Error Handling](./error-handling.md) for the unified-channel

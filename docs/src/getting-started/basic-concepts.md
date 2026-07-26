@@ -17,7 +17,7 @@ Dataflow-rs follows a two-phase architecture:
 1. **Compilation Phase** (Startup) - All JSONLogic expressions are compiled once
 2. **Execution Phase** (Runtime) - Messages are processed using compiled logic
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    Compilation Phase                         │
 │  ┌──────────┐    ┌──────────────┐    ┌──────────────────┐  │
@@ -50,6 +50,9 @@ Both naming conventions work — use whichever fits your mental model.
 The central orchestrator that processes messages through rules.
 
 ```rust
+# use dataflow_rs::{Message, Workflow};
+# async fn _demo(rules: Vec<Workflow>, mut message: Message)
+#     -> dataflow_rs::Result<()> {
 use dataflow_rs::Engine;
 
 // Create engine with rules (compiled at creation). Builder is the
@@ -62,6 +65,7 @@ let engine = Engine::builder()
 
 // Process messages (uses pre-compiled logic)
 engine.process_message(&mut message).await?;
+# Ok(()) }
 ```
 
 ### Rule (Workflow)
@@ -132,7 +136,7 @@ println!("Audit: {:?}", message.audit_trail());
 3. **Action Execution** - Actions run sequentially within each matching rule
 4. **Output** - Message contains transformed data and audit trail
 
-```
+```text
 Message (input)
     │
     v

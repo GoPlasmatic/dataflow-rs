@@ -41,7 +41,11 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
   });
 
   // Update expanded nodes when folder tree changes (e.g., new workflows loaded)
+  // TODO(react-hooks): merges newly-loaded folders into user-controlled
+  // expansion state, so it cannot be derived during render without losing the
+  // user's manual collapses. Pre-existing behaviour.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpandedNodes((prev) => {
       const next = new Set(prev);
       next.add(NODE_IDS.ROOT);
@@ -52,6 +56,8 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
   }, [folderTree]);
 
   // Expand the first workflow when workflows change
+  // TODO(react-hooks): same shape as the effect above — augments
+  // user-controlled expansion state rather than replacing it.
   useEffect(() => {
     const allWorkflows = [...folderTree.workflows];
     // Also collect workflows from folders
@@ -66,6 +72,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
     if (allWorkflows.length > 0) {
       // Sort by priority and expand the first one
       allWorkflows.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setExpandedNodes((prev) => {
         const next = new Set(prev);
         next.add(NODE_IDS.workflow(allWorkflows[0].id));

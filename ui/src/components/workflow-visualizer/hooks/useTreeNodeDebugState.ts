@@ -263,7 +263,7 @@ export function useMappingDebugState(task: Task, workflow: Workflow, _mappingInd
       isSkipped: state === 'skipped',
       hasError: state === 'error',
     };
-  }, [dbgContext, task.id, workflow.id, _mappingIndex]);
+  }, [dbgContext, task.id, workflow.id]);
 }
 
 /**

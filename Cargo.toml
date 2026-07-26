@@ -14,6 +14,11 @@ exclude = [
     "/ui",
     "/docs",
     "CLAUDE.md",
+    # CI-only configuration — no value to someone building the crate.
+    "/.github",
+    "/docs-tests",
+    "deny.toml",
+    ".gitignore",
 ]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
 license = "Apache-2.0"
@@ -53,7 +58,7 @@ futures = "0.3"
 num_cpus = "1.17"
 
 [workspace]
-members = [".", "wasm"]
+members = [".", "wasm", "docs-tests"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread"] }

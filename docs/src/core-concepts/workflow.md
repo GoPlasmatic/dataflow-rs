@@ -61,6 +61,7 @@ Rules provide:
 ### From JSON String
 
 ```rust
+# fn _demo() -> dataflow_rs::Result<()> {
 use dataflow_rs::Workflow;
 
 let rule = Workflow::from_json(r#"{
@@ -68,6 +69,7 @@ let rule = Workflow::from_json(r#"{
     "name": "My Rule",
     "tasks": [...]
 }"#)?;
+# Ok(()) }
 ```
 
 ### Using the Convenience Constructor
@@ -87,7 +89,10 @@ let rule = Rule::rule(
 ### From File
 
 ```rust
+# use dataflow_rs::Workflow;
+# fn _demo() -> dataflow_rs::Result<()> {
 let rule = Workflow::from_file("rules/my_rule.json")?;
+# Ok(()) }
 ```
 
 ## Priority Ordering
@@ -249,8 +254,12 @@ Group workflows by channel for efficient message routing:
 Then route messages to a specific channel:
 
 ```rust
+# use dataflow_rs::{Engine, Message};
+# async fn _demo(engine: Engine, mut message: Message)
+#     -> dataflow_rs::Result<()> {
 // Only runs workflows on the "orders" channel
 engine.process_message_for_channel("orders", &mut message).await?;
+# Ok(()) }
 ```
 
 ### Version and Tags

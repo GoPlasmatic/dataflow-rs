@@ -1,0 +1,32 @@
+[package]
+name = "dataflow-docs-tests"
+version = "3.0.4"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+license = "Apache-2.0"
+description = "Compiles the Rust examples in docs/src as doctests. Not published."
+
+# This crate exists only to hold doctests. It deliberately lives outside the
+# `dataflow-rs` package: `docs/` is in the root crate's `exclude` list, so a
+# `include_str!("../docs/...")` in `src/lib.rs` would reference a file absent
+# from the published `.crate` archive.
+[lib]
+path = "src/lib.rs"
+doctest = true
+test = false
+
+[dependencies]
+dataflow-rs = { path = "..", features = [] }
+
+[dev-dependencies]
+async-trait = "0.1"
+datavalue = { package = "datavalue-rs", version = "0.2.3", features = [
+    "serde",
+    "serde_json",
+] }
+env_logger = "0.11"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }

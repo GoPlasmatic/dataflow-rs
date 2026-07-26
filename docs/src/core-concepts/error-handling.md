@@ -99,6 +99,8 @@ All actions will continue even if earlier actions fail.
 After processing, walk `message.errors()`:
 
 ```rust
+# use dataflow_rs::{Engine, Message};
+# async fn _demo(engine: Engine, mut message: Message) {
 let result = engine.process_message(&mut message).await;
 
 for error in message.errors() {
@@ -113,6 +115,7 @@ for error in message.errors() {
 if let Err(e) = result {
     eprintln!("engine stopped early: {e}");
 }
+# }
 ```
 
 Common error codes you'll see:

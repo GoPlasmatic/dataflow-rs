@@ -9,6 +9,9 @@ Dataflow-rs is designed for high-performance rule evaluation and data processing
 All JSONLogic expressions are compiled once at engine startup:
 
 ```rust
+# use dataflow_rs::{Engine, Message, Workflow};
+# async fn _demo(workflows: Vec<Workflow>, mut message: Message)
+#     -> dataflow_rs::Result<()> {
 // Builder is the recommended construction path; compiles all
 // JSONLogic at .build() and pre-parses Custom-task inputs into
 // their typed Self::Input.
@@ -19,6 +22,7 @@ let engine = Engine::builder()
 // Runtime processing uses pre-compiled logic — no parsing or
 // compilation overhead.
 engine.process_message(&mut message).await?;
+# Ok(()) }
 ```
 
 ### Benefits of Pre-compilation
@@ -72,6 +76,8 @@ single results.
 ### Sample Benchmark
 
 ```rust
+# async fn _demo(workflow_json: &str, test_data: serde_json::Value)
+#     -> dataflow_rs::Result<()> {
 use dataflow_rs::{Engine, Workflow, Message};
 use std::time::Instant;
 
@@ -91,6 +97,7 @@ for _ in 0..iterations {
 let elapsed = start.elapsed();
 println!("Processed {} messages in {:?}", iterations, elapsed);
 println!("Average: {:?} per message", elapsed / iterations);
+# Ok(()) }
 ```
 
 ## Optimization Tips
@@ -190,10 +197,13 @@ mapping-heavy workloads. If you never read `message.audit_trail()`, turn it
 off per message:
 
 ```rust
+# use dataflow_rs::Message;
+# fn _demo(payload: serde_json::Value) {
 let mut message = Message::builder()
     .payload_json(&payload)
     .capture_changes(false)
     .build();
+# }
 ```
 
 This is the single largest tuning lever in the hot path. See
@@ -212,6 +222,9 @@ production workflows without paying for it.
 Process multiple messages concurrently:
 
 ```rust
+# use dataflow_rs::{Engine, Message, Workflow};
+# async fn _demo(workflows: Vec<Workflow>, messages: Vec<Message>)
+#     -> std::result::Result<(), Box<dyn std::error::Error>> {
 use std::sync::Arc;
 use tokio::task;
 
@@ -230,6 +243,7 @@ let handles: Vec<_> = messages.into_iter()
 for handle in handles {
     handle.await??;
 }
+# Ok(()) }
 ```
 
 ### Thread Safety
@@ -268,7 +282,7 @@ env_logger::Builder::from_env(
 
 ### Custom Metrics
 
-```rust
+```rust,ignore
 use std::time::Instant;
 
 let start = Instant::now();

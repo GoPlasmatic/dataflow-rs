@@ -74,49 +74,52 @@ fn write_progress_metadata(
     task_id: &str,
     status: u16,
 ) {
-    if let OwnedDataValue::Object(top) = context
-        && let Some((_, metadata)) = top.iter_mut().find(|(k, _)| k == "metadata")
-        && let OwnedDataValue::Object(meta) = metadata
-    {
-        match meta.iter_mut().find(|(k, _)| k == "progress") {
-            Some((_, slot)) => {
-                if let OwnedDataValue::Object(fields) = slot
-                    && fields.len() == 3
-                {
-                    let mut matched = 0;
-                    for (k, v) in fields.iter_mut() {
-                        match k.as_str() {
-                            "workflow_id" => {
-                                *v = OwnedDataValue::String(workflow_id.to_string());
-                                matched += 1;
+    // Nested `if let` rather than a let-chain: let-chains are stable only from
+    // Rust 1.88 and this crate's MSRV is 1.85. Keep it that way.
+    if let OwnedDataValue::Object(top) = context {
+        if let Some((_, OwnedDataValue::Object(meta))) =
+            top.iter_mut().find(|(k, _)| k == "metadata")
+        {
+            match meta.iter_mut().find(|(k, _)| k == "progress") {
+                Some((_, slot)) => {
+                    if let OwnedDataValue::Object(fields) = slot {
+                        if fields.len() == 3 {
+                            let mut matched = 0;
+                            for (k, v) in fields.iter_mut() {
+                                match k.as_str() {
+                                    "workflow_id" => {
+                                        *v = OwnedDataValue::String(workflow_id.to_string());
+                                        matched += 1;
+                                    }
+                                    "task_id" => {
+                                        *v = OwnedDataValue::String(task_id.to_string());
+                                        matched += 1;
+                                    }
+                                    "status_code" => {
+                                        *v = OwnedDataValue::from(u64::from(status));
+                                        matched += 1;
+                                    }
+                                    _ => {}
+                                }
                             }
-                            "task_id" => {
-                                *v = OwnedDataValue::String(task_id.to_string());
-                                matched += 1;
+                            if matched == 3 {
+                                return;
                             }
-                            "status_code" => {
-                                *v = OwnedDataValue::from(u64::from(status));
-                                matched += 1;
-                            }
-                            _ => {}
                         }
                     }
-                    if matched == 3 {
-                        return;
-                    }
+                    // Unexpected shape (partial overwrites above are harmless —
+                    // the whole slot is replaced here).
+                    *slot = new_progress_object(workflow_id, task_id, status);
                 }
-                // Unexpected shape (partial overwrites above are harmless —
-                // the whole slot is replaced here).
-                *slot = new_progress_object(workflow_id, task_id, status);
+                None => {
+                    meta.push((
+                        "progress".to_string(),
+                        new_progress_object(workflow_id, task_id, status),
+                    ));
+                }
             }
-            None => {
-                meta.push((
-                    "progress".to_string(),
-                    new_progress_object(workflow_id, task_id, status),
-                ));
-            }
+            return;
         }
-        return;
     }
     set_nested_value(
         context,

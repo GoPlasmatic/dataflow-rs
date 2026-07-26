@@ -7,8 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.4] — 2026-07-26
 
-Dependency refresh and repository cleanup. No public API changes — nothing
-under `src/` was touched.
+Dependency refresh, documentation corrections, and repository hardening. One
+behaviour-preserving `src/` change (see *Fixed*); no public API changes.
+
+### Added
+
+- **docs:** `CONTRIBUTING.md` and `SECURITY.md`. The security policy documents
+  private vulnerability reporting, the supported-version window, and the
+  engine's trust model (workflow definitions are trusted configuration; message
+  payloads are untrusted data).
+- **ci:** MSRV job pinned to 1.85. `rust-version` was previously a promise
+  nothing verified — see *Fixed*.
+- **ci:** UI job running `npm ci` and `build:lib`, with an assertion that the
+  emitted `dist/lib.d.ts` is non-empty and contains exports. `ui/` is published
+  to npm on every release but had no CI coverage at all; dataflow-ui v2.1.3
+  shipped an empty declaration file this would have caught.
+- **ci:** `cargo-deny` job (advisories, licenses, sources, bans) plus a weekly
+  scheduled run, so a new RUSTSEC advisory against unchanged code surfaces
+  without someone noticing by hand. Policy lives in `deny.toml`.
+- **ci:** `.github/dependabot.yml` covering cargo, npm (`ui/`), and
+  github-actions, with minor/patch updates grouped into single PRs.
+- **docs:** README Rust snippets are now compiled as doctests through a
+  `ReadmeDoctests` hook in `src/lib.rs`.
+- **docs:** the mdBook guide's Rust examples are compiled too, via a new
+  `dataflow-docs-tests` workspace member (`publish = false`). `mdbook test`
+  cannot do this — it only passes `-L` to rustdoc, while an edition-2018+
+  `use dataflow_rs::…` needs `--extern`, which mdBook has no flag for; routing
+  the pages through `#[doc = include_str!(…)]` lets Cargo wire it up. 57 of the
+  book's 84 Rust blocks now compile; the remaining 27 are API signature
+  listings and are tagged `ignore` explicitly rather than silently unverified.
+  Fragments that assume an `engine` or `message` binding got hidden `#`
+  preambles — compiled by rustdoc, hidden from readers by mdBook — so nothing
+  readers see changed. Workspace test count 123 → 183.
+- **ui:** working eslint setup — `eslint.config.js` (flat config, eslint 10 +
+  typescript-eslint + react-hooks) and the toolchain as devDependencies. The
+  `lint` script had been calling a binary that was never installed and had no
+  config file, so it failed for anyone who ran it; it is now green and enforced
+  in CI. Five pre-existing `react-hooks/set-state-in-effect` violations are
+  marked with per-site `eslint-disable-next-line` plus a `TODO(react-hooks)`
+  explaining each, so the rule still fails CI for newly-written code.
+
+### Fixed
+
+- **README:** the Getting Started example did not work. It built a message with
+  `Message::from_value`, which populates `payload`, but its rule condition and
+  mappings read `data.order.total` — and `payload` is not part of the JSONLogic
+  evaluation context, which is `{data, metadata, temp_data}`. The example
+  printed `null` rather than the documented `150` / `1350`. It now shows the
+  two-rule chain it always described: an intake rule that `parse_json`s the
+  payload into `data.order`, then the conditioned discount rule. The corrected
+  version runs as a doctest and asserts both values, so it cannot silently break
+  again. Also documents that a rule's condition is evaluated *before* its own
+  tasks run, which is why the parse cannot live inside the conditioned rule.
+- **MSRV:** `rust-version = "1.85"` was not true — `write_progress_metadata` in
+  `src/engine/workflow_executor.rs` used let-chains, stable only since Rust
+  1.88, so the crate had never built on its advertised minimum. Rewritten as
+  nested `if let` (behaviour identical, no API change) and 1.85 restored as a
+  working, CI-enforced minimum.
+- **docs:** `getting-started/installation.md` told new users to depend on
+  `dataflow-rs = "2.1"` while the surrounding snippets used 3.x builder API.
+- **docs:** the Quick Start example did not compile. It declared
+  `async fn main() -> Result<(), Box<dyn std::error::Error>>` while importing
+  `dataflow_rs::prelude::*`, whose `Result<T>` alias takes a single type
+  parameter and shadows `std::result::Result`. Now `Result<()>`, with a note
+  about the shadowing. Compiled *and executed* as a doctest.
+- **docs:** `core-concepts/engine.md` called `workflow.name.as_deref()`;
+  `Workflow::name` is a `String`, not an `Option<String>`.
+- **docs:** `built-in-functions/log.md` had a shell command
+  (`RUST_LOG=… cargo run`) inside a ```` ```rust ```` block; split into `bash`
+  and `rust` blocks.
+- **docs:** five ASCII diagrams and one sample-output block used unlabelled
+  fences, which rustdoc treats as Rust. Tagged `text`.
+- **docs:** `CLAUDE.md` had drifted from the code in eight places, including the
+  pre-3.0 handler signature `Result<(usize, Vec<Change>)>`, a
+  `register_task_function()` entry point that no longer exists, a
+  `with_preserve_structure()` call absent from the tree, a retry/backoff
+  mechanism that was never implemented, and a release process described as
+  branch-triggered when it is tag-gated.
 
 ### Changed
 
@@ -25,6 +100,12 @@ under `src/` was touched.
   skipped. Added a `wasm` job that lints against `wasm32-unknown-unknown`
   and runs the wasm test suite under Node.
 - `Cargo.lock` is now tracked, making CI runs reproducible.
+- **ci:** the release workflow's validation gate now mirrors CI
+  (`--workspace --all-features`) instead of running a narrower
+  `cargo clippy --all-targets` / `cargo test`. A wasm-only regression could
+  previously fail PR CI and still pass the release gate. `cargo publish`,
+  `clippy`, and `test` all run `--locked` so the published build resolves the
+  tracked lockfile.
 
 ### Removed
 

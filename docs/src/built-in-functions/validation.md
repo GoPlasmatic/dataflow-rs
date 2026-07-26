@@ -152,9 +152,11 @@ All rules are evaluated, collecting all errors:
 After processing, check `message.errors()`:
 
 ```rust
+# fn _demo(message: dataflow_rs::Message) {
 for error in message.errors() {
     println!("{}: {}", error.code, error.message);
 }
+# }
 ```
 
 Error structure:

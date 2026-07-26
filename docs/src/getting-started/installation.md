@@ -11,9 +11,9 @@ Add dataflow-rs to your Rust project using Cargo.
 
 ```toml
 [dependencies]
-dataflow-rs = "2.1"
+dataflow-rs = "3.0"
 serde_json = "1.0"
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
 ## Verify Installation
@@ -39,7 +39,7 @@ cargo run
 
 You should see:
 
-```
+```text
 Rules engine created with 0 rules
 ```
 

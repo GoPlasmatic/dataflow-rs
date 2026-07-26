@@ -43,7 +43,7 @@
     "build": "tsc && vite build",
     "build:lib": "tsc && vite build --config vite.lib.config.ts",
     "preview": "vite preview",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "prepublishOnly": "npm run build:lib",
     "publish:npm": "npm run build:lib && npm publish --access public"
   },
@@ -59,13 +59,19 @@
     "lucide-react": "^1.8.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.7.0",
     "monaco-editor": "^0.55.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "typescript": "^6.0.2",
+    "typescript-eslint": "^8.65.0",
     "vite": "^8.0.8",
     "vite-plugin-dts": "^4.5.4",
     "vite-plugin-wasm": "^3.6.0"

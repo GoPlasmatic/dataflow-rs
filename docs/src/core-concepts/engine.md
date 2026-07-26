@@ -17,6 +17,7 @@ The Engine is responsible for:
 ## Creating an Engine
 
 ```rust
+# fn _demo() -> dataflow_rs::Result<()> {
 use dataflow_rs::{Engine, Workflow};
 
 // Parse rules from JSON
@@ -43,21 +44,29 @@ let engine = Engine::builder()
 
 // Engine is now ready — all JSONLogic compiled, Custom inputs typed.
 println!("Loaded {} rules", engine.workflows().len());
+# Ok(()) }
 ```
 
 You can also use the `RulesEngine` type alias:
 
 ```rust
+# use dataflow_rs::Workflow;
+# fn _demo() -> dataflow_rs::Result<()> {
+# let rule1 = Workflow::from_json(r#"{"id":"a","tasks":[]}"#)?;
+# let rule2 = Workflow::from_json(r#"{"id":"b","tasks":[]}"#)?;
 use dataflow_rs::RulesEngine;
 
 let engine = RulesEngine::builder()
     .with_workflows([rule1, rule2])
     .build()?;
+# Ok(()) }
 ```
 
 ## Processing Messages
 
 ```rust
+# use dataflow_rs::Engine;
+# async fn _demo(engine: Engine) -> dataflow_rs::Result<()> {
 use dataflow_rs::engine::message::Message;
 use serde_json::json;
 
@@ -73,17 +82,22 @@ engine.process_message(&mut message).await?;
 // Access results
 println!("Processed data: {:?}", message.data());
 println!("Audit trail: {:?}", message.audit_trail());
+# Ok(()) }
 ```
 
 If you already have an `Arc<OwnedDataValue>` payload, use `Message::new`
 to skip the `serde_json` bridge:
 
 ```rust
+# use dataflow_rs::Message;
+# use serde_json::json;
+# fn _demo() {
 use datavalue::OwnedDataValue;
 use std::sync::Arc;
 
 let payload = Arc::new(OwnedDataValue::from(&json!({"user": "john"})));
 let mut message = Message::new(payload);
+# }
 ```
 
 ## Execution Tracing
@@ -91,6 +105,9 @@ let mut message = Message::new(payload);
 For debugging, use `process_message_with_trace` to capture step-by-step execution:
 
 ```rust
+# use dataflow_rs::{Engine, Message};
+# async fn _demo(engine: Engine, mut message: Message)
+#     -> dataflow_rs::Result<()> {
 let trace = engine.process_message_with_trace(&mut message).await?;
 
 println!("Steps executed: {}", trace.executed_count());
@@ -100,6 +117,7 @@ for step in &trace.steps {
     println!("Rule: {}, Action: {:?}, Result: {:?}",
         step.workflow_id, step.task_id, step.result);
 }
+# Ok(()) }
 ```
 
 ## Rule Execution Order
@@ -107,6 +125,8 @@ for step in &trace.steps {
 Rules execute in priority order (lowest priority number first):
 
 ```rust
+# use dataflow_rs::Workflow;
+# fn _demo() -> dataflow_rs::Result<()> {
 // Priority 1 executes first
 let high_priority = Workflow::from_json(r#"{
     "id": "high",
@@ -120,6 +140,7 @@ let low_priority = Workflow::from_json(r#"{
     "priority": 10,
     "tasks": [...]
 }"#)?;
+# Ok(()) }
 ```
 
 ## Rule Conditions
@@ -146,10 +167,21 @@ input JSON into the handler's typed `Self::Input` at `.build()` time, so
 mis-shaped configs fail at startup, not on first message.
 
 ```rust
+# use async_trait::async_trait;
+# use dataflow_rs::prelude::*;
+# struct MyCustomFunction;
+# #[async_trait]
+# impl AsyncFunctionHandler for MyCustomFunction {
+#     type Input = ();
+#     async fn execute(&self, _c: &mut TaskContext<'_>, _i: &())
+#         -> Result<TaskOutcome> { Ok(TaskOutcome::Success) }
+# }
+# fn _demo(rules: Vec<Workflow>) -> Result<()> {
 let engine = Engine::builder()
     .with_workflows(rules)
     .register("my_function", MyCustomFunction)
     .build()?;
+# Ok(()) }
 ```
 
 ## Thread Safety
@@ -161,6 +193,9 @@ The Engine is designed for concurrent use:
 - Each message is processed independently
 
 ```rust
+# use dataflow_rs::{Engine, Message, Workflow};
+# async fn _demo(rules: Vec<Workflow>, messages: Vec<Message>)
+#     -> std::result::Result<(), Box<dyn std::error::Error>> {
 use std::sync::Arc;
 use tokio::task;
 
@@ -178,6 +213,7 @@ let handles: Vec<_> = messages.into_iter().map(|mut msg| {
 for handle in handles {
     handle.await??;
 }
+# Ok(()) }
 ```
 
 ## API Reference
@@ -218,7 +254,9 @@ Processes a message and returns an execution trace for debugging.
 Returns a reference to the registered rules (sorted by priority).
 
 ```rust
+# fn _demo(engine: dataflow_rs::Engine) {
 let count = engine.workflows().len();
+# }
 ```
 
 ### `engine.workflow_by_id(id)`
@@ -226,9 +264,11 @@ let count = engine.workflows().len();
 Find a specific workflow by its ID.
 
 ```rust
+# fn _demo(engine: dataflow_rs::Engine) {
 if let Some(workflow) = engine.workflow_by_id("my_rule") {
-    println!("Found: {}", workflow.name.as_deref().unwrap_or("unnamed"));
+    println!("Found: {}", workflow.name);
 }
+# }
 ```
 
 ### `engine.process_message_for_channel(channel, message)`
@@ -236,7 +276,11 @@ if let Some(workflow) = engine.workflow_by_id("my_rule") {
 Processes a message through only the active workflows on a specific channel. Uses O(1) channel index lookup.
 
 ```rust
+# use dataflow_rs::{Engine, Message};
+# async fn _demo(engine: Engine, mut message: Message)
+#     -> dataflow_rs::Result<()> {
 engine.process_message_for_channel("orders", &mut message).await?;
+# Ok(()) }
 ```
 
 Only workflows with `status: "active"` are included in channel routing.
@@ -246,7 +290,11 @@ Only workflows with `status: "active"` are included in channel routing.
 Same as `process_message_for_channel` but returns an execution trace for debugging.
 
 ```rust
+# use dataflow_rs::{Engine, Message};
+# async fn _demo(engine: Engine, mut message: Message)
+#     -> dataflow_rs::Result<()> {
 let trace = engine.process_message_for_channel_with_trace("orders", &mut message).await?;
+# Ok(()) }
 ```
 
 ### `engine.with_new_workflows(workflows)`
@@ -254,9 +302,12 @@ let trace = engine.process_message_for_channel_with_trace("orders", &mut message
 Creates a new engine with different workflows while preserving custom function registrations. Useful for hot-reloading workflow definitions at runtime.
 
 ```rust
+# use dataflow_rs::{Engine, Workflow};
+# fn _demo(engine: Engine) -> dataflow_rs::Result<()> {
 let new_workflows = vec![Workflow::from_json(r#"{ ... }"#)?];
 let new_engine = engine.with_new_workflows(new_workflows);
 
 // Old engine is still valid for in-flight messages
 // New engine has freshly compiled logic + same custom functions
+# Ok(()) }
 ```

@@ -244,3 +244,13 @@ pub type Action = Task;
 
 /// Type alias for `Engine` — the RulesEngine evaluates rules and executes their actions.
 pub type RulesEngine = Engine;
+
+/// Compiles the Rust snippets in `README.md` as doctests so the landing-page
+/// examples cannot drift from the API. Compiled only under `cargo test`; this
+/// type does not exist in a normal build and is not part of the public API.
+///
+/// Snippets that are illustrative fragments rather than runnable programs are
+/// tagged `ignore` in the README and are skipped here.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;

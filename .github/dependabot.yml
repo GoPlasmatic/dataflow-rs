@@ -1,0 +1,46 @@
+version: 2
+
+updates:
+  # Root crate + the dataflow-wasm workspace member share one lockfile, so a
+  # single cargo entry covers both.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Patch/minor bumps are the bulk of the noise and are what the v3.0.3 and
+      # v3.0.4 manual refreshes were doing by hand. Batch them into one PR.
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: npm
+    directory: "/ui"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    ignore:
+      # Version-locked to the Rust crate by the release workflow, not by
+      # dependabot. See the "Sync dataflow-wasm dep" step in release.yml.
+      - dependency-name: "@goplasmatic/dataflow-wasm"
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(ci)"

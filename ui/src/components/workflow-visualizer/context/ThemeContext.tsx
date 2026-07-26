@@ -28,11 +28,19 @@ export function ThemeProvider({ children, defaultTheme = 'system' }: ThemeProvid
     defaultTheme === 'system' ? getSystemTheme() : defaultTheme
   );
 
-  // Sync theme when defaultTheme prop changes
+  // Sync theme when defaultTheme prop changes.
+  // TODO(react-hooks): prop-to-state sync. React's recommended shape is to
+  // derive during render or reset via a `key`, but `theme` is also settable by
+  // consumers through `setTheme`, so both sources have to converge here.
+  // Pre-existing behaviour; left as-is rather than refactored in a patch release.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme(defaultTheme);
   }, [defaultTheme]);
 
+  // TODO(react-hooks): `resolvedTheme` is derivable from `theme` in the
+  // non-system branch; only the 'system' branch genuinely needs an effect for
+  // the media-query subscription. Pre-existing behaviour.
   useEffect(() => {
     if (theme === 'system') {
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -41,6 +49,7 @@ export function ThemeProvider({ children, defaultTheme = 'system' }: ThemeProvid
       mediaQuery.addEventListener('change', handleChange);
       return () => mediaQuery.removeEventListener('change', handleChange);
     } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setResolvedTheme(theme);
     }
   }, [theme]);

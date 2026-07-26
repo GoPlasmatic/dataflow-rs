@@ -65,7 +65,7 @@ Experience the power of dataflow-rs directly in your browser. Define a rule and 
 
 ## How It Works
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  Rule (Workflow)                                                │
 │                                                                 │

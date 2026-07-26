@@ -49,17 +49,20 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # Must match ci.yml: `--workspace` covers dataflow-wasm and
+      # `--all-features` covers `wasm-web`. A narrower gate here would let a
+      # regression that fails PR CI through the release.
       - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --workspace --all-features --locked
 
   publish-crate:
     name: Publish to crates.io
@@ -90,9 +93,11 @@ jobs:
             exit 1
           fi
 
+      # `--locked` so the published build resolves exactly the tracked
+      # Cargo.lock that the validate job tested against.
       - name: Publish
         if: steps.check.outputs.skip != 'true'
-        run: cargo publish
+        run: cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
 

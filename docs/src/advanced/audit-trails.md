@@ -12,7 +12,7 @@ Every change to message data is recorded in the audit trail:
 
 ## Audit Trail Structure
 
-```rust
+```rust,ignore
 pub struct AuditTrail {
     pub workflow_id: Arc<str>,
     pub task_id: Arc<str>,
@@ -42,6 +42,9 @@ audit entry at all.
 After processing, the audit trail is available on the message:
 
 ```rust
+# use dataflow_rs::{Engine, Message};
+# async fn _demo(engine: Engine, mut message: Message)
+#     -> dataflow_rs::Result<()> {
 engine.process_message(&mut message).await?;
 
 for entry in message.audit_trail() {
@@ -54,6 +57,7 @@ for entry in message.audit_trail() {
         println!("  New: {}", change.new_value);
     }
 }
+# Ok(()) }
 ```
 
 ## JSON Representation
@@ -138,6 +142,7 @@ Notice the audit trail shows each step's changes.
 Trace exactly how data was transformed:
 
 ```rust
+# fn _demo(message: dataflow_rs::Message) {
 // Find where a value was set
 for entry in message.audit_trail() {
     for change in &entry.changes {
@@ -149,6 +154,7 @@ for entry in message.audit_trail() {
         }
     }
 }
+# }
 ```
 
 ### Compliance
@@ -156,6 +162,10 @@ for entry in message.audit_trail() {
 Log all changes for regulatory compliance:
 
 ```rust
+# use dataflow_rs::Change;
+# fn log_to_audit_system<T>(_ts: T, _wf: std::sync::Arc<str>,
+#     _task: std::sync::Arc<str>, _changes: &[Change]) {}
+# fn _demo(message: dataflow_rs::Message) {
 for entry in message.audit_trail() {
     log_to_audit_system(
         entry.timestamp,
@@ -164,6 +174,7 @@ for entry in message.audit_trail() {
         &entry.changes
     );
 }
+# }
 ```
 
 ### Change Detection
@@ -171,6 +182,8 @@ for entry in message.audit_trail() {
 Detect if specific fields were modified:
 
 ```rust
+# use dataflow_rs::Message;
+# fn _demo(message: Message) {
 fn was_field_modified(message: &Message, field: &str) -> bool {
     message.audit_trail().iter()
         .flat_map(|e| e.changes.iter())
@@ -180,6 +193,7 @@ fn was_field_modified(message: &Message, field: &str) -> bool {
 if was_field_modified(&message, "data.price") {
     // Price was changed during processing
 }
+# }
 ```
 
 ### Rollback (Conceptual)
@@ -187,6 +201,8 @@ if was_field_modified(&message, "data.price") {
 The audit trail can be used to implement rollback:
 
 ```rust
+# use dataflow_rs::Message;
+# fn _demo() {
 use datavalue::OwnedDataValue;
 
 fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a OwnedDataValue> {
@@ -195,6 +211,7 @@ fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a Owned
         .find(|c| c.path.as_ref() == field)
         .map(|c| &c.old_value)
 }
+# }
 ```
 
 ## Best Practices

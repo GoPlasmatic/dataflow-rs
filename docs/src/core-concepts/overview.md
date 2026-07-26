@@ -4,7 +4,7 @@ Dataflow-rs is built around a small set of core concepts that work together to e
 
 ## The Big Picture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     Rules Engine (Engine)                            │
 │  ┌───────────────────────────────────────────────────────────────┐  │
