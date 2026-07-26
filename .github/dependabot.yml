@@ -29,6 +29,11 @@ updates:
       # Version-locked to the Rust crate by the release workflow, not by
       # dependabot. See the "Sync dataflow-wasm dep" step in release.yml.
       - dependency-name: "@goplasmatic/dataflow-wasm"
+      # TypeScript 7 (the native compiler) drops the JS Compiler API, and
+      # typescript-eslint peer-caps at <6.1.0 — adopting it breaks the lint
+      # gate. Remove this once typescript-eslint supports TS7.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-patch:
         update-types:
