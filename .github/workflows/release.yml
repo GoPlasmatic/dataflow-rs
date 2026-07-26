@@ -35,38 +35,16 @@ jobs:
           fi
           echo "Tag $GITHUB_REF_NAME matches Cargo.toml version $VERSION"
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      # Must match ci.yml: `--workspace` covers dataflow-wasm and
-      # `--all-features` covers `wasm-web`. A narrower gate here would let a
-      # regression that fails PR CI through the release.
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
-      - name: Run tests
-        run: cargo test --workspace --all-features --locked
+  # The full PR gate — fmt/clippy/tests, wasm32, MSRV, UI build, cargo-deny —
+  # invoked as a reusable workflow, so the release gate is the same definition
+  # as PR CI and structurally cannot drift narrower than it.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
 
   publish-crate:
     name: Publish to crates.io
-    needs: validate
+    needs: [validate, ci]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -103,7 +81,7 @@ jobs:
 
   publish-wasm:
     name: Publish WASM to npm
-    needs: validate
+    needs: [validate, ci]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

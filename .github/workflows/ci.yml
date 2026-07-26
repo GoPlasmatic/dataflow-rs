@@ -3,12 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      # Neither README.md nor docs/** appear here on purpose. The Rust blocks in
-      # both are compiled as doctests (ReadmeDoctests in src/lib.rs, and the
-      # dataflow-docs-tests member for the book), so edits to either can break
-      # the build and must run CI. Only files with no compiled content belong
-      # in this list.
+    # Neither README.md nor docs/** appear here on purpose. The Rust blocks in
+    # both are compiled as doctests (ReadmeDoctests in src/lib.rs, and the
+    # dataflow-docs-tests member for the book), so edits to either can break
+    # the build and must run CI. Only files with no compiled content belong
+    # in this list. (Anchored here, aliased under pull_request.)
+    paths-ignore: &prose-only
       - 'CHANGELOG.md'
       - 'CLAUDE.md'
       - 'CONTRIBUTING.md'
@@ -17,23 +17,15 @@ on:
       - '.github/workflows/docs.yml'
   pull_request:
     branches: [main]
-    paths-ignore:
-      # Neither README.md nor docs/** appear here on purpose. The Rust blocks in
-      # both are compiled as doctests (ReadmeDoctests in src/lib.rs, and the
-      # dataflow-docs-tests member for the book), so edits to either can break
-      # the build and must run CI. Only files with no compiled content belong
-      # in this list.
-      - 'CHANGELOG.md'
-      - 'CLAUDE.md'
-      - 'CONTRIBUTING.md'
-      - 'SECURITY.md'
-      - 'LICENSE'
-      - '.github/workflows/docs.yml'
+    paths-ignore: *prose-only
   # A new RUSTSEC advisory lands against unchanged code, so the supply-chain
   # gate needs a trigger that does not depend on someone pushing. This also
   # catches stable-toolchain regressions in the other jobs.
   schedule:
     - cron: '0 6 * * 1'
+  # Lets release.yml run this entire workflow as its pre-publish gate, so the
+  # release gate is the same definition as PR CI and cannot drift narrower.
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
@@ -57,7 +49,6 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
@@ -96,7 +87,6 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
@@ -104,9 +94,10 @@ jobs:
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-wasm-
 
-      # Cached via ~/.cargo/bin above, so this is a no-op on warm runs.
+      # Prebuilt binary, same as release.yml — seconds, versus a multi-minute
+      # from-source `cargo install` on every cache miss.
       - name: Install wasm-pack
-        run: which wasm-pack || cargo install wasm-pack --locked
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Run clippy (wasm32)
         run: |
@@ -180,32 +171,17 @@ jobs:
         working-directory: ui
 
       # `build:lib` is `tsc && vite build`, so this type-checks the whole
-      # package as well as producing the artifact.
+      # package as well as producing the artifact. Its `postbuild:lib` hook
+      # (scripts/verify-dts.mjs) then fails the build if the declaration
+      # bundle came out empty, so the guard covers every producer of the
+      # artifact — this job, release.yml, and manual publishes alike.
       - name: Type-check and build library
         run: npm run build:lib
         working-directory: ui
 
-      # `vite-dts` has silently emitted an empty declaration file before. A
-      # successful build is not sufficient evidence that the types are usable.
-      - name: Verify type declarations are non-empty
-        working-directory: ui
-        run: |
-          DTS="dist/lib.d.ts"
-          if [ ! -s "$DTS" ]; then
-            echo "::error::$DTS is missing or empty"
-            exit 1
-          fi
-          if ! grep -q 'export' "$DTS"; then
-            echo "::error::$DTS contains no export declarations:"
-            cat "$DTS"
-            exit 1
-          fi
-          echo "$DTS OK ($(wc -c < "$DTS") bytes, $(grep -c 'export' "$DTS") export lines)"
-
-  # Supply-chain gate: RUSTSEC advisories, license policy, and source policy.
-  # See deny.toml. v3.0.3 was a hand-rolled response to RUSTSEC-2026-0194/0195;
-  # the scheduled run below is what surfaces the next one without a human
-  # noticing first.
+  # Supply-chain gate: RUSTSEC advisories, license policy, and source policy,
+  # all configured in deny.toml — the single source of truth, honored by the
+  # action's default `check` command and by local `cargo deny check` runs.
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
@@ -215,6 +191,3 @@ jobs:
 
       - name: Run cargo-deny
         uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          arguments: --all-features
-          command: check advisories licenses sources bans

@@ -174,15 +174,17 @@ Documentation examples are compiled, so they cannot drift from the API:
 
 - `README.md` — via the `ReadmeDoctests` hook at the bottom of `src/lib.rs`.
 - `docs/src/**.md` — via the `dataflow-docs-tests` workspace member. It is a
-  separate crate because `docs/` is in the root crate's `exclude` list, so an
-  `include_str!` from `src/lib.rs` would break the published package.
+  separate crate because `docs/` is not shipped in the published crate (see
+  the root `include` list), so an `include_str!` from `src/lib.rs` would break
+  the published package. Its `tests/coverage.rs` fails if a docs page is
+  missing from the page list.
 
 When editing docs: fragments get a hidden `# ` preamble (compiled by rustdoc,
 hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 183 passing.
+`cargo test --workspace --all-features` should report 184 passing.
 
 When extending the engine:
 

@@ -42,6 +42,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:lib": "tsc && vite build --config vite.lib.config.ts",
+    "postbuild:lib": "node scripts/verify-dts.mjs",
     "preview": "vite preview",
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "prepublishOnly": "npm run build:lib",

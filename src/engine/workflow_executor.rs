@@ -60,6 +60,41 @@ fn new_progress_object(workflow_id: &str, task_id: &str, status: u16) -> OwnedDa
     ])
 }
 
+/// Overwrite the three fields of an existing 3-key `progress` object without
+/// reallocating it. Returns `false` when the object's shape diverges from
+/// `{workflow_id, task_id, status_code}`, in which case the caller replaces
+/// the slot wholesale (partial overwrites here are harmless — the whole slot
+/// gets replaced).
+fn overwrite_progress_in_place(
+    fields: &mut [(String, OwnedDataValue)],
+    workflow_id: &str,
+    task_id: &str,
+    status: u16,
+) -> bool {
+    if fields.len() != 3 {
+        return false;
+    }
+    let mut matched = 0;
+    for (k, v) in fields.iter_mut() {
+        match k.as_str() {
+            "workflow_id" => {
+                *v = OwnedDataValue::String(workflow_id.to_string());
+                matched += 1;
+            }
+            "task_id" => {
+                *v = OwnedDataValue::String(task_id.to_string());
+                matched += 1;
+            }
+            "status_code" => {
+                *v = OwnedDataValue::from(u64::from(status));
+                matched += 1;
+            }
+            _ => {}
+        }
+    }
+    matched == 3
+}
+
 /// Write `metadata.progress = {workflow_id, task_id, status_code}` with a
 /// single tree walk. From the second task of a message onward the slot
 /// already holds the expected 3-key object, so the three values are
@@ -83,32 +118,10 @@ fn write_progress_metadata(
             match meta.iter_mut().find(|(k, _)| k == "progress") {
                 Some((_, slot)) => {
                     if let OwnedDataValue::Object(fields) = slot {
-                        if fields.len() == 3 {
-                            let mut matched = 0;
-                            for (k, v) in fields.iter_mut() {
-                                match k.as_str() {
-                                    "workflow_id" => {
-                                        *v = OwnedDataValue::String(workflow_id.to_string());
-                                        matched += 1;
-                                    }
-                                    "task_id" => {
-                                        *v = OwnedDataValue::String(task_id.to_string());
-                                        matched += 1;
-                                    }
-                                    "status_code" => {
-                                        *v = OwnedDataValue::from(u64::from(status));
-                                        matched += 1;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            if matched == 3 {
-                                return;
-                            }
+                        if overwrite_progress_in_place(fields, workflow_id, task_id, status) {
+                            return;
                         }
                     }
-                    // Unexpected shape (partial overwrites above are harmless —
-                    // the whole slot is replaced here).
                     *slot = new_progress_object(workflow_id, task_id, status);
                 }
                 None => {

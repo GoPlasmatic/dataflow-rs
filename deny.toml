@@ -2,7 +2,7 @@
 #
 # Run locally with:
 #   cargo install cargo-deny --locked
-#   cargo deny --all-features check
+#   cargo deny check
 
 [graph]
 all-features = true
@@ -11,7 +11,6 @@ all-features = true
 # Fail on any unmaintained/vulnerable crate in the tree. v3.0.3 was a manual
 # response to RUSTSEC-2026-0194/0195; this job is what catches the next one.
 yanked = "deny"
-ignore = []
 
 [licenses]
 # The dependency tree is uniformly permissive today. Anything outside this set
@@ -39,4 +38,3 @@ wildcards = "deny"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-registry = ["https://github.com/rust-lang/crates.io-index"]

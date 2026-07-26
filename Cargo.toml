@@ -3,22 +3,19 @@ name = "dataflow-rs"
 version = "3.0.4"
 edition = "2024"
 rust-version = "1.85"
-exclude = [
-    ".DS_Store",
-    "/target",
-    ".vscode",
-    "/assets",
-    # Not part of the Rust crate: the React debugger lives on npm as
-    # `@goplasmatic/dataflow-ui`, the book is published to GitHub Pages, and
-    # CLAUDE.md is repo-local contributor guidance.
-    "/ui",
-    "/docs",
-    "CLAUDE.md",
-    # CI-only configuration — no value to someone building the crate.
-    "/.github",
-    "/docs-tests",
-    "deny.toml",
-    ".gitignore",
+# Allowlist of what ships in the published .crate: the library, its examples
+# and tests, and the user-facing root docs. An allowlist fails safe — future
+# repo-root additions (CI config, tooling, the npm-published ui/, the GitHub
+# Pages docs/) stay out without anyone remembering to add an exclude entry.
+include = [
+    "/src",
+    "/examples",
+    "/tests",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
+    "/LICENSE",
 ]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
 license = "Apache-2.0"

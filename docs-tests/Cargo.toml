@@ -1,6 +1,8 @@
 [package]
 name = "dataflow-docs-tests"
-version = "3.0.4"
+# Deliberately not the workspace version: this crate is never published and is
+# consumed only by path, so it is not part of the three-artifact release bump.
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.85"
 publish = false
@@ -8,16 +10,14 @@ license = "Apache-2.0"
 description = "Compiles the Rust examples in docs/src as doctests. Not published."
 
 # This crate exists only to hold doctests. It deliberately lives outside the
-# `dataflow-rs` package: `docs/` is in the root crate's `exclude` list, so a
-# `include_str!("../docs/...")` in `src/lib.rs` would reference a file absent
-# from the published `.crate` archive.
+# `dataflow-rs` package: `docs/` is not shipped in the published `.crate`
+# archive (see the root `include` list), so a `include_str!("../docs/...")`
+# in `src/lib.rs` would reference a file absent for crate consumers.
 [lib]
-path = "src/lib.rs"
-doctest = true
-test = false
+test = false # no unit tests to harness; the doctests are the whole point
 
 [dependencies]
-dataflow-rs = { path = "..", features = [] }
+dataflow-rs = { path = ".." }
 
 [dev-dependencies]
 async-trait = "0.1"

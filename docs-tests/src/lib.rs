@@ -14,11 +14,17 @@
 //!
 //! # Why it is a separate crate
 //!
-//! `docs/` is in the root crate's `exclude` list, so it is absent from the
+//! `docs/` is not in the root crate's `include` list, so it is absent from the
 //! published `.crate` archive. An `include_str!("../docs/…")` inside
 //! `dataflow-rs` itself would reference a file that does not exist for anyone
 //! who downloads the crate. This member is `publish = false`, so it never
 //! ships and the paths always resolve.
+//!
+//! # Completeness
+//!
+//! The page list below is hand-maintained; `tests/coverage.rs` walks
+//! `docs/src` and fails if a page is neither listed here nor in its explicit
+//! skip list, so a new page cannot silently ship unverified examples.
 //!
 //! # Conventions
 //!

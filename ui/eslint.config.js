@@ -6,14 +6,13 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 
 export default tseslint.config(
   {
-    ignores: ['dist', 'node_modules', 'eslint.config.js'],
+    ignores: ['dist', 'eslint.config.js'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
-      ecmaVersion: 2022,
       globals: globals.browser,
     },
     plugins: {
@@ -39,6 +38,13 @@ export default tseslint.config(
           caughtErrorsIgnorePattern: '^_',
         },
       ],
+    },
+  },
+  // Build tooling runs under Node, not the browser.
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: globals.node,
     },
   },
 )
