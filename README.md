@@ -289,6 +289,19 @@ cargo run --example rules_engine          # IFTTT-style rules engine demo
 cargo run --example complete_workflow     # Parse → Transform → Validate pipeline
 cargo run --example custom_function       # Extending the engine with custom handlers
 cargo run --example error_handling        # Error handling patterns
+cargo run --example async_migration       # Typed Input + TaskContext + TaskOutcome handler shape
+```
+
+Targeted microbenchmarks for profiling a specific hot path. The `micro_*` ones
+run a tight `current_thread` loop so the signal isn't buried under Tokio
+scheduling; the last two measure throughput on a multi-threaded runtime:
+
+```bash
+cargo run --example micro_cond_bench --release          # Condition-eval / trivially-true folding
+cargo run --example micro_multiworkflow_bench --release # Chained workflows, per-workflow arena cost
+cargo run --example micro_subtree_write_bench --release # Same-subtree map-write scaling
+cargo run --example async_handler_benchmark --release   # Marginal cost of one custom async handler
+cargo run --example map_performance_test --release      # Sequential map mappings
 ```
 
 ## Custom Functions

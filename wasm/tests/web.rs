@@ -3,7 +3,10 @@
 use dataflow_wasm::*;
 use wasm_bindgen_test::*;
 
-wasm_bindgen_test_configure!(run_in_browser);
+// Deliberately no `wasm_bindgen_test_configure!(run_in_browser)`: nothing here
+// touches a browser-only API, and the directive restricted the suite to a
+// browser runner. Without it these run under both `wasm-pack test --node`
+// (no driver needed, so CI can run them) and `--headless --chrome`.
 
 #[wasm_bindgen_test]
 fn test_create_engine_simple() {
@@ -53,9 +56,12 @@ fn test_invalid_workflows_json() {
 #[wasm_bindgen_test]
 fn test_workflows_must_be_array() {
     let not_array = r#"{"id": "single"}"#;
-    let result = WasmEngine::new(not_array);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("must be a JSON array"));
+    // Destructure rather than `unwrap_err()`, which would require
+    // `WasmEngine: Debug`.
+    let Err(err) = WasmEngine::new(not_array) else {
+        panic!("expected an error for a non-array workflows document");
+    };
+    assert!(err.contains("must be a JSON array"));
 }
 
 #[wasm_bindgen_test]
@@ -69,8 +75,8 @@ async fn test_process_payload_as_string() {
             "id": "parse_payload",
             "name": "Parse Payload",
             "function": {
-                "name": "parse",
-                "input": {}
+                "name": "parse_json",
+                "input": {"source": "payload", "target": "input"}
             }
         }, {
             "id": "copy_name",
@@ -80,7 +86,7 @@ async fn test_process_payload_as_string() {
                 "input": {
                     "mappings": [{
                         "path": "data.output_name",
-                        "logic": {"var": "data.input_name"}
+                        "logic": {"var": "data.input.input_name"}
                     }]
                 }
             }
@@ -151,8 +157,8 @@ async fn test_process_message_standalone() {
             "id": "parse",
             "name": "Parse",
             "function": {
-                "name": "parse",
-                "input": {}
+                "name": "parse_json",
+                "input": {"source": "payload", "target": "input"}
             }
         }, {
             "id": "t",
@@ -191,8 +197,8 @@ async fn test_workflow_with_condition() {
             "id": "parse",
             "name": "Parse",
             "function": {
-                "name": "parse",
-                "input": {}
+                "name": "parse_json",
+                "input": {"source": "payload", "target": "input"}
             }
         }, {
             "id": "copy_metadata",
@@ -202,7 +208,7 @@ async fn test_workflow_with_condition() {
                 "input": {
                     "mappings": [{
                         "path": "metadata.should_run",
-                        "logic": {"var": "data.should_run"}
+                        "logic": {"var": "data.input.should_run"}
                     }]
                 }
             }

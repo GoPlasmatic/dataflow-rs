@@ -1,9 +1,20 @@
 [package]
 name = "dataflow-rs"
-version = "3.0.3"
+version = "3.0.4"
 edition = "2024"
 rust-version = "1.85"
-exclude = [".DS_Store", "/target", ".vscode", "/assets"]
+exclude = [
+    ".DS_Store",
+    "/target",
+    ".vscode",
+    "/assets",
+    # Not part of the Rust crate: the React debugger lives on npm as
+    # `@goplasmatic/dataflow-ui`, the book is published to GitHub Pages, and
+    # CLAUDE.md is repo-local contributor guidance.
+    "/ui",
+    "/docs",
+    "CLAUDE.md",
+]
 authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
 license = "Apache-2.0"
 description = "A lightweight rules engine for building IFTTT-style automation and data processing pipelines in Rust. Define rules with JSONLogic conditions, execute actions, and chain workflows."
@@ -15,7 +26,10 @@ categories = ["data-structures", "development-tools", "config"]
 
 [features]
 default = []
-wasm-web = ["chrono/wasmbind", "getrandom/wasm_js", "uuid/js"]
+# `uuid/js` is what supplies randomness on wasm32-unknown-unknown: uuid's own
+# `getrandom` dependency is target-gated *off* for that triple, and its `js`
+# feature routes through wasm-bindgen/js-sys instead.
+wasm-web = ["chrono/wasmbind", "uuid/js"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -30,7 +44,6 @@ log = "0.4"
 tokio = { version = "1", features = ["rt", "macros"] }
 async-trait = "0.1"
 quick-xml = { version = "0.41", features = ["serialize"] }
-getrandom = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

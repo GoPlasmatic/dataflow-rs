@@ -44,6 +44,31 @@ cargo run --example realistic_benchmark --release   # ISO 20022 → SwiftMT-styl
 cargo run --example micro_aggregate_bench --release # Aggregate-heavy (reduce/map) mappings
 ```
 
+### Microbenchmarks
+
+The macro benchmarks above are dominated by Tokio scheduling and can't resolve a
+sub-100ns/message change. The `micro_*` benchmarks run a tight loop on a
+`current_thread` runtime instead, so the effect under test is a measurable
+fraction of the total:
+
+```bash
+cargo run --example micro_cond_bench --release          # Condition eval, incl. trivially-true folding
+cargo run --example micro_multiworkflow_bench --release # Chained workflows, per-workflow arena rebuild
+cargo run --example micro_subtree_write_bench --release # k map writes into one subtree (write-path scaling)
+```
+
+Two more measure throughput on a multi-threaded runtime, so they carry the same
+scheduling noise as the macro benchmarks:
+
+```bash
+cargo run --example async_handler_benchmark --release   # Marginal cost of one custom async handler
+cargo run --example map_performance_test --release      # Sequential map mappings
+```
+
+Each source file documents what it isolates and why in its header comment.
+Numbers vary ±2–3% run to run, so compare the mean of several runs rather than
+single results.
+
 ### Sample Benchmark
 
 ```rust

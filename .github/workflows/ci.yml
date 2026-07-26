@@ -42,14 +42,60 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # `--workspace` so dataflow-wasm is covered too, and `--all-features` so
+      # the `wasm-web` feature gets linted rather than silently skipped.
       - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --workspace --all-features
+
+  # The native job above builds dataflow-wasm for the host only. This job is
+  # what actually exercises the wasm32 target, where uuid/chrono take different
+  # code paths than they do natively.
+  wasm:
+    name: Wasm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-wasm-
+
+      # Cached via ~/.cargo/bin above, so this is a no-op on warm runs.
+      - name: Install wasm-pack
+        run: which wasm-pack || cargo install wasm-pack --locked
+
+      - name: Run clippy (wasm32)
+        run: |
+          cargo clippy -p dataflow-rs --target wasm32-unknown-unknown \
+            --features wasm-web -- -D warnings
+          cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown \
+            --all-targets -- -D warnings
+
+      # `--node` needs no browser driver; tests/web.rs is not browser-gated.
+      - name: Run wasm tests
+        run: wasm-pack test --node
+        working-directory: wasm

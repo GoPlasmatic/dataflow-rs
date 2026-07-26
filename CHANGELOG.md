@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.4] — 2026-07-26
+
+Dependency refresh and repository cleanup. No public API changes — nothing
+under `src/` was touched.
+
+### Changed
+
+- **deps:** refreshed the lockfile to latest compatible versions — serde
+  `1.0.228 → 1.0.229`, serde_json `1.0.150 → 1.0.151`, tokio
+  `1.52.3 → 1.53.1`, uuid `1.23.3 → 1.24.0`, thiserror `2.0.18 → 2.0.19`,
+  log `0.4.32 → 0.4.33`, async-trait `0.1.89 → 0.1.91`, datalogic-rs
+  `5.1.0 → 5.1.1`, futures `0.3.32 → 0.3.33`, env_logger
+  `0.11.10 → 0.11.11`, wasm-bindgen `0.2.125 → 0.2.126`. Total lockfile
+  packages 165 → 145: wasm-bindgen 0.2.126 drops its
+  `wit-bindgen`/`wasm-encoder`/`wasmparser` tooling chain.
+- **ci:** clippy and tests now run with `--workspace --all-features`, so
+  `dataflow-wasm` and the `wasm-web` feature are covered instead of silently
+  skipped. Added a `wasm` job that lints against `wasm32-unknown-unknown`
+  and runs the wasm test suite under Node.
+- `Cargo.lock` is now tracked, making CI runs reproducible.
+
+### Removed
+
+- **deps:** dropped the direct `getrandom` dependency from both crates and
+  from the `wasm-web` feature. It was inert: uuid's own `getrandom` is
+  target-gated *off* for `wasm32-unknown-unknown` (it routes through
+  wasm-bindgen/js-sys via `uuid/js`), and the pin was `0.3` while uuid uses
+  `0.4` — so `getrandom/wasm_js` could never affect uuid, and it put two
+  `getrandom` majors in the tree.
+- The published crate no longer ships `/ui`, `/docs`, or `CLAUDE.md`. These
+  are the npm-published React debugger, the GitHub Pages book, and
+  repo-local contributor guidance — none are needed to build the crate.
+  Package contents drop 175 → 50 files (270 KiB → 130 KiB compressed).
+
+### Fixed
+
+- `wasm/tests/web.rs` did not compile: an `unwrap_err()` required
+  `WasmEngine: Debug`, and three tests referenced a `parse` function that
+  had been split into `parse_json`/`parse_xml` with required
+  `source`/`target` config. The suite is also no longer browser-gated, so it
+  runs under `wasm-pack test --node` without a driver. 0 → 8 passing tests.
+
 ## [3.0.3] — 2026-07-18
 
 Security dependency update.
