@@ -57,11 +57,70 @@ pub(crate) fn eval_to_owned(
     compiled: &Logic,
     context: &OwnedDataValue,
 ) -> std::result::Result<OwnedDataValue, datalogic_rs::Error> {
-    EVAL_ARENA.with(|cell| {
-        let mut arena = cell.borrow_mut();
-        arena.reset();
-        let r = engine.evaluate(compiled, context, &arena)?;
+    with_eval_arena(|arena| {
+        let r = engine.evaluate(compiled, context, arena)?;
         Ok(r.to_owned())
+    })
+}
+
+/// As [`eval_to_owned`] but projects the arena result directly to
+/// `serde_json::Value` — one walk out, with no `OwnedDataValue` intermediate
+/// and no `serde_json::from_value` rebuild.
+#[inline]
+pub(crate) fn eval_to_json(
+    engine: &Engine,
+    compiled: &Logic,
+    context: &OwnedDataValue,
+) -> std::result::Result<serde_json::Value, datalogic_rs::Error> {
+    with_eval_arena(|arena| Ok(engine.evaluate(compiled, context, arena)?.to_serde_value()))
+}
+
+/// As [`eval_to_owned`] but coerced to a *plain* string: a `DataValue::String`
+/// yields its contents, everything else its compact JSON form (`Display` on
+/// `DataValue` is compact JSON).
+///
+/// This deliberately disagrees with datalogic-rs's `String: FromDataValue` — and
+/// therefore with `Session::eval_str` — which keeps the JSON quoting, so a string
+/// result there comes back as `"\"abc\""`. The divergence is pinned by a test.
+#[inline]
+pub(crate) fn eval_to_plain_string(
+    engine: &Engine,
+    compiled: &Logic,
+    context: &OwnedDataValue,
+) -> std::result::Result<String, datalogic_rs::Error> {
+    with_eval_arena(|arena| {
+        Ok(match engine.evaluate(compiled, context, arena)? {
+            DataValue::String(s) => s.to_string(),
+            other => other.to_string(),
+        })
+    })
+}
+
+/// Run `f` against the worker thread's rewound arena, falling back to a fresh
+/// `Bump` if the thread-local is already borrowed.
+///
+/// The fallback exists for re-entrancy. The engine's own paths never nest:
+/// `next_async_boundary` keeps every non-sync-builtin task out of the
+/// `run_sync_stretch` arena block, and the only in-crate `TaskContext::new` call
+/// site sits at an `.await` outside every `with_arena` scope. But
+/// `TaskContext::new` is `pub` precisely so tests and benches can drive a handler
+/// directly, and one of those *can* be written inside a `with_arena` closure.
+/// Paying one allocation there is better than panicking out of
+/// `process_message`.
+///
+/// Note [`with_arena`] deliberately does **not** do this: a nested batch scope
+/// would be an engine bug, and the panic is the right signal for it.
+#[inline]
+fn with_eval_arena<R>(f: impl FnOnce(&Bump) -> R) -> R {
+    EVAL_ARENA.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut arena) => {
+            arena.reset();
+            f(&arena)
+        }
+        Err(_) => {
+            let arena = Bump::new();
+            f(&arena)
+        }
     })
 }
 

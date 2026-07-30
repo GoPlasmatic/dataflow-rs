@@ -1,3 +1,5 @@
+use crate::engine::error::Result;
+use crate::engine::task_context::TaskContext;
 use datalogic_rs::Logic;
 use serde::Deserialize;
 use serde_json::Value;
@@ -30,7 +32,11 @@ pub struct HttpCallConfig {
     #[serde(default)]
     pub path_logic: Option<Value>,
 
-    /// Pre-compiled `path_logic`, populated by `LogicCompiler`.
+    /// Engine-internal: pre-compiled `path_logic`, populated by
+    /// `LogicCompiler`. Read it through [`HttpCallConfig::resolve_path`] rather
+    /// than directly — that method applies the static-`path` fallback and is the
+    /// sanctioned read. Not part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub compiled_path_logic: Option<Arc<Logic>>,
 
@@ -46,7 +52,10 @@ pub struct HttpCallConfig {
     #[serde(default)]
     pub body_logic: Option<Value>,
 
-    /// Pre-compiled `body_logic`, populated by `LogicCompiler`.
+    /// Engine-internal: pre-compiled `body_logic`, populated by
+    /// `LogicCompiler`. Read it through [`HttpCallConfig::resolve_body`]. Not
+    /// part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub compiled_body_logic: Option<Arc<Logic>>,
 
@@ -165,7 +174,10 @@ pub struct EnrichConfig {
     #[serde(default)]
     pub path_logic: Option<Value>,
 
-    /// Pre-compiled `path_logic`, populated by `LogicCompiler`.
+    /// Engine-internal: pre-compiled `path_logic`, populated by
+    /// `LogicCompiler`. Read it through [`EnrichConfig::resolve_path`]. Not part
+    /// of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub compiled_path_logic: Option<Arc<Logic>>,
 
@@ -179,6 +191,96 @@ pub struct EnrichConfig {
     /// What to do on enrichment failure
     #[serde(default)]
     pub on_error: EnrichErrorAction,
+}
+
+impl HttpCallConfig {
+    /// Resolve the request path: `path_logic` evaluated against the message
+    /// context when compiled, otherwise the static `path`. `Ok(None)` when
+    /// neither is set.
+    ///
+    /// A non-string result is coerced to its compact JSON form — `7` becomes
+    /// `"7"`, `{"a":1}` becomes `"{\"a\":1}"` — because these values end up in a
+    /// URL. See [`crate::TaskContext::eval_to_plain_string`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`crate::DataflowError::LogicEvaluation`] if the expression
+    /// fails to evaluate. It does **not** fall back to the static `path` on
+    /// failure: a compiled expression that errors is a real problem, and silently
+    /// substituting a different URL would hide it.
+    pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
+        match self.compiled_path_logic.as_deref() {
+            Some(logic) => Ok(Some(ctx.eval_to_plain_string(logic)?)),
+            None => Ok(self.path.clone()),
+        }
+    }
+
+    /// Resolve the request body: `body_logic` when compiled, otherwise the
+    /// static `body`. `Ok(None)` when neither is set.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::resolve_path`] — an evaluation failure propagates rather than
+    /// falling back.
+    pub fn resolve_body(&self, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
+        match self.compiled_body_logic.as_deref() {
+            Some(logic) => Ok(Some(ctx.eval_json(logic)?)),
+            None => Ok(self.body.clone()),
+        }
+    }
+}
+
+impl EnrichConfig {
+    /// Resolve the enrichment path: `path_logic` when compiled, otherwise the
+    /// static `path`. `Ok(None)` when neither is set.
+    ///
+    /// # Errors
+    ///
+    /// As [`HttpCallConfig::resolve_path`].
+    pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
+        match self.compiled_path_logic.as_deref() {
+            Some(logic) => Ok(Some(ctx.eval_to_plain_string(logic)?)),
+            None => Ok(self.path.clone()),
+        }
+    }
+}
+
+impl PublishKafkaConfig {
+    /// Resolve the message key from `key_logic`. `Ok(None)` when it is not set —
+    /// there is no static key field, so a `None` key is the caller's to interpret
+    /// (Kafka treats a null key as "partition round-robin").
+    ///
+    /// Coerced to a plain string, matching [`HttpCallConfig::resolve_path`].
+    ///
+    /// # Errors
+    ///
+    /// As [`HttpCallConfig::resolve_path`].
+    pub fn resolve_key(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
+        match self.compiled_key_logic.as_deref() {
+            Some(logic) => Ok(Some(ctx.eval_to_plain_string(logic)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Resolve the message value from `value_logic`. `Ok(None)` when it is not
+    /// set — the fallback (typically "serialize the whole message") stays the
+    /// caller's policy.
+    ///
+    /// Returns `Option<Value>`, **not** `Option<String>`, deliberately: a
+    /// producer that does `serde_json::to_string` unconditionally would put
+    /// different bytes on the wire for a string-valued payload than
+    /// [`Self::resolve_key`]'s plain-string coercion does. Keeping this as a
+    /// `Value` leaves that choice where it belongs.
+    ///
+    /// # Errors
+    ///
+    /// As [`HttpCallConfig::resolve_path`].
+    pub fn resolve_value(&self, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
+        match self.compiled_value_logic.as_deref() {
+            Some(logic) => Ok(Some(ctx.eval_json(logic)?)),
+            None => Ok(None),
+        }
+    }
 }
 
 /// What to do when enrichment fails
@@ -210,7 +312,10 @@ pub struct PublishKafkaConfig {
     #[serde(default)]
     pub key_logic: Option<Value>,
 
-    /// Pre-compiled `key_logic`, populated by `LogicCompiler`.
+    /// Engine-internal: pre-compiled `key_logic`, populated by
+    /// `LogicCompiler`. Read it through [`PublishKafkaConfig::resolve_key`]. Not
+    /// part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub compiled_key_logic: Option<Arc<Logic>>,
 
@@ -218,7 +323,10 @@ pub struct PublishKafkaConfig {
     #[serde(default)]
     pub value_logic: Option<Value>,
 
-    /// Pre-compiled `value_logic`, populated by `LogicCompiler`.
+    /// Engine-internal: pre-compiled `value_logic`, populated by
+    /// `LogicCompiler`. Read it through [`PublishKafkaConfig::resolve_value`].
+    /// Not part of the stable API.
+    #[doc(hidden)]
     #[serde(skip)]
     pub compiled_value_logic: Option<Arc<Logic>>,
 }
@@ -287,5 +395,187 @@ mod tests {
         assert_eq!(HttpMethod::default(), HttpMethod::Get);
         // `HttpCallConfig` relies on this via `default_method`.
         assert_eq!(default_method(), HttpMethod::Get);
+    }
+
+    use crate::engine::message::Message;
+    use crate::engine::utils::set_nested_value;
+    use datavalue::OwnedDataValue;
+
+    fn dv(v: serde_json::Value) -> OwnedDataValue {
+        OwnedDataValue::from(&v)
+    }
+
+    fn engine() -> Arc<datalogic_rs::Engine> {
+        Arc::new(
+            datalogic_rs::Engine::builder()
+                .with_templating(true)
+                .build(),
+        )
+    }
+
+    /// A message with a few readable values in `data`.
+    fn fresh_message() -> Message {
+        let mut m = Message::from_value(&json!({}));
+        set_nested_value(&mut m.context, "data.id", dv(json!("abc")));
+        set_nested_value(&mut m.context, "data.n", dv(json!(7)));
+        set_nested_value(&mut m.context, "data.obj", dv(json!({"a": 1})));
+        m
+    }
+
+    /// Stamp a compiled expression into a slot, mirroring what `LogicCompiler`
+    /// does — so these tests exercise the same slot state the engine produces.
+    fn compile(dl: &Arc<datalogic_rs::Engine>, logic: serde_json::Value) -> Option<Arc<Logic>> {
+        Some(dl.compile_arc(&logic).expect("logic should compile"))
+    }
+
+    fn http_config() -> HttpCallConfig {
+        serde_json::from_value(json!({ "connector": "c" })).unwrap()
+    }
+
+    fn enrich_config() -> EnrichConfig {
+        serde_json::from_value(json!({ "connector": "c", "merge_path": "data.out" })).unwrap()
+    }
+
+    fn kafka_config() -> PublishKafkaConfig {
+        serde_json::from_value(json!({ "connector": "c", "topic": "t" })).unwrap()
+    }
+
+    #[test]
+    fn http_resolve_path_covers_all_four_slot_combinations() {
+        let dl = engine();
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        // logic present -> evaluated string
+        let mut cfg = http_config();
+        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.id"}));
+        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
+
+        // logic absent, static path present
+        let mut cfg = http_config();
+        cfg.path = Some("/static".to_string());
+        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("/static".to_string()));
+
+        // both absent
+        assert_eq!(http_config().resolve_path(&ctx).unwrap(), None);
+
+        // both present -> logic wins
+        let mut cfg = http_config();
+        cfg.path = Some("/static".to_string());
+        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.id"}));
+        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
+    }
+
+    #[test]
+    fn http_resolve_body_covers_all_four_slot_combinations() {
+        let dl = engine();
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        let mut cfg = http_config();
+        cfg.compiled_body_logic = compile(&dl, json!({"var": "data.obj"}));
+        assert_eq!(cfg.resolve_body(&ctx).unwrap(), Some(json!({"a": 1})));
+
+        let mut cfg = http_config();
+        cfg.body = Some(json!({"static": true}));
+        assert_eq!(
+            cfg.resolve_body(&ctx).unwrap(),
+            Some(json!({"static": true}))
+        );
+
+        assert_eq!(http_config().resolve_body(&ctx).unwrap(), None);
+
+        let mut cfg = http_config();
+        cfg.body = Some(json!({"static": true}));
+        cfg.compiled_body_logic = compile(&dl, json!({"var": "data.obj"}));
+        assert_eq!(cfg.resolve_body(&ctx).unwrap(), Some(json!({"a": 1})));
+    }
+
+    #[test]
+    fn enrich_resolve_path_covers_all_four_slot_combinations() {
+        let dl = engine();
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        let mut cfg = enrich_config();
+        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.id"}));
+        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
+
+        let mut cfg = enrich_config();
+        cfg.path = Some("/lookup".to_string());
+        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("/lookup".to_string()));
+
+        assert_eq!(enrich_config().resolve_path(&ctx).unwrap(), None);
+
+        let mut cfg = enrich_config();
+        cfg.path = Some("/lookup".to_string());
+        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.id"}));
+        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
+    }
+
+    #[test]
+    fn kafka_resolve_key_and_value() {
+        let dl = engine();
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        // No static fallback exists for either, so absent logic is Ok(None).
+        let cfg = kafka_config();
+        assert_eq!(cfg.resolve_key(&ctx).unwrap(), None);
+        assert_eq!(cfg.resolve_value(&ctx).unwrap(), None);
+
+        let mut cfg = kafka_config();
+        cfg.compiled_key_logic = compile(&dl, json!({"var": "data.id"}));
+        cfg.compiled_value_logic = compile(&dl, json!({"var": "data.obj"}));
+        assert_eq!(cfg.resolve_key(&ctx).unwrap(), Some("abc".to_string()));
+        // `resolve_value` returns a Value, not a String — a producer that
+        // serializes unconditionally must not be forced through the key's
+        // plain-string coercion.
+        assert_eq!(cfg.resolve_value(&ctx).unwrap(), Some(json!({"a": 1})));
+    }
+
+    #[test]
+    fn path_resolution_coerces_non_strings_for_the_url() {
+        let dl = engine();
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        // A number becomes its digits, not "7" with quotes.
+        let mut cfg = http_config();
+        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.n"}));
+        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("7".to_string()));
+
+        // A container becomes compact JSON.
+        let mut cfg = http_config();
+        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.obj"}));
+        assert_eq!(
+            cfg.resolve_path(&ctx).unwrap(),
+            Some("{\"a\":1}".to_string())
+        );
+    }
+
+    #[test]
+    fn a_failing_expression_propagates_instead_of_falling_back() {
+        let dl = engine();
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        // Static field is set, so a silent fallback would look like success.
+        let mut cfg = http_config();
+        cfg.path = Some("/static".to_string());
+        cfg.compiled_path_logic = compile(&dl, json!({"+": ["abc", 1]}));
+
+        match cfg.resolve_path(&ctx) {
+            Err(crate::engine::error::DataflowError::LogicEvaluation(msg)) => {
+                assert!(!msg.is_empty());
+            }
+            other => panic!("expected LogicEvaluation, got {other:?}"),
+        }
+
+        // Same for body.
+        let mut cfg = http_config();
+        cfg.body = Some(json!({"static": true}));
+        cfg.compiled_body_logic = compile(&dl, json!({"+": ["abc", 1]}));
+        assert!(cfg.resolve_body(&ctx).is_err());
     }
 }

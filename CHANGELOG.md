@@ -37,6 +37,23 @@ because new public items ship and several existing behaviours change.
   `filter`, `parse_*`, `publish_*`, `log` are dispatched inside the executor and
   cannot be wrapped from outside the crate, so this is the only place their
   duration is observable. (#27)
+- **task-context:** `TaskContext::context()` plus a value-returning evaluation
+  surface — `eval` (→ `OwnedDataValue`), `eval_json` (projected straight from the
+  arena to `serde_json::Value`, skipping the `from_value` rebuild) and
+  `eval_to_plain_string`. Unlike `executor::evaluate_condition`, these return the
+  value rather than collapsing it to a bool, and surface an evaluation failure as
+  `Err` rather than `false` — a condition that fails should not run its task, but
+  a handler reading a config value needs to know the read failed. All three
+  evaluate on the worker thread's pooled arena rather than allocating a session
+  per call. (#23)
+- **integration:** `resolve_path` / `resolve_body` on `HttpCallConfig`,
+  `resolve_path` on `EnrichConfig`, and `resolve_key` / `resolve_value` on
+  `PublishKafkaConfig`. Each applies the logic-then-static fallback, coerces path
+  and key results to a plain string (these end up in URLs and partition keys),
+  and propagates an evaluation failure instead of silently substituting the
+  static value. `resolve_value` returns `Option<Value>` rather than
+  `Option<String>` on purpose, so a producer that serializes unconditionally is
+  not forced through the key's coercion. (#23)
 - **lib:** `datalogic_rs` and `datavalue` are re-exported from the crate root.
   Both are unavoidable for handler authors — `TaskContext::datalogic()` returns
   `&Arc<datalogic_rs::Engine>`, `HttpCallConfig::compiled_path_logic` is an
@@ -144,6 +161,12 @@ because new public items ship and several existing behaviours change.
 
 ### Changed
 
+- **integration:** the five `compiled_*` slots on the integration configs are now
+  marked `#[doc(hidden)]`, matching `MapMapping::compiled_logic`. Visibility is
+  unchanged — they stay `pub` and code reading them keeps compiling — but they are
+  reclassified as engine-internal now that `resolve_*` is the sanctioned read. No
+  `#[deprecated]`, deliberately: that would emit warnings in downstream builds and
+  fail a consumer CI running `-D warnings`. (#23)
 - **engine:** `DataflowError::FunctionNotFound`'s message is now documented as
   free-form and explicitly unpinned, with the new classifier as the supported
   programmatic route. No test asserts on its wording, and none should — pinning
@@ -198,7 +221,7 @@ trace keeps the historical wire shape. Neither `ExecutionStep` nor `Message` set
 kept as a fallback, and a new `traceHasSnapshots()` helper reports whether a trace
 carries state to inspect at all.
 
-Workspace test count 184 → 292.
+Workspace test count 184 → 309.
 
 ## [3.0.4] — 2026-07-26
 

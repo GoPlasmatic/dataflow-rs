@@ -3500,3 +3500,117 @@ fn remove_nested_value_is_public_from_the_utils_module() {
         "unlike set_nested_value(path, Null), the key is gone rather than nulled"
     );
 }
+
+// =============================================================================
+// TaskContext eval surface and integration-config resolve_*
+// =============================================================================
+
+/// Reads its config through the sanctioned `resolve_*` methods rather than
+/// touching the `compiled_*` slots, and records what it saw.
+struct ResolvingHttpCall;
+
+#[async_trait]
+impl AsyncFunctionHandler for ResolvingHttpCall {
+    type Input = dataflow_rs::HttpCallConfig;
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Self::Input) -> Result<TaskOutcome> {
+        let path = input.resolve_path(ctx)?.unwrap_or_default();
+        let body = input.resolve_body(ctx)?.unwrap_or(json!(null));
+        let method = input.method.as_str().to_string();
+
+        ctx.set("data.seen_path", dv(json!(path)));
+        ctx.set("data.seen_body", dv(body));
+        ctx.set("data.seen_method", dv(json!(method)));
+        Ok(TaskOutcome::Success)
+    }
+}
+
+#[tokio::test]
+async fn resolve_methods_work_through_the_full_engine_path() {
+    // Proves the compiled slots are populated by LogicCompiler and read through
+    // resolve_*, end to end: from_json -> compile -> build -> dispatch.
+    let wf = Workflow::from_json(
+        r#"{
+        "id": "w", "name": "w", "priority": 0, "condition": true,
+        "tasks": [
+            { "id": "seed", "name": "seed", "function": {
+                "name": "map",
+                "input": { "mappings": [
+                    { "path": "data.user_id", "logic": "u-42" },
+                    { "path": "data.amount", "logic": 100 } ] } } },
+            { "id": "call", "name": "call", "function": {
+                "name": "http_call",
+                "input": {
+                    "connector": "user_service",
+                    "method": "POST",
+                    "path_logic": { "cat": ["/users/", { "var": "data.user_id" }] },
+                    "body_logic": { "var": "data.amount" }
+                } } }
+        ]
+    }"#,
+    )
+    .expect("workflow with path_logic/body_logic should parse");
+
+    let engine = Engine::builder()
+        .with_workflow(wf)
+        .register("http_call", ResolvingHttpCall)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        message.context["data"]["seen_path"],
+        dv(json!("/users/u-42")),
+        "path_logic must be compiled by the engine and resolved to a plain string"
+    );
+    assert_eq!(message.context["data"]["seen_body"], dv(json!(100)));
+    assert_eq!(message.context["data"]["seen_method"], dv(json!("POST")));
+}
+
+#[tokio::test]
+async fn task_context_eval_surface_is_reachable_from_outside_the_crate() {
+    // Built the way test_async_task_execution does, so this proves the methods
+    // need no imports beyond datalogic_rs::Logic — reached here through the
+    // crate-root re-export added in #26.
+    use dataflow_rs::datalogic_rs::Logic;
+
+    struct EvalProbe;
+
+    #[async_trait]
+    impl AsyncFunctionHandler for EvalProbe {
+        type Input = Value;
+        async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+            // The whole-context accessor lines up with the three slots.
+            assert_eq!(&ctx.context()["data"], ctx.data());
+            assert_eq!(&ctx.context()["metadata"], ctx.metadata());
+            assert_eq!(&ctx.context()["temp_data"], ctx.temp_data());
+
+            let logic: std::sync::Arc<Logic> = ctx
+                .datalogic()
+                .compile_arc(&json!({"var": "data.x"}))
+                .unwrap();
+
+            assert_eq!(ctx.eval_json(&logic)?, json!("dx"));
+            assert_eq!(ctx.eval_to_plain_string(&logic)?, "dx");
+            assert_eq!(ctx.eval(&logic)?, dv(json!("dx")));
+            Ok(TaskOutcome::Success)
+        }
+    }
+
+    let mut message = Message::from_value(&json!({}));
+    set_nested_value(&mut message.context, "data.x", dv(json!("dx")));
+    let datalogic = std::sync::Arc::new(
+        dataflow_rs::datalogic_rs::Engine::builder()
+            .with_templating(true)
+            .build(),
+    );
+
+    let mut ctx = TaskContext::new(&mut message, &datalogic);
+    let outcome = EvalProbe
+        .execute(&mut ctx, &json!({}))
+        .await
+        .expect("eval surface should be reachable and correct");
+    assert_eq!(outcome, TaskOutcome::Success);
+}

@@ -288,7 +288,15 @@ impl<'a> TaskContext<'a> {
     pub fn data(&self) -> &OwnedDataValue
     pub fn metadata(&self) -> &OwnedDataValue
     pub fn temp_data(&self) -> &OwnedDataValue
+    pub fn context(&self) -> &OwnedDataValue      // the whole {data, metadata, temp_data} tree
     pub fn get(&self, path: &str) -> Option<&OwnedDataValue>
+
+    // Value-returning evaluation on the worker thread's pooled arena.
+    // Unlike `executor::evaluate_condition`, these return the value rather than
+    // collapsing to a bool, and surface failures as Err rather than false.
+    pub fn eval(&self, logic: &Logic) -> Result<OwnedDataValue>
+    pub fn eval_json(&self, logic: &Logic) -> Result<serde_json::Value>
+    pub fn eval_to_plain_string(&self, logic: &Logic) -> Result<String>
 
     // Audit-trail-aware mutation
     pub fn set(&mut self, path: &str, value: OwnedDataValue)
@@ -300,6 +308,15 @@ impl<'a> TaskContext<'a> {
 `set` records a `Change` on the audit trail when `message.capture_changes`
 is `true`, then writes through `set_nested_value` (auto-creates
 intermediate objects/arrays, handles `#`-prefix escapes).
+
+`eval_to_plain_string` **deliberately disagrees** with datalogic-rs's own string
+projection: `Session::eval_str` keeps the JSON quoting, so a string result comes
+back from it as `"\"abc\""`, whereas this returns `abc`. The name says
+`plain_string` rather than `to_string` so the difference is visible at the call
+site — these values end up in URL paths and message keys. A test pins both sides.
+
+`eval_json` projects straight from the arena to `serde_json::Value` in one walk,
+skipping the `OwnedDataValue` intermediate and the `from_value` rebuild.
 
 ## Path helpers (`engine::utils`)
 

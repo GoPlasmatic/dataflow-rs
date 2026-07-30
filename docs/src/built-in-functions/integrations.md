@@ -39,8 +39,15 @@ impl AsyncFunctionHandler for HttpCallHandler {
         ctx: &mut TaskContext<'_>,
         cfg: &HttpCallConfig,
     ) -> Result<TaskOutcome> {
-        // Resolve cfg.connector, evaluate cfg.compiled_path_logic if set,
-        // make the call, merge response into ctx via cfg.response_path…
+        // `resolve_*` applies the logic-then-static fallback for you and
+        // evaluates on the worker thread's pooled arena.
+        let path = cfg.resolve_path(ctx)?;      // path_logic, else static path
+        let body = cfg.resolve_body(ctx)?;      // body_logic, else static body
+        let method = cfg.method.as_str();       // canonical token for your client
+
+        // Resolve cfg.connector against your own registry, make the call, then
+        // merge the response into ctx at cfg.response_path…
+        let _ = (path, body, method);
         Ok(TaskOutcome::Success)
     }
 }
@@ -53,6 +60,36 @@ let engine = Engine::builder()
 
 Skip the registration step and any workflow that uses these variants will fail
 with `DataflowError::FunctionNotFound("http_call")` at dispatch time.
+
+## Reading a config's dynamic fields
+
+Each integration config pairs a static field with a `*_logic` JSONLogic field, and
+the engine pre-compiles the latter at `build()`. Read them through the
+`resolve_*` methods rather than the `compiled_*` slots:
+
+| Method | Logic field | Static fallback |
+|---|---|---|
+| `HttpCallConfig::resolve_path` | `path_logic` | `path` |
+| `HttpCallConfig::resolve_body` | `body_logic` | `body` |
+| `EnrichConfig::resolve_path` | `path_logic` | `path` |
+| `PublishKafkaConfig::resolve_key` | `key_logic` | none — `Ok(None)` |
+| `PublishKafkaConfig::resolve_value` | `value_logic` | none — `Ok(None)` |
+
+Three things they guarantee that a hand-rolled read does not:
+
+- **Logic wins over the static field** when both are set, consistently across all
+  five.
+- **An evaluation failure propagates** as `DataflowError::LogicEvaluation` rather
+  than silently falling back to the static value — substituting a different URL
+  because an expression errored would hide a real problem.
+- **Path and key results are coerced to a plain string** — a number becomes its
+  digits, a container its compact JSON — because those values go into a URL or a
+  partition key. `resolve_value` deliberately returns `Option<Value>` instead, so a
+  producer that serializes unconditionally is not forced through the key's
+  coercion and end up with different bytes on the wire.
+
+The `compiled_*` fields are still `pub` for compatibility but are now marked
+engine-internal (`#[doc(hidden)]`), matching `MapMapping::compiled_logic`.
 
 ## Detecting a missing handler before it fails
 
