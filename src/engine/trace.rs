@@ -477,6 +477,7 @@ impl ExecutionTrace {
             audit_trail,
             errors: message.errors.clone(),
             capture_changes: message.capture_changes,
+            routing_bucket: message.routing_bucket,
         }
     }
 

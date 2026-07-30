@@ -81,6 +81,17 @@ pub struct Message {
     /// the bulk-pipeline fast path. UI debug consumers should leave this at
     /// `true`. Wire shape is unchanged either way.
     pub(crate) capture_changes: bool,
+    /// Routing bucket `0..=99` for a workflow traffic split
+    /// ([`crate::Workflow::rollout`]).
+    ///
+    /// Deliberately **not** stored in `context`, so it never appears in `data` /
+    /// `metadata` / `temp_data` and never has to be stripped before the context
+    /// is serialized — that is the point of the field.
+    ///
+    /// Like `capture_changes`, an in-memory hint: the hand-written `Serialize` /
+    /// `Deserialize` impls keep the 5-field wire shape, so the bucket does not
+    /// survive a JSON round trip.
+    pub(crate) routing_bucket: Option<u8>,
 }
 
 // Custom Serialize: stable wire format ({id, payload, context, audit_trail, errors}).
@@ -125,6 +136,7 @@ impl<'de> Deserialize<'de> for Message {
             audit_trail: data.audit_trail,
             errors: data.errors,
             capture_changes: true,
+            routing_bucket: None,
         })
     }
 }
@@ -154,6 +166,7 @@ impl Message {
             audit_trail: vec![],
             errors: vec![],
             capture_changes: true,
+            routing_bucket: None,
         }
     }
 
@@ -227,6 +240,15 @@ impl Message {
         self.capture_changes
     }
 
+    /// Routing bucket for the traffic-split gate, if one was set.
+    ///
+    /// `None` means every workflow admits this message regardless of its
+    /// [`crate::Workflow::rollout`].
+    #[inline]
+    pub fn routing_bucket(&self) -> Option<u8> {
+        self.routing_bucket
+    }
+
     /// Get a reference to the `data` field in context. Returns
     /// `&OwnedDataValue::Null` if missing (matches `serde_json::Value`'s
     /// `Index` fallback semantics).
@@ -266,6 +288,10 @@ pub struct MessageBuilder {
     id: Option<String>,
     payload: Option<Arc<OwnedDataValue>>,
     capture_changes: Option<bool>,
+    data: Option<OwnedDataValue>,
+    metadata: Option<OwnedDataValue>,
+    temp_data: Option<OwnedDataValue>,
+    routing_bucket: Option<u8>,
 }
 
 impl MessageBuilder {
@@ -296,6 +322,108 @@ impl MessageBuilder {
         self
     }
 
+    /// Seed `context.data`.
+    ///
+    /// Replaces the empty `Object` that [`Self::build`] would otherwise install;
+    /// the other two root fields are unaffected. Seeding records no audit-trail
+    /// entry and no `Change` — it is initial state, not a mutation.
+    ///
+    /// Keys are taken **literally**: unlike
+    /// [`crate::engine::utils::set_nested_value`], a key containing `.` stays a
+    /// single key and a leading `#` is not stripped.
+    ///
+    /// A non-`Object` value is **ignored**, preserving the crate-wide invariant
+    /// that the three root fields are always objects. Calling this twice keeps
+    /// the last value.
+    ///
+    /// ```
+    /// use dataflow_rs::Message;
+    /// use serde_json::json;
+    ///
+    /// let m = Message::builder().data_json(&json!({"order": {"total": 1500}})).build();
+    /// assert_eq!(m.data()["order"]["total"], json!(1500).into());
+    /// ```
+    pub fn data(mut self, data: OwnedDataValue) -> Self {
+        if data.is_object() {
+            self.data = Some(data);
+        }
+        self
+    }
+
+    /// [`Self::data`] from a `serde_json::Value` (one `OwnedDataValue::from`
+    /// deep walk).
+    pub fn data_json(self, data: &JsonValue) -> Self {
+        self.data(OwnedDataValue::from(data))
+    }
+
+    /// Seed `context.metadata` — request headers, correlation ids, routing
+    /// hints.
+    ///
+    /// `Engine::process_message` adds `processed_at` and `engine_version` on top
+    /// of whatever is seeded here; a seeded `channel` key is overwritten by
+    /// `process_message_for_channel`. Same literal-key and non-object rules as
+    /// [`Self::data`].
+    ///
+    /// ```
+    /// use dataflow_rs::Message;
+    /// use serde_json::json;
+    ///
+    /// let m = Message::builder().metadata_json(&json!({"source": "api"})).build();
+    /// assert_eq!(m.metadata()["source"], json!("api").into());
+    /// ```
+    pub fn metadata(mut self, metadata: OwnedDataValue) -> Self {
+        if metadata.is_object() {
+            self.metadata = Some(metadata);
+        }
+        self
+    }
+
+    /// [`Self::metadata`] from a `serde_json::Value`.
+    pub fn metadata_json(self, metadata: &JsonValue) -> Self {
+        self.metadata(OwnedDataValue::from(metadata))
+    }
+
+    /// Seed `context.temp_data` — scratch space for intermediate task output.
+    ///
+    /// Same literal-key and non-object rules as [`Self::data`].
+    ///
+    /// ```
+    /// use dataflow_rs::Message;
+    /// use serde_json::json;
+    ///
+    /// let m = Message::builder().temp_data_json(&json!({"scratch": 1})).build();
+    /// assert_eq!(m.temp_data()["scratch"], json!(1).into());
+    /// ```
+    pub fn temp_data(mut self, temp_data: OwnedDataValue) -> Self {
+        if temp_data.is_object() {
+            self.temp_data = Some(temp_data);
+        }
+        self
+    }
+
+    /// [`Self::temp_data`] from a `serde_json::Value`.
+    pub fn temp_data_json(self, temp_data: &JsonValue) -> Self {
+        self.temp_data(OwnedDataValue::from(temp_data))
+    }
+
+    /// Routing bucket `0..=99` for [`crate::Workflow::rollout`] matching.
+    ///
+    /// Values `>= 100` are clamped to `99`, keeping the builder infallible like
+    /// the rest of its methods. A message with no bucket is admitted by every
+    /// workflow, split or not.
+    ///
+    /// ```
+    /// use dataflow_rs::Message;
+    ///
+    /// assert_eq!(Message::builder().routing_bucket(7).build().routing_bucket(), Some(7));
+    /// assert_eq!(Message::builder().routing_bucket(200).build().routing_bucket(), Some(99));
+    /// assert_eq!(Message::builder().build().routing_bucket(), None);
+    /// ```
+    pub fn routing_bucket(mut self, bucket: u8) -> Self {
+        self.routing_bucket = Some(bucket.min(99));
+        self
+    }
+
     /// When `false`, built-in functions skip per-write `Change` capture —
     /// audit-trail entries are still recorded but their `changes` list is
     /// empty. Defaults to `true`.
@@ -315,22 +443,39 @@ impl MessageBuilder {
             payload: self
                 .payload
                 .unwrap_or_else(|| Arc::new(OwnedDataValue::Null)),
-            context: empty_context(),
+            context: context_from(self.data, self.metadata, self.temp_data),
             audit_trail: vec![],
             errors: vec![],
             capture_changes: self.capture_changes.unwrap_or(true),
+            routing_bucket: self.routing_bucket,
         }
     }
 }
 
-/// Build the canonical empty context shape used by `Message::new` and
-/// `MessageBuilder::build`.
-fn empty_context() -> OwnedDataValue {
+/// Build the canonical context object, substituting any caller-seeded root field
+/// for the empty `Object`.
+///
+/// Key order is fixed at `data, metadata, temp_data` so the serialized shape is
+/// identical whether or not a seed was supplied.
+fn context_from(
+    data: Option<OwnedDataValue>,
+    metadata: Option<OwnedDataValue>,
+    temp_data: Option<OwnedDataValue>,
+) -> OwnedDataValue {
+    fn slot(v: Option<OwnedDataValue>) -> OwnedDataValue {
+        v.unwrap_or_else(|| OwnedDataValue::Object(Vec::new()))
+    }
     OwnedDataValue::Object(vec![
-        ("data".to_string(), OwnedDataValue::Object(Vec::new())),
-        ("metadata".to_string(), OwnedDataValue::Object(Vec::new())),
-        ("temp_data".to_string(), OwnedDataValue::Object(Vec::new())),
+        ("data".to_string(), slot(data)),
+        ("metadata".to_string(), slot(metadata)),
+        ("temp_data".to_string(), slot(temp_data)),
     ])
+}
+
+/// Build the canonical empty context shape used by `Message::new`. One
+/// implementation of the shape, shared with the seeded path.
+fn empty_context() -> OwnedDataValue {
+    context_from(None, None, None)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -372,5 +517,184 @@ mod tests {
     fn from_json_str_rejects_malformed_payload() {
         let err = Message::from_json_str("{ not json").expect_err("malformed input should fail");
         assert!(matches!(err, DataflowError::Deserialization(_)));
+    }
+
+    #[test]
+    fn builder_with_no_seed_matches_the_historical_empty_context() {
+        let m = Message::builder().build();
+        let v = serde_json::to_value(&m).unwrap();
+        // Key order is part of the shape, so assert on the serialized object.
+        let ctx = v["context"].as_object().unwrap();
+        assert_eq!(
+            ctx.keys().collect::<Vec<_>>(),
+            vec!["data", "metadata", "temp_data"]
+        );
+        assert_eq!(
+            v["context"],
+            serde_json::json!({
+                "data": {}, "metadata": {}, "temp_data": {}
+            })
+        );
+    }
+
+    #[test]
+    fn each_setter_lands_in_its_own_root_field() {
+        let m = Message::builder()
+            .data_json(&serde_json::json!({"d": 1}))
+            .build();
+        assert_eq!(
+            serde_json::Value::from(m.data()),
+            serde_json::json!({"d": 1})
+        );
+        assert_eq!(serde_json::Value::from(m.metadata()), serde_json::json!({}));
+        assert_eq!(
+            serde_json::Value::from(m.temp_data()),
+            serde_json::json!({})
+        );
+
+        let m = Message::builder()
+            .metadata_json(&serde_json::json!({"m": 1}))
+            .build();
+        assert_eq!(
+            serde_json::Value::from(m.metadata()),
+            serde_json::json!({"m": 1})
+        );
+        assert_eq!(serde_json::Value::from(m.data()), serde_json::json!({}));
+
+        let m = Message::builder()
+            .temp_data_json(&serde_json::json!({"t": 1}))
+            .build();
+        assert_eq!(
+            serde_json::Value::from(m.temp_data()),
+            serde_json::json!({"t": 1})
+        );
+        assert_eq!(serde_json::Value::from(m.data()), serde_json::json!({}));
+    }
+
+    #[test]
+    fn the_owned_and_json_setter_forms_agree() {
+        let v = serde_json::json!({"a": {"b": [1, 2]}});
+        let via_json = Message::builder().data_json(&v).build();
+        let via_owned = Message::builder().data(OwnedDataValue::from(&v)).build();
+        assert_eq!(via_json.context, via_owned.context);
+    }
+
+    #[test]
+    fn seeding_records_no_audit_entry_or_change() {
+        for capture in [true, false] {
+            let m = Message::builder()
+                .capture_changes(capture)
+                .data_json(&serde_json::json!({"d": 1}))
+                .build();
+            assert!(
+                m.audit_trail().is_empty(),
+                "seeding is initial state, not a mutation"
+            );
+            assert_eq!(
+                serde_json::Value::from(m.data()),
+                serde_json::json!({"d": 1})
+            );
+        }
+    }
+
+    #[test]
+    fn calling_a_setter_twice_keeps_the_last_value() {
+        let m = Message::builder()
+            .data_json(&serde_json::json!({"first": 1}))
+            .data_json(&serde_json::json!({"second": 2}))
+            .build();
+        assert_eq!(
+            serde_json::Value::from(m.data()),
+            serde_json::json!({"second": 2})
+        );
+    }
+
+    #[test]
+    fn an_empty_object_seed_is_indistinguishable_from_no_seed() {
+        let seeded = Message::builder().data_json(&serde_json::json!({})).build();
+        let bare = Message::builder().build();
+        assert_eq!(seeded.context, bare.context);
+    }
+
+    #[test]
+    fn seed_keys_are_literal_not_paths() {
+        use crate::engine::utils::get_nested_value;
+
+        let m = Message::builder()
+            .metadata_json(&serde_json::json!({"a.b": 1}))
+            .build();
+        // One literal key, not nested.
+        assert_eq!(
+            serde_json::Value::from(m.metadata()),
+            serde_json::json!({"a.b": 1})
+        );
+        assert!(
+            get_nested_value(&m.context, "metadata.a.b").is_none(),
+            "a dotted key must not become a nested path"
+        );
+
+        // Leading `#` is not stripped.
+        let m = Message::builder()
+            .metadata_json(&serde_json::json!({"#20": 1}))
+            .build();
+        assert_eq!(
+            serde_json::Value::from(m.metadata()),
+            serde_json::json!({"#20": 1})
+        );
+
+        // A numeric-string key stays an object key, not an Array.
+        let m = Message::builder()
+            .data_json(&serde_json::json!({"0": 1}))
+            .build();
+        assert!(matches!(m.data(), OwnedDataValue::Object(_)));
+        assert_eq!(
+            serde_json::Value::from(m.data()),
+            serde_json::json!({"0": 1})
+        );
+    }
+
+    #[test]
+    fn non_ascii_keys_and_values_round_trip() {
+        let v = serde_json::json!({"régión": "東京"});
+        let m = Message::builder().data_json(&v).build();
+        assert_eq!(serde_json::Value::from(m.data()), v);
+        assert_eq!(serde_json::to_value(&m).unwrap()["context"]["data"], v);
+    }
+
+    #[test]
+    fn nested_seeds_resolve_through_the_path_api() {
+        use crate::engine::utils::get_nested_value;
+
+        let m = Message::builder()
+            .data_json(&serde_json::json!({"order": {"items": [1, 2]}}))
+            .build();
+        assert_eq!(
+            get_nested_value(&m.context, "data.order.items.1"),
+            Some(&OwnedDataValue::from(&serde_json::json!(2)))
+        );
+    }
+
+    #[test]
+    fn non_object_seeds_are_ignored_to_preserve_the_context_invariant() {
+        // The recorded decision: the three root fields are always Objects.
+        // Storing a scalar verbatim would make `set_processing_metadata` bail out
+        // and silently drop `processed_at` / `engine_version`.
+        for bad in [
+            serde_json::json!("scalar"),
+            serde_json::json!([1, 2]),
+            serde_json::json!(null),
+            serde_json::json!(7),
+        ] {
+            let m = Message::builder()
+                .data_json(&bad)
+                .metadata_json(&bad)
+                .temp_data_json(&bad)
+                .build();
+            assert_eq!(
+                serde_json::Value::from(&m.context),
+                serde_json::json!({"data": {}, "metadata": {}, "temp_data": {}}),
+                "non-object seed {bad} must be ignored"
+            );
+        }
     }
 }

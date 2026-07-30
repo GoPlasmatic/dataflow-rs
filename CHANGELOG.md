@@ -37,6 +37,22 @@ because new public items ship and several existing behaviours change.
   `filter`, `parse_*`, `publish_*`, `log` are dispatched inside the executor and
   cannot be wrapped from outside the crate, so this is the only place their
   duration is observable. (#27)
+- **message:** `MessageBuilder::data` / `metadata` / `temp_data` and their
+  `*_json` siblings seed the three context root fields directly, so a workflow
+  condition reading `data.*` fires without a `parse_json` task first. Keys are
+  taken literally (unlike `set_nested_value`, a dotted key stays one key and a
+  leading `#` is not stripped) and a non-`Object` value is ignored, preserving the
+  invariant that the three root fields are always objects. Seeding records no
+  audit entry and no `Change`. (#30)
+- **workflow:** `Workflow::rollout: Option<Rollout>` plus `Rollout` and
+  `Message::routing_bucket()` / `MessageBuilder::routing_bucket()` — half-open
+  bucket ranges over `0..100` giving a workflow a slice of its channel's traffic.
+  The engine does not derive the bucket; how a caller maps to one stays its
+  policy. A message with no bucket is admitted by every workflow, so every
+  existing caller and the WASM entry points are unaffected. An excluded workflow
+  is skipped exactly like a false condition — no audit entry, `metadata.progress`
+  untouched, one workflow-level `Skipped` step in a trace — and the gate runs
+  before any arena work. (#33)
 - **task-context:** `TaskContext::context()` plus a value-returning evaluation
   surface — `eval` (→ `OwnedDataValue`), `eval_json` (projected straight from the
   arena to `serde_json::Value`, skipping the `from_value` rebuild) and
@@ -221,7 +237,7 @@ trace keeps the historical wire shape. Neither `ExecutionStep` nor `Message` set
 kept as a fallback, and a new `traceHasSnapshots()` helper reports whether a trace
 carries state to inspect at all.
 
-Workspace test count 184 → 309.
+Workspace test count 184 → 337.
 
 ## [3.0.4] — 2026-07-26
 

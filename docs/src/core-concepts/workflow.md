@@ -53,6 +53,7 @@ Rules provide:
 | `version` | number | No | Workflow version number (default: `1`) |
 | `status` | string | No | Lifecycle status: `active`, `paused`, or `archived` (default: `active`) |
 | `tags` | array | No | Arbitrary tags for organization (default: `[]`) |
+| `rollout` | object | No | Traffic split — `{bucket_start, bucket_end}` over `0..100` (default: none) |
 | `created_at` | datetime | No | Creation timestamp (ISO 8601) |
 | `updated_at` | datetime | No | Last update timestamp (ISO 8601) |
 
@@ -274,6 +275,54 @@ Use `version` and `tags` for workflow organization:
     "tasks": [...]
 }
 ```
+
+### Traffic Splits (Rollout)
+
+Give a workflow a slice of its channel's traffic with a half-open bucket range
+over `0..100`:
+
+```json
+{
+    "id": "checkout_v2",
+    "channel": "checkout",
+    "rollout": { "bucket_start": 0, "bucket_end": 10 },
+    "tasks": [...]
+}
+```
+
+That workflow serves buckets `0..=9` — 10% of traffic. Pair it with a
+`{"bucket_start": 10, "bucket_end": 100}` sibling to run the old version for the
+rest. `bucket_start` is inclusive and `bucket_end` exclusive, so the two ranges
+partition `0..=99` exactly with no overlap and no gap. An empty or inverted range
+(`bucket_end <= bucket_start`) serves nothing.
+
+The engine does **not** derive the bucket — set it on the message:
+
+```rust
+# use dataflow_rs::Message;
+# fn _demo() {
+let message = Message::builder().routing_bucket(7).build();
+assert_eq!(message.routing_bucket(), Some(7));
+# }
+```
+
+How you map a request to a bucket is entirely your policy: a sticky hash of some
+request identity (so a given user always sees the same version), a per-message
+random draw, round-robin. That deliberately stays outside this crate.
+
+Two rules worth knowing:
+
+- **A message with no bucket is admitted by every workflow**, split or not. Every
+  message built without `routing_bucket` behaves exactly as it did before rollouts
+  existed, and the WASM entry points — which have no way to set one — keep working
+  on any workflow JSON. The trade-off is that setting `rollout` and forgetting the
+  bucket runs *every* version on the same message, so set both together.
+- **An excluded workflow is skipped exactly like a false condition**: no audit
+  entry, `metadata.progress` untouched, and one workflow-level `Skipped` step in a
+  trace. The gate runs before any arena work, so exclusion is cheap.
+
+Values `>= 100` passed to `routing_bucket` are clamped to `99`, keeping the
+builder infallible.
 
 ## Try It
 

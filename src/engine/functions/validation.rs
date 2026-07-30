@@ -305,10 +305,7 @@ mod tests {
 
     fn message_with_data(initial: serde_json::Value) -> crate::engine::message::Message {
         use crate::engine::message::Message;
-        use crate::engine::utils::set_nested_value;
-        let mut m = Message::new(Arc::new(dv(json!({}))));
-        set_nested_value(&mut m.context, "data", dv(initial));
-        m
+        Message::builder().data(dv(initial)).build()
     }
 
     /// Compile each rule's `logic` and stamp the resulting `Arc<Logic>` into

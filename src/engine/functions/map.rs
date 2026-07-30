@@ -332,9 +332,7 @@ mod tests {
 
     fn fresh_message(initial: serde_json::Value) -> Message {
         // Build a message whose context's `data` field starts as `initial`.
-        let mut m = Message::new(Arc::new(dv(json!({}))));
-        set_nested_value(&mut m.context, "data", dv(initial));
-        m
+        Message::builder().data(dv(initial)).build()
     }
 
     #[test]

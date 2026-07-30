@@ -10,19 +10,14 @@
 //! Run with: `cargo run --example rules_engine`
 
 use dataflow_rs::engine::message::Message;
-use dataflow_rs::engine::utils::set_nested_value;
 use dataflow_rs::{Rule, RulesEngine};
-use datavalue::OwnedDataValue;
 use serde_json::json;
-use std::sync::Arc;
 
 /// Helper to create a message with data already in the data context.
 /// In production, you'd typically use a `parse_json` task as the first action
 /// to move payload into the data context.
 fn message_with_data(data: serde_json::Value) -> Message {
-    let mut message = Message::new(Arc::new(OwnedDataValue::from(&json!({}))));
-    set_nested_value(&mut message.context, "data", OwnedDataValue::from(&data));
-    message
+    Message::builder().data_json(&data).build()
 }
 
 #[tokio::main]

@@ -378,7 +378,6 @@ fn sanitize_xml_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::utils::set_nested_value;
     use serde_json::json;
 
     fn dv(v: serde_json::Value) -> OwnedDataValue {
@@ -386,9 +385,7 @@ mod tests {
     }
 
     fn message_with_data(initial: serde_json::Value) -> Message {
-        let mut m = Message::new(Arc::new(dv(json!({}))));
-        set_nested_value(&mut m.context, "data", dv(initial));
-        m
+        Message::builder().data(dv(initial)).build()
     }
 
     #[test]

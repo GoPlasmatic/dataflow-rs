@@ -115,6 +115,7 @@ pub fn rule(id: &str, name: &str, condition: Value, tasks: Vec<Task>) -> Self
     "version": "number (optional, default: 1)",
     "status": "'active' | 'paused' | 'archived' (optional, default: 'active')",
     "tags": "array of string (optional, default: [])",
+    "rollout": "{bucket_start, bucket_end} over 0..100 (optional, default: none)",
     "created_at": "ISO 8601 datetime (optional)",
     "updated_at": "ISO 8601 datetime (optional)"
 }
@@ -179,7 +180,17 @@ pub fn from_value(payload: &serde_json::Value) -> Message
 `MessageBuilder` (`#[must_use]`) chains
 `.id(...)`, `.payload(Arc<OwnedDataValue>)` /
 `.payload_json(&serde_json::Value)`, `.capture_changes(bool)`,
+`.data(..)` / `.data_json(..)`, `.metadata(..)` / `.metadata_json(..)`,
+`.temp_data(..)` / `.temp_data_json(..)`, `.routing_bucket(u8)`,
 then `.build() -> Message`.
+
+The three context setters seed `context.data` / `metadata` / `temp_data`
+directly, so a workflow condition reading `data.*` fires without needing a
+`parse_json` task first. Keys are taken **literally** — unlike
+`set_nested_value`, a key containing `.` stays one key and a leading `#` is not
+stripped — and a non-`Object` value is ignored, preserving the invariant that the
+three root fields are always objects. Seeding records no audit entry and no
+`Change`; it is initial state, not a mutation.
 
 ### Structure
 
@@ -212,6 +223,7 @@ pub fn temp_data(&self) -> &OwnedDataValue
 pub fn errors(&self) -> &[ErrorInfo]
 pub fn audit_trail(&self) -> &[AuditTrail]
 pub fn capture_changes(&self) -> bool
+pub fn routing_bucket(&self) -> Option<u8>
 
 // Mutation (constructive)
 pub fn add_error(&mut self, error: ErrorInfo)
@@ -536,6 +548,26 @@ pub enum WorkflowStatus {
     Archived,  // Permanently retired
 }
 ```
+
+## Rollout
+
+Traffic split for a workflow, compared against `Message::routing_bucket()`.
+
+```rust,ignore
+pub struct Rollout {
+    pub bucket_start: u8,   // inclusive
+    pub bucket_end: u8,     // exclusive; 100 means "up to and including 99"
+}
+
+impl Rollout {
+    // `[0,100)` accepts everything; an empty or inverted range accepts nothing.
+    pub fn accepts(&self, bucket: u8) -> bool
+}
+```
+
+`Workflow::rollout` is `Option<Rollout>`, defaulting to `None` (not part of a
+split). A message with **no** bucket is admitted by every workflow. See
+[Traffic Splits](../core-concepts/workflow.md#traffic-splits-rollout).
 
 ## Built-in Functions
 

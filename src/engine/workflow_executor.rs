@@ -44,6 +44,25 @@ fn next_async_boundary(tasks: &[Task], start: usize) -> usize {
     i
 }
 
+/// Whether `workflow` serves this message's routing bucket.
+///
+/// A workflow with no `rollout`, or a message with no bucket, is admitted. The
+/// missing-bucket case admits deliberately: every message any existing caller
+/// builds has no bucket, and the wasm entry points have no way to set one, so
+/// rejecting would silently stop those workflows running.
+///
+/// Nested `match` rather than a let-chain: MSRV is 1.85. See
+/// `write_progress_metadata` below for the same reason.
+fn rollout_admits(workflow: &Workflow, message: &Message) -> bool {
+    match workflow.rollout {
+        None => true,
+        Some(r) => match message.routing_bucket() {
+            None => true,
+            Some(b) => r.accepts(b),
+        },
+    }
+}
+
 /// Build a fresh `metadata.progress` object value.
 fn new_progress_object(workflow_id: &str, task_id: &str, status: u16) -> OwnedDataValue {
     OwnedDataValue::Object(vec![
@@ -295,6 +314,18 @@ impl WorkflowExecutor {
             /// Continue with the remaining tasks (from the first async
             /// boundary onward).
             Continue,
+        }
+
+        // Traffic-split gate, ahead of the arena scope below so an excluded
+        // workflow costs no `ArenaContext::from_owned` walk. Reuses the existing
+        // skipped path verbatim, so an excluded workflow is indistinguishable
+        // from a false condition.
+        if !rollout_admits(workflow, message) {
+            debug!("Skipping workflow {} - outside rollout bucket", workflow.id);
+            if let Some(t) = trace.as_deref_mut() {
+                t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
+            }
+            return Ok(false);
         }
 
         let tasks = &workflow.tasks;
@@ -722,6 +753,20 @@ impl WorkflowExecutor {
 
             for workflow in workflows {
                 let workflow: &Workflow = workflow.borrow();
+
+                // Same gate as `execute_inner`. This is the site a fully-sync
+                // workflow actually reaches: `fully_sync` routes every
+                // map/log/validation/filter-only workflow here and never through
+                // `execute_inner`, so gating only there would silently not apply
+                // to most workflows.
+                if !rollout_admits(workflow, message) {
+                    debug!("Skipping workflow {} - outside rollout bucket", workflow.id);
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
+                    }
+                    continue;
+                }
+
                 // Workflow condition in-arena: a folded `None` skips the eval;
                 // a real condition reuses the carried context instead of the
                 // owned-path `eval_to_owned` deep-walk.
