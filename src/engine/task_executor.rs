@@ -7,6 +7,7 @@
 //! routed to the matching registered handler.
 
 use crate::engine::error::{DataflowError, Result};
+use crate::engine::functions::config::{BuiltinKind, builtin_function_kind};
 use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig};
 use crate::engine::message::{Change, Message};
 use crate::engine::task::Task;
@@ -143,12 +144,22 @@ impl TaskExecutor {
         Ok((outcome, changes))
     }
 
-    /// Check if a function handler exists
+    /// Whether this executor can actually run a task named `name`.
+    ///
+    /// `true` for a [`BuiltinKind::SelfContained`] built-in, which this crate
+    /// executes itself, and for any name with a registered handler.
+    ///
+    /// `false` for `http_call` / `enrich` / `publish_kafka` with no handler
+    /// registered — those deserialize into a typed built-in variant and so pass
+    /// `Engine::new`, but fail at dispatch with
+    /// [`DataflowError::FunctionNotFound`] on the first message. This is
+    /// deliberately narrower than "is this a known name"; use
+    /// [`crate::is_builtin_function`] for that.
     pub fn has_function(&self, name: &str) -> bool {
-        match name {
-            "map" | "validation" | "validate" | "parse_json" | "parse_xml" | "publish_json"
-            | "publish_xml" | "filter" | "log" | "http_call" | "enrich" | "publish_kafka" => true,
-            custom_name => self.task_functions.contains_key(custom_name),
+        match builtin_function_kind(name) {
+            Some(BuiltinKind::SelfContained) => true,
+            // RequiresHandler and Custom alike: only if a handler was registered.
+            _ => self.task_functions.contains_key(name),
         }
     }
 
@@ -168,11 +179,23 @@ mod tests {
     use super::*;
     use crate::engine::AsyncFunctionHandler;
     use crate::engine::compiler::LogicCompiler;
+    use crate::engine::functions::config::is_builtin_function;
+
+    /// A `TaskExecutor` with an empty handler registry.
+    fn executor_with_no_handlers() -> TaskExecutor {
+        TaskExecutor::new(Arc::new(HashMap::new()), LogicCompiler::new().into_engine())
+    }
+
+    /// A `TaskExecutor` with `MockAsyncFunction` registered under `name`.
+    fn executor_with_handler(name: &str) -> TaskExecutor {
+        let mut handlers: HashMap<String, BoxedFunctionHandler> = HashMap::new();
+        handlers.insert(name.to_string(), Box::new(MockAsyncFunction));
+        TaskExecutor::new(Arc::new(handlers), LogicCompiler::new().into_engine())
+    }
 
     #[test]
     fn test_has_function() {
-        let engine = LogicCompiler::new().into_engine();
-        let task_executor = TaskExecutor::new(Arc::new(HashMap::new()), engine);
+        let task_executor = executor_with_no_handlers();
 
         // Built-in functions
         assert!(task_executor.has_function("map"));
@@ -181,6 +204,75 @@ mod tests {
 
         // Non-existent function
         assert!(!task_executor.has_function("nonexistent"));
+        assert!(!task_executor.has_function(""));
+    }
+
+    #[test]
+    fn has_function_is_false_for_config_only_integrations_without_a_handler() {
+        // These three deserialize into typed built-in variants, so `Engine::new`
+        // accepts them — but they dispatch to a registered handler and fail with
+        // FunctionNotFound on the first message. `has_function` answers "can this
+        // executor run it", so it must say no.
+        let task_executor = executor_with_no_handlers();
+
+        for name in ["http_call", "enrich", "publish_kafka"] {
+            assert!(
+                !task_executor.has_function(name),
+                "'{name}' has no registered handler, so it cannot be run"
+            );
+            // It is still a known built-in name — the two questions differ.
+            assert!(is_builtin_function(name));
+        }
+    }
+
+    #[test]
+    fn has_function_is_true_for_config_only_integrations_once_registered() {
+        for name in ["http_call", "enrich", "publish_kafka"] {
+            assert!(
+                executor_with_handler(name).has_function(name),
+                "'{name}' has a registered handler, so it can be run"
+            );
+        }
+    }
+
+    #[test]
+    fn has_function_is_true_for_every_self_contained_builtin_with_an_empty_registry() {
+        let task_executor = executor_with_no_handlers();
+
+        // Both accepted spellings of validation are covered: the deserializer
+        // takes either, while `function_name()` only ever returns "validate".
+        for name in [
+            "map",
+            "validation",
+            "validate",
+            "parse_json",
+            "parse_xml",
+            "publish_json",
+            "publish_xml",
+            "filter",
+            "log",
+        ] {
+            assert!(
+                task_executor.has_function(name),
+                "'{name}' is executed by the crate and needs no registration"
+            );
+        }
+    }
+
+    #[test]
+    fn registering_a_handler_under_a_self_contained_name_does_not_change_the_answer() {
+        // `TaskExecutor::execute` dispatches sync built-ins by variant and never
+        // consults the registry, so a handler registered under "map" is dead
+        // code. `has_function` answers `true` either way; pinning it here stops a
+        // later change from making the two disagree silently.
+        assert!(executor_with_handler("map").has_function("map"));
+        assert!(executor_with_no_handlers().has_function("map"));
+    }
+
+    #[test]
+    fn has_function_is_unchanged_for_custom_names() {
+        assert!(executor_with_handler("custom_test").has_function("custom_test"));
+        assert!(!executor_with_handler("custom_test").has_function("other_custom"));
     }
 
     #[test]

@@ -31,7 +31,7 @@ cd dataflow-rs
 cargo test --workspace --all-features
 ```
 
-You should see 197 passing tests (91 unit, 33 integration, 13 doc, 59 docs-page
+You should see 210 passing tests (99 unit, 36 integration, 14 doc, 60 docs-page
 doctests, 1 docs coverage).
 
 ## Before You Open a Pull Request

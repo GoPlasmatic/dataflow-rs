@@ -3,7 +3,8 @@ use dataflow_rs::engine::functions::{AsyncFunctionHandler, FunctionConfig};
 use dataflow_rs::engine::message::Message;
 use dataflow_rs::engine::utils::set_nested_value;
 use dataflow_rs::{
-    Engine, ExecutionStep, ExecutionTrace, Result, Task, TaskContext, TaskOutcome, Workflow,
+    BUILTIN_FUNCTION_NAMES, BuiltinKind, Engine, ExecutionStep, ExecutionTrace, Result, Task,
+    TaskContext, TaskOutcome, Workflow, builtin_function_kind,
 };
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
@@ -2322,4 +2323,113 @@ async fn with_trace_wrappers_are_unchanged_by_the_tracing_refactor() {
             .is_err(),
         "callers of the by-value method see no behaviour change"
     );
+}
+
+// =============================================================================
+// Built-in function classification — regression coverage for the
+// has_function / config-only-integration conflation
+// =============================================================================
+
+#[tokio::test]
+async fn handler_less_enrich_builds_but_is_detectable_before_processing() {
+    // `enrich` ships as a config schema with no implementation. It deserializes
+    // to `FunctionConfig::Enrich` rather than `Custom`, so `precompile_custom_inputs`
+    // never visits it and `Engine::new` accepts the workflow — then every message
+    // fails with FunctionNotFound.
+    //
+    // `Engine::new` staying permissive is deliberate (a host screening stored
+    // definitions one row at a time must not be stopped from booting by one
+    // unusable row). What was missing was any way to *detect* the gap first.
+    let wf = Workflow::from_json(
+        r#"{
+        "id": "w", "name": "w", "priority": 0, "condition": true,
+        "tasks": [{ "id": "t", "name": "t",
+                    "function": { "name": "enrich",
+                                  "input": { "connector": "c",
+                                             "merge_path": "data.out" } } }]
+    }"#,
+    )
+    .expect("a handler-less enrich task still parses");
+
+    // Unchanged: the engine builds.
+    let engine = Engine::new(vec![wf], std::collections::HashMap::new())
+        .expect("Engine::new stays permissive for config-only integrations");
+
+    // The gap is now detectable without processing a message.
+    assert_eq!(
+        builtin_function_kind("enrich"),
+        Some(BuiltinKind::RequiresHandler),
+        "a caller can screen for this before accepting the workflow"
+    );
+
+    // And the underlying behaviour it predicts is real.
+    let mut message = Message::from_value(&json!({}));
+    let result = engine.process_message(&mut message).await;
+    assert!(
+        result.is_err(),
+        "a handler-less enrich still fails on the first message"
+    );
+    let codes: Vec<&str> = message.errors().iter().map(|e| e.code.as_str()).collect();
+    assert!(
+        !codes.is_empty(),
+        "the failure is also recorded on the message, got {codes:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_registered_enrich_handler_closes_the_gap() {
+    let wf = Workflow::from_json(
+        r#"{
+        "id": "w", "name": "w", "priority": 0, "condition": true,
+        "tasks": [{ "id": "t", "name": "t",
+                    "function": { "name": "enrich",
+                                  "input": { "connector": "c",
+                                             "merge_path": "data.out" } } }]
+    }"#,
+    )
+    .unwrap();
+
+    let engine = Engine::builder()
+        .with_workflow(wf)
+        .register("enrich", MockEnrich)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine
+        .process_message(&mut message)
+        .await
+        .expect("with a handler registered the same workflow runs");
+}
+
+// A handler for a config-only integration must declare the *typed* input its
+// `FunctionConfig` variant carries — an `enrich` task deserializes to
+// `FunctionConfig::Enrich { input: EnrichConfig }`, so a handler declaring
+// `type Input = Value` fails the downcast at dispatch with "Handler input type
+// mismatch" rather than running.
+struct MockEnrich;
+
+#[async_trait]
+impl AsyncFunctionHandler for MockEnrich {
+    type Input = dataflow_rs::EnrichConfig;
+
+    async fn execute(
+        &self,
+        _ctx: &mut TaskContext<'_>,
+        _input: &Self::Input,
+    ) -> Result<TaskOutcome> {
+        Ok(TaskOutcome::Success)
+    }
+}
+
+#[test]
+fn builtin_classification_is_reachable_from_the_crate_root() {
+    // Pins the re-export path a consumer actually uses.
+    assert!(BUILTIN_FUNCTION_NAMES.contains(&"enrich"));
+    assert!(dataflow_rs::is_builtin_function("map"));
+    assert_eq!(
+        builtin_function_kind("map"),
+        Some(BuiltinKind::SelfContained)
+    );
+    assert_eq!(builtin_function_kind("my_custom_handler"), None);
 }

@@ -179,11 +179,26 @@ pub enum PublishKafkaName {
     PublishKafka,
 }
 
-/// Names of the built-in function variants — used in error messages and as
-/// the discriminator for [`FunctionConfig`] deserialization. Kept in one
-/// place so adding a new built-in updates the dispatch, the error suggestion
-/// list, and the docs in lockstep.
-pub(crate) const BUILTIN_FUNCTION_NAMES: &[&str] = &[
+/// Every function name that [`FunctionConfig`]'s deserializer resolves to a
+/// typed built-in variant instead of [`FunctionConfig::Custom`].
+///
+/// Used in error messages and as the discriminator for [`FunctionConfig`]
+/// deserialization. Kept in one place so adding a new built-in updates the
+/// dispatch, the error suggestion list, and the docs in lockstep.
+///
+/// Public so a service layer that gates workflow authoring on a closed
+/// function set can derive that set rather than copy it. Membership here is
+/// **not** the same fact as "this engine can run it" — see
+/// [`builtin_function_kind`], and prefer it for that question.
+///
+/// # Stability
+///
+/// Names are only added in a minor release and only removed in a major one, so
+/// a caller may treat a name that appears here as durable. **Ordering is not
+/// meaningful** and may change without notice; treat this as a set. Note that
+/// `validation` and `validate` are both present and both resolve to
+/// [`FunctionConfig::Validation`].
+pub const BUILTIN_FUNCTION_NAMES: &[&str] = &[
     "map",
     "validation",
     "validate",
@@ -197,6 +212,66 @@ pub(crate) const BUILTIN_FUNCTION_NAMES: &[&str] = &[
     "enrich",
     "publish_kafka",
 ];
+
+/// How a built-in function reaches an implementation.
+///
+/// This is the programmatic form of the distinction
+/// `docs/src/built-in-functions/integrations.md` draws in prose: some built-ins
+/// this crate executes itself, and for others it only supplies a config schema.
+///
+/// Deliberately **not** `#[non_exhaustive]`. A caller matching on this is
+/// usually deciding whether to accept a workflow definition, and if a third
+/// kind is ever added that decision needs revisiting — a compile error at every
+/// match site is the correct signal, not a silent fall-through to a `_` arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinKind {
+    /// Executed by this crate. Needs no registration; an engine can always run it.
+    SelfContained,
+    /// Deserializes into a typed built-in variant — so `Engine::new` accepts it
+    /// without complaint — but dispatches to a handler registered under the same
+    /// name, and fails with [`crate::DataflowError::FunctionNotFound`] on the
+    /// first message if none is registered.
+    ///
+    /// `http_call`, `enrich` and `publish_kafka` are these. A validator that
+    /// treats them like [`BuiltinKind::SelfContained`] will green-light a
+    /// workflow that builds cleanly and then fails every request.
+    RequiresHandler,
+}
+
+/// Classify `name` as a built-in function.
+///
+/// `None` means it is not a built-in: it lands in [`FunctionConfig::Custom`] and
+/// needs `Engine::builder().register(name, handler)`.
+///
+/// Matching is exact, the same as the deserializer dispatch — `"HTTP_CALL"` and
+/// `"htttp_call"` are both `None`.
+///
+/// ```
+/// use dataflow_rs::{BuiltinKind, builtin_function_kind};
+///
+/// assert_eq!(builtin_function_kind("map"), Some(BuiltinKind::SelfContained));
+/// assert_eq!(builtin_function_kind("enrich"), Some(BuiltinKind::RequiresHandler));
+/// assert_eq!(builtin_function_kind("my_handler"), None);
+/// ```
+pub fn builtin_function_kind(name: &str) -> Option<BuiltinKind> {
+    match name {
+        "map" | "validation" | "validate" | "parse_json" | "parse_xml" | "publish_json"
+        | "publish_xml" | "filter" | "log" => Some(BuiltinKind::SelfContained),
+        "http_call" | "enrich" | "publish_kafka" => Some(BuiltinKind::RequiresHandler),
+        _ => None,
+    }
+}
+
+/// Whether `name` deserializes to a typed built-in variant at all.
+///
+/// Equivalent to `builtin_function_kind(name).is_some()`. This answers "is this
+/// a name the crate special-cases", **not** "can this engine run it" — a
+/// [`BuiltinKind::RequiresHandler`] name returns `true` here whether or not a
+/// handler is registered.
+#[inline]
+pub fn is_builtin_function(name: &str) -> bool {
+    builtin_function_kind(name).is_some()
+}
 
 /// Parse a `serde_json::Value` into a typed config, wrapping any error in a
 /// "config for function '<func>': …" envelope. Strips the trailing
@@ -544,6 +619,107 @@ mod tests {
                     "name '{name}' failed without envelope: {e}"
                 ),
             }
+
+            // The const and the classifier cannot drift: anything listed as a
+            // built-in must classify as one.
+            assert!(
+                builtin_function_kind(name).is_some(),
+                "name '{name}' is in BUILTIN_FUNCTION_NAMES but classifies as None"
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_function_kind_is_none_for_non_builtins() {
+        // Classification is exact-match, same as the deserializer dispatch.
+        for name in [
+            "",
+            "__not_a_builtin__",
+            "HTTP_CALL",    // case differs
+            "htttp_call",   // typo
+            "map ",         // trailing space
+            "publish_kafk", // truncated
+        ] {
+            assert_eq!(
+                builtin_function_kind(name),
+                None,
+                "'{name}' must not classify as a built-in"
+            );
+            assert!(!is_builtin_function(name));
+        }
+    }
+
+    #[test]
+    fn builtin_kinds_partition_matches_real_dispatch_behaviour() {
+        // Tie the classifier to executed code rather than to a second
+        // hand-maintained list: `is_sync_builtin` decides whether the workflow
+        // executor runs a task itself in the arena, and `try_execute_in_arena`
+        // returns `None` for exactly the handler-backed variants. So a
+        // SelfContained name must be a sync built-in and a RequiresHandler name
+        // must not be.
+        let minimal_input = |name: &str| -> serde_json::Value {
+            match name {
+                "map" => json!({ "mappings": [] }),
+                "validation" | "validate" => json!({ "rules": [] }),
+                "parse_json" | "parse_xml" | "publish_json" | "publish_xml" => {
+                    json!({ "source": "data.in", "target": "out" })
+                }
+                "filter" => json!({ "condition": true }),
+                "log" => json!({ "message": "hi" }),
+                "http_call" => json!({ "connector": "c" }),
+                "enrich" => json!({ "connector": "c", "merge_path": "data.out" }),
+                "publish_kafka" => json!({ "connector": "c", "topic": "t" }),
+                // A new built-in with required fields will fail loudly below
+                // rather than silently skewing the partition.
+                _ => json!({}),
+            }
+        };
+
+        for name in BUILTIN_FUNCTION_NAMES {
+            let kind = builtin_function_kind(name)
+                .unwrap_or_else(|| panic!("'{name}' must classify as a built-in"));
+            let cfg = parse(json!({ "name": name, "input": minimal_input(name) }))
+                .unwrap_or_else(|e| panic!("'{name}' should parse with minimal input: {e}"));
+
+            assert_eq!(
+                cfg.is_sync_builtin(),
+                matches!(kind, BuiltinKind::SelfContained),
+                "'{name}' classifies as {kind:?} but is_sync_builtin() is {}",
+                cfg.is_sync_builtin()
+            );
+        }
+    }
+
+    #[test]
+    fn requires_handler_kind_covers_exactly_the_config_only_integrations() {
+        // The three names documented as shipping config-only.
+        for name in ["http_call", "enrich", "publish_kafka"] {
+            assert_eq!(
+                builtin_function_kind(name),
+                Some(BuiltinKind::RequiresHandler),
+                "'{name}' ships as config only and needs a registered handler"
+            );
+        }
+
+        // Both accepted spellings of validation are self-contained. The
+        // deserializer takes either; `function_name()` only ever returns
+        // "validate", so checking one spelling would miss a regression.
+        for name in [
+            "map",
+            "validation",
+            "validate",
+            "parse_json",
+            "parse_xml",
+            "publish_json",
+            "publish_xml",
+            "filter",
+            "log",
+        ] {
+            assert_eq!(
+                builtin_function_kind(name),
+                Some(BuiltinKind::SelfContained),
+                "'{name}' is executed by this crate"
+            );
         }
     }
 }

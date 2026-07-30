@@ -336,6 +336,36 @@ pub enum FunctionConfig {
 }
 ```
 
+### Classifying a function name
+
+Which names get a typed variant is a fact about this crate, so it is exposed
+rather than left to be copied or scraped out of an error message:
+
+```rust,ignore
+// Every name that resolves to a typed variant instead of `Custom`.
+pub const BUILTIN_FUNCTION_NAMES: &[&str]
+
+// How a built-in reaches an implementation.
+pub enum BuiltinKind {
+    SelfContained,    // executed by this crate; no registration needed
+    RequiresHandler,  // config schema only; needs a registered handler
+}
+
+// `None` means the name lands in `FunctionConfig::Custom`.
+pub fn builtin_function_kind(name: &str) -> Option<BuiltinKind>
+
+// Equivalent to `builtin_function_kind(name).is_some()`.
+pub fn is_builtin_function(name: &str) -> bool
+```
+
+`RequiresHandler` covers `http_call`, `enrich` and `publish_kafka`. These parse
+without complaint and fail on the first message if no handler is registered, so a
+validator that treats them like `SelfContained` will accept a workflow that fails
+every request — see
+[Integration Functions](../built-in-functions/integrations.md#detecting-a-missing-handler-before-it-fails).
+
+Matching is exact: `"HTTP_CALL"` and `"htttp_call"` are both `None`.
+
 ## Change
 
 Represents a single data modification recorded in the audit trail.
@@ -434,6 +464,13 @@ pub enum WorkflowStatus {
 ```
 
 ## Built-in Functions
+
+`map`, `validation`/`validate`, `parse_json`, `parse_xml`, `publish_json`,
+`publish_xml`, `filter` and `log` are executed by the crate itself
+(`BuiltinKind::SelfContained`). `http_call`, `enrich` and `publish_kafka` ship as
+typed config only and require a registered handler
+(`BuiltinKind::RequiresHandler`) — see
+[Classifying a function name](#classifying-a-function-name).
 
 ### map
 

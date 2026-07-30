@@ -7,7 +7,10 @@ use serde_json::Value;
 use std::any::Any;
 
 pub mod config;
-pub use config::{CompiledCustomInput, FunctionConfig};
+pub use config::{
+    BUILTIN_FUNCTION_NAMES, BuiltinKind, CompiledCustomInput, FunctionConfig,
+    builtin_function_kind, is_builtin_function,
+};
 
 pub mod validation;
 pub use validation::{ValidationConfig, ValidationRule};

@@ -54,6 +54,38 @@ let engine = Engine::builder()
 Skip the registration step and any workflow that uses these variants will fail
 with `DataflowError::FunctionNotFound("http_call")` at dispatch time.
 
+## Detecting a missing handler before it fails
+
+Because these three names deserialize into typed built-in variants, a workflow
+that uses one without a registered handler **builds cleanly** — `Engine::new()`
+raises nothing, and the failure arrives on the first message. That is deliberate:
+a host screening stored workflow definitions one row at a time should not be
+stopped from booting by a single unusable row.
+
+To detect the gap instead of discovering it at runtime, classify the name:
+
+```rust
+use dataflow_rs::{BuiltinKind, builtin_function_kind};
+
+// Executed by the crate — always runnable, no registration needed.
+assert_eq!(builtin_function_kind("map"), Some(BuiltinKind::SelfContained));
+
+// Config schema only — needs a handler registered under the same name.
+assert_eq!(
+    builtin_function_kind("enrich"),
+    Some(BuiltinKind::RequiresHandler),
+);
+
+// Not a built-in at all — lands in `FunctionConfig::Custom`.
+assert_eq!(builtin_function_kind("my_handler"), None);
+```
+
+So a validator that gates workflow authoring can require a registration for
+every `RequiresHandler` and `None` name, and accept `SelfContained` names
+outright. `BUILTIN_FUNCTION_NAMES` gives the full set if you need to enumerate
+it. Prefer these over parsing the text of `FunctionNotFound`, which is a
+human-facing diagnostic and may be reworded at any time.
+
 ---
 
 ## http_call

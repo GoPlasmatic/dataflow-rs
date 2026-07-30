@@ -609,6 +609,13 @@ fn precompile_custom_inputs(
 /// Build a `FunctionNotFound` error that lists both the registered custom
 /// handlers and the names of built-in functions, so a user with a typo
 /// (e.g. `htttp_call`) can immediately spot the intended name.
+///
+/// **This message is free-form and deliberately unpinned.** It is a diagnostic
+/// for humans; its wording and layout may change in any release. No test
+/// asserts on it, and none should — a caller that needs the built-in vocabulary
+/// programmatically should use [`crate::BUILTIN_FUNCTION_NAMES`] and
+/// [`crate::builtin_function_kind`], which exist for exactly that purpose and
+/// answer the sharper question of whether a name needs a registered handler.
 fn function_not_found_error(
     name: &str,
     handlers: &HashMap<String, BoxedFunctionHandler>,
