@@ -3378,3 +3378,125 @@ async fn no_observer_means_no_added_clock_reads() {
     assert_eq!(stamps.len(), 4);
     assert!(stamps.windows(2).all(|w| w[0] == w[1]));
 }
+
+// =============================================================================
+// Crate-root re-exports of datalogic_rs / datavalue
+// =============================================================================
+//
+// Compile-only. Underscore-prefixed so `-D warnings` does not flag them as dead
+// code; they exist to fail the build if a path stops resolving or the two
+// reachable spellings of the value type ever become different types.
+
+/// Both paths to the value type are one type — catches an accidental
+/// double-link of incompatible `datavalue` majors.
+fn _datavalue_reexport_paths_agree(
+    v: dataflow_rs::datavalue::OwnedDataValue,
+) -> dataflow_rs::datalogic_rs::datavalue::OwnedDataValue {
+    v
+}
+
+/// The re-exported engine type is the one the accessor returns.
+fn _datalogic_engine_type_is_reachable(
+    e: &dataflow_rs::Engine,
+) -> &std::sync::Arc<dataflow_rs::datalogic_rs::Engine> {
+    e.datalogic()
+}
+
+/// `Logic` is nameable through the re-export — the type handler authors need
+/// for `HttpCallConfig::compiled_path_logic` and friends.
+fn _datalogic_logic_is_nameable(
+    l: &Option<std::sync::Arc<dataflow_rs::datalogic_rs::Logic>>,
+) -> bool {
+    l.is_some()
+}
+
+#[test]
+fn reexports_do_not_shadow_the_crate_root_names() {
+    // `datalogic_rs` / `datavalue` must not collide with `engine` / `prelude`
+    // or the Rule/Action/RulesEngine aliases.
+    let _: dataflow_rs::Rule = Workflow::new();
+    let _engine_mod_still_reachable: fn(&str) -> Option<&dataflow_rs::datavalue::OwnedDataValue> =
+        |_| None;
+    assert!(dataflow_rs::is_builtin_function("map"));
+}
+
+// =============================================================================
+// Connector introspection across a built engine
+// =============================================================================
+
+#[tokio::test]
+async fn connector_refs_across_a_built_engine() {
+    // The rename-guard shape: "is any workflow still pointing at this
+    // connector?" — answered without an engine-level wrapper, via
+    // `workflows()` + flat_map.
+    let wf_a = Workflow::from_json(
+        r#"{
+        "id": "wf_a", "name": "wf_a", "priority": 0, "condition": true,
+        "tasks": [
+            { "id": "m", "name": "m", "function": {
+                "name": "map", "input": { "mappings": [] } } },
+            { "id": "call", "name": "call", "function": {
+                "name": "http_call", "input": { "connector": "user_service" } } }
+        ]
+    }"#,
+    )
+    .unwrap();
+    let wf_b = Workflow::from_json(
+        r#"{
+        "id": "wf_b", "name": "wf_b", "priority": 1, "condition": true,
+        "tasks": [
+            { "id": "db", "name": "db", "function": {
+                "name": "pg_query",
+                "input": { "connector": "pg_main", "database": "orders" } } }
+        ]
+    }"#,
+    )
+    .unwrap();
+
+    let engine = Engine::builder()
+        .with_workflows(vec![wf_a, wf_b])
+        .register("pg_query", LoggingTask)
+        .build()
+        .unwrap();
+
+    let refs: Vec<_> = engine
+        .workflows()
+        .iter()
+        .flat_map(Workflow::connector_refs)
+        .collect();
+
+    assert_eq!(refs.len(), 2, "one per connector-bearing task");
+
+    // Workflow provenance survives, so a diagnostic can name where a reference
+    // lives — and the Custom convention is picked up alongside the typed field.
+    let located: Vec<(&str, &str, &str)> = refs
+        .iter()
+        .map(|r| (r.workflow_id, r.task_id, r.connector))
+        .collect();
+    assert_eq!(
+        located,
+        vec![("wf_a", "call", "user_service"), ("wf_b", "db", "pg_main"),]
+    );
+
+    // The rename guard itself.
+    assert!(refs.iter().any(|r| r.connector == "pg_main"));
+    assert!(!refs.iter().any(|r| r.connector == "retired_connector"));
+}
+
+#[test]
+fn remove_nested_value_is_public_from_the_utils_module() {
+    // Reachable from an external crate with no other change.
+    use dataflow_rs::engine::utils::remove_nested_value;
+
+    let mut ctx = dv(json!({"data": {"keep": 1, "scratch": {"x": 2}}}));
+
+    assert_eq!(
+        remove_nested_value(&mut ctx, "data.scratch"),
+        Some(dv(json!({"x": 2})))
+    );
+    assert_eq!(
+        serde_json::Value::from(&ctx),
+        json!({"data": {"keep": 1}}),
+        "unlike set_nested_value(path, Null), the key is gone rather than nulled"
+    );
+}

@@ -360,7 +360,7 @@ records audit-trail changes automatically, and returns a `TaskOutcome`:
 ```rust
 use async_trait::async_trait;
 use dataflow_rs::{AsyncFunctionHandler, Engine, Result, TaskContext, TaskOutcome};
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::json;
 

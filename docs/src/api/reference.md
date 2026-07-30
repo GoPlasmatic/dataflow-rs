@@ -158,7 +158,7 @@ evaluator can borrow it into its arena without a `serde_json` round-trip.
 
 ```rust
 use dataflow_rs::Message;
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 use std::sync::Arc;
 ```
 
@@ -300,6 +300,56 @@ impl<'a> TaskContext<'a> {
 `set` records a `Change` on the audit trail when `message.capture_changes`
 is `true`, then writes through `set_nested_value` (auto-creates
 intermediate objects/arrays, handles `#`-prefix escapes).
+
+## Path helpers (`engine::utils`)
+
+Dot-path read, write and remove over the `OwnedDataValue` tree behind
+`Message::context`. Numeric segments index arrays; one leading `#` escapes a
+numerically-named object key (`data.#20` is the object key `"20"`).
+
+```rust,ignore
+pub fn get_nested_value<'b>(data: &'b OwnedDataValue, path: &str) -> Option<&'b OwnedDataValue>
+pub fn get_nested_value_cloned(data: &OwnedDataValue, path: &str) -> Option<OwnedDataValue>
+pub fn set_nested_value(data: &mut OwnedDataValue, path: &str, value: OwnedDataValue)
+
+// Remove and return. `None` — leaving the tree untouched — for a missing key,
+// an out-of-bounds or non-numeric index, descent through a non-container, or
+// an empty path. Never panics.
+pub fn remove_nested_value(data: &mut OwnedDataValue, path: &str) -> Option<OwnedDataValue>
+```
+
+`remove_nested_value` is genuine removal:
+`set_nested_value(path, OwnedDataValue::Null)` leaves an explicit `null` behind,
+which survives serialization because `Message` emits `context` whole. Object
+removal preserves the order of the surviving keys; array removal shifts the tail
+rather than leaving a hole.
+
+## Connector introspection
+
+Which function configs carry a connector is this crate's fact, so it is exposed
+rather than reimplemented downstream.
+
+```rust,ignore
+// `Some` for http_call / enrich / publish_kafka (typed field), and for a
+// `Custom` input whose `connector` key holds a string. `None` otherwise.
+pub fn FunctionConfig::connector(&self) -> Option<&str>
+
+// Every connector reference in a workflow, in task order. One item per task,
+// not deduplicated. Works on an uncompiled `Workflow::from_json` result.
+pub fn Workflow::connector_refs(&self) -> impl Iterator<Item = ConnectorRef<'_>>
+
+pub struct ConnectorRef<'a> {
+    pub workflow_id: &'a str,
+    pub task_id: &'a str,
+    pub function: &'a str,
+    pub connector: &'a str,
+    pub config: &'a FunctionConfig,   // for cross-field rules
+}
+```
+
+Across a whole engine, `engine.workflows().iter().flat_map(Workflow::connector_refs)`
+covers it — there is deliberately no `Engine::connector_refs()`, since the engine
+has no stake in connectors.
 
 ## TaskOutcome
 

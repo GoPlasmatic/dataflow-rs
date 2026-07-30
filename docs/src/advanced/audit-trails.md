@@ -203,7 +203,7 @@ The audit trail can be used to implement rollback:
 ```rust
 # use dataflow_rs::Message;
 # fn _demo() {
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 
 fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a OwnedDataValue> {
     message.audit_trail().iter()

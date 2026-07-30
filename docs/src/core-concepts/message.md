@@ -15,7 +15,7 @@ The Message structure contains:
 ## Message Structure
 
 ```rust
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 use std::sync::Arc;
 
 pub struct Message {
@@ -63,7 +63,7 @@ let mut message = Message::from_value(&json!({
 # use dataflow_rs::Message;
 # use serde_json::json;
 # fn _demo() {
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 use std::sync::Arc;
 
 let payload = Arc::new(OwnedDataValue::from(&json!({

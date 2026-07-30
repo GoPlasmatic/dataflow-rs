@@ -156,7 +156,7 @@ your config once at startup; handlers then receive typed input and a
 use dataflow_rs::{
     AsyncFunctionHandler, Engine, Result, TaskContext, TaskOutcome, Workflow,
 };
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::json;
 use async_trait::async_trait;
@@ -236,7 +236,47 @@ pub use engine::observer::{ExecutionObserver, TaskEvent};
 pub use engine::task_context::TaskContext;
 pub use engine::task_outcome::TaskOutcome;
 pub use engine::trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
-pub use engine::{Engine, EngineBuilder, Task, Workflow, WorkflowStatus};
+pub use engine::{ConnectorRef, Engine, EngineBuilder, Task, Workflow, WorkflowStatus};
+
+/// The [`datalogic_rs`] JSONLogic engine, re-exported.
+///
+/// [`Engine::datalogic`] and [`TaskContext::datalogic`] both return
+/// `&Arc<datalogic_rs::Engine>`, and [`HttpCallConfig::compiled_path_logic`]
+/// (with its siblings on [`EnrichConfig`] and [`PublishKafkaConfig`]) is an
+/// `Option<Arc<datalogic_rs::Logic>>` — so any crate implementing
+/// [`AsyncFunctionHandler`] against those configs has to name these types.
+/// Reaching them through here locks their major version to whatever
+/// `dataflow-rs` depends on; prefer it over an independent `datalogic-rs`
+/// dependency, which can skew.
+///
+/// Two things to know:
+///
+/// - `datalogic_rs::Engine` and [`crate::Engine`] are both called `Engine`.
+///   This crate imports the former under an alias
+///   (`use datalogic_rs::Engine as DatalogicEngine;`); you will want to do the
+///   same.
+/// - The operator surface is feature-dependent. `datalogic-rs` gates
+///   `length`/`starts_with`/`upper`/`split` behind `ext-string`, `sort`/`slice`
+///   behind `ext-array`, `abs`/`ceil`/`floor` behind `ext-math`,
+///   `exists`/`??`/`switch`/`type` behind `ext-control`, `try`/`throw` behind
+///   `error-handling`, and the date operators behind `datetime`. `dataflow-rs`
+///   enables none of those. To turn one on, keep a direct `datalogic-rs`
+///   dependency with the feature enabled — cargo's additive feature unification
+///   then enables it here too. The two arrangements coexist.
+pub use datalogic_rs;
+
+/// The [`datavalue`] value-type crate, re-exported.
+///
+/// [`Message::context`], [`Message::data`], [`TaskContext::get`] /
+/// [`TaskContext::set`], [`Change::old_value`] and the [`engine::utils`] path
+/// helpers are all expressed in terms of `datavalue::OwnedDataValue`, so it is
+/// unavoidable for handler authors.
+///
+/// Note the crate is published as `datavalue-rs` and used here under the name
+/// `datavalue` via a `package =` rename, which makes the correct `Cargo.toml`
+/// line hard to guess — reach it as `dataflow_rs::datavalue` instead. Same
+/// major-version-skew argument as [`datalogic_rs`].
+pub use datavalue;
 
 /// Type alias for `Workflow` — a Rule represents an IF-THEN unit: IF condition THEN execute actions.
 pub type Rule = Workflow;

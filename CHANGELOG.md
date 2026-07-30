@@ -37,6 +37,29 @@ because new public items ship and several existing behaviours change.
   `filter`, `parse_*`, `publish_*`, `log` are dispatched inside the executor and
   cannot be wrapped from outside the crate, so this is the only place their
   duration is observable. (#27)
+- **lib:** `datalogic_rs` and `datavalue` are re-exported from the crate root.
+  Both are unavoidable for handler authors — `TaskContext::datalogic()` returns
+  `&Arc<datalogic_rs::Engine>`, `HttpCallConfig::compiled_path_logic` is an
+  `Option<Arc<datalogic_rs::Logic>>`, and the whole context/path surface is in
+  terms of `datavalue::OwnedDataValue` — yet neither was reachable without a
+  duplicate direct dependency, and `datavalue` is published under a different
+  name (`datavalue-rs`) than it is used under, so the manifest line was hard to
+  guess. Reaching them through here also locks their major version to whatever
+  this crate depends on. Proven mechanically: the `docs-tests` crate's duplicate
+  `datavalue` pin is deleted and its snippets now import through the re-export,
+  so the only `datavalue` pin in the workspace is the root manifest. (#26)
+- **utils:** `remove_nested_value` completes the dot-path helper API. Previously
+  the closest available operation was `set_nested_value(path, Null)`, which is not
+  removal — it leaves an explicit `null` that survives every serialization
+  boundary, because `Message` emits `context` whole. Object removal preserves the
+  order of surviving keys; array removal shifts the tail rather than leaving a
+  hole. (#21)
+- **functions:** `FunctionConfig::connector()`, `Workflow::connector_refs()` and
+  `ConnectorRef`. Which configs carry a connector is this crate's fact, and every
+  consumer that reimplements the set is a silent-breakage site the next time one
+  is added. Covers the three typed integrations plus the `Custom`
+  `input["connector"]` convention; the match is exhaustive so a future
+  connector-bearing variant cannot be silently omitted. (#32)
 - **observer:** `ExecutionObserver` and `TaskEvent`, attached via
   `EngineBuilder::with_observer` or `Engine::with_observer`. An always-on
   per-task callback for aggregation, as distinct from a trace you persist. This
@@ -175,7 +198,7 @@ trace keeps the historical wire shape. Neither `ExecutionStep` nor `Message` set
 kept as a fallback, and a new `traceHasSnapshots()` helper reports whether a trace
 carries state to inspect at all.
 
-Workspace test count 184 → 267.
+Workspace test count 184 → 292.
 
 ## [3.0.4] — 2026-07-26
 

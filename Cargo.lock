@@ -253,7 +253,6 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "dataflow-rs",
- "datavalue-rs",
  "env_logger",
  "log",
  "serde",

@@ -1,4 +1,5 @@
 use crate::engine::error::{DataflowError, Result};
+use crate::engine::functions::FunctionConfig;
 use crate::engine::task::Task;
 use chrono::{DateTime, Utc};
 use datalogic_rs::Logic;
@@ -191,5 +192,165 @@ impl Workflow {
         }
 
         Ok(())
+    }
+}
+
+/// One task's connector reference, located within a workflow.
+///
+/// `Copy`: every field is a shared borrow. `config` is carried so callers can
+/// apply cross-field rules — "a task on this kind of connector also needs
+/// `input.database`" — without re-parsing the task.
+///
+/// Not `Serialize`: [`FunctionConfig`] is deserialize-only, so callers that emit
+/// JSON diagnostics build their own shape from these fields.
+#[derive(Debug, Clone, Copy)]
+pub struct ConnectorRef<'a> {
+    /// `id` of the owning workflow.
+    pub workflow_id: &'a str,
+    /// `id` of the referencing task.
+    pub task_id: &'a str,
+    /// Canonical function name, as [`FunctionConfig::function_name`].
+    pub function: &'a str,
+    /// The connector name, exactly as authored.
+    pub connector: &'a str,
+    /// The whole function config, for cross-field rules.
+    pub config: &'a FunctionConfig,
+}
+
+impl Workflow {
+    /// Every connector reference in this workflow, in task order.
+    ///
+    /// Tasks whose function names no connector are skipped. One item is yielded
+    /// per *task*, not per distinct connector: two tasks on the same connector
+    /// yield two items. Callers wanting a distinct set collect one themselves.
+    ///
+    /// Does not require a compiled workflow — this reads only deserialized
+    /// fields, so it works on the output of [`Workflow::from_json`] before the
+    /// engine has compiled it.
+    ///
+    /// Which configs carry a connector is this crate's fact; deriving it here
+    /// rather than reimplementing the set downstream is the point.
+    pub fn connector_refs(&self) -> impl Iterator<Item = ConnectorRef<'_>> {
+        // `move` is load-bearing: it copies the `&Workflow` into the closure so
+        // the returned iterator does not borrow a local.
+        self.tasks.iter().filter_map(move |task| {
+            task.function.connector().map(|connector| ConnectorRef {
+                workflow_id: &self.id,
+                task_id: &task.id,
+                function: task.function.function_name(),
+                connector,
+                config: &task.function,
+            })
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wf(tasks_json: &str) -> Workflow {
+        Workflow::from_json(&format!(
+            r#"{{ "id": "w", "name": "w", "priority": 0, "condition": true,
+                  "tasks": [{tasks_json}] }}"#
+        ))
+        .expect("workflow should parse")
+    }
+
+    const HTTP: &str = r#"{ "id": "call", "name": "call", "function": {
+        "name": "http_call", "input": { "connector": "user_service" } } }"#;
+    const KAFKA: &str = r#"{ "id": "pub", "name": "pub", "function": {
+        "name": "publish_kafka",
+        "input": { "connector": "events", "topic": "t" } } }"#;
+    const MAP: &str = r#"{ "id": "m", "name": "m", "function": {
+        "name": "map", "input": { "mappings": [] } } }"#;
+    const LOG: &str = r#"{ "id": "l", "name": "l", "function": {
+        "name": "log", "input": { "message": "hi" } } }"#;
+
+    #[test]
+    fn connector_refs_yields_only_connector_tasks_in_task_order() {
+        let workflow = wf(&format!("{MAP},{HTTP},{LOG},{KAFKA}"));
+        let refs: Vec<_> = workflow.connector_refs().collect();
+
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].task_id, "call");
+        assert_eq!(refs[0].function, "http_call");
+        assert_eq!(refs[0].connector, "user_service");
+        assert_eq!(refs[1].task_id, "pub");
+        assert_eq!(refs[1].function, "publish_kafka");
+        assert_eq!(refs[1].connector, "events");
+    }
+
+    #[test]
+    fn connector_refs_carries_the_owning_workflow_id() {
+        let workflow = wf(HTTP);
+        assert!(workflow.connector_refs().all(|r| r.workflow_id == "w"));
+
+        // Including the empty-id case from `Workflow::new()`.
+        let empty = Workflow::new();
+        assert_eq!(empty.id, "");
+        assert_eq!(empty.connector_refs().count(), 0);
+    }
+
+    #[test]
+    fn connector_refs_is_empty_for_no_tasks() {
+        // `validate` rejects an empty task list, but `connector_refs` must not
+        // assume `validate` ran — `Workflow::new()` has empty tasks.
+        assert_eq!(Workflow::new().connector_refs().count(), 0);
+    }
+
+    #[test]
+    fn connector_refs_does_not_deduplicate() {
+        let a = r#"{ "id": "a", "name": "a", "function": {
+            "name": "http_call", "input": { "connector": "same" } } }"#;
+        let b = r#"{ "id": "b", "name": "b", "function": {
+            "name": "enrich",
+            "input": { "connector": "same", "merge_path": "data.out" } } }"#;
+        let workflow = wf(&format!("{a},{b}"));
+
+        let refs: Vec<_> = workflow.connector_refs().collect();
+        assert_eq!(refs.len(), 2, "one item per task, not a distinct set");
+        assert!(refs.iter().all(|r| r.connector == "same"));
+    }
+
+    #[test]
+    fn connector_refs_works_on_an_uncompiled_workflow() {
+        // Straight from `from_json`, before any engine construction: `id_arc` and
+        // `compiled_condition` are still unset.
+        let workflow = wf(HTTP);
+        assert!(workflow.compiled_condition.is_none());
+        assert_eq!(workflow.connector_refs().count(), 1);
+    }
+
+    #[test]
+    fn connector_ref_is_copy() {
+        let workflow = wf(HTTP);
+        let r = workflow.connector_refs().next().unwrap();
+        let copied = r;
+        // Reading both without cloning only compiles if `ConnectorRef` is `Copy`.
+        assert_eq!(r.connector, copied.connector);
+        assert_eq!(r.task_id, copied.task_id);
+    }
+
+    #[test]
+    fn connector_ref_config_supports_a_cross_field_rule() {
+        // Proves `config` is load-bearing rather than decorative: read another
+        // key out of the same task's input.
+        let custom = r#"{ "id": "db", "name": "db", "function": {
+            "name": "pg_query",
+            "input": { "connector": "pg_main", "database": "orders" } } }"#;
+        let workflow = wf(custom);
+
+        let r = workflow.connector_refs().next().expect("custom connector");
+        assert_eq!(r.connector, "pg_main");
+        match r.config {
+            FunctionConfig::Custom { input, .. } => {
+                assert_eq!(
+                    input.get("database").and_then(|v| v.as_str()),
+                    Some("orders")
+                );
+            }
+            other => panic!("expected Custom, got {other:?}"),
+        }
     }
 }

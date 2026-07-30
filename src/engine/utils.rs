@@ -246,6 +246,84 @@ pub fn set_nested_value_parts(
     }
 }
 
+/// Remove the value at `path` and return it; `None` if the path does not resolve.
+///
+/// Completes the module's read/write pair with a removal. Note that
+/// `set_nested_value(path, OwnedDataValue::Null)` is *not* removal — it leaves an
+/// explicit `null` in the tree, which survives every serialization boundary
+/// because `Message`'s `Serialize` emits `context` whole.
+///
+/// Path syntax is identical to [`get_nested_value`] and [`set_nested_value`]:
+/// dot-separated segments, numeric segments index arrays, and one leading `#` is
+/// stripped from an object-key segment (`"data.#20"` is the object key `"20"`).
+///
+/// - Object keys are removed from the pair vec; the relative order of the
+///   surviving pairs is preserved.
+/// - Array elements are removed with a tail shift, so later indices move down.
+/// - Returns `None` — leaving `data` untouched — for a missing key, an
+///   out-of-bounds or non-numeric array index, an attempt to descend through a
+///   non-container, or an empty `path`. Never panics.
+///
+/// Note the deliberate asymmetry with the read side: `get_nested_value(d, "")`
+/// returns the whole tree, but there is no such thing as removing the root, so an
+/// empty path yields `None` rather than taking `data` apart.
+///
+/// ```
+/// use dataflow_rs::datavalue::OwnedDataValue;
+/// use dataflow_rs::engine::utils::remove_nested_value;
+/// use serde_json::json;
+///
+/// let mut ctx = OwnedDataValue::from(&json!({"data": {"order_id": 7, "_scratch": 42}}));
+///
+/// let taken = remove_nested_value(&mut ctx, "data._scratch");
+///
+/// assert_eq!(taken, Some(OwnedDataValue::from(&json!(42))));
+/// assert_eq!(
+///     serde_json::Value::from(&ctx),
+///     json!({"data": {"order_id": 7}}),
+/// );
+/// ```
+pub fn remove_nested_value(data: &mut OwnedDataValue, path: &str) -> Option<OwnedDataValue> {
+    if path.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = path.split('.').collect();
+    let (last, parents) = parts.split_last()?;
+
+    let mut current = data;
+    for part in parents {
+        current = match current {
+            OwnedDataValue::Object(pairs) => {
+                let key = strip_hash_prefix(part);
+                let idx = pairs.iter().position(|(k, _)| k == key)?;
+                &mut pairs[idx].1
+            }
+            OwnedDataValue::Array(items) => {
+                let idx: usize = part.parse().ok()?;
+                items.get_mut(idx)?
+            }
+            _ => return None,
+        };
+    }
+
+    match current {
+        OwnedDataValue::Object(pairs) => {
+            let key = strip_hash_prefix(last);
+            let pos = pairs.iter().position(|(k, _)| k == key)?;
+            Some(pairs.remove(pos).1)
+        }
+        OwnedDataValue::Array(items) => {
+            let idx: usize = last.parse().ok()?;
+            if idx < items.len() {
+                Some(items.remove(idx))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Strip exactly one leading `#` from an object-key path component.
 /// `"#20"` → `"20"`, `"##"` → `"#"`, `"foo"` → `"foo"`.
 #[inline]
@@ -620,5 +698,137 @@ mod tests {
             get_nested_value(&multi_hash_data, "data.##fields.#10.0"),
             Some(&dv(json!("numeric array")))
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // remove_nested_value
+    // ---------------------------------------------------------------------
+
+    /// Round-trip helper: the whole tree as `serde_json::Value`, for
+    /// byte-identical assertions after a `None` return.
+    fn as_json(v: &OwnedDataValue) -> serde_json::Value {
+        serde_json::Value::from(v)
+    }
+
+    #[test]
+    fn test_remove_nested_value_object() {
+        let mut data = dv(json!({"data": {"a": 1, "_b": 2}}));
+
+        assert_eq!(
+            remove_nested_value(&mut data, "data._b"),
+            Some(dv(json!(2)))
+        );
+        // Surviving pairs keep their relative order.
+        assert_eq!(as_json(&data), json!({"data": {"a": 1}}));
+
+        // Removing the same path twice: Some, then None.
+        assert_eq!(remove_nested_value(&mut data, "data._b"), None);
+        assert_eq!(as_json(&data), json!({"data": {"a": 1}}));
+    }
+
+    #[test]
+    fn test_remove_nested_value_array_shifts_tail() {
+        let mut data = dv(json!({"items": [1, 2, 3]}));
+
+        assert_eq!(
+            remove_nested_value(&mut data, "items.1"),
+            Some(dv(json!(2)))
+        );
+        // A tail shift, not a null hole.
+        assert_eq!(as_json(&data), json!({"items": [1, 3]}));
+    }
+
+    #[test]
+    fn test_remove_nested_value_returns_subtree_intact() {
+        let mut data = dv(json!({"data": {"nested": {"x": [1, 2]}}}));
+
+        assert_eq!(
+            remove_nested_value(&mut data, "data.nested"),
+            Some(dv(json!({"x": [1, 2]})))
+        );
+        assert_eq!(as_json(&data), json!({"data": {}}));
+    }
+
+    #[test]
+    fn test_remove_nested_value_traverses_array_in_non_terminal_position() {
+        let mut data = dv(json!({"a": [{"k": 1}, {"k": 2}]}));
+
+        assert_eq!(remove_nested_value(&mut data, "a.1.k"), Some(dv(json!(2))));
+        assert_eq!(as_json(&data), json!({"a": [{"k": 1}, {}]}));
+    }
+
+    #[test]
+    fn test_remove_hash_prefix_in_paths() {
+        // Same `#`-escape mapping asserted by test_hash_prefix_in_paths and
+        // test_set_hash_prefix_in_paths.
+        let mut data = dv(json!({"fields": {"20": "x", "#": "y", "##": "z"}}));
+
+        assert_eq!(
+            remove_nested_value(&mut data, "fields.#20"),
+            Some(dv(json!("x")))
+        );
+        assert_eq!(
+            remove_nested_value(&mut data, "fields.##"),
+            Some(dv(json!("y")))
+        );
+        assert_eq!(
+            remove_nested_value(&mut data, "fields.###"),
+            Some(dv(json!("z")))
+        );
+        assert_eq!(as_json(&data), json!({"fields": {}}));
+    }
+
+    #[test]
+    fn test_remove_nested_value_negative_cases_leave_tree_untouched() {
+        // Every one of these must return None *and* leave the tree
+        // byte-identical — asserted on the whole tree, not just the return.
+        let original = json!({
+            "items": [1, 2, 3],
+            "a": [{"k": 1}],
+            "data": {"x": 1},
+            "b": 1
+        });
+
+        for path in [
+            "",          // empty path
+            "data.nope", // missing key, last segment
+            "nope.x",    // missing key, parent segment
+            "items.9",   // out-of-bounds, terminal
+            "a.5.k",     // out-of-bounds, mid-path
+            "items.abc", // non-numeric array segment
+            "items.-1",  // negative array segment
+            "b.c",       // descent through a scalar
+            "b.c.d",     // deeper descent through a scalar
+        ] {
+            let mut data = dv(original.clone());
+            assert_eq!(
+                remove_nested_value(&mut data, path),
+                None,
+                "path '{path}' should not resolve"
+            );
+            assert_eq!(
+                as_json(&data),
+                original,
+                "path '{path}' must leave the tree untouched"
+            );
+        }
+    }
+
+    #[test]
+    fn test_remove_nested_value_scalar_root() {
+        let mut scalar = dv(json!("scalar"));
+        assert_eq!(remove_nested_value(&mut scalar, "a"), None);
+        assert_eq!(as_json(&scalar), json!("scalar"));
+    }
+
+    #[test]
+    fn test_remove_nested_value_non_ascii_keys() {
+        let mut data = dv(json!({"データ": {"ключ": "значение"}}));
+
+        assert_eq!(
+            remove_nested_value(&mut data, "データ.ключ"),
+            Some(dv(json!("значение")))
+        );
+        assert_eq!(as_json(&data), json!({"データ": {}}));
     }
 }

@@ -92,7 +92,7 @@ to skip the `serde_json` bridge:
 # use dataflow_rs::Message;
 # use serde_json::json;
 # fn _demo() {
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 use std::sync::Arc;
 
 let payload = Arc::new(OwnedDataValue::from(&json!({"user": "john"})));

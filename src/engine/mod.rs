@@ -81,7 +81,7 @@ pub use task::Task;
 pub use task_context::TaskContext;
 pub use task_outcome::TaskOutcome;
 pub use trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
-pub use workflow::{Workflow, WorkflowStatus};
+pub use workflow::{ConnectorRef, Workflow, WorkflowStatus};
 
 // `EngineBuilder` is defined further down in this file but exposed here so
 // downstream paths can import it via `dataflow_rs::engine::EngineBuilder`.

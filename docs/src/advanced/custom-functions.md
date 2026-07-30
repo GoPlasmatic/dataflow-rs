@@ -31,7 +31,7 @@ The trait has three moving parts:
 ```rust
 use async_trait::async_trait;
 use dataflow_rs::prelude::*;
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -193,7 +193,7 @@ The trait is async/await all the way through. Real I/O works naturally:
 ```rust,ignore
 use async_trait::async_trait;
 use dataflow_rs::prelude::*;
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -268,7 +268,7 @@ unified-channel contract.
 ```rust
 use async_trait::async_trait;
 use dataflow_rs::prelude::*;
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::json;
 

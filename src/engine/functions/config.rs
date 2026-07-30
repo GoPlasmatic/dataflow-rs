@@ -393,6 +393,42 @@ impl FunctionConfig {
     ///
     /// Must match the variants handled in [`Self::try_execute_in_arena`]; the
     /// debug assertion below ties the two together so they can't drift.
+    /// The connector this task references, if any.
+    ///
+    /// The three integration variants return their typed `connector` field
+    /// verbatim — including an empty string. Whether an empty connector name is
+    /// acceptable is a validation question for the host, not this accessor's.
+    ///
+    /// [`FunctionConfig::Custom`] returns `input["connector"]` when that key
+    /// holds a string. That is the convention for service-registered integration
+    /// handlers, mirroring the three built-in schemas; a `Custom` input whose
+    /// `connector` key means something else is a false positive, and the
+    /// convention is the only contract available.
+    ///
+    /// Usable without a [`crate::Task`]: `FunctionConfig` deserializes from a
+    /// bare `{"name": .., "input": ..}` object, so a caller holding only a task's
+    /// `function` value does not need to satisfy `Task`'s required `id` and
+    /// `name`.
+    ///
+    /// The match is exhaustive on purpose — a future connector-bearing config
+    /// cannot be silently omitted.
+    pub fn connector(&self) -> Option<&str> {
+        match self {
+            FunctionConfig::HttpCall { input, .. } => Some(&input.connector),
+            FunctionConfig::Enrich { input, .. } => Some(&input.connector),
+            FunctionConfig::PublishKafka { input, .. } => Some(&input.connector),
+            FunctionConfig::Custom { input, .. } => input.get("connector").and_then(Value::as_str),
+            FunctionConfig::Map { .. }
+            | FunctionConfig::Validation { .. }
+            | FunctionConfig::ParseJson { .. }
+            | FunctionConfig::ParseXml { .. }
+            | FunctionConfig::PublishJson { .. }
+            | FunctionConfig::PublishXml { .. }
+            | FunctionConfig::Filter { .. }
+            | FunctionConfig::Log { .. } => None,
+        }
+    }
+
     pub fn is_sync_builtin(&self) -> bool {
         matches!(
             self,
@@ -744,6 +780,106 @@ mod tests {
         }))
         .expect_err("publish_kafka should reject an unknown field");
         assert!(err.to_string().contains("unknown field"), "got: {err}");
+    }
+
+    #[test]
+    fn connector_is_returned_for_the_three_typed_integrations() {
+        let cases = [
+            (
+                json!({ "name": "http_call", "input": { "connector": "user_service" } }),
+                "user_service",
+            ),
+            (
+                json!({ "name": "enrich",
+                        "input": { "connector": "ref_data", "merge_path": "data.out" } }),
+                "ref_data",
+            ),
+            (
+                json!({ "name": "publish_kafka",
+                        "input": { "connector": "events", "topic": "t" } }),
+                "events",
+            ),
+        ];
+        for (input, expected) in cases {
+            let cfg = parse(input.clone()).expect("should parse");
+            assert_eq!(cfg.connector(), Some(expected), "for {input}");
+        }
+    }
+
+    #[test]
+    fn connector_is_none_for_every_non_connector_builtin() {
+        // Table-driven over BUILTIN_FUNCTION_NAMES minus the three integration
+        // names, so this cannot go stale when a built-in is added.
+        let minimal_input = |name: &str| -> serde_json::Value {
+            match name {
+                "map" => json!({ "mappings": [] }),
+                "validation" | "validate" => json!({ "rules": [] }),
+                "parse_json" | "parse_xml" | "publish_json" | "publish_xml" => {
+                    json!({ "source": "data.in", "target": "out" })
+                }
+                "filter" => json!({ "condition": true }),
+                "log" => json!({ "message": "hi" }),
+                _ => json!({}),
+            }
+        };
+
+        for name in BUILTIN_FUNCTION_NAMES {
+            if matches!(*name, "http_call" | "enrich" | "publish_kafka") {
+                continue;
+            }
+            let cfg = parse(json!({ "name": name, "input": minimal_input(name) }))
+                .unwrap_or_else(|e| panic!("'{name}' should parse: {e}"));
+            assert_eq!(cfg.connector(), None, "'{name}' names no connector");
+        }
+    }
+
+    #[test]
+    fn connector_reads_the_custom_convention() {
+        let cfg = parse(json!({
+            "name": "pg_query",
+            "input": { "connector": "pg_main", "database": "orders" }
+        }))
+        .unwrap();
+        assert_eq!(cfg.connector(), Some("pg_main"));
+    }
+
+    #[test]
+    fn connector_is_none_for_a_custom_input_without_a_string_connector() {
+        // `Custom` accepts arbitrary input, so every one of these is reachable.
+        for input in [
+            json!({}),                            // key absent
+            json!({ "connector": 7 }),            // number
+            json!({ "connector": true }),         // bool
+            json!({ "connector": null }),         // null
+            json!({ "connector": ["a"] }),        // array
+            json!({ "connector": { "n": "a" } }), // object
+            json!([]),                            // input is not an object
+            json!(7),                             // input is a scalar
+        ] {
+            let cfg = parse(json!({ "name": "my_handler", "input": input.clone() }))
+                .unwrap_or_else(|e| panic!("custom should parse {input}: {e}"));
+            assert_eq!(cfg.connector(), None, "for input {input}");
+        }
+    }
+
+    #[test]
+    fn connector_returns_an_empty_name_verbatim() {
+        // The recorded decision: the accessor reports what was authored and
+        // never disagrees with itself across the typed and Custom arms. Whether
+        // an empty connector is acceptable is the host's validation question.
+        let typed = parse(json!({ "name": "http_call", "input": { "connector": "" } })).unwrap();
+        assert_eq!(typed.connector(), Some(""));
+
+        let custom = parse(json!({ "name": "x", "input": { "connector": "" } })).unwrap();
+        assert_eq!(custom.connector(), Some(""));
+    }
+
+    #[test]
+    fn connector_returns_a_non_ascii_name_byte_for_byte() {
+        // A pin against a future "normalize or trim it here" change.
+        let cfg =
+            parse(json!({ "name": "http_call", "input": { "connector": "連携先" } })).unwrap();
+        assert_eq!(cfg.connector(), Some("連携先"));
     }
 
     #[test]

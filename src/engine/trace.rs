@@ -197,7 +197,7 @@ pub struct ExecutionStep {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<Message>,
     /// Context snapshots before each mapping (map tasks only, trace mode only).
-    /// mapping_contexts[i] = message.context before mapping[i] executed.
+    /// `mapping_contexts[i]` is `message.context` before `mapping[i]` executed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mapping_contexts: Option<Vec<Value>>,
     /// Wall-clock start of the task body. `Executed` steps only.
