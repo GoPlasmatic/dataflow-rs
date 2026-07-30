@@ -319,10 +319,57 @@ impl Engine {
             .await
     }
 
+    /// Processes a message through workflows with step-by-step tracing,
+    /// recording into a caller-owned trace.
+    ///
+    /// Identical to [`Engine::process_message_with_trace`] except that the
+    /// trace is borrowed rather than returned, so the steps completed before a
+    /// hard failure survive the `Err`. That makes this the method to reach for
+    /// when the run you want to inspect is the run that failed — a returned
+    /// trace is dropped by the `?` at the call site, a borrowed one is not.
+    ///
+    /// Steps are **appended** to `trace`; any steps already present are
+    /// preserved, so a caller can accumulate across a chain of calls.
+    ///
+    /// The error contract is unchanged: `Ok(())` means every workflow was
+    /// processed (each may still have pushed to `message.errors`), and `Err(e)`
+    /// means the engine stopped early. See [`Engine::process_message`] for the
+    /// full contract.
+    ///
+    /// Note that the failing task's *own* step is not recorded — the engine
+    /// propagates the failure before appending it — so the retained trace ends
+    /// at the last known-good step rather than at the error. The error itself
+    /// is available from the returned `Err` and from `message.errors()`.
+    ///
+    /// # Arguments
+    /// * `message` - The message to process through workflows
+    /// * `trace` - Caller-owned trace to append steps to
+    ///
+    /// # Returns
+    /// * `Result<()>` — `Ok(())` if every workflow completed; `Err(e)` if the
+    ///   engine stopped early. In both cases `trace` holds the steps that ran.
+    pub async fn process_message_tracing(
+        &self,
+        message: &mut Message,
+        trace: &mut ExecutionTrace,
+    ) -> Result<()> {
+        let now = Utc::now();
+        set_processing_metadata(&mut message.context, &self.engine_version, now, None);
+
+        // Process workflows in priority order (pre-sorted at construction).
+        self.workflow_executor
+            .run_all_borrowed(&self.workflows[..], message, Some(trace), now)
+            .await
+    }
+
     /// Processes a message through workflows with step-by-step tracing.
     ///
     /// This method is similar to `process_message` but captures an execution trace
     /// that can be used for debugging and step-by-step visualization.
+    ///
+    /// Because the trace is returned by value, a `?` at the call site discards
+    /// it — on a hard failure this yields `Err` and no steps at all. Use
+    /// [`Engine::process_message_tracing`] to keep the steps that ran.
     ///
     /// # Arguments
     /// * `message` - The message to process through workflows
@@ -333,18 +380,8 @@ impl Engine {
         &self,
         message: &mut Message,
     ) -> Result<ExecutionTrace> {
-        use trace::ExecutionTrace;
-
-        let now = Utc::now();
-        set_processing_metadata(&mut message.context, &self.engine_version, now, None);
-
         let mut trace = ExecutionTrace::new();
-
-        // Process workflows in priority order (pre-sorted at construction).
-        self.workflow_executor
-            .run_all_borrowed(&self.workflows[..], message, Some(&mut trace), now)
-            .await?;
-
+        self.process_message_tracing(message, &mut trace).await?;
         Ok(trace)
     }
 
@@ -382,7 +419,48 @@ impl Engine {
         Ok(())
     }
 
+    /// Channel-scoped variant of [`Engine::process_message_tracing`].
+    ///
+    /// As with [`Engine::process_message_for_channel`], an unknown channel — or
+    /// a channel with no Active workflows — is a no-op: this returns `Ok(())`
+    /// and leaves `trace` untouched. Steps are appended, matching
+    /// [`Engine::process_message_tracing`].
+    ///
+    /// # Arguments
+    /// * `channel` - The channel name to route the message through
+    /// * `message` - The message to process
+    /// * `trace` - Caller-owned trace to append steps to
+    pub async fn process_message_for_channel_tracing(
+        &self,
+        channel: &str,
+        message: &mut Message,
+        trace: &mut ExecutionTrace,
+    ) -> Result<()> {
+        let now = Utc::now();
+        set_processing_metadata(
+            &mut message.context,
+            &self.engine_version,
+            now,
+            Some(channel),
+        );
+
+        if let Some(indices) = self.channel_index.get(channel) {
+            let workflows: Vec<&Workflow> =
+                indices.iter().map(|&idx| &self.workflows[idx]).collect();
+            self.workflow_executor
+                .run_all_borrowed(&workflows, message, Some(trace), now)
+                .await?;
+        }
+
+        Ok(())
+    }
+
     /// Processes a message through a channel with step-by-step tracing.
+    ///
+    /// Because the trace is returned by value, a `?` at the call site discards
+    /// it — on a hard failure this yields `Err` and no steps at all. Use
+    /// [`Engine::process_message_for_channel_tracing`] to keep the steps that
+    /// ran.
     ///
     /// # Arguments
     /// * `channel` - The channel name to route the message through
@@ -392,26 +470,9 @@ impl Engine {
         channel: &str,
         message: &mut Message,
     ) -> Result<ExecutionTrace> {
-        use trace::ExecutionTrace;
-
-        let now = Utc::now();
-        set_processing_metadata(
-            &mut message.context,
-            &self.engine_version,
-            now,
-            Some(channel),
-        );
-
         let mut trace = ExecutionTrace::new();
-
-        if let Some(indices) = self.channel_index.get(channel) {
-            let workflows: Vec<&Workflow> =
-                indices.iter().map(|&idx| &self.workflows[idx]).collect();
-            self.workflow_executor
-                .run_all_borrowed(&workflows, message, Some(&mut trace), now)
-                .await?;
-        }
-
+        self.process_message_for_channel_tracing(channel, message, &mut trace)
+            .await?;
         Ok(trace)
     }
 

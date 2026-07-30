@@ -120,6 +120,38 @@ for step in &trace.steps {
 # Ok(()) }
 ```
 
+### Tracing a run that fails
+
+`process_message_with_trace` returns the trace by value, so the `?` above
+discards it when the engine stops early — on a hard failure you get `Err` and no
+steps at all, which is the opposite of what a debugging API should do.
+
+When the run you need to inspect is the run that failed, pass a trace you own:
+
+```rust
+# use dataflow_rs::{Engine, ExecutionTrace, Message};
+# async fn _demo(engine: Engine, mut message: Message) {
+let mut trace = ExecutionTrace::new();
+let result = engine.process_message_tracing(&mut message, &mut trace).await;
+
+// Whether the run succeeded or stopped early, `trace` holds the steps that ran.
+for step in &trace.steps {
+    println!("{}: {:?}", step.workflow_id, step.result);
+}
+
+if let Err(e) = result {
+    println!("stopped early after {} steps: {e}", trace.executed_count());
+}
+# }
+```
+
+Steps are **appended**, so one trace can accumulate across a chain of calls.
+Note that the failing task's own step is not recorded — the engine propagates the
+failure before appending it — so the trace ends at the last known-good step. The
+error itself comes from the returned `Err` and from `message.errors()`.
+
+`process_message_for_channel_tracing` is the channel-scoped equivalent.
+
 ## Rule Execution Order
 
 Rules execute in priority order (lowest priority number first):
@@ -248,6 +280,16 @@ Processes a message and returns an execution trace for debugging.
 
 - Returns `Result<ExecutionTrace>` - Contains all execution steps with message snapshots
 - Useful for step-by-step debugging and visualization
+- On `Err` the trace is discarded — use `process_message_tracing` to keep it
+
+### `engine.process_message_tracing(&mut message, &mut trace)`
+
+Same as `process_message_with_trace`, but records into a caller-owned trace so
+the steps survive a hard failure.
+
+- Returns `Result<()>` - the trace is borrowed rather than returned
+- Steps are appended; any already present are preserved
+- The failing task's own step is not recorded (see [Tracing a run that fails](#tracing-a-run-that-fails))
 
 ### `engine.workflows()`
 
@@ -295,6 +337,22 @@ Same as `process_message_for_channel` but returns an execution trace for debuggi
 #     -> dataflow_rs::Result<()> {
 let trace = engine.process_message_for_channel_with_trace("orders", &mut message).await?;
 # Ok(()) }
+```
+
+### `engine.process_message_for_channel_tracing(channel, message, trace)`
+
+Channel-scoped `process_message_tracing`. An unknown channel is a no-op: returns
+`Ok(())` and leaves the trace untouched.
+
+```rust
+# use dataflow_rs::{Engine, ExecutionTrace, Message};
+# async fn _demo(engine: Engine, mut message: Message) {
+let mut trace = ExecutionTrace::new();
+let result = engine
+    .process_message_for_channel_tracing("orders", &mut message, &mut trace)
+    .await;
+# let _ = result;
+# }
 ```
 
 ### `engine.with_new_workflows(workflows)`

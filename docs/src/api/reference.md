@@ -48,14 +48,20 @@ config-shape errors fail there, not on first message.
 // Process a message through all matching rules
 pub async fn process_message(&self, message: &mut Message) -> Result<()>
 
-// Process with execution trace for debugging
+// Process with execution trace for debugging (trace is lost if this returns Err)
 pub async fn process_message_with_trace(&self, message: &mut Message) -> Result<ExecutionTrace>
+
+// Process with tracing into a caller-owned trace, so steps survive a hard failure
+pub async fn process_message_tracing(&self, message: &mut Message, trace: &mut ExecutionTrace) -> Result<()>
 
 // Process only workflows on a specific channel (O(1) lookup)
 pub async fn process_message_for_channel(&self, channel: &str, message: &mut Message) -> Result<()>
 
 // Channel routing with execution trace
 pub async fn process_message_for_channel_with_trace(&self, channel: &str, message: &mut Message) -> Result<ExecutionTrace>
+
+// Channel routing, recording into a caller-owned trace
+pub async fn process_message_for_channel_tracing(&self, channel: &str, message: &mut Message, trace: &mut ExecutionTrace) -> Result<()>
 
 // Get registered rules (sorted by priority)
 pub fn workflows(&self) -> &Arc<Vec<Workflow>>
