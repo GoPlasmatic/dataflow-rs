@@ -115,14 +115,64 @@ Issue an HTTP request and optionally merge the response into the message context
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `connector` | string | Yes | Named reference resolved by your service layer |
-| `method` | string | No | `GET` (default), `POST`, `PUT`, `PATCH`, `DELETE` |
+| `method` | string | No | `GET` (default), `POST`, `PUT`, `PATCH`, `DELETE` — uppercase only |
 | `path` | string | No | Static request path |
 | `path_logic` | JSONLogic | No | Computed path; pre-compiled at startup |
 | `headers` | object | No | Static request headers |
 | `body` | any | No | Static request body |
 | `body_logic` | JSONLogic | No | Computed body; pre-compiled at startup |
-| `response_path` | string | No | Dot-path to merge response into the message context |
+| `response_path` | string | No | Dot-path to merge response into the message context. Also accepted as `output` |
 | `timeout_ms` | u64 | No | Request timeout in milliseconds (default: `30000`) |
+
+`response_path` accepts `output` as an alias, so a service layer can present one
+destination-field name across its whole function catalogue. Supplying **both**
+keys is a `duplicate field` error rather than a precedence rule.
+
+The alias is specific to `http_call`. `enrich` names its destination `merge_path`
+and `publish_json` / `publish_xml` name theirs `target`; neither takes `output`.
+
+### Unknown fields are rejected
+
+All three integration configs reject keys they do not recognise. A misspelled
+field used to parse cleanly and be discarded, so an `http_call` task would make
+its request and silently throw the response away — no error at
+`Engine::builder().build()`, none at dispatch. Now it fails at parse time:
+
+```text
+config for function 'http_call': unknown field `outputs`, expected one of
+`connector`, `method`, `path`, `path_logic`, `headers`, `body`, `body_logic`,
+`output`, `response_path`, `timeout_ms`
+```
+
+Note this fails when the workflow definition is parsed, so a host loading stored
+definitions row by row sees one bad row fail its own parse rather than losing the
+whole set.
+
+### Converting `method` for your HTTP client
+
+This crate takes no HTTP-client dependency, so your handler converts `HttpMethod`
+into whatever type its client uses. `as_str()` gives the canonical token — the
+same spelling the config accepts — so the bridge is one line and needs no match:
+
+```rust
+use dataflow_rs::HttpMethod;
+
+// e.g. reqwest::Method::from_bytes(m.as_str().as_bytes())
+assert_eq!(HttpMethod::Patch.as_str(), "PATCH");
+assert_eq!(HttpMethod::Get.to_string(), "GET");
+
+// Retry decisions without a hand-written table.
+assert!(HttpMethod::Put.is_idempotent());
+assert!(!HttpMethod::Post.is_idempotent());
+
+// The vocabulary an `http_call` task may name, for validating your own
+// operator-facing allow-lists against something the compiler keeps honest.
+assert_eq!(HttpMethod::ALL.len(), 5);
+```
+
+`HttpMethod::ALL` is scoped to what `http_call` accepts. It is deliberately not a
+general list of HTTP methods — don't reuse it to validate inbound routes, which
+may legitimately accept `HEAD` or `OPTIONS`.
 
 Use `path` **or** `path_logic`, not both. Same for `body` / `body_logic`.
 

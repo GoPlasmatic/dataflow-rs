@@ -31,7 +31,7 @@ pub mod log;
 pub use log::{LogConfig, LogLevel};
 
 pub mod integration;
-pub use integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
+pub use integration::{EnrichConfig, HttpCallConfig, HttpMethod, PublishKafkaConfig};
 
 /// Async interface for task functions that operate on messages.
 ///

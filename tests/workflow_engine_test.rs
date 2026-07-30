@@ -2433,3 +2433,94 @@ fn builtin_classification_is_reachable_from_the_crate_root() {
     );
     assert_eq!(builtin_function_kind("my_custom_handler"), None);
 }
+
+// =============================================================================
+// http_call destination field — regression coverage for the silent discard
+// =============================================================================
+
+// Records what the engine actually handed the handler, by writing the observed
+// `response_path` into the message context. `type Input` is pinned to
+// `HttpCallConfig` because `http_call` deserializes to a typed built-in variant.
+struct SpyHttpCall;
+
+#[async_trait]
+impl AsyncFunctionHandler for SpyHttpCall {
+    type Input = dataflow_rs::HttpCallConfig;
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Self::Input) -> Result<TaskOutcome> {
+        let observed = input.response_path.clone().unwrap_or_default();
+        ctx.set("data.observed_response_path", dv(json!(observed)));
+        ctx.set("data.observed_method", dv(json!(input.method.as_str())));
+        Ok(TaskOutcome::Success)
+    }
+}
+
+#[tokio::test]
+async fn http_call_output_alias_survives_the_full_engine_path() {
+    // Proves the alias holds through Workflow::from_json -> LogicCompiler ->
+    // Engine::builder().build() -> dispatch, not just a bare from_value.
+    let wf = Workflow::from_json(
+        r#"{
+        "id": "w", "name": "w", "priority": 0, "condition": true,
+        "tasks": [{ "id": "call", "name": "call",
+                    "function": { "name": "http_call",
+                                  "input": { "connector": "user_service",
+                                             "method": "POST",
+                                             "output": "data.user_profile" } } }]
+    }"#,
+    )
+    .expect("a task spelling the field `output` should parse");
+
+    let engine = Engine::builder()
+        .with_workflow(wf)
+        .register("http_call", SpyHttpCall)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        message.context["data"]["observed_response_path"],
+        dv(json!("data.user_profile")),
+        "the handler must see the aliased destination, not an empty default"
+    );
+    assert_eq!(
+        message.context["data"]["observed_method"],
+        dv(json!("POST")),
+        "as_str() must give the canonical token the config was written with"
+    );
+}
+
+#[test]
+fn http_call_misspelled_destination_is_rejected_at_workflow_parse_time() {
+    // The defect: this previously parsed cleanly, and the task would make its
+    // request and throw the response away with no error anywhere.
+    let err = Workflow::from_json(
+        r#"{
+        "id": "w", "name": "w", "priority": 0, "condition": true,
+        "tasks": [{ "id": "call", "name": "call",
+                    "function": { "name": "http_call",
+                                  "input": { "connector": "c",
+                                             "outputs": "data.user_profile" } } }]
+    }"#,
+    )
+    .expect_err("a misspelled destination field must fail the workflow parse");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("unknown field") && msg.contains("outputs"),
+        "the error should name the offending field, got: {msg}"
+    );
+}
+
+#[test]
+fn http_method_is_reachable_from_the_crate_root() {
+    use dataflow_rs::HttpMethod;
+
+    assert_eq!(HttpMethod::default(), HttpMethod::Get);
+    assert_eq!(HttpMethod::Delete.as_str(), "DELETE");
+    assert!(HttpMethod::Put.is_idempotent());
+    assert!(!HttpMethod::Post.is_idempotent());
+    assert_eq!(HttpMethod::ALL.len(), 5);
+}

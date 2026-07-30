@@ -7,11 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.1.0] — 2026-07-30
 
-Two defects from a boundary audit of the crate's deepest known consumer, both
-fixed additively. Minor rather than patch because six new public items ship and
-one existing method's answer changes.
+Three defects from a boundary audit of the crate's deepest known consumer. Minor
+rather than patch because new public items ship and two existing behaviours
+change.
 
 ### Added
+
+- **integration:** `HttpMethod` is re-exported from the crate root (previously
+  reachable only as
+  `dataflow_rs::engine::functions::integration::HttpMethod`) and gains
+  `ALL`, `as_str`, `is_idempotent`, `Display`, and the `Copy`/`PartialEq`/`Eq`/
+  `Hash` derives. Because this crate does not implement `http_call`, every
+  consumer converts this enum into their own client's method type and wrote the
+  same five-arm match to do it; `as_str()` is the intended bridge, and the crate
+  still takes no HTTP-client dependency. `ALL` is scoped to what an `http_call`
+  task may name — not a general HTTP method list. (#24)
+- **integration:** `HttpCallConfig::response_path` accepts `output` as an alias,
+  so a service layer can present one destination-field name across its whole
+  function catalogue. Supplying both keys is a `duplicate field` error, not a
+  precedence rule. The alias is specific to `http_call`; `enrich`'s `merge_path`
+  and publish's `target` do not take it. (#24)
 
 - **engine:** `Engine::process_message_tracing` and
   `Engine::process_message_for_channel_tracing`, which record into a
@@ -60,6 +75,13 @@ one existing method's answer changes.
   and `has_function`'s match arm had all spelled out the same twelve names, with
   only the first two tied together by a test.
 
+- **integration:** `HttpCallConfig`, `EnrichConfig` and `PublishKafkaConfig` now
+  reject unknown keys (`deny_unknown_fields`). A misspelled field previously
+  parsed cleanly and was discarded, so an `http_call` task would make its request
+  and silently throw the response away — no error at
+  `Engine::builder().build()`, none at dispatch. The failure now arrives when the
+  workflow definition is parsed, naming the offending field. (#24)
+
 ### Changed
 
 - **engine:** `DataflowError::FunctionNotFound`'s message is now documented as
@@ -69,15 +91,32 @@ one existing method's answer changes.
 
 ### Compatibility
 
-`has_function`'s signature is unchanged, but its answer changes for
-`http_call` / `enrich` / `publish_kafka` when no handler is registered. In-repo
-the only caller was its own test, and `Engine` exposes no accessor for its
-executor (`workflow_executor` is private), so the method is reachable only by a
-caller that constructed a `TaskExecutor` itself. Everything else is additive:
-no existing public type, enum, struct or function signature changed shape, and
-no existing test needed editing.
+No public type, enum, struct or function signature changes shape, so all existing
+downstream code keeps compiling. Three behaviours change at runtime:
 
-Workspace test count 184 → 210.
+`has_function`'s answer changes for `http_call` / `enrich` / `publish_kafka` when
+no handler is registered. In-repo the only caller was its own test, and `Engine`
+exposes no accessor for its executor (`workflow_executor` is private), so the
+method is reachable only by a caller that constructed a `TaskExecutor` itself.
+
+Two changes affect how existing workflow **input JSON** is interpreted, neither
+visible as a compile error downstream:
+
+| `http_call` input | Before | Now |
+|---|---|---|
+| `{"response_path": "a"}` | `Some("a")` | `Some("a")` — unchanged |
+| `{"output": "b"}` | `None`, silently | `Some("b")` |
+| `{"response_path": "a", "output": "b"}` | `Some("a")`, `output` ignored | `Err`: duplicate field, either key order |
+| `{"outputs": "b"}` (typo) | `None`, silently | `Err`: unknown field `outputs` |
+
+The last row is the defect being closed and also the upgrade risk: a stored
+workflow document carrying a stray or misspelled key inside an `http_call`,
+`enrich` or `publish_kafka` input loaded before and now fails. The failure is at
+`Workflow::from_json`, per definition, so a host screening stored rows one at a
+time sees that row fail its own parse rather than losing the whole set — but any
+such document must be corrected before upgrading.
+
+Workspace test count 184 → 216.
 
 ## [3.0.4] — 2026-07-26
 

@@ -227,7 +227,7 @@ pub mod prelude;
 pub use engine::error::{DataflowError, ErrorInfo, Result};
 pub use engine::functions::{
     AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind, EnrichConfig,
-    FilterConfig, FunctionConfig, HttpCallConfig, LogConfig, MapConfig, MapMapping,
+    FilterConfig, FunctionConfig, HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping,
     PublishKafkaConfig, ValidationConfig, ValidationRule, builtin_function_kind,
     is_builtin_function,
 };

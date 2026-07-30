@@ -629,6 +629,123 @@ mod tests {
         }
     }
 
+    /// Parse an `http_call` task and hand back its typed config.
+    fn parse_http_call(
+        input: serde_json::Value,
+    ) -> std::result::Result<HttpCallConfig, serde_json::Error> {
+        match parse(json!({ "name": "http_call", "input": input }))? {
+            FunctionConfig::HttpCall { input, .. } => Ok(input),
+            other => panic!("expected HttpCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn http_call_response_path_is_read_under_its_own_name() {
+        let cfg = parse_http_call(json!({ "connector": "c", "response_path": "data.x" }))
+            .expect("response_path should parse");
+        assert_eq!(cfg.response_path.as_deref(), Some("data.x"));
+    }
+
+    #[test]
+    fn http_call_response_path_accepts_the_output_alias() {
+        // This is the case that previously yielded None, silently: the request
+        // was made and the response thrown away.
+        let cfg = parse_http_call(json!({ "connector": "c", "output": "data.x" }))
+            .expect("output should be accepted as an alias");
+        assert_eq!(cfg.response_path.as_deref(), Some("data.x"));
+    }
+
+    #[test]
+    fn http_call_response_path_is_optional() {
+        let cfg = parse_http_call(json!({ "connector": "c" })).expect("no destination is valid");
+        assert_eq!(cfg.response_path, None);
+    }
+
+    #[test]
+    fn http_call_rejects_both_destination_keys_in_either_order() {
+        // Asserting both orderings matters: a single-order test would also pass
+        // on an implementation that had an order-dependent precedence rule.
+        for input in [
+            json!({ "connector": "c", "response_path": "a", "output": "b" }),
+            json!({ "connector": "c", "output": "b", "response_path": "a" }),
+        ] {
+            let err = parse_http_call(input.clone())
+                .expect_err("supplying both destination keys must fail");
+            let msg = err.to_string();
+            assert!(
+                msg.starts_with("config for function 'http_call':"),
+                "error should carry the function envelope, got: {msg}"
+            );
+            assert!(
+                msg.contains("duplicate field"),
+                "error should name the conflict, got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn http_call_rejects_a_misspelled_destination_field() {
+        // The recorded decision: `HttpCallConfig` is `deny_unknown_fields`, so a
+        // near-miss spelling is a parse error naming the field rather than a
+        // silently discarded response. This is the defect this closes.
+        for bad in ["outputs", "Output", "respose_path", "response-path"] {
+            let mut input = serde_json::Map::new();
+            input.insert("connector".to_string(), json!("c"));
+            input.insert(bad.to_string(), json!("data.x"));
+
+            let err = parse_http_call(serde_json::Value::Object(input))
+                .expect_err("a misspelled field must be rejected, not silently discarded");
+            let msg = err.to_string();
+            assert!(
+                msg.starts_with("config for function 'http_call':"),
+                "error should carry the function envelope, got: {msg}"
+            );
+            assert!(
+                msg.contains("unknown field"),
+                "error should say the field is unknown, got: {msg}"
+            );
+            assert!(
+                msg.contains(bad),
+                "error should name the offending field '{bad}', got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn enrich_does_not_accept_the_output_alias() {
+        // The asymmetry is deliberate: only `HttpCallConfig::response_path`
+        // takes the alias. `EnrichConfig`'s destination is `merge_path`, and
+        // `deny_unknown_fields` makes the mistake loud instead of silent.
+        let err = parse(json!({
+            "name": "enrich",
+            "input": { "connector": "c", "output": "data.x" }
+        }))
+        .expect_err("enrich has no `output` field");
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with("config for function 'enrich':"),
+            "error should carry the function envelope, got: {msg}"
+        );
+
+        // And the real spelling still works.
+        let ok = parse(json!({
+            "name": "enrich",
+            "input": { "connector": "c", "merge_path": "data.x" }
+        }))
+        .expect("merge_path is enrich's destination field");
+        assert!(matches!(ok, FunctionConfig::Enrich { .. }));
+    }
+
+    #[test]
+    fn publish_kafka_rejects_unknown_fields() {
+        let err = parse(json!({
+            "name": "publish_kafka",
+            "input": { "connector": "c", "topic": "t", "tpoic": "typo" }
+        }))
+        .expect_err("publish_kafka should reject an unknown field");
+        assert!(err.to_string().contains("unknown field"), "got: {err}");
+    }
+
     #[test]
     fn builtin_function_kind_is_none_for_non_builtins() {
         // Classification is exact-match, same as the deserializer dispatch.
