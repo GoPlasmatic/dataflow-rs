@@ -70,7 +70,7 @@ pub mod workflow;
 pub mod workflow_executor;
 
 // Re-export key types for easier access
-pub use error::{DataflowError, ErrorInfo, Result};
+pub use error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use functions::{
     AsyncFunctionHandler, BoxedFunctionHandler, CompiledCustomInput, DynAsyncFunctionHandler,
     FunctionConfig,

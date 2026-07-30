@@ -3890,3 +3890,106 @@ async fn a_seeded_metadata_survives_processing_and_gains_the_engine_stamps() {
         .unwrap();
     assert_eq!(m2.context["metadata"]["channel"], dv(json!("default")));
 }
+
+// =============================================================================
+// DataflowError::Service — handler-owned error classification
+// =============================================================================
+
+/// Returns a service-classified error with operator-only detail.
+struct ServiceFailingTask;
+
+#[async_trait]
+impl AsyncFunctionHandler for ServiceFailingTask {
+    type Input = Value;
+
+    async fn execute(&self, _ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        Err(
+            dataflow_rs::DataflowError::service("circuit_open", "upstream unavailable")
+                .detail("connector 'billing' breaker open since 12:04")
+                .retryable(true)
+                .build(),
+        )
+    }
+}
+
+fn service_workflow(continue_on_error: bool) -> Workflow {
+    Workflow::from_json(&format!(
+        r#"{{ "id": "svc", "name": "svc", "priority": 0, "condition": true,
+              "continue_on_error": {continue_on_error},
+              "tasks": [ {{ "id": "boom", "name": "boom",
+                            "continue_on_error": {continue_on_error},
+                            "function": {{ "name": "svc_fail", "input": {{}} }} }} ] }}"#
+    ))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_service_error_lifts_its_kind_and_detail_onto_the_message() {
+    let engine = Engine::builder()
+        .with_workflow(service_workflow(false))
+        .register("svc_fail", ServiceFailingTask)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    assert!(engine.process_message(&mut message).await.is_err());
+
+    // Assert the FULL code vec, so the decision to lift at the task site only —
+    // and therefore to keep WORKFLOW_ERROR meaning "a workflow stopped" — is
+    // part of the contract rather than incidental.
+    let codes: Vec<&str> = message.errors().iter().map(|e| e.code.as_str()).collect();
+    assert_eq!(codes, vec!["circuit_open", "WORKFLOW_ERROR"]);
+
+    let task_err = &message.errors()[0];
+    assert!(
+        task_err.message.contains("upstream unavailable"),
+        "the caller-safe text is carried, got: {}",
+        task_err.message
+    );
+    assert!(
+        !task_err.message.contains("breaker open"),
+        "the operator-only detail must not leak into `message`, got: {}",
+        task_err.message
+    );
+    assert_eq!(
+        task_err.detail.as_deref(),
+        Some("connector 'billing' breaker open since 12:04"),
+        "the detail rides its own field"
+    );
+}
+
+#[tokio::test]
+async fn a_service_error_respects_continue_on_error_like_any_other() {
+    // Control flow is untouched: `continue_on_error` still governs.
+    let engine = Engine::builder()
+        .with_workflow(service_workflow(true))
+        .register("svc_fail", ServiceFailingTask)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine
+        .process_message(&mut message)
+        .await
+        .expect("continue_on_error: true still yields Ok");
+    assert!(message.has_errors());
+    assert_eq!(message.errors()[0].code, "circuit_open");
+}
+
+#[test]
+fn the_service_builder_is_reachable_from_an_external_crate() {
+    // `tests/` is a separate crate, so this proves the public path — including
+    // that `ServiceErrorBuilder` is nameable at the crate root.
+    let builder: dataflow_rs::ServiceErrorBuilder =
+        dataflow_rs::DataflowError::service("rate_limited", "too many requests");
+    let e = builder
+        .detail("token bucket empty for tenant 42")
+        .retryable(true)
+        .build();
+
+    assert_eq!(e.kind(), Some("rate_limited"));
+    assert_eq!(e.detail(), Some("token bucket empty for tenant 42"));
+    assert!(e.retryable());
+    assert_eq!(e.to_string(), "too many requests");
+    assert!(!e.to_string().contains("token bucket"));
+}

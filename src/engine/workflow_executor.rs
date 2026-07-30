@@ -44,6 +44,24 @@ fn next_async_boundary(tasks: &[Task], start: usize) -> usize {
     i
 }
 
+/// Code recorded when a task returns `Err`.
+///
+/// A [`DataflowError::Service`] contributes its own `kind` verbatim; everything
+/// else keeps the historical `TASK_ERROR`, so no existing deployment sees a
+/// different code until it opts in by returning `Service`.
+///
+/// Deliberately lifted at the task site only. The two `WORKFLOW_ERROR` wrappers
+/// wrap the same propagated error, so lifting there too would put two entries
+/// with the same `code` on the message — making "count errors by code"
+/// double-count — and would stop `WORKFLOW_ERROR` reliably meaning "a workflow
+/// stopped".
+fn task_error_code(e: &DataflowError) -> String {
+    match e.kind() {
+        Some(kind) if !kind.is_empty() => kind.to_string(),
+        _ => "TASK_ERROR".to_string(),
+    }
+}
+
 /// Whether `workflow` serves this message's routing bucket.
 ///
 /// A workflow with no `rollout`, or a message with no bucket, is admitted. The
@@ -968,13 +986,23 @@ impl WorkflowExecutor {
                     changes: vec![],
                 });
 
-                // Add error to message
-                message.errors.push(
-                    ErrorInfo::builder("TASK_ERROR", format!("Task {} error: {}", task_id, e))
-                        .workflow_id(workflow_id)
-                        .task_id(task_id)
-                        .build(),
-                );
+                // Add error to message. A service-classified error contributes
+                // its own `kind` as the code and carries its operator-only
+                // `detail`; everything else keeps the historical `TASK_ERROR`.
+                //
+                // `format!("{}", e)` stays caller-safe because `Service`'s
+                // `Display` is `{message}` — the detail is never interpolated.
+                let mut info = ErrorInfo::builder(
+                    task_error_code(&e),
+                    format!("Task {} error: {}", task_id, e),
+                )
+                .workflow_id(workflow_id)
+                .task_id(task_id);
+                // Nested `if let`, not a let-chain: MSRV is 1.85.
+                if let Some(detail) = e.detail() {
+                    info = info.detail(detail);
+                }
+                message.errors.push(info.build());
 
                 if !continue_on_error {
                     Err(e)

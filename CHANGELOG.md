@@ -37,6 +37,18 @@ because new public items ship and several existing behaviours change.
   `filter`, `parse_*`, `publish_*`, `log` are dispatched inside the executor and
   cannot be wrapped from outside the crate, so this is the only place their
   duration is observable. (#27)
+- **error:** `DataflowError::Service { kind, message, detail, retryable }`, built
+  through `DataflowError::service(..)` / `ServiceErrorBuilder`, plus
+  `DataflowError::kind()` / `detail()` and a new `ErrorInfo::detail` field with a
+  matching builder setter. A handler-owned classification channel: `kind` becomes
+  `ErrorInfo::code` **verbatim** (not upper-cased, so the string a service writes
+  is the string it switches on), `detail` is an operator-only field that `Display`
+  never renders — `to_string()` stays safe for an untrusted caller — and
+  `retryable` is declared rather than inferred from the variant. The engine never
+  interprets any of it; `continue_on_error`, the audit entry and the `Result::Err`
+  short-circuit are unchanged, and no built-in returns the variant. Lifted at the
+  task site only, so the `WORKFLOW_ERROR` wrapper keeps its own code and counting
+  errors by code does not double-count. (#31)
 - **message:** `MessageBuilder::data` / `metadata` / `temp_data` and their
   `*_json` siblings seed the three context root fields directly, so a workflow
   condition reading `data.*` fires without a `parse_json` task first. Keys are
@@ -218,6 +230,15 @@ such document must be corrected before upgrading.
 
 ### Notes for trace consumers
 
+`DataflowError` and `ErrorInfo` are now `#[non_exhaustive]`, so a downstream
+`match` over the error enum needs a wildcard arm and `ErrorInfo` must be built
+through `builder()` / `new()` / `simple()`. Both gained a variant or field in this
+release, which already broke exhaustive matching and struct literals; marking them
+makes future additions non-breaking. Nothing outside `src/` in this repository
+matched the enum exhaustively or constructed `ErrorInfo` literally. `Workflow`
+deliberately did **not** get the marking — it would forbid `..Default::default()`
+cross-crate, which is the shape this repo's own integration tests use.
+
 `ExecutionStep` and `ExecutionTrace` are now `#[non_exhaustive]`. Both gained
 fields in this release, which already broke out-of-crate struct-literal
 construction and exhaustive destructuring; marking them makes future field
@@ -237,7 +258,7 @@ trace keeps the historical wire shape. Neither `ExecutionStep` nor `Message` set
 kept as a fallback, and a new `traceHasSnapshots()` helper reports whether a trace
 carries state to inspect at all.
 
-Workspace test count 184 → 337.
+Workspace test count 184 → 351.
 
 ## [3.0.4] — 2026-07-26
 

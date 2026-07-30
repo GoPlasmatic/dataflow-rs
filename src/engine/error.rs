@@ -3,7 +3,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Main error type for the dataflow engine
+///
+/// `#[non_exhaustive]`: a downstream `match` needs a wildcard arm. Adding it here
+/// makes every *future* variant additive rather than a breaking change, which
+/// matters because this enum is the crate's error channel and will keep growing.
 #[derive(Debug, Error, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DataflowError {
     /// Validation errors occurring during rule evaluation
     #[error("Validation error: {0}")]
@@ -53,6 +58,33 @@ pub enum DataflowError {
     /// Any other errors
     #[error("Unknown error: {0}")]
     Unknown(String),
+
+    /// A failure the service layer classifies itself.
+    ///
+    /// The engine never interprets `kind`: it carries it to [`ErrorInfo::code`]
+    /// and otherwise treats this exactly like any other error —
+    /// `continue_on_error`, the audit-trail entry and the `Result::Err`
+    /// short-circuit are unchanged. No built-in returns this variant.
+    ///
+    /// `Display` renders `message` alone, so `to_string()` is always safe to hand
+    /// to an untrusted caller. `detail` is reachable only through `Debug`,
+    /// [`DataflowError::detail`] and [`ErrorInfo::detail`].
+    ///
+    /// Build it with [`DataflowError::service`].
+    #[error("{message}")]
+    Service {
+        /// Stable, service-owned classification, e.g. `"circuit_open"`.
+        kind: String,
+        /// Caller-safe text.
+        message: String,
+        /// Operator-only text: logged and kept on the trace, not intended for an
+        /// untrusted caller.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        /// Retryability, declared by the service rather than inferred from the
+        /// variant.
+        retryable: bool,
+    },
 }
 
 impl DataflowError {
@@ -110,6 +142,96 @@ impl DataflowError {
             DataflowError::Task(_) => false,
             DataflowError::FunctionNotFound(_) => false,
             DataflowError::Unknown(_) => false,
+
+            // Declared by the service rather than inferred from the variant.
+            DataflowError::Service { retryable, .. } => *retryable,
+        }
+    }
+
+    /// The service-owned classification, or `None` for every engine-owned
+    /// variant.
+    ///
+    /// This is the whole point of [`DataflowError::Service`]: a handler can
+    /// classify its own failures with a stable code the engine never interprets.
+    pub fn kind(&self) -> Option<&str> {
+        match self {
+            DataflowError::Service { kind, .. } => Some(kind),
+            _ => None,
+        }
+    }
+
+    /// Operator-only detail, if this is a [`DataflowError::Service`] carrying one.
+    ///
+    /// Never included in `Display`, so `to_string()` stays safe to hand to an
+    /// untrusted caller. Reachable through `Debug`, this method, and
+    /// [`ErrorInfo::detail`].
+    pub fn detail(&self) -> Option<&str> {
+        match self {
+            DataflowError::Service { detail, .. } => detail.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Start building a service-classified error.
+    ///
+    /// `kind` is the stable code the service will switch on; `message` is the
+    /// caller-safe text. Defaults: no detail, `retryable: false`.
+    ///
+    /// ```
+    /// use dataflow_rs::DataflowError;
+    ///
+    /// let e = DataflowError::service("circuit_open", "upstream unavailable")
+    ///     .detail("connector 'billing' breaker open")
+    ///     .retryable(true)
+    ///     .build();
+    ///
+    /// assert_eq!(e.kind(), Some("circuit_open"));
+    /// assert_eq!(e.detail(), Some("connector 'billing' breaker open"));
+    /// assert!(e.retryable());
+    /// // Display carries only the caller-safe text.
+    /// assert_eq!(e.to_string(), "upstream unavailable");
+    /// ```
+    pub fn service(kind: impl Into<String>, message: impl Into<String>) -> ServiceErrorBuilder {
+        ServiceErrorBuilder {
+            kind: kind.into(),
+            message: message.into(),
+            detail: None,
+            retryable: false,
+        }
+    }
+}
+
+/// Builder for [`DataflowError::Service`]. Mirrors [`ErrorInfoBuilder`].
+#[must_use = "ServiceErrorBuilder must be `.build()` to produce a DataflowError"]
+pub struct ServiceErrorBuilder {
+    kind: String,
+    message: String,
+    detail: Option<String>,
+    retryable: bool,
+}
+
+impl ServiceErrorBuilder {
+    /// Attach operator-only detail — logged and kept on the trace, not intended
+    /// for an untrusted caller.
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    /// Declare retryability. Defaults to `false`.
+    ///
+    /// Carriage for consumers: no engine code path acts on `retryable()`.
+    pub fn retryable(mut self, retryable: bool) -> Self {
+        self.retryable = retryable;
+        self
+    }
+
+    pub fn build(self) -> DataflowError {
+        DataflowError::Service {
+            kind: self.kind,
+            message: self.message,
+            detail: self.detail,
+            retryable: self.retryable,
         }
     }
 }
@@ -118,7 +240,13 @@ impl DataflowError {
 pub type Result<T> = std::result::Result<T, DataflowError>;
 
 /// Structured error information for error tracking in messages
+///
+/// `#[non_exhaustive]`: construct through [`ErrorInfo::builder`],
+/// [`ErrorInfo::new`], [`ErrorInfo::simple`] or [`ErrorInfo::simple_ref`], which
+/// are the documented paths. Field reads and `..` patterns are unaffected, and
+/// future field additions stay non-breaking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ErrorInfo {
     /// Error code (e.g., "WORKFLOW_ERROR", "TASK_ERROR", "VALIDATION_ERROR")
     pub code: String,
@@ -148,6 +276,28 @@ pub struct ErrorInfo {
     /// Number of retries attempted
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_count: Option<u32>,
+
+    /// Operator-only detail lifted from [`DataflowError::Service`].
+    ///
+    /// Present on the persisted trace; a service must **not** surface it to an
+    /// untrusted caller. `None` for every engine-owned error, and omitted from
+    /// the serialized form when absent, so the JSON shape is unchanged unless a
+    /// `Service` error carried one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Code recorded for a [`DataflowError::Service`].
+///
+/// `kind` is passed through **verbatim** rather than upper-cased: the service owns
+/// it and will switch on the recorded `code`, so making the two different strings
+/// would force every consumer to know the transform. An empty `kind` falls back to
+/// the historical `TASK_ERROR` so no `ErrorInfo` ever carries an empty code.
+fn service_error_code(error: &DataflowError) -> String {
+    match error.kind() {
+        Some(kind) if !kind.is_empty() => kind.to_string(),
+        _ => "TASK_ERROR".to_string(),
+    }
 }
 
 impl ErrorInfo {
@@ -166,7 +316,9 @@ impl ErrorInfo {
                 DataflowError::Io(_) => "IO_ERROR".to_string(),
                 DataflowError::Deserialization(_) => "DESERIALIZATION_ERROR".to_string(),
                 DataflowError::Unknown(_) => "UNKNOWN_ERROR".to_string(),
+                DataflowError::Service { .. } => service_error_code(&error),
             },
+            detail: error.detail().map(str::to_string),
             message: error.to_string(),
             path: None,
             workflow_id,
@@ -188,6 +340,7 @@ impl ErrorInfo {
             timestamp: Some(Utc::now().to_rfc3339()),
             retry_attempted: None,
             retry_count: None,
+            detail: None,
         }
     }
 
@@ -202,6 +355,7 @@ impl ErrorInfo {
             timestamp: Some(Utc::now().to_rfc3339()),
             retry_attempted: None,
             retry_count: None,
+            detail: None,
         }
     }
 
@@ -229,6 +383,7 @@ pub struct ErrorInfoBuilder {
     timestamp: Option<String>,
     retry_attempted: Option<bool>,
     retry_count: Option<u32>,
+    detail: Option<String>,
 }
 
 impl ErrorInfoBuilder {
@@ -243,6 +398,7 @@ impl ErrorInfoBuilder {
             timestamp: Some(Utc::now().to_rfc3339()),
             retry_attempted: None,
             retry_count: None,
+            detail: None,
         }
     }
 
@@ -282,6 +438,13 @@ impl ErrorInfoBuilder {
         self
     }
 
+    /// Attach operator-only detail. Not surfaced by `Display` anywhere; a service
+    /// must not pass it to an untrusted caller.
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
     /// Build the ErrorInfo instance
     pub fn build(self) -> ErrorInfo {
         ErrorInfo {
@@ -293,6 +456,7 @@ impl ErrorInfoBuilder {
             timestamp: self.timestamp,
             retry_attempted: self.retry_attempted,
             retry_count: self.retry_count,
+            detail: self.detail,
         }
     }
 }
@@ -565,5 +729,139 @@ mod tests {
             let dataflow_err = DataflowError::from_serde(e);
             assert!(matches!(dataflow_err, DataflowError::Deserialization(_)));
         }
+    }
+
+    #[test]
+    fn service_error_carries_kind_detail_and_declared_retryability() {
+        let e = DataflowError::service("circuit_open", "upstream unavailable")
+            .detail("connector 'billing' breaker open")
+            .retryable(true)
+            .build();
+
+        assert_eq!(e.kind(), Some("circuit_open"));
+        assert_eq!(e.detail(), Some("connector 'billing' breaker open"));
+        assert!(e.retryable());
+    }
+
+    #[test]
+    fn service_display_hides_the_detail_but_debug_shows_it() {
+        let e = DataflowError::service("circuit_open", "upstream unavailable")
+            .detail("SECRET-TOPOLOGY")
+            .build();
+
+        // `to_string()` is always safe to hand to an untrusted caller.
+        assert_eq!(e.to_string(), "upstream unavailable");
+        assert!(!e.to_string().contains("SECRET-TOPOLOGY"));
+        // The operator channel is reachable through Debug.
+        assert!(format!("{e:?}").contains("SECRET-TOPOLOGY"));
+    }
+
+    #[test]
+    fn service_retryability_is_independent_of_every_other_field() {
+        let yes = DataflowError::service("k", "m").retryable(true).build();
+        let no = DataflowError::service("k", "m").retryable(false).build();
+        assert!(yes.retryable());
+        assert!(!no.retryable());
+        // Defaults to false.
+        assert!(!DataflowError::service("k", "m").build().retryable());
+    }
+
+    #[test]
+    fn kind_and_detail_are_none_for_every_engine_owned_variant() {
+        let variants = [
+            DataflowError::Validation("v".into()),
+            DataflowError::FunctionExecution {
+                context: "c".into(),
+                source: None,
+            },
+            DataflowError::LogicEvaluation("l".into()),
+            DataflowError::Deserialization("d".into()),
+            DataflowError::Workflow("w".into()),
+            DataflowError::Task("t".into()),
+            DataflowError::FunctionNotFound("f".into()),
+            DataflowError::Http {
+                status: 500,
+                message: "h".into(),
+            },
+            DataflowError::Timeout("to".into()),
+            DataflowError::Io("io".into()),
+            DataflowError::Unknown("u".into()),
+        ];
+        assert_eq!(variants.len(), 11, "one assertion per engine-owned variant");
+        for v in &variants {
+            assert_eq!(v.kind(), None, "kind() for {v:?}");
+            assert_eq!(v.detail(), None, "detail() for {v:?}");
+        }
+    }
+
+    #[test]
+    fn service_error_code_passes_kind_through_verbatim() {
+        // The recorded decision: verbatim, not upper-cased. A service switching
+        // on the recorded `code` should not have to know a transform.
+        let e = DataflowError::service("circuit_open", "m").build();
+        let info = ErrorInfo::new(None, None, e);
+        assert_eq!(info.code, "circuit_open");
+    }
+
+    #[test]
+    fn an_empty_kind_falls_back_rather_than_recording_an_empty_code() {
+        let e = DataflowError::service("", "m").build();
+        let info = ErrorInfo::new(None, None, e);
+        assert_eq!(info.code, "TASK_ERROR");
+        assert!(!info.code.is_empty());
+    }
+
+    #[test]
+    fn a_non_ascii_kind_is_neither_panicked_on_nor_mangled() {
+        let e = DataflowError::service("limite_dépassé", "m").build();
+        let info = ErrorInfo::new(None, None, e);
+        // Verbatim, so the exact string round-trips including the accent.
+        assert_eq!(info.code, "limite_dépassé");
+    }
+
+    #[test]
+    fn error_info_lifts_the_detail_and_omits_it_when_absent() {
+        let with = ErrorInfo::new(
+            None,
+            None,
+            DataflowError::service("k", "m").detail("op only").build(),
+        );
+        assert_eq!(with.detail.as_deref(), Some("op only"));
+        assert!(serde_json::to_string(&with).unwrap().contains("detail"));
+
+        // Absent on a Service without one, and on every engine-owned variant.
+        let without = ErrorInfo::new(None, None, DataflowError::service("k", "m").build());
+        assert_eq!(without.detail, None);
+        assert!(!serde_json::to_string(&without).unwrap().contains("detail"));
+
+        let engine_owned = ErrorInfo::new(None, None, DataflowError::Task("t".into()));
+        assert_eq!(engine_owned.detail, None);
+        assert!(
+            !serde_json::to_string(&engine_owned)
+                .unwrap()
+                .contains("detail"),
+            "the JSON shape is unchanged for every pre-existing error"
+        );
+    }
+
+    #[test]
+    fn a_service_error_round_trips_through_serde_with_and_without_detail() {
+        for e in [
+            DataflowError::service("k", "m")
+                .detail("d")
+                .retryable(true)
+                .build(),
+            DataflowError::service("k", "m").build(),
+        ] {
+            let json = serde_json::to_string(&e).unwrap();
+            let back: DataflowError = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.kind(), e.kind());
+            assert_eq!(back.detail(), e.detail());
+            assert_eq!(back.retryable(), e.retryable());
+        }
+
+        // `detail: None` emits no key.
+        let bare = DataflowError::service("k", "m").build();
+        assert!(!serde_json::to_string(&bare).unwrap().contains("detail"));
     }
 }

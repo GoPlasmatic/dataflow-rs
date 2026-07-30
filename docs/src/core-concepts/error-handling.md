@@ -125,6 +125,45 @@ Common error codes you'll see:
 - `TASK_STATUS_ERROR` — handler returned `TaskOutcome::Status(s)` with `s >= 500`
 - `WORKFLOW_ERROR` — wrapper recording workflow context for the failure above
 
+That list is not closed: a handler returning a **service-classified** error
+contributes its own code (see below). Switch on `code` with a default arm.
+
+## Service-classified errors
+
+The engine's error variants describe engine concerns. When your handler fails for
+a reason only your service understands — a circuit breaker opened, a tenant hit a
+rate limit — classify it yourself:
+
+```rust
+# use dataflow_rs::DataflowError;
+# fn _demo() -> DataflowError {
+DataflowError::service("circuit_open", "upstream unavailable")
+    .detail("connector 'billing' breaker open since 12:04")
+    .retryable(true)
+    .build()
+# }
+```
+
+Three things this buys you:
+
+- **`kind` becomes the `ErrorInfo::code`** on `message.errors()`, passed through
+  **verbatim** — not upper-cased — so the string you switch on is the string you
+  wrote. An empty `kind` falls back to `TASK_ERROR`.
+- **`detail` is a separate, operator-only channel.** `Display` renders `message`
+  alone, so `to_string()` is always safe to hand to an untrusted caller; the detail
+  is reachable through `Debug`, `DataflowError::detail()` and `ErrorInfo::detail`.
+  It is omitted from the serialized form when absent, so nothing changes for errors
+  that do not carry one.
+- **`retryable` is declared, not inferred** from the variant. Note the engine does
+  not act on it — no code path in this crate reads `retryable()`. It is carriage
+  for your own retry policy.
+
+Everything else is unchanged: `continue_on_error`, the audit-trail entry, and the
+`Result::Err` short-circuit behave exactly as for any other error. The
+`WORKFLOW_ERROR` wrapper still records workflow context and keeps its own code, so
+counting errors by code does not double-count. No built-in ever returns this
+variant.
+
 ## Error Types
 
 ### Validation Errors

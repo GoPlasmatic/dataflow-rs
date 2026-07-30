@@ -452,6 +452,28 @@ every request — see
 
 Matching is exact: `"HTTP_CALL"` and `"htttp_call"` are both `None`.
 
+### Service-classified errors
+
+```rust,ignore
+// Build a handler-owned error. `kind` becomes ErrorInfo::code verbatim.
+pub fn DataflowError::service(kind: impl Into<String>, message: impl Into<String>)
+    -> ServiceErrorBuilder
+
+impl ServiceErrorBuilder {
+    pub fn detail(self, detail: impl Into<String>) -> Self   // operator-only
+    pub fn retryable(self, retryable: bool) -> Self          // default false
+    pub fn build(self) -> DataflowError
+}
+
+// None for every engine-owned variant.
+pub fn DataflowError::kind(&self) -> Option<&str>
+pub fn DataflowError::detail(&self) -> Option<&str>
+```
+
+`Display` on `DataflowError::Service` renders `message` alone, so `to_string()`
+never leaks the detail. `DataflowError` and `ErrorInfo` are `#[non_exhaustive]`.
+See [Service-classified errors](../core-concepts/error-handling.md#service-classified-errors).
+
 ## Change
 
 Represents a single data modification recorded in the audit trail.
