@@ -54,6 +54,10 @@ pub async fn process_message_with_trace(&self, message: &mut Message) -> Result<
 // Process with tracing into a caller-owned trace, so steps survive a hard failure
 pub async fn process_message_tracing(&self, message: &mut Message, trace: &mut ExecutionTrace) -> Result<()>
 
+// Process with tracing under an explicit capture policy (snapshot budget,
+// audit-trail scope, redaction, per-step diff)
+pub async fn process_message_with_trace_options(&self, message: &mut Message, options: TraceOptions) -> Result<ExecutionTrace>
+
 // Process only workflows on a specific channel (O(1) lookup)
 pub async fn process_message_for_channel(&self, channel: &str, message: &mut Message) -> Result<()>
 
@@ -62,6 +66,9 @@ pub async fn process_message_for_channel_with_trace(&self, channel: &str, messag
 
 // Channel routing, recording into a caller-owned trace
 pub async fn process_message_for_channel_tracing(&self, channel: &str, message: &mut Message, trace: &mut ExecutionTrace) -> Result<()>
+
+// Channel routing under an explicit capture policy
+pub async fn process_message_for_channel_with_trace_options(&self, channel: &str, message: &mut Message, options: TraceOptions) -> Result<ExecutionTrace>
 
 // Get registered rules (sorted by priority)
 pub fn workflows(&self) -> &Arc<Vec<Workflow>>

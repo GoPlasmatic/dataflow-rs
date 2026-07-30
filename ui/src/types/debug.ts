@@ -78,10 +78,24 @@ export interface ExecutionStep {
   task_id?: string;
   /** Result of the step execution */
   result: StepResult;
-  /** Message snapshot after this step (only for executed steps) */
+  /**
+   * Message snapshot after this step. Absent for skipped steps, when the host
+   * ran with `TraceOptions { snapshots: false }`, and for executed steps
+   * recorded after `max_snapshot_bytes` was exceeded.
+   */
   message?: Message;
   /** Context snapshots before each mapping (map tasks only, trace mode) */
   mapping_contexts?: Record<string, unknown>[];
+  /** RFC 3339 wall-clock start of the task body. Executed steps only. */
+  started_at?: string;
+  /** Task body duration in microseconds. Executed steps only. */
+  duration_us?: number;
+  /**
+   * This task's own writes, when the host ran with `TraceOptions { changes: true }`.
+   * Preferred over reading the last `audit_trail` entry, which mis-attributes
+   * on a skip-outcome step.
+   */
+  changes?: Change[];
 }
 
 /**
@@ -90,6 +104,22 @@ export interface ExecutionStep {
 export interface ExecutionTrace {
   /** All execution steps in order */
   steps: ExecutionStep[];
+  /**
+   * Set when the host's snapshot budget was exceeded, meaning one or more
+   * executed steps carry no `message`. Absent on a complete trace.
+   */
+  truncated?: boolean;
+}
+
+/**
+ * Whether this trace carries message snapshots at all.
+ *
+ * A host running with `TraceOptions { snapshots: false }` (e.g. `timings_only()`)
+ * produces steps with ids, result and timing but no state to inspect, so the
+ * step-detail views have nothing to render.
+ */
+export function traceHasSnapshots(trace: ExecutionTrace): boolean {
+  return trace.steps.some((s) => s.result === 'executed' && s.message !== undefined);
 }
 
 /**
@@ -203,16 +233,29 @@ export function getMessageAtStep(trace: ExecutionTrace, stepIndex: number): Mess
 }
 
 /**
- * Get the changes made at a specific step
- * Returns the changes from the last audit_trail entry if step was executed
+ * Get the changes made at a specific step.
+ *
+ * Prefers the step's own `changes` field, which the engine attributes to this
+ * task exactly. Falls back to the last `audit_trail` entry for traces recorded
+ * without `TraceOptions { changes: true }` — note that fallback mis-attributes
+ * on a skip-outcome step, because a skip records no audit entry and the last
+ * entry then belongs to an earlier task.
  */
 export function getChangesAtStep(trace: ExecutionTrace, stepIndex: number): Change[] {
   const step = trace.steps[stepIndex];
-  if (!step || step.result !== 'executed' || !step.message) {
+  if (!step || step.result !== 'executed') {
     return [];
   }
 
-  // The last audit_trail entry corresponds to this step's task execution
+  // Exact attribution when the host enabled it.
+  if (step.changes !== undefined) {
+    return step.changes;
+  }
+
+  // Fallback: the last audit_trail entry usually corresponds to this step.
+  if (!step.message) {
+    return [];
+  }
   const auditTrail = step.message.audit_trail;
   if (auditTrail.length === 0) {
     return [];

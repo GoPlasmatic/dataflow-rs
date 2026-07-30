@@ -152,6 +152,76 @@ error itself comes from the returned `Err` and from `message.errors()`.
 
 `process_message_for_channel_tracing` is the channel-scoped equivalent.
 
+### Bounding what a trace captures
+
+The default policy takes a full `Message` snapshot on every executed step. That
+is unbounded in message size and **quadratic in task count** — each snapshot
+clones the accumulated audit trail, so an N-task workflow retains `N*(N+1)/2`
+audit entries. Fine for a step debugger, ruinous for a service that persists a
+trace per request.
+
+`TraceOptions` bounds it at capture time, which is the only place it can be
+bounded: trimming the result afterwards has already paid the peak memory.
+
+```rust
+# use dataflow_rs::{AuditTrailScope, Engine, Message, TraceOptions};
+# async fn _demo(engine: Engine, mut message: Message) -> dataflow_rs::Result<()> {
+let trace = engine
+    .process_message_with_trace_options(
+        &mut message,
+        TraceOptions {
+            // Bound retained snapshots. Approximate in-memory size, not
+            // serialized length — 0 means unbounded.
+            max_snapshot_bytes: 256 * 1024,
+            // Drop the quadratic term while keeping the step view working.
+            snapshot_audit_trail: AuditTrailScope::Own,
+            // Never let these subtrees reach the trace. The live message keeps
+            // its real values, so later tasks are unaffected.
+            redact_paths: vec!["data.card.pan".to_string()],
+            // Per-step diff attributed to the task that produced it.
+            changes: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+if trace.truncated() {
+    println!("snapshot budget hit — some steps carry no message");
+}
+# Ok(()) }
+```
+
+For metrics rather than debugging, `TraceOptions::timings_only()` drops snapshots
+and mapping contexts entirely, leaving ids, result, timing and the diff — a step
+costs a few hundred bytes regardless of message size:
+
+```rust
+# use dataflow_rs::{Engine, Message, TraceOptions};
+# async fn _demo(engine: Engine, mut message: Message) -> dataflow_rs::Result<()> {
+let trace = engine
+    .process_message_with_trace_options(&mut message, TraceOptions::timings_only())
+    .await?;
+
+for step in &trace.steps {
+    if let Some(us) = step.duration_us {
+        println!("{}/{:?} took {us}us", step.workflow_id, step.task_id);
+    }
+}
+# Ok(()) }
+```
+
+Two things to know about `snapshots: false`: `final_message()` returns `None` and
+`is_success()` degenerates to `true` (read `Message::errors` on the message you
+passed in instead), and the `dataflow-ui` step debugger cannot render a step view
+without snapshots.
+
+Timing covers the **sync built-ins too** — `map`, `validation`, `filter`, the
+`parse_*` and `publish_*` pair and `log` are dispatched inside the executor and
+cannot be wrapped from outside the crate, so this is the only place their
+duration is observable. Trace mode reads the clock twice per executed task; the
+non-trace `process_message` path is unchanged and still takes one `Utc::now()`
+per message.
+
 ## Rule Execution Order
 
 Rules execute in priority order (lowest priority number first):

@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.1.0] — 2026-07-30
 
-Three defects from a boundary audit of the crate's deepest known consumer. Minor
-rather than patch because new public items ship and two existing behaviours
-change.
+Four defects from a boundary audit of the crate's deepest known consumer, plus
+the capture-policy surface the trace API was missing. Minor rather than patch
+because new public items ship and several existing behaviours change.
 
 ### Added
 
@@ -22,6 +22,21 @@ change.
   same five-arm match to do it; `as_str()` is the intended bridge, and the crate
   still takes no HTTP-client dependency. `ALL` is scoped to what an `http_call`
   task may name — not a general HTTP method list. (#24)
+- **trace:** `TraceOptions` (re-exported from the crate root, with
+  `AuditTrailScope`) plus `Engine::process_message_with_trace_options` and
+  `Engine::process_message_for_channel_with_trace_options`. Bounds what a trace
+  captures *at capture time*, which is the only place it can be bounded —
+  trimming the result afterwards has already paid the peak memory. Knobs:
+  `snapshots`, `mapping_contexts`, `changes`, `max_snapshot_bytes` (approximate
+  in-memory size, not serialized length), `redact_paths`, and
+  `snapshot_audit_trail`. `TraceOptions::timings_only()` is the metrics preset.
+  The default reproduces the historical capture behaviour exactly. (#27)
+- **trace:** `ExecutionStep` gains `started_at`, `duration_us` and `changes`;
+  `ExecutionTrace` gains `truncated()`, `options()` and `with_options()`.
+  Per-task timing now covers the **sync built-ins** — `map`, `validation`,
+  `filter`, `parse_*`, `publish_*`, `log` are dispatched inside the executor and
+  cannot be wrapped from outside the crate, so this is the only place their
+  duration is observable. (#27)
 - **integration:** `HttpCallConfig::response_path` accepts `output` as an alias,
   so a service layer can present one destination-field name across its whole
   function catalogue. Supplying both keys is a `duplicate field` error, not a
@@ -75,6 +90,12 @@ change.
   and `has_function`'s match arm had all spelled out the same twelve names, with
   only the first two tied together by a test.
 
+- **trace:** a step's per-task diff was only recoverable as
+  `step.message.audit_trail.last()`, which is wrong whenever a task returns
+  `TaskOutcome::Skip` — no audit entry is recorded for a skip, so the last entry
+  belongs to a *different* task. Reachable with built-ins alone via `filter` with
+  `on_reject: "skip"`. `TraceOptions::changes` reports each task's own writes,
+  and the `dataflow-ui` helper now prefers it. (#27)
 - **integration:** `HttpCallConfig`, `EnrichConfig` and `PublishKafkaConfig` now
   reject unknown keys (`deny_unknown_fields`). A misspelled field previously
   parsed cleanly and was discarded, so an `http_call` task would make its request
@@ -91,8 +112,9 @@ change.
 
 ### Compatibility
 
-No public type, enum, struct or function signature changes shape, so all existing
-downstream code keeps compiling. Three behaviours change at runtime:
+No existing function or method signature changes shape. Two structs gain fields
+(`ExecutionStep`, `ExecutionTrace` — see *Notes for trace consumers*); everything
+else is additive. Behaviours that change at runtime:
 
 `has_function`'s answer changes for `http_call` / `enrich` / `publish_kafka` when
 no handler is registered. In-repo the only caller was its own test, and `Engine`
@@ -116,7 +138,28 @@ workflow document carrying a stray or misspelled key inside an `http_call`,
 time sees that row fail its own parse rather than losing the whole set — but any
 such document must be corrected before upgrading.
 
-Workspace test count 184 → 216.
+### Notes for trace consumers
+
+`ExecutionStep` and `ExecutionTrace` are now `#[non_exhaustive]`. Both gained
+fields in this release, which already broke out-of-crate struct-literal
+construction and exhaustive destructuring; marking them makes future field
+additions non-breaking. Field reads, `..` patterns, the three step constructors
+and the `with_*` chain are unaffected, and nothing in this repository or the wasm
+bindings constructed either type by literal. `StepResult` is deliberately left
+exhaustive — a new variant there should break downstream `matches!` sites at
+compile time rather than silently reclassify them.
+
+Under default options the serialized trace gains `started_at` and `duration_us`
+per executed step. `truncated` is serialized only when `true`, so a complete
+trace keeps the historical wire shape. Neither `ExecutionStep` nor `Message` sets
+`deny_unknown_fields`, so old and new payloads deserialize in both directions.
+
+`ui/`: `ExecutionStep` gains the three optional fields, `ExecutionTrace` gains
+`truncated?`, `getChangesAtStep` prefers `step.changes` with the audit-trail read
+kept as a fallback, and a new `traceHasSnapshots()` helper reports whether a trace
+carries state to inspect at all.
+
+Workspace test count 184 → 259.
 
 ## [3.0.4] — 2026-07-26
 

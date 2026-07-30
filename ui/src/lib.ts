@@ -90,6 +90,7 @@ export {
   getChangesAtStep,
   getWorkflowState,
   getTaskState,
+  traceHasSnapshots,
 } from './types';
 
 // Engine adapters

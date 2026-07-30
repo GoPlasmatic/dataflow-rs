@@ -234,7 +234,7 @@ pub use engine::functions::{
 pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
 pub use engine::task_context::TaskContext;
 pub use engine::task_outcome::TaskOutcome;
-pub use engine::trace::{ExecutionStep, ExecutionTrace, StepResult};
+pub use engine::trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
 pub use engine::{Engine, EngineBuilder, Task, Workflow, WorkflowStatus};
 
 /// Type alias for `Workflow` — a Rule represents an IF-THEN unit: IF condition THEN execute actions.

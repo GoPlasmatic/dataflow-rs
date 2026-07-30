@@ -78,7 +78,7 @@ pub use message::Message;
 pub use task::Task;
 pub use task_context::TaskContext;
 pub use task_outcome::TaskOutcome;
-pub use trace::{ExecutionStep, ExecutionTrace, StepResult};
+pub use trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
 pub use workflow::{Workflow, WorkflowStatus};
 
 // `EngineBuilder` is defined further down in this file but exposed here so
@@ -353,6 +353,7 @@ impl Engine {
         message: &mut Message,
         trace: &mut ExecutionTrace,
     ) -> Result<()> {
+        // The trace carries its own capture policy, so nothing to pass here.
         let now = Utc::now();
         set_processing_metadata(&mut message.context, &self.engine_version, now, None);
 
@@ -380,7 +381,31 @@ impl Engine {
         &self,
         message: &mut Message,
     ) -> Result<ExecutionTrace> {
-        let mut trace = ExecutionTrace::new();
+        self.process_message_with_trace_options(message, TraceOptions::default())
+            .await
+    }
+
+    /// Processes a message with tracing under an explicit capture policy.
+    ///
+    /// The default policy — what [`Engine::process_message_with_trace`] uses —
+    /// takes a full [`Message`] snapshot per executed step, which is unbounded
+    /// in message size and quadratic in task count. A host that *persists*
+    /// traces should bound them here rather than trimming the result
+    /// afterwards; by then the peak memory has already been paid.
+    ///
+    /// See [`TraceOptions`] for the knobs, and
+    /// [`Engine::process_message_tracing`] if you also need the steps to survive
+    /// a hard failure.
+    ///
+    /// # Arguments
+    /// * `message` - The message to process through workflows
+    /// * `options` - What to record for each step
+    pub async fn process_message_with_trace_options(
+        &self,
+        message: &mut Message,
+        options: TraceOptions,
+    ) -> Result<ExecutionTrace> {
+        let mut trace = ExecutionTrace::with_options(options);
         self.process_message_tracing(message, &mut trace).await?;
         Ok(trace)
     }
@@ -470,7 +495,28 @@ impl Engine {
         channel: &str,
         message: &mut Message,
     ) -> Result<ExecutionTrace> {
-        let mut trace = ExecutionTrace::new();
+        self.process_message_for_channel_with_trace_options(
+            channel,
+            message,
+            TraceOptions::default(),
+        )
+        .await
+    }
+
+    /// Channel-scoped variant of
+    /// [`Engine::process_message_with_trace_options`].
+    ///
+    /// # Arguments
+    /// * `channel` - The channel name to route the message through
+    /// * `message` - The message to process
+    /// * `options` - What to record for each step
+    pub async fn process_message_for_channel_with_trace_options(
+        &self,
+        channel: &str,
+        message: &mut Message,
+        options: TraceOptions,
+    ) -> Result<ExecutionTrace> {
+        let mut trace = ExecutionTrace::with_options(options);
         self.process_message_for_channel_tracing(channel, message, &mut trace)
             .await?;
         Ok(trace)

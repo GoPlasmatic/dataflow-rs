@@ -12,7 +12,7 @@ use crate::engine::message::{AuditTrail, Change, Message};
 use crate::engine::task::Task;
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::trace::{ExecutionStep, ExecutionTrace};
+use crate::engine::trace::{ExecutionStep, ExecutionTrace, duration_us_between};
 use crate::engine::utils::set_nested_value;
 use crate::engine::workflow::Workflow;
 use chrono::{DateTime, Utc};
@@ -395,6 +395,14 @@ impl WorkflowExecutor {
                     continue;
                 }
 
+                // Clock reads only when a trace is live, so the non-trace path
+                // keeps its documented one-`Utc::now()`-per-message invariant.
+                let trace_start = if trace.is_some() {
+                    Some(Utc::now())
+                } else {
+                    None
+                };
+
                 let result = self.task_executor.execute(task, message).await;
                 let control_flow = self.handle_task_result(
                     result,
@@ -408,7 +416,15 @@ impl WorkflowExecutor {
                 // Async tasks at the boundary have no per-mapping snapshots —
                 // they're either HTTP/Kafka/Enrich or a custom handler.
                 if let Some(t) = trace.as_deref_mut() {
-                    t.add_step(ExecutionStep::executed(&workflow.id, &task.id, message));
+                    let started_at = trace_start.unwrap_or(now);
+                    t.add_executed_step(
+                        &workflow.id,
+                        &task.id,
+                        message,
+                        started_at,
+                        duration_us_between(started_at, Utc::now()),
+                        None,
+                    );
                 }
 
                 if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
@@ -489,14 +505,26 @@ impl WorkflowExecutor {
             }
 
             // Per-task snapshot buffer — only used for Map tasks in trace
-            // mode. Allocating an empty Vec is cheap and the buffer stays
-            // empty for non-Map tasks.
+            // mode, and only when the trace's policy wants them. Allocating an
+            // empty Vec is cheap and the buffer stays empty for non-Map tasks.
             let mut mapping_snapshots: Vec<Value> = Vec::new();
-            let snapshot_buf = if trace.is_some() {
+            let want_mapping_contexts = trace
+                .as_deref()
+                .is_some_and(|t| t.options().mapping_contexts);
+            let snapshot_buf = if want_mapping_contexts {
                 Some(&mut mapping_snapshots)
             } else {
                 None
             };
+
+            // Clock reads only when a trace is live, so the non-trace path keeps
+            // its documented one-`Utc::now()`-per-message invariant.
+            let trace_start = if trace.is_some() {
+                Some(Utc::now())
+            } else {
+                None
+            };
+
             let result = self.execute_sync_task_in_arena(task, message, arena_ctx, snapshot_buf);
 
             let control_flow = self.handle_task_result(
@@ -517,11 +545,20 @@ impl WorkflowExecutor {
             arena_ctx.refresh_for_path(&message.context, "metadata.progress");
 
             if let Some(t) = trace.as_deref_mut() {
-                let mut step = ExecutionStep::executed(&workflow.id, &task.id, message);
-                if !mapping_snapshots.is_empty() {
-                    step = step.with_mapping_contexts(mapping_snapshots);
-                }
-                t.add_step(step);
+                let started_at = trace_start.unwrap_or(now);
+                let mapping_contexts = if mapping_snapshots.is_empty() {
+                    None
+                } else {
+                    Some(mapping_snapshots)
+                };
+                t.add_executed_step(
+                    &workflow.id,
+                    &task.id,
+                    message,
+                    started_at,
+                    duration_us_between(started_at, Utc::now()),
+                    mapping_contexts,
+                );
             }
 
             if matches!(control_flow, TaskControlFlow::HaltWorkflow) {

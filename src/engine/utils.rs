@@ -249,7 +249,7 @@ pub fn set_nested_value_parts(
 /// Strip exactly one leading `#` from an object-key path component.
 /// `"#20"` → `"20"`, `"##"` → `"#"`, `"foo"` → `"foo"`.
 #[inline]
-fn strip_hash_prefix(part: &str) -> &str {
+pub(crate) fn strip_hash_prefix(part: &str) -> &str {
     part.strip_prefix('#').unwrap_or(part)
 }
 
