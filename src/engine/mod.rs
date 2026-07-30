@@ -59,6 +59,7 @@ pub mod error;
 pub mod executor;
 pub mod functions;
 pub mod message;
+pub mod observer;
 pub mod task;
 pub mod task_context;
 pub mod task_executor;
@@ -75,6 +76,7 @@ pub use functions::{
     FunctionConfig,
 };
 pub use message::Message;
+pub use observer::{ExecutionObserver, TaskEvent};
 pub use task::Task;
 pub use task_context::TaskContext;
 pub use task_outcome::TaskOutcome;
@@ -256,8 +258,13 @@ impl Engine {
         // Rebuild the executor stack, reusing the existing function registry
         let task_executor = Arc::new(TaskExecutor::new(task_functions, Arc::clone(&datalogic)));
 
-        let workflow_executor =
-            Arc::new(WorkflowExecutor::new(task_executor, Arc::clone(&datalogic)));
+        // Carry the observer across the reload. Dropping it here would stop
+        // metrics silently at the first hot reload.
+        let mut executor = WorkflowExecutor::new(task_executor, Arc::clone(&datalogic));
+        if let Some(observer) = self.workflow_executor.observer() {
+            executor = executor.with_observer(Arc::clone(observer));
+        }
+        let workflow_executor = Arc::new(executor);
 
         // Build channel index for O(1) channel-based routing
         let channel_index = build_channel_index(&sorted_workflows);
@@ -269,6 +276,33 @@ impl Engine {
             datalogic,
             engine_version: Arc::clone(&self.engine_version),
         })
+    }
+
+    /// Attach a per-task [`ExecutionObserver`], returning the updated engine.
+    ///
+    /// The escape hatch matching [`Engine::new`] — [`EngineBuilder::with_observer`]
+    /// is the recommended path. Rebuilds the executor stack around the existing
+    /// handler registry and datalogic engine, so nothing is recompiled; the cost
+    /// is a few `Arc` bumps.
+    ///
+    /// Carried across [`Engine::with_new_workflows`], so a hot reload does not
+    /// silently stop reporting.
+    pub fn with_observer(self, observer: Arc<dyn ExecutionObserver>) -> Self {
+        let task_executor = Arc::new(TaskExecutor::new(
+            self.workflow_executor.task_functions(),
+            Arc::clone(&self.datalogic),
+        ));
+        let workflow_executor = Arc::new(
+            WorkflowExecutor::new(task_executor, Arc::clone(&self.datalogic))
+                .with_observer(observer),
+        );
+        Self {
+            workflows: self.workflows,
+            channel_index: self.channel_index,
+            workflow_executor,
+            datalogic: self.datalogic,
+            engine_version: self.engine_version,
+        }
     }
 
     /// Processes a message through workflows that match their conditions.
@@ -561,6 +595,7 @@ impl Engine {
 pub struct EngineBuilder {
     workflows: Vec<Workflow>,
     handlers: HashMap<String, BoxedFunctionHandler>,
+    observer: Option<Arc<dyn ExecutionObserver>>,
 }
 
 impl EngineBuilder {
@@ -609,11 +644,39 @@ impl EngineBuilder {
         self
     }
 
+    /// Insert every handler in `handlers`, keeping any already registered.
+    ///
+    /// Same extend-not-replace semantics as [`EngineBuilder::with_workflows`].
+    /// Exists because `register` is per-name, which pushed an embedder that
+    /// builds a whole `HashMap<String, BoxedFunctionHandler>` in one place onto
+    /// [`Engine::new`] and off the builder entirely — and therefore out of reach
+    /// of [`EngineBuilder::with_observer`].
+    pub fn with_handlers(mut self, handlers: HashMap<String, BoxedFunctionHandler>) -> Self {
+        self.handlers.extend(handlers);
+        self
+    }
+
+    /// Attach a per-task [`ExecutionObserver`]. Later calls replace the previous
+    /// one.
+    ///
+    /// This is the only way to time the sync built-ins, which are dispatched
+    /// inside the executor and never reach the function registry. With no
+    /// observer attached the instrumentation — including its clock reads — stays
+    /// out of the dispatch path entirely.
+    pub fn with_observer(mut self, observer: Arc<dyn ExecutionObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
     /// Compile the workflows, pre-parse Custom inputs, and produce the
     /// engine. Compile errors and missing handler references surface here —
     /// the engine never deserializes Custom config on the hot path.
     pub fn build(self) -> Result<Engine> {
-        Engine::new(self.workflows, self.handlers)
+        let engine = Engine::new(self.workflows, self.handlers)?;
+        Ok(match self.observer {
+            Some(observer) => engine.with_observer(observer),
+            None => engine,
+        })
     }
 }
 

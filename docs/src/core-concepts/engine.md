@@ -222,6 +222,69 @@ duration is observable. Trace mode reads the clock twice per executed task; the
 non-trace `process_message` path is unchanged and still takes one `Utc::now()`
 per message.
 
+## Always-on per-task metrics
+
+A trace is a per-request allocation you persist. For aggregation — counters,
+histograms, spans — attach an `ExecutionObserver` instead. It fires once per
+dispatched task on every `process_message` call, with no trace involved:
+
+```rust
+use dataflow_rs::{Engine, ExecutionObserver, TaskEvent, Workflow};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[derive(Default)]
+struct Metrics {
+    tasks: AtomicU64,
+    total_us: AtomicU64,
+}
+
+impl ExecutionObserver for Metrics {
+    fn task_finished(&self, event: &TaskEvent<'_>) {
+        // Must be cheap and non-blocking — see the contract below.
+        self.tasks.fetch_add(1, Ordering::Relaxed);
+        self.total_us
+            .fetch_add(event.duration.as_micros() as u64, Ordering::Relaxed);
+    }
+}
+
+# fn _demo(workflow: Workflow) -> dataflow_rs::Result<()> {
+let metrics = Arc::new(Metrics::default());
+let engine = Engine::builder()
+    .with_workflow(workflow)
+    .with_observer(metrics.clone())
+    .build()?;
+# Ok(()) }
+```
+
+`TaskEvent` carries `workflow_id`, `task_id`, `function`, `status` and
+`duration`. Notes on the edges:
+
+- **`status`** is `None` when the handler returned `TaskOutcome::Skip` (the body
+  ran, but no audit entry was recorded), and `Some(500)` when the task returned
+  `Err`. The event is emitted *before* the error propagates, so failing tasks are
+  reported rather than dropped.
+- **A task whose condition evaluated false is not reported** — it was never
+  dispatched, so there is nothing to time.
+- **`function`** reports `"validate"` for both `validation` and `validate`
+  configs; they share one variant.
+- **`duration`** is the task body only — not the condition evaluation, the
+  audit-trail push, or the `metadata.progress` write.
+
+The callback runs **synchronously on the executor's thread**, and on the sync
+built-in path inside the arena scope. So it must not block, must not re-enter the
+engine, and must not panic — a panic unwinds out of `process_message`. Push to a
+channel or bump an atomic.
+
+With no observer attached the instrumentation stays out of the dispatch path
+entirely, including its clock reads, so `process_message` keeps its one
+`Utc::now()` per message. The observer is carried across
+`with_new_workflows`, so a hot reload does not silently stop reporting.
+
+If you build your handler map in one place rather than calling `register` per
+name, `EngineBuilder::with_handlers` takes the whole `HashMap` so you can still
+reach `with_observer`.
+
 ## Rule Execution Order
 
 Rules execute in priority order (lowest priority number first):

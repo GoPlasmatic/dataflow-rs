@@ -9,6 +9,7 @@ use crate::engine::executor::{
 };
 use crate::engine::functions::BoxedFunctionHandler;
 use crate::engine::message::{AuditTrail, Change, Message};
+use crate::engine::observer::{ExecutionObserver, TaskEvent};
 use crate::engine::task::Task;
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::task_outcome::TaskOutcome;
@@ -16,6 +17,7 @@ use crate::engine::trace::{ExecutionStep, ExecutionTrace, duration_us_between};
 use crate::engine::utils::set_nested_value;
 use crate::engine::workflow::Workflow;
 use chrono::{DateTime, Utc};
+use core::time::Duration;
 use datalogic_rs::Engine;
 use datavalue::OwnedDataValue;
 use log::{debug, error, info, warn};
@@ -153,6 +155,9 @@ pub struct WorkflowExecutor {
     task_executor: Arc<TaskExecutor>,
     /// Shared datalogic engine for condition evaluation
     engine: Arc<Engine>,
+    /// Optional per-task observer. `None` keeps the instrumentation — and its
+    /// clock reads — entirely out of the dispatch path.
+    observer: Option<Arc<dyn ExecutionObserver>>,
 }
 
 impl WorkflowExecutor {
@@ -161,7 +166,62 @@ impl WorkflowExecutor {
         Self {
             task_executor,
             engine,
+            observer: None,
         }
+    }
+
+    /// Attach an observer to an existing executor. Replaces any previous one.
+    pub fn with_observer(mut self, observer: Arc<dyn ExecutionObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    /// The registered observer, if any.
+    ///
+    /// Used by `Engine::with_new_workflows` to carry the observer across a hot
+    /// reload — without it, metrics would stop silently at the first reload.
+    pub fn observer(&self) -> Option<&Arc<dyn ExecutionObserver>> {
+        self.observer.as_ref()
+    }
+
+    /// Emit a task event, deriving the status from the dispatch result.
+    ///
+    /// Called before `handle_task_result`, which takes `result` by value and
+    /// whose `?` propagates on a hard failure — emitting afterwards would
+    /// silently drop exactly the tasks a host most wants timed.
+    #[inline]
+    fn emit_task_event(
+        &self,
+        workflow: &Workflow,
+        task: &Task,
+        result: &Result<(TaskOutcome, Vec<Change>)>,
+        started_at: Option<DateTime<Utc>>,
+    ) {
+        if let Some(observer) = self.observer.as_ref() {
+            let status = match result {
+                Ok((outcome, _)) => outcome.audit_status(),
+                Err(_) => Some(500),
+            };
+            let duration = started_at
+                .map(|s| Duration::from_micros(duration_us_between(s, Utc::now())))
+                .unwrap_or_default();
+            observer.task_finished(&TaskEvent {
+                workflow_id: &workflow.id,
+                task_id: &task.id,
+                function: task.function.function_name(),
+                status,
+                duration,
+            });
+        }
+    }
+
+    /// Clock read for the observer, only when one is attached.
+    ///
+    /// Gated so that `process_message`'s documented "one `Utc::now()` per
+    /// message" holds for every caller that has not opted in.
+    #[inline]
+    fn observer_clock(&self) -> Option<DateTime<Utc>> {
+        self.observer.as_ref().map(|_| Utc::now())
     }
 
     /// Get a clone of the task_functions Arc for reuse in new engines
@@ -395,15 +455,21 @@ impl WorkflowExecutor {
                     continue;
                 }
 
-                // Clock reads only when a trace is live, so the non-trace path
-                // keeps its documented one-`Utc::now()`-per-message invariant.
+                // Clock reads only when a trace is live or an observer is
+                // attached, so the plain path keeps its documented
+                // one-`Utc::now()`-per-message invariant.
                 let trace_start = if trace.is_some() {
                     Some(Utc::now())
                 } else {
                     None
                 };
+                let obs_start = trace_start.or_else(|| self.observer_clock());
 
                 let result = self.task_executor.execute(task, message).await;
+
+                // Before `handle_task_result`, whose `?` would drop failed tasks.
+                self.emit_task_event(workflow, task, &result, obs_start);
+
                 let control_flow = self.handle_task_result(
                     result,
                     &workflow.id_arc,
@@ -517,15 +583,20 @@ impl WorkflowExecutor {
                 None
             };
 
-            // Clock reads only when a trace is live, so the non-trace path keeps
-            // its documented one-`Utc::now()`-per-message invariant.
+            // Clock reads only when a trace is live or an observer is attached,
+            // so the plain path keeps its documented
+            // one-`Utc::now()`-per-message invariant.
             let trace_start = if trace.is_some() {
                 Some(Utc::now())
             } else {
                 None
             };
+            let obs_start = trace_start.or_else(|| self.observer_clock());
 
             let result = self.execute_sync_task_in_arena(task, message, arena_ctx, snapshot_buf);
+
+            // Before `handle_task_result`, whose `?` would drop failed tasks.
+            self.emit_task_event(workflow, task, &result, obs_start);
 
             let control_flow = self.handle_task_result(
                 result,

@@ -232,6 +232,7 @@ pub use engine::functions::{
     is_builtin_function,
 };
 pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
+pub use engine::observer::{ExecutionObserver, TaskEvent};
 pub use engine::task_context::TaskContext;
 pub use engine::task_outcome::TaskOutcome;
 pub use engine::trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};

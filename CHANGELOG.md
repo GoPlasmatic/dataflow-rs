@@ -37,6 +37,22 @@ because new public items ship and several existing behaviours change.
   `filter`, `parse_*`, `publish_*`, `log` are dispatched inside the executor and
   cannot be wrapped from outside the crate, so this is the only place their
   duration is observable. (#27)
+- **observer:** `ExecutionObserver` and `TaskEvent`, attached via
+  `EngineBuilder::with_observer` or `Engine::with_observer`. An always-on
+  per-task callback for aggregation, as distinct from a trace you persist. This
+  is the only way to time the eight sync built-ins, which are dispatched inside a
+  private executor method and never reach the function registry — a host can wrap
+  its own handlers but could not touch `map`, `validation`, `filter`, `parse_*`,
+  `publish_*` or `log` at any price, and so could not tell engine time from
+  handler time. Emitted before the error propagates, so failing tasks are
+  reported rather than dropped; a task whose condition was false is not reported.
+  Carried across `with_new_workflows`, so a hot reload does not silently stop
+  reporting. With no observer attached the instrumentation and its clock reads
+  stay out of the dispatch path entirely. (#28)
+- **engine:** `EngineBuilder::with_handlers` takes a whole
+  `HashMap<String, BoxedFunctionHandler>`, keeping any already registered. Without
+  it, an embedder that builds the map in one place was pushed onto `Engine::new`
+  and off the builder — and therefore out of reach of `with_observer`. (#28)
 - **integration:** `HttpCallConfig::response_path` accepts `output` as an alias,
   so a service layer can present one destination-field name across its whole
   function catalogue. Supplying both keys is a `duplicate field` error, not a
@@ -159,7 +175,7 @@ trace keeps the historical wire shape. Neither `ExecutionStep` nor `Message` set
 kept as a fallback, and a new `traceHasSnapshots()` helper reports whether a trace
 carries state to inspect at all.
 
-Workspace test count 184 → 259.
+Workspace test count 184 → 267.
 
 ## [3.0.4] — 2026-07-26
 
