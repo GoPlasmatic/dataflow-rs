@@ -69,11 +69,11 @@ If you need dynamic business rules or user-customizable workflows, writing manua
 
 | Capability | Hardcoded Rust | dataflow-rs | Heavy Orchestrators (Temporal/Zeebe) |
 |---|---|---|---|
-| **Hot Reload Rules** | ❌ Recompile & redeploy |  Instant JSON update | ❌ Deploy new worker code |
-| **Execution Overhead** | None | **Zero (pre-compiled JSONLogic)** | ❌ DB reads/writes (tens of ms) |
-| **Browser execution** | ❌ Compile full app to WASM |  Run same rules in JS via WASM | ❌ Network round-trip required |
-| **Visual Debugger** | ❌ Build your own UI |  Included React UI components |  Included Dashboard |
-| **Infrastructure** | None | **None (embeddable library)** | ❌ Requires server clusters & DBs |
+| **Hot Reload Rules** | Recompile & redeploy | **Instant JSON update** | Deploy new worker code |
+| **Execution Overhead** | None | **Zero (pre-compiled JSONLogic)** | DB reads/writes (tens of ms) |
+| **Browser Execution** | Compile full app to WASM | **Run same rules in JS via WASM** | Network round-trip required |
+| **Visual Debugger** | Build your own UI | **Included React UI components** | Included dashboard |
+| **Infrastructure** | None | **None (embeddable library)** | Requires server clusters & DBs |
 
 ## Getting Started
 
@@ -81,7 +81,7 @@ If you need dynamic business rules or user-customizable workflows, writing manua
 
 ```toml
 [dependencies]
-dataflow-rs = "3.0"
+dataflow-rs = "3.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1.0"
 ```
@@ -260,6 +260,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Classifying Your Own Errors
+
+The built-in error variants describe engine concerns — a missing function, a
+failed condition, a bad path. When a handler fails for a reason only your
+service understands (a circuit breaker opened, a tenant hit a rate limit),
+classify it yourself instead of inventing a parallel error channel:
+
+```rust,ignore
+use dataflow_rs::DataflowError;
+
+DataflowError::service("circuit_open", "upstream unavailable")
+    .detail("connector 'billing' breaker open since 12:04")
+    .retryable(true)
+    .build()
+```
+
+`kind` becomes `ErrorInfo::code` verbatim (not upper-cased, so the string your
+service writes is the string it switches on), `detail` is an operator-only field
+that `Display` never renders — `to_string()` stays safe for an untrusted caller —
+and `retryable` is declared rather than inferred from the variant. The engine
+never interprets any of it: `continue_on_error`, the audit entry, and the
+`Result::Err` short-circuit behave exactly as for any other error.
+
 ### Using Rules Engine Aliases
 
 ```rust,ignore
@@ -276,14 +299,17 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 - **Zero Runtime Compilation:** All JSONLogic expressions pre-compiled at startup for optimal performance.
 - **Full Context Access:** Conditions can access any field — `data`, `metadata`, `temp_data`.
 - **Async-First Architecture:** Native async/await support with Tokio for high-throughput processing.
-- **Execution Tracing:** Step-by-step debugging with message snapshots after each action.
+- **Execution Tracing:** Step-by-step debugging with message snapshots after each action, bounded by `TraceOptions` (snapshot budget, redaction, timings-only mode) when you need it in production.
+- **Always-On Observability:** Attach an `ExecutionObserver` for per-task timing, including the sync built-ins a trace or a wrapped handler can't reach on their own.
 - **Built-in Functions:** Parse, Map, Validate, Filter, Log, and Publish for complete data pipelines.
 - **Pipeline Control Flow:** Filter/gate function to halt workflows or skip tasks based on conditions.
 - **Channel Routing:** Route messages to specific workflow channels with O(1) lookup.
+- **Traffic Splits:** Roll a new workflow version out to a percentage of a channel's traffic with bucket-range routing.
 - **Workflow Lifecycle:** Manage workflow status (active/paused/archived), versioning, and tagging.
 - **Hot Reload:** Swap workflows at runtime without re-registering custom functions.
-- **Extensible:** Add custom async actions by implementing the `AsyncFunctionHandler` trait.
-- **Typed Integration Configs:** Pre-validated configs for HTTP, Enrich, and Kafka integrations.
+- **Extensible:** Add custom async actions by implementing the `AsyncFunctionHandler` trait, with typed config fields that are themselves JSONLogic (`Template`).
+- **Typed Integration Configs:** Pre-validated configs for HTTP, Enrich, and Kafka integrations, with `resolve_*` helpers and an `HttpMethod` enum your client can convert directly.
+- **Service-Classified Errors:** Handlers attach their own error `kind`, `detail`, and `retryable` via `DataflowError::Service`, without a parallel error channel.
 - **WebAssembly Support:** Run rules in the browser with `@goplasmatic/dataflow-wasm`.
 - **React UI Components:** Visualize and debug rules with `@goplasmatic/dataflow-ui`.
 - **Auditing:** Full audit trail of all changes as data flows through the pipeline.
@@ -300,6 +326,7 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 2. Matching rules execute their actions with pre-compiled logic (zero compilation overhead)
 3. `process_message()` for normal execution, `process_message_with_trace()` for debugging
 4. Each action can be async, enabling I/O operations without blocking
+5. Optionally attach an `ExecutionObserver` for always-on per-task timing, or call `process_message_with_trace_options()` for a bounded, redactable trace
 
 ## Performance
 
@@ -401,6 +428,35 @@ fn build(workflows: Vec<dataflow_rs::Workflow>) -> dataflow_rs::Result<Engine> {
 }
 ```
 
+If a handler's config field should itself be authored as JSONLogic — the same
+`*_logic` convention this crate's own `HttpCallConfig` / `EnrichConfig` /
+`PublishKafkaConfig` use internally — declare it as `Template` and compile it
+once via the `compile_input` hook instead of hand-rolling the raw/compiled pair:
+
+```rust,ignore
+#[derive(Deserialize)]
+struct GreetingInput {
+    // Authored in the workflow as JSONLogic: {"cat": ["hello, ", {"var": "data.name"}]}
+    greeting: Template,
+}
+
+impl AsyncFunctionHandler for GreetingHandler {
+    type Input = GreetingInput;
+
+    // Called once per task at build time, right after `parse_input`. The
+    // default is a no-op, so a handler with no `Template` field needs no override.
+    fn compile_input(input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> {
+        input.greeting.compile(c, "greeting")
+    }
+
+    // ...
+}
+```
+
+A malformed expression fails at build time, matching this crate's own stance
+for the built-in `*_logic` fields, rather than on the first message that reaches
+the task.
+
 ## Built-in Functions
 
 | Function | Purpose | Modifies Data |
@@ -492,10 +548,42 @@ Workflows support lifecycle management fields:
 | `version` | number | `1` | Workflow version |
 | `status` | string | `"active"` | `active`, `paused`, or `archived` |
 | `tags` | array | `[]` | Arbitrary tags for organization |
+| `rollout` | object | `null` | Traffic split — `{bucket_start, bucket_end}` over `0..100` |
 | `created_at` | datetime | `null` | Creation timestamp (ISO 8601) |
 | `updated_at` | datetime | `null` | Last update timestamp (ISO 8601) |
 
 All fields are optional and backward-compatible with existing configurations.
+
+## Traffic Splits (Canary Rollouts)
+
+Give a workflow a slice of its channel's traffic with a half-open bucket range
+over `0..100`, so a new version can roll out gradually alongside the old one:
+
+```json
+{
+    "id": "checkout_v2",
+    "channel": "checkout",
+    "rollout": { "bucket_start": 0, "bucket_end": 10 },
+    "tasks": [...]
+}
+```
+
+That workflow serves buckets `0..=9` — 10% of traffic. `bucket_start` is
+inclusive and `bucket_end` exclusive, so a `{"bucket_start": 10, "bucket_end": 100}`
+sibling covers the remaining 90% with no overlap and no gap.
+
+The engine does not derive the bucket — set it per message with whatever policy
+is yours (a sticky hash of a user id, a random draw, round-robin):
+
+```rust,ignore
+let message = Message::builder().routing_bucket(7).build();
+```
+
+A message with no bucket is admitted by every workflow, split or not, so every
+caller that predates rollouts — including the WASM entry points, which have no
+way to set one — keeps working unchanged. An excluded workflow is skipped
+exactly like a false condition: no audit entry, and the gate runs before any
+other per-message work.
 
 ## Engine Hot Reload
 
@@ -506,6 +594,47 @@ let new_workflows = vec![Workflow::from_json(r#"{ ... }"#)?];
 let new_engine = engine.with_new_workflows(new_workflows);
 // Old engine remains valid for in-flight messages
 ```
+
+## Execution Tracing & Observability
+
+The default `process_message_with_trace()` snapshots the full message after
+every step — great for a step debugger, but unbounded in size and quadratic in
+task count. `process_message_with_trace_options` bounds capture at the only
+point it can be bounded: snapshot size, path redaction, and audit-trail scope
+are all set up front, not trimmed afterward.
+
+```rust,ignore
+let trace = engine
+    .process_message_with_trace_options(&mut message, TraceOptions::timings_only())
+    .await?;
+
+for step in &trace.steps {
+    if let Some(us) = step.duration_us {
+        println!("{}/{:?} took {us}us", step.workflow_id, step.task_id);
+    }
+}
+```
+
+For always-on aggregation instead of a per-request trace, attach an
+`ExecutionObserver`. It fires once per dispatched task — including the sync
+built-ins (`map`, `validation`, `filter`, `parse_*`, `publish_*`, `log`), which
+are dispatched inside the executor and unreachable by a wrapped handler:
+
+```rust,ignore
+impl ExecutionObserver for Metrics {
+    fn task_finished(&self, event: &TaskEvent<'_>) {
+        // Must be cheap and non-blocking — runs synchronously on the executor.
+    }
+}
+
+let engine = Engine::builder()
+    .with_workflow(workflow)
+    .with_observer(Arc::new(Metrics::default()))
+    .build()?;
+```
+
+With neither attached, tracing and observation overhead — including their clock
+reads — stay out of the dispatch path entirely.
 
 ## Visualize & Debug Rules
 
