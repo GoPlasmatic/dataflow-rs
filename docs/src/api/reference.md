@@ -262,6 +262,11 @@ pub trait AsyncFunctionHandler: Send + Sync + 'static {
     /// override only for custom validation beyond what serde provides.
     fn parse_input(input: &serde_json::Value) -> Result<Self::Input> { ... }
 
+    /// Compile the `Template` fields of a just-parsed input. Called once per
+    /// task at engine construction, right after `parse_input`. Default is a
+    /// no-op, so a handler with no `Template` fields needs no override.
+    fn compile_input(input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> { ... }
+
     /// Execute the handler.
     async fn execute(
         &self,
@@ -274,6 +279,40 @@ pub trait AsyncFunctionHandler: Send + Sync + 'static {
 The engine pre-parses each `FunctionConfig::Custom { input }` JSON into
 the registered handler's typed `Self::Input` at `Engine::builder().build()`
 (or `Engine::new`) — config-shape errors fail there, not on first message.
+
+### Template
+
+A config field whose authored JSON is JSONLogic, for custom handlers — the same
+shape this crate's own `*_logic` fields (`path_logic`, `body_logic`, `key_logic`,
+`value_logic`) use.
+
+```rust,ignore
+pub struct Template { /* opaque */ }
+
+impl Template {
+    // Called from `AsyncFunctionHandler::compile_input`.
+    pub fn compile(&mut self, c: &TemplateCompiler, label: &str) -> Result<()>
+
+    pub fn eval(&self, ctx: &TaskContext<'_>) -> Result<OwnedDataValue>
+    pub fn eval_into<T: serde::de::DeserializeOwned>(&self, ctx: &TaskContext<'_>) -> Result<T>
+
+    pub fn as_json(&self) -> &serde_json::Value
+    pub fn is_compiled(&self) -> bool
+}
+
+// Handed to `compile_input`; wraps the same shared datalogic engine
+// `LogicCompiler` uses internally, so a compiled `Template` evaluates against
+// the same engine that will run the message.
+pub struct TemplateCompiler { /* opaque */ }
+impl TemplateCompiler {
+    pub fn engine(&self) -> &datalogic_rs::Engine
+}
+```
+
+Declare `Template` only on fields the workflow author is told are JSONLogic — the
+engine compiles with templating enabled, so a single-key object whose key
+matches an operator name evaluates as that operator rather than as a literal.
+See [Config fields that are JSONLogic](../advanced/custom-functions.md#config-fields-that-are-jsonlogic-template).
 
 ### Boxing
 

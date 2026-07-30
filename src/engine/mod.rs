@@ -73,7 +73,7 @@ pub mod workflow_executor;
 pub use error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use functions::{
     AsyncFunctionHandler, BoxedFunctionHandler, CompiledCustomInput, DynAsyncFunctionHandler,
-    FunctionConfig,
+    FunctionConfig, Template, TemplateCompiler,
 };
 pub use message::Message;
 pub use observer::{ExecutionObserver, TaskEvent};
@@ -186,7 +186,7 @@ impl Engine {
         // message — matches the "fail loud at startup" stance for compiled
         // logic. Built-in async configs (HttpCall/Enrich/PublishKafka) are
         // already typed by serde and need no second pass.
-        precompile_custom_inputs(&mut sorted_workflows, &task_functions)?;
+        precompile_custom_inputs(&mut sorted_workflows, &task_functions, &datalogic)?;
 
         let task_executor = Arc::new(TaskExecutor::new(
             Arc::new(task_functions),
@@ -253,7 +253,7 @@ impl Engine {
         // Pre-parse Custom inputs against the existing handler registry —
         // hot-reload still validates the new workflow set against the
         // already-registered handlers.
-        precompile_custom_inputs(&mut sorted_workflows, &task_functions)?;
+        precompile_custom_inputs(&mut sorted_workflows, &task_functions, &datalogic)?;
 
         // Rebuild the executor stack, reusing the existing function registry
         let task_executor = Arc::new(TaskExecutor::new(task_functions, Arc::clone(&datalogic)));
@@ -695,7 +695,9 @@ impl EngineBuilder {
 fn precompile_custom_inputs(
     workflows: &mut [Workflow],
     handlers: &HashMap<String, BoxedFunctionHandler>,
+    datalogic: &Arc<DatalogicEngine>,
 ) -> Result<()> {
+    let template_compiler = TemplateCompiler::new(Arc::clone(datalogic));
     for workflow in workflows {
         for task in &mut workflow.tasks {
             if let FunctionConfig::Custom {
@@ -707,7 +709,8 @@ fn precompile_custom_inputs(
                 let handler = handlers
                     .get(name)
                     .ok_or_else(|| function_not_found_error(name, handlers))?;
-                let parsed = handler.parse_input_box(input)?;
+                let mut parsed = handler.parse_input_box(input)?;
+                handler.compile_input_box(&mut *parsed, &template_compiler)?;
                 *compiled_input = Some(CompiledCustomInput(Arc::from(parsed)));
             }
         }

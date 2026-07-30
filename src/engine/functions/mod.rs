@@ -33,6 +33,9 @@ pub use log::{LogConfig, LogLevel};
 pub mod integration;
 pub use integration::{EnrichConfig, HttpCallConfig, HttpMethod, PublishKafkaConfig};
 
+pub mod template;
+pub use template::{Template, TemplateCompiler};
+
 /// Async interface for task functions that operate on messages.
 ///
 /// Implement this trait for custom processing logic. The trait associates a
@@ -107,6 +110,28 @@ pub trait AsyncFunctionHandler: Send + Sync + 'static {
         serde_json::from_value(input.clone()).map_err(DataflowError::from_serde)
     }
 
+    /// Compile the [`Template`] fields of a just-parsed input.
+    ///
+    /// Called once per task at engine construction, immediately after
+    /// [`Self::parse_input`]. The default is a no-op, so a handler with no
+    /// `Template` fields needs no implementation.
+    ///
+    /// A malformed expression fails here — at `Engine::new` / `Engine::builder().build()`
+    /// / `Engine::with_new_workflows` — rather than on the first message that
+    /// reaches the task, matching the crate's existing stance for the built-in
+    /// `*_logic` fields. A host that loads workflows from a database and must
+    /// not let one bad row take the whole process down needs a per-row
+    /// pre-check before activation; this method does not change that trade-off,
+    /// only makes it apply to custom handlers too.
+    ///
+    /// # Errors
+    ///
+    /// Propagate whatever [`Template::compile`] returns — typically
+    /// [`crate::DataflowError::LogicEvaluation`].
+    fn compile_input(_input: &mut Self::Input, _c: &TemplateCompiler) -> Result<()> {
+        Ok(())
+    }
+
     /// Execute the handler. The `ctx` accumulates audit-trail changes
     /// pushed via its `set` family; the workflow executor folds them into
     /// the audit trail when this method returns.
@@ -124,6 +149,18 @@ pub trait DynAsyncFunctionHandler: Send + Sync + 'static {
     /// it as `dyn Any`. Called once per task at `Engine::new()` time.
     fn parse_input_box(&self, input: &Value) -> Result<Box<dyn Any + Send + Sync>>;
 
+    /// Compile the [`Template`] fields of an already-parsed boxed input, in
+    /// place. Defaulted to a no-op so a hand-written impl of this
+    /// `#[doc(hidden)]` trait — which is not expected to exist — keeps
+    /// compiling regardless.
+    fn compile_input_box(
+        &self,
+        _boxed: &mut (dyn Any + Send + Sync),
+        _c: &TemplateCompiler,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Execute against an already-parsed typed input. The implementation
     /// downcasts `input` to `<Self as AsyncFunctionHandler>::Input`; the
     /// downcast is infallible in the engine's call paths because
@@ -140,6 +177,20 @@ impl<F: AsyncFunctionHandler> DynAsyncFunctionHandler for F {
     fn parse_input_box(&self, input: &Value) -> Result<Box<dyn Any + Send + Sync>> {
         let typed = <F as AsyncFunctionHandler>::parse_input(input)?;
         Ok(Box::new(typed))
+    }
+
+    fn compile_input_box(
+        &self,
+        boxed: &mut (dyn Any + Send + Sync),
+        c: &TemplateCompiler,
+    ) -> Result<()> {
+        let typed = boxed.downcast_mut::<F::Input>().ok_or_else(|| {
+            DataflowError::Validation(format!(
+                "Handler input type mismatch (expected {})",
+                std::any::type_name::<F::Input>()
+            ))
+        })?;
+        <F as AsyncFunctionHandler>::compile_input(typed, c)
     }
 
     async fn dyn_execute(

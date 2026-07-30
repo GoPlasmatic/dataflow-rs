@@ -145,11 +145,11 @@ impl AsyncFunctionHandler for FreeformHandler {
 
 ## Evaluating JSONLogic from a handler
 
-Custom handlers can compile and evaluate ad-hoc JSONLogic using the
-shared datalogic engine exposed by `TaskContext::datalogic()`:
+`TaskContext` has a value-returning evaluation surface — `eval`, `eval_json` and
+`eval_to_plain_string` — that runs on the worker thread's pooled bump arena, so a
+handler never has to manage a `Bump` or walk `ctx.message().context` itself:
 
 ```rust,ignore
-use bumpalo::Bump;
 use dataflow_rs::prelude::*;
 use serde_json::json;
 
@@ -162,29 +162,92 @@ impl AsyncFunctionHandler for EvalDemo {
         ctx: &mut TaskContext<'_>,
         _input: &serde_json::Value,
     ) -> Result<TaskOutcome> {
-        // Compile the expression — Arc<Logic> so it can be cached/shared.
+        // Compile once — Arc<Logic> so it can be cached/shared. `compile_arc`
+        // is on the shared engine, still reachable via `ctx.datalogic()`.
         let compiled = ctx
             .datalogic()
             .compile_arc(&json!({"var": "data.input"}))
             .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))?;
 
         // Evaluate against the current message context.
-        let arena = Bump::new();
-        let av = ctx.message().context.to_arena(&arena);
-        let result = ctx
-            .datalogic()
-            .evaluate(&compiled, av, &arena)
-            .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))?;
-
-        // `result` is a `DataValue<'_>` borrowed from the arena.
-        let _owned = result.to_owned();
+        let value: serde_json::Value = ctx.eval_json(&compiled)?;
+        let _ = value;
         Ok(TaskOutcome::Success)
     }
 }
 ```
 
-If your handler evaluates many expressions against the same context,
-build the `DataValue<'_>` once via `to_arena` and reuse it.
+`eval` returns `OwnedDataValue`, `eval_json` projects straight to
+`serde_json::Value`, and `eval_to_plain_string` unquotes a string result —
+`eval_to_plain_string` **deliberately disagrees** with datalogic-rs's own string
+projection (`Session::eval_str` keeps the JSON quoting), so pick it when the
+result is going into a URL path or similar. See [API Reference](../api/reference.md#taskcontext).
+
+Compiling once per task rather than per message matters for a hot path. If your
+config has a field the workflow author writes as JSONLogic — the `*_logic`
+convention this crate's own built-ins use — reach for `Template` instead of
+managing the raw/compiled pair by hand.
+
+## Config fields that are JSONLogic (`Template`)
+
+A `Template` field deserializes from any JSON value, gets compiled once at
+engine construction, and evaluates through `TaskContext` like any other
+pre-compiled expression:
+
+```rust,ignore
+use dataflow_rs::prelude::*;
+use dataflow_rs::{Template, TemplateCompiler};
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct GreetingInput {
+    // Authored as JSONLogic in the workflow: {"cat": ["hello, ", {"var": "data.name"}]}
+    greeting: Template,
+}
+
+struct GreetingHandler;
+
+#[async_trait]
+impl AsyncFunctionHandler for GreetingHandler {
+    type Input = GreetingInput;
+
+    // Called once per task at Engine::builder().build() time, right after
+    // parse_input. The default is a no-op, so a handler with no Template
+    // fields needs no override.
+    fn compile_input(input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> {
+        input.greeting.compile(c, "greeting")
+    }
+
+    async fn execute(
+        &self,
+        ctx: &mut TaskContext<'_>,
+        input: &Self::Input,
+    ) -> Result<TaskOutcome> {
+        let text: String = input.greeting.eval_into(ctx)?;
+        ctx.set("data.greeting", OwnedDataValue::from(&serde_json::json!(text)));
+        Ok(TaskOutcome::Success)
+    }
+}
+```
+
+A malformed expression fails at `compile_input` time — `Engine::builder().build()`
+or `Engine::with_new_workflows` — not on the first message that reaches the task,
+matching this crate's stance for the built-in `*_logic` fields.
+
+Two things worth knowing:
+
+- **Declare `Template` only on fields the workflow author is told are
+  JSONLogic.** The engine compiles with templating enabled, so a single-key
+  object whose key happens to match an operator name — `{"cat": ["a", "b"]}` —
+  evaluates as that operator rather than being treated as a literal object. Do
+  not use `Template` as a blanket "accept any JSON" wrapper.
+- **`Template` fields nested inside a `Vec<T>` or a nested struct work fine** —
+  walk the collection in `compile_input` and call `.compile(..)` on each one, as
+  the example above's single field does trivially and a list of rules would do
+  in a loop.
+
+There is no derive macro for this — a hand-written `compile_input` is a few
+lines, and this crate has no proc-macro dependency to add one.
 
 ## Async Operations
 

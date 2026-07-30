@@ -228,8 +228,8 @@ pub use engine::error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use engine::functions::{
     AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind, EnrichConfig,
     FilterConfig, FunctionConfig, HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping,
-    PublishKafkaConfig, ValidationConfig, ValidationRule, builtin_function_kind,
-    is_builtin_function,
+    PublishKafkaConfig, Template, TemplateCompiler, ValidationConfig, ValidationRule,
+    builtin_function_kind, is_builtin_function,
 };
 pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
 pub use engine::observer::{ExecutionObserver, TaskEvent};

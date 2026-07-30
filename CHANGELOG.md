@@ -13,6 +13,24 @@ because new public items ship and several existing behaviours change.
 
 ### Added
 
+- **functions:** `Template` and `TemplateCompiler`, plus a defaulted
+  `AsyncFunctionHandler::compile_input` hook. Lets a custom handler declare a
+  config field whose authored JSON is JSONLogic — the same `*_logic` pattern
+  this crate's own `HttpCallConfig` / `EnrichConfig` / `PublishKafkaConfig` use
+  internally — without hand-rolling the raw/compiled pair and the eager
+  "fail loud at construction" plumbing each time. `compile_input` is called once
+  per task at `Engine::new` / `Engine::builder().build()` /
+  `Engine::with_new_workflows`, immediately after `parse_input`; a malformed
+  expression fails there rather than on the first message that reaches the
+  task, matching the existing stance for the built-in `*_logic` fields. The
+  default is a no-op, so a handler with no `Template` field needs no override —
+  verified by building every existing test handler, `mod tests` fixture, and
+  example unchanged. `Template` fields nested inside a `Vec<T>` or a nested
+  struct work by walking the collection inside `compile_input`. The built-in
+  integration configs are **not** migrated to `Template` in this change — that
+  migration is the one part of this design with a real downstream break
+  (existing code reading `compiled_path_logic` and friends would stop
+  compiling) and is left for a follow-up. (#29)
 - **integration:** `HttpMethod` is re-exported from the crate root (previously
   reachable only as
   `dataflow_rs::engine::functions::integration::HttpMethod`) and gains
@@ -258,7 +276,7 @@ trace keeps the historical wire shape. Neither `ExecutionStep` nor `Message` set
 kept as a fallback, and a new `traceHasSnapshots()` helper reports whether a trace
 carries state to inspect at all.
 
-Workspace test count 184 → 351.
+Workspace test count 184 → 363.
 
 ## [3.0.4] — 2026-07-26
 
