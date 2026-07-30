@@ -5,6 +5,80 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] — 2026-07-30
+
+Two defects from a boundary audit of the crate's deepest known consumer, both
+fixed additively. Minor rather than patch because six new public items ship and
+one existing method's answer changes.
+
+### Added
+
+- **engine:** `Engine::process_message_tracing` and
+  `Engine::process_message_for_channel_tracing`, which record into a
+  caller-owned `ExecutionTrace` instead of returning one. Steps are appended, so
+  a trace can accumulate across a chain of calls. See *Fixed* for why this
+  exists. (#25)
+- **functions:** `BuiltinKind` (`SelfContained` / `RequiresHandler`),
+  `builtin_function_kind` and `is_builtin_function`, re-exported from the crate
+  root, so a service layer that gates workflow authoring on a closed function
+  set can classify a name programmatically. `RequiresHandler` covers
+  `http_call`, `enrich` and `publish_kafka` — the three that ship as typed
+  config only and need a registered handler. Deliberately not
+  `#[non_exhaustive]`: callers match on this to accept or reject workflow
+  definitions, so a future third kind should break those matches at compile time
+  rather than fall silently into a `_` arm. (#22)
+- **functions:** `BUILTIN_FUNCTION_NAMES` is now `pub` (was `pub(crate)`), with
+  a documented stability contract — names are added in a minor release and
+  removed only in a major one, and ordering is not meaningful. Previously the
+  only public surface for this set was the free-form text of
+  `DataflowError::FunctionNotFound`, leaving consumers to scrape an untested
+  `Display` format. (#22)
+
+### Fixed
+
+- **engine:** `process_message_with_trace` and
+  `process_message_for_channel_with_trace` built the trace as a function-local
+  and moved it into the `Ok` arm, so a hard failure discarded every step that
+  had already run — a debugging API dropped its output on the one input class it
+  exists to explain. The steps were already in memory: every layer beneath the
+  two entry points threaded the trace by reference and appended incrementally,
+  making this an API-shape inversion at exactly two functions. Both keep their
+  exact signatures and behaviour and are now thin wrappers over the new
+  caller-owned methods. Note the failing task's own step is still not recorded
+  (the engine propagates before appending it), so a retained trace ends at the
+  last known-good step. (#25)
+- **functions:** `TaskExecutor::has_function` returned `true` for `http_call`,
+  `enrich` and `publish_kafka` without consulting the handler registry, so the
+  API shaped like "can this engine run this task?" answered it wrongly and
+  nothing answered it at all. It now routes through `builtin_function_kind` and
+  returns `false` for those three unless a handler is registered. `Engine::new`
+  stays permissive on purpose — a host screening stored definitions one row at a
+  time must not be stopped from booting by a single unusable row — so the fix is
+  the introspection needed to detect and quarantine the gap instead. (#22)
+- **functions:** routing `has_function` through the classifier removes the third
+  in-crate copy of the built-in name list; the const, the deserializer dispatch
+  and `has_function`'s match arm had all spelled out the same twelve names, with
+  only the first two tied together by a test.
+
+### Changed
+
+- **engine:** `DataflowError::FunctionNotFound`'s message is now documented as
+  free-form and explicitly unpinned, with the new classifier as the supported
+  programmatic route. No test asserts on its wording, and none should — pinning
+  it would cement the scraping workaround #22 exists to remove.
+
+### Compatibility
+
+`has_function`'s signature is unchanged, but its answer changes for
+`http_call` / `enrich` / `publish_kafka` when no handler is registered. In-repo
+the only caller was its own test, and `Engine` exposes no accessor for its
+executor (`workflow_executor` is private), so the method is reachable only by a
+caller that constructed a `TaskExecutor` itself. Everything else is additive:
+no existing public type, enum, struct or function signature changed shape, and
+no existing test needed editing.
+
+Workspace test count 184 → 210.
+
 ## [3.0.4] — 2026-07-26
 
 Dependency refresh, documentation corrections, and repository hardening. One

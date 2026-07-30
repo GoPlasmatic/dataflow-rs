@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "dataflow-rs"
-version = "3.0.4"
+version = "3.1.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "dataflow-wasm"
-version = "3.0.4"
+version = "3.1.0"
 dependencies = [
  "console_error_panic_hook",
  "dataflow-rs",
