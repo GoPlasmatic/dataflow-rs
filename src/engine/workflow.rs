@@ -62,7 +62,7 @@ pub struct Workflow {
     #[serde(default)]
     pub priority: u32,
     pub description: Option<String>,
-    #[serde(default = "default_condition")]
+    #[serde(default = "crate::engine::utils::default_condition")]
     pub condition: Value,
     /// Engine-internal: pre-compiled JSONLogic for `condition`, populated by
     /// `LogicCompiler`. `None` is treated as "no condition / always run" by
@@ -107,10 +107,6 @@ pub struct Workflow {
     /// Last update timestamp
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
-}
-
-fn default_condition() -> Value {
-    Value::Bool(true)
 }
 
 fn default_channel() -> String {

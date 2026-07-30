@@ -175,26 +175,60 @@ pub struct EnrichConfig {
     pub on_error: EnrichErrorAction,
 }
 
+/// Shared shape behind every `resolve_*` method below: `logic`, evaluated as a
+/// plain string, wins over `static_value` when both are set; `Ok(None)` when
+/// neither is.
+///
+/// A non-string result is coerced to its compact JSON form — `7` becomes `"7"`,
+/// `{"a":1}` becomes `"{\"a\":1}"` — because these values end up in a URL or a
+/// partition key. See [`crate::TaskContext::eval_to_plain_string`].
+///
+/// # Errors
+///
+/// Propagates [`crate::DataflowError::LogicEvaluation`] if `logic` fails to
+/// evaluate. It does **not** fall back to `static_value` on failure: a compiled
+/// expression that errors is a real problem, and silently substituting a
+/// different value would hide it.
+fn resolve_string_field(
+    logic: &Option<Template>,
+    static_value: Option<String>,
+    ctx: &TaskContext<'_>,
+) -> Result<Option<String>> {
+    match logic {
+        Some(t) => Ok(Some(t.eval_to_plain_string(ctx)?)),
+        None => Ok(static_value),
+    }
+}
+
+/// As [`resolve_string_field`], but for a `logic` field evaluated into a
+/// [`Value`] rather than coerced to a string — for fields (like a request body)
+/// where the caller wants the JSON shape, not a stringified one.
+///
+/// # Errors
+///
+/// As [`resolve_string_field`].
+fn resolve_value_field(
+    logic: &Option<Template>,
+    static_value: Option<Value>,
+    ctx: &TaskContext<'_>,
+) -> Result<Option<Value>> {
+    match logic {
+        Some(t) => Ok(Some(t.eval_into(ctx)?)),
+        None => Ok(static_value),
+    }
+}
+
 impl HttpCallConfig {
     /// Resolve the request path: `path_logic` evaluated against the message
     /// context when compiled, otherwise the static `path`. `Ok(None)` when
     /// neither is set.
     ///
-    /// A non-string result is coerced to its compact JSON form — `7` becomes
-    /// `"7"`, `{"a":1}` becomes `"{\"a\":1}"` — because these values end up in a
-    /// URL. See [`crate::TaskContext::eval_to_plain_string`].
-    ///
     /// # Errors
     ///
-    /// Propagates [`crate::DataflowError::LogicEvaluation`] if the expression
-    /// fails to evaluate. It does **not** fall back to the static `path` on
-    /// failure: a compiled expression that errors is a real problem, and silently
-    /// substituting a different URL would hide it.
+    /// As [`resolve_string_field`] — an evaluation failure propagates rather
+    /// than falling back to the static `path`.
     pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
-        match &self.path_logic {
-            Some(t) => Ok(Some(t.eval_to_plain_string(ctx)?)),
-            None => Ok(self.path.clone()),
-        }
+        resolve_string_field(&self.path_logic, self.path.clone(), ctx)
     }
 
     /// Resolve the request body: `body_logic` when compiled, otherwise the
@@ -205,10 +239,7 @@ impl HttpCallConfig {
     /// As [`Self::resolve_path`] — an evaluation failure propagates rather than
     /// falling back.
     pub fn resolve_body(&self, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
-        match &self.body_logic {
-            Some(t) => Ok(Some(t.eval_into(ctx)?)),
-            None => Ok(self.body.clone()),
-        }
+        resolve_value_field(&self.body_logic, self.body.clone(), ctx)
     }
 }
 
@@ -220,10 +251,7 @@ impl EnrichConfig {
     ///
     /// As [`HttpCallConfig::resolve_path`].
     pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
-        match &self.path_logic {
-            Some(t) => Ok(Some(t.eval_to_plain_string(ctx)?)),
-            None => Ok(self.path.clone()),
-        }
+        resolve_string_field(&self.path_logic, self.path.clone(), ctx)
     }
 }
 
@@ -238,10 +266,7 @@ impl PublishKafkaConfig {
     ///
     /// As [`HttpCallConfig::resolve_path`].
     pub fn resolve_key(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
-        match &self.key_logic {
-            Some(t) => Ok(Some(t.eval_to_plain_string(ctx)?)),
-            None => Ok(None),
-        }
+        resolve_string_field(&self.key_logic, None, ctx)
     }
 
     /// Resolve the message value from `value_logic`. `Ok(None)` when it is not
@@ -258,10 +283,7 @@ impl PublishKafkaConfig {
     ///
     /// As [`HttpCallConfig::resolve_path`].
     pub fn resolve_value(&self, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
-        match &self.value_logic {
-            Some(t) => Ok(Some(t.eval_into(ctx)?)),
-            None => Ok(None),
-        }
+        resolve_value_field(&self.value_logic, None, ctx)
     }
 }
 

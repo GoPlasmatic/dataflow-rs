@@ -44,6 +44,17 @@ fn next_async_boundary(tasks: &[Task], start: usize) -> usize {
     i
 }
 
+/// Log and (if tracing) record a whole-workflow skip. `reason` is only for the
+/// debug log — `ExecutionStep::workflow_skipped` doesn't carry one, so a
+/// rollout-bucket exclusion and a false condition are indistinguishable in the
+/// trace, same as before this was factored out of its four call sites.
+fn note_workflow_skip(trace: Option<&mut ExecutionTrace>, workflow_id: &str, reason: &str) {
+    debug!("Skipping workflow {} - {}", workflow_id, reason);
+    if let Some(t) = trace {
+        t.add_step(ExecutionStep::workflow_skipped(workflow_id));
+    }
+}
+
 /// Whether `workflow` serves this message's routing bucket.
 ///
 /// A workflow with no `rollout`, or a message with no bucket, is admitted. The
@@ -321,10 +332,7 @@ impl WorkflowExecutor {
         // skipped path verbatim, so an excluded workflow is indistinguishable
         // from a false condition.
         if !rollout_admits(workflow, message) {
-            debug!("Skipping workflow {} - outside rollout bucket", workflow.id);
-            if let Some(t) = trace.as_deref_mut() {
-                t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
-            }
+            note_workflow_skip(trace.as_deref_mut(), &workflow.id, "outside rollout bucket");
             return Ok(false);
         }
 
@@ -375,10 +383,7 @@ impl WorkflowExecutor {
         // workflow-level error contract to whichever half failed.
         let run_result: Result<()> = match first {
             Ok(FirstStretch::Skipped) => {
-                debug!("Skipping workflow {} - condition not met", workflow.id);
-                if let Some(t) = trace.as_deref_mut() {
-                    t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
-                }
+                note_workflow_skip(trace.as_deref_mut(), &workflow.id, "condition not met");
                 return Ok(false);
             }
             Ok(FirstStretch::Halted) => Ok(()),
@@ -696,8 +701,13 @@ impl WorkflowExecutor {
     /// consecutive `fully_sync` workflows into a single shared-arena scope
     /// (`execute_sync_workflow_run`) and falling back to the per-workflow
     /// `.await` path (`execute_inner`) for any workflow containing an async
-    /// task. This is the single orchestration entry for all four
-    /// `Engine::process_message*` variants.
+    /// task.
+    ///
+    /// A thin `&[&Workflow]` wrapper over [`Self::run_all_borrowed`], which is
+    /// the actual shared entry all four `Engine::process_message*` variants
+    /// call directly (against `&[Workflow]` from the engine's own registry,
+    /// with no per-message `Vec<&Workflow>` collect). This method exists for
+    /// a caller that already holds borrowed references.
     pub async fn run_all(
         &self,
         workflows: &[&Workflow],
@@ -782,10 +792,11 @@ impl WorkflowExecutor {
                 // `execute_inner`, so gating only there would silently not apply
                 // to most workflows.
                 if !rollout_admits(workflow, message) {
-                    debug!("Skipping workflow {} - outside rollout bucket", workflow.id);
-                    if let Some(t) = trace.as_deref_mut() {
-                        t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
-                    }
+                    note_workflow_skip(
+                        trace.as_deref_mut(),
+                        &workflow.id,
+                        "outside rollout bucket",
+                    );
                     continue;
                 }
 
@@ -803,10 +814,7 @@ impl WorkflowExecutor {
                 };
 
                 if !should_execute {
-                    debug!("Skipping workflow {} - condition not met", workflow.id);
-                    if let Some(t) = trace.as_deref_mut() {
-                        t.add_step(ExecutionStep::workflow_skipped(&workflow.id));
-                    }
+                    note_workflow_skip(trace.as_deref_mut(), &workflow.id, "condition not met");
                     continue;
                 }
 
@@ -972,6 +980,11 @@ impl WorkflowExecutor {
                     status: 500,
                     changes: vec![],
                 });
+
+                // Same invariant as the Ok arm: `metadata.progress` is written
+                // after every task, unconditionally, so a downstream workflow
+                // gating on it still sees this task ran even though it errored.
+                write_progress_metadata(&mut message.context, workflow_id, task_id, 500);
 
                 // Add error to message. A service-classified error contributes
                 // its own `kind` as the code and carries its operator-only

@@ -9,7 +9,8 @@ use crate::engine::error::{DataflowError, Result};
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::utils::{
-    compute_data_path, get_nested_value, get_nested_value_parts, set_nested_value_parts,
+    get_nested_value, get_nested_value_parts, precompute_target_path, resolve_target_path,
+    set_nested_value_parts,
 };
 use datavalue::OwnedDataValue;
 use log::debug;
@@ -112,21 +113,18 @@ impl PublishConfig {
     /// Populate the precomputed target-path fields from `target`. Called by
     /// `LogicCompiler` for serde-built configs and by `from_json`.
     pub(crate) fn precompute_target_path(&mut self) {
-        (self.target_path_arc, self.target_path_parts) = compute_data_path(&self.target);
+        precompute_target_path(
+            &self.target,
+            &mut self.target_path_arc,
+            &mut self.target_path_parts,
+        );
     }
 
     /// Precomputed `(path, parts)` for `data.{target}` — falls back to
     /// computing on the fly for directly-constructed configs (the test
     /// surface), mirroring the `MapMapping` fallback pattern.
     fn resolve_target_path(&self) -> (Arc<str>, Arc<[Arc<str>]>) {
-        if self.target_path_parts.is_empty() {
-            compute_data_path(&self.target)
-        } else {
-            (
-                Arc::clone(&self.target_path_arc),
-                Arc::clone(&self.target_path_parts),
-            )
-        }
+        resolve_target_path(&self.target, &self.target_path_arc, &self.target_path_parts)
     }
 
     /// Resolve the source value as a borrow into the message context. The
@@ -152,6 +150,34 @@ impl PublishConfig {
 
         None
     }
+}
+
+/// Shared tail behind [`execute_publish_json`] and [`execute_publish_xml`]:
+/// resolve the target path, snapshot the old value, write the already-computed
+/// `serialized` string, and build the `Change`. The two callers differ only in
+/// how they produce `serialized` (JSON vs. XML) — everything from "where does
+/// it land" onward is identical.
+fn finish_publish(
+    message: &mut Message,
+    config: &PublishConfig,
+    serialized: String,
+) -> (TaskOutcome, Vec<Change>) {
+    let (target_path_arc, target_parts) = config.resolve_target_path();
+    let old_value = get_nested_value_parts(&message.context, &target_parts)
+        .cloned()
+        .unwrap_or(OwnedDataValue::Null);
+    let new_value = OwnedDataValue::String(serialized);
+
+    set_nested_value_parts(&mut message.context, &target_parts, new_value.clone());
+
+    (
+        TaskOutcome::Success,
+        vec![Change {
+            path: target_path_arc,
+            old_value,
+            new_value,
+        }],
+    )
 }
 
 /// Execute `publish_json`: serialise `data.{source}` to a JSON string and
@@ -190,22 +216,7 @@ pub fn execute_publish_json(
         source_data.to_json_string()
     };
 
-    let (target_path_arc, target_parts) = config.resolve_target_path();
-    let old_value = get_nested_value_parts(&message.context, &target_parts)
-        .cloned()
-        .unwrap_or(OwnedDataValue::Null);
-    let new_value = OwnedDataValue::String(json_string);
-
-    set_nested_value_parts(&mut message.context, &target_parts, new_value.clone());
-
-    Ok((
-        TaskOutcome::Success,
-        vec![Change {
-            path: target_path_arc,
-            old_value,
-            new_value,
-        }],
-    ))
+    Ok(finish_publish(message, config, json_string))
 }
 
 /// Execute `publish_xml`: serialise `data.{source}` to an XML string and
@@ -235,22 +246,7 @@ pub fn execute_publish_xml(
     let bridge = Value::from(source_data);
     let xml_string = json_to_xml(&bridge, &config.root_element)?;
 
-    let (target_path_arc, target_parts) = config.resolve_target_path();
-    let old_value = get_nested_value_parts(&message.context, &target_parts)
-        .cloned()
-        .unwrap_or(OwnedDataValue::Null);
-    let new_value = OwnedDataValue::String(xml_string);
-
-    set_nested_value_parts(&mut message.context, &target_parts, new_value.clone());
-
-    Ok((
-        TaskOutcome::Success,
-        vec![Change {
-            path: target_path_arc,
-            old_value,
-            new_value,
-        }],
-    ))
+    Ok(finish_publish(message, config, xml_string))
 }
 
 /// Convert JSON Value to XML string. Recursive walker; same shape as before

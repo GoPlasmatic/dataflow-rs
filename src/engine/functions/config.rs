@@ -368,6 +368,23 @@ impl<'de> Deserialize<'de> for FunctionConfig {
     }
 }
 
+/// Refresh the arena's `"data"` slot on `Ok`, then return `result` unchanged.
+/// Shared by the three built-ins (`parse_xml`, `publish_json`, `publish_xml`)
+/// that write through `set_nested_value` on the owned context rather than the
+/// arena — the arena cache would otherwise miss that write for the rest of the
+/// sync stretch. On `Err` the context didn't change, so the cache is already
+/// in sync and is left alone.
+fn refresh_data_on_success(
+    message: &Message,
+    arena_ctx: &mut ArenaContext<'_>,
+    result: Result<(TaskOutcome, Vec<Change>)>,
+) -> Result<(TaskOutcome, Vec<Change>)> {
+    if result.is_ok() {
+        arena_ctx.refresh_for_path(&message.context, "data");
+    }
+    result
+}
+
 impl FunctionConfig {
     /// Get the function name for this configuration
     pub fn function_name(&self) -> &str {
@@ -474,37 +491,21 @@ impl FunctionConfig {
                 Some(execute_parse_json_in_arena(message, input, arena_ctx))
             }
             FunctionConfig::ParseXml { input, .. } => {
-                // Refresh the arena only on success; on error the arena cache
-                // is still in sync with the unchanged context.
-                Some(match execute_parse_xml(message, input) {
-                    Ok(r) => {
-                        arena_ctx.refresh_for_path(&message.context, "data");
-                        Ok(r)
-                    }
-                    Err(e) => Err(e),
-                })
+                // parse_xml/publish_json/publish_xml all write through
+                // `set_nested_value` on the owned context rather than the
+                // arena, so the arena's "data" slot needs a manual refresh —
+                // but only on success; on error the context didn't change
+                // either, so the arena cache is still in sync.
+                let result = execute_parse_xml(message, input);
+                Some(refresh_data_on_success(message, arena_ctx, result))
             }
             FunctionConfig::PublishJson { input, .. } => {
-                // publish writes to `data.<target>` but goes through
-                // `set_nested_value` on the owned context — refresh the
-                // arena slot afterwards so the next task in the stretch
-                // observes the new value.
-                Some(match execute_publish_json(message, input) {
-                    Ok(r) => {
-                        arena_ctx.refresh_for_path(&message.context, "data");
-                        Ok(r)
-                    }
-                    Err(e) => Err(e),
-                })
+                let result = execute_publish_json(message, input);
+                Some(refresh_data_on_success(message, arena_ctx, result))
             }
             FunctionConfig::PublishXml { input, .. } => {
-                Some(match execute_publish_xml(message, input) {
-                    Ok(r) => {
-                        arena_ctx.refresh_for_path(&message.context, "data");
-                        Ok(r)
-                    }
-                    Err(e) => Err(e),
-                })
+                let result = execute_publish_xml(message, input);
+                Some(refresh_data_on_success(message, arena_ctx, result))
             }
             FunctionConfig::Filter { input, .. } => {
                 Some(input.execute_in_arena(message, arena_ctx, engine))

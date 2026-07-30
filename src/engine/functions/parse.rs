@@ -15,7 +15,8 @@ use crate::engine::executor::ArenaContext;
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::utils::{
-    compute_data_path, get_nested_value, get_nested_value_parts, set_nested_value_parts,
+    get_nested_value, get_nested_value_parts, precompute_target_path, resolve_target_path,
+    set_nested_value_parts,
 };
 use datavalue::OwnedDataValue;
 use log::debug;
@@ -78,21 +79,18 @@ impl ParseConfig {
     /// Populate the precomputed target-path fields from `target`. Called by
     /// `LogicCompiler` for serde-built configs and by `from_json`.
     pub(crate) fn precompute_target_path(&mut self) {
-        (self.target_path_arc, self.target_path_parts) = compute_data_path(&self.target);
+        precompute_target_path(
+            &self.target,
+            &mut self.target_path_arc,
+            &mut self.target_path_parts,
+        );
     }
 
     /// Precomputed `(path, parts)` for `data.{target}` — falls back to
     /// computing on the fly for directly-constructed configs (the test
     /// surface), mirroring the `MapMapping` fallback pattern.
     fn resolve_target_path(&self) -> (Arc<str>, Arc<[Arc<str>]>) {
-        if self.target_path_parts.is_empty() {
-            compute_data_path(&self.target)
-        } else {
-            (
-                Arc::clone(&self.target_path_arc),
-                Arc::clone(&self.target_path_parts),
-            )
-        }
+        resolve_target_path(&self.target, &self.target_path_arc, &self.target_path_parts)
     }
 
     /// Extract the source value as an owned `OwnedDataValue`.

@@ -335,10 +335,13 @@ impl ExecutionTrace {
     }
 
     /// Whether [`TraceOptions::max_snapshot_bytes`] was exceeded, and one or
-    /// more executed steps therefore carry `message: None`.
+    /// more executed steps therefore carry `message: None`, missing mapping
+    /// contexts, or both.
     ///
-    /// Always `false` when [`TraceOptions::snapshots`] is off — there is nothing
-    /// to truncate.
+    /// The budget is shared across both: with [`TraceOptions::snapshots`] off
+    /// but [`TraceOptions::mapping_contexts`] on, this can still return `true`
+    /// from the mapping-context term alone, even though no step was ever going
+    /// to carry a `message`.
     pub fn truncated(&self) -> bool {
         self.truncated
     }
@@ -375,9 +378,9 @@ impl ExecutionTrace {
                 // `audit_trail.last()` unconditionally — that is the
                 // mis-attribution being fixed. A `TaskOutcome::Skip` records no
                 // entry, so it correctly reports an empty diff instead of
-                // inheriting the previous task's.
+                // inheriting the previous task's (or another workflow's).
                 Some(
-                    own_audit_entry(message, task_id)
+                    own_audit_entry(message, workflow_id, task_id)
                         .map(|e| e.changes.clone())
                         .unwrap_or_default(),
                 )
@@ -390,12 +393,12 @@ impl ExecutionTrace {
             // Size is *probed* without cloning, so a snapshot that would not fit
             // is never built. Checking after the clone would be pointless: the
             // peak memory this budget exists to bound has already been paid.
-            let projected = self.projected_snapshot_size(message, task_id);
+            let projected = self.projected_snapshot_size(message, workflow_id, task_id);
             if self.would_exceed(projected) {
                 self.truncated = true;
             } else {
                 self.snapshot_bytes += projected;
-                step.message = Some(self.build_snapshot(message, task_id));
+                step.message = Some(self.build_snapshot(message, workflow_id, task_id));
             }
         }
 
@@ -431,9 +434,14 @@ impl ExecutionTrace {
     ///
     /// Must agree with what [`Self::build_snapshot`] actually retains; a unit
     /// test pins the two together.
-    fn projected_snapshot_size(&self, message: &Message, task_id: &str) -> usize {
+    fn projected_snapshot_size(
+        &self,
+        message: &Message,
+        workflow_id: &str,
+        task_id: &str,
+    ) -> usize {
         let mut size = redacted_size(&message.context, &self.redact_segments);
-        for entry in self.scoped_audit_trail(message, task_id) {
+        for entry in self.scoped_audit_trail(message, workflow_id, task_id) {
             size += NODE_SIZE;
             for change in &entry.changes {
                 size += change.path.len()
@@ -446,10 +454,15 @@ impl ExecutionTrace {
 
     /// The audit entries this step's snapshot will carry, per
     /// [`TraceOptions::snapshot_audit_trail`].
-    fn scoped_audit_trail<'m>(&self, message: &'m Message, task_id: &str) -> Vec<&'m AuditTrail> {
+    fn scoped_audit_trail<'m>(
+        &self,
+        message: &'m Message,
+        workflow_id: &str,
+        task_id: &str,
+    ) -> Vec<&'m AuditTrail> {
         match self.options.snapshot_audit_trail {
             AuditTrailScope::Full => message.audit_trail.iter().collect(),
-            AuditTrailScope::Own => own_audit_entry(message, task_id)
+            AuditTrailScope::Own => own_audit_entry(message, workflow_id, task_id)
                 .map(|e| vec![e])
                 .unwrap_or_default(),
             AuditTrailScope::None => Vec::new(),
@@ -462,10 +475,10 @@ impl ExecutionTrace {
     ///
     /// `payload` is an `Arc`, so it is shared rather than deep-cloned here —
     /// same as the derived `Message::clone` this replaces.
-    fn build_snapshot(&self, message: &Message, task_id: &str) -> Message {
+    fn build_snapshot(&self, message: &Message, workflow_id: &str, task_id: &str) -> Message {
         let (context, _) = redacting_clone(&message.context, &self.redact_segments);
         let audit_trail: Vec<AuditTrail> = self
-            .scoped_audit_trail(message, task_id)
+            .scoped_audit_trail(message, workflow_id, task_id)
             .into_iter()
             .cloned()
             .collect();
@@ -530,14 +543,25 @@ impl Default for ExecutionTrace {
 /// The audit entry this task produced, if any.
 ///
 /// The executor pushes at most one entry per task and pushes it immediately, so
-/// the last entry is this task's exactly when its id matches. A
-/// `TaskOutcome::Skip` records none — which is why reading
+/// the last entry is this task's exactly when both its workflow and task id
+/// match. A `TaskOutcome::Skip` records none — which is why reading
 /// `audit_trail.last()` unconditionally mis-attributes the previous task's diff
-/// to a skipped step.
+/// to a skipped step. Comparing `task_id` alone is not enough either: two
+/// workflows can share a task id (or the same task can run again in a later
+/// workflow), so a `Skip` right after a same-named task in a different
+/// workflow would otherwise inherit that other workflow's entry.
 #[inline]
-fn own_audit_entry<'m>(message: &'m Message, task_id: &str) -> Option<&'m AuditTrail> {
+fn own_audit_entry<'m>(
+    message: &'m Message,
+    workflow_id: &str,
+    task_id: &str,
+) -> Option<&'m AuditTrail> {
     match message.audit_trail.last() {
-        Some(entry) if entry.task_id.as_ref() == task_id => Some(entry),
+        Some(entry)
+            if entry.task_id.as_ref() == task_id && entry.workflow_id.as_ref() == workflow_id =>
+        {
+            Some(entry)
+        }
         _ => None,
     }
 }

@@ -156,6 +156,11 @@ impl DataflowError {
     pub fn kind(&self) -> Option<&str> {
         match self {
             DataflowError::Service { kind, .. } => Some(kind),
+            // Same inheritance as `retryable()`: a `Service` error wrapped for
+            // context via `FunctionExecution` must not lose its classification.
+            DataflowError::FunctionExecution { source, .. } => {
+                source.as_deref().and_then(DataflowError::kind)
+            }
             _ => None,
         }
     }
@@ -168,6 +173,9 @@ impl DataflowError {
     pub fn detail(&self) -> Option<&str> {
         match self {
             DataflowError::Service { detail, .. } => detail.as_deref(),
+            DataflowError::FunctionExecution { source, .. } => {
+                source.as_deref().and_then(DataflowError::detail)
+            }
             _ => None,
         }
     }
@@ -320,7 +328,17 @@ impl ErrorInfo {
                 DataflowError::Io(_) => "IO_ERROR".to_string(),
                 DataflowError::Deserialization(_) => "DESERIALIZATION_ERROR".to_string(),
                 DataflowError::Unknown(_) => "UNKNOWN_ERROR".to_string(),
-                DataflowError::Service { .. } => service_error_code(&error),
+                // Same "empty falls back to TASK_ERROR" rule as
+                // `service_error_code`, inlined rather than routed back through
+                // it — `error` is already known to be `Service` here, so a
+                // second match on `error.kind()` would just re-derive `kind`.
+                DataflowError::Service { kind, .. } => {
+                    if kind.is_empty() {
+                        "TASK_ERROR".to_string()
+                    } else {
+                        kind.clone()
+                    }
+                }
             },
             detail: error.detail().map(str::to_string),
             message: error.to_string(),
@@ -745,6 +763,31 @@ mod tests {
         assert_eq!(e.kind(), Some("circuit_open"));
         assert_eq!(e.detail(), Some("connector 'billing' breaker open"));
         assert!(e.retryable());
+    }
+
+    #[test]
+    fn function_execution_inherits_kind_detail_and_retryable_from_a_wrapped_service_source() {
+        // `DataflowError::function_execution` is the documented way to add
+        // context to a downstream error. `retryable()` already recursed into
+        // `source`; `kind()`/`detail()` must do the same, or wrapping a
+        // `Service` error for context silently downgrades it to a generic
+        // `TASK_ERROR` with no detail.
+        let inner = DataflowError::service("circuit_open", "upstream unavailable")
+            .detail("connector 'billing' breaker open since 12:04")
+            .retryable(true)
+            .build();
+        let wrapped = DataflowError::function_execution("calling billing connector", Some(inner));
+
+        assert_eq!(wrapped.kind(), Some("circuit_open"));
+        assert_eq!(
+            wrapped.detail(),
+            Some("connector 'billing' breaker open since 12:04")
+        );
+        assert!(wrapped.retryable());
+
+        // `ErrorInfo::new`'s Service arm goes through the same `kind()` call,
+        // so the wrapped error's code makes it through end to end too.
+        assert_eq!(service_error_code(&wrapped), "circuit_open");
     }
 
     #[test]

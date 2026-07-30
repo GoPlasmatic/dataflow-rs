@@ -1723,6 +1723,73 @@ async fn task_status_500_pushes_status_error_to_message() {
     assert_eq!(message.audit_trail()[0].status, 500);
 }
 
+#[tokio::test]
+async fn metadata_progress_is_written_even_when_a_task_errors() {
+    // `metadata.progress` is documented as written "after every task", never
+    // conditionally — a downstream workflow gates on it to chain forward. A
+    // task that returns `Err` (not just a 500 status) with
+    // `continue_on_error: true` must still advance it, or a later workflow
+    // gating on `metadata.progress.task_id` never sees that the failing task
+    // ran at all.
+    let wf_a = r#"{
+        "id": "wf_a", "name": "A", "priority": 0, "condition": true,
+        "tasks": [{
+            "id": "boom", "name": "Boom", "continue_on_error": true,
+            "function": { "name": "fail", "input": {} }
+        }]
+    }"#;
+    let wf_b = r#"{
+        "id": "wf_b", "name": "B", "priority": 1,
+        "condition": { "==": [ { "var": "metadata.progress.task_id" }, "boom" ] },
+        "tasks": [{
+            "id": "map_b", "name": "B",
+            "function": { "name": "map", "input": { "mappings": [ { "path": "data.b_ran", "logic": true } ] } }
+        }]
+    }"#;
+
+    let workflows = vec![
+        Workflow::from_json(wf_a).unwrap(),
+        Workflow::from_json(wf_b).unwrap(),
+    ];
+    let engine = Engine::builder()
+        .with_workflows(workflows)
+        .register("fail", FailingTask)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    let trace = engine
+        .process_message_with_trace(&mut message)
+        .await
+        .unwrap();
+
+    // The step for the failing task itself must already show the write —
+    // its own message snapshot is captured right after `handle_task_result`.
+    let boom_step = trace
+        .steps
+        .iter()
+        .find(|s| s.task_id.as_deref() == Some("boom"))
+        .expect("boom task should have an executed step (continue_on_error: true)");
+    let boom_snapshot = boom_step.message.as_ref().expect("step carries a snapshot");
+    assert_eq!(
+        boom_snapshot.context["metadata"]["progress"]["task_id"],
+        dv(json!("boom")),
+        "metadata.progress must name the failing task right after it ran, not be left stale or absent"
+    );
+    assert_eq!(
+        boom_snapshot.context["metadata"]["progress"]["status_code"],
+        dv(json!(500))
+    );
+
+    // End-to-end proof: wf_b's condition gates on that same write and must
+    // still see it and run, even though wf_a's task errored.
+    assert_eq!(
+        message.context["data"]["b_ran"],
+        dv(json!(true)),
+        "wf_b gates on wf_a's progress write and must still run"
+    );
+}
+
 // =============================================================================
 // Cross-workflow shared-arena run — regression coverage
 // =============================================================================
@@ -2916,6 +2983,59 @@ async fn audit_trail_scope_controls_the_quadratic_term() {
 }
 
 #[tokio::test]
+async fn own_scope_does_not_leak_across_workflows_sharing_a_task_id() {
+    // Two workflows reuse the same task id ("step1"). wf_a's step1 runs and
+    // writes data.a; wf_b's step1 is skipped via `filter`. Regression for a
+    // bug where the per-step diff (`changes: true` / `AuditTrailScope::Own`)
+    // matched the "this task's own audit entry" lookup on `task_id` alone —
+    // since wf_b's Skip pushes no entry, `audit_trail.last()` was still
+    // wf_a's, and the matching task id made it look like a match. The skipped
+    // step in wf_b must report an empty diff, not wf_a's `data.a` change.
+    let wf_a = r#"{
+        "id": "wf_a", "name": "A", "priority": 0, "condition": true,
+        "tasks": [{
+            "id": "step1", "name": "A1",
+            "function": { "name": "map", "input": { "mappings": [ { "path": "data.a", "logic": 1 } ] } }
+        }]
+    }"#;
+    let wf_b = r#"{
+        "id": "wf_b", "name": "B", "priority": 1, "condition": true,
+        "tasks": [{
+            "id": "step1", "name": "B1",
+            "function": { "name": "filter", "input": { "condition": false, "on_reject": "skip" } }
+        }]
+    }"#;
+
+    let workflows = vec![
+        Workflow::from_json(wf_a).unwrap(),
+        Workflow::from_json(wf_b).unwrap(),
+    ];
+    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
+    let mut message = Message::from_value(&json!({}));
+    let trace = engine
+        .process_message_with_trace_options(
+            &mut message,
+            TraceOptions {
+                changes: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let wf_b_step = trace
+        .steps
+        .iter()
+        .find(|s| s.workflow_id == "wf_b" && s.task_id.as_deref() == Some("step1"))
+        .expect("wf_b's step1 should still produce a step, even though it was skipped");
+    assert_eq!(
+        wf_b_step.changes.as_ref().map(Vec::len),
+        Some(0),
+        "a skipped step in wf_b must not inherit wf_a's same-named task's diff"
+    );
+}
+
+#[tokio::test]
 async fn redaction_nulls_the_snapshot_but_not_the_live_message() {
     let wf = Workflow::from_json(
         r#"{
@@ -3099,6 +3219,61 @@ async fn the_budget_accounts_for_mapping_contexts_on_their_own() {
     assert!(
         trace.steps[1].message.is_none(),
         "the following step is past the budget"
+    );
+}
+
+#[tokio::test]
+async fn truncated_can_be_true_from_mapping_contexts_alone_with_snapshots_off() {
+    // `truncated()` is one flag shared by two budget terms: message snapshots
+    // and mapping contexts. With `snapshots: false`, no step was ever going to
+    // carry a `message` — but a large-enough mapping context can still trip
+    // the same shared budget on its own.
+    let engine = Engine::builder()
+        .with_workflow(
+            Workflow::from_json(
+                r#"{
+        "id": "w", "name": "w", "priority": 0, "condition": true,
+        "tasks": [
+            { "id": "multi", "name": "multi", "function": {
+                "name": "map",
+                "input": { "mappings": [
+                    { "path": "data.one", "logic": 1 },
+                    { "path": "data.two", "logic": 2 },
+                    { "path": "data.three", "logic": 3 } ] } } }
+        ]
+    }"#,
+            )
+            .unwrap(),
+        )
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    set_nested_value(
+        &mut message.context,
+        "data.blob",
+        dv(json!("q".repeat(4096))),
+    );
+    let trace = engine
+        .process_message_with_trace_options(
+            &mut message,
+            TraceOptions {
+                snapshots: false,
+                mapping_contexts: true,
+                max_snapshot_bytes: 6000,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        trace.truncated(),
+        "three whole-context mapping snapshots alone exceed 6000, even with snapshots off"
+    );
+    assert!(
+        trace.steps.iter().all(|s| s.message.is_none()),
+        "snapshots: false means no step ever carries a message, truncated or not"
     );
 }
 

@@ -338,17 +338,7 @@ impl Engine {
         // workflow executor reads it back via Message metadata if it needs to
         // emit AuditTrail entries; this caps the number of `Utc::now()` syscalls
         // at 1 per message (down from 3+ — one stamp here, one per AuditTrail).
-        let now = Utc::now();
-        set_processing_metadata(&mut message.context, &self.engine_version, now, None);
-
-        // Process workflows in priority order (pre-sorted at construction).
-        // `run_all_borrowed` groups consecutive fully-sync workflows into a
-        // single shared-arena scope so the context is deep-walked once per
-        // run rather than once per workflow. Passing the registry slice
-        // directly avoids the former per-message `Vec<&Workflow>` collect.
-        self.workflow_executor
-            .run_all_borrowed(&self.workflows[..], message, None, now)
-            .await
+        self.process_all(message, None, Utc::now()).await
     }
 
     /// Processes a message through workflows with step-by-step tracing,
@@ -386,12 +376,27 @@ impl Engine {
         trace: &mut ExecutionTrace,
     ) -> Result<()> {
         // The trace carries its own capture policy, so nothing to pass here.
-        let now = Utc::now();
-        set_processing_metadata(&mut message.context, &self.engine_version, now, None);
+        self.process_all(message, Some(trace), Utc::now()).await
+    }
 
-        // Process workflows in priority order (pre-sorted at construction).
+    /// Shared driver behind [`Self::process_message`] and
+    /// [`Self::process_message_tracing`] — stamps processing metadata and runs
+    /// every registered workflow in priority order. Mirrors [`Self::process_channel`]
+    /// for the whole-registry case.
+    ///
+    /// `run_all_borrowed` groups consecutive fully-sync workflows into a
+    /// single shared-arena scope so the context is deep-walked once per run
+    /// rather than once per workflow. Passing the registry slice directly
+    /// avoids a per-message `Vec<&Workflow>` collect.
+    async fn process_all(
+        &self,
+        message: &mut Message,
+        trace: Option<&mut ExecutionTrace>,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        set_processing_metadata(&mut message.context, &self.engine_version, now, None);
         self.workflow_executor
-            .run_all_borrowed(&self.workflows[..], message, Some(trace), now)
+            .run_all_borrowed(&self.workflows[..], message, trace, now)
             .await
     }
 

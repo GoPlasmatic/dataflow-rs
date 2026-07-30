@@ -8,6 +8,13 @@
 use datavalue::OwnedDataValue;
 use std::sync::Arc;
 
+/// `#[serde(default = ...)]` value for a `Workflow`/`Task` condition: always
+/// true, so an absent condition runs unconditionally. Shared by both —
+/// duplicating a one-line `fn` per struct is what it looks like when it isn't.
+pub(crate) fn default_condition() -> serde_json::Value {
+    serde_json::Value::Bool(true)
+}
+
 /// Get a reference to the value at `path`, walking the tree.
 ///
 /// Path syntax:
@@ -23,25 +30,8 @@ pub fn get_nested_value<'b>(data: &'b OwnedDataValue, path: &str) -> Option<&'b 
     if path.is_empty() {
         return Some(data);
     }
-
-    let mut current = data;
-
-    for part in path.split('.') {
-        match current {
-            OwnedDataValue::Object(pairs) => {
-                let key = strip_hash_prefix(part);
-                let slot = pairs.iter().find(|(k, _)| k == key)?;
-                current = &slot.1;
-            }
-            OwnedDataValue::Array(items) => {
-                let idx: usize = part.parse().ok()?;
-                current = items.get(idx)?;
-            }
-            _ => return None,
-        }
-    }
-
-    Some(current)
+    let parts: Vec<&str> = path.split('.').collect();
+    get_nested_value_impl(data, &parts)
 }
 
 /// Set the value at `path`, creating intermediate containers as needed.
@@ -79,6 +69,18 @@ pub fn get_nested_value_parts<'b>(
     if parts.is_empty() {
         return Some(data);
     }
+    let parts: Vec<&str> = parts.iter().map(Arc::as_ref).collect();
+    get_nested_value_impl(data, &parts)
+}
+
+/// Shared tree-walk behind [`get_nested_value`] and [`get_nested_value_parts`].
+/// `#`-prefix escape is applied at lookup time via `strip_hash_prefix`, so a
+/// caller passing raw (unstripped) parts — as `get_nested_value_parts` does —
+/// still gets `#20` → object key `"20"` semantics.
+fn get_nested_value_impl<'b>(
+    data: &'b OwnedDataValue,
+    parts: &[&str],
+) -> Option<&'b OwnedDataValue> {
     let mut current = data;
     for part in parts {
         match current {
@@ -284,6 +286,34 @@ pub(crate) fn compute_data_path(target: &str) -> (Arc<str>, Arc<[Arc<str>]>) {
     let path = format!("data.{target}");
     let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
     (Arc::from(path), parts.into())
+}
+
+/// Populate `*path_arc`/`*path_parts` from `target` via [`compute_data_path`].
+/// Shared body behind `ParseConfig::precompute_target_path` and
+/// `PublishConfig::precompute_target_path` — both configs cache the same
+/// `data.{target}` shape and populate it identically.
+pub(crate) fn precompute_target_path(
+    target: &str,
+    path_arc: &mut Arc<str>,
+    path_parts: &mut Arc<[Arc<str>]>,
+) {
+    (*path_arc, *path_parts) = compute_data_path(target);
+}
+
+/// Precomputed `(path, parts)` for `data.{target}` — falls back to computing on
+/// the fly when `path_parts` is empty (a directly-constructed config, e.g. the
+/// test surface, that skipped `precompute_target_path`). Shared body behind
+/// `ParseConfig::resolve_target_path` and `PublishConfig::resolve_target_path`.
+pub(crate) fn resolve_target_path(
+    target: &str,
+    path_arc: &Arc<str>,
+    path_parts: &Arc<[Arc<str>]>,
+) -> (Arc<str>, Arc<[Arc<str>]>) {
+    if path_parts.is_empty() {
+        compute_data_path(target)
+    } else {
+        (Arc::clone(path_arc), Arc::clone(path_parts))
+    }
 }
 
 #[cfg(test)]

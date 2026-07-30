@@ -53,7 +53,7 @@ pub struct Task {
     /// JSONLogic condition that determines if the task should execute.
     /// Conditions can access any context field (`data`, `metadata`, `temp_data`).
     /// Defaults to `true` (always execute).
-    #[serde(default = "default_condition")]
+    #[serde(default = "crate::engine::utils::default_condition")]
     pub condition: Value,
 
     /// Engine-internal: pre-compiled JSONLogic for `condition`, populated by
@@ -96,9 +96,4 @@ impl Task {
             continue_on_error: false,
         }
     }
-}
-
-/// Returns the default condition value (always true).
-fn default_condition() -> Value {
-    Value::Bool(true)
 }
