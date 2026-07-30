@@ -1,10 +1,9 @@
 use crate::engine::error::Result;
+use crate::engine::functions::template::Template;
 use crate::engine::task_context::TaskContext;
-use datalogic_rs::Logic;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Configuration for the http_call integration function.
 ///
@@ -28,17 +27,12 @@ pub struct HttpCallConfig {
     #[serde(default)]
     pub path: Option<String>,
 
-    /// JSONLogic expression to compute path dynamically
+    /// JSONLogic expression to compute path dynamically. Compiled once at
+    /// engine construction (`LogicCompiler`); read it through
+    /// [`HttpCallConfig::resolve_path`] rather than directly — that method
+    /// applies the static-`path` fallback and is the sanctioned read.
     #[serde(default)]
-    pub path_logic: Option<Value>,
-
-    /// Engine-internal: pre-compiled `path_logic`, populated by
-    /// `LogicCompiler`. Read it through [`HttpCallConfig::resolve_path`] rather
-    /// than directly — that method applies the static-`path` fallback and is the
-    /// sanctioned read. Not part of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub compiled_path_logic: Option<Arc<Logic>>,
+    pub path_logic: Option<Template>,
 
     /// Static headers
     #[serde(default)]
@@ -48,16 +42,10 @@ pub struct HttpCallConfig {
     #[serde(default)]
     pub body: Option<Value>,
 
-    /// JSONLogic expression to compute body dynamically
+    /// JSONLogic expression to compute body dynamically. Compiled once at
+    /// engine construction; read it through [`HttpCallConfig::resolve_body`].
     #[serde(default)]
-    pub body_logic: Option<Value>,
-
-    /// Engine-internal: pre-compiled `body_logic`, populated by
-    /// `LogicCompiler`. Read it through [`HttpCallConfig::resolve_body`]. Not
-    /// part of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub compiled_body_logic: Option<Arc<Logic>>,
+    pub body_logic: Option<Template>,
 
     /// JSONPath/dot-path to extract from response and merge into context.
     ///
@@ -170,16 +158,10 @@ pub struct EnrichConfig {
     #[serde(default)]
     pub path: Option<String>,
 
-    /// JSONLogic expression to compute path dynamically
+    /// JSONLogic expression to compute path dynamically. Compiled once at
+    /// engine construction; read it through [`EnrichConfig::resolve_path`].
     #[serde(default)]
-    pub path_logic: Option<Value>,
-
-    /// Engine-internal: pre-compiled `path_logic`, populated by
-    /// `LogicCompiler`. Read it through [`EnrichConfig::resolve_path`]. Not part
-    /// of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub compiled_path_logic: Option<Arc<Logic>>,
+    pub path_logic: Option<Template>,
 
     /// Dot-path where enrichment data is merged into the message context
     pub merge_path: String,
@@ -209,8 +191,8 @@ impl HttpCallConfig {
     /// failure: a compiled expression that errors is a real problem, and silently
     /// substituting a different URL would hide it.
     pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
-        match self.compiled_path_logic.as_deref() {
-            Some(logic) => Ok(Some(ctx.eval_to_plain_string(logic)?)),
+        match &self.path_logic {
+            Some(t) => Ok(Some(t.eval_to_plain_string(ctx)?)),
             None => Ok(self.path.clone()),
         }
     }
@@ -223,8 +205,8 @@ impl HttpCallConfig {
     /// As [`Self::resolve_path`] — an evaluation failure propagates rather than
     /// falling back.
     pub fn resolve_body(&self, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
-        match self.compiled_body_logic.as_deref() {
-            Some(logic) => Ok(Some(ctx.eval_json(logic)?)),
+        match &self.body_logic {
+            Some(t) => Ok(Some(t.eval_into(ctx)?)),
             None => Ok(self.body.clone()),
         }
     }
@@ -238,8 +220,8 @@ impl EnrichConfig {
     ///
     /// As [`HttpCallConfig::resolve_path`].
     pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
-        match self.compiled_path_logic.as_deref() {
-            Some(logic) => Ok(Some(ctx.eval_to_plain_string(logic)?)),
+        match &self.path_logic {
+            Some(t) => Ok(Some(t.eval_to_plain_string(ctx)?)),
             None => Ok(self.path.clone()),
         }
     }
@@ -256,8 +238,8 @@ impl PublishKafkaConfig {
     ///
     /// As [`HttpCallConfig::resolve_path`].
     pub fn resolve_key(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
-        match self.compiled_key_logic.as_deref() {
-            Some(logic) => Ok(Some(ctx.eval_to_plain_string(logic)?)),
+        match &self.key_logic {
+            Some(t) => Ok(Some(t.eval_to_plain_string(ctx)?)),
             None => Ok(None),
         }
     }
@@ -276,8 +258,8 @@ impl PublishKafkaConfig {
     ///
     /// As [`HttpCallConfig::resolve_path`].
     pub fn resolve_value(&self, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
-        match self.compiled_value_logic.as_deref() {
-            Some(logic) => Ok(Some(ctx.eval_json(logic)?)),
+        match &self.value_logic {
+            Some(t) => Ok(Some(t.eval_into(ctx)?)),
             None => Ok(None),
         }
     }
@@ -308,27 +290,17 @@ pub struct PublishKafkaConfig {
     /// Target topic name
     pub topic: String,
 
-    /// JSONLogic expression to compute the message key
+    /// JSONLogic expression to compute the message key. Compiled once at
+    /// engine construction; read it through
+    /// [`PublishKafkaConfig::resolve_key`].
     #[serde(default)]
-    pub key_logic: Option<Value>,
+    pub key_logic: Option<Template>,
 
-    /// Engine-internal: pre-compiled `key_logic`, populated by
-    /// `LogicCompiler`. Read it through [`PublishKafkaConfig::resolve_key`]. Not
-    /// part of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub compiled_key_logic: Option<Arc<Logic>>,
-
-    /// JSONLogic expression to compute the message value
+    /// JSONLogic expression to compute the message value. Compiled once at
+    /// engine construction; read it through
+    /// [`PublishKafkaConfig::resolve_value`].
     #[serde(default)]
-    pub value_logic: Option<Value>,
-
-    /// Engine-internal: pre-compiled `value_logic`, populated by
-    /// `LogicCompiler`. Read it through [`PublishKafkaConfig::resolve_value`].
-    /// Not part of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub compiled_value_logic: Option<Arc<Logic>>,
+    pub value_logic: Option<Template>,
 }
 
 #[cfg(test)]
@@ -397,9 +369,11 @@ mod tests {
         assert_eq!(default_method(), HttpMethod::Get);
     }
 
+    use crate::engine::functions::template::TemplateCompiler;
     use crate::engine::message::Message;
     use crate::engine::utils::set_nested_value;
     use datavalue::OwnedDataValue;
+    use std::sync::Arc;
 
     fn dv(v: serde_json::Value) -> OwnedDataValue {
         OwnedDataValue::from(&v)
@@ -422,10 +396,13 @@ mod tests {
         m
     }
 
-    /// Stamp a compiled expression into a slot, mirroring what `LogicCompiler`
+    /// Build a compiled `Template` for a slot, mirroring what `LogicCompiler`
     /// does — so these tests exercise the same slot state the engine produces.
-    fn compile(dl: &Arc<datalogic_rs::Engine>, logic: serde_json::Value) -> Option<Arc<Logic>> {
-        Some(dl.compile_arc(&logic).expect("logic should compile"))
+    fn compile(dl: &Arc<datalogic_rs::Engine>, logic: serde_json::Value) -> Option<Template> {
+        let c = TemplateCompiler::new(Arc::clone(dl));
+        let mut t: Template = serde_json::from_value(logic).expect("Template::deserialize");
+        t.compile(&c, "test").expect("logic should compile");
+        Some(t)
     }
 
     fn http_config() -> HttpCallConfig {
@@ -448,7 +425,7 @@ mod tests {
 
         // logic present -> evaluated string
         let mut cfg = http_config();
-        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.id"}));
+        cfg.path_logic = compile(&dl, json!({"var": "data.id"}));
         assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
 
         // logic absent, static path present
@@ -462,7 +439,7 @@ mod tests {
         // both present -> logic wins
         let mut cfg = http_config();
         cfg.path = Some("/static".to_string());
-        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.id"}));
+        cfg.path_logic = compile(&dl, json!({"var": "data.id"}));
         assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
     }
 
@@ -473,7 +450,7 @@ mod tests {
         let ctx = TaskContext::new(&mut m, &dl);
 
         let mut cfg = http_config();
-        cfg.compiled_body_logic = compile(&dl, json!({"var": "data.obj"}));
+        cfg.body_logic = compile(&dl, json!({"var": "data.obj"}));
         assert_eq!(cfg.resolve_body(&ctx).unwrap(), Some(json!({"a": 1})));
 
         let mut cfg = http_config();
@@ -487,7 +464,7 @@ mod tests {
 
         let mut cfg = http_config();
         cfg.body = Some(json!({"static": true}));
-        cfg.compiled_body_logic = compile(&dl, json!({"var": "data.obj"}));
+        cfg.body_logic = compile(&dl, json!({"var": "data.obj"}));
         assert_eq!(cfg.resolve_body(&ctx).unwrap(), Some(json!({"a": 1})));
     }
 
@@ -498,7 +475,7 @@ mod tests {
         let ctx = TaskContext::new(&mut m, &dl);
 
         let mut cfg = enrich_config();
-        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.id"}));
+        cfg.path_logic = compile(&dl, json!({"var": "data.id"}));
         assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
 
         let mut cfg = enrich_config();
@@ -509,7 +486,7 @@ mod tests {
 
         let mut cfg = enrich_config();
         cfg.path = Some("/lookup".to_string());
-        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.id"}));
+        cfg.path_logic = compile(&dl, json!({"var": "data.id"}));
         assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
     }
 
@@ -525,8 +502,8 @@ mod tests {
         assert_eq!(cfg.resolve_value(&ctx).unwrap(), None);
 
         let mut cfg = kafka_config();
-        cfg.compiled_key_logic = compile(&dl, json!({"var": "data.id"}));
-        cfg.compiled_value_logic = compile(&dl, json!({"var": "data.obj"}));
+        cfg.key_logic = compile(&dl, json!({"var": "data.id"}));
+        cfg.value_logic = compile(&dl, json!({"var": "data.obj"}));
         assert_eq!(cfg.resolve_key(&ctx).unwrap(), Some("abc".to_string()));
         // `resolve_value` returns a Value, not a String — a producer that
         // serializes unconditionally must not be forced through the key's
@@ -542,12 +519,12 @@ mod tests {
 
         // A number becomes its digits, not "7" with quotes.
         let mut cfg = http_config();
-        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.n"}));
+        cfg.path_logic = compile(&dl, json!({"var": "data.n"}));
         assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("7".to_string()));
 
         // A container becomes compact JSON.
         let mut cfg = http_config();
-        cfg.compiled_path_logic = compile(&dl, json!({"var": "data.obj"}));
+        cfg.path_logic = compile(&dl, json!({"var": "data.obj"}));
         assert_eq!(
             cfg.resolve_path(&ctx).unwrap(),
             Some("{\"a\":1}".to_string())
@@ -563,7 +540,7 @@ mod tests {
         // Static field is set, so a silent fallback would look like success.
         let mut cfg = http_config();
         cfg.path = Some("/static".to_string());
-        cfg.compiled_path_logic = compile(&dl, json!({"+": ["abc", 1]}));
+        cfg.path_logic = compile(&dl, json!({"+": ["abc", 1]}));
 
         match cfg.resolve_path(&ctx) {
             Err(crate::engine::error::DataflowError::LogicEvaluation(msg)) => {
@@ -575,7 +552,7 @@ mod tests {
         // Same for body.
         let mut cfg = http_config();
         cfg.body = Some(json!({"static": true}));
-        cfg.compiled_body_logic = compile(&dl, json!({"+": ["abc", 1]}));
+        cfg.body_logic = compile(&dl, json!({"+": ["abc", 1]}));
         assert!(cfg.resolve_body(&ctx).is_err());
     }
 }

@@ -26,11 +26,8 @@ because new public items ship and several existing behaviours change.
   default is a no-op, so a handler with no `Template` field needs no override —
   verified by building every existing test handler, `mod tests` fixture, and
   example unchanged. `Template` fields nested inside a `Vec<T>` or a nested
-  struct work by walking the collection inside `compile_input`. The built-in
-  integration configs are **not** migrated to `Template` in this change — that
-  migration is the one part of this design with a real downstream break
-  (existing code reading `compiled_path_logic` and friends would stop
-  compiling) and is left for a follow-up. (#29)
+  struct work by walking the collection inside `compile_input`. See *Changed*
+  for the built-in integration configs' own migration onto this type. (#29)
 - **integration:** `HttpMethod` is re-exported from the crate root (previously
   reachable only as
   `dataflow_rs::engine::functions::integration::HttpMethod`) and gains
@@ -207,12 +204,22 @@ because new public items ship and several existing behaviours change.
 
 ### Changed
 
-- **integration:** the five `compiled_*` slots on the integration configs are now
-  marked `#[doc(hidden)]`, matching `MapMapping::compiled_logic`. Visibility is
-  unchanged — they stay `pub` and code reading them keeps compiling — but they are
-  reclassified as engine-internal now that `resolve_*` is the sanctioned read. No
-  `#[deprecated]`, deliberately: that would emit warnings in downstream builds and
-  fail a consumer CI running `-D warnings`. (#23)
+- **integration:** the built-in integration configs migrate onto `Template`.
+  `HttpCallConfig::path_logic` / `body_logic`, `EnrichConfig::path_logic`, and
+  `PublishKafkaConfig::key_logic` / `value_logic` are now `Option<Template>`
+  (were `Option<Value>`), and the five matching `compiled_*` slots — marked
+  `#[doc(hidden)]` earlier in this release specifically so this could follow —
+  are removed, since each raw/compiled pair collapses into the one field that
+  used to be raw-only. `LogicCompiler`'s three near-identical `compile_*_logic`
+  methods (~64 lines) shrink to one `Template::compile` call per field.
+  `resolve_path` / `resolve_body` / `resolve_key` / `resolve_value` — the
+  sanctioned read — keep their exact signatures, so any caller already using
+  them is unaffected. The wire JSON is unaffected too: `Template::deserialize`
+  accepts the same shape `Value` did, so `{"path_logic": {...}}` parses
+  identically. `Template` gains `eval_to_plain_string`, mirroring
+  `TaskContext::eval_to_plain_string`, so `resolve_path` / `resolve_key` keep
+  their non-string-coerces-to-compact-JSON behaviour. See *Compatibility* for
+  what this breaks. (#29)
 - **engine:** `DataflowError::FunctionNotFound`'s message is now documented as
   free-form and explicitly unpinned, with the new classifier as the supported
   programmatic route. No test asserts on its wording, and none should — pinning
@@ -220,9 +227,22 @@ because new public items ship and several existing behaviours change.
 
 ### Compatibility
 
-No existing function or method signature changes shape. Two structs gain fields
-(`ExecutionStep`, `ExecutionTrace` — see *Notes for trace consumers*); everything
-else is additive. Behaviours that change at runtime:
+No existing **function or method signature** changes shape. Two structs gain
+fields (`ExecutionStep`, `ExecutionTrace` — see *Notes for trace consumers*).
+
+One field-level break, from the `Template` migration above: `HttpCallConfig` /
+`EnrichConfig` / `PublishKafkaConfig` retype their four `*_logic` fields from
+`Option<Value>` to `Option<Template>`, and drop the five `compiled_*` fields
+entirely. This breaks source code that reads `cfg.path_logic` (or the sibling
+fields) directly and expects `Option<Value>`, or that reads any `compiled_*`
+field at all — those were already `#[doc(hidden)]` and documented as not part
+of the stable API earlier in this same release. Code going through
+`resolve_path` / `resolve_body` / `resolve_key` / `resolve_value` — the
+documented, sanctioned read — is unaffected: those methods keep their exact
+signatures and behaviour. Nothing in `wasm/` or `ui/` touches these fields.
+The wire JSON format is unaffected in both directions.
+
+Everything else in this release is additive. Behaviours that change at runtime:
 
 `has_function`'s answer changes for `http_call` / `enrich` / `publish_kafka` when
 no handler is registered. In-repo the only caller was its own test, and `Engine`
@@ -276,7 +296,7 @@ trace keeps the historical wire shape. Neither `ExecutionStep` nor `Message` set
 kept as a fallback, and a new `traceHasSnapshots()` helper reports whether a trace
 carries state to inspect at all.
 
-Workspace test count 184 → 363.
+Workspace test count 184 → 365.
 
 ## [3.0.4] — 2026-07-26
 

@@ -241,13 +241,12 @@ pub use engine::{ConnectorRef, Engine, EngineBuilder, Rollout, Task, Workflow, W
 /// The [`datalogic_rs`] JSONLogic engine, re-exported.
 ///
 /// [`Engine::datalogic`] and [`TaskContext::datalogic`] both return
-/// `&Arc<datalogic_rs::Engine>`, and [`HttpCallConfig::compiled_path_logic`]
-/// (with its siblings on [`EnrichConfig`] and [`PublishKafkaConfig`]) is an
-/// `Option<Arc<datalogic_rs::Logic>>` — so any crate implementing
-/// [`AsyncFunctionHandler`] against those configs has to name these types.
-/// Reaching them through here locks their major version to whatever
-/// `dataflow-rs` depends on; prefer it over an independent `datalogic-rs`
-/// dependency, which can skew.
+/// `&Arc<datalogic_rs::Engine>`, [`TaskContext::eval`] takes a `&datalogic_rs::Logic`
+/// directly, and [`TemplateCompiler::engine`] returns a `&datalogic_rs::Engine` —
+/// so any crate implementing [`AsyncFunctionHandler`] with ad-hoc evaluation, or
+/// compiling a [`Template`] field itself, has to name these types. Reaching them
+/// through here locks their major version to whatever `dataflow-rs` depends on;
+/// prefer it over an independent `datalogic-rs` dependency, which can skew.
 ///
 /// Two things to know:
 ///

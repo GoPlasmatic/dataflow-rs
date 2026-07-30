@@ -109,6 +109,26 @@ impl Template {
         serde_json::from_value(json).map_err(DataflowError::from_serde)
     }
 
+    /// As [`Self::eval`], coerced to a *plain* string via
+    /// [`TaskContext::eval_to_plain_string`] — a JSON string result yields its
+    /// contents, anything else its compact JSON form. Use this when the result
+    /// is going into a URL path or a message key, where JSON quoting would be
+    /// wrong.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::eval`].
+    pub fn eval_to_plain_string(&self, ctx: &TaskContext<'_>) -> Result<String> {
+        let logic = self.compiled.as_deref().ok_or_else(|| {
+            DataflowError::LogicEvaluation(
+                "Template::eval_to_plain_string called before Template::compile — the engine \
+                 did not compile this field at construction time"
+                    .to_string(),
+            )
+        })?;
+        ctx.eval_to_plain_string(logic)
+    }
+
     /// The authored JSON, unchanged. For handlers that need to report or
     /// re-serialize their own config.
     pub fn as_json(&self) -> &Value {
@@ -259,6 +279,44 @@ mod tests {
         let mut t = template_from(json!({"cat": ["a", "b"]}));
         t.compile(&c, "lbl").unwrap();
         assert_eq!(t.eval_into::<Value>(&ctx).unwrap(), json!("ab"));
+    }
+
+    #[test]
+    fn eval_to_plain_string_unquotes_and_coerces_non_strings() {
+        let dl = engine();
+        let c = TemplateCompiler::new(Arc::clone(&dl));
+        let mut m = Message::from_value(&json!({}));
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        let mut string_t = template_from(json!("abc"));
+        string_t.compile(&c, "lbl").unwrap();
+        assert_eq!(string_t.eval_to_plain_string(&ctx).unwrap(), "abc");
+
+        let mut num_t = template_from(json!(7));
+        num_t.compile(&c, "lbl").unwrap();
+        assert_eq!(num_t.eval_to_plain_string(&ctx).unwrap(), "7");
+
+        let mut obj_t = template_from(json!({"a": 1}));
+        obj_t.compile(&c, "lbl").unwrap();
+        assert_eq!(obj_t.eval_to_plain_string(&ctx).unwrap(), "{\"a\":1}");
+    }
+
+    #[test]
+    fn eval_to_plain_string_before_compile_errors_without_panicking() {
+        let mut m = Message::from_value(&json!({}));
+        let dl = engine();
+        let ctx = TaskContext::new(&mut m, &dl);
+        let t = template_from(json!("abc"));
+
+        match t.eval_to_plain_string(&ctx) {
+            Err(DataflowError::LogicEvaluation(msg)) => {
+                assert!(
+                    msg.contains("compile"),
+                    "message should name the cause: {msg}"
+                );
+            }
+            other => panic!("expected LogicEvaluation, got {other:?}"),
+        }
     }
 
     #[test]

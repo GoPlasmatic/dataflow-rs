@@ -9,6 +9,7 @@
 
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::functions::integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
+use crate::engine::functions::template::TemplateCompiler;
 use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
 use crate::engine::{FunctionConfig, Workflow};
 use datalogic_rs::{Engine, Logic};
@@ -21,6 +22,11 @@ use std::sync::Arc;
 pub struct LogicCompiler {
     /// Shared datalogic Engine used both for compilation and (later) evaluation.
     engine: Arc<Engine>,
+    /// Handed to `AsyncFunctionHandler::compile_input` and used internally to
+    /// compile `Template` fields on the built-in integration configs. Wraps the
+    /// same `engine`, so a `Template` compiled here or by a custom handler is
+    /// evaluable by the engine that will run the message.
+    template_compiler: TemplateCompiler,
 }
 
 impl Default for LogicCompiler {
@@ -33,8 +39,11 @@ impl LogicCompiler {
     /// Create a new LogicCompiler with a fresh datalogic `Engine` configured for
     /// templating mode (preserves object structure in JSONLogic operations).
     pub fn new() -> Self {
+        let engine = Arc::new(Engine::builder().with_templating(true).build());
+        let template_compiler = TemplateCompiler::new(Arc::clone(&engine));
         Self {
-            engine: Arc::new(Engine::builder().with_templating(true).build()),
+            engine,
+            template_compiler,
         }
     }
 
@@ -266,19 +275,19 @@ impl LogicCompiler {
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        if let Some(logic) = &config.path_logic {
+        if let Some(t) = &mut config.path_logic {
             let label = format!(
                 "http_call path_logic for task {} in workflow {}",
                 task_id, workflow_id
             );
-            config.compiled_path_logic = Some(self.compile(logic, &label)?);
+            t.compile(&self.template_compiler, &label)?;
         }
-        if let Some(logic) = &config.body_logic {
+        if let Some(t) = &mut config.body_logic {
             let label = format!(
                 "http_call body_logic for task {} in workflow {}",
                 task_id, workflow_id
             );
-            config.compiled_body_logic = Some(self.compile(logic, &label)?);
+            t.compile(&self.template_compiler, &label)?;
         }
         Ok(())
     }
@@ -290,12 +299,12 @@ impl LogicCompiler {
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        if let Some(logic) = &config.path_logic {
+        if let Some(t) = &mut config.path_logic {
             let label = format!(
                 "enrich path_logic for task {} in workflow {}",
                 task_id, workflow_id
             );
-            config.compiled_path_logic = Some(self.compile(logic, &label)?);
+            t.compile(&self.template_compiler, &label)?;
         }
         Ok(())
     }
@@ -307,19 +316,19 @@ impl LogicCompiler {
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        if let Some(logic) = &config.key_logic {
+        if let Some(t) = &mut config.key_logic {
             let label = format!(
                 "publish_kafka key_logic for task {} in workflow {}",
                 task_id, workflow_id
             );
-            config.compiled_key_logic = Some(self.compile(logic, &label)?);
+            t.compile(&self.template_compiler, &label)?;
         }
-        if let Some(logic) = &config.value_logic {
+        if let Some(t) = &mut config.value_logic {
             let label = format!(
                 "publish_kafka value_logic for task {} in workflow {}",
                 task_id, workflow_id
             );
-            config.compiled_value_logic = Some(self.compile(logic, &label)?);
+            t.compile(&self.template_compiler, &label)?;
         }
         Ok(())
     }

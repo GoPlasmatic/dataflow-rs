@@ -88,8 +88,10 @@ Three things they guarantee that a hand-rolled read does not:
   producer that serializes unconditionally is not forced through the key's
   coercion and end up with different bytes on the wire.
 
-The `compiled_*` fields are still `pub` for compatibility but are now marked
-engine-internal (`#[doc(hidden)]`), matching `MapMapping::compiled_logic`.
+Each `*_logic` field is a [`Template`](../advanced/custom-functions.md#config-fields-that-are-jsonlogic-template)
+— the same type available for your own handler's config. There is no separate
+compiled slot to read directly; `resolve_*` is the only supported way to get a
+value out of one.
 
 ## Detecting a missing handler before it fails
 
