@@ -3,7 +3,7 @@
 //! This module handles the execution of workflows and their associated tasks.
 //! It provides a clean separation between workflow orchestration and task execution.
 
-use crate::engine::error::{DataflowError, ErrorInfo, Result};
+use crate::engine::error::{DataflowError, ErrorInfo, Result, service_error_code};
 use crate::engine::executor::{
     ArenaContext, evaluate_condition, evaluate_condition_in_arena, with_arena,
 };
@@ -42,24 +42,6 @@ fn next_async_boundary(tasks: &[Task], start: usize) -> usize {
         i += 1;
     }
     i
-}
-
-/// Code recorded when a task returns `Err`.
-///
-/// A [`DataflowError::Service`] contributes its own `kind` verbatim; everything
-/// else keeps the historical `TASK_ERROR`, so no existing deployment sees a
-/// different code until it opts in by returning `Service`.
-///
-/// Deliberately lifted at the task site only. The two `WORKFLOW_ERROR` wrappers
-/// wrap the same propagated error, so lifting there too would put two entries
-/// with the same `code` on the message — making "count errors by code"
-/// double-count — and would stop `WORKFLOW_ERROR` reliably meaning "a workflow
-/// stopped".
-fn task_error_code(e: &DataflowError) -> String {
-    match e.kind() {
-        Some(kind) if !kind.is_empty() => kind.to_string(),
-        _ => "TASK_ERROR".to_string(),
-    }
 }
 
 /// Whether `workflow` serves this message's routing bucket.
@@ -418,26 +400,47 @@ impl WorkflowExecutor {
                 // the caller that we stopped before processing further
                 // workflows. The workflow-level wrapper records workflow
                 // context that the underlying task error doesn't carry.
-                message.errors.push(
-                    ErrorInfo::builder(
-                        "WORKFLOW_ERROR",
-                        format!("Workflow {} error: {}", workflow.id, e),
-                    )
-                    .workflow_id(&workflow.id)
-                    .build(),
-                );
-
-                if workflow.continue_on_error {
-                    warn!(
-                        "Workflow {} encountered error but continuing: {:?}",
-                        workflow.id, e
-                    );
-                    Ok(true)
-                } else {
-                    error!("Workflow {} failed: {:?}", workflow.id, e);
+                if self.record_workflow_error(workflow, message, &e) {
                     Err(e)
+                } else {
+                    Ok(true)
                 }
             }
+        }
+    }
+
+    /// Record a `WORKFLOW_ERROR` to `message.errors` and log at the level
+    /// `continue_on_error` implies. Returns `true` when the caller should stop
+    /// processing further workflows (i.e. `continue_on_error` is `false`).
+    ///
+    /// Shared by `execute_inner` (returns from its own `Result<bool>`) and
+    /// `execute_sync_workflow_run` (returns from its `with_arena` closure or
+    /// continues the loop) — the recording and log-level decision are
+    /// identical; only what happens next differs by call site.
+    fn record_workflow_error(
+        &self,
+        workflow: &Workflow,
+        message: &mut Message,
+        e: &DataflowError,
+    ) -> bool {
+        message.errors.push(
+            ErrorInfo::builder(
+                "WORKFLOW_ERROR",
+                format!("Workflow {} error: {}", workflow.id, e),
+            )
+            .workflow_id(&workflow.id)
+            .build(),
+        );
+
+        if workflow.continue_on_error {
+            warn!(
+                "Workflow {} encountered error but continuing: {:?}",
+                workflow.id, e
+            );
+            false
+        } else {
+            error!("Workflow {} failed: {:?}", workflow.id, e);
+            true
         }
     }
 
@@ -626,7 +629,7 @@ impl WorkflowExecutor {
             let want_mapping_contexts = trace
                 .as_deref()
                 .is_some_and(|t| t.options().mapping_contexts);
-            let snapshot_buf = if want_mapping_contexts {
+            let mapping_snapshots_buf = if want_mapping_contexts {
                 Some(&mut mapping_snapshots)
             } else {
                 None
@@ -642,7 +645,8 @@ impl WorkflowExecutor {
             };
             let obs_start = trace_start.or_else(|| self.observer_clock());
 
-            let result = self.execute_sync_task_in_arena(task, message, arena_ctx, snapshot_buf);
+            let result =
+                self.execute_sync_task_in_arena(task, message, arena_ctx, mapping_snapshots_buf);
 
             // Before `handle_task_result`, whose `?` would drop failed tasks.
             self.emit_task_event(workflow, task, &result, obs_start);
@@ -820,25 +824,8 @@ impl WorkflowExecutor {
                         info!("Successfully completed workflow: {}", workflow.id);
                     }
                     Err(e) => {
-                        // Single-channel contract — mirror `execute_inner`:
-                        // record the workflow-context error to `message.errors`
-                        // and honor `continue_on_error`.
-                        message.errors.push(
-                            ErrorInfo::builder(
-                                "WORKFLOW_ERROR",
-                                format!("Workflow {} error: {}", workflow.id, e),
-                            )
-                            .workflow_id(&workflow.id)
-                            .build(),
-                        );
-
-                        if workflow.continue_on_error {
-                            warn!(
-                                "Workflow {} encountered error but continuing: {:?}",
-                                workflow.id, e
-                            );
-                        } else {
-                            error!("Workflow {} failed: {:?}", workflow.id, e);
+                        // Single-channel contract — mirror `execute_inner`.
+                        if self.record_workflow_error(workflow, message, &e) {
                             return Err(e);
                         }
                     }
@@ -853,14 +840,14 @@ impl WorkflowExecutor {
     /// the stretch contents are sync built-ins, so the `None` arm is
     /// unreachable in practice.
     ///
-    /// `map_snapshot_buf` is only consulted by the `Map` variant; non-Map
+    /// `mapping_snapshots` is only consulted by the `Map` variant; non-Map
     /// sync builtins ignore it. Pass `None` from the production path.
     fn execute_sync_task_in_arena<'arena>(
         &self,
         task: &'arena Task,
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'arena>,
-        map_snapshot_buf: Option<&mut Vec<Value>>,
+        mapping_snapshots: Option<&mut Vec<Value>>,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
         debug!(
             "Executing sync task in arena: {} ({})",
@@ -876,7 +863,7 @@ impl WorkflowExecutor {
         // we still surface the invariant violation as a recoverable engine
         // error rather than panicking via `unreachable!`.
         task.function
-            .try_execute_in_arena(message, arena_ctx, &self.engine, map_snapshot_buf)
+            .try_execute_in_arena(message, arena_ctx, &self.engine, mapping_snapshots)
             .ok_or_else(|| {
                 DataflowError::Task(format!(
                     "execute_sync_task_in_arena dispatched to non-sync-builtin task '{}' \
@@ -989,11 +976,17 @@ impl WorkflowExecutor {
                 // Add error to message. A service-classified error contributes
                 // its own `kind` as the code and carries its operator-only
                 // `detail`; everything else keeps the historical `TASK_ERROR`.
+                // Deliberately lifted at the task site only: the two
+                // `WORKFLOW_ERROR` wrappers wrap the same propagated error, so
+                // lifting there too would put two entries with the same
+                // `code` on the message — making "count errors by code"
+                // double-count — and would stop `WORKFLOW_ERROR` reliably
+                // meaning "a workflow stopped".
                 //
                 // `format!("{}", e)` stays caller-safe because `Service`'s
                 // `Display` is `{message}` — the detail is never interpolated.
                 let mut info = ErrorInfo::builder(
-                    task_error_code(&e),
+                    service_error_code(&e),
                     format!("Task {} error: {}", task_id, e),
                 )
                 .workflow_id(workflow_id)

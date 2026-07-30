@@ -131,7 +131,7 @@ impl MapConfig {
     /// `OwnedDataValue → arena` conversion done by an earlier task in the
     /// same workflow stretch is reused.
     ///
-    /// `trace_snapshots` (when `Some`) collects a `serde_json::Value` snapshot
+    /// `mapping_snapshots` (when `Some`) collects a `serde_json::Value` snapshot
     /// of `message.context` *before* each mapping runs — the trace
     /// surface uses this for per-mapping debugging. `None` skips the snapshot
     /// work entirely (the production path).
@@ -144,7 +144,7 @@ impl MapConfig {
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'arena>,
         engine: &Arc<Engine>,
-        mut trace_snapshots: Option<&mut Vec<Value>>,
+        mut mapping_snapshots: Option<&mut Vec<Value>>,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
         // Audit-on runs push one Change per non-null mapping — size for the
         // common all-mappings-write case up front.
@@ -164,7 +164,7 @@ impl MapConfig {
             // Trace mode: snapshot the context as a serde_json::Value *before*
             // applying this mapping. Bridge cost is acceptable on the debug
             // surface; production callers pass `None` and skip it entirely.
-            if let Some(buf) = trace_snapshots.as_deref_mut() {
+            if let Some(buf) = mapping_snapshots.as_deref_mut() {
                 buf.push(Value::from(&message.context));
             }
 

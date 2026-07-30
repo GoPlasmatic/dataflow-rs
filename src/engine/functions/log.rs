@@ -120,11 +120,11 @@ impl LogConfig {
 
         let mut field_parts = Vec::with_capacity(self.compiled_fields.len());
         for (key, compiled_opt) in &self.compiled_fields {
-            let val = match compiled_opt {
+            let field_value = match compiled_opt {
                 Some(compiled) => stringify(compiled),
                 None => "<uncompiled>".to_string(),
             };
-            field_parts.push(format!("{}={}", key, val));
+            field_parts.push(format!("{}={}", key, field_value));
         }
 
         let full_message = if field_parts.is_empty() {

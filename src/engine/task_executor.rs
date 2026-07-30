@@ -81,15 +81,21 @@ impl TaskExecutor {
             }
             FunctionConfig::Filter { input, .. } => input.execute(message, &self.engine),
             FunctionConfig::Log { input, .. } => input.execute(message, &self.engine),
-            // Async / user-registered handlers
+            // Async / user-registered handlers. Named via `function_name()`
+            // rather than a repeated string literal, so the registry lookup
+            // can never drift from the canonical name `FunctionConfig` itself
+            // reports for the variant.
             FunctionConfig::HttpCall { input, .. } => {
-                self.dispatch_handler("http_call", message, input).await
+                self.dispatch_handler(task.function.function_name(), message, input)
+                    .await
             }
             FunctionConfig::Enrich { input, .. } => {
-                self.dispatch_handler("enrich", message, input).await
+                self.dispatch_handler(task.function.function_name(), message, input)
+                    .await
             }
             FunctionConfig::PublishKafka { input, .. } => {
-                self.dispatch_handler("publish_kafka", message, input).await
+                self.dispatch_handler(task.function.function_name(), message, input)
+                    .await
             }
             FunctionConfig::Custom {
                 name,

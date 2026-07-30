@@ -14,7 +14,9 @@ use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::ArenaContext;
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::utils::{get_nested_value, get_nested_value_parts, set_nested_value_parts};
+use crate::engine::utils::{
+    compute_data_path, get_nested_value, get_nested_value_parts, set_nested_value_parts,
+};
 use datavalue::OwnedDataValue;
 use log::debug;
 use serde::Deserialize;
@@ -76,10 +78,7 @@ impl ParseConfig {
     /// Populate the precomputed target-path fields from `target`. Called by
     /// `LogicCompiler` for serde-built configs and by `from_json`.
     pub(crate) fn precompute_target_path(&mut self) {
-        let path = format!("data.{}", self.target);
-        let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
-        self.target_path_parts = parts.into();
-        self.target_path_arc = Arc::from(path);
+        (self.target_path_arc, self.target_path_parts) = compute_data_path(&self.target);
     }
 
     /// Precomputed `(path, parts)` for `data.{target}` — falls back to
@@ -87,9 +86,7 @@ impl ParseConfig {
     /// surface), mirroring the `MapMapping` fallback pattern.
     fn resolve_target_path(&self) -> (Arc<str>, Arc<[Arc<str>]>) {
         if self.target_path_parts.is_empty() {
-            let path = format!("data.{}", self.target);
-            let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
-            (Arc::from(path), parts.into())
+            compute_data_path(&self.target)
         } else {
             (
                 Arc::clone(&self.target_path_arc),
@@ -147,17 +144,7 @@ pub fn execute_parse_json(
         // Resolve the source value once. For the payload fast-path we clone
         // out of the shared `Arc<OwnedDataValue>` payload; for the slow path
         // we extract from a sub-tree and re-parse JSON-string payloads.
-        let source_data = if payload_fast_path {
-            (*message.payload).clone()
-        } else {
-            let raw = config.extract_source(message);
-            match &raw {
-                OwnedDataValue::String(s) => {
-                    OwnedDataValue::from_json(s).unwrap_or_else(|_| raw.clone())
-                }
-                _ => raw,
-            }
-        };
+        let source_data = resolve_parsed_source(config, message, payload_fast_path);
 
         // Clone the source value once for the audit `new_value`; the original
         // is moved into the context below. (No `Arc` wrapping in the audit
@@ -180,7 +167,27 @@ pub fn execute_parse_json(
     }
 
     // Audit-off fast path: only the deep clone into the context survives.
-    let source_data_for_context: OwnedDataValue = if payload_fast_path {
+    let source_data_for_context = resolve_parsed_source(config, message, payload_fast_path);
+    set_nested_value_parts(&mut message.context, &target_parts, source_data_for_context);
+
+    debug!(
+        "ParseJson: Successfully stored data to 'data.{}'",
+        config.target
+    );
+
+    Ok((TaskOutcome::Success, Vec::new()))
+}
+
+/// Resolve the value `parse_json` stores into `data.{target}`. The payload
+/// fast-path clones straight out of the shared `Arc<OwnedDataValue>` payload;
+/// otherwise the source is extracted from a sub-tree, re-parsing a
+/// JSON-string source and falling back to the raw value on parse failure.
+fn resolve_parsed_source(
+    config: &ParseConfig,
+    message: &Message,
+    payload_fast_path: bool,
+) -> OwnedDataValue {
+    if payload_fast_path {
         (*message.payload).clone()
     } else {
         let raw = config.extract_source(message);
@@ -190,15 +197,7 @@ pub fn execute_parse_json(
             }
             _ => raw,
         }
-    };
-    set_nested_value_parts(&mut message.context, &target_parts, source_data_for_context);
-
-    debug!(
-        "ParseJson: Successfully stored data to 'data.{}'",
-        config.target
-    );
-
-    Ok((TaskOutcome::Success, Vec::new()))
+    }
 }
 
 /// Same as `execute_parse_json` but also refreshes the supplied

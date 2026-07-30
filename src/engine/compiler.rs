@@ -9,7 +9,7 @@
 
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::functions::integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
-use crate::engine::functions::template::TemplateCompiler;
+use crate::engine::functions::template::{Template, TemplateCompiler};
 use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
 use crate::engine::{FunctionConfig, Workflow};
 use datalogic_rs::{Engine, Logic};
@@ -232,10 +232,7 @@ impl LogicCompiler {
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        let msg_label = format!(
-            "log message for task {} in workflow {}",
-            task_id, workflow_id
-        );
+        let msg_label = label("log message", task_id, workflow_id);
         config.compiled_message = Some(self.compile(&config.message, &msg_label)?);
 
         // Compile each field expression. Collect into a fresh Vec, then
@@ -260,10 +257,7 @@ impl LogicCompiler {
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        let label = format!(
-            "filter condition for task {} in workflow {}",
-            task_id, workflow_id
-        );
+        let label = label("filter condition", task_id, workflow_id);
         config.compiled_condition = Some(self.compile(&config.condition, &label)?);
         Ok(())
     }
@@ -275,20 +269,18 @@ impl LogicCompiler {
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        if let Some(t) = &mut config.path_logic {
-            let label = format!(
-                "http_call path_logic for task {} in workflow {}",
-                task_id, workflow_id
-            );
-            t.compile(&self.template_compiler, &label)?;
-        }
-        if let Some(t) = &mut config.body_logic {
-            let label = format!(
-                "http_call body_logic for task {} in workflow {}",
-                task_id, workflow_id
-            );
-            t.compile(&self.template_compiler, &label)?;
-        }
+        self.compile_template_field(
+            &mut config.path_logic,
+            "http_call path_logic",
+            task_id,
+            workflow_id,
+        )?;
+        self.compile_template_field(
+            &mut config.body_logic,
+            "http_call body_logic",
+            task_id,
+            workflow_id,
+        )?;
         Ok(())
     }
 
@@ -299,14 +291,12 @@ impl LogicCompiler {
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        if let Some(t) = &mut config.path_logic {
-            let label = format!(
-                "enrich path_logic for task {} in workflow {}",
-                task_id, workflow_id
-            );
-            t.compile(&self.template_compiler, &label)?;
-        }
-        Ok(())
+        self.compile_template_field(
+            &mut config.path_logic,
+            "enrich path_logic",
+            task_id,
+            workflow_id,
+        )
     }
 
     /// Compile publish_kafka JSONLogic expressions (key_logic, value_logic)
@@ -316,22 +306,46 @@ impl LogicCompiler {
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        if let Some(t) = &mut config.key_logic {
-            let label = format!(
-                "publish_kafka key_logic for task {} in workflow {}",
-                task_id, workflow_id
-            );
-            t.compile(&self.template_compiler, &label)?;
-        }
-        if let Some(t) = &mut config.value_logic {
-            let label = format!(
-                "publish_kafka value_logic for task {} in workflow {}",
-                task_id, workflow_id
-            );
-            t.compile(&self.template_compiler, &label)?;
+        self.compile_template_field(
+            &mut config.key_logic,
+            "publish_kafka key_logic",
+            task_id,
+            workflow_id,
+        )?;
+        self.compile_template_field(
+            &mut config.value_logic,
+            "publish_kafka value_logic",
+            task_id,
+            workflow_id,
+        )?;
+        Ok(())
+    }
+
+    /// Compile an optional built-in integration `Template` field — `path_logic`,
+    /// `body_logic`, `key_logic`, `value_logic` — against `self.template_compiler`.
+    /// A `None` field is a no-op, matching every one of these fields being
+    /// optional. `what` labels the compile-error context as `"{what} for task
+    /// {task_id} in workflow {workflow_id}"`, e.g. `"http_call body_logic"`.
+    fn compile_template_field(
+        &self,
+        field: &mut Option<Template>,
+        what: &str,
+        task_id: &str,
+        workflow_id: &str,
+    ) -> Result<()> {
+        if let Some(t) = field {
+            t.compile(&self.template_compiler, &label(what, task_id, workflow_id))?;
         }
         Ok(())
     }
+}
+
+/// Format a JSONLogic compile-error label as `"{what} for task {task_id} in
+/// workflow {workflow_id}"` — the shape shared by every built-in whose
+/// context needs no further detail (a few, like map mappings and validation
+/// rules, append per-item detail and format their own label instead).
+fn label(what: &str, task_id: &str, workflow_id: &str) -> String {
+    format!("{what} for task {task_id} in workflow {workflow_id}")
 }
 
 #[cfg(test)]

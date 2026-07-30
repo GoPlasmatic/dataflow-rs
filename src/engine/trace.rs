@@ -568,6 +568,29 @@ fn redacting_clone(value: &OwnedDataValue, paths: &[Vec<String>]) -> (OwnedDataV
     redacting_clone_inner(value, &refs)
 }
 
+/// Narrow `paths` to the child suffixes that still apply under object key
+/// `key` — the entries whose head segment (after the `#`-prefix escape)
+/// matches `key`, each with that head segment dropped. Shared by every
+/// redact/size walker below so the "does this path element apply here"
+/// filter has one definition instead of one copy per walker per value type.
+fn narrow_for_object_key<'a>(paths: &[&'a [String]], key: &str) -> Vec<&'a [String]> {
+    paths
+        .iter()
+        .filter(|p| strip_hash_prefix(&p[0]) == key)
+        .map(|p| &p[1..])
+        .collect()
+}
+
+/// Same as [`narrow_for_object_key`] but for an array index: the entries
+/// whose head segment parses as `idx`.
+fn narrow_for_array_index<'a>(paths: &[&'a [String]], idx: usize) -> Vec<&'a [String]> {
+    paths
+        .iter()
+        .filter(|p| p[0].parse::<usize>() == Ok(idx))
+        .map(|p| &p[1..])
+        .collect()
+}
+
 fn redacting_clone_inner(value: &OwnedDataValue, paths: &[&[String]]) -> (OwnedDataValue, usize) {
     // An exhausted suffix names this node: redact without descending.
     if paths.iter().any(|p| p.is_empty()) {
@@ -579,11 +602,7 @@ fn redacting_clone_inner(value: &OwnedDataValue, paths: &[&[String]]) -> (OwnedD
             let mut out = Vec::with_capacity(pairs.len());
             let mut size = NODE_SIZE;
             for (key, child) in pairs {
-                let sub: Vec<&[String]> = paths
-                    .iter()
-                    .filter(|p| strip_hash_prefix(&p[0]) == key.as_str())
-                    .map(|p| &p[1..])
-                    .collect();
+                let sub = narrow_for_object_key(paths, key);
                 let (cloned, child_size) = redacting_clone_inner(child, &sub);
                 size += key.len() + child_size;
                 out.push((key.clone(), cloned));
@@ -594,11 +613,7 @@ fn redacting_clone_inner(value: &OwnedDataValue, paths: &[&[String]]) -> (OwnedD
             let mut out = Vec::with_capacity(items.len());
             let mut size = NODE_SIZE;
             for (idx, child) in items.iter().enumerate() {
-                let sub: Vec<&[String]> = paths
-                    .iter()
-                    .filter(|p| p[0].parse::<usize>() == Ok(idx))
-                    .map(|p| &p[1..])
-                    .collect();
+                let sub = narrow_for_array_index(paths, idx);
                 let (cloned, child_size) = redacting_clone_inner(child, &sub);
                 size += child_size;
                 out.push(cloned);
@@ -629,11 +644,7 @@ fn redacted_size_inner(value: &OwnedDataValue, paths: &[&[String]]) -> usize {
         OwnedDataValue::Object(pairs) => {
             let mut size = NODE_SIZE;
             for (key, child) in pairs {
-                let sub: Vec<&[String]> = paths
-                    .iter()
-                    .filter(|p| strip_hash_prefix(&p[0]) == key.as_str())
-                    .map(|p| &p[1..])
-                    .collect();
+                let sub = narrow_for_object_key(paths, key);
                 size += key.len() + redacted_size_inner(child, &sub);
             }
             size
@@ -641,11 +652,7 @@ fn redacted_size_inner(value: &OwnedDataValue, paths: &[&[String]]) -> usize {
         OwnedDataValue::Array(items) => {
             let mut size = NODE_SIZE;
             for (idx, child) in items.iter().enumerate() {
-                let sub: Vec<&[String]> = paths
-                    .iter()
-                    .filter(|p| p[0].parse::<usize>() == Ok(idx))
-                    .map(|p| &p[1..])
-                    .collect();
+                let sub = narrow_for_array_index(paths, idx);
                 size += redacted_size_inner(child, &sub);
             }
             size
@@ -696,21 +703,13 @@ fn redact_json_inner(value: &mut Value, paths: &[&[String]]) {
     match value {
         Value::Object(map) => {
             for (key, child) in map.iter_mut() {
-                let sub: Vec<&[String]> = paths
-                    .iter()
-                    .filter(|p| strip_hash_prefix(&p[0]) == key.as_str())
-                    .map(|p| &p[1..])
-                    .collect();
+                let sub = narrow_for_object_key(paths, key);
                 redact_json_inner(child, &sub);
             }
         }
         Value::Array(items) => {
             for (idx, child) in items.iter_mut().enumerate() {
-                let sub: Vec<&[String]> = paths
-                    .iter()
-                    .filter(|p| p[0].parse::<usize>() == Ok(idx))
-                    .map(|p| &p[1..])
-                    .collect();
+                let sub = narrow_for_array_index(paths, idx);
                 redact_json_inner(child, &sub);
             }
         }

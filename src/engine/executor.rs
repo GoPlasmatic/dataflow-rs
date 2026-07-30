@@ -185,16 +185,16 @@ impl<'a> ArenaContext<'a> {
                 match v {
                     OwnedDataValue::Object(children) => {
                         let mut d2_keys: Vec<&'a str> = Vec::with_capacity(children.len());
-                        let mut d2_vals: Vec<DataValue<'a>> = Vec::with_capacity(children.len());
+                        let mut d2_values: Vec<DataValue<'a>> = Vec::with_capacity(children.len());
                         for (ck, cv) in children {
                             d2_keys.push(arena.alloc_str(ck));
-                            d2_vals.push(cv.to_arena(arena));
+                            d2_values.push(cv.to_arena(arena));
                         }
-                        let slice = build_object_slice(arena, &d2_keys, &d2_vals);
+                        let slice = build_object_slice(arena, &d2_keys, &d2_values);
                         top_values.push(DataValue::Object(slice));
                         depth2.push(Some(Depth2Cache {
                             keys: d2_keys,
-                            values: d2_vals,
+                            values: d2_values,
                         }));
                     }
                     _ => {
@@ -484,16 +484,16 @@ impl<'a> ArenaContext<'a> {
         match owned {
             OwnedDataValue::Object(children) => {
                 let mut d2_keys: Vec<&'a str> = Vec::with_capacity(children.len());
-                let mut d2_vals: Vec<DataValue<'a>> = Vec::with_capacity(children.len());
+                let mut d2_values: Vec<DataValue<'a>> = Vec::with_capacity(children.len());
                 for (ck, cv) in children {
                     d2_keys.push(self.arena.alloc_str(ck));
-                    d2_vals.push(cv.to_arena(self.arena));
+                    d2_values.push(cv.to_arena(self.arena));
                 }
-                let slice = build_object_slice(self.arena, &d2_keys, &d2_vals);
+                let slice = build_object_slice(self.arena, &d2_keys, &d2_values);
                 self.top_values[idx] = DataValue::Object(slice);
                 self.depth2[idx] = Some(Depth2Cache {
                     keys: d2_keys,
-                    values: d2_vals,
+                    values: d2_values,
                 });
             }
             _ => {

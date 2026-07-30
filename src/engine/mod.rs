@@ -152,7 +152,7 @@ impl Engine {
     ///
     /// # Arguments
     /// * `workflows` - The workflows to use for processing messages
-    /// * `custom_functions` - Custom async function handlers (use
+    /// * `task_functions` - Custom async function handlers (use
     ///   `HashMap::new()` for none, or prefer [`Engine::builder`])
     ///
     /// # Example
@@ -169,7 +169,7 @@ impl Engine {
     /// `HashMap` (use `HashMap::new()` for the no-handler case).
     pub fn new(
         workflows: Vec<Workflow>,
-        custom_functions: HashMap<String, BoxedFunctionHandler>,
+        task_functions: HashMap<String, BoxedFunctionHandler>,
     ) -> Result<Self> {
         // Compile workflows (sorted by priority at compile time). Each
         // workflow/task/config owns its own `Arc<Logic>` slots — no central
@@ -177,8 +177,6 @@ impl Engine {
         let compiler = LogicCompiler::new();
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
-
-        let task_functions = custom_functions;
 
         // Pre-parse `FunctionConfig::Custom { input }` JSON into the
         // registered handler's typed `Self::Input`, caching the boxed value
@@ -457,25 +455,8 @@ impl Engine {
         channel: &str,
         message: &mut Message,
     ) -> Result<()> {
-        let now = Utc::now();
-        set_processing_metadata(
-            &mut message.context,
-            &self.engine_version,
-            now,
-            Some(channel),
-        );
-
-        if let Some(indices) = self.channel_index.get(channel) {
-            // Channel-selected workflows are non-contiguous in the registry,
-            // so the pointer collect stays on this path.
-            let workflows: Vec<&Workflow> =
-                indices.iter().map(|&idx| &self.workflows[idx]).collect();
-            self.workflow_executor
-                .run_all_borrowed(&workflows, message, None, now)
-                .await?;
-        }
-
-        Ok(())
+        self.process_channel(channel, message, None, Utc::now())
+            .await
     }
 
     /// Channel-scoped variant of [`Engine::process_message_tracing`].
@@ -495,7 +476,21 @@ impl Engine {
         message: &mut Message,
         trace: &mut ExecutionTrace,
     ) -> Result<()> {
-        let now = Utc::now();
+        self.process_channel(channel, message, Some(trace), Utc::now())
+            .await
+    }
+
+    /// Shared driver behind [`Self::process_message_for_channel`] and
+    /// [`Self::process_message_for_channel_tracing`] — stamps processing
+    /// metadata and runs only the channel's Active workflows. An unknown
+    /// channel, or one with no Active workflows, is a no-op.
+    async fn process_channel(
+        &self,
+        channel: &str,
+        message: &mut Message,
+        trace: Option<&mut ExecutionTrace>,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<()> {
         set_processing_metadata(
             &mut message.context,
             &self.engine_version,
@@ -504,10 +499,12 @@ impl Engine {
         );
 
         if let Some(indices) = self.channel_index.get(channel) {
+            // Channel-selected workflows are non-contiguous in the registry,
+            // so the pointer collect stays on this path.
             let workflows: Vec<&Workflow> =
                 indices.iter().map(|&idx| &self.workflows[idx]).collect();
             self.workflow_executor
-                .run_all_borrowed(&workflows, message, Some(trace), now)
+                .run_all_borrowed(&workflows, message, trace, now)
                 .await?;
         }
 

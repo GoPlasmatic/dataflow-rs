@@ -8,7 +8,9 @@
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::utils::{get_nested_value, get_nested_value_parts, set_nested_value_parts};
+use crate::engine::utils::{
+    compute_data_path, get_nested_value, get_nested_value_parts, set_nested_value_parts,
+};
 use datavalue::OwnedDataValue;
 use log::debug;
 use serde::Deserialize;
@@ -110,10 +112,7 @@ impl PublishConfig {
     /// Populate the precomputed target-path fields from `target`. Called by
     /// `LogicCompiler` for serde-built configs and by `from_json`.
     pub(crate) fn precompute_target_path(&mut self) {
-        let path = format!("data.{}", self.target);
-        let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
-        self.target_path_parts = parts.into();
-        self.target_path_arc = Arc::from(path);
+        (self.target_path_arc, self.target_path_parts) = compute_data_path(&self.target);
     }
 
     /// Precomputed `(path, parts)` for `data.{target}` — falls back to
@@ -121,9 +120,7 @@ impl PublishConfig {
     /// surface), mirroring the `MapMapping` fallback pattern.
     fn resolve_target_path(&self) -> (Arc<str>, Arc<[Arc<str>]>) {
         if self.target_path_parts.is_empty() {
-            let path = format!("data.{}", self.target);
-            let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
-            (Arc::from(path), parts.into())
+            compute_data_path(&self.target)
         } else {
             (
                 Arc::clone(&self.target_path_arc),

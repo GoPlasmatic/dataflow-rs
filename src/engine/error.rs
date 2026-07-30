@@ -287,13 +287,17 @@ pub struct ErrorInfo {
     pub detail: Option<String>,
 }
 
-/// Code recorded for a [`DataflowError::Service`].
+/// Code recorded for a [`DataflowError::Service`] — also the historical
+/// `TASK_ERROR` fallback for every other variant. Shared with
+/// `workflow_executor`'s per-task error recording, which needs the identical
+/// "Service contributes its own kind verbatim; everything else stays
+/// `TASK_ERROR`" rule.
 ///
 /// `kind` is passed through **verbatim** rather than upper-cased: the service owns
 /// it and will switch on the recorded `code`, so making the two different strings
 /// would force every consumer to know the transform. An empty `kind` falls back to
 /// the historical `TASK_ERROR` so no `ErrorInfo` ever carries an empty code.
-fn service_error_code(error: &DataflowError) -> String {
+pub(crate) fn service_error_code(error: &DataflowError) -> String {
     match error.kind() {
         Some(kind) if !kind.is_empty() => kind.to_string(),
         _ => "TASK_ERROR".to_string(),

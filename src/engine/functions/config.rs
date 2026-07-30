@@ -448,7 +448,7 @@ impl FunctionConfig {
     /// the workflow executor uses that as the signal to break the sync
     /// stretch and dispatch the task on the async path instead.
     ///
-    /// `map_snapshot_buf` is only consulted by the `Map` variant — when
+    /// `mapping_snapshots` is only consulted by the `Map` variant — when
     /// `Some`, the map function pushes a `serde_json::Value` snapshot of the
     /// context before each mapping (for the trace surface). All other
     /// variants ignore it. Pass `None` from the production path.
@@ -461,11 +461,11 @@ impl FunctionConfig {
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'arena>,
         engine: &Arc<Engine>,
-        map_snapshot_buf: Option<&mut Vec<Value>>,
+        mapping_snapshots: Option<&mut Vec<Value>>,
     ) -> Option<Result<(TaskOutcome, Vec<Change>)>> {
         match self {
             FunctionConfig::Map { input, .. } => {
-                Some(input.execute_in_arena(message, arena_ctx, engine, map_snapshot_buf))
+                Some(input.execute_in_arena(message, arena_ctx, engine, mapping_snapshots))
             }
             FunctionConfig::Validation { input, .. } => {
                 Some(input.execute_in_arena(message, arena_ctx, engine))
