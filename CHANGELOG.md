@@ -13,6 +13,21 @@ because new public items ship and several existing behaviours change.
 
 ### Added
 
+- **task-outcome:** `HALT_STATUS_CODE` is re-exported from the crate root.
+  Public since v3 but only reachable as
+  `dataflow_rs::engine::task_outcome::HALT_STATUS_CODE`.
+- **tests:** operator-semantics coverage in `src/engine/compiler.rs`, pinning
+  the `datalogic-rs` behaviour this crate's own code depends on against a live
+  engine built the way `LogicCompiler` builds one — empty-operand results
+  (`{"and":[]}` → `null`, `{"+":[]}` → `0`, …), a missing `var` path resolving
+  to `null` rather than erroring (the mechanism behind the `payload.*` pitfall
+  CLAUDE.md documents), the documented truthy/falsy table (previously an
+  unverified `json` fence in the guide), and — the one that matters most —
+  that an unrecognised or feature-gated operator name (`starts_with`, not
+  enabled by this crate's `Cargo.toml`) is **not** an error under templating:
+  it echoes back as a literal object. That silent-pass-through is exactly why
+  a static "known operators" table was refused earlier in this audit; now it's
+  a regression test instead of a comment.
 - **functions:** `Template` and `TemplateCompiler`, plus a defaulted
   `AsyncFunctionHandler::compile_input` hook. Lets a custom handler declare a
   config field whose authored JSON is JSONLogic — the same `*_logic` pattern
@@ -296,7 +311,7 @@ trace keeps the historical wire shape. Neither `ExecutionStep` nor `Message` set
 kept as a fallback, and a new `traceHasSnapshots()` helper reports whether a trace
 carries state to inspect at all.
 
-Workspace test count 184 → 365.
+Workspace test count 184 → 369.
 
 ## [3.0.4] — 2026-07-26
 

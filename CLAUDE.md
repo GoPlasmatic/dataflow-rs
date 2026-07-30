@@ -184,7 +184,7 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 365 passing.
+`cargo test --workspace --all-features` should report 369 passing.
 
 When extending the engine:
 

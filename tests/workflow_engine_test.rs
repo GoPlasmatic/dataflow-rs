@@ -1523,11 +1523,15 @@ async fn filter_halt_in_sync_stretch_short_circuits_workflow() {
     let mut message = Message::from_value(&json!({}));
     engine.process_message(&mut message).await.unwrap();
 
-    // Only the gate's audit entry should exist (status 299 = HALT). The map
-    // task never ran, so `data.should_not_run` must be absent.
+    // Only the gate's audit entry should exist. The map task never ran, so
+    // `data.should_not_run` must be absent. `HALT_STATUS_CODE` reachable from
+    // the crate root, not just `dataflow_rs::engine::task_outcome::..`.
     assert_eq!(message.audit_trail().len(), 1);
     assert_eq!(message.audit_trail()[0].task_id.as_ref(), "gate");
-    assert_eq!(message.audit_trail()[0].status, 299);
+    assert_eq!(
+        message.audit_trail()[0].status,
+        usize::from(dataflow_rs::HALT_STATUS_CODE)
+    );
     assert!(message.context["data"].get("should_not_run").is_none());
 }
 

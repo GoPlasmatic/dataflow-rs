@@ -333,3 +333,127 @@ impl LogicCompiler {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Pins the datalogic operator semantics this crate's own behaviour
+    //! depends on. Not an attempt at a general operator-semantics table — that
+    //! was investigated and refused: `datalogic-rs` keeps `mod opcode;` private
+    //! and `OpCode` `pub(crate)`, so this crate could only hand-maintain the
+    //! same unverified table one layer lower, and it would actively mislead —
+    //! see `an_unrecognised_operator_is_not_an_error_under_templating` below,
+    //! which is exactly the case a static "known operators" table would get
+    //! wrong. Every value here was read from a live `datalogic_rs::Engine`
+    //! built the way `LogicCompiler::new` builds one, not assumed.
+    //!
+    //! If a `datalogic-rs` upgrade changes any of these, that is a real
+    //! behaviour change for every workflow in production — these tests exist
+    //! so it fails CI instead of surfacing as a support ticket.
+
+    use super::*;
+    use serde_json::json;
+
+    /// The exact engine construction `LogicCompiler::new` uses: templating
+    /// enabled, `serde_json` feature only — no `ext-string`/`ext-array`/
+    /// `ext-math`/`ext-control`/`error-handling`/`datetime`.
+    fn engine() -> Engine {
+        Engine::builder().with_templating(true).build()
+    }
+
+    fn eval(engine: &Engine, logic: &Value) -> Value {
+        let compiled = engine.compile_arc(logic).expect("should compile");
+        let ctx = datavalue::OwnedDataValue::from(&json!({}));
+        serde_json::from_str(
+            &engine
+                .session()
+                .eval_str(&compiled, &ctx)
+                .expect("should evaluate"),
+        )
+        .expect("eval_str output should be valid JSON")
+    }
+
+    #[test]
+    fn empty_operand_results_this_crate_would_silently_break_on() {
+        // A workflow author can write any of these — a map mapping folding an
+        // empty list, a filter condition over an empty selector — and the
+        // crate never validates operand count. If a datalogic upgrade changed
+        // any of these defaults, every workflow relying on the vacuous case
+        // would silently start producing a different value.
+        let e = engine();
+        for (logic, expected) in [
+            (json!({"and": []}), json!(null)),
+            (json!({"or": []}), json!(null)),
+            (json!({"+": []}), json!(0)),
+            (json!({"*": []}), json!(1)),
+            (json!({"cat": []}), json!("")),
+            (json!({"merge": []}), json!([])),
+            (json!({"missing": []}), json!([])),
+        ] {
+            assert_eq!(eval(&e, &logic), expected, "for {logic}");
+        }
+    }
+
+    #[test]
+    fn a_missing_var_path_resolves_to_null_not_an_error() {
+        // The exact mechanism behind the pitfall CLAUDE.md documents for
+        // `payload.*` expressions: a `var` over a path that does not resolve
+        // is `Null`, silently, never `Err`. `Template::eval` and the built-in
+        // `*_logic` fields inherit this — there is no engine-level signal that
+        // distinguishes "field absent" from "field is null".
+        let e = engine();
+        assert_eq!(
+            eval(&e, &json!({"var": "data.does_not_exist"})),
+            json!(null)
+        );
+    }
+
+    #[test]
+    fn truthy_falsy_matches_the_documented_semantics() {
+        // Verifies the claim in docs/src/advanced/jsonlogic.md's Truthy/Falsy
+        // section, which is a `json` fence and therefore NOT compiled by
+        // dataflow-docs-tests — this is the only check on that claim.
+        // Notable and easy to get wrong: an empty object `{}` is falsy here,
+        // unlike some JSONLogic implementations that treat any object as truthy.
+        let e = engine();
+        for (v, truthy) in [
+            (json!(0), false),
+            (json!(""), false),
+            (json!(false), false),
+            (json!(null), false),
+            (json!([]), false),
+            (json!({}), false),
+            (json!("x"), true),
+            (json!(1), true),
+        ] {
+            assert_eq!(
+                eval(&e, &json!({"!!": v})),
+                json!(truthy),
+                "truthiness of {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_operator_is_not_an_error_under_templating() {
+        // The load-bearing fact behind #26's refusal of a static "known
+        // operators" table, and the reason `Template` documents itself as
+        // opt-in per field rather than a blanket JSON wrapper: under
+        // templating (which LogicCompiler and TemplateCompiler both enable),
+        // neither a name gated behind an unenabled feature (`starts_with`
+        // needs `ext-string`, not in this crate's Cargo.toml) nor an outright
+        // typo fails to compile or fails to evaluate. Both echo back as a
+        // literal structured object instead — a workflow author who mistypes
+        // an operator name gets silent pass-through, not a validation error.
+        let e = engine();
+        for logic in [
+            json!({"starts_with": ["hello", "he"]}),
+            json!({"totally_made_up_op_xyz": ["a", "b"]}),
+        ] {
+            assert_eq!(
+                eval(&e, &logic),
+                logic,
+                "an unrecognised/gated operator must echo back verbatim, not error"
+            );
+        }
+    }
+}

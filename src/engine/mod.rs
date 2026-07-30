@@ -79,7 +79,7 @@ pub use message::Message;
 pub use observer::{ExecutionObserver, TaskEvent};
 pub use task::Task;
 pub use task_context::TaskContext;
-pub use task_outcome::TaskOutcome;
+pub use task_outcome::{HALT_STATUS_CODE, TaskOutcome};
 pub use trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
 pub use workflow::{ConnectorRef, Rollout, Workflow, WorkflowStatus};
 
