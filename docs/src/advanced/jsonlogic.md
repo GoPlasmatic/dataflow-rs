@@ -260,13 +260,71 @@ Access fields with:
 
 ### Type Checking
 
+The operator is `type`, not `typeof`, and it requires the `ext-control`
+[operator family](#operator-families-cargo-features). It returns `"null"`,
+`"boolean"`, `"number"`, `"string"`, `"array"` or `"object"`.
+
 ```json
 // Check if string
-{"===": [{"typeof": {"var": "data.field"}}, "string"]}
+{"===": [{"type": {"var": "data.field"}}, "string"]}
 
 // Check if array
-{"===": [{"typeof": {"var": "data.items"}}, "array"]}
+{"===": [{"type": {"var": "data.items"}}, "array"]}
 ```
+
+With the `datetime` family also enabled, `type` classifies date-shaped strings
+as `"datetime"` or `"duration"` rather than `"string"`.
+
+## Operator Families (Cargo Features)
+
+Everything documented above this section is core JSONLogic and is always
+available. The remaining operators ship behind cargo features, all **off by
+default**:
+
+| Feature | Operators |
+|---|---|
+| `ext-string` | `length`, `starts_with`, `ends_with`, `upper`, `lower`, `trim`, `split` |
+| `ext-array` | `sort`, `slice` |
+| `ext-math` | `abs`, `ceil`, `floor` |
+| `ext-control` | `exists`, `??`, `switch` (alias `match`), `type` |
+| `error-handling` | `try`, `throw` |
+| `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
+| `all-operators` | every family above |
+
+```toml
+[dependencies]
+dataflow-rs = { version = "3.2", features = ["ext-string", "ext-control"] }
+```
+
+`error-handling` names the JSONLogic `try`/`throw` operators. It has nothing to
+do with dataflow-rs's own [error handling](../core-concepts/error-handling.md),
+which is always on.
+
+Two placements are easy to get wrong: `length` is in `ext-string`, not
+`ext-array`, even though it counts array elements as well as string characters;
+and `type` is in `ext-control`, not a family of its own.
+
+### Enabling a family can change existing rules
+
+dataflow-rs runs JSONLogic in **templating mode**, where an unrecognised
+operator name is not an error — the object passes through as literal data. That
+is what makes these features non-additive.
+
+Before `ext-string`, a mapping that produces `{"length": {"var": "data.x"}}`
+stores that object verbatim. After `ext-string`, the same mapping stores a
+number. Audit your rules for object keys matching any operator in the table
+above before enabling its family.
+
+`datetime` goes further and changes **core** operators. With it on, `==`, `<`,
+`<=`, `>` and `>=` first try to parse plain string operands as datetimes or
+durations:
+
+```json
+{"==": ["2024-01-15T00:00:00Z", "2024-01-15T01:00:00+01:00"]}
+```
+
+This is `false` without `datetime` and `true` with it — the two strings are
+different bytes naming the same instant.
 
 ## Best Practices
 

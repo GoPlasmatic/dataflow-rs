@@ -67,6 +67,33 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features --locked
 
+      # Everything above is --all-features. `-p dataflow-rs` rather than
+      # `--workspace` is load-bearing: dataflow-wasm depends on dataflow-rs with
+      # `all-operators`, and cargo unifies features across workspace members
+      # selected in one invocation, so `--workspace` silently turns every
+      # operator family back on. These two steps are the only ones that compile
+      # the crate the way `cargo add dataflow-rs` delivers it.
+      - name: Run clippy (default features)
+        run: cargo clippy -p dataflow-rs --all-targets --locked -- -D warnings
+
+      # No `--all-targets`: that flag suppresses doctests, and the README
+      # snippets compiled by `ReadmeDoctests` are user-facing claims that must
+      # hold in the default configuration.
+      - name: Run tests (default features)
+        run: cargo test -p dataflow-rs --locked
+
+      # `--all-features` and the default build are the two endpoints; neither
+      # catches a family that only compiles when another one is also on.
+      - name: Test each operator family in isolation
+        run: |
+          set -euo pipefail
+          for f in datetime ext-string ext-array ext-math ext-control \
+                   error-handling all-operators; do
+            echo "::group::$f"
+            cargo test -p dataflow-rs --no-default-features --features "$f" --locked
+            echo "::endgroup::"
+          done
+
   # The native job above builds dataflow-wasm for the host only. This job is
   # what actually exercises the wasm32 target, where uuid/chrono take different
   # code paths than they do natively.
@@ -102,7 +129,7 @@ jobs:
       - name: Run clippy (wasm32)
         run: |
           cargo clippy -p dataflow-rs --target wasm32-unknown-unknown \
-            --features wasm-web -- -D warnings
+            --features wasm-web,all-operators -- -D warnings
           cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown \
             --all-targets -- -D warnings
 

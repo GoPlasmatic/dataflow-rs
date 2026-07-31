@@ -11,10 +11,34 @@ Add dataflow-rs to your Rust project using Cargo.
 
 ```toml
 [dependencies]
-dataflow-rs = "3.0"
+dataflow-rs = "3.2"
 serde_json = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
+
+## Cargo Features
+
+All features are off by default; the default build has core JSONLogic only.
+
+| Feature | Unlocks |
+|---|---|
+| `ext-string` | `length`, `starts_with`, `ends_with`, `upper`, `lower`, `trim`, `split` |
+| `ext-array` | `sort`, `slice` |
+| `ext-math` | `abs`, `ceil`, `floor` |
+| `ext-control` | `exists`, `??`, `switch` (alias `match`), `type` |
+| `error-handling` | `try`, `throw` (the JSONLogic operators — unrelated to dataflow-rs error handling, which is always on) |
+| `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
+| `all-operators` | every family above |
+| `wasm-web` | required when targeting `wasm32-unknown-unknown` |
+
+```toml
+[dependencies]
+dataflow-rs = { version = "3.2", features = ["ext-string"] }
+```
+
+Read [JSONLogic → Operator Families](../advanced/jsonlogic.md#operator-families-cargo-features)
+before enabling one: turning a family on can change how an existing rule
+behaves.
 
 ## Verify Installation
 

@@ -54,11 +54,18 @@ treats warnings as errors:
 ```bash
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy -p dataflow-rs --all-targets -- -D warnings
 ```
 
 `--all-targets` covers examples, tests and benches; `--all-features` covers the
 `wasm-web` feature, which is otherwise silently skipped. Never leave clippy
 warnings behind.
+
+The second line is not redundant: it lints the **default** build, which is what
+`cargo add dataflow-rs` delivers. `--workspace` cannot do it — `dataflow-wasm`
+depends on `dataflow-rs` with `all-operators`, and cargo unifies features across
+workspace members, so a `--workspace` invocation always has every operator
+family on. Same reasoning applies to `cargo test -p dataflow-rs`.
 
 **MSRV is 1.85 and CI enforces it.** Do not use language features stabilized
 after 1.85 — most easily tripped is let-chains (`if let ... && let ...`), which
@@ -142,6 +149,17 @@ matching version.
   `metadata.progress = {workflow_id, task_id, status_code}` after every task.
   Cross-workflow chaining depends on downstream conditions reading it, so do not
   gate, skip, or make this write conditional.
+- **Operator families are opt-in, and enabling one is not a no-op.** The
+  `datalogic-rs` extension operators ship behind cargo features (`ext-string`,
+  `ext-array`, `ext-math`, `ext-control`, `error-handling`, `datetime`,
+  `all-operators`), all off by default. Because the engine always runs in
+  templating mode, an operator whose family is off is *not* an error — the
+  object echoes back as literal data. So turning a family on converts
+  previously-inert values like `{"length": …}` into live operator calls, and
+  `datetime` additionally changes `==` and the ordering operators on plain
+  date-shaped strings. Both directions are pinned by `#[cfg]`-gated tests in
+  `src/engine/compiler.rs`; keep them that way, and never test only
+  `--all-features`.
 - **Handler contract**: implement `AsyncFunctionHandler` with a
   `type Input: DeserializeOwned`, and
 
@@ -184,7 +202,9 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 369 passing.
+`cargo test --workspace --all-features` should report 381 passing.
+`cargo test -p dataflow-rs` (default features) should report 308 — the operator
+families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:
 

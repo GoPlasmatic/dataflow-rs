@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "3.1.0"
+version = "3.2.0"
 edition = "2024"
 rust-version = "1.85"
 # Allowlist of what ships in the published .crate: the library, its examples
@@ -26,12 +26,67 @@ repository = "https://github.com/GoPlasmatic/dataflow-rs"
 keywords = ["rules-engine", "ifttt", "automation", "jsonlogic", "workflow"]
 categories = ["data-structures", "development-tools", "config"]
 
+# docs.rs renders the operator families so their operator docs resolve.
+# `wasm-web` is deliberately excluded — it is a platform switch, not API
+# surface — which is why this is an explicit list rather than `all-features`.
+[package.metadata.docs.rs]
+features = ["all-operators"]
+
 [features]
 default = []
+
+# Optional `datalogic-rs` operator families, each forwarding to the identically
+# named feature there. The names deliberately mirror datalogic's so they need no
+# translation when reading its documentation.
+#
+# NOTE `error-handling` here means the JSONLogic `try`/`throw` *operators*. It
+# has nothing to do with dataflow-rs's own error handling (`DataflowError`,
+# `continue_on_error`, `message.errors()`), which is unconditional.
+#
+#   datetime        datetime, timestamp, parse_date, format_date, date_diff, now
+#   ext-string      length, starts_with, ends_with, upper, lower, trim, split
+#   ext-array       sort, slice
+#   ext-math        abs, ceil, floor
+#   ext-control     exists, ??, switch (alias match), type
+#   error-handling  try, throw
+#
+# Off by default, and enabling one is *not* a no-op for existing workflows: this
+# crate always runs datalogic in templating mode, where an unknown operator name
+# passes through as literal data. A `{"length": ...}` value that used to survive
+# a `map` mapping intact starts evaluating instead. `datetime` goes further and
+# changes `==` and the ordering operators on plain date-shaped strings. Enable
+# only the families your rules actually use.
+datetime = ["datalogic-rs/datetime"]
+ext-string = ["datalogic-rs/ext-string"]
+ext-array = ["datalogic-rs/ext-array"]
+ext-math = ["datalogic-rs/ext-math"]
+ext-control = ["datalogic-rs/ext-control"]
+error-handling = ["datalogic-rs/error-handling"]
+
+# Every family this crate exposes. Deliberately not datalogic's `flagd`
+# (`fractional`, `sem_ver`): it is feature-flag-evaluation specific, and it is
+# the only family that pulls an extra dependency. Adding a family here later is
+# a semver-minor change.
+all-operators = [
+    "datetime",
+    "ext-string",
+    "ext-array",
+    "ext-math",
+    "ext-control",
+    "error-handling",
+]
+
 # `uuid/js` is what supplies randomness on wasm32-unknown-unknown: uuid's own
 # `getrandom` dependency is target-gated *off* for that triple, and its `js`
 # feature routes through wasm-bindgen/js-sys instead.
-wasm-web = ["chrono/wasmbind", "uuid/js"]
+#
+# `datalogic-rs/wasm-clock` forwards `chrono?/wasmbind` — weak, so it is a no-op
+# unless `datetime` turned datalogic's optional chrono on. It is redundant today
+# with `chrono/wasmbind` above (both dependents resolve to one chrono unit and
+# cargo unions their feature sets), but it states the requirement at the crate
+# that actually has it, so datalogic's `now` keeps working on wasm32 even if
+# this crate's own chrono edge later changes shape.
+wasm-web = ["chrono/wasmbind", "uuid/js", "datalogic-rs/wasm-clock"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -39,7 +94,7 @@ serde_json = "1.0"
 datalogic-rs = { version = "5.1", features = ["serde_json", "templating"] }
 datavalue = { package = "datavalue-rs", version = "0.2.3", features = ["serde", "serde_json"] }
 bumpalo = "3.20"
-uuid = { version = "1.23", default-features = false, features = ["v7", "std"] }
+uuid = { version = "1.24", default-features = false, features = ["v7", "std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 thiserror = "2.0"
 log = "0.4"
@@ -63,7 +118,7 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 # `getrandom` syscall per `Uuid::now_v7()` — appropriate for v7 ids
 # (uniqueness, not secrecy). Native-only; features are additive per-target,
 # so the wasm build keeps the lean `v7`+`std` set from the main table.
-uuid = { version = "1.23", default-features = false, features = ["fast-rng"] }
+uuid = { version = "1.24", default-features = false, features = ["fast-rng"] }
 
 # Native release profile: maximize throughput. `lto = "fat"` plus
 # `codegen-units = 1` lets the compiler propagate inlining across crate

@@ -78,6 +78,9 @@ The validation function:
 
 ### String Length
 
+Requires the `ext-string` [operator family](../advanced/jsonlogic.md#operator-families-cargo-features).
+Note `length` lives in `ext-string` even though it also counts array elements.
+
 ```json
 {
     "logic": {">=": [
@@ -88,17 +91,21 @@ The validation function:
 }
 ```
 
-### Pattern Matching (with Regex)
+### Pattern Matching
+
+JSONLogic has **no regex operator** — there is no `regex_match`. Substring and
+prefix checks cover many cases; `in` is a core operator, while `starts_with` and
+`ends_with` need `ext-string`.
 
 ```json
 {
-    "logic": {"regex_match": [
-        {"var": "data.email"},
-        "^[^@]+@[^@]+\\.[^@]+$"
-    ]},
+    "logic": {"in": ["@", {"var": "data.email"}]},
     "message": "Invalid email format"
 }
 ```
+
+For real pattern matching, register a [custom function](../advanced/custom-functions.md)
+and run the regex in Rust.
 
 ### Conditional Required
 

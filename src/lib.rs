@@ -254,14 +254,38 @@ pub use engine::{ConnectorRef, Engine, EngineBuilder, Rollout, Task, Workflow, W
 ///   This crate imports the former under an alias
 ///   (`use datalogic_rs::Engine as DatalogicEngine;`); you will want to do the
 ///   same.
-/// - The operator surface is feature-dependent. `datalogic-rs` gates
-///   `length`/`starts_with`/`upper`/`split` behind `ext-string`, `sort`/`slice`
-///   behind `ext-array`, `abs`/`ceil`/`floor` behind `ext-math`,
-///   `exists`/`??`/`switch`/`type` behind `ext-control`, `try`/`throw` behind
-///   `error-handling`, and the date operators behind `datetime`. `dataflow-rs`
-///   enables none of those. To turn one on, keep a direct `datalogic-rs`
-///   dependency with the feature enabled — cargo's additive feature unification
-///   then enables it here too. The two arrangements coexist.
+/// - The operator surface is feature-dependent, and the gate is compile-time —
+///   `datalogic-rs` `#[cfg]`s the opcodes themselves, so there is no runtime
+///   equivalent. `dataflow-rs` forwards each family as a cargo feature of the
+///   same name, all **off by default**:
+///
+///   | feature | operators |
+///   |---|---|
+///   | `ext-string` | `length`, `starts_with`, `ends_with`, `upper`, `lower`, `trim`, `split` |
+///   | `ext-array` | `sort`, `slice` |
+///   | `ext-math` | `abs`, `ceil`, `floor` |
+///   | `ext-control` | `exists`, `??`, `switch` (alias `match`), `type` |
+///   | `error-handling` | `try`, `throw` |
+///   | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
+///   | `all-operators` | all of the above |
+///
+///   `error-handling` names the JSONLogic `try`/`throw` operators. It is
+///   unrelated to this crate's own error handling ([`DataflowError`],
+///   `continue_on_error`, [`Message::errors`]), which is unconditional.
+///
+///   Enabling a family is **not** a no-op for existing workflows. This crate
+///   always runs `datalogic-rs` in templating mode, where an unrecognised
+///   operator name is not an error — the object echoes back verbatim. So a
+///   `{"length": …}` value that used to pass through a `map` mapping as literal
+///   data starts *evaluating* once `ext-string` is on. `datetime` goes further
+///   and changes core operators: with it enabled, `==` and the ordering
+///   operators parse plain date-shaped strings as instants, so
+///   `{"==": ["2024-01-15T00:00:00Z", "2024-01-15T01:00:00+01:00"]}` is `true`
+///   rather than `false`. Enable only the families your rules use.
+///
+///   A direct `datalogic-rs` dependency with the feature enabled still works
+///   via cargo's additive unification, but prefer the feature here — it cannot
+///   skew from the version this crate depends on.
 pub use datalogic_rs;
 
 /// The [`datavalue`] value-type crate, re-exported.

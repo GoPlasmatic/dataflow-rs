@@ -363,13 +363,23 @@ mod tests {
     //! If a `datalogic-rs` upgrade changes any of these, that is a real
     //! behaviour change for every workflow in production — these tests exist
     //! so it fails CI instead of surfacing as a support ticket.
+    //!
+    //! These values are also *feature*-dependent. This crate exposes the
+    //! `datalogic-rs` operator families as cargo features, all off by default.
+    //! Any test whose answer changes when a family is enabled carries a
+    //! `#[cfg(feature = ...)]` so **both** configurations stay pinned —
+    //! otherwise the `--all-features` CI run would be the only one checking
+    //! anything and the default build, which is what `cargo add dataflow-rs`
+    //! delivers, would go untested.
 
     use super::*;
     use serde_json::json;
 
     /// The exact engine construction `LogicCompiler::new` uses: templating
-    /// enabled, `serde_json` feature only — no `ext-string`/`ext-array`/
-    /// `ext-math`/`ext-control`/`error-handling`/`datetime`.
+    /// enabled, plus whichever `datalogic-rs` operator families this crate's
+    /// cargo features turned on — none, by default. Which families are live is
+    /// fixed at compile time, so a test whose result depends on one must be
+    /// `#[cfg]`-gated rather than assuming the default build.
     fn engine() -> Engine {
         Engine::builder().with_templating(true).build()
     }
@@ -453,21 +463,126 @@ mod tests {
         // operators" table, and the reason `Template` documents itself as
         // opt-in per field rather than a blanket JSON wrapper: under
         // templating (which LogicCompiler and TemplateCompiler both enable),
-        // neither a name gated behind an unenabled feature (`starts_with`
-        // needs `ext-string`, not in this crate's Cargo.toml) nor an outright
-        // typo fails to compile or fails to evaluate. Both echo back as a
-        // literal structured object instead — a workflow author who mistypes
-        // an operator name gets silent pass-through, not a validation error.
+        // an outright typo neither fails to compile nor fails to evaluate. It
+        // echoes back as a literal structured object instead — a workflow
+        // author who mistypes an operator name gets silent pass-through, not a
+        // validation error. True under every feature combination, so this half
+        // of the tripwire is unconditional.
         let e = engine();
-        for logic in [
-            json!({"starts_with": ["hello", "he"]}),
-            json!({"totally_made_up_op_xyz": ["a", "b"]}),
-        ] {
-            assert_eq!(
-                eval(&e, &logic),
-                logic,
-                "an unrecognised/gated operator must echo back verbatim, not error"
-            );
-        }
+        let logic = json!({"totally_made_up_op_xyz": ["a", "b"]});
+        assert_eq!(
+            eval(&e, &logic),
+            logic,
+            "an unrecognised operator must echo back verbatim, not error"
+        );
+    }
+
+    /// With `ext-string` off, `starts_with` is not a name the engine knows, so
+    /// it is indistinguishable from the typo above: silent pass-through. This
+    /// is the failure mode a workflow author hits when they reach for an
+    /// operator whose family this build did not enable — no error, just a
+    /// wrong value.
+    #[cfg(not(feature = "ext-string"))]
+    #[test]
+    fn a_gated_operator_echoes_back_while_its_family_is_off() {
+        let e = engine();
+        let logic = json!({"starts_with": ["hello", "he"]});
+        assert_eq!(
+            eval(&e, &logic),
+            logic,
+            "an operator behind an unenabled family must echo back, not error"
+        );
+    }
+
+    /// The other side of the same coin, and the reason enabling a family is
+    /// not a no-op for existing workflows: `ext-string` converts a previously
+    /// inert `{"starts_with": [...]}` *literal* into a live operator call.
+    /// Anyone carrying such an object as data through a `map` mapping sees
+    /// their value silently replaced by the operator's result.
+    #[cfg(feature = "ext-string")]
+    #[test]
+    fn a_gated_operator_evaluates_once_its_family_is_on() {
+        let e = engine();
+        assert_eq!(
+            eval(&e, &json!({"starts_with": ["hello", "he"]})),
+            json!(true),
+            "with ext-string on, starts_with must evaluate, not echo"
+        );
+    }
+
+    /// `datetime` is the one family that is not confined to new operator
+    /// names. `datalogic-rs`'s comparison path probes *plain strings* for a
+    /// datetime/duration shape before falling back to byte comparison, so
+    /// `==` and the ordering operators change answers on date-shaped
+    /// operands. These two strings are different byte sequences naming the
+    /// same instant.
+    #[test]
+    fn datetime_feature_changes_plain_string_comparison() {
+        let e = engine();
+        let logic = json!({"==": ["2024-01-15T00:00:00Z", "2024-01-15T01:00:00+01:00"]});
+        #[cfg(feature = "datetime")]
+        assert_eq!(eval(&e, &logic), json!(true));
+        #[cfg(not(feature = "datetime"))]
+        assert_eq!(eval(&e, &logic), json!(false));
+    }
+
+    /// Each family's cargo feature actually reaches `datalogic-rs`. One
+    /// representative operator per family is enough — the feature either
+    /// forwards or it does not.
+    #[cfg(feature = "ext-string")]
+    #[test]
+    fn ext_string_feature_reaches_datalogic() {
+        let e = engine();
+        assert_eq!(eval(&e, &json!({"upper": "ab"})), json!("AB"));
+    }
+
+    #[cfg(feature = "ext-array")]
+    #[test]
+    fn ext_array_feature_reaches_datalogic() {
+        let e = engine();
+        assert_eq!(eval(&e, &json!({"sort": [[3, 1, 2]]})), json!([1, 2, 3]));
+    }
+
+    #[cfg(feature = "ext-math")]
+    #[test]
+    fn ext_math_feature_reaches_datalogic() {
+        let e = engine();
+        assert_eq!(eval(&e, &json!({"abs": -5})), json!(5));
+    }
+
+    #[cfg(feature = "ext-control")]
+    #[test]
+    fn ext_control_feature_reaches_datalogic() {
+        let e = engine();
+        assert_eq!(
+            eval(&e, &json!({"??": [null, "fallback"]})),
+            json!("fallback")
+        );
+    }
+
+    #[cfg(feature = "error-handling")]
+    #[test]
+    fn error_handling_feature_reaches_datalogic() {
+        // `error-handling` is the JSONLogic `try`/`throw` pair — unrelated to
+        // this crate's own always-on error handling.
+        let e = engine();
+        assert_eq!(
+            eval(&e, &json!({"try": [{"throw": "boom"}, "recovered"]})),
+            json!("recovered")
+        );
+    }
+
+    /// The `datetime` family's own operators. Their exact output depends on
+    /// the ambient clock and on format details this crate does not pin, so
+    /// assert only the property the feature actually buys: the operator is
+    /// recognised and evaluates, rather than echoing back as a literal.
+    #[cfg(feature = "datetime")]
+    #[test]
+    fn datetime_feature_reaches_datalogic() {
+        let e = engine();
+        let logic = json!({"now": []});
+        let result = eval(&e, &logic);
+        assert_ne!(result, logic, "with datetime on, `now` must not echo back");
+        assert!(!result.is_null(), "`now` should produce a value, got null");
     }
 }

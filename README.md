@@ -81,10 +81,21 @@ If you need dynamic business rules or user-customizable workflows, writing manua
 
 ```toml
 [dependencies]
-dataflow-rs = "3.1"
+dataflow-rs = "3.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1.0"
 ```
+
+JSONLogic's extended operator families are opt-in — the default build ships core
+JSONLogic only. Add the families your rules use:
+
+```toml
+[dependencies]
+dataflow-rs = { version = "3.2", features = ["ext-string", "ext-control"] }
+```
+
+Read [JSONLogic → Operator Families](docs/src/advanced/jsonlogic.md#operator-families-cargo-features)
+first: enabling a family can change how an existing rule behaves.
 
 ### 2. Define Rules in JSON
 
