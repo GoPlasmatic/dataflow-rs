@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] — 2026-07-31
+
+`datalogic-rs` ships `default = []`, and this crate enabled only `serde_json`
+and `templating` — so every extension operator (`upper`, `split`, `sort`, `abs`,
+`try`, `parse_date`, …) was compiled out with no way for a consuming application
+to turn one on except by declaring its own `datalogic-rs` dependency and relying
+on cargo's feature unification. Each family is now a feature of this crate.
+
+### Added
+
+- **features:** opt-in passthrough features for the `datalogic-rs` operator
+  families — `ext-string`, `ext-array`, `ext-math`, `ext-control`,
+  `error-handling`, `datetime`, and the `all-operators` umbrella. Names mirror
+  `datalogic-rs`'s own. All are **off by default**; `default = []` is unchanged,
+  so nothing changes for existing dependents until they opt in.
+- **wasm:** `dataflow-wasm` enables `all-operators`. The npm artifact's JS
+  consumers have no cargo-feature knob, so the operator set is compiled in.
+- **ci:** default-features clippy and test steps, plus a per-family isolation
+  loop. Every previous job was `--all-features`, which left the configuration
+  `cargo add dataflow-rs` produces entirely unbuilt.
+- **tests:** `#[cfg]`-gated coverage of both sides of each family gate in
+  `src/engine/compiler.rs`, including a tripwire pinning the `datetime`
+  comparison change below.
+
+### Compatibility
+
+Enabling an operator family is **not** a backwards-compatible no-op. Read this
+before turning one on.
+
+- **Data keys become operator calls.** The engine always runs `datalogic-rs` in
+  templating mode, where an unrecognised operator name is not an error — the
+  object passes through as literal data. Enabling a family makes its names live,
+  so a `map` mapping that carried `{"length": {...}}` as a *value* starts
+  storing a number instead. Plausible-as-data names include `type`, `match`,
+  `datetime`, `timestamp`, `length`, `split` and `sort`. Audit rules for these
+  keys before enabling the corresponding family.
+- **`datetime` changes core operators.** With it on, `==`, `<`, `<=`, `>` and
+  `>=` parse plain date-shaped strings as instants rather than comparing bytes.
+  `{"==": ["2024-01-15T00:00:00Z", "2024-01-15T01:00:00+01:00"]}` is `false`
+  without the feature and `true` with it. `type` also starts reporting
+  `"datetime"`/`"duration"` for such strings.
+- **`--workspace` no longer exercises the default build.** `dataflow-wasm`
+  requires `all-operators` and cargo unifies features across workspace members,
+  so `cargo test --workspace` compiles `dataflow-rs` with every family on. Use
+  `cargo test -p dataflow-rs` for the default configuration.
+
+No new packages enter the dependency graph: the `datetime` family's `chrono` was
+already a direct dependency, and the other five have no dependencies.
+
+### Changed
+
+- **deps:** `uuid` requirement `1.23` → `1.24`; lockfile refresh picks up
+  `http` 1.5.0, `jiff` 0.2.35 and `tokio-macros` 2.7.2. All semver-compatible.
+- **deps(ui):** lockfile refresh within the existing ranges — `dataflow-wasm`
+  3.1.0, `vite` 8.2.0, `lucide-react` 1.28.0, `globals` 17.8.0, `@types/react`
+  19.2.18, `@types/react-dom` 19.2.4, `@vitejs/plugin-react` 6.0.5. No declared
+  range in `ui/package.json` changed. `typescript` is deliberately held at 6.x;
+  7.0 is a major bump and `build:lib` runs `tsc`, so it needs its own change.
+- **deps(ui):** dropped the unused `@microsoft/api-extractor` tree from the
+  lockfile. `vite.lib.config.ts` calls `dts()` without `rollupTypes`, so it was
+  never used by the build; `scripts/verify-dts.mjs` confirms the declaration
+  bundle is unaffected.
+
+### Fixed
+
+- **docs:** `docs/src/advanced/jsonlogic.md` documented a `typeof` operator that
+  does not exist; the operator is `type` and it requires `ext-control`.
+- **docs:** `docs/src/built-in-functions/validation.md` documented a
+  `regex_match` operator that does not exist in `datalogic-rs` under any
+  feature. Replaced with an achievable substring check and a pointer to custom
+  functions for real pattern matching; the neighbouring `length` example is now
+  marked as requiring `ext-string`.
+- **docs:** the installation page pinned `dataflow-rs = "3.0"`, two versions
+  stale.
+
 ## [3.1.0] — 2026-07-30
 
 Four defects from a boundary audit of the crate's deepest known consumer, plus
