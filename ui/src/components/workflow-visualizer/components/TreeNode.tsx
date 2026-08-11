@@ -19,6 +19,8 @@ export interface TreeNodeProps {
   conditionResult?: boolean;
   /** Whether this is the current step */
   isCurrent?: boolean;
+  /** Optional badge rendered after the label, e.g. a loop marker. */
+  badge?: React.ReactNode;
 }
 
 export function TreeNode({
@@ -35,6 +37,7 @@ export function TreeNode({
   debugState,
   conditionResult,
   isCurrent,
+  badge,
 }: TreeNodeProps) {
   const handleMouseDown = (e: React.MouseEvent) => {
     // Prevent text selection on click/double-click
@@ -74,6 +77,7 @@ export function TreeNode({
         </span>
         {icon && <span className="df-tree-icon" style={iconColor ? { color: iconColor } : undefined}>{icon}</span>}
         <span className="df-tree-label">{label}</span>
+        {badge}
 
         {/* Debug state indicator */}
         {debugState && (

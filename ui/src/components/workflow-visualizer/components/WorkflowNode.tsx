@@ -2,6 +2,7 @@ import { Layers, GitBranch } from 'lucide-react';
 import type { Workflow, JsonLogicValue } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useWorkflowDebugState, useWorkflowConditionDebugState } from '../hooks';
+import { LoopBadge } from '../cards';
 import { TreeNode } from './TreeNode';
 import { TaskNode } from './TaskNode';
 import { TREE_COLORS } from './colors';
@@ -41,6 +42,7 @@ export function WorkflowNode({
       label={workflow.name}
       icon={<Layers size={14} />}
       iconColor={TREE_COLORS.workflow}
+      badge={<LoopBadge loop={workflow.loop} />}
       isExpanded={isExpanded}
       isSelected={selection.type === 'workflow' && selection.workflow.id === workflow.id}
       hasChildren={hasChildren}

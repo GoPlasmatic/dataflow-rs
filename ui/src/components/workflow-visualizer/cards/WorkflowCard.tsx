@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Workflow } from '../../../types';
 import { TaskRow } from './TaskRow';
 import { ConditionBadge } from './ConditionBadge';
+import { LoopBadge } from './LoopBadge';
 
 interface WorkflowCardProps {
   workflow: Workflow;
@@ -46,6 +47,7 @@ export function WorkflowCard({
         </div>
 
         <div className="df-workflow-meta">
+          <LoopBadge loop={workflow.loop} />
           <span className="df-workflow-priority">Priority: {priorityDisplay}</span>
           <span className="df-workflow-task-count">
             {workflow.tasks.length} task{workflow.tasks.length !== 1 ? 's' : ''}

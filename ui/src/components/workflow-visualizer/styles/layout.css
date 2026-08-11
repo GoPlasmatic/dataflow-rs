@@ -1507,3 +1507,23 @@
   flex: none;
   border-bottom: none;
 }
+
+/* ---- Loop badge ---- */
+
+.df-loop-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+  background: color-mix(in srgb, var(--accent-violet) 14%, transparent);
+  color: var(--accent-violet);
+}
+
+.df-loop-badge-text {
+  white-space: nowrap;
+}
