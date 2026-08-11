@@ -21,7 +21,9 @@ number:
   CI enforces it, so avoid language features stabilized after 1.85 — notably
   let-chains (`if let ... && let ...`), which need 1.88.
 - **Node.js 20+** — only if you are touching `ui/`.
-- **wasm-pack** — only if you are touching `wasm/`.
+- **wasm-pack** — if you are touching `wasm/`, or running the `ui/` debugger
+  against unreleased engine changes (see *Running the debugger against your
+  engine changes*).
 
 ## Getting Started
 
@@ -46,6 +48,39 @@ should report 308 passing (203 unit, 84 integration, 21 doc). Use `-p dataflow-r
 not `--workspace`: `dataflow-wasm` depends on `dataflow-rs` with `all-operators`,
 and cargo unifies features across workspace members, so `--workspace` would turn
 every family back on.
+
+### Running the debugger against your engine changes
+
+`ui/package.json` pins `@goplasmatic/dataflow-wasm` to the last **published**
+version, because `npm ci` has to be able to resolve it — both here and in
+`release.yml`, which then copies the release's own build over `node_modules`.
+So a plain `npm run dev` runs the debugger against the last release, not your
+checkout.
+
+That matters more than it sounds. `Workflow` does not set
+`deny_unknown_fields`, so a field the published wasm has never heard of is
+silently ignored rather than rejected: the debugger runs, and quietly does the
+wrong thing. A workflow using an unreleased feature appears to work while
+producing results that disagree with the engine you are editing.
+
+Build your engine into the installed package instead:
+
+```bash
+cd ui
+npm run wasm:local     # wasm-pack build -> verify -> copy over node_modules
+npm run dev
+```
+
+Re-run it after any engine change, and after every `npm ci` / `npm install` —
+both restore the published package. It also clears `node_modules/.vite`, which
+is required: Vite keys its dependency cache off the lockfile, which does not
+change when files are overwritten in place, so without that the dev server
+keeps serving the old JS glue against the new binary. That pairing fails
+confusingly, because init succeeds and only a later mangled-name lookup throws.
+
+`npm run wasm:local` refuses to overlay a build that fails
+`wasm/scripts/verify-wasm.mjs` — the same guard the release pipeline runs
+before publishing.
 
 ## Before You Open a Pull Request
 
