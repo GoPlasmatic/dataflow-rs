@@ -1,4 +1,11 @@
-import { engine_version } from '@goplasmatic/dataflow-wasm';
+import * as wasm from '@goplasmatic/dataflow-wasm';
+
+// Read off the namespace rather than `import { engine_version }`. An engine
+// released before the export existed would fail a *named* import at
+// module-link time, with a bundler error that says nothing about versions —
+// in exactly the case this module exists to explain. Off the namespace, a
+// missing symbol is just a value this code can interpret.
+const engineVersionFn = (wasm as { engine_version?: () => string }).engine_version;
 
 // Injected by both vite configs from package.json. Declared locally rather
 // than in vite-env.d.ts: that file has previously been pulled into the
@@ -45,16 +52,22 @@ let result: { ok: true } | { ok: false; error: Error } | undefined;
  */
 export function assertEngineVersion(): void {
   if (result === undefined) {
-    const engineVersion = engine_version();
+    const engineVersion = engineVersionFn?.();
     const uiVersion = __DATAFLOW_UI_VERSION__;
 
-    result = isOlder(parseSemver(engineVersion), parseSemver(uiVersion))
+    // No `engine_version` at all means the engine predates the release that
+    // added it, so it is necessarily older than any build running this check.
+    const tooOld =
+      engineVersion === undefined ||
+      isOlder(parseSemver(engineVersion), parseSemver(uiVersion));
+
+    result = tooOld
       ? {
           ok: false,
           error: new Error(
-            `@goplasmatic/dataflow-wasm ${engineVersion} is older than ` +
-              `@goplasmatic/dataflow-ui ${uiVersion} expects. Workflow fields added ` +
-              `after ${engineVersion} are silently ignored by that engine, so results ` +
+            `@goplasmatic/dataflow-wasm ${engineVersion ?? '(too old to report its version)'} ` +
+              `is older than @goplasmatic/dataflow-ui ${uiVersion} expects. Workflow ` +
+              `fields added after it are silently ignored by that engine, so results ` +
               `would not match the workflows shown. Upgrade the wasm package to ` +
               `>=${uiVersion}, or run \`npm run wasm:local\` when working in this repo.`,
           ),
