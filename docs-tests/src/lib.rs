@@ -73,6 +73,7 @@ doc_pages! {
     AdvancedCustomFunctions => "../../docs/src/advanced/custom-functions.md",
     AdvancedJsonLogic => "../../docs/src/advanced/jsonlogic.md",
     AdvancedAuditTrails => "../../docs/src/advanced/audit-trails.md",
+    AdvancedLoops => "../../docs/src/advanced/loops.md",
     AdvancedPerformance => "../../docs/src/advanced/performance.md",
 
     ApiReference => "../../docs/src/api/reference.md",

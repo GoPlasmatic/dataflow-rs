@@ -11,7 +11,7 @@ Add dataflow-rs to your Rust project using Cargo.
 
 ```toml
 [dependencies]
-dataflow-rs = "3.2"
+dataflow-rs = "3.3"
 serde_json = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
@@ -33,7 +33,7 @@ All features are off by default; the default build has core JSONLogic only.
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "3.2", features = ["ext-string"] }
+dataflow-rs = { version = "3.3", features = ["ext-string"] }
 ```
 
 Read [JSONLogic → Operator Families](../advanced/jsonlogic.md#operator-families-cargo-features)

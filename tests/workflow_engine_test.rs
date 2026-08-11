@@ -4406,3 +4406,136 @@ async fn a_handler_with_no_template_fields_is_unaffected() {
     let mut message = Message::from_value(&json!({}));
     engine.process_message(&mut message).await.unwrap();
 }
+
+/// Counts one async handler call per loop sweep, so the per-item test proves
+/// an async task in a loop body runs once per item — not just sync built-ins.
+#[derive(Debug, Default)]
+struct CallCounter {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl AsyncFunctionHandler for CallCounter {
+    type Input = Value;
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        // Write through TaskContext so the audit trail records the change.
+        ctx.set("temp_data.calls", OwnedDataValue::from_i64(n as i64));
+        Ok(TaskOutcome::Success)
+    }
+}
+
+#[tokio::test]
+async fn loop_workflow_processes_each_item_of_an_array() {
+    // The per-item pattern: a setup workflow counts the items, then a looping
+    // workflow picks `items[i]`, calls an async handler for it, and appends one
+    // output per item. `reduce`, `<`, `+`, `cat`, `merge` and computed-path
+    // `val` are all core operators, so this runs under default features too.
+    let workflows = vec![
+        Workflow::from_json(
+            r#"{
+                "id": "setup", "name": "Setup", "priority": 0,
+                "tasks": [{ "id": "count", "name": "Count items",
+                    "function": { "name": "map", "input": { "mappings": [
+                        { "path": "temp_data.n",
+                          "logic": {"reduce": [{"var": "data.items"},
+                                               {"+": [{"var": "accumulator"}, 1]}, 0]} },
+                        { "path": "data.processed", "logic": [] }
+                    ]}}}]
+            }"#,
+        )
+        .unwrap(),
+        Workflow::from_json(
+            r#"{
+                "id": "per_item", "name": "Per item", "priority": 1,
+                "condition": {"<": [{"var": "temp_data.i"}, {"var": "temp_data.n"}]},
+                "loop": { "counter": "i", "max": 100 },
+                "tasks": [
+                  { "id": "pick", "name": "Pick the item at i",
+                    "function": { "name": "map", "input": { "mappings": [
+                        { "path": "temp_data.item",
+                          "logic": {"val": [["data", "items", {"var": "temp_data.i"}]]} }
+                    ]}}},
+                  { "id": "call", "name": "Async call for this item",
+                    "function": { "name": "call_counter", "input": {} } },
+                  { "id": "collect", "name": "Collect the result",
+                    "function": { "name": "map", "input": { "mappings": [
+                        { "path": "data.processed",
+                          "logic": {"merge": [{"var": "data.processed"},
+                                              [{"cat": ["item-", {"var": "temp_data.item.id"}]}]]} }
+                    ]}}}
+                ]
+            }"#,
+        )
+        .unwrap(),
+    ];
+
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let engine = Engine::builder()
+        .with_workflows(workflows)
+        .register(
+            "call_counter",
+            CallCounter {
+                calls: Arc::clone(&calls),
+            },
+        )
+        .build()
+        .expect("engine should build");
+
+    // Seed `data`, not the payload: the JSONLogic eval context is
+    // {data, metadata, temp_data}, so `data.items` is what conditions see.
+    let mut message = Message::builder()
+        .data(dv(
+            json!({ "items": [{"id": "a"}, {"id": "b"}, {"id": "c"}] }),
+        ))
+        .build();
+    engine
+        .process_message(&mut message)
+        .await
+        .expect("processing should succeed");
+
+    assert_eq!(
+        Value::from(&message.context["data"]["processed"]),
+        json!(["item-a", "item-b", "item-c"]),
+        "one output per input item, in order"
+    );
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "the async body task ran once per item"
+    );
+
+    // One audit entry per task per sweep, each carrying the index it processed.
+    let per_item: Vec<Option<i64>> = message
+        .audit_trail()
+        .iter()
+        .filter(|entry| entry.workflow_id.as_ref() == "per_item")
+        .map(|entry| entry.loop_counter)
+        .collect();
+    assert_eq!(
+        per_item,
+        vec![
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(1),
+            Some(1),
+            Some(1),
+            Some(2),
+            Some(2),
+            Some(2),
+        ],
+        "three tasks per sweep, three sweeps"
+    );
+
+    // The setup workflow's own entries are unstamped.
+    assert!(
+        message
+            .audit_trail()
+            .iter()
+            .filter(|entry| entry.workflow_id.as_ref() == "setup")
+            .all(|entry| entry.loop_counter.is_none()),
+        "a non-looping workflow records no loop counter"
+    );
+}

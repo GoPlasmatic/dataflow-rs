@@ -119,7 +119,7 @@ matching version.
 - `task_context.rs`: `TaskContext` — accessors and audit-recording setters for handlers
 - `task_outcome.rs`: `TaskOutcome` and `HALT_STATUS_CODE`
 - `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
-- `workflow.rs`: `Workflow` definition, lifecycle fields, validation
+- `workflow.rs`: `Workflow` definition, lifecycle fields, `LoopConfig`, validation
 - `task.rs`: `Task` structure
 - `trace.rs`: `ExecutionTrace` / `ExecutionStep` for step-through debugging
 - `error.rs`: `DataflowError`, `ErrorInfo`, retryability classification
@@ -145,6 +145,15 @@ matching version.
   context. A `{"var": "payload.foo"}` expression silently resolves to nothing —
   parse the payload into `data` first. This is an easy and invisible mistake to
   make when writing examples or benchmarks.
+- **A workflow's `loop` makes its task list a bounded `for` loop.** Per sweep
+  the engine writes the counter to `temp_data`, checks `counter < max`
+  (half-open), re-evaluates the workflow condition, runs the task list
+  unchanged, then advances by `increment`. `max` is required — it is what makes
+  termination structural. Reaching it is *normal completion*, not an error.
+  `TaskOutcome::Halt` breaks the whole loop, not one sweep. The engine owns the
+  counter, so a body task writing that path is overwritten at the next
+  increment. Looping workflows are excluded from the shared-arena fully-sync
+  run (`joins_sync_run`) so bump-arena memory is freed between sweeps.
 - **`metadata.progress` is load-bearing.** The workflow executor writes
   `metadata.progress = {workflow_id, task_id, status_code}` after every task.
   Cross-workflow chaining depends on downstream conditions reading it, so do not
@@ -202,8 +211,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 381 passing.
-`cargo test -p dataflow-rs` (default features) should report 308 — the operator
+`cargo test --workspace --all-features` should report 406 passing.
+`cargo test -p dataflow-rs` (default features) should report 333 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:
