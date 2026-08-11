@@ -197,12 +197,43 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
-      # Resolves @goplasmatic/dataflow-wasm from npm at the version pinned in
-      # package.json rather than building it locally. That is enough to catch
-      # UI-side build and typing regressions; release.yml is what validates the
-      # UI against this release's freshly-built wasm.
+      # Builds the engine from this checkout instead of resolving it from npm.
+      # Resolving from npm cannot work in general: a UI change that uses a wasm
+      # export added in the same commit has no published engine to compile
+      # against, and the release that would publish one is gated on this job.
+      # release.yml is the counterpart — it validates the UI against the engine
+      # it has just published, which is what consumers actually install.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-ui-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-ui-
+
+      # Prebuilt binary, as in the `wasm` job. release.yml pins a version
+      # instead, because that job produces the artifact users install; this one
+      # only has to catch regressions.
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
       - name: Install dependencies
         run: npm ci
+        working-directory: ui
+
+      # Builds ../wasm, refuses to proceed if verify-wasm.mjs rejects the
+      # binary, then overlays the glue, the binary and the type declarations
+      # onto the package npm ci just installed.
+      - name: Overlay this checkout's engine
+        run: npm run wasm:local
         working-directory: ui
 
       - name: Lint
