@@ -194,8 +194,25 @@ matching version.
 
 ### Testing Patterns
 
-Unit tests live in `mod tests` blocks alongside the code they cover (12 modules);
-`tests/workflow_engine_test.rs` holds the integration suite.
+Unit tests live in `mod tests` blocks alongside the code they cover (12 modules).
+The integration suite is split by topic across `tests/`, one binary per file:
+
+| File | Covers |
+|---|---|
+| `engine_execution.rs` | Async handler path, sync stretch, shared-arena runs |
+| `mapping_semantics.rs` | `map` write semantics — replace vs. merge, `#` paths |
+| `error_handling.rs` | Single error channel, `DataflowError::Service` |
+| `tracing.rs` | Caller-owned `process_message_tracing` |
+| `trace_options.rs` | `TraceOptions` — timing, diffs, budget, redaction |
+| `observer.rs` | `ExecutionObserver` callbacks |
+| `public_api.rs` | Built-in classification, typed configs, re-exports, connectors |
+| `rollout.rs` | Traffic splits gated on `Message::routing_bucket` |
+| `templates.rs` | `Template` config fields on custom handlers |
+| `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
+
+Each file under `tests/` compiles as its own crate, so fixtures used by more
+than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
+That module is `#![allow(dead_code)]` because no single binary uses all of it.
 
 Documentation examples are compiled, so they cannot drift from the API:
 

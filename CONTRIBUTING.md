@@ -171,8 +171,14 @@ in front of users.
 4. Open a PR describing what changed and why
 
 Add tests next to the code they cover in a `mod tests` block for unit-level
-changes, or to `tests/workflow_engine_test.rs` for behaviour that spans the
-engine.
+changes. Behaviour that spans the engine goes in `tests/`, which is split by
+topic — one binary per file (`engine_execution.rs`, `mapping_semantics.rs`,
+`error_handling.rs`, `tracing.rs`, `trace_options.rs`, `observer.rs`,
+`public_api.rs`, `rollout.rs`, `templates.rs`, `workflow_loop.rs`). Pick the
+file whose topic already matches; add a new one only for a genuinely new area.
+
+Because each file is its own crate, a fixture needed by more than one of them
+belongs in `tests/common/mod.rs` (declared `pub`, pulled in with `mod common;`).
 
 Note that CI skips docs-only and Markdown-only changes by design, so a PR
 touching only those paths will not show Rust checks.
