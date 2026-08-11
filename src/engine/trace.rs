@@ -177,6 +177,21 @@ impl TraceOptions {
     }
 }
 
+/// Task-body timing for an executed step: when the body started and how long
+/// it ran.
+///
+/// Bundled because both executor call sites always have the pair — it is
+/// exactly what [`ExecutionStep::with_timing`] sets — and because it keeps
+/// [`ExecutionTrace::add_executed_step`] inside clippy's argument-count
+/// threshold now that the loop counter rides along too.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StepTiming {
+    /// Wall-clock start of the task body.
+    pub started_at: DateTime<Utc>,
+    /// Task body duration in microseconds.
+    pub duration_us: u64,
+}
+
 /// A single step in the execution trace
 ///
 /// `#[non_exhaustive]`: construct through [`ExecutionStep::executed`],
@@ -217,6 +232,15 @@ pub struct ExecutionStep {
     /// distinct from `None` meaning "not recorded".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changes: Option<Vec<Change>>,
+    /// Loop counter of the sweep this step belongs to, for workflows carrying
+    /// a [`crate::engine::workflow::LoopConfig`]; `None` otherwise. Group
+    /// steps by it to reconstruct per-iteration execution.
+    ///
+    /// Mirrors [`crate::engine::message::AuditTrail::loop_counter`], including
+    /// being skipped when `None` so a non-looping trace keeps its historical
+    /// wire shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_counter: Option<i64>,
 }
 
 impl ExecutionStep {
@@ -231,6 +255,7 @@ impl ExecutionStep {
             started_at: None,
             duration_us: None,
             changes: None,
+            loop_counter: None,
         }
     }
 
@@ -245,6 +270,7 @@ impl ExecutionStep {
             started_at: None,
             duration_us: None,
             changes: None,
+            loop_counter: None,
         }
     }
 
@@ -259,6 +285,7 @@ impl ExecutionStep {
             started_at: None,
             duration_us: None,
             changes: None,
+            loop_counter: None,
         }
     }
 
@@ -278,6 +305,13 @@ impl ExecutionStep {
     /// Attach this task's own diff. Chains after [`Self::executed`].
     pub fn with_changes(mut self, changes: Vec<Change>) -> Self {
         self.changes = Some(changes);
+        self
+    }
+
+    /// Attach the loop counter of the sweep this step belongs to. `None` is
+    /// the non-looping case and leaves the step's JSON unchanged.
+    pub fn with_loop_counter(mut self, loop_counter: Option<i64>) -> Self {
+        self.loop_counter = loop_counter;
         self
     }
 }
@@ -361,9 +395,9 @@ impl ExecutionTrace {
         workflow_id: &str,
         task_id: &str,
         message: &Message,
-        started_at: DateTime<Utc>,
-        duration_us: u64,
+        timing: StepTiming,
         mapping_contexts: Option<Vec<Value>>,
+        loop_counter: Option<i64>,
     ) {
         let mut step = ExecutionStep {
             workflow_id: workflow_id.to_string(),
@@ -371,8 +405,9 @@ impl ExecutionTrace {
             result: StepResult::Executed,
             message: None,
             mapping_contexts: None,
-            started_at: Some(started_at),
-            duration_us: Some(duration_us),
+            started_at: Some(timing.started_at),
+            duration_us: Some(timing.duration_us),
+            loop_counter,
             changes: if self.options.changes {
                 // Derived from this task's own audit entry rather than
                 // `audit_trail.last()` unconditionally — that is the

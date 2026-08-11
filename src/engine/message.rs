@@ -485,6 +485,20 @@ pub struct AuditTrail {
     pub timestamp: DateTime<Utc>,
     pub changes: Vec<Change>,
     pub status: usize,
+    /// Loop counter value for the sweep that produced this entry, for
+    /// workflows carrying a [`crate::engine::workflow::LoopConfig`]; `None`
+    /// otherwise.
+    ///
+    /// The counter rather than a sweep ordinal: `increment >= 1` makes it
+    /// strictly increasing, so it identifies the iteration *and* carries the
+    /// business meaning — in the per-item pattern it is the array index this
+    /// entry refers to. Recorded even when the loop leaves its counter
+    /// unnamed, since the engine tracks the value either way.
+    ///
+    /// Skipped when `None`, so a non-looping workflow's audit JSON is
+    /// byte-identical to what it was before loops existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_counter: Option<i64>,
 }
 
 /// A single recorded mutation in the audit trail.
@@ -504,6 +518,45 @@ pub struct Change {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audit_trail_loop_counter_is_absent_from_json_when_none() {
+        // A non-looping workflow must keep the historical wire shape byte for
+        // byte — dataflow-ui and any stored audit JSON depend on it.
+        let entry = AuditTrail {
+            workflow_id: Arc::from("w"),
+            task_id: Arc::from("t"),
+            timestamp: Utc::now(),
+            changes: vec![],
+            status: 200,
+            loop_counter: None,
+        };
+        let json = serde_json::to_value(&entry).expect("should serialize");
+        assert!(json.get("loop_counter").is_none());
+
+        let with_counter = AuditTrail {
+            loop_counter: Some(7),
+            ..entry
+        };
+        assert_eq!(
+            serde_json::to_value(&with_counter).expect("should serialize")["loop_counter"],
+            serde_json::json!(7)
+        );
+    }
+
+    #[test]
+    fn audit_trail_without_a_loop_counter_key_deserializes() {
+        // Audit JSON written before loops existed must still round-trip.
+        let entry: AuditTrail = serde_json::from_value(serde_json::json!({
+            "workflow_id": "w",
+            "task_id": "t",
+            "timestamp": "2026-08-11T00:00:00Z",
+            "changes": [],
+            "status": 200
+        }))
+        .expect("legacy audit JSON should deserialize");
+        assert_eq!(entry.loop_counter, None);
+    }
 
     #[test]
     fn from_json_str_parses_valid_payload() {

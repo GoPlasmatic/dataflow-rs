@@ -13,9 +13,9 @@ use crate::engine::observer::{ExecutionObserver, TaskEvent};
 use crate::engine::task::Task;
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::trace::{ExecutionStep, ExecutionTrace, duration_us_between};
-use crate::engine::utils::set_nested_value;
-use crate::engine::workflow::Workflow;
+use crate::engine::trace::{ExecutionStep, ExecutionTrace, StepTiming, duration_us_between};
+use crate::engine::utils::{set_nested_value, set_nested_value_parts};
+use crate::engine::workflow::{LoopConfig, Workflow};
 use chrono::{DateTime, Utc};
 use core::time::Duration;
 use datalogic_rs::Engine;
@@ -31,6 +31,42 @@ enum TaskControlFlow {
     Continue,
     /// Stop executing further tasks in this workflow (filter halt)
     HaltWorkflow,
+}
+
+/// Constants shared by every task in one pass over a workflow's task list.
+///
+/// Bundles the per-message timestamp with the loop counter so that threading
+/// the counter through the task loop did not push `run_tasks_slice_in_arena`
+/// and `handle_task_result` past clippy's argument-count threshold.
+#[derive(Clone, Copy)]
+struct PassCtx {
+    /// The single `Utc::now()` read for this `process_message` call, shared by
+    /// every `AuditTrail` it produces.
+    now: DateTime<Utc>,
+    /// Loop counter of the sweep this pass is, or `None` for a workflow
+    /// without a `loop`.
+    loop_counter: Option<i64>,
+}
+
+impl PassCtx {
+    /// The single pass of a workflow without a `loop`.
+    #[inline]
+    fn once(now: DateTime<Utc>) -> Self {
+        Self {
+            now,
+            loop_counter: None,
+        }
+    }
+}
+
+/// Result of one pass over a workflow's task list.
+enum PassOutcome {
+    /// The workflow condition evaluated false — no task ran.
+    ConditionFalse,
+    /// Every task ran (or was individually skipped) to the end of the list.
+    Completed,
+    /// A task returned [`TaskOutcome::Halt`].
+    Halted,
 }
 
 /// Return the index of the first task at or after `start` that is *not* a
@@ -71,6 +107,41 @@ fn rollout_admits(workflow: &Workflow, message: &Message) -> bool {
             None => true,
             Some(b) => r.accepts(b),
         },
+    }
+}
+
+/// Whether `workflow` may join a shared-arena run of consecutive fully-sync
+/// workflows.
+///
+/// A looping workflow is excluded even when every task is a sync built-in: its
+/// sweeps run through `execute_inner`, which opens a fresh arena scope per
+/// sweep. Bump arenas never free mid-scope, so sweeping inside one shared
+/// scope would grow memory with the iteration count.
+fn joins_sync_run(workflow: &Workflow) -> bool {
+    workflow.fully_sync && workflow.loop_config.is_none()
+}
+
+/// Write the loop counter into `temp_data` ahead of a sweep.
+///
+/// Called before the bound and condition checks so a condition indexing by the
+/// counter — the per-item pattern — resolves on the very first sweep. An
+/// unnamed counter is a no-op: the loop is still bounded, the value simply is
+/// not exposed to JSONLogic (the audit trail carries it either way).
+///
+/// No arena refresh is needed here: `execute_pass` builds its `ArenaContext`
+/// from `message.context` *after* this write.
+fn write_loop_counter(context: &mut OwnedDataValue, config: &LoopConfig, counter: i64) {
+    let Some(name) = config.counter.as_deref() else {
+        return;
+    };
+    let value = OwnedDataValue::from_i64(counter);
+    if config.counter_parts.is_empty() {
+        // Workflow built directly rather than through `Engine::builder`, so the
+        // compiler never pre-split the path. Same semantics, one extra split
+        // per sweep.
+        set_nested_value(context, &format!("temp_data.{name}"), value);
+    } else {
+        set_nested_value_parts(context, &config.counter_parts, value);
     }
 }
 
@@ -296,9 +367,161 @@ impl WorkflowExecutor {
             .await
     }
 
-    /// Unified workflow-condition + task-loop driver. `trace` is `None` for
-    /// the production path and `Some(&mut trace)` for the debug path —
-    /// stepping is the only behavioural difference between them.
+    /// Run `workflow` against `message`: the rollout gate, then either a single
+    /// pass over the task list or — for a workflow carrying a `loop` — a
+    /// bounded sweep loop.
+    ///
+    /// `trace` is `None` for the production path and `Some(&mut trace)` for the
+    /// debug path; stepping is the only behavioural difference between them.
+    async fn execute_inner(
+        &self,
+        workflow: &Workflow,
+        message: &mut Message,
+        mut trace: Option<&mut ExecutionTrace>,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
+        // Traffic-split gate, ahead of any arena work so an excluded workflow
+        // costs no `ArenaContext::from_owned` walk. Reuses the existing skipped
+        // path verbatim, so an excluded workflow is indistinguishable from a
+        // false condition.
+        if !rollout_admits(workflow, message) {
+            note_workflow_skip(trace.as_deref_mut(), &workflow.id, "outside rollout bucket");
+            return Ok(false);
+        }
+
+        if let Some(loop_config) = workflow.loop_config.as_ref() {
+            return self
+                .execute_loop(workflow, loop_config, message, trace, now)
+                .await;
+        }
+
+        match self
+            .execute_pass(workflow, message, trace.as_deref_mut(), PassCtx::once(now))
+            .await
+        {
+            Ok(PassOutcome::ConditionFalse) => {
+                // Last use of `trace` on this path — no reborrow needed.
+                note_workflow_skip(trace, &workflow.id, "condition not met");
+                Ok(false)
+            }
+            Ok(_) => {
+                info!("Successfully completed workflow: {}", workflow.id);
+                Ok(true)
+            }
+            Err(e) => {
+                // Single-channel contract: every error appears in
+                // `message.errors`. The `Result::Err` return only signals to
+                // the caller that we stopped before processing further
+                // workflows. The workflow-level wrapper records workflow
+                // context that the underlying task error doesn't carry.
+                if self.record_workflow_error(workflow, message, &e) {
+                    Err(e)
+                } else {
+                    Ok(true)
+                }
+            }
+        }
+    }
+
+    /// Drive a looping workflow: repeat [`Self::execute_pass`] while the
+    /// counter is below `max` and the workflow condition holds.
+    ///
+    /// Per-sweep order — write counter, check bound, check condition, run
+    /// tasks, advance counter — is the documented contract. The counter is in
+    /// `temp_data` before the first condition evaluation, so a condition that
+    /// indexes by it works on sweep 0.
+    ///
+    /// Returns `Ok(false)` only when no sweep ever ran, which is what a
+    /// condition-skipped workflow reports.
+    async fn execute_loop(
+        &self,
+        workflow: &Workflow,
+        config: &LoopConfig,
+        message: &mut Message,
+        mut trace: Option<&mut ExecutionTrace>,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
+        let mut counter = config.init;
+        let mut sweeps_run: u32 = 0;
+
+        loop {
+            write_loop_counter(&mut message.context, config, counter);
+
+            if counter >= config.max {
+                // Normal completion: `max` is always author-supplied, so
+                // reaching it is the stated bound rather than a runaway. A
+                // condition that was still true wanted to keep going, which is
+                // worth a log line but not an error.
+                if workflow.compiled_condition.is_some() {
+                    warn!(
+                        "Workflow {} stopped at its loop bound (max {}) with the condition \
+                         still true after {} sweep(s)",
+                        workflow.id, config.max, sweeps_run
+                    );
+                }
+                break;
+            }
+
+            let pass = PassCtx {
+                now,
+                loop_counter: Some(counter),
+            };
+
+            match self
+                .execute_pass(workflow, message, trace.as_deref_mut(), pass)
+                .await
+            {
+                Ok(PassOutcome::ConditionFalse) => {
+                    if sweeps_run == 0 {
+                        // Never entered: indistinguishable from a plain
+                        // condition-skipped workflow, and reported as one.
+                        note_workflow_skip(trace.as_deref_mut(), &workflow.id, "condition not met");
+                    } else {
+                        debug!(
+                            "Workflow {} loop exited at counter {} - condition no longer met",
+                            workflow.id, counter
+                        );
+                    }
+                    break;
+                }
+                Ok(PassOutcome::Halted) => {
+                    sweeps_run += 1;
+                    debug!(
+                        "Workflow {} loop halted at counter {}",
+                        workflow.id, counter
+                    );
+                    break;
+                }
+                Ok(PassOutcome::Completed) => {
+                    sweeps_run += 1;
+                }
+                Err(e) => {
+                    sweeps_run += 1;
+                    // Same single-channel contract as the non-looping path. On
+                    // `continue_on_error` the loop advances past the failing
+                    // sweep rather than abandoning the rest — the per-item case
+                    // wants item 8 processed after item 7 failed.
+                    if self.record_workflow_error(workflow, message, &e) {
+                        return Err(e);
+                    }
+                }
+            }
+
+            counter = counter.saturating_add(config.increment);
+        }
+
+        if sweeps_run > 0 {
+            info!(
+                "Successfully completed workflow: {} ({} loop sweep(s))",
+                workflow.id, sweeps_run
+            );
+        }
+        Ok(sweeps_run > 0)
+    }
+
+    /// One pass over `workflow.tasks`: evaluate the workflow condition, then
+    /// run the task list once. This is the whole of a non-looping workflow, and
+    /// one sweep of a looping one.
     ///
     /// The workflow condition is folded into the *first* sync stretch's arena
     /// scope: one `ArenaContext::from_owned` walk serves both the condition
@@ -309,13 +532,13 @@ impl WorkflowExecutor {
     /// form. Mixed sync+async workflows now pay one walk where they paid two.
     /// No `.await` occurs inside the scope, preserving the `!Send` arena
     /// invariant.
-    async fn execute_inner(
+    async fn execute_pass(
         &self,
         workflow: &Workflow,
         message: &mut Message,
         mut trace: Option<&mut ExecutionTrace>,
-        now: DateTime<Utc>,
-    ) -> Result<bool> {
+        pass: PassCtx,
+    ) -> Result<PassOutcome> {
         /// Outcome of the folded condition-plus-first-stretch arena scope.
         enum FirstStretch {
             /// Workflow condition evaluated false — skip the workflow.
@@ -325,15 +548,6 @@ impl WorkflowExecutor {
             /// Continue with the remaining tasks (from the first async
             /// boundary onward).
             Continue,
-        }
-
-        // Traffic-split gate, ahead of the arena scope below so an excluded
-        // workflow costs no `ArenaContext::from_owned` walk. Reuses the existing
-        // skipped path verbatim, so an excluded workflow is indistinguishable
-        // from a false condition.
-        if !rollout_admits(workflow, message) {
-            note_workflow_skip(trace.as_deref_mut(), &workflow.id, "outside rollout bucket");
-            return Ok(false);
         }
 
         let tasks = &workflow.tasks;
@@ -369,7 +583,7 @@ impl WorkflowExecutor {
                         message,
                         &mut arena_ctx,
                         trace.as_deref_mut(),
-                        now,
+                        pass,
                     )?;
                     Ok(if halted {
                         FirstStretch::Halted
@@ -379,37 +593,21 @@ impl WorkflowExecutor {
                 })
             };
 
-        // Drive the remaining (async-containing) tail, then apply the single
-        // workflow-level error contract to whichever half failed.
-        let run_result: Result<()> = match first {
-            Ok(FirstStretch::Skipped) => {
-                note_workflow_skip(trace.as_deref_mut(), &workflow.id, "condition not met");
-                return Ok(false);
-            }
-            Ok(FirstStretch::Halted) => Ok(()),
-            Ok(FirstStretch::Continue) => {
-                self.execute_tasks(workflow, message, trace, now, first_boundary)
-                    .await
-            }
-            Err(e) => Err(e),
-        };
-
-        match run_result {
-            Ok(_) => {
-                info!("Successfully completed workflow: {}", workflow.id);
-                Ok(true)
-            }
-            Err(e) => {
-                // Single-channel contract: every error appears in
-                // `message.errors`. The `Result::Err` return only signals to
-                // the caller that we stopped before processing further
-                // workflows. The workflow-level wrapper records workflow
-                // context that the underlying task error doesn't carry.
-                if self.record_workflow_error(workflow, message, &e) {
-                    Err(e)
+        // Drive the remaining (async-containing) tail. The workflow-level error
+        // contract lives in the caller, which is the one place that knows
+        // whether this pass was a whole workflow or one sweep of a loop.
+        match first? {
+            FirstStretch::Skipped => Ok(PassOutcome::ConditionFalse),
+            FirstStretch::Halted => Ok(PassOutcome::Halted),
+            FirstStretch::Continue => {
+                let halted = self
+                    .execute_tasks(workflow, message, trace, pass, first_boundary)
+                    .await?;
+                Ok(if halted {
+                    PassOutcome::Halted
                 } else {
-                    Ok(true)
-                }
+                    PassOutcome::Completed
+                })
             }
         }
     }
@@ -466,14 +664,16 @@ impl WorkflowExecutor {
     /// When `trace` is `Some`, the loop also records `ExecutionStep` entries
     /// after each task (skipped/executed) including per-mapping snapshots
     /// for `Map` tasks.
+    ///
+    /// Returns `Ok(true)` when a filter task halted the workflow.
     async fn execute_tasks(
         &self,
         workflow: &Workflow,
         message: &mut Message,
         mut trace: Option<&mut ExecutionTrace>,
-        now: DateTime<Utc>,
+        pass: PassCtx,
         start: usize,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let tasks = &workflow.tasks;
         let mut idx = start;
         while idx < tasks.len() {
@@ -486,10 +686,10 @@ impl WorkflowExecutor {
                     workflow,
                     message,
                     trace.as_deref_mut(),
-                    now,
+                    pass,
                 )?;
                 if halt {
-                    return Ok(());
+                    return Ok(true);
                 }
                 idx = stretch_end;
             }
@@ -506,7 +706,10 @@ impl WorkflowExecutor {
                 if !should_execute {
                     debug!("Skipping task {} - condition not met", task.id);
                     if let Some(t) = trace.as_deref_mut() {
-                        t.add_step(ExecutionStep::task_skipped(&workflow.id, &task.id));
+                        t.add_step(
+                            ExecutionStep::task_skipped(&workflow.id, &task.id)
+                                .with_loop_counter(pass.loop_counter),
+                        );
                     }
                     idx += 1;
                     continue;
@@ -533,31 +736,34 @@ impl WorkflowExecutor {
                     &task.id_arc,
                     task.continue_on_error,
                     message,
-                    now,
+                    pass,
                 )?;
 
                 // Async tasks at the boundary have no per-mapping snapshots —
                 // they're either HTTP/Kafka/Enrich or a custom handler.
                 if let Some(t) = trace.as_deref_mut() {
-                    let started_at = trace_start.unwrap_or(now);
+                    let started_at = trace_start.unwrap_or(pass.now);
                     t.add_executed_step(
                         &workflow.id,
                         &task.id,
                         message,
-                        started_at,
-                        duration_us_between(started_at, Utc::now()),
+                        StepTiming {
+                            started_at,
+                            duration_us: duration_us_between(started_at, Utc::now()),
+                        },
                         None,
+                        pass.loop_counter,
                     );
                 }
 
                 if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
-                    return Ok(());
+                    return Ok(true);
                 }
                 idx += 1;
             }
         }
 
-        Ok(())
+        Ok(false)
     }
 
     /// Execute a contiguous run of sync-builtin tasks inside one
@@ -575,11 +781,11 @@ impl WorkflowExecutor {
         workflow: &Workflow,
         message: &mut Message,
         trace: Option<&mut ExecutionTrace>,
-        now: DateTime<Utc>,
+        pass: PassCtx,
     ) -> Result<bool> {
         with_arena(|arena| -> Result<bool> {
             let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
-            self.run_tasks_slice_in_arena(tasks, workflow, message, &mut arena_ctx, trace, now)
+            self.run_tasks_slice_in_arena(tasks, workflow, message, &mut arena_ctx, trace, pass)
         })
     }
 
@@ -599,7 +805,7 @@ impl WorkflowExecutor {
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'arena>,
         mut trace: Option<&mut ExecutionTrace>,
-        now: DateTime<Utc>,
+        pass: PassCtx,
     ) -> Result<bool> {
         let arena = arena_ctx.arena();
 
@@ -622,7 +828,10 @@ impl WorkflowExecutor {
             if !should_execute {
                 debug!("Skipping task {} - condition not met", task.id);
                 if let Some(t) = trace.as_deref_mut() {
-                    t.add_step(ExecutionStep::task_skipped(&workflow.id, &task.id));
+                    t.add_step(
+                        ExecutionStep::task_skipped(&workflow.id, &task.id)
+                            .with_loop_counter(pass.loop_counter),
+                    );
                 }
                 continue;
             }
@@ -662,7 +871,7 @@ impl WorkflowExecutor {
                 &task.id_arc,
                 task.continue_on_error,
                 message,
-                now,
+                pass,
             )?;
 
             // The only context write `handle_task_result` performs is
@@ -674,7 +883,7 @@ impl WorkflowExecutor {
             arena_ctx.refresh_for_path(&message.context, "metadata.progress");
 
             if let Some(t) = trace.as_deref_mut() {
-                let started_at = trace_start.unwrap_or(now);
+                let started_at = trace_start.unwrap_or(pass.now);
                 let mapping_contexts = if mapping_snapshots.is_empty() {
                     None
                 } else {
@@ -684,9 +893,12 @@ impl WorkflowExecutor {
                     &workflow.id,
                     &task.id,
                     message,
-                    started_at,
-                    duration_us_between(started_at, Utc::now()),
+                    StepTiming {
+                        started_at,
+                        duration_us: duration_us_between(started_at, Utc::now()),
+                    },
                     mapping_contexts,
+                    pass.loop_counter,
                 );
             }
 
@@ -731,11 +943,11 @@ impl WorkflowExecutor {
     ) -> Result<()> {
         let mut i = 0;
         while i < workflows.len() {
-            if workflows[i].borrow().fully_sync {
+            if joins_sync_run(workflows[i].borrow()) {
                 // Extend over the maximal run of consecutive fully-sync
                 // workflows and execute them in one shared arena scope.
                 let mut j = i + 1;
-                while j < workflows.len() && workflows[j].borrow().fully_sync {
+                while j < workflows.len() && joins_sync_run(workflows[j].borrow()) {
                     j += 1;
                 }
                 self.execute_sync_workflow_run(
@@ -780,6 +992,16 @@ impl WorkflowExecutor {
         mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        // `joins_sync_run` keeps looping workflows out of this path, so every
+        // workflow here runs exactly one pass and carries no loop counter.
+        debug_assert!(
+            workflows
+                .iter()
+                .all(|w| w.borrow().loop_config.is_none() && w.borrow().fully_sync),
+            "only non-looping fully-sync workflows may join a shared-arena run"
+        );
+        let pass = PassCtx::once(now);
+
         with_arena(|arena| -> Result<()> {
             let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
 
@@ -824,7 +1046,7 @@ impl WorkflowExecutor {
                     message,
                     &mut arena_ctx,
                     trace.as_deref_mut(),
-                    now,
+                    pass,
                 ) {
                     // Filter-halt stops only this workflow; carry on with the
                     // next one (and keep the shared arena context).
@@ -893,7 +1115,7 @@ impl WorkflowExecutor {
         task_id_arc: &Arc<str>,
         continue_on_error: bool,
         message: &mut Message,
-        now: DateTime<Utc>,
+        pass: PassCtx,
     ) -> Result<TaskControlFlow> {
         let workflow_id: &str = workflow_id_arc;
         let task_id: &str = task_id_arc;
@@ -918,11 +1140,12 @@ impl WorkflowExecutor {
                 // refcount bump, not a string copy. `now` is shared with all
                 // other AuditTrails in this process_message call.
                 message.audit_trail.push(AuditTrail {
-                    timestamp: now,
+                    timestamp: pass.now,
                     workflow_id: Arc::clone(workflow_id_arc),
                     task_id: Arc::clone(task_id_arc),
                     status: status as usize,
                     changes,
+                    loop_counter: pass.loop_counter,
                 });
 
                 // Update progress metadata for workflow chaining. Always
@@ -974,11 +1197,12 @@ impl WorkflowExecutor {
 
                 // Record error in audit trail (Arc clones are refcount bumps).
                 message.audit_trail.push(AuditTrail {
-                    timestamp: now,
+                    timestamp: pass.now,
                     workflow_id: Arc::clone(workflow_id_arc),
                     task_id: Arc::clone(task_id_arc),
                     status: 500,
                     changes: vec![],
+                    loop_counter: pass.loop_counter,
                 });
 
                 // Same invariant as the Ok arm: `metadata.progress` is written
@@ -1026,6 +1250,265 @@ mod tests {
     use crate::engine::compiler::LogicCompiler;
     use serde_json::json;
     use std::collections::HashMap;
+
+    /// Test-only helper: build an `OwnedDataValue` from a `json!` literal.
+    fn dv(v: serde_json::Value) -> OwnedDataValue {
+        OwnedDataValue::from(&v)
+    }
+
+    /// Compile `json` into a single runnable workflow plus its engine.
+    fn compiled(json: &str) -> (Workflow, Arc<datalogic_rs::Engine>) {
+        let compiler = LogicCompiler::new();
+        let workflow = Workflow::from_json(json).expect("workflow should parse");
+        let compiled = compiler
+            .compile_workflows(vec![workflow])
+            .expect("workflow should compile");
+        (
+            compiled.into_iter().next().expect("one workflow"),
+            compiler.into_engine(),
+        )
+    }
+
+    /// A `WorkflowExecutor` over an empty handler registry.
+    fn executor(engine: Arc<datalogic_rs::Engine>) -> WorkflowExecutor {
+        let task_executor = Arc::new(TaskExecutor::new(
+            Arc::new(HashMap::new()),
+            Arc::clone(&engine),
+        ));
+        WorkflowExecutor::new(task_executor, engine)
+    }
+
+    /// Every `loop_counter` recorded on the audit trail, in order.
+    fn counters(message: &Message) -> Vec<Option<i64>> {
+        message
+            .audit_trail
+            .iter()
+            .map(|entry| entry.loop_counter)
+            .collect()
+    }
+
+    /// A one-task `map` workflow body writing `data.n` from the counter.
+    const COUNTER_BODY: &str = r#"{"id": "t", "name": "t", "function": {"name": "map",
+        "input": {"mappings": [{"path": "data.n", "logic": {"var": "temp_data.i"}}]}}}"#;
+
+    #[tokio::test]
+    async fn loop_without_a_condition_runs_exactly_max_sweeps() {
+        let (workflow, engine) = compiled(&format!(
+            r#"{{ "id": "w", "name": "w", "loop": {{"counter": "i", "max": 3}},
+                  "tasks": [{COUNTER_BODY}] }}"#
+        ));
+        let mut message = Message::from_value(&json!({}));
+
+        let executed = executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert!(executed);
+        // One audit entry per sweep, each stamped with its counter.
+        assert_eq!(counters(&message), vec![Some(0), Some(1), Some(2)]);
+        // The counter is left at the bound the loop stopped on.
+        assert_eq!(message.context["temp_data"].get("i"), Some(&dv(json!(3))));
+        // The body observed each value; the last one survives.
+        assert_eq!(message.context["data"].get("n"), Some(&dv(json!(2))));
+    }
+
+    #[tokio::test]
+    async fn loop_exits_early_when_the_condition_goes_false() {
+        // Bounded at 10 but the condition stops it at 4.
+        let (workflow, engine) = compiled(&format!(
+            r#"{{ "id": "w", "name": "w",
+                  "condition": {{"<": [{{"var": "temp_data.i"}}, 4]}},
+                  "loop": {{"counter": "i", "max": 10}},
+                  "tasks": [{COUNTER_BODY}] }}"#
+        ));
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert_eq!(counters(&message), vec![Some(0), Some(1), Some(2), Some(3)]);
+    }
+
+    #[tokio::test]
+    async fn loop_whose_condition_is_false_on_the_first_sweep_is_a_plain_skip() {
+        let (workflow, engine) = compiled(&format!(
+            r#"{{ "id": "w", "name": "w", "condition": false,
+                  "loop": {{"counter": "i", "max": 5}},
+                  "tasks": [{COUNTER_BODY}] }}"#
+        ));
+        let mut message = Message::from_value(&json!({}));
+
+        let executed = executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("a skip is not an error");
+
+        assert!(!executed, "a never-entered loop reports as skipped");
+        assert!(message.audit_trail.is_empty());
+    }
+
+    #[tokio::test]
+    async fn filter_halt_breaks_the_whole_loop_not_just_one_sweep() {
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"counter": "i", "max": 10},
+                 "tasks": [
+                   {"id": "gate", "name": "gate", "function": {"name": "filter",
+                     "input": {"condition": {"<": [{"var": "temp_data.i"}, 2]},
+                               "on_reject": "halt"}}},
+                   {"id": "body", "name": "body", "function": {"name": "map",
+                     "input": {"mappings": [
+                        {"path": "data.n", "logic": {"var": "temp_data.i"}}]}}}] }"#,
+        );
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("a halt is not an error");
+
+        // Sweeps 0 and 1 run both tasks; sweep 2's gate halts and ends the
+        // loop rather than moving on to sweep 3.
+        let ids: Vec<&str> = message
+            .audit_trail
+            .iter()
+            .map(|entry| entry.task_id.as_ref())
+            .collect();
+        assert_eq!(ids, ["gate", "body", "gate", "body", "gate"]);
+        assert_eq!(
+            counters(&message),
+            vec![Some(0), Some(0), Some(1), Some(1), Some(2)]
+        );
+    }
+
+    #[tokio::test]
+    async fn init_and_increment_drive_the_counter() {
+        let (workflow, engine) = compiled(&format!(
+            r#"{{ "id": "w", "name": "w",
+                  "loop": {{"counter": "i", "init": 10, "increment": 5, "max": 25}},
+                  "tasks": [{COUNTER_BODY}] }}"#
+        ));
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert_eq!(counters(&message), vec![Some(10), Some(15), Some(20)]);
+    }
+
+    #[tokio::test]
+    async fn a_loop_without_a_named_counter_still_records_it_on_the_audit_trail() {
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"max": 2},
+                 "tasks": [{"id": "t", "name": "t",
+                            "function": {"name": "map", "input": {"mappings": []}}}] }"#,
+        );
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert_eq!(counters(&message), vec![Some(0), Some(1)]);
+        // Nothing was written to temp_data — the counter was never named.
+        assert_eq!(message.context["temp_data"], dv(json!({})));
+    }
+
+    #[tokio::test]
+    async fn a_non_looping_workflow_records_no_loop_counter() {
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w",
+                 "tasks": [{"id": "t", "name": "t",
+                            "function": {"name": "map", "input": {"mappings": []}}}] }"#,
+        );
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("should complete");
+
+        assert_eq!(counters(&message), vec![None]);
+    }
+
+    #[tokio::test]
+    async fn progress_metadata_is_written_on_every_sweep() {
+        // `metadata.progress` is load-bearing for cross-workflow chaining; a
+        // loop must not gate it.
+        let (workflow, engine) = compiled(&format!(
+            r#"{{ "id": "w", "name": "w", "loop": {{"counter": "i", "max": 3}},
+                  "tasks": [{COUNTER_BODY}] }}"#
+        ));
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        let progress = message.context["metadata"]
+            .get("progress")
+            .expect("progress must be written");
+        assert_eq!(progress.get("workflow_id"), Some(&dv(json!("w"))));
+        assert_eq!(progress.get("task_id"), Some(&dv(json!("t"))));
+        assert_eq!(progress.get("status_code"), Some(&dv(json!(200))));
+    }
+
+    #[tokio::test]
+    async fn the_engine_owns_the_counter_even_if_a_body_task_writes_it() {
+        // A body task writing the counter path is overwritten at the next
+        // increment, so termination reasoning stays local to LoopConfig.
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"counter": "i", "max": 3},
+                 "tasks": [{"id": "t", "name": "t", "function": {"name": "map",
+                    "input": {"mappings": [{"path": "temp_data.i", "logic": 99}]}}}] }"#,
+        );
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert_eq!(
+            counters(&message),
+            vec![Some(0), Some(1), Some(2)],
+            "the body's write must not stall or skew the loop"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_loop_body_can_index_an_array_by_its_counter() {
+        // The per-item pattern, using only core operators.
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"counter": "i", "max": 3},
+                 "tasks": [{"id": "pick", "name": "pick", "function": {"name": "map",
+                    "input": {"mappings": [
+                       {"path": "data.picked",
+                        "logic": {"merge": [{"var": "data.picked"},
+                                            [{"val": [["data", "items",
+                                                       {"var": "temp_data.i"}]]}]]}}]}}}] }"#,
+        );
+        let mut message = Message::builder()
+            .data(dv(json!({"items": ["a", "b", "c"], "picked": []})))
+            .build();
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert_eq!(
+            serde_json::Value::from(&message.context["data"]["picked"]),
+            json!(["a", "b", "c"]),
+            "each sweep appended the item at its own index"
+        );
+    }
 
     #[tokio::test]
     async fn test_workflow_executor_skip_condition() {
