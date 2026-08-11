@@ -1,6 +1,7 @@
 import dagre from '@dagrejs/dagre';
 import type { Node, Edge } from '@xyflow/react';
 import type { Workflow, Task } from '../../../../types';
+import { loopGuardLabel, loopStepLabel } from '../../../../types';
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT_PILL = 40;
@@ -16,6 +17,7 @@ function hasCondition(condition: unknown): boolean {
 function nodeHeight(type: string | undefined): number {
   switch (type) {
     case 'condition':
+    case 'loopGuard':
       return NODE_HEIGHT_DIAMOND;
     case 'task':
       return NODE_HEIGHT_TASK;
@@ -74,19 +76,40 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
   // Skip nodes discovered before the End node exists.
   const danglingToEnd: string[] = [];
 
+  const loop = workflow.loop;
+  let guardId: string | undefined;
+  let tailId: string | undefined;
+
+  // ---- Loop guard ----
+  // The engine checks `counter < max` before re-evaluating the condition, so
+  // the guard sits above it. Its false branch is a loop exit, wired to End
+  // once End exists.
+  if (loop) {
+    guardId = addNode('loopGuard', {
+      label: loopGuardLabel(loop),
+      variant: 'guard',
+    });
+    connect(guardId);
+    prevNodeId = guardId;
+    prevSourceHandle = 'true';
+  }
+
   // ---- Workflow condition ----
   if (hasCondition(workflow.condition)) {
     const condId = addNode('condition', {
       label: 'Workflow\nCondition',
       conditionType: 'workflow',
     });
-    // Explicit rather than `connect`: this edge leaves Start, so it never
-    // carries a "Yes" label, and it declares an explicit default edge type.
+    // Explicit rather than `connect` so the edge can declare a default type.
+    // Without a loop this leaves Start and carries no label; with one it
+    // leaves the guard's true branch and is labelled like any other.
     edges.push({
       id: `e-${prevNodeId}-${condId}`,
       source: prevNodeId,
       target: condId,
       sourceHandle: prevSourceHandle,
+      label: prevSourceHandle === 'true' ? 'Yes' : undefined,
+      className: prevSourceHandle === 'true' ? 'df-flow-edge-true' : undefined,
       type: 'default',
     });
 
@@ -96,7 +119,9 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
       source: condId,
       target: skipId,
       sourceHandle: 'false',
-      label: 'No',
+      // A false condition *breaks* the loop rather than skipping one sweep,
+      // so under a loop this branch is an exit, not a per-sweep skip.
+      label: loop ? 'Exit loop' : 'No',
       style: { strokeDasharray: '6 3' },
       className: 'df-flow-edge-false',
     });
@@ -158,16 +183,43 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
     emitTask(task);
   }
 
+  // ---- Loop tail ----
+  // The counter advance the engine performs after each sweep. It is a sink in
+  // the DAG; the back-edge to the guard is added after layout.
+  if (loop) {
+    tailId = addNode('loopTail', {
+      label: loopStepLabel(loop),
+      variant: 'tail',
+    });
+    connect(tailId);
+    prevNodeId = tailId;
+    prevSourceHandle = undefined;
+  }
+
   // ---- End ----
   const endId = addNode('startEnd', { label: 'End', variant: 'end' });
-  // Explicit rather than `connect`: the End edge carries the pending handle
-  // but never the "Yes" label, even when it leaves a condition's true branch.
-  edges.push({
-    id: `e-${prevNodeId}-${endId}`,
-    source: prevNodeId,
-    target: endId,
-    sourceHandle: prevSourceHandle,
-  });
+  if (guardId) {
+    // Under a loop the body never falls through to End: the exits are the
+    // guard's bound check and the condition going false. Both are normal
+    // completion, so both land on End rather than an error node.
+    edges.push({
+      id: `e-${guardId}-${endId}`,
+      source: guardId,
+      target: endId,
+      sourceHandle: 'false',
+      label: 'Reached max',
+      className: 'df-flow-edge-loop-exit',
+    });
+  } else {
+    // Explicit rather than `connect`: the End edge carries the pending handle
+    // but never the "Yes" label, even when it leaves a condition's true branch.
+    edges.push({
+      id: `e-${prevNodeId}-${endId}`,
+      source: prevNodeId,
+      target: endId,
+      sourceHandle: prevSourceHandle,
+    });
+  }
   for (const danglingId of danglingToEnd) {
     edges.push({ id: `e-${danglingId}-${endId}`, source: danglingId, target: endId });
   }
@@ -192,6 +244,24 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
       x: pos.x - NODE_WIDTH / 2,
       y: pos.y - nodeHeight(node.type) / 2,
     };
+  }
+
+  // ---- Loop back-edge ----
+  // Deliberately added after dagre has run: dagre requires a DAG, and feeding
+  // it this cycle inverts the ranks and renders the diagram inside-out. Enters
+  // and leaves on the left so it sweeps clear of the main column.
+  if (guardId && tailId) {
+    edges.push({
+      id: `e-loop-${tailId}-${guardId}`,
+      source: tailId,
+      target: guardId,
+      sourceHandle: 'loop-out',
+      targetHandle: 'loop-in',
+      type: 'smoothstep',
+      animated: true,
+      label: 'repeat',
+      className: 'df-flow-edge-loop',
+    });
   }
 
   return { nodes, edges };
