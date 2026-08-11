@@ -11,6 +11,11 @@ const external = [
 ];
 
 export default defineConfig({
+  // Baked in so the engine version handshake has something to compare against.
+  // Must stay in sync with vite.config.ts.
+  define: {
+    __DATAFLOW_UI_VERSION__: JSON.stringify(pkg.version),
+  },
   plugins: [
     react(),
     dts({

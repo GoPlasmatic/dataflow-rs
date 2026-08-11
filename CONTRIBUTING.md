@@ -59,24 +59,34 @@ checkout.
 
 That matters more than it sounds. `Workflow` does not set
 `deny_unknown_fields`, so a field the published wasm has never heard of is
-silently ignored rather than rejected: the debugger runs, and quietly does the
-wrong thing. A workflow using an unreleased feature appears to work while
-producing results that disagree with the engine you are editing.
+silently ignored rather than rejected.
 
-Build your engine into the installed package instead:
+Two mechanisms keep that from biting you:
 
 ```bash
 cd ui
-npm run wasm:local     # wasm-pack build -> verify -> copy over node_modules
-npm run dev
+npm run dev            # predev builds your engine and overlays it
 ```
 
-Re-run it after any engine change, and after every `npm ci` / `npm install` —
-both restore the published package. It also clears `node_modules/.vite`, which
-is required: Vite keys its dependency cache off the lockfile, which does not
-change when files are overwritten in place, so without that the dev server
-keeps serving the old JS glue against the new binary. That pairing fails
-confusingly, because init succeeds and only a later mangled-name lookup throws.
+`npm run dev` runs `wasm:local` first, which rebuilds `wasm/pkg`, verifies it,
+and copies it over `node_modules`. It always rebuilds rather than reusing
+whatever is already there — a stale build usually carries the *same* version as
+your checkout, so no version check can see it. wasm-pack no-ops in about two
+seconds when nothing changed.
+
+If wasm-pack is not installed the step warns and continues, so a contributor
+touching only `ui/` is not blocked. That is safe because of the second
+mechanism: the engine exports `engine_version()`, and `WasmEngineAdapter`
+throws when the loaded engine is **older** than the `dataflow-ui` build using
+it. A newer engine passes silently — the dependency is a caret range, so npm
+may legitimately resolve one. Run `npm run wasm:local` by hand after any engine
+change if you keep a dev server running.
+
+Overlaying also clears `node_modules/.vite`, which is required: Vite keys its
+dependency cache off the lockfile, which does not change when files are
+overwritten in place, so without it the dev server keeps serving the old JS
+glue against the new binary. That pairing fails confusingly — init succeeds and
+only a later mangled-name lookup throws.
 
 `npm run wasm:local` refuses to overlay a build that fails
 `wasm/scripts/verify-wasm.mjs` — the same guard the release pipeline runs

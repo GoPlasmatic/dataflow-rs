@@ -35,6 +35,48 @@ jobs:
           fi
           echo "Tag $GITHUB_REF_NAME matches Cargo.toml version $VERSION"
 
+      # The three artifacts are version-locked, but only the root Cargo.toml
+      # was ever checked. publish-wasm and publish-ui stamp their npm versions
+      # from it, so a stale in-repo value publishes fine and stays invisible —
+      # which is how a docs install snippet sat at the wrong version.
+      - name: Validate all artifact versions agree
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          FAILED=0
+
+          check() {
+            if [ "$2" != "$VERSION" ]; then
+              echo "::error::$1 is $2, expected $VERSION"
+              FAILED=1
+            else
+              echo "  ok  $1 = $2"
+            fi
+          }
+
+          check "wasm/Cargo.toml" \
+            "$(grep '^version = ' wasm/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')"
+          check "wasm/Cargo.toml dataflow-rs dep" \
+            "$(grep 'dataflow-rs = ' wasm/Cargo.toml | sed 's/.*version = "\([^"]*\)".*/\1/')"
+          check "ui/package.json" \
+            "$(node -p "require('./ui/package.json').version")"
+
+          # Docs pin the minor only (`dataflow-rs = "3.3"`), so compare that.
+          MINOR="${VERSION%.*}"
+          while IFS= read -r hit; do
+            [ -n "$hit" ] || continue
+            FOUND=$(printf '%s' "$hit" | grep -oE '"[0-9]+\.[0-9]+' | head -1 | tr -d '"')
+            if [ "$FOUND" != "$MINOR" ]; then
+              echo "::error::stale version in $hit (expected $MINOR)"
+              FAILED=1
+            else
+              echo "  ok  ${hit%%:*} pins $FOUND"
+            fi
+          done < <(grep -rnE 'dataflow-rs = (\{ *version = )?"[0-9]+\.[0-9]+' \
+                     README.md docs/src/ 2>/dev/null)
+
+          [ "$FAILED" -eq 0 ] || exit 1
+          echo "All artifact and documentation versions agree on $VERSION"
+
   # The full PR gate — fmt/clippy/tests, wasm32, MSRV, UI build, cargo-deny —
   # invoked as a reusable workflow, so the release gate is the same definition
   # as PR CI and structurally cannot drift narrower than it.

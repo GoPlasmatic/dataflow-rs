@@ -209,6 +209,21 @@ impl WasmEngine {
     }
 }
 
+/// The version of the engine compiled into this module.
+///
+/// Matches the published npm package version — the release workflow stamps
+/// both from the root `Cargo.toml`.
+///
+/// Callers pair a wasm build with a UI build, and a mismatch is otherwise
+/// invisible: [`Workflow`] does not set `deny_unknown_fields`, so an older
+/// engine *ignores* a field it predates rather than rejecting it. The workflow
+/// then runs and quietly does something other than what it says. Compare this
+/// against the version your frontend was built for and fail loudly instead.
+#[wasm_bindgen]
+pub fn engine_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// Process a payload through a one-off engine (convenience function).
 ///
 /// Creates an engine with the given workflows and processes a single payload.

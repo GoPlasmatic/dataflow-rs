@@ -39,13 +39,13 @@
     "typescript"
   ],
   "scripts": {
+    "predev": "node scripts/use-local-wasm.mjs --if-available",
     "dev": "vite",
     "build": "tsc && vite build",
     "build:lib": "tsc && vite build --config vite.lib.config.ts",
     "postbuild:lib": "node scripts/verify-dts.mjs",
     "preview": "vite preview",
-    "wasm:build": "wasm-pack build ../wasm --target web --out-dir pkg --release",
-    "wasm:local": "npm run wasm:build && node scripts/use-local-wasm.mjs",
+    "wasm:local": "node scripts/use-local-wasm.mjs",
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "prepublishOnly": "npm run build:lib",
     "publish:npm": "npm run build:lib && npm publish --access public"

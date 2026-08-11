@@ -38,6 +38,20 @@ This release also fixes the npm `@goplasmatic/dataflow-wasm` artifact, which
   version so `npm ci` can resolve it. Without this the debugger silently runs
   against the last release.
 - **ci:** `wasm/scripts/verify-wasm.mjs`, run before publishing and on every PR.
+- **wasm:** `engine_version()`, returning the engine version compiled into the
+  module.
+- **ui:** an engine version handshake. `WasmEngineAdapter` throws when the
+  loaded wasm is **older** than the `dataflow-ui` build using it, because
+  `Workflow` does not set `deny_unknown_fields` — an older engine ignores
+  fields it predates instead of rejecting them, so the debugger would otherwise
+  run and quietly disagree with the workflows on screen. A newer engine passes
+  silently; the dependency is a caret range, so npm may legitimately resolve
+  one. Exported as `assertEngineVersion` for hosts that build their own engine.
+- **ci:** the release `validate` job now asserts that root `Cargo.toml`,
+  `wasm/Cargo.toml` (and its `dataflow-rs` dependency), `ui/package.json`, and
+  the `dataflow-rs = "X.Y"` snippets in `README.md` and `docs/src/` all agree.
+  Only the root version was previously checked, and the npm versions are
+  stamped from it at publish time, so in-repo drift was invisible.
 
 ### Fixed
 

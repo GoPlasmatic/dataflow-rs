@@ -99,7 +99,7 @@ export {
 } from './types';
 
 // Engine adapters
-export { WasmEngineAdapter, defaultEngineFactory } from './engines';
+export { WasmEngineAdapter, defaultEngineFactory, assertEngineVersion } from './engines';
 
 // Styles
 import './components/workflow-visualizer/styles/index.css';

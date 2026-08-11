@@ -2,6 +2,7 @@ import { WasmEngine } from '@goplasmatic/dataflow-wasm';
 import type { DataflowEngine, EngineFactory } from '../types/engine';
 import type { ExecutionTrace } from '../types/debug';
 import type { Workflow } from '../types/workflow';
+import { assertEngineVersion } from './versionCheck';
 
 /**
  * Default WASM engine adapter implementing the DataflowEngine interface.
@@ -13,6 +14,9 @@ export class WasmEngineAdapter implements DataflowEngine {
   private engine: WasmEngine;
 
   constructor(workflows: Workflow[]) {
+    // Every execution path builds an adapter, so this is the one chokepoint
+    // where a stale engine can be caught before it produces wrong results.
+    assertEngineVersion();
     const workflowsJson = JSON.stringify(workflows);
     this.engine = new WasmEngine(workflowsJson);
   }

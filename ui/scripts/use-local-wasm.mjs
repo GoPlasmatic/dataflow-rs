@@ -12,20 +12,57 @@
 // debugger runs but quietly does the wrong thing.
 //
 // Usage: npm run wasm:local   (builds, verifies, then overlays)
+//
+// `predev` runs it with --if-available, which downgrades a missing wasm-pack
+// from an error to a warning: a contributor touching only `ui/` should not
+// need the Rust toolchain to start the dev server. The engine version
+// handshake in src/engines/versionCheck.ts is the backstop for that case — it
+// throws at execution time if the installed engine predates this build.
+//
+// It always rebuilds rather than reusing whatever is in wasm/pkg. A stale
+// build usually carries the *same* version as the checkout, so the handshake
+// cannot see it; only rebuilding keeps "the engine I am debugging" equal to
+// "the engine I am editing". wasm-pack no-ops in ~2s when nothing changed.
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
+const optional = process.argv.includes('--if-available');
 const SRC = '../wasm/pkg';
 const DEST = 'node_modules/@goplasmatic/dataflow-wasm';
 const FILES = ['dataflow_wasm.js', 'dataflow_wasm_bg.wasm', 'dataflow_wasm.d.ts'];
 const VITE_CACHE = 'node_modules/.vite';
 
+const build = spawnSync(
+  'wasm-pack',
+  ['build', '../wasm', '--target', 'web', '--out-dir', 'pkg', '--release'],
+  { stdio: 'inherit' },
+);
+
+if (build.error?.code === 'ENOENT') {
+  const message =
+    'wasm-pack is not installed, so this checkout\'s engine cannot be built.\n' +
+    '  Install it from https://drager.github.io/wasm-pack/installer/';
+  if (optional) {
+    console.warn(
+      `⚠ ${message}\n` +
+        '  Continuing against the installed @goplasmatic/dataflow-wasm. If it\n' +
+        '  predates the engine in this checkout, running a workflow fails with a\n' +
+        '  version mismatch rather than silently misbehaving.',
+    );
+    process.exit(0);
+  }
+  console.error(`✗ ${message}`);
+  process.exit(1);
+}
+
+if (build.status !== 0) {
+  console.error('\n✗ wasm-pack build failed; leaving the installed package alone.');
+  process.exit(1);
+}
+
 if (!existsSync(SRC)) {
-  console.error(
-    `✗ ${SRC} not found.\n` +
-      `  Build it first:  wasm-pack build ../wasm --target web --out-dir pkg --release`,
-  );
+  console.error(`✗ ${SRC} not found even though the build reported success.`);
   process.exit(1);
 }
 
