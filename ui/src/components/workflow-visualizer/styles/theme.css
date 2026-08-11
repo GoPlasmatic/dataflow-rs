@@ -54,6 +54,7 @@
   --accent-blue-hover: #2563eb;
   --accent-blue-light: #dbeafe;
   --accent-amber: #f59e0b;
+  --accent-violet: #8b5cf6;
   --node-shadow: rgba(0, 0, 0, 0.1);
   --node-shadow-hover: rgba(0, 0, 0, 0.15);
   --node-bg: #ffffff;
@@ -111,6 +112,7 @@
   --accent-blue-hover: #3b82f6;
   --accent-blue-light: #1e3a5f;
   --accent-amber: #fbbf24;
+  --accent-violet: #a78bfa;
   --node-shadow: rgba(0, 0, 0, 0.3);
   --node-shadow-hover: rgba(0, 0, 0, 0.4);
   --node-bg: #2d2d2d;

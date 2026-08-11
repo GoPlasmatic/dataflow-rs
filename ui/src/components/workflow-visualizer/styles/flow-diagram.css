@@ -320,3 +320,42 @@
 .df-flow-wf-group-node-always {
   color: var(--df-success);
 }
+
+/* ---- Loop nodes and back-edge ---- */
+
+/* React Flow's `.animated` class supplies its own stroke-dasharray and the
+   `dashdraw` keyframes. Setting a competing dasharray here breaks the motion,
+   so the back-edge declares stroke and width only. */
+.df-flow-diagram .react-flow__edge.df-flow-edge-loop .react-flow__edge-path {
+  stroke: var(--accent-violet);
+  stroke-width: 2;
+}
+
+/* The bound-reached exit is a static edge, so it may carry a dash pattern. */
+.df-flow-diagram .react-flow__edge.df-flow-edge-loop-exit .react-flow__edge-path {
+  stroke: var(--accent-violet);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+}
+
+.df-flow-loop-diamond {
+  border-color: var(--accent-violet);
+}
+
+.df-flow-loop-diamond:hover {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-violet) 25%, transparent);
+}
+
+.df-flow-loop-diamond .df-flow-diamond-content {
+  color: var(--accent-violet);
+}
+
+.df-flow-pill-loop {
+  background: var(--node-bg);
+  border: 2px solid var(--accent-violet);
+  color: var(--accent-violet);
+}
+
+.df-flow-handle-loop {
+  background: var(--accent-violet) !important;
+}

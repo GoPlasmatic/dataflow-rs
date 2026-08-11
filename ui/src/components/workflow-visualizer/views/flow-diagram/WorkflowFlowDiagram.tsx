@@ -3,7 +3,7 @@ import { ReactFlow, Background, Controls, type NodeTypes, type NodeMouseHandler 
 import type { Workflow, Task, JsonLogicValue } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
 import { useTheme } from '../../context';
-import { FlowStartEndNode, FlowConditionNode, FlowTaskNode, FlowSkipNode } from './nodes';
+import { FlowStartEndNode, FlowConditionNode, FlowTaskNode, FlowSkipNode, FlowLoopNode } from './nodes';
 import { buildFlowGraph } from './buildFlowGraph';
 
 const nodeTypes: NodeTypes = {
@@ -11,6 +11,9 @@ const nodeTypes: NodeTypes = {
   condition: FlowConditionNode,
   task: FlowTaskNode,
   skip: FlowSkipNode,
+  // One component, two shapes — `data.variant` selects between them.
+  loopGuard: FlowLoopNode,
+  loopTail: FlowLoopNode,
 };
 
 interface WorkflowFlowDiagramProps {
