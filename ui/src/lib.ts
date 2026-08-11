@@ -60,6 +60,7 @@ export type {
   ValidationRule,
   ValidationFunctionInput,
   BuiltinFunctionType,
+  LoopConfig,
   // Debug types
   Message,
   ErrorInfo,
@@ -83,6 +84,10 @@ export type {
 export {
   isBuiltinFunction,
   getFunctionDisplayInfo,
+  loopBadgeLabel,
+  loopGuardLabel,
+  loopStepLabel,
+  loopDescription,
   // Debug helpers
   createEmptyMessage,
   cloneMessage,

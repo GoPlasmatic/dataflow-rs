@@ -40,6 +40,37 @@ export interface Task {
 }
 
 /**
+ * Engine-managed `for` loop over a workflow's task list.
+ *
+ * Mirrors `LoopConfig` in `src/engine/workflow.rs`. A workflow carrying a
+ * `loop` runs its task list once per *sweep* rather than once. Per sweep the
+ * engine writes the counter into `temp_data`, checks `counter < max`
+ * (half-open), re-evaluates the workflow condition, runs the task list, then
+ * advances the counter by `increment`.
+ *
+ * Both exits — reaching `max` and the condition going false — are normal
+ * completion, never an error.
+ */
+export interface LoopConfig {
+  /**
+   * `temp_data` field the engine maintains as the induction variable. `"i"`
+   * means `temp_data.i`; dot-paths nest (`"cursor.index"` →
+   * `temp_data.cursor.index`). Absent still bounds the loop by `max`; the
+   * count is simply not exposed to conditions or tasks.
+   */
+  counter?: string;
+  /** First counter value. Defaults to 0. */
+  init?: number;
+  /** Added to the counter after each sweep. Defaults to 1; must be >= 1. */
+  increment?: number;
+  /**
+   * Required upper bound — sweeps run while `counter < max`. Half-open, so
+   * `init: 0, max: n` yields `0..n-1`, exactly array indices.
+   */
+  max: number;
+}
+
+/**
  * Workflow definition
  */
 export interface Workflow {
@@ -59,6 +90,12 @@ export interface Workflow {
   tasks: Task[];
   /** Whether to continue processing other workflows if this one fails */
   continue_on_error?: boolean;
+  /**
+   * Engine-managed bounded loop over this workflow's task list. Absent runs
+   * the task list exactly once. The JSON key is `loop` (Rust
+   * `#[serde(rename = "loop")]`).
+   */
+  loop?: LoopConfig;
 }
 
 /**
@@ -131,4 +168,53 @@ export function getFunctionDisplayInfo(name: string): {
     default:
       return { label: name, colorClass: 'df-function-badge-custom', Icon: Box };
   }
+}
+
+/** Engine default for `init` when the field is absent. */
+const LOOP_INIT_DEFAULT = 0;
+/** Engine default for `increment` when the field is absent. */
+const LOOP_INCREMENT_DEFAULT = 1;
+
+/**
+ * Short chip text for a loop badge: `i: 0..10000`, or `0..10000` when the
+ * loop leaves its counter unnamed. Appends ` step N` when the increment is
+ * not 1.
+ *
+ * Shows the counter *range*, never a sweep count: with `increment: 2` the
+ * range `0..10000` runs 5,000 sweeps, so a `×10000` form would be wrong.
+ */
+export function loopBadgeLabel(loop: LoopConfig): string {
+  const init = loop.init ?? LOOP_INIT_DEFAULT;
+  const increment = loop.increment ?? LOOP_INCREMENT_DEFAULT;
+  const step = increment === LOOP_INCREMENT_DEFAULT ? '' : ` step ${increment}`;
+  const range = `${init}..${loop.max}`;
+  return loop.counter ? `${loop.counter}: ${range}${step}` : `${range}${step}`;
+}
+
+/**
+ * Text for the loop guard diamond: `i < 10000`, or `sweep < 10000` when the
+ * counter is unnamed. The engine still tracks the count either way.
+ */
+export function loopGuardLabel(loop: LoopConfig): string {
+  return `${loop.counter ?? 'sweep'} < ${loop.max}`;
+}
+
+/**
+ * Text for the loop tail node — the counter advance the engine performs after
+ * each sweep: `i += 1`, or `next sweep` when the counter is unnamed.
+ */
+export function loopStepLabel(loop: LoopConfig): string {
+  const increment = loop.increment ?? LOOP_INCREMENT_DEFAULT;
+  return loop.counter ? `${loop.counter} += ${increment}` : 'next sweep';
+}
+
+/** Full-sentence description of the loop contract, for a `title` tooltip. */
+export function loopDescription(loop: LoopConfig): string {
+  const init = loop.init ?? LOOP_INIT_DEFAULT;
+  const increment = loop.increment ?? LOOP_INCREMENT_DEFAULT;
+  const subject = loop.counter ? `temp_data.${loop.counter}` : 'the sweep count';
+  return (
+    `Loops while ${subject} < ${loop.max}, starting at ${init}, step ${increment}. ` +
+    `Exits when the bound is reached or the condition goes false.`
+  );
 }
