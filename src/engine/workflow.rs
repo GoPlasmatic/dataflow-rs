@@ -35,6 +35,120 @@ impl Rollout {
     }
 }
 
+/// Engine-managed `for` loop over a workflow's task list.
+///
+/// A workflow carrying a `loop` runs its task list repeatedly — one *sweep*
+/// per iteration — rather than once. Per sweep the engine writes the counter
+/// into `temp_data` (when [`counter`](Self::counter) names it), checks
+/// `counter < max`, then re-evaluates the workflow `condition`; the sweep runs
+/// only if both hold. Afterwards the counter advances by `increment`.
+///
+/// The bound is half-open, matching [`Rollout`]: `init: 0, max: n` yields
+/// counter values `0..n-1` — exactly array indices.
+///
+/// Reaching `max` is normal completion, never an error: `max` is always
+/// author-supplied, so hitting it is the stated bound rather than a runaway.
+/// To stop mid-body, use a `filter` task with `on_reject: halt` — that breaks
+/// the whole loop, not just the current sweep.
+///
+/// # Example
+///
+/// ```json
+/// {
+///     "id": "per_item",
+///     "condition": {"<": [{"var": "temp_data.i"}, {"var": "temp_data.n"}]},
+///     "loop": { "counter": "i", "max": 10000 },
+///     "tasks": [ ... ]
+/// }
+/// ```
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct LoopConfig {
+    /// `temp_data` field the engine maintains as the induction variable —
+    /// `"i"` means `temp_data.i`, and dot-paths nest (`"cursor.index"` →
+    /// `temp_data.cursor.index`).
+    ///
+    /// `None` still bounds the loop by `max`; the count is simply not exposed
+    /// to conditions or tasks. The engine tracks it either way, so the audit
+    /// trail carries it regardless.
+    ///
+    /// The engine owns this field: it is rewritten before every sweep, so a
+    /// body task writing the same path is overwritten at the next increment.
+    #[serde(default)]
+    pub counter: Option<String>,
+
+    /// First counter value. Defaults to `0`.
+    #[serde(default)]
+    pub init: i64,
+
+    /// Added to the counter after each sweep. Defaults to `1`; must be `>= 1`,
+    /// so the counter strictly increases and the loop cannot stall.
+    #[serde(default = "default_increment")]
+    pub increment: i64,
+
+    /// Required upper bound — sweeps run while `counter < max`. There is no
+    /// default: an unbounded loop is never what the author meant, and the
+    /// bound is what makes termination structural rather than a property of
+    /// the condition being written correctly.
+    pub max: i64,
+
+    /// Engine-internal: `["temp_data", ..counter segments]`, populated by
+    /// `LogicCompiler`. Empty when `counter` is `None`. Not part of the stable
+    /// API.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub counter_parts: Arc<[Arc<str>]>,
+}
+
+fn default_increment() -> i64 {
+    1
+}
+
+impl LoopConfig {
+    /// Structural validation, run from [`Workflow::validate`] at
+    /// `Engine::build()` time. Every rule here rejects a config that could
+    /// only fail — or spin — at runtime.
+    fn validate(&self, workflow_id: &str) -> Result<()> {
+        if self.increment < 1 {
+            return Err(DataflowError::Workflow(format!(
+                "Workflow {workflow_id}: loop increment must be >= 1, got {} \
+                 (a non-advancing counter would never reach max)",
+                self.increment
+            )));
+        }
+        if self.max <= self.init {
+            return Err(DataflowError::Workflow(format!(
+                "Workflow {workflow_id}: loop max ({}) must be greater than init ({}) — \
+                 the bound is half-open, so this could never run a sweep",
+                self.max, self.init
+            )));
+        }
+        if let Some(counter) = &self.counter {
+            if counter.is_empty() || counter.split('.').any(str::is_empty) {
+                return Err(DataflowError::Workflow(format!(
+                    "Workflow {workflow_id}: loop counter must be a non-empty \
+                     temp_data field path, got {counter:?}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Pre-split `temp_data.{counter}` into the path parts the executor writes
+    /// through, so a sweep never re-splits the path. Populated by
+    /// `LogicCompiler`; the executor falls back to splitting on the fly for
+    /// workflows constructed directly rather than through `Engine::builder`.
+    #[doc(hidden)]
+    pub fn precompute_counter_path(&mut self) {
+        let parts: Vec<Arc<str>> = match &self.counter {
+            Some(counter) => std::iter::once(Arc::from("temp_data"))
+                .chain(counter.split('.').map(Arc::from))
+                .collect(),
+            None => Vec::new(),
+        };
+        self.counter_parts = Arc::from(parts.into_boxed_slice());
+    }
+}
+
 /// Workflow lifecycle status
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -98,6 +212,13 @@ pub struct Workflow {
     /// **no** bucket is admitted — see [`Rollout`].
     #[serde(default)]
     pub rollout: Option<Rollout>,
+    /// Engine-managed loop over this workflow's task list. `None` (the
+    /// default) runs the task list exactly once — the historical behaviour, on
+    /// a code path that carries no loop overhead.
+    ///
+    /// See [`LoopConfig`] for the per-sweep contract.
+    #[serde(default, rename = "loop")]
+    pub loop_config: Option<LoopConfig>,
     /// Tags for categorization and filtering
     #[serde(default)]
     pub tags: Vec<String>,
@@ -140,6 +261,7 @@ impl Workflow {
             version: 1,
             status: WorkflowStatus::Active,
             rollout: None,
+            loop_config: None,
             tags: Vec::new(),
             created_at: None,
             updated_at: None,
@@ -172,6 +294,7 @@ impl Workflow {
             version: 1,
             status: WorkflowStatus::Active,
             rollout: None,
+            loop_config: None,
             tags: Vec::new(),
             created_at: None,
             updated_at: None,
@@ -221,6 +344,13 @@ impl Workflow {
                     task.id
                 )));
             }
+        }
+
+        // A loop whose bounds could never advance is rejected at build time
+        // rather than spinning — or silently doing nothing — on the first
+        // message.
+        if let Some(loop_config) = &self.loop_config {
+            loop_config.validate(&self.id)?;
         }
 
         Ok(())
@@ -459,6 +589,110 @@ mod tests {
             None
         );
         assert_eq!(wf(MAP).rollout, None, "absent JSON key gives None");
+    }
+
+    // -----------------------------------------------------------------
+    // LoopConfig
+    // -----------------------------------------------------------------
+
+    /// Build a one-task workflow carrying `loop_json`, then validate it.
+    fn loop_wf(loop_json: &str) -> Result<Workflow> {
+        let workflow = Workflow::from_json(&format!(
+            r#"{{ "id": "w", "name": "w", "loop": {loop_json}, "tasks": [{MAP}] }}"#
+        ))?;
+        workflow.validate()?;
+        Ok(workflow)
+    }
+
+    #[test]
+    fn loop_config_defaults_init_zero_increment_one() {
+        let cfg = loop_wf(r#"{"max": 5}"#)
+            .expect("valid loop")
+            .loop_config
+            .expect("loop config present");
+        assert_eq!(cfg.init, 0);
+        assert_eq!(cfg.increment, 1);
+        assert_eq!(cfg.max, 5);
+        assert_eq!(cfg.counter, None);
+    }
+
+    #[test]
+    fn loop_config_is_absent_on_every_construction_path() {
+        assert!(wf(MAP).loop_config.is_none(), "absent JSON key gives None");
+        assert!(Workflow::new().loop_config.is_none());
+        assert!(Workflow::default().loop_config.is_none());
+        assert!(
+            Workflow::rule("r", "r", Value::Bool(true), Vec::new())
+                .loop_config
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn loop_config_rejects_a_bound_that_could_never_run_a_sweep() {
+        // Half-open: sweeps run while `counter < max`, so max == init is zero
+        // sweeps and max < init is worse.
+        assert!(loop_wf(r#"{"max": 0}"#).is_err());
+        assert!(loop_wf(r#"{"init": 5, "max": 5}"#).is_err());
+        assert!(loop_wf(r#"{"init": 5, "max": 2}"#).is_err());
+    }
+
+    #[test]
+    fn loop_config_rejects_a_non_advancing_increment() {
+        assert!(loop_wf(r#"{"max": 5, "increment": 0}"#).is_err());
+        assert!(loop_wf(r#"{"max": 5, "increment": -1}"#).is_err());
+    }
+
+    #[test]
+    fn loop_config_rejects_an_empty_counter_path() {
+        assert!(loop_wf(r#"{"max": 5, "counter": ""}"#).is_err());
+        assert!(loop_wf(r#"{"max": 5, "counter": "a..b"}"#).is_err());
+        assert!(loop_wf(r#"{"max": 5, "counter": "a."}"#).is_err());
+    }
+
+    #[test]
+    fn loop_config_requires_max() {
+        // No default: an unbounded loop is never what the author meant, so it
+        // fails to deserialize rather than picking a bound on their behalf.
+        assert!(
+            Workflow::from_json(r#"{ "id": "w", "name": "w", "loop": {}, "tasks": [] }"#).is_err()
+        );
+    }
+
+    #[test]
+    fn loop_config_accepts_a_valid_counter() {
+        let cfg = loop_wf(r#"{"max": 5, "counter": "cursor.index"}"#)
+            .expect("valid loop")
+            .loop_config
+            .expect("loop config present");
+        assert_eq!(cfg.counter.as_deref(), Some("cursor.index"));
+    }
+
+    #[test]
+    fn precompute_counter_path_prefixes_temp_data() {
+        let mut cfg = loop_wf(r#"{"max": 5, "counter": "cursor.index"}"#)
+            .expect("valid loop")
+            .loop_config
+            .expect("loop config present");
+        assert!(
+            cfg.counter_parts.is_empty(),
+            "uncompiled workflows start with no pre-split path"
+        );
+
+        cfg.precompute_counter_path();
+
+        let parts: Vec<&str> = cfg.counter_parts.iter().map(Arc::as_ref).collect();
+        assert_eq!(parts, ["temp_data", "cursor", "index"]);
+    }
+
+    #[test]
+    fn precompute_counter_path_is_empty_without_a_counter_name() {
+        let mut cfg = loop_wf(r#"{"max": 5}"#)
+            .expect("valid loop")
+            .loop_config
+            .expect("loop config present");
+        cfg.precompute_counter_path();
+        assert!(cfg.counter_parts.is_empty());
     }
 
     #[test]

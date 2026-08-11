@@ -74,6 +74,12 @@ impl LogicCompiler {
                 task.id_arc = Arc::from(task.id.as_str());
             }
 
+            // Pre-split `temp_data.{counter}` so a loop sweep never re-splits
+            // the write path.
+            if let Some(loop_config) = workflow.loop_config.as_mut() {
+                loop_config.precompute_counter_path();
+            }
+
             // Compile the workflow condition (defaults to `true`, which folds
             // to `None` so the hot path skips the eval — see `compile_condition`).
             let label = format!("workflow {} condition", workflow.id);
@@ -394,6 +400,56 @@ mod tests {
                 .expect("should evaluate"),
         )
         .expect("eval_str output should be valid JSON")
+    }
+
+    /// A one-task workflow carrying `extra` as additional top-level JSON keys.
+    fn workflow_json(extra: &str) -> String {
+        format!(
+            r#"{{ "id": "w", "name": "w", {extra}
+                 "tasks": [{{"id": "t", "name": "t",
+                             "function": {{"name": "map", "input": {{"mappings": []}}}}}}] }}"#
+        )
+    }
+
+    #[test]
+    fn compile_workflows_precomputes_the_loop_counter_path() {
+        let workflow =
+            Workflow::from_json(&workflow_json(r#""loop": {"counter": "i", "max": 3},"#))
+                .expect("should parse");
+
+        let compiled = LogicCompiler::new()
+            .compile_workflows(vec![workflow])
+            .expect("should compile");
+
+        let cfg = compiled[0].loop_config.as_ref().expect("loop config");
+        let parts: Vec<&str> = cfg.counter_parts.iter().map(Arc::as_ref).collect();
+        assert_eq!(parts, ["temp_data", "i"]);
+    }
+
+    #[test]
+    fn compile_workflows_rejects_an_invalid_loop_config() {
+        // `Workflow::validate` runs inside `compile_workflows`, so a bound that
+        // could never advance fails engine construction rather than the first
+        // message.
+        let workflow =
+            Workflow::from_json(&workflow_json(r#""loop": {"init": 5, "max": 5},"#)).unwrap();
+
+        assert!(
+            LogicCompiler::new()
+                .compile_workflows(vec![workflow])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn compile_workflows_leaves_a_non_looping_workflow_without_a_loop() {
+        let workflow = Workflow::from_json(&workflow_json("")).expect("should parse");
+
+        let compiled = LogicCompiler::new()
+            .compile_workflows(vec![workflow])
+            .expect("should compile");
+
+        assert!(compiled[0].loop_config.is_none());
     }
 
     #[test]
