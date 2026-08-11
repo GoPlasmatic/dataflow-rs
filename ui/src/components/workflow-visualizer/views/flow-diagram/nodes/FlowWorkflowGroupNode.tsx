@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Layers, GitBranch, Check } from 'lucide-react';
+import type { LoopConfig } from '../../../../../types';
+import { LoopBadge } from '../../../cards';
 
 export interface FlowWorkflowGroupData {
   workflowName: string;
@@ -8,11 +10,12 @@ export interface FlowWorkflowGroupData {
   taskCount: number;
   hasCondition: boolean;
   workflowId: string;
+  loop?: LoopConfig;
   [key: string]: unknown;
 }
 
 export const FlowWorkflowGroupNode = memo(function FlowWorkflowGroupNode({ data }: NodeProps) {
-  const { workflowName, priority, taskCount, hasCondition } = data as FlowWorkflowGroupData;
+  const { workflowName, priority, taskCount, hasCondition, loop } = data as FlowWorkflowGroupData;
 
   return (
     <div className="df-flow-wf-group-node">
@@ -32,6 +35,7 @@ export const FlowWorkflowGroupNode = memo(function FlowWorkflowGroupNode({ data 
           {hasCondition ? <GitBranch size={12} /> : <Check size={12} />}
           {hasCondition ? 'Conditional' : 'Always'}
         </span>
+        <LoopBadge loop={loop} />
       </div>
       <Handle type="source" position={Position.Bottom} className="df-flow-handle" />
     </div>
