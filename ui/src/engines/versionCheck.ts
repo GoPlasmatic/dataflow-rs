@@ -66,8 +66,3 @@ export function assertEngineVersion(): void {
     throw result.error;
   }
 }
-
-/** Test seam: forget the memoised result. */
-export function resetEngineVersionCheck(): void {
-  result = undefined;
-}

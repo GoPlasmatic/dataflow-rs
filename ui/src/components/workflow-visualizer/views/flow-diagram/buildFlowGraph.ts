@@ -100,18 +100,9 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
       label: 'Workflow\nCondition',
       conditionType: 'workflow',
     });
-    // Explicit rather than `connect` so the edge can declare a default type.
     // Without a loop this leaves Start and carries no label; with one it
     // leaves the guard's true branch and is labelled like any other.
-    edges.push({
-      id: `e-${prevNodeId}-${condId}`,
-      source: prevNodeId,
-      target: condId,
-      sourceHandle: prevSourceHandle,
-      label: prevSourceHandle === 'true' ? 'Yes' : undefined,
-      className: prevSourceHandle === 'true' ? 'df-flow-edge-true' : undefined,
-      type: 'default',
-    });
+    connect(condId);
 
     const skipId = addNode('skip', {});
     edges.push({

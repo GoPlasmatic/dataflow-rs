@@ -112,19 +112,28 @@ pub fn set_nested_value_parts(
     if parts.is_empty() {
         return;
     }
-    let parts: Vec<&str> = parts.iter().map(Arc::as_ref).collect();
-    set_nested_value_impl(data, &parts, value);
+    set_nested_value_impl(data, parts, value);
 }
 
 /// Shared tree-walk behind [`set_nested_value`] and [`set_nested_value_parts`]:
 /// intermediate containers are created on demand (next part decides Array vs
 /// Object), arrays grow with `Null` padding, and the `#`-prefix escape applies
 /// inside object contexts only. See [`set_nested_value`] for the full contract.
-fn set_nested_value_impl(data: &mut OwnedDataValue, parts: &[&str], value: OwnedDataValue) {
+///
+/// Generic over the part type so the pre-split `&[Arc<str>]` callers walk their
+/// slice directly: collecting it into a `Vec<&str>` first would allocate on
+/// every write, once per loop sweep and once per mapping per task, which is
+/// exactly the cost the pre-split paths exist to avoid.
+fn set_nested_value_impl<P: AsRef<str>>(
+    data: &mut OwnedDataValue,
+    parts: &[P],
+    value: OwnedDataValue,
+) {
     let last = parts.len() - 1;
     let mut current = data;
 
     for (i, part) in parts.iter().enumerate() {
+        let part = part.as_ref();
         if i == last {
             match current {
                 OwnedDataValue::Object(pairs) => {
@@ -151,7 +160,7 @@ fn set_nested_value_impl(data: &mut OwnedDataValue, parts: &[&str], value: Owned
         // Non-terminal hop: locate-or-create the child and descend.
         // Use the next part to decide whether the child container is an Array
         // (next part parses as usize) or an Object (anything else).
-        let next_is_array = parts[i + 1].parse::<usize>().is_ok();
+        let next_is_array = parts[i + 1].as_ref().parse::<usize>().is_ok();
 
         match current {
             OwnedDataValue::Object(pairs) => {
@@ -283,9 +292,22 @@ pub(crate) fn strip_hash_prefix(part: &str) -> &str {
 /// by `LogicCompiler`) and `resolve_target_path` (the on-the-fly fallback for
 /// directly-constructed configs).
 pub(crate) fn compute_data_path(target: &str) -> (Arc<str>, Arc<[Arc<str>]>) {
-    let path = format!("data.{target}");
-    let parts: Vec<Arc<str>> = path.split('.').map(Arc::from).collect();
-    (Arc::from(path), parts.into())
+    (
+        Arc::from(format!("data.{target}")),
+        compute_path_parts("data", target),
+    )
+}
+
+/// Split `"{prefix}.{target}"` into the cached `Arc<[Arc<str>]>` walk order used
+/// by the `*_parts` accessors, without building the joined string.
+///
+/// Shared by [`compute_data_path`] and `LoopConfig`'s `temp_data.{counter}`
+/// pre-split — the latter only ever writes through the parts, so materializing
+/// the dotted form for it would be wasted work.
+pub(crate) fn compute_path_parts(prefix: &str, target: &str) -> Arc<[Arc<str>]> {
+    std::iter::once(Arc::from(prefix))
+        .chain(target.split('.').map(Arc::from))
+        .collect()
 }
 
 /// Populate `*path_arc`/`*path_parts` from `target` via [`compute_data_path`].

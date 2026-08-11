@@ -14,7 +14,7 @@ use crate::engine::task::Task;
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::trace::{ExecutionStep, ExecutionTrace, StepTiming, duration_us_between};
-use crate::engine::utils::{set_nested_value, set_nested_value_parts};
+use crate::engine::utils::{compute_path_parts, set_nested_value, set_nested_value_parts};
 use crate::engine::workflow::{LoopConfig, Workflow};
 use chrono::{DateTime, Utc};
 use core::time::Duration;
@@ -91,6 +91,26 @@ fn note_workflow_skip(trace: Option<&mut ExecutionTrace>, workflow_id: &str, rea
     }
 }
 
+/// Log and (if tracing) record a single task's condition skip.
+///
+/// The async task loop and the shared-arena one both reach this point with the
+/// same state, and previously spelled the block out twice — every field added
+/// to the skipped step had to be added in both places, with nothing to catch a
+/// one-sided edit. Companion to [`note_workflow_skip`] above.
+fn note_task_skip(
+    trace: Option<&mut ExecutionTrace>,
+    workflow_id: &str,
+    task_id: &str,
+    loop_counter: Option<i64>,
+) {
+    debug!("Skipping task {} - condition not met", task_id);
+    if let Some(t) = trace {
+        t.add_step(
+            ExecutionStep::task_skipped(workflow_id, task_id).with_loop_counter(loop_counter),
+        );
+    }
+}
+
 /// Whether `workflow` serves this message's routing bucket.
 ///
 /// A workflow with no `rollout`, or a message with no bucket, is admitted. The
@@ -121,27 +141,22 @@ fn joins_sync_run(workflow: &Workflow) -> bool {
     workflow.fully_sync && workflow.loop_config.is_none()
 }
 
-/// Write the loop counter into `temp_data` ahead of a sweep.
+/// Resolve the counter's pre-split write path, once per looping workflow.
 ///
-/// Called before the bound and condition checks so a condition indexing by the
-/// counter — the per-item pattern — resolves on the very first sweep. An
-/// unnamed counter is a no-op: the loop is still bounded, the value simply is
-/// not exposed to JSONLogic (the audit trail carries it either way).
+/// `LogicCompiler` pre-splits `temp_data.{counter}` at build time. A workflow
+/// constructed directly rather than through `Engine::builder` never got that
+/// pass, so the parts are computed here instead — once, ahead of the sweep
+/// loop, rather than re-formatted and re-split on every sweep.
 ///
-/// No arena refresh is needed here: `execute_pass` builds its `ArenaContext`
-/// from `message.context` *after* this write.
-fn write_loop_counter(context: &mut OwnedDataValue, config: &LoopConfig, counter: i64) {
-    let Some(name) = config.counter.as_deref() else {
-        return;
-    };
-    let value = OwnedDataValue::from_i64(counter);
-    if config.counter_parts.is_empty() {
-        // Workflow built directly rather than through `Engine::builder`, so the
-        // compiler never pre-split the path. Same semantics, one extra split
-        // per sweep.
-        set_nested_value(context, &format!("temp_data.{name}"), value);
-    } else {
-        set_nested_value_parts(context, &config.counter_parts, value);
+/// An unnamed counter resolves to an empty slice, which `set_nested_value_parts`
+/// treats as a no-op: the loop is still bounded, the value simply is not
+/// exposed to JSONLogic (the audit trail carries it either way).
+fn resolve_counter_parts(config: &LoopConfig) -> Arc<[Arc<str>]> {
+    match &config.counter {
+        Some(counter) if config.counter_parts.is_empty() => {
+            compute_path_parts("temp_data", counter)
+        }
+        _ => Arc::clone(&config.counter_parts),
     }
 }
 
@@ -163,6 +178,24 @@ fn new_progress_object(workflow_id: &str, task_id: &str, status: u16) -> OwnedDa
     ])
 }
 
+/// Overwrite a string slot by reusing its existing buffer where possible.
+///
+/// The ids written per task are drawn from a small, repeating set — in a loop
+/// they are outright constant across every sweep — so the common case is
+/// writing the value that is already there. Comparing first turns that case
+/// into a no-op, and the mismatch case still reuses the allocation.
+fn overwrite_str_in_place(slot: &mut OwnedDataValue, value: &str) {
+    match slot {
+        OwnedDataValue::String(existing) => {
+            if existing != value {
+                existing.clear();
+                existing.push_str(value);
+            }
+        }
+        _ => *slot = OwnedDataValue::String(value.to_string()),
+    }
+}
+
 /// Overwrite the three fields of an existing 3-key `progress` object without
 /// reallocating it. Returns `false` when the object's shape diverges from
 /// `{workflow_id, task_id, status_code}`, in which case the caller replaces
@@ -181,11 +214,11 @@ fn overwrite_progress_in_place(
     for (k, v) in fields.iter_mut() {
         match k.as_str() {
             "workflow_id" => {
-                *v = OwnedDataValue::String(workflow_id.to_string());
+                overwrite_str_in_place(v, workflow_id);
                 matched += 1;
             }
             "task_id" => {
-                *v = OwnedDataValue::String(task_id.to_string());
+                overwrite_str_in_place(v, task_id);
                 matched += 1;
             }
             "status_code" => {
@@ -201,8 +234,8 @@ fn overwrite_progress_in_place(
 /// Write `metadata.progress = {workflow_id, task_id, status_code}` with a
 /// single tree walk. From the second task of a message onward the slot
 /// already holds the expected 3-key object, so the three values are
-/// overwritten in place — no Vec/Object/key-`String` allocations, just the
-/// two unavoidable id `String`s. First write (or any shape divergence)
+/// overwritten in place, reusing the id `String` buffers — no allocation at
+/// all once the shape settles. First write (or any shape divergence)
 /// replaces the slot wholesale; a context whose `metadata` is missing or
 /// non-Object falls back to the generic `set_nested_value` writer, which
 /// creates intermediate containers as needed.
@@ -443,9 +476,18 @@ impl WorkflowExecutor {
     ) -> Result<bool> {
         let mut counter = config.init;
         let mut sweeps_run: u32 = 0;
+        let counter_parts = resolve_counter_parts(config);
 
         loop {
-            write_loop_counter(&mut message.context, config, counter);
+            // Written before the bound and condition checks so a condition
+            // indexing by the counter — the per-item pattern — resolves on the
+            // very first sweep. No arena refresh is needed: `execute_pass`
+            // builds its `ArenaContext` from `message.context` after this write.
+            set_nested_value_parts(
+                &mut message.context,
+                &counter_parts,
+                OwnedDataValue::from_i64(counter),
+            );
 
             // `>=`, not `>`, and that is load-bearing for termination rather
             // than a style choice. `increment >= 1` is validated at build time
@@ -710,13 +752,12 @@ impl WorkflowExecutor {
                 )?;
 
                 if !should_execute {
-                    debug!("Skipping task {} - condition not met", task.id);
-                    if let Some(t) = trace.as_deref_mut() {
-                        t.add_step(
-                            ExecutionStep::task_skipped(&workflow.id, &task.id)
-                                .with_loop_counter(pass.loop_counter),
-                        );
-                    }
+                    note_task_skip(
+                        trace.as_deref_mut(),
+                        &workflow.id,
+                        &task.id,
+                        pass.loop_counter,
+                    );
                     idx += 1;
                     continue;
                 }
@@ -832,13 +873,12 @@ impl WorkflowExecutor {
             };
 
             if !should_execute {
-                debug!("Skipping task {} - condition not met", task.id);
-                if let Some(t) = trace.as_deref_mut() {
-                    t.add_step(
-                        ExecutionStep::task_skipped(&workflow.id, &task.id)
-                            .with_loop_counter(pass.loop_counter),
-                    );
-                }
+                note_task_skip(
+                    trace.as_deref_mut(),
+                    &workflow.id,
+                    &task.id,
+                    pass.loop_counter,
+                );
                 continue;
             }
 
@@ -1001,9 +1041,7 @@ impl WorkflowExecutor {
         // `joins_sync_run` keeps looping workflows out of this path, so every
         // workflow here runs exactly one pass and carries no loop counter.
         debug_assert!(
-            workflows
-                .iter()
-                .all(|w| w.borrow().loop_config.is_none() && w.borrow().fully_sync),
+            workflows.iter().all(|w| joins_sync_run(w.borrow())),
             "only non-looping fully-sync workflows may join a shared-arena run"
         );
         let pass = PassCtx::once(now);

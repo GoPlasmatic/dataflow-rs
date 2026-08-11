@@ -139,13 +139,10 @@ impl LoopConfig {
     /// workflows constructed directly rather than through `Engine::builder`.
     #[doc(hidden)]
     pub fn precompute_counter_path(&mut self) {
-        let parts: Vec<Arc<str>> = match &self.counter {
-            Some(counter) => std::iter::once(Arc::from("temp_data"))
-                .chain(counter.split('.').map(Arc::from))
-                .collect(),
-            None => Vec::new(),
+        self.counter_parts = match &self.counter {
+            Some(counter) => crate::engine::utils::compute_path_parts("temp_data", counter),
+            None => Arc::from([] as [Arc<str>; 0]),
         };
-        self.counter_parts = Arc::from(parts.into_boxed_slice());
     }
 }
 

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 mod common;
 
-use common::{RecordingObserver, dv};
+use common::{FailingTask, RecordingObserver, dv};
 
 // =============================================================================
 // Workflow loop — bounded per-sweep re-execution of a task list
@@ -150,21 +150,6 @@ async fn loop_workflow_processes_each_item_of_an_array() {
     );
 }
 
-/// Always fails, to drive the loop's error paths.
-#[derive(Debug)]
-struct AlwaysFails;
-
-#[async_trait]
-impl AsyncFunctionHandler for AlwaysFails {
-    type Input = Value;
-
-    async fn execute(&self, _ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
-        Err(dataflow_rs::engine::error::DataflowError::Task(
-            "boom".to_string(),
-        ))
-    }
-}
-
 /// A three-sweep loop whose body is `tasks`, wired to the given handlers.
 fn loop_engine(
     tasks: &str,
@@ -299,7 +284,7 @@ async fn a_failing_task_with_continue_on_error_lets_every_sweep_run() {
         r#"{"id": "boom", "name": "boom", "continue_on_error": true,
              "function": {"name": "failing", "input": {}}}"#,
         "",
-        vec![("failing", Box::new(AlwaysFails))],
+        vec![("failing", Box::new(FailingTask))],
     );
 
     let mut message = Message::builder().build();
@@ -325,7 +310,7 @@ async fn a_failing_task_with_workflow_continue_on_error_advances_to_the_next_swe
     let engine = loop_engine(
         r#"{"id": "boom", "name": "boom", "function": {"name": "failing", "input": {}}}"#,
         r#""continue_on_error": true,"#,
-        vec![("failing", Box::new(AlwaysFails))],
+        vec![("failing", Box::new(FailingTask))],
     );
 
     let mut message = Message::builder().build();
@@ -355,7 +340,7 @@ async fn a_failing_task_without_continue_on_error_stops_the_loop_on_the_first_sw
     let engine = loop_engine(
         r#"{"id": "boom", "name": "boom", "function": {"name": "failing", "input": {}}}"#,
         "",
-        vec![("failing", Box::new(AlwaysFails))],
+        vec![("failing", Box::new(FailingTask))],
     );
 
     let mut message = Message::builder().build();
