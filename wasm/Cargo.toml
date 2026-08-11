@@ -12,6 +12,25 @@ categories = ["wasm", "development-tools"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# One explicit wasm-opt pass, shared by every builder — a local `wasm-pack
+# build`, docs.yml and release.yml — rather than wasm-pack's default followed
+# by a second ad-hoc pass in CI with different flags.
+#
+# `--enable-reference-types` is load-bearing, not decoration. The glue's
+# `__wbindgen_init_externref_table` unconditionally calls `table.grow(4)`; a
+# binaryen that processes this module without reference-types rewrites the
+# externref table with `maximum == initial`, so that grow throws RangeError on
+# the very first init and the package is dead on arrival in every browser.
+# `scripts/verify-wasm.mjs` fails the build if that ever regresses.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "-Oz",
+    "--enable-reference-types",
+    "--enable-bulk-memory",
+    "--enable-nontrapping-float-to-int",
+    "--enable-sign-ext",
+]
+
 [dependencies]
 # `all-operators` on the dependency line, not via `--features` at release time,
 # so `wasm-pack test` and any from-source build get the same operator set the

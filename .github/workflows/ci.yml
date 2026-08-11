@@ -121,8 +121,10 @@ jobs:
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-wasm-
 
-      # Prebuilt binary, same as release.yml — seconds, versus a multi-minute
-      # from-source `cargo install` on every cache miss.
+      # Prebuilt binary — seconds, versus a multi-minute from-source
+      # `cargo install` on every cache miss. release.yml deliberately does pin
+      # a version instead: this job only has to catch regressions, while that
+      # one produces the artifact users install.
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
@@ -136,6 +138,16 @@ jobs:
       # `--node` needs no browser driver; tests/web.rs is not browser-gated.
       - name: Run wasm tests
         run: wasm-pack test --node
+        working-directory: wasm
+
+      # A release-profile build, because the defect this guards against lives
+      # in the release wasm-opt pass and a dev build would not show it. Catches
+      # the regression on the PR rather than at `git tag` time, when the only
+      # remedy is a failed release.
+      - name: Build and verify the release wasm artifact
+        run: |
+          wasm-pack build --target web --out-dir pkg --release
+          node scripts/verify-wasm.mjs pkg
         working-directory: wasm
 
   # `rust-version` in Cargo.toml is a promise to downstream consumers, and

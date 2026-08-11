@@ -39,6 +39,12 @@ jobs:
       - name: Build WASM
         run: wasm-pack build wasm --target web --release
 
+      # The playground loads this binary, so it hits the same failure mode as
+      # the npm package if the externref table comes out non-growable.
+      - name: Verify WASM artifact
+        run: node scripts/verify-wasm.mjs pkg
+        working-directory: wasm
+
       - name: Copy WASM to docs
         run: |
           mkdir -p docs/src/wasm

@@ -92,11 +92,13 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Install binaryen
-        run: sudo apt-get update && sudo apt-get install -y binaryen
+      # Pinned, and deliberately not the `| sh` installer: that tracks whatever
+      # wasm-pack is latest on the day of the release, which is how the
+      # toolchain drifted unnoticed in the first place. wasm-pack fetches a
+      # matching binaryen itself, so no system binaryen is installed — an
+      # apt-provided one is old enough to mishandle the externref table.
+      - name: Install wasm-pack (pinned)
+        run: cargo install wasm-pack --version 0.14.0 --locked
 
       - name: Cache cargo
         uses: actions/cache@v6
@@ -115,14 +117,11 @@ jobs:
           cd wasm
           wasm-pack build --target web --out-dir pkg --release
 
-      - name: Optimize WASM binary
-        run: |
-          WASM_FILE="wasm/pkg/dataflow_wasm_bg.wasm"
-          ORIGINAL_SIZE=$(stat -c%s "$WASM_FILE")
-          wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext "$WASM_FILE" -o "$WASM_FILE.opt"
-          mv "$WASM_FILE.opt" "$WASM_FILE"
-          NEW_SIZE=$(stat -c%s "$WASM_FILE")
-          echo "WASM optimized: $ORIGINAL_SIZE -> $NEW_SIZE bytes (saved $((ORIGINAL_SIZE - NEW_SIZE)) bytes)"
+      # No separate wasm-opt step: optimization is declared once in
+      # wasm/Cargo.toml under [package.metadata.wasm-pack.profile.release], so
+      # a local build, docs.yml and this job all produce the same binary. The
+      # old second pass here ran with different flags and no
+      # --enable-reference-types.
 
       - name: Generate package.json
         run: |
@@ -166,6 +165,14 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+
+      # The last gate before the artifact leaves the machine. `wasm-pack build`
+      # exits 0 for a binary that cannot initialize in a browser, and npm will
+      # happily publish it — that is how every release from 2.1.3 to 3.2.0
+      # shipped broken. This asserts the externref table can grow and that the
+      # glue and binary come from the same build.
+      - name: Verify WASM artifact
+        run: cd wasm && node scripts/verify-wasm.mjs pkg
 
       - name: Check if version exists on npm
         id: check
