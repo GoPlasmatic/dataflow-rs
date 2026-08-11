@@ -2,10 +2,12 @@
 // debugger runs against this checkout's engine instead of the last npm
 // release.
 //
-// This mirrors what release.yml's publish-ui job already does: the dependency
-// stays pinned to a *published* version so `npm ci` can resolve the lockfile,
-// and the fresh build is copied over node_modules. Using a `file:` dependency
-// instead would break that resolution.
+// The dependency stays pinned to a *published* version so `npm ci` can resolve
+// the lockfile before a matching engine exists; a `file:` dependency would
+// break that resolution. This script is what bridges the gap, and ci.yml's ui
+// job runs it for the same reason a developer does. release.yml deliberately
+// does the opposite — it installs the engine it has just published, so the
+// release validates what consumers actually receive.
 //
 // Needed whenever the engine has unreleased changes — a workflow field the
 // published wasm has never heard of is silently ignored by serde, so the
