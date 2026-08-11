@@ -52,10 +52,11 @@ every family back on.
 ### Running the debugger against your engine changes
 
 `ui/package.json` pins `@goplasmatic/dataflow-wasm` to the last **published**
-version, because `npm ci` has to be able to resolve it — both here and in
-`release.yml`, which then copies the release's own build over `node_modules`.
-So a plain `npm run dev` runs the debugger against the last release, not your
-checkout.
+version, because `npm ci` has to be able to resolve it before a matching
+engine exists — both here and in `release.yml`, which installs that release's
+own just-published engine instead of overlaying a local build, so the release
+validates what consumers actually receive. So a plain `npm run dev` runs the
+debugger against the last release, not your checkout.
 
 That matters more than it sounds. `Workflow` does not set
 `deny_unknown_fields`, so a field the published wasm has never heard of is
@@ -87,6 +88,14 @@ dependency cache off the lockfile, which does not change when files are
 overwritten in place, so without it the dev server keeps serving the old JS
 glue against the new binary. That pairing fails confusingly — init succeeds and
 only a later mangled-name lookup throws.
+
+This overlay is deliberately one-directional: `predev` and `wasm:local` are
+the only scripts that call `use-local-wasm.mjs`. `build:lib` — which
+`prepublishOnly` runs, and therefore `npm publish` — never does. Keep it that
+way. `release.yml` installs the engine it has just published immediately
+before running `build:lib`; a future `prebuild:lib` hook that overlaid a local
+build would silently overwrite that published engine partway through
+`publish-ui`, undoing the point of installing it.
 
 `npm run wasm:local` refuses to overlay a build that fails
 `wasm/scripts/verify-wasm.mjs` — the same guard the release pipeline runs

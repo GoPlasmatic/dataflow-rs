@@ -47,11 +47,21 @@ This release also fixes the npm `@goplasmatic/dataflow-wasm` artifact, which
   run and quietly disagree with the workflows on screen. A newer engine passes
   silently; the dependency is a caret range, so npm may legitimately resolve
   one. Exported as `assertEngineVersion` for hosts that build their own engine.
+  An engine too old to export `engine_version` at all is read off a namespace
+  import rather than a named one, so it produces this same friendly
+  version-mismatch error instead of an opaque module-link failure.
 - **ci:** the release `validate` job now asserts that root `Cargo.toml`,
   `wasm/Cargo.toml` (and its `dataflow-rs` dependency), `ui/package.json`, and
   the `dataflow-rs = "X.Y"` snippets in `README.md` and `docs/src/` all agree.
   Only the root version was previously checked, and the npm versions are
   stamped from it at publish time, so in-repo drift was invisible.
+- **ci:** CI and the release now resolve `@goplasmatic/dataflow-wasm`
+  differently, because they answer different questions. The `ui` job builds
+  the engine from the commit under test via `wasm:local`, so a UI change that
+  depends on a wasm export added in the same commit can typecheck without a
+  published release to resolve. `publish-ui` installs the version
+  `publish-wasm` just published, so the release validates the exact artifact
+  consumers will install rather than a local build that never reaches them.
 
 ### Fixed
 

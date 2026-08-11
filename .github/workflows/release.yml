@@ -271,29 +271,26 @@ jobs:
       # against the exact artifact consumers will install, rather than against
       # a local build that would never reach them.
       #
-      # The wait absorbs registry propagation. publish-wasm finished moments
-      # ago and the new version is not always immediately resolvable; without
-      # this the release would fail spuriously after the crate and the engine
-      # had already published.
-      - name: Wait for the published engine to be resolvable
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          PKG="@goplasmatic/dataflow-wasm@$VERSION"
-          for i in $(seq 1 30); do
-            if npm view "$PKG" version >/dev/null 2>&1; then
-              echo "$PKG resolvable on attempt $i"
-              exit 0
-            fi
-            echo "waiting for $PKG (attempt $i/30)"
-            sleep 10
-          done
-          echo "::error::$PKG did not become resolvable within 5 minutes"
-          exit 1
-
+      # The retry wraps the install itself rather than polling ahead of it.
+      # `npm view` requests full metadata and `npm install` requests the
+      # abbreviated "corgi" metadata; registry.npmjs.org caches those as two
+      # independent objects with their own TTLs, so a poll on `npm view` can
+      # succeed while the install still 404s on ETARGET — after the crate and
+      # the engine have already published. `--prefer-online` matters on every
+      # attempt, not just the first: a failed install caches the stale corgi
+      # packument locally, so a bare retry would keep failing from that cache
+      # instead of asking the registry again.
       - name: Install this release's published engine
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          cd ui && npm install "@goplasmatic/dataflow-wasm@$VERSION"
+          cd ui
+          for i in $(seq 1 30); do
+            npm install --prefer-online "@goplasmatic/dataflow-wasm@$VERSION" && exit 0
+            echo "waiting for @goplasmatic/dataflow-wasm@$VERSION (attempt $i/30)"
+            sleep 10
+          done
+          echo "::error::@goplasmatic/dataflow-wasm@$VERSION did not become installable within 5 minutes"
+          exit 1
 
       - name: Build UI library
         run: cd ui && npm run build:lib
