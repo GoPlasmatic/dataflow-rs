@@ -293,7 +293,7 @@ default**:
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "3.2", features = ["ext-string", "ext-control"] }
+dataflow-rs = { version = "3.3", features = ["ext-string", "ext-control"] }
 ```
 
 `error-handling` names the JSONLogic `try`/`throw` operators. It has nothing to

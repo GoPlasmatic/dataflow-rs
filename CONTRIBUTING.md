@@ -33,7 +33,7 @@ cd dataflow-rs
 cargo test --workspace --all-features
 ```
 
-You should see 381 passing tests (209 unit, 84 integration, 21 doc, 66 docs-page
+You should see 444 passing tests (260 unit, 96 integration, 21 doc, 66 docs-page
 doctests, 1 docs coverage).
 
 The count is feature-dependent. The optional operator families are `#[cfg]`-gated
@@ -44,7 +44,7 @@ off — so the default build reports a different number:
 cargo test -p dataflow-rs
 ```
 
-should report 308 passing (203 unit, 84 integration, 21 doc). Use `-p dataflow-rs`,
+should report 371 passing (254 unit, 96 integration, 21 doc). Use `-p dataflow-rs`,
 not `--workspace`: `dataflow-wasm` depends on `dataflow-rs` with `all-operators`,
 and cargo unifies features across workspace members, so `--workspace` would turn
 every family back on.

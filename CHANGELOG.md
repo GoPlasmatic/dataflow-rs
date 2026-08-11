@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] — 2026-08-11
+
+A workflow's task list can now run as a bounded loop, so a set of tasks can
+process one array element per sweep instead of needing one workflow per item.
+
+This release also fixes the npm `@goplasmatic/dataflow-wasm` artifact, which
+**has never worked in a browser** — see *Fixed*.
+
+### Added
+
+- **workflow:** `loop` field (`LoopConfig`) turning a workflow's task list into
+  a bounded `for` loop. Per sweep the engine writes the counter to `temp_data`,
+  checks `counter < max` (half-open), re-evaluates the workflow condition, runs
+  the task list unchanged, then advances by `increment`. Fields: `max`
+  (**required**), `counter`, `init` (default `0`), `increment` (default `1`).
+  `increment < 1`, `max <= init`, and a malformed `counter` path are rejected at
+  `Engine::build()` rather than at runtime.
+- **audit/trace:** `loop_counter` on `AuditTrail` and `ExecutionStep`, carrying
+  the counter value for the sweep that produced the entry. Omitted entirely for
+  workflows without a `loop`, and recorded even when the loop leaves its counter
+  unnamed, so a trace can be grouped by iteration.
+- **docs:** `docs/src/advanced/loops.md`, covering per-item processing, fixed
+  repetition, repeat-until-false, breaking out mid-body, and audit volume.
+- **ui:** looping workflows are now visually distinct. A `⟳ i: 0..n` badge on
+  the workflow card, tree node and group-diagram node, and in the flow diagram a
+  loop-guard diamond, an `i += 1` tail, and an animated back-edge. Adds the
+  `LoopConfig` type and the `loopBadgeLabel` / `loopGuardLabel` / `loopStepLabel`
+  / `loopDescription` helpers to the public exports, plus a Per-Item Loop sample.
+- **ui:** `npm run wasm:local`, which builds this checkout's engine and overlays
+  it onto the installed package — the dependency stays pinned to a published
+  version so `npm ci` can resolve it. Without this the debugger silently runs
+  against the last release.
+- **ci:** `wasm/scripts/verify-wasm.mjs`, run before publishing and on every PR.
+
+### Fixed
+
+- **wasm (critical):** every published `@goplasmatic/dataflow-wasm` from 2.1.3
+  through 3.2.0 shipped a binary whose externref table declares
+  `maximum == initial`, while the JS glue beside it calls `table.grow(4)` during
+  init. Initialization threw `RangeError: WebAssembly.Table.grow(): failed to
+  grow table by 4` on the first call, so the package could never start in any
+  browser. `release.yml` was the only pipeline installing binaryen from apt, and
+  its extra `wasm-opt` pass omitted `--enable-reference-types`; `ci.yml` and
+  `docs.yml` let wasm-pack fetch its own binaryen and were unaffected.
+  Optimization now lives once in `wasm/Cargo.toml` under
+  `[package.metadata.wasm-pack.profile.release]`, wasm-pack is pinned rather
+  than tracking whatever is latest on release day, and `verify-wasm.mjs`
+  instantiates the built binary and fails the release if the table cannot grow
+  or the glue and binary come from different builds.
+
+### Changed
+
+- **tests:** the single 4,408-line integration file is split into ten
+  topic-scoped files under `tests/`, one binary each, with shared fixtures in
+  `tests/common/mod.rs`.
+- **ui:** `buildFlowGraph` no longer duplicates its task-emitting logic across
+  separate with-condition and without-condition branches. Output for
+  non-looping workflows is unchanged.
+
+### Compatibility
+
+- **`loop` is opt-in and costs nothing when absent.** A workflow without one
+  takes the same code path it always did, with no added per-message checks.
+- **Reaching `max` is normal completion, not an error.** The bound is always
+  author-supplied. If the loop stops at `max` while the condition was still
+  true, the engine logs a warning.
+- **The workflow condition is a loop guard, not a per-sweep filter.** It is
+  re-evaluated between sweeps, and going false ends the loop rather than
+  skipping one iteration. Use a `filter` task with `on_reject: halt` to stop
+  part-way through a sweep; that breaks the whole loop.
+- **The engine owns the counter.** It is rewritten before every sweep, so a body
+  task writing the same `temp_data` path has its value replaced at the next
+  increment.
+- **Looping workflows do not join the shared-arena fully-sync run.** The arena
+  is a bump allocator that never frees mid-scope, so one scope per sweep keeps
+  memory flat instead of growing with the iteration count.
+- **Audit volume scales with sweeps.** A 1,000-sweep loop over 3 tasks records
+  3,000 entries. `max` is what keeps that finite.
+- Wire shapes are otherwise unchanged: `loop_counter` is omitted when absent,
+  and a workflow JSON without `loop` deserializes exactly as before.
+
 ## [3.2.0] — 2026-07-31
 
 `datalogic-rs` ships `default = []`, and this crate enabled only `serde_json`

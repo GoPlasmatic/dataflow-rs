@@ -17,6 +17,7 @@ A React component library for visualizing and debugging [dataflow-rs](https://gi
 ## Features
 
 - **Workflow Visualization** - Interactive tree view of workflows, tasks, and conditions
+- **Loop Visualization** - Looping workflows carry a `⟳` badge, and their flow diagram shows the bound check, the counter advance, and a back-edge
 - **Execution Debugging** - Step-by-step execution trace visualization with message snapshots
 - **JSONLogic Viewer** - Visual representation of JSONLogic expressions via [@goplasmatic/datalogic-ui](https://www.npmjs.com/package/@goplasmatic/datalogic-ui)
 - **Theme Support** - Light, dark, and system theme modes

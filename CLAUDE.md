@@ -194,7 +194,7 @@ matching version.
 
 ### Testing Patterns
 
-Unit tests live in `mod tests` blocks alongside the code they cover (12 modules).
+Unit tests live in `mod tests` blocks alongside the code they cover (17 modules).
 The integration suite is split by topic across `tests/`, one binary per file:
 
 | File | Covers |
