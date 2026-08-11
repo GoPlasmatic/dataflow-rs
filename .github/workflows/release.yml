@@ -234,6 +234,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # Kept after publish-ui stopped consuming it: nothing downloads this now,
+      # but it is the only record of the exact bytes that went to npm, which is
+      # what a post-mortem on a bad release needs.
       - name: Upload wasm-pkg artifact
         uses: actions/upload-artifact@v7
         with:
@@ -247,12 +250,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Download wasm-pkg artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: wasm-pkg
-          path: wasm/pkg/
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -268,19 +265,45 @@ jobs:
       - name: Install dependencies
         run: cd ui && npm ci
 
-      - name: Copy local WASM build
+      # `npm ci` above resolved the lockfile, which pins the *previous*
+      # release's engine. publish-wasm has since published this release's, so
+      # install that explicitly: the library is then type-checked and built
+      # against the exact artifact consumers will install, rather than against
+      # a local build that would never reach them.
+      #
+      # The wait absorbs registry propagation. publish-wasm finished moments
+      # ago and the new version is not always immediately resolvable; without
+      # this the release would fail spuriously after the crate and the engine
+      # had already published.
+      - name: Wait for the published engine to be resolvable
         run: |
-          cp wasm/pkg/dataflow_wasm.js ui/node_modules/@goplasmatic/dataflow-wasm/
-          cp wasm/pkg/dataflow_wasm_bg.wasm ui/node_modules/@goplasmatic/dataflow-wasm/
+          VERSION="${{ needs.validate.outputs.version }}"
+          PKG="@goplasmatic/dataflow-wasm@$VERSION"
+          for i in $(seq 1 30); do
+            if npm view "$PKG" version >/dev/null 2>&1; then
+              echo "$PKG resolvable on attempt $i"
+              exit 0
+            fi
+            echo "waiting for $PKG (attempt $i/30)"
+            sleep 10
+          done
+          echo "::error::$PKG did not become resolvable within 5 minutes"
+          exit 1
+
+      - name: Install this release's published engine
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          cd ui && npm install "@goplasmatic/dataflow-wasm@$VERSION"
 
       - name: Build UI library
         run: cd ui && npm run build:lib
 
-      # The repo pins the dataflow-wasm dep at the last *published* version so
-      # `npm ci` above can resolve the lockfile (this release's wasm build is
-      # copied over node_modules instead). Stamp the published package.json
-      # with this release's version so dataflow-ui@X internally refers to
-      # dataflow-wasm@^X — publish-wasm has already published it by now.
+      # The repo pins dataflow-wasm at the last *published* version so `npm ci`
+      # can resolve the lockfile before this release's engine exists. The step
+      # above has already installed the release version, which npm records with
+      # its default caret prefix; restate it explicitly so the published
+      # package.json declares dataflow-wasm@^X regardless of any local
+      # save-prefix configuration.
       - name: Sync dataflow-wasm dep to release version
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
