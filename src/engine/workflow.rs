@@ -660,6 +660,211 @@ mod tests {
     }
 
     #[test]
+    fn loop_config_deserializes_every_combination_of_optional_fields() {
+        // `max` is the only required field; the other three are independently
+        // optional, so all eight presence combinations must land on the
+        // documented defaults for whatever is absent.
+        for (json, counter, init, increment) in [
+            (r#"{"max": 9}"#, None, 0, 1),
+            (r#"{"max": 9, "counter": "i"}"#, Some("i"), 0, 1),
+            (r#"{"max": 9, "init": 4}"#, None, 4, 1),
+            (r#"{"max": 9, "increment": 3}"#, None, 0, 3),
+            (r#"{"max": 9, "counter": "i", "init": 4}"#, Some("i"), 4, 1),
+            (
+                r#"{"max": 9, "counter": "i", "increment": 3}"#,
+                Some("i"),
+                0,
+                3,
+            ),
+            (r#"{"max": 9, "init": 4, "increment": 3}"#, None, 4, 3),
+            (
+                r#"{"max": 9, "counter": "i", "init": 4, "increment": 3}"#,
+                Some("i"),
+                4,
+                3,
+            ),
+        ] {
+            let cfg = loop_wf(json)
+                .unwrap_or_else(|e| panic!("{json} should be valid: {e}"))
+                .loop_config
+                .expect("loop config present");
+            assert_eq!(cfg.counter.as_deref(), counter, "counter for {json}");
+            assert_eq!(cfg.init, init, "init for {json}");
+            assert_eq!(cfg.increment, increment, "increment for {json}");
+            assert_eq!(cfg.max, 9, "max for {json}");
+        }
+    }
+
+    #[test]
+    fn loop_config_validation_matrix_over_init_increment_and_max() {
+        // The full accept/reject table for the three numeric fields. `max` must
+        // be strictly above `init` (half-open bound) and `increment` at least
+        // 1 (the counter must advance).
+        for (init, increment, max, valid) in [
+            // Ordinary forward ranges.
+            (0_i64, 1_i64, 1_i64, true),
+            (0, 1, 100, true),
+            (0, 7, 3, true), // one sweep, then the increment overshoots
+            (5, 1, 6, true),
+            // Negative and mixed-sign ranges are fine as long as max > init.
+            (-5, 1, 0, true),
+            (-5, 2, -4, true),
+            (-1, 1, 1, true),
+            // Empty or inverted bounds.
+            (0, 1, 0, false),
+            (5, 1, 5, false),
+            (5, 1, 4, false),
+            (0, 1, -1, false),
+            (-5, 1, -5, false),
+            // Non-advancing increments, independent of the bound.
+            (0, 0, 10, false),
+            (0, -1, 10, false),
+            (0, -100, 10, false),
+        ] {
+            let json = format!(r#"{{"init": {init}, "increment": {increment}, "max": {max}}}"#);
+            assert_eq!(
+                loop_wf(&json).is_ok(),
+                valid,
+                "init={init} increment={increment} max={max} should be {}",
+                if valid { "accepted" } else { "rejected" }
+            );
+        }
+    }
+
+    #[test]
+    fn loop_config_counter_path_matrix() {
+        // Accepted and rejected counter spellings, including the `#` escape the
+        // rest of the path vocabulary uses for numerically-named keys.
+        for (counter, valid) in [
+            ("i", true),
+            ("index", true),
+            ("cursor.index", true),
+            ("a.b.c.d", true),
+            ("#7", true), // escaped numeric object key, same as elsewhere
+            ("", false),
+            (".", false),
+            ("a.", false),
+            (".a", false),
+            ("a..b", false),
+        ] {
+            let json = format!(r#"{{"max": 5, "counter": "{counter}"}}"#);
+            assert_eq!(
+                loop_wf(&json).is_ok(),
+                valid,
+                "counter {counter:?} should be {}",
+                if valid { "accepted" } else { "rejected" }
+            );
+        }
+    }
+
+    #[test]
+    fn precompute_counter_path_matrix() {
+        for (counter, expected) in [
+            ("i", vec!["temp_data", "i"]),
+            ("cursor.index", vec!["temp_data", "cursor", "index"]),
+            ("a.b.c", vec!["temp_data", "a", "b", "c"]),
+            // The `#` prefix is preserved here and stripped at write time,
+            // exactly as `MapMapping::path_parts` treats it.
+            ("#7", vec!["temp_data", "#7"]),
+        ] {
+            let mut cfg = loop_wf(&format!(r#"{{"max": 5, "counter": "{counter}"}}"#))
+                .expect("valid loop")
+                .loop_config
+                .expect("loop config present");
+            cfg.precompute_counter_path();
+            let parts: Vec<&str> = cfg.counter_parts.iter().map(Arc::as_ref).collect();
+            assert_eq!(parts, expected, "for counter {counter:?}");
+        }
+    }
+
+    #[test]
+    fn precompute_counter_path_is_idempotent() {
+        // The compiler runs once, but a hot reload recompiles the same config;
+        // calling twice must not accumulate segments.
+        let mut cfg = loop_wf(r#"{"max": 5, "counter": "cursor.index"}"#)
+            .expect("valid loop")
+            .loop_config
+            .expect("loop config present");
+        cfg.precompute_counter_path();
+        let first: Vec<Arc<str>> = cfg.counter_parts.to_vec();
+        cfg.precompute_counter_path();
+        assert_eq!(cfg.counter_parts.to_vec(), first);
+    }
+
+    #[test]
+    fn loop_config_rejects_a_non_object_and_a_non_numeric_max() {
+        for json in [r#""five""#, "5", "[]", r#"{"max": "5"}"#, "true"] {
+            assert!(loop_wf(json).is_err(), "{json} is not a valid loop config");
+        }
+    }
+
+    #[test]
+    fn an_explicit_null_loop_means_no_loop() {
+        // `Option<LoopConfig>` takes an explicit JSON null as absence, so a
+        // caller emitting `"loop": null` for "no loop" gets the single-pass
+        // workflow they meant rather than a deserialization error.
+        let workflow = loop_wf("null").expect("explicit null should be accepted");
+        assert!(workflow.loop_config.is_none());
+    }
+
+    #[test]
+    fn a_workflow_with_a_loop_still_validates_its_other_rules() {
+        // Loop validation is additive: the pre-existing rules still fire, and
+        // an otherwise-invalid workflow is not rescued by a valid loop.
+        let duplicate_tasks = Workflow::from_json(
+            r#"{ "id": "w", "name": "w", "loop": {"max": 5}, "tasks": [
+                 {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": []}}},
+                 {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": []}}}] }"#,
+        )
+        .expect("should parse");
+        assert!(duplicate_tasks.validate().is_err(), "duplicate task ids");
+
+        let no_tasks =
+            Workflow::from_json(r#"{ "id": "w", "name": "w", "loop": {"max": 5}, "tasks": [] }"#)
+                .expect("should parse");
+        assert!(no_tasks.validate().is_err(), "empty task list");
+    }
+
+    #[test]
+    fn loop_config_coexists_with_every_other_workflow_field() {
+        // `loop` is orthogonal to the rest of the schema — nothing it adds
+        // shadows or disturbs a neighbouring field.
+        let workflow = Workflow::from_json(&format!(
+            r#"{{ "id": "w", "name": "w", "priority": 7, "description": "d",
+                  "condition": {{"==": [1, 1]}},
+                  "loop": {{"counter": "i", "max": 5}},
+                  "continue_on_error": true, "channel": "c", "version": 3,
+                  "status": "paused",
+                  "rollout": {{"bucket_start": 0, "bucket_end": 50}},
+                  "tags": ["x"], "tasks": [{MAP}] }}"#
+        ))
+        .expect("should parse");
+        workflow.validate().expect("should validate");
+
+        assert_eq!(workflow.priority, 7);
+        assert_eq!(workflow.channel, "c");
+        assert_eq!(workflow.version, 3);
+        assert_eq!(workflow.status, WorkflowStatus::Paused);
+        assert!(workflow.continue_on_error);
+        assert_eq!(
+            workflow.rollout,
+            Some(Rollout {
+                bucket_start: 0,
+                bucket_end: 50
+            })
+        );
+        assert_eq!(workflow.tags, ["x"]);
+        assert_eq!(
+            workflow
+                .loop_config
+                .expect("loop present")
+                .counter
+                .as_deref(),
+            Some("i")
+        );
+    }
+
+    #[test]
     fn loop_config_accepts_a_valid_counter() {
         let cfg = loop_wf(r#"{"max": 5, "counter": "cursor.index"}"#)
             .expect("valid loop")

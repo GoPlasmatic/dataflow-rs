@@ -1080,4 +1080,75 @@ mod tests {
         redact_json_in_place(&mut hash, &segments(&["data.#20"]));
         assert_eq!(hash, json!({"data": {"20": null}}));
     }
+
+    #[test]
+    fn execution_step_loop_counter_defaults_to_none_on_every_constructor() {
+        assert_eq!(
+            ExecutionStep::executed("w", "t", &Message::from_value(&json!({}))).loop_counter,
+            None
+        );
+        assert_eq!(ExecutionStep::task_skipped("w", "t").loop_counter, None);
+        assert_eq!(ExecutionStep::workflow_skipped("w").loop_counter, None);
+    }
+
+    #[test]
+    fn with_loop_counter_sets_and_clears_the_field() {
+        let step = ExecutionStep::task_skipped("w", "t").with_loop_counter(Some(3));
+        assert_eq!(step.loop_counter, Some(3));
+        // Passing None must clear rather than be a no-op, so the non-looping
+        // caller can chain unconditionally.
+        assert_eq!(step.with_loop_counter(None).loop_counter, None);
+    }
+
+    #[test]
+    fn execution_step_loop_counter_is_absent_from_json_when_none() {
+        // A non-looping trace must keep the historical wire shape byte for
+        // byte — dataflow-ui parses these.
+        let step = ExecutionStep::task_skipped("w", "t");
+        let json = serde_json::to_value(&step).expect("should serialize");
+        assert!(json.get("loop_counter").is_none());
+
+        let looped = ExecutionStep::task_skipped("w", "t").with_loop_counter(Some(0));
+        assert_eq!(
+            serde_json::to_value(&looped).expect("should serialize")["loop_counter"],
+            json!(0),
+            "counter 0 must serialize, not be elided as a default"
+        );
+    }
+
+    #[test]
+    fn execution_step_without_a_loop_counter_key_deserializes() {
+        // Trace JSON written before loops existed must still round-trip.
+        let step: ExecutionStep = serde_json::from_value(json!({
+            "workflow_id": "w",
+            "task_id": "t",
+            "result": "skipped"
+        }))
+        .expect("legacy trace JSON should deserialize");
+        assert_eq!(step.loop_counter, None);
+        assert_eq!(step.workflow_id, "w");
+    }
+
+    #[test]
+    fn add_executed_step_records_the_timing_bundle_and_the_loop_counter() {
+        let mut trace = ExecutionTrace::with_options(TraceOptions::timings_only());
+        let started_at = Utc::now();
+        trace.add_executed_step(
+            "w",
+            "t",
+            &Message::from_value(&json!({})),
+            StepTiming {
+                started_at,
+                duration_us: 42,
+            },
+            None,
+            Some(7),
+        );
+
+        let step = &trace.steps[0];
+        assert_eq!(step.started_at, Some(started_at));
+        assert_eq!(step.duration_us, Some(42));
+        assert_eq!(step.loop_counter, Some(7));
+        assert_eq!(step.result, StepResult::Executed);
+    }
 }

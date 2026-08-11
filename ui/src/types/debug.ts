@@ -49,6 +49,13 @@ export interface AuditTrail {
   changes: Change[];
   /** Status code (e.g., 200 for success) */
   status: number;
+  /**
+   * Loop counter value for the sweep that produced this entry, when the
+   * workflow carries a `loop`. Absent for non-looping workflows. Strictly
+   * increasing across sweeps, so it both identifies the iteration and carries
+   * its meaning (the array index, for per-item loops).
+   */
+  loop_counter?: number;
 }
 
 /**
@@ -96,6 +103,12 @@ export interface ExecutionStep {
    * on a skip-outcome step.
    */
   changes?: Change[];
+  /**
+   * Loop counter of the sweep this step belongs to, when the workflow carries
+   * a `loop`. Absent otherwise. Group steps by it to reconstruct per-iteration
+   * execution.
+   */
+  loop_counter?: number;
 }
 
 /**

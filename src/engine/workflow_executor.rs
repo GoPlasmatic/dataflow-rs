@@ -447,6 +447,12 @@ impl WorkflowExecutor {
         loop {
             write_loop_counter(&mut message.context, config, counter);
 
+            // `>=`, not `>`, and that is load-bearing for termination rather
+            // than a style choice. `increment >= 1` is validated at build time
+            // and the advance below saturates, so the counter strictly
+            // increases until it pins at `i64::MAX` — which satisfies
+            // `>= config.max` for every representable `max`. With `>` a loop
+            // whose counter saturates would spin forever.
             if counter >= config.max {
                 // Normal completion: `max` is always author-supplied, so
                 // reaching it is the stated bound rather than a runaway. A
@@ -1480,6 +1486,430 @@ mod tests {
             vec![Some(0), Some(1), Some(2)],
             "the body's write must not stall or skew the loop"
         );
+    }
+
+    /// Run a bare counting loop with the given bounds and return the counter
+    /// values the sweeps actually recorded.
+    async fn counter_sequence(init: i64, increment: i64, max: i64) -> Vec<Option<i64>> {
+        let (workflow, engine) = compiled(&format!(
+            r#"{{ "id": "w", "name": "w",
+                  "loop": {{"counter": "i", "init": {init},
+                            "increment": {increment}, "max": {max}}},
+                  "tasks": [{{"id": "t", "name": "t",
+                              "function": {{"name": "map", "input": {{"mappings": []}}}}}}] }}"#
+        ));
+        let mut message = Message::from_value(&json!({}));
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+        counters(&message)
+    }
+
+    #[tokio::test]
+    async fn counter_sequence_matrix_over_init_increment_and_max() {
+        // The half-open `counter < max` bound, swept across signs and step
+        // sizes. Each expected list is the exact sequence of sweeps.
+        let cases: Vec<(i64, i64, i64, Vec<i64>)> = vec![
+            // Defaults: 0-based, step 1 — the array-index case.
+            (0, 1, 1, vec![0]),
+            (0, 1, 2, vec![0, 1]),
+            (0, 1, 5, vec![0, 1, 2, 3, 4]),
+            // Non-unit steps, including a range the step does not divide.
+            (0, 2, 6, vec![0, 2, 4]),
+            (0, 3, 10, vec![0, 3, 6, 9]),
+            (0, 5, 3, vec![0]),
+            (0, 100, 1, vec![0]),
+            // Non-zero starts.
+            (10, 5, 25, vec![10, 15, 20]),
+            (3, 1, 6, vec![3, 4, 5]),
+            // Negative and mixed-sign ranges.
+            (-3, 1, 2, vec![-3, -2, -1, 0, 1]),
+            (-4, 2, 1, vec![-4, -2, 0]),
+            (-10, 5, -5, vec![-10]),
+        ];
+
+        for (init, increment, max, expected) in cases {
+            let got = counter_sequence(init, increment, max).await;
+            let expected: Vec<Option<i64>> = expected.into_iter().map(Some).collect();
+            assert_eq!(got, expected, "init={init} increment={increment} max={max}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_counter_advance_saturates_instead_of_overflowing() {
+        // A huge increment must end the loop, not wrap into a negative counter
+        // and spin. Both the giant-step and the near-i64::MAX start are
+        // exercised, since either could overflow a plain `+`.
+        assert_eq!(
+            counter_sequence(0, i64::MAX, 5).await,
+            vec![Some(0)],
+            "one sweep, then the advance saturates past max"
+        );
+        assert_eq!(
+            counter_sequence(i64::MAX - 1, 1, i64::MAX).await,
+            vec![Some(i64::MAX - 1)],
+            "the last representable sweep still terminates"
+        );
+        assert_eq!(
+            counter_sequence(i64::MAX - 2, i64::MAX, i64::MAX).await,
+            vec![Some(i64::MAX - 2)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_task_condition_is_re_evaluated_against_the_counter_every_sweep() {
+        // Per-sweep task conditions are the mechanism for "do this only on
+        // some iterations"; a stale condition cache would break it.
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"counter": "i", "max": 4},
+                 "tasks": [
+                   {"id": "evens", "name": "evens",
+                    "condition": {"==": [{"%": [{"var": "temp_data.i"}, 2]}, 0]},
+                    "function": {"name": "map", "input": {"mappings": []}}},
+                   {"id": "always", "name": "always",
+                    "function": {"name": "map", "input": {"mappings": []}}}] }"#,
+        );
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        let entries: Vec<(&str, Option<i64>)> = message
+            .audit_trail
+            .iter()
+            .map(|e| (e.task_id.as_ref(), e.loop_counter))
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("evens", Some(0)),
+                ("always", Some(0)),
+                ("always", Some(1)),
+                ("evens", Some(2)),
+                ("always", Some(2)),
+                ("always", Some(3)),
+            ],
+            "the gated task runs only on even counters"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_filter_skip_does_not_keep_the_loop_alive_or_record_entries() {
+        // `TaskOutcome::Skip` records no audit entry and no progress write.
+        // The loop is driven by its bound, not by whether tasks recorded
+        // anything, so it still runs exactly `max` sweeps.
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"counter": "i", "max": 3},
+                 "tasks": [{"id": "gate", "name": "gate", "function": {"name": "filter",
+                    "input": {"condition": false, "on_reject": "skip"}}}] }"#,
+        );
+        let mut message = Message::from_value(&json!({}));
+
+        let executed = executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("skip is not an error");
+
+        assert!(executed, "sweeps ran even though every task skipped");
+        assert!(message.audit_trail.is_empty(), "Skip records no entry");
+        assert_eq!(
+            message.context["temp_data"].get("i"),
+            Some(&dv(json!(3))),
+            "the loop still ran to its bound"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_4xx_task_status_is_recorded_per_sweep_without_stopping_the_loop() {
+        // A failing `validation` yields 400: warned, recorded, loop continues.
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"counter": "i", "max": 3},
+                 "tasks": [{"id": "check", "name": "check", "function": {"name": "validation",
+                    "input": {"rules": [{"logic": {"==": [1, 2]}, "message": "nope"}]}}}] }"#,
+        );
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("a 4xx does not stop the workflow");
+
+        assert_eq!(counters(&message), vec![Some(0), Some(1), Some(2)]);
+        assert!(
+            message.audit_trail.iter().all(|e| e.status == 400),
+            "every sweep recorded the 4xx"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_rollout_gate_excludes_a_looping_workflow_before_any_sweep() {
+        // The gate runs ahead of the loop, so an excluded workflow writes no
+        // counter at all — it must be indistinguishable from a plain skip.
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w",
+                 "rollout": {"bucket_start": 0, "bucket_end": 50},
+                 "loop": {"counter": "i", "max": 5},
+                 "tasks": [{"id": "t", "name": "t",
+                            "function": {"name": "map", "input": {"mappings": []}}}] }"#,
+        );
+        let mut message = Message::builder().routing_bucket(75).build();
+
+        let executed = executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("an excluded workflow is not an error");
+
+        assert!(!executed);
+        assert!(message.audit_trail.is_empty());
+        assert_eq!(
+            message.context["temp_data"].get("i"),
+            None,
+            "no counter is written for an excluded workflow"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_nested_counter_path_is_created_and_advanced() {
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w",
+                 "loop": {"counter": "cursor.index", "max": 3},
+                 "tasks": [{"id": "t", "name": "t", "function": {"name": "map",
+                    "input": {"mappings": [
+                       {"path": "data.seen", "logic": {"var": "temp_data.cursor.index"}}]}}}] }"#,
+        );
+        let mut message = Message::from_value(&json!({}));
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert_eq!(
+            message.context["temp_data"]["cursor"].get("index"),
+            Some(&dv(json!(3)))
+        );
+        assert_eq!(
+            message.context["data"].get("seen"),
+            Some(&dv(json!(2))),
+            "the body read the nested counter"
+        );
+    }
+
+    #[tokio::test]
+    async fn writing_the_counter_preserves_unrelated_temp_data() {
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"counter": "i", "max": 2},
+                 "tasks": [{"id": "t", "name": "t",
+                            "function": {"name": "map", "input": {"mappings": []}}}] }"#,
+        );
+        let mut message = Message::builder()
+            .temp_data(dv(json!({"keep": "me", "nested": {"a": 1}})))
+            .build();
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert_eq!(
+            message.context["temp_data"].get("keep"),
+            Some(&dv(json!("me")))
+        );
+        assert_eq!(
+            message.context["temp_data"]["nested"].get("a"),
+            Some(&dv(json!(1)))
+        );
+        assert_eq!(message.context["temp_data"].get("i"), Some(&dv(json!(2))));
+    }
+
+    #[tokio::test]
+    async fn the_counter_overwrites_a_pre_existing_value_at_that_path() {
+        // The engine owns the path: whatever was there before the loop is
+        // replaced by `init` on the first sweep.
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"counter": "i", "init": 5, "max": 7},
+                 "tasks": [{"id": "t", "name": "t",
+                            "function": {"name": "map", "input": {"mappings": []}}}] }"#,
+        );
+        let mut message = Message::builder()
+            .temp_data(dv(json!({"i": "not a number"})))
+            .build();
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert_eq!(counters(&message), vec![Some(5), Some(6)]);
+        assert_eq!(message.context["temp_data"].get("i"), Some(&dv(json!(7))));
+    }
+
+    #[tokio::test]
+    async fn a_loop_records_audit_entries_with_capture_changes_off() {
+        // `capture_changes(false)` suppresses the per-change diff, not the
+        // audit entries themselves — so the loop counter is still recorded.
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "loop": {"counter": "i", "max": 2},
+                 "tasks": [{"id": "t", "name": "t", "function": {"name": "map",
+                    "input": {"mappings": [
+                       {"path": "data.n", "logic": {"var": "temp_data.i"}}]}}}] }"#,
+        );
+        let mut message = Message::builder().capture_changes(false).build();
+
+        executor(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("loop should complete");
+
+        assert_eq!(counters(&message), vec![Some(0), Some(1)]);
+        assert!(
+            message.audit_trail.iter().all(|e| e.changes.is_empty()),
+            "no diffs captured, but the entries are still there"
+        );
+    }
+
+    #[tokio::test]
+    async fn two_loops_sharing_a_counter_name_do_not_interfere() {
+        // Each loop re-initialises the path it owns, so the second starts from
+        // its own `init` rather than inheriting where the first stopped.
+        let first = r#"{ "id": "a", "name": "a", "priority": 0,
+             "loop": {"counter": "i", "max": 2},
+             "tasks": [{"id": "t", "name": "t",
+                        "function": {"name": "map", "input": {"mappings": []}}}] }"#;
+        let second = r#"{ "id": "b", "name": "b", "priority": 1,
+             "loop": {"counter": "i", "init": 10, "max": 12},
+             "tasks": [{"id": "t", "name": "t",
+                        "function": {"name": "map", "input": {"mappings": []}}}] }"#;
+
+        let compiler = LogicCompiler::new();
+        let workflows = compiler
+            .compile_workflows(vec![
+                Workflow::from_json(first).unwrap(),
+                Workflow::from_json(second).unwrap(),
+            ])
+            .expect("should compile");
+        let exec = executor(compiler.into_engine());
+        let mut message = Message::from_value(&json!({}));
+
+        exec.run_all_borrowed(&workflows, &mut message, None, Utc::now())
+            .await
+            .expect("both loops should complete");
+
+        let per_workflow: Vec<(&str, Option<i64>)> = message
+            .audit_trail
+            .iter()
+            .map(|e| (e.workflow_id.as_ref(), e.loop_counter))
+            .collect();
+        assert_eq!(
+            per_workflow,
+            [
+                ("a", Some(0)),
+                ("a", Some(1)),
+                ("b", Some(10)),
+                ("b", Some(11)),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_looping_workflow_between_sync_workflows_does_not_break_the_sync_run() {
+        // Regression guard for the `joins_sync_run` change: a loop workflow is
+        // excluded from the shared-arena run, which must split the run around
+        // it rather than dropping its neighbours.
+        let sync_wf = |id: &str, priority: u32| {
+            format!(
+                r#"{{ "id": "{id}", "name": "{id}", "priority": {priority},
+                      "tasks": [{{"id": "t", "name": "t", "function": {{"name": "map",
+                        "input": {{"mappings": [
+                          {{"path": "data.{id}", "logic": true}}]}}}}}}] }}"#
+            )
+        };
+        let loop_wf = r#"{ "id": "mid", "name": "mid", "priority": 1,
+             "loop": {"counter": "i", "max": 2},
+             "tasks": [{"id": "t", "name": "t", "function": {"name": "map",
+                "input": {"mappings": [{"path": "data.mid", "logic": true}]}}}] }"#;
+
+        let compiler = LogicCompiler::new();
+        let workflows = compiler
+            .compile_workflows(vec![
+                Workflow::from_json(&sync_wf("before", 0)).unwrap(),
+                Workflow::from_json(loop_wf).unwrap(),
+                Workflow::from_json(&sync_wf("after", 2)).unwrap(),
+            ])
+            .expect("should compile");
+        // All three are sync-only, but the loop must not join a shared run.
+        assert!(workflows.iter().all(|w| w.fully_sync));
+        assert!(!joins_sync_run(&workflows[1]));
+
+        let exec = executor(compiler.into_engine());
+        let mut message = Message::from_value(&json!({}));
+
+        exec.run_all_borrowed(&workflows, &mut message, None, Utc::now())
+            .await
+            .expect("all three should run");
+
+        for id in ["before", "mid", "after"] {
+            assert_eq!(
+                message.context["data"].get(id),
+                Some(&dv(json!(true))),
+                "workflow {id} must have run"
+            );
+        }
+        let order: Vec<(&str, Option<i64>)> = message
+            .audit_trail
+            .iter()
+            .map(|e| (e.workflow_id.as_ref(), e.loop_counter))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ("before", None),
+                ("mid", Some(0)),
+                ("mid", Some(1)),
+                ("after", None),
+            ],
+            "priority order is preserved across the split"
+        );
+    }
+
+    #[tokio::test]
+    async fn consecutive_non_looping_sync_workflows_still_share_one_run() {
+        // The other half of the same regression: without a loop in the way,
+        // every fully-sync workflow still groups as it always did.
+        let compiler = LogicCompiler::new();
+        let workflows = compiler
+            .compile_workflows(vec![
+                Workflow::from_json(
+                    r#"{ "id": "a", "name": "a", "priority": 0, "tasks": [{"id": "t", "name": "t",
+                         "function": {"name": "map", "input": {"mappings": [
+                           {"path": "data.a", "logic": 1}]}}}] }"#,
+                )
+                .unwrap(),
+                Workflow::from_json(
+                    r#"{ "id": "b", "name": "b", "priority": 1,
+                         "condition": {"==": [{"var": "data.a"}, 1]},
+                         "tasks": [{"id": "t", "name": "t",
+                         "function": {"name": "map", "input": {"mappings": [
+                           {"path": "data.b", "logic": 2}]}}}] }"#,
+                )
+                .unwrap(),
+            ])
+            .expect("should compile");
+        assert!(workflows.iter().all(joins_sync_run));
+
+        let exec = executor(compiler.into_engine());
+        let mut message = Message::from_value(&json!({}));
+        exec.run_all_borrowed(&workflows, &mut message, None, Utc::now())
+            .await
+            .expect("both should run");
+
+        // `b`'s condition reads what `a` wrote, which only works if the shared
+        // arena context was refreshed across the workflow boundary.
+        assert_eq!(message.context["data"].get("b"), Some(&dv(json!(2))));
+        assert_eq!(counters(&message), vec![None, None]);
     }
 
     #[tokio::test]
