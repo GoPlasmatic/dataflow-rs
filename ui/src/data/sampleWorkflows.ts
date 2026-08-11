@@ -12,6 +12,7 @@ import type { Workflow } from '../types';
  * 4. Message Router     — multiple workflows with metadata conditions
  * 5. Premium Order Perks — rule chaining: condition on data computed by an earlier rule (reduce, if-chain, log)
  * 6. E-Commerce Pipeline — full realistic pipeline with folders & audit
+ * 7. Per-Item Loop      — bounded workflow loop: one sweep per array item, indexed by temp_data.i
  */
 export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: object }> = {
   'Hello Transform': {
@@ -696,6 +697,100 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
         state: 'CA',
         zip: '94105',
       },
+    },
+  },
+
+  'Per-Item Loop': {
+    workflows: [
+      {
+        id: 'prepare-items',
+        name: 'Prepare Items',
+        priority: 0,
+        description: 'Counts the items and seeds the collector array',
+        tasks: [
+          {
+            id: 'parse',
+            name: 'Parse Payload',
+            function: {
+              name: 'parse_json',
+              input: { source: 'payload', target: 'input' },
+            },
+          },
+          {
+            id: 'count',
+            name: 'Count Items',
+            function: {
+              name: 'map',
+              input: {
+                mappings: [
+                  {
+                    path: 'temp_data.n',
+                    logic: {
+                      reduce: [
+                        { var: 'data.input.items' },
+                        { '+': [{ var: 'accumulator' }, 1] },
+                        0,
+                      ],
+                    },
+                  },
+                  { path: 'data.picked', logic: [] },
+                ],
+              },
+            },
+          },
+        ],
+      },
+      {
+        id: 'per-item',
+        name: 'Collect Each SKU',
+        priority: 1,
+        description: 'Runs once per item, indexed by temp_data.i',
+        condition: { '<': [{ var: 'temp_data.i' }, { var: 'temp_data.n' }] },
+        loop: { counter: 'i', init: 0, increment: 1, max: 1000 },
+        tasks: [
+          {
+            id: 'pick',
+            name: 'Pick Item At i',
+            function: {
+              name: 'map',
+              input: {
+                mappings: [
+                  {
+                    path: 'temp_data.item',
+                    // `val` evaluates its path argument, so this indexes the
+                    // array by the current counter.
+                    logic: { val: [['data', 'input', 'items', { var: 'temp_data.i' }]] },
+                  },
+                ],
+              },
+            },
+          },
+          {
+            id: 'collect',
+            name: 'Collect SKU',
+            function: {
+              name: 'map',
+              input: {
+                mappings: [
+                  {
+                    path: 'data.picked',
+                    logic: {
+                      merge: [{ var: 'data.picked' }, [{ var: 'temp_data.item.sku' }]],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ],
+    payload: {
+      items: [
+        { sku: 'A-100', qty: 2 },
+        { sku: 'B-200', qty: 1 },
+        { sku: 'C-300', qty: 5 },
+      ],
     },
   },
 };
