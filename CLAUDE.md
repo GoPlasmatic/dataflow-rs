@@ -160,8 +160,8 @@ matching version.
   gate, skip, or make this write conditional.
 - **Operator families are opt-in, and enabling one is not a no-op.** The
   `datalogic-rs` extension operators ship behind cargo features (`ext-string`,
-  `ext-array`, `ext-math`, `ext-control`, `error-handling`, `datetime`,
-  `all-operators`), all off by default. Because the engine always runs in
+  `ext-array`, `ext-math`, `ext-control`, `ext-object`, `error-handling`,
+  `datetime`, `all-operators`), all off by default. Because the engine always runs in
   templating mode, an operator whose family is off is *not* an error — the
   object echoes back as literal data. So turning a family on converts
   previously-inert values like `{"length": …}` into live operator calls, and
@@ -228,8 +228,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 444 passing.
-`cargo test -p dataflow-rs` (default features) should report 371 — the operator
+`cargo test --workspace --all-features` should report 451 passing.
+`cargo test -p dataflow-rs` (default features) should report 377 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

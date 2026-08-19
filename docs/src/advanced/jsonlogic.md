@@ -284,25 +284,31 @@ default**:
 | Feature | Operators |
 |---|---|
 | `ext-string` | `length`, `starts_with`, `ends_with`, `upper`, `lower`, `trim`, `split` |
-| `ext-array` | `sort`, `slice` |
+| `ext-array` | `sort`, `slice`, `group_by`, `distinct` |
 | `ext-math` | `abs`, `ceil`, `floor` |
 | `ext-control` | `exists`, `??`, `switch` (alias `match`), `type` |
+| `ext-object` | `keys`, `values`, `entries` |
 | `error-handling` | `try`, `throw` |
 | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
 | `all-operators` | every family above |
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "3.3", features = ["ext-string", "ext-control"] }
+dataflow-rs = { version = "3.4", features = ["ext-string", "ext-control"] }
 ```
 
 `error-handling` names the JSONLogic `try`/`throw` operators. It has nothing to
 do with dataflow-rs's own [error handling](../core-concepts/error-handling.md),
 which is always on.
 
-Two placements are easy to get wrong: `length` is in `ext-string`, not
+Three placements are easy to get wrong: `length` is in `ext-string`, not
 `ext-array`, even though it counts array elements as well as string characters;
-and `type` is in `ext-control`, not a family of its own.
+`type` is in `ext-control`, not a family of its own; and the split between the
+last two array-flavoured families follows the *input*, not the output —
+`entries` is in `ext-object` even though it produces an array (of
+`{key, value}` rows), while `group_by` and `distinct` are in `ext-array` even
+though they are natural companions to it. Iterating an object's entries with
+`group_by` therefore needs both families enabled.
 
 ### Enabling a family can change existing rules
 

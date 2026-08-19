@@ -262,9 +262,10 @@ pub use engine::{ConnectorRef, Engine, EngineBuilder, Rollout, Task, Workflow, W
 ///   | feature | operators |
 ///   |---|---|
 ///   | `ext-string` | `length`, `starts_with`, `ends_with`, `upper`, `lower`, `trim`, `split` |
-///   | `ext-array` | `sort`, `slice` |
+///   | `ext-array` | `sort`, `slice`, `group_by`, `distinct` |
 ///   | `ext-math` | `abs`, `ceil`, `floor` |
 ///   | `ext-control` | `exists`, `??`, `switch` (alias `match`), `type` |
+///   | `ext-object` | `keys`, `values`, `entries` |
 ///   | `error-handling` | `try`, `throw` |
 ///   | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
 ///   | `all-operators` | all of the above |

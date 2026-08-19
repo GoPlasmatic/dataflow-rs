@@ -123,12 +123,22 @@ pub struct Engine {
     workflow_executor: Arc<WorkflowExecutor>,
     /// Shared datalogic v5 engine for JSONLogic evaluation (Send + Sync)
     datalogic: Arc<DatalogicEngine>,
+    /// Custom JSONLogic operators registered via
+    /// [`EngineBuilder::with_datalogic_operator`]. Retained here — not just
+    /// applied once — because [`Engine::with_new_workflows`] builds a fresh
+    /// datalogic engine and must re-register them; holding only the built
+    /// engine would silently drop every custom operator at the first hot
+    /// reload.
+    datalogic_operators: DatalogicOperators,
     /// Pre-built `Arc<OwnedDataValue::String>` of the engine version.
     /// Built once at construction. Note the per-message stamp still clones
     /// the inner `String` — the context owns its values, so the cached
     /// form only saves re-formatting, not the (small) allocation.
     engine_version: Arc<OwnedDataValue>,
 }
+
+/// The custom-operator registrations an engine carries across rebuilds.
+pub type DatalogicOperators = Arc<HashMap<String, Arc<dyn datalogic_rs::CustomOperator>>>;
 
 /// Build a channel index from pre-sorted workflows.
 /// Maps channel name -> indices into workflows vec, only for Active workflows.
@@ -171,10 +181,22 @@ impl Engine {
         workflows: Vec<Workflow>,
         task_functions: HashMap<String, BoxedFunctionHandler>,
     ) -> Result<Self> {
+        Self::new_with_operators(workflows, task_functions, Arc::new(HashMap::new()))
+    }
+
+    /// As [`Engine::new`], with custom JSONLogic operators registered on the
+    /// datalogic engine (and retained across [`Engine::with_new_workflows`]).
+    /// The builder path is [`EngineBuilder::with_datalogic_operator`]; this is
+    /// its escape-hatch twin, matching `new`.
+    pub fn new_with_operators(
+        workflows: Vec<Workflow>,
+        task_functions: HashMap<String, BoxedFunctionHandler>,
+        datalogic_operators: DatalogicOperators,
+    ) -> Result<Self> {
         // Compile workflows (sorted by priority at compile time). Each
         // workflow/task/config owns its own `Arc<Logic>` slots — no central
         // cache to return. Any compile failure bubbles up immediately.
-        let compiler = LogicCompiler::new();
+        let compiler = LogicCompiler::with_operators(&datalogic_operators);
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
 
@@ -202,6 +224,7 @@ impl Engine {
             channel_index: Arc::new(channel_index),
             workflow_executor,
             datalogic,
+            datalogic_operators,
             engine_version: Arc::new(OwnedDataValue::String(
                 env!("CARGO_PKG_VERSION").to_string(),
             )),
@@ -243,8 +266,10 @@ impl Engine {
         // Extract the shared function registry from the existing executor
         let task_functions = self.workflow_executor.task_functions();
 
-        // Compile new workflows with a fresh datalogic engine instance.
-        let compiler = LogicCompiler::new();
+        // Compile new workflows with a fresh datalogic engine instance —
+        // re-registering the retained custom operators, so a hot reload keeps
+        // the same operator vocabulary as the engine it replaces.
+        let compiler = LogicCompiler::with_operators(&self.datalogic_operators);
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
 
@@ -272,6 +297,7 @@ impl Engine {
             channel_index: Arc::new(channel_index),
             workflow_executor,
             datalogic,
+            datalogic_operators: Arc::clone(&self.datalogic_operators),
             engine_version: Arc::clone(&self.engine_version),
         })
     }
@@ -299,6 +325,7 @@ impl Engine {
             channel_index: self.channel_index,
             workflow_executor,
             datalogic: self.datalogic,
+            datalogic_operators: self.datalogic_operators,
             engine_version: self.engine_version,
         }
     }
@@ -598,6 +625,7 @@ pub struct EngineBuilder {
     workflows: Vec<Workflow>,
     handlers: HashMap<String, BoxedFunctionHandler>,
     observer: Option<Arc<dyn ExecutionObserver>>,
+    datalogic_operators: HashMap<String, Arc<dyn datalogic_rs::CustomOperator>>,
 }
 
 impl EngineBuilder {
@@ -670,11 +698,41 @@ impl EngineBuilder {
         self
     }
 
+    /// Register a custom JSONLogic operator on the engine's internal datalogic
+    /// instance, under `name`. Later calls with the same name replace the
+    /// earlier registration.
+    ///
+    /// This is the host's door for domain operators: the engine builds (and on
+    /// [`Engine::with_new_workflows`] *rebuilds*) its datalogic engine
+    /// internally, where registration is builder-only — so operators must
+    /// enter here to exist at all, and are retained on the engine so every
+    /// hot reload re-registers them.
+    ///
+    /// Semantics follow `datalogic_rs`: arguments arrive pre-evaluated, and a
+    /// built-in operator name always wins over a custom registration — pick
+    /// names no built-in uses. Because the engine always runs in templating
+    /// mode, a name that is *not* registered is not an error: the object
+    /// echoes back as literal data, exactly like a disabled operator family.
+    /// Registering a name therefore converts previously-inert values into
+    /// live operator calls, the same caveat the cargo features carry.
+    pub fn with_datalogic_operator<T>(mut self, name: impl Into<String>, operator: T) -> Self
+    where
+        T: datalogic_rs::CustomOperator + 'static,
+    {
+        self.datalogic_operators
+            .insert(name.into(), Arc::new(operator));
+        self
+    }
+
     /// Compile the workflows, pre-parse Custom inputs, and produce the
     /// engine. Compile errors and missing handler references surface here —
     /// the engine never deserializes Custom config on the hot path.
     pub fn build(self) -> Result<Engine> {
-        let engine = Engine::new(self.workflows, self.handlers)?;
+        let engine = Engine::new_with_operators(
+            self.workflows,
+            self.handlers,
+            Arc::new(self.datalogic_operators),
+        )?;
         Ok(match self.observer {
             Some(observer) => engine.with_observer(observer),
             None => engine,

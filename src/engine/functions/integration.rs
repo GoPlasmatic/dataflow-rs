@@ -47,6 +47,17 @@ pub struct HttpCallConfig {
     #[serde(default)]
     pub body_logic: Option<Template>,
 
+    /// How the resolved body becomes request bytes (e.g. `"json"`, `"form"`,
+    /// `"text"`).
+    ///
+    /// The value is **data, not API surface**: this crate does not validate or
+    /// interpret it — the service layer owns the value table, its default for
+    /// `None`, and the encoding behaviour. That split is deliberate: field
+    /// *names* are fixed here by `deny_unknown_fields`, but a service layer can
+    /// grow new *values* (say, `"multipart"`) without touching this crate.
+    #[serde(default)]
+    pub body_format: Option<String>,
+
     /// JSONPath/dot-path to extract from response and merge into context.
     ///
     /// `output` is accepted as an alias, so a service layer can present one
@@ -54,6 +65,13 @@ pub struct HttpCallConfig {
     /// both keys is a `duplicate field` error rather than a precedence rule.
     #[serde(default, alias = "output")]
     pub response_path: Option<String>,
+
+    /// How response bytes become the captured value (e.g. `"json"`, `"text"`).
+    ///
+    /// As [`Self::body_format`]: data, not API surface — uninterpreted by this
+    /// crate, owned by the service layer.
+    #[serde(default)]
+    pub response_format: Option<String>,
 
     /// Request timeout in milliseconds (default: 30000)
     #[serde(default = "default_timeout")]
@@ -389,6 +407,47 @@ mod tests {
         assert_eq!(HttpMethod::default(), HttpMethod::Get);
         // `HttpCallConfig` relies on this via `default_method`.
         assert_eq!(default_method(), HttpMethod::Get);
+    }
+
+    #[test]
+    fn format_fields_default_to_none() {
+        // Every pre-existing config deserializes unchanged: absent format
+        // fields are `None`, and what `None` means is the service layer's call.
+        let cfg = http_config();
+        assert_eq!(cfg.body_format, None);
+        assert_eq!(cfg.response_format, None);
+    }
+
+    #[test]
+    fn format_values_are_data_not_api_surface() {
+        // The crate accepts any string value — validation belongs to the
+        // service layer's value table, so a new encoding must not need a
+        // release of this crate.
+        let cfg: HttpCallConfig = serde_json::from_value(json!({
+            "connector": "c",
+            "body_format": "form",
+            "response_format": "some-future-encoding",
+        }))
+        .expect("format values must parse as plain data");
+        assert_eq!(cfg.body_format.as_deref(), Some("form"));
+        assert_eq!(cfg.response_format.as_deref(), Some("some-future-encoding"));
+    }
+
+    #[test]
+    fn misspelled_format_field_is_rejected() {
+        // `deny_unknown_fields` covers the new names too: a typo fails at
+        // parse time instead of silently sending the default encoding.
+        let err = serde_json::from_value::<HttpCallConfig>(json!({
+            "connector": "c",
+            "body_fromat": "form",
+        }))
+        .expect_err("unknown field must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("body_fromat"), "{msg}");
+        // The expected-field list in the error names both format fields — the
+        // docs quote this text (integrations.md "Unknown fields are rejected").
+        assert!(msg.contains("`body_format`"), "{msg}");
+        assert!(msg.contains("`response_format`"), "{msg}");
     }
 
     use crate::engine::functions::template::TemplateCompiler;

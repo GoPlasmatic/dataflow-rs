@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "3.3.0"
+version = "3.4.0"
 edition = "2024"
 rust-version = "1.85"
 # Allowlist of what ships in the published .crate: the library, its examples
@@ -45,9 +45,10 @@ default = []
 #
 #   datetime        datetime, timestamp, parse_date, format_date, date_diff, now
 #   ext-string      length, starts_with, ends_with, upper, lower, trim, split
-#   ext-array       sort, slice
+#   ext-array       sort, slice, group_by, distinct
 #   ext-math        abs, ceil, floor
 #   ext-control     exists, ??, switch (alias match), type
+#   ext-object      keys, values, entries
 #   error-handling  try, throw
 #
 # Off by default, and enabling one is *not* a no-op for existing workflows: this
@@ -61,6 +62,7 @@ ext-string = ["datalogic-rs/ext-string"]
 ext-array = ["datalogic-rs/ext-array"]
 ext-math = ["datalogic-rs/ext-math"]
 ext-control = ["datalogic-rs/ext-control"]
+ext-object = ["datalogic-rs/ext-object"]
 error-handling = ["datalogic-rs/error-handling"]
 
 # Every family this crate exposes. Deliberately not datalogic's `flagd`
@@ -73,6 +75,7 @@ all-operators = [
     "ext-array",
     "ext-math",
     "ext-control",
+    "ext-object",
     "error-handling",
 ]
 
@@ -91,7 +94,7 @@ wasm-web = ["chrono/wasmbind", "uuid/js", "datalogic-rs/wasm-clock"]
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-datalogic-rs = { version = "5.1", features = ["serde_json", "templating"] }
+datalogic-rs = { version = "5.2", features = ["serde_json", "templating"] }
 datavalue = { package = "datavalue-rs", version = "0.2.3", features = ["serde", "serde_json"] }
 bumpalo = "3.20"
 uuid = { version = "1.24", default-features = false, features = ["v7", "std"] }

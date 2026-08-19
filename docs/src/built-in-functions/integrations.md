@@ -160,8 +160,17 @@ Issue an HTTP request and optionally merge the response into the message context
 | `headers` | object | No | Static request headers |
 | `body` | any | No | Static request body |
 | `body_logic` | JSONLogic | No | Computed body; pre-compiled at startup |
+| `body_format` | string | No | How the resolved body becomes request bytes (e.g. `"json"`, `"form"`, `"text"`). Uninterpreted by this crate — see below |
 | `response_path` | string | No | Dot-path to merge response into the message context. Also accepted as `output` |
+| `response_format` | string | No | How response bytes become the captured value (e.g. `"json"`, `"text"`). Uninterpreted by this crate — see below |
 | `timeout_ms` | u64 | No | Request timeout in milliseconds (default: `30000`) |
+
+`body_format` and `response_format` are **data, not API surface**: dataflow-rs
+carries them but neither validates nor interprets their values — the service
+layer that implements `http_call` owns the value table, the default for an
+absent field, and the encoding behaviour. The split is deliberate: field *names*
+are fixed here by `deny_unknown_fields`, but a service layer can grow new
+*values* (say, `"multipart"`) without a release of this crate.
 
 `response_path` accepts `output` as an alias, so a service layer can present one
 destination-field name across its whole function catalogue. Supplying **both**
@@ -180,7 +189,7 @@ its request and silently throw the response away — no error at
 ```text
 config for function 'http_call': unknown field `outputs`, expected one of
 `connector`, `method`, `path`, `path_logic`, `headers`, `body`, `body_logic`,
-`output`, `response_path`, `timeout_ms`
+`body_format`, `output`, `response_path`, `response_format`, `timeout_ms`
 ```
 
 Note this fails when the workflow definition is parsed, so a host loading stored

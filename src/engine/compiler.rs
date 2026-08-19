@@ -12,10 +12,30 @@ use crate::engine::functions::integration::{EnrichConfig, HttpCallConfig, Publis
 use crate::engine::functions::template::{Template, TemplateCompiler};
 use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
 use crate::engine::{FunctionConfig, Workflow};
-use datalogic_rs::{Engine, Logic};
+use datalogic_rs::{CustomOperator, Engine, Logic};
 use log::debug;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Adapter handing a shared operator to the datalogic builder, which takes
+/// ownership of what it registers. The `Arc` is the point: one registration
+/// (held by [`crate::Engine`]) outlives any single datalogic engine and is
+/// re-applied on every rebuild — without it, custom operators would silently
+/// vanish at the first [`crate::Engine::with_new_workflows`] hot reload.
+struct SharedOperator(Arc<dyn CustomOperator>);
+
+impl CustomOperator for SharedOperator {
+    #[inline]
+    fn evaluate<'a>(
+        &self,
+        args: &[&'a datalogic_rs::DataValue<'a>],
+        ctx: &mut datalogic_rs::operator::EvalContext<'_, 'a>,
+        arena: &'a datalogic_rs::bumpalo::Bump,
+    ) -> datalogic_rs::Result<&'a datalogic_rs::DataValue<'a>> {
+        self.0.evaluate(args, ctx, arena)
+    }
+}
 
 /// Compiles JSONLogic expressions and stamps them onto workflow/task/config
 /// structs as `Option<Arc<Logic>>` slots.
@@ -39,7 +59,18 @@ impl LogicCompiler {
     /// Create a new LogicCompiler with a fresh datalogic `Engine` configured for
     /// templating mode (preserves object structure in JSONLogic operations).
     pub fn new() -> Self {
-        let engine = Arc::new(Engine::builder().with_templating(true).build());
+        Self::with_operators(&HashMap::new())
+    }
+
+    /// As [`LogicCompiler::new`], with `operators` registered on the datalogic
+    /// engine before it is built — registration there is builder-only, so this
+    /// is the single point where custom operators can enter.
+    pub fn with_operators(operators: &HashMap<String, Arc<dyn CustomOperator>>) -> Self {
+        let mut builder = Engine::builder().with_templating(true);
+        for (name, op) in operators {
+            builder = builder.add_operator(name.clone(), SharedOperator(Arc::clone(op)));
+        }
+        let engine = Arc::new(builder.build());
         let template_compiler = TemplateCompiler::new(Arc::clone(&engine));
         Self {
             engine,
@@ -613,6 +644,16 @@ mod tests {
         assert_eq!(
             eval(&e, &json!({"??": [null, "fallback"]})),
             json!("fallback")
+        );
+    }
+
+    #[cfg(feature = "ext-object")]
+    #[test]
+    fn ext_object_feature_reaches_datalogic() {
+        let e = engine();
+        assert_eq!(
+            eval(&e, &json!({"keys": [{"a": 1, "b": 2}]})),
+            json!(["a", "b"])
         );
     }
 

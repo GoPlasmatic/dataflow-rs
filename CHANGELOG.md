@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] — 2026-08-19
+
+Custom JSONLogic operators can now be registered on the engine, and the
+`datalogic-rs` upgrade to 5.2 brings a new `ext-object` operator family.
+
+### Added
+
+- **engine:** `EngineBuilder::with_datalogic_operator` — register a custom
+  JSONLogic operator (`datalogic_rs::CustomOperator`) under a host-chosen
+  name (a built-in operator name always wins over a custom registration, so
+  pick names no built-in uses). Registrations are retained on the engine, so an
+  `Engine::with_new_workflows` hot reload re-registers them instead of
+  silently dropping them. Under templating an *unregistered* name still
+  echoes back as literal data, so registering a name converts previously-inert
+  values into live operator calls — the same caveat the operator-family cargo
+  features carry.
+- **integrations:** `HttpCallConfig` gains `body_format` and `response_format`
+  — uninterpreted passthrough fields whose value table belongs to the service
+  layer, so new encodings need no release of this crate. Absent fields
+  deserialize as `None`; misspelled field *names* still fail at parse time via
+  `deny_unknown_fields`.
+- **jsonlogic:** `ext-object` cargo feature, forwarding `datalogic-rs`'s new
+  object take-apart family: `keys`, `values`, and `entries` (`entries` yields
+  `[{key, value}]` rows the array vocabulary can iterate). Off by default like
+  every family, and included in `all-operators` — which makes it live in the
+  npm `@goplasmatic/dataflow-wasm` build.
+- **jsonlogic:** `ext-array` now also unlocks `group_by` and `distinct`
+  (datalogic-rs 5.2). Existing rules carrying `{"group_by": …}` or
+  `{"distinct": …}` objects as literal data start evaluating them — the same
+  non-additivity caveat that applies to enabling a family.
+- **jsonlogic:** with `datetime` enabled, `format_date` and `parse_date` accept
+  an optional trailing IANA timezone argument (backed by `chrono-tz`), and the
+  format-token table gains month/weekday names (`MMM`, `MMMM`, `EEE`, `EEEE`).
+
+### Changed
+
+- **deps:** `datalogic-rs` 5.1 → 5.2.
+
 ## [3.3.0] — 2026-08-11
 
 A workflow's task list can now run as a bounded loop, so a set of tasks can

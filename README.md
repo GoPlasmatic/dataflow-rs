@@ -81,7 +81,7 @@ If you need dynamic business rules or user-customizable workflows, writing manua
 
 ```toml
 [dependencies]
-dataflow-rs = "3.3"
+dataflow-rs = "3.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1.0"
 ```
@@ -91,7 +91,7 @@ JSONLogic only. Add the families your rules use:
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "3.3", features = ["ext-string", "ext-control"] }
+dataflow-rs = { version = "3.4", features = ["ext-string", "ext-control"] }
 ```
 
 Read [JSONLogic → Operator Families](docs/src/advanced/jsonlogic.md#operator-families-cargo-features)

@@ -451,3 +451,97 @@ async fn task_context_eval_surface_is_reachable_from_outside_the_crate() {
         .expect("eval surface should be reachable and correct");
     assert_eq!(outcome, TaskOutcome::Success);
 }
+
+// =============================================================================
+// Custom JSONLogic operators — EngineBuilder::with_datalogic_operator
+// =============================================================================
+
+/// Uppercases its first argument. Small enough that the test reads as a test
+/// of the *registration path*, not of an operator.
+struct Shout;
+
+impl dataflow_rs::datalogic_rs::CustomOperator for Shout {
+    fn evaluate<'a>(
+        &self,
+        args: &[&'a dataflow_rs::datalogic_rs::DataValue<'a>],
+        _ctx: &mut dataflow_rs::datalogic_rs::operator::EvalContext<'_, 'a>,
+        arena: &'a dataflow_rs::datalogic_rs::bumpalo::Bump,
+    ) -> dataflow_rs::datalogic_rs::Result<&'a dataflow_rs::datalogic_rs::DataValue<'a>> {
+        use dataflow_rs::datalogic_rs::ArenaExt;
+        let s = args.first().and_then(|v| v.as_str()).unwrap_or_default();
+        Ok(arena.string(&s.to_uppercase()))
+    }
+}
+
+/// One workflow whose `map` logic calls the custom operator.
+fn shout_workflow() -> Workflow {
+    Workflow::from_json(
+        r#"{
+        "id": "w", "name": "w", "priority": 0, "condition": true,
+        "tasks": [{ "id": "t", "name": "t",
+                    "function": { "name": "map", "input": { "mappings": [
+                        { "path": "data.loud",
+                          "logic": { "shout": [{ "var": "data.word" }] } }
+                    ] } } }]
+    }"#,
+    )
+    .expect("workflow json")
+}
+
+#[tokio::test]
+async fn custom_datalogic_operator_is_live_through_the_full_engine_path() {
+    let engine = Engine::builder()
+        .with_workflow(shout_workflow())
+        .with_datalogic_operator("shout", Shout)
+        .build()
+        .expect("engine should build");
+
+    let mut message = Message::from_value(&json!({}));
+    set_nested_value(&mut message.context, "data.word", dv(json!("quiet")));
+    engine.process_message(&mut message).await.expect("process");
+    assert_eq!(message.context["data"]["loud"], dv(json!("QUIET")));
+}
+
+#[tokio::test]
+async fn custom_datalogic_operator_survives_hot_reload() {
+    // `with_new_workflows` builds a fresh datalogic engine; the registration
+    // must be retained and re-applied or the operator silently vanishes on
+    // the first reload — the exact regression this test exists to catch.
+    let engine = Engine::builder()
+        .with_workflow(shout_workflow())
+        .with_datalogic_operator("shout", Shout)
+        .build()
+        .expect("engine should build");
+
+    let reloaded = engine
+        .with_new_workflows(vec![shout_workflow()])
+        .expect("hot reload should recompile the operator call");
+
+    let mut message = Message::from_value(&json!({}));
+    set_nested_value(&mut message.context, "data.word", dv(json!("still quiet")));
+    reloaded
+        .process_message(&mut message)
+        .await
+        .expect("process");
+    assert_eq!(message.context["data"]["loud"], dv(json!("STILL QUIET")));
+}
+
+#[tokio::test]
+async fn unregistered_operator_name_stays_inert_template_data() {
+    // Templating mode: an object keyed by an unknown name is not an error —
+    // it echoes as literal data. Registering a name is what turns it live,
+    // so this pins the OFF state of the same vocabulary the two tests above
+    // pin ON.
+    let engine = Engine::builder()
+        .with_workflow(shout_workflow())
+        .build()
+        .expect("engine should build without the operator");
+
+    let mut message = Message::from_value(&json!({}));
+    set_nested_value(&mut message.context, "data.word", dv(json!("quiet")));
+    engine.process_message(&mut message).await.expect("process");
+    assert_eq!(
+        message.context["data"]["loud"],
+        dv(json!({ "shout": ["quiet"] }))
+    );
+}
