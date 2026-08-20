@@ -386,9 +386,19 @@ for handle in handles {
 ### `Engine::builder()`
 
 Returns an [`EngineBuilder`](../api/reference.md). Chain
-`.register("name", handler)`, `.with_workflow(w)`,
-`.with_workflows(iter)`, then `.build() -> Result<Engine>`. Recommended
-construction path.
+`.register("name", handler)`, `.register_boxed(name, boxed)`,
+`.with_workflow(w)`, `.with_workflows(iter)`, `.with_handlers(map)`,
+`.with_observer(obs)`, `.with_datalogic_operator(name, op)`,
+`.with_error_context_path(path)`, `.with_error_context_limit(n)`, then
+`.build() -> Result<Engine>`. Recommended construction path.
+
+### `EngineBuilder::with_error_context_path(path)`
+
+Mirror per-task failure codes into `path` inside the message context, so a
+downstream `condition` or `map` can branch on *why* a task failed. Off unless
+called. See [Error Handling](./error-handling.md#branching-on-why-a-task-failed)
+for the record shape and the coverage rules; `.with_error_context_limit(n)` caps
+how many records are retained (default 32, newest kept).
 
 ### `Engine::new(workflows, custom_functions)`
 

@@ -1,5 +1,7 @@
+use crate::engine::utils::{compute_path_parts, strip_hash_prefix};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Main error type for the dataflow engine
@@ -295,20 +297,114 @@ pub struct ErrorInfo {
     pub detail: Option<String>,
 }
 
-/// Code recorded for a [`DataflowError::Service`] — also the historical
-/// `TASK_ERROR` fallback for every other variant. Shared with
-/// `workflow_executor`'s per-task error recording, which needs the identical
-/// "Service contributes its own kind verbatim; everything else stays
-/// `TASK_ERROR`" rule.
+/// Default cap on the number of records held at the error-context path.
 ///
-/// `kind` is passed through **verbatim** rather than upper-cased: the service owns
-/// it and will switch on the recorded `code`, so making the two different strings
-/// would force every consumer to know the transform. An empty `kind` falls back to
-/// the historical `TASK_ERROR` so no `ErrorInfo` ever carries an empty code.
+/// Bounded so the option's memory cost does not scale with a looping workflow's
+/// iteration count — `Message.context` is deep-cloned into every trace snapshot.
+pub(crate) const DEFAULT_ERROR_CONTEXT_LIMIT: usize = 32;
+
+/// Where the engine mirrors per-task failure codes into the message context, so
+/// a downstream `condition` or `map` can branch on *why* a task failed.
+///
+/// Built and validated by `EngineBuilder::build`; never constructed on the hot
+/// path. Holds the dotted form (for `refresh_for_path`) and the pre-split walk
+/// order (for the write) so neither is recomputed per failure.
+#[derive(Debug, Clone)]
+pub(crate) struct ErrorContextConfig {
+    /// Dotted path, e.g. `"metadata.errors"`.
+    pub(crate) path: String,
+    /// `path` pre-split into the walk order used by the `*_parts` accessors.
+    pub(crate) path_parts: Arc<[Arc<str>]>,
+    /// Most-recent-N records retained; older ones are dropped from the front.
+    pub(crate) limit: usize,
+}
+
+impl ErrorContextConfig {
+    /// Validate `path` and pre-split it.
+    ///
+    /// The first segment must name one of the three context slots. Anything else
+    /// — `payload.errors` above all — would write somewhere the JSONLogic
+    /// evaluation context cannot see, and the workflow author would get a
+    /// silently-never-true condition rather than an error. `metadata.progress` is
+    /// rejected outright: the workflow executor owns that slot and cross-workflow
+    /// chaining depends on its shape.
+    pub(crate) fn new(path: String, limit: usize) -> Result<Self> {
+        let mut segments = path.split('.');
+        let first = segments.next().unwrap_or_default();
+        let root = strip_hash_prefix(first);
+        if !matches!(root, "data" | "metadata" | "temp_data") {
+            return Err(DataflowError::Workflow(format!(
+                "error context path must start with `data`, `metadata` or `temp_data`, got {path:?}"
+            )));
+        }
+        let rest: Vec<&str> = segments.collect();
+        if rest.is_empty() || rest.iter().any(|s| s.is_empty()) {
+            return Err(DataflowError::Workflow(format!(
+                "error context path must name a slot inside `{root}`, got {path:?}"
+            )));
+        }
+        if root == "metadata" && rest == ["progress"] {
+            return Err(DataflowError::Workflow(
+                "error context path may not be `metadata.progress` — the engine owns \
+                 that slot for cross-workflow chaining"
+                    .to_string(),
+            ));
+        }
+        if limit == 0 {
+            return Err(DataflowError::Workflow(
+                "error context limit must be at least 1".to_string(),
+            ));
+        }
+        let path_parts = compute_path_parts(first, &rest.join("."));
+        Ok(Self {
+            path,
+            path_parts,
+            limit,
+        })
+    }
+}
+
+/// The engine-owned code for a `DataflowError` variant.
+///
+/// The closed vocabulary every consumer switches on. `Service` is included for
+/// totality but is normally reached through [`service_error_code`], which
+/// prefers the service's own `kind`; an empty `kind` lands here and falls back
+/// to `TASK_ERROR` so no `ErrorInfo` ever carries an empty code.
+fn variant_code(error: &DataflowError) -> String {
+    match error {
+        DataflowError::Validation(_) => "VALIDATION_ERROR".to_string(),
+        DataflowError::Workflow(_) => "WORKFLOW_ERROR".to_string(),
+        DataflowError::Task(_) => "TASK_ERROR".to_string(),
+        DataflowError::FunctionNotFound(_) => "FUNCTION_NOT_FOUND".to_string(),
+        DataflowError::FunctionExecution { .. } => "FUNCTION_ERROR".to_string(),
+        DataflowError::LogicEvaluation(_) => "LOGIC_ERROR".to_string(),
+        DataflowError::Http { .. } => "HTTP_ERROR".to_string(),
+        DataflowError::Timeout(_) => "TIMEOUT_ERROR".to_string(),
+        DataflowError::Io(_) => "IO_ERROR".to_string(),
+        DataflowError::Deserialization(_) => "DESERIALIZATION_ERROR".to_string(),
+        DataflowError::Unknown(_) => "UNKNOWN_ERROR".to_string(),
+        DataflowError::Service { .. } => "TASK_ERROR".to_string(),
+    }
+}
+
+/// The `ErrorInfo.code` recorded for `error` — the single classifier, used by
+/// both [`ErrorInfo::new`] and `workflow_executor`'s per-task error recording,
+/// so the two can never drift.
+///
+/// A [`DataflowError::Service`] contributes its own `kind` **verbatim** rather
+/// than upper-cased: the service owns it and will switch on the recorded `code`,
+/// so making the two different strings would force every consumer to know the
+/// transform. `kind()` recurses through `FunctionExecution.source`, so wrapping a
+/// service error for context keeps its classification.
+///
+/// Everything else takes its variant's code from [`variant_code`]. Note this is
+/// **not** a flat `TASK_ERROR` fallback: before 3.5.0 every engine-owned variant
+/// collapsed to `TASK_ERROR` on the live path, which made a timeout, a dropped
+/// connection and a rejected request indistinguishable to a workflow author.
 pub(crate) fn service_error_code(error: &DataflowError) -> String {
     match error.kind() {
         Some(kind) if !kind.is_empty() => kind.to_string(),
-        _ => "TASK_ERROR".to_string(),
+        _ => variant_code(error),
     }
 }
 
@@ -316,30 +412,9 @@ impl ErrorInfo {
     /// Create a new error info entry with all fields
     pub fn new(workflow_id: Option<String>, task_id: Option<String>, error: DataflowError) -> Self {
         Self {
-            code: match &error {
-                DataflowError::Validation(_) => "VALIDATION_ERROR".to_string(),
-                DataflowError::Workflow(_) => "WORKFLOW_ERROR".to_string(),
-                DataflowError::Task(_) => "TASK_ERROR".to_string(),
-                DataflowError::FunctionNotFound(_) => "FUNCTION_NOT_FOUND".to_string(),
-                DataflowError::FunctionExecution { .. } => "FUNCTION_ERROR".to_string(),
-                DataflowError::LogicEvaluation(_) => "LOGIC_ERROR".to_string(),
-                DataflowError::Http { .. } => "HTTP_ERROR".to_string(),
-                DataflowError::Timeout(_) => "TIMEOUT_ERROR".to_string(),
-                DataflowError::Io(_) => "IO_ERROR".to_string(),
-                DataflowError::Deserialization(_) => "DESERIALIZATION_ERROR".to_string(),
-                DataflowError::Unknown(_) => "UNKNOWN_ERROR".to_string(),
-                // Same "empty falls back to TASK_ERROR" rule as
-                // `service_error_code`, inlined rather than routed back through
-                // it — `error` is already known to be `Service` here, so a
-                // second match on `error.kind()` would just re-derive `kind`.
-                DataflowError::Service { kind, .. } => {
-                    if kind.is_empty() {
-                        "TASK_ERROR".to_string()
-                    } else {
-                        kind.clone()
-                    }
-                }
-            },
+            // The single classifier, shared with the live per-task recording
+            // path so the two can never drift.
+            code: service_error_code(&error),
             detail: error.detail().map(str::to_string),
             message: error.to_string(),
             path: None,

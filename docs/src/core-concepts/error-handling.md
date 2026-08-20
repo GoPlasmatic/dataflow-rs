@@ -120,10 +120,21 @@ if let Err(e) = result {
 
 Common error codes you'll see:
 
-- `VALIDATION_ERROR` — from the `validation` built-in
-- `TASK_ERROR` — handler returned `Result::Err`
+- `VALIDATION_ERROR` — from the `validation` built-in, or a handler returning
+  `DataflowError::Validation`
+- `TASK_ERROR` — handler returned `DataflowError::Task`
 - `TASK_STATUS_ERROR` — handler returned `TaskOutcome::Status(s)` with `s >= 500`
 - `WORKFLOW_ERROR` — wrapper recording workflow context for the failure above
+
+Every other engine variant contributes its own code the same way:
+`FUNCTION_NOT_FOUND`, `FUNCTION_ERROR`, `LOGIC_ERROR`, `HTTP_ERROR`,
+`TIMEOUT_ERROR`, `IO_ERROR`, `DESERIALIZATION_ERROR`, `UNKNOWN_ERROR`.
+
+> **Changed in 3.5.0.** Before this release every variant except
+> `Service` collapsed to `TASK_ERROR` on the live path, so a timeout, a dropped
+> connection and a rejected request were indistinguishable. If you were matching
+> on `TASK_ERROR` to mean "the handler returned `Err`", match the specific codes
+> instead — or return `DataflowError::Task`, which still maps to `TASK_ERROR`.
 
 That list is not closed: a handler returning a **service-classified** error
 contributes its own code (see below). Switch on `code` with a default arm.
@@ -163,6 +174,82 @@ Everything else is unchanged: `continue_on_error`, the audit-trail entry, and th
 `WORKFLOW_ERROR` wrapper still records workflow context and keeps its own code, so
 counting errors by code does not double-count. No built-in ever returns this
 variant.
+
+## Branching on why a task failed
+
+`message.errors()` is host-side only — the JSONLogic evaluation context is
+exactly `{data, metadata, temp_data}`, so `{"var": "errors"}` resolves to
+nothing. To let a workflow branch on *why* a step failed, point the engine at a
+context path:
+
+```rust
+# use dataflow_rs::{Engine, Workflow};
+# fn _demo(workflows: Vec<Workflow>) -> dataflow_rs::Result<()> {
+let engine = Engine::builder()
+    .with_workflows(workflows)
+    .with_error_context_path("metadata.errors")
+    .build()?;
+# Ok(()) }
+```
+
+Off unless called. With no path configured nothing is written, and the whole
+mechanism is one `Option` check on a path that only runs after a task has
+already failed.
+
+One record is appended per error a task contributes:
+
+```json
+{ "workflow_id": "place_order", "task_id": "charge_payment",
+  "code": "TIMEOUT_ERROR", "status": 500 }
+```
+
+so a later task — or a later workflow — can route on the reason:
+
+```json
+{ "in": [ { "var": "metadata.errors.0.code" }, ["TIMEOUT_ERROR", "IO_ERROR"] ] }
+```
+
+### What is recorded
+
+Coverage matches `errors()`: a handler returning `Err`, a task returning a 5xx
+outcome, each failing rule of the `validation` built-in, and anything a handler
+adds through `TaskContext::add_error`. Two deliberate exclusions:
+
+- **The `WORKFLOW_ERROR` wrapper.** It re-reports the same underlying failure, so
+  mirroring it would double-count. A task failure with `continue_on_error: false`
+  therefore puts *two* entries on `message.errors()` but *one* record here.
+- **Tasks returning `TaskOutcome::Skip`.** Skip opts out of the per-task record
+  entirely — no audit entry, no `metadata.progress` write, no record.
+
+`status` is the task's own status: `500` when the handler returned `Err`,
+otherwise the status the outcome carried (`400` for `validation`, `200` for a
+handler that recorded an error and still succeeded). That is the distinction
+`metadata.progress` cannot make — its failure arm hard-codes `500`.
+
+The error `message` and the operator-only `detail` are **not** recorded. This
+value lands in `Message.context`, which is serialized straight back to callers;
+read those from `message.errors()` host-side instead. Note this applies to
+`temp_data` too — it is part of `context` and ships on the wire like everything
+else, so it is not private scratch space.
+
+### Practical notes
+
+- The key is **absent**, not `[]`, when nothing failed — a clean message keeps
+  the exact wire shape it had before the option existed.
+- At most 32 records are kept by default, newest retained; change it with
+  `.with_error_context_limit(n)`. The bound is what keeps the cost independent of
+  a looping workflow's iteration count, since `Message.context` is deep-cloned
+  into every trace snapshot.
+- **The engine owns the configured path.** A non-array found there is replaced.
+  `metadata.progress` is rejected at `build()`, as is any path that does not start
+  with `data`, `metadata` or `temp_data` — such a path would write somewhere the
+  evaluation context cannot see, giving you a condition that is silently never
+  true.
+- Prefer `metadata.*` or `temp_data.*` over `data.*`: the first append into a
+  `data.*` path costs a one-time re-arena of the whole `data` subtree, which is
+  the heavy payload side.
+- The append is engine bookkeeping, not a task mutation, so it is not recorded as
+  an audit-trail `Change`.
 
 ## Error Types
 

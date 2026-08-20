@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 mod common;
 
-use common::{FailingTask, FivehundredTask, dv};
+use common::{AddErrorTask, FailingTask, FivehundredTask, TimingOutTask, dv};
 
 // =============================================================================
 // Single error channel — regression coverage
@@ -291,4 +291,563 @@ fn the_service_builder_is_reachable_from_an_external_crate() {
     assert!(e.retryable());
     assert_eq!(e.to_string(), "too many requests");
     assert!(!e.to_string().contains("token bucket"));
+}
+
+// =============================================================================
+// Error-code classification on the live path
+// =============================================================================
+
+#[tokio::test]
+async fn an_engine_owned_variant_records_its_own_code_not_a_blanket_task_error() {
+    // Before 3.5.0 the live path ran every non-`Service` variant through a flat
+    // `TASK_ERROR` fallback, so a timeout, a dropped connection and a rejected
+    // request were indistinguishable to a workflow author — the variant->code
+    // table existed but had no non-test caller. This pins that the table is on
+    // the live path.
+    let workflow = r#"{
+        "id": "wf", "name": "W", "priority": 0, "condition": true,
+        "tasks": [{
+            "id": "slow", "name": "Slow", "continue_on_error": true,
+            "function": { "name": "timeout", "input": {} }
+        }]
+    }"#;
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(workflow).unwrap())
+        .register("timeout", TimingOutTask)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        message.errors()[0].code,
+        "TIMEOUT_ERROR",
+        "the live path must classify by variant, not collapse to TASK_ERROR"
+    );
+}
+
+// =============================================================================
+// Error context path — per-task failure codes mirrored into the context
+// =============================================================================
+
+/// A workflow whose single `validation` task fails two rules and returns
+/// `Status(400)`. That path pushes straight to `message.errors` and lands in
+/// `handle_task_result`'s *success* arm, so it reaches neither failure arm.
+fn failing_validation_workflow(id: &str, continue_on_error: bool) -> Workflow {
+    Workflow::from_json(&format!(
+        r#"{{
+            "id": "{id}", "name": "V", "priority": 0, "condition": true,
+            "continue_on_error": true,
+            "tasks": [{{
+                "id": "check", "name": "Check", "continue_on_error": {continue_on_error},
+                "function": {{ "name": "validation", "input": {{ "rules": [
+                    {{ "logic": false, "message": "first rule failed" }},
+                    {{ "logic": false, "message": "second rule failed" }}
+                ] }} }}
+            }}]
+        }}"#
+    ))
+    .unwrap()
+}
+
+/// The records written at `metadata.errors`, as plain JSON.
+fn records(message: &Message) -> Vec<Value> {
+    let ctx: Value = serde_json::to_value(&message.context).unwrap();
+    ctx.get("metadata")
+        .and_then(|m| m.get("errors"))
+        .and_then(|e| e.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn off_by_default_writes_nothing() {
+    let engine = Engine::builder()
+        .with_workflow(failing_validation_workflow("wf", true))
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    // The failure is on the message either way — only the context is untouched.
+    assert_eq!(message.errors().len(), 2);
+    let ctx: Value = serde_json::to_value(&message.context).unwrap();
+    assert!(
+        ctx["metadata"].get("errors").is_none(),
+        "no path configured must mean no write at all, got {ctx}"
+    );
+}
+
+#[tokio::test]
+async fn nothing_is_written_when_no_task_fails() {
+    // The key is *absent*, not an empty array: a clean message keeps the exact
+    // wire shape it had before the option existed.
+    let workflow = r#"{
+        "id": "wf", "name": "W", "priority": 0, "condition": true,
+        "tasks": [{
+            "id": "ok", "name": "Ok",
+            "function": { "name": "map", "input": { "mappings": [
+                { "path": "data.ran", "logic": true }
+            ] } }
+        }]
+    }"#;
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(workflow).unwrap())
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    let ctx: Value = serde_json::to_value(&message.context).unwrap();
+    assert!(
+        ctx["metadata"].get("errors").is_none(),
+        "a clean run must leave the key absent, not an empty array, got {ctx}"
+    );
+}
+
+#[tokio::test]
+async fn validation_failures_are_recorded_with_the_executors_own_ids_and_status() {
+    // Three things at once: the sync stretch, the `Status(400)` path that
+    // reaches neither failure arm, and that ids come from the executor rather
+    // than the `ErrorInfo` (validation builds its entries with `simple_ref`,
+    // whose `task_id` is `None`).
+    let engine = Engine::builder()
+        .with_workflow(failing_validation_workflow("wf", true))
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        records(&message),
+        vec![
+            json!({ "workflow_id": "wf", "task_id": "check",
+                    "code": "VALIDATION_ERROR", "status": 400 }),
+            json!({ "workflow_id": "wf", "task_id": "check",
+                    "code": "VALIDATION_ERROR", "status": 400 }),
+        ],
+        "one record per failed rule, carrying the task's own 400"
+    );
+    assert!(
+        message.errors()[0].task_id.is_none(),
+        "guard: validation's own ErrorInfo has no task_id, so the record's must \
+         come from the executor"
+    );
+}
+
+#[tokio::test]
+async fn a_later_task_in_the_same_sync_stretch_sees_the_record() {
+    // The intra-stretch arena refresh. Both tasks are sync built-ins, so they
+    // share one ArenaContext; without refreshing the configured path the second
+    // task's condition reads a stale snapshot and never fires.
+    let workflow = r#"{
+        "id": "wf", "name": "W", "priority": 0, "condition": true,
+        "tasks": [
+            { "id": "check", "name": "Check", "continue_on_error": true,
+              "function": { "name": "validation", "input": { "rules": [
+                  { "logic": false, "message": "nope" }
+              ] } } },
+            { "id": "react", "name": "React",
+              "condition": { "==": [ { "var": "metadata.errors.0.code" }, "VALIDATION_ERROR" ] },
+              "function": { "name": "map", "input": { "mappings": [
+                  { "path": "data.reacted", "logic": true }
+              ] } } }
+        ]
+    }"#;
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(workflow).unwrap())
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        message.context["data"]["reacted"],
+        dv(json!(true)),
+        "the next task in the same stretch must see the record"
+    );
+}
+
+#[tokio::test]
+async fn a_downstream_workflow_branches_on_the_recorded_code() {
+    // The issue's use case, end to end: three failure modes that used to be
+    // indistinguishable now route differently. Both workflows are fully sync,
+    // so they share one arena across the workflow boundary.
+    let wf_a = failing_validation_workflow("wf_a", true);
+    let wf_b = Workflow::from_json(
+        r#"{
+        "id": "wf_b", "name": "B", "priority": 1,
+        "condition": { "in": [ { "var": "metadata.errors.0.code" },
+                               ["VALIDATION_ERROR", "TIMEOUT_ERROR"] ] },
+        "tasks": [{
+            "id": "retry", "name": "Retry",
+            "function": { "name": "map", "input": { "mappings": [
+                { "path": "data.queued_for_retry", "logic": true }
+            ] } }
+        }]
+    }"#,
+    )
+    .unwrap();
+
+    let engine = Engine::builder()
+        .with_workflows(vec![wf_a, wf_b])
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        message.context["data"]["queued_for_retry"],
+        dv(json!(true)),
+        "a downstream workflow must be able to gate on why the task failed"
+    );
+}
+
+#[tokio::test]
+async fn an_async_handler_error_is_recorded_with_status_500() {
+    // The async call site, which has no live arena.
+    let workflow = r#"{
+        "id": "wf", "name": "W", "priority": 0, "condition": true,
+        "tasks": [{
+            "id": "boom", "name": "Boom", "continue_on_error": true,
+            "function": { "name": "fail", "input": {} }
+        }]
+    }"#;
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(workflow).unwrap())
+        .register("fail", FailingTask)
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        records(&message),
+        vec![json!({ "workflow_id": "wf", "task_id": "boom",
+                     "code": "TASK_ERROR", "status": 500 })],
+    );
+}
+
+#[tokio::test]
+async fn a_five_hundred_outcome_is_recorded_as_task_status_error() {
+    let workflow = r#"{
+        "id": "wf", "name": "W", "priority": 0, "condition": true,
+        "tasks": [{
+            "id": "five", "name": "Five", "continue_on_error": true,
+            "function": { "name": "five", "input": {} }
+        }]
+    }"#;
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(workflow).unwrap())
+        .register("five", FivehundredTask)
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        records(&message),
+        vec![json!({ "workflow_id": "wf", "task_id": "five",
+                     "code": "TASK_STATUS_ERROR", "status": 500 })],
+    );
+}
+
+#[tokio::test]
+async fn a_handler_recorded_error_carries_the_outcome_status() {
+    // `TaskContext::add_error` on a task that *succeeds*. `status` is the task's
+    // own outcome status, not a blanket 500 — the distinction
+    // `metadata.progress` cannot make.
+    let workflow = r#"{
+        "id": "wf", "name": "W", "priority": 0, "condition": true,
+        "tasks": [{
+            "id": "noted", "name": "Noted",
+            "function": { "name": "note", "input": {} }
+        }]
+    }"#;
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(workflow).unwrap())
+        .register("note", AddErrorTask)
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        records(&message),
+        vec![json!({ "workflow_id": "wf", "task_id": "noted",
+                     "code": "CUSTOM_CODE", "status": 200 })],
+    );
+}
+
+#[tokio::test]
+async fn records_accumulate_across_workflows_and_exclude_the_workflow_wrapper() {
+    let wf_a = failing_validation_workflow("wf_a", true);
+    let wf_b = Workflow::from_json(
+        r#"{
+        "id": "wf_b", "name": "B", "priority": 1, "condition": true,
+        "continue_on_error": true,
+        "tasks": [{
+            "id": "boom", "name": "Boom", "continue_on_error": false,
+            "function": { "name": "fail", "input": {} }
+        }]
+    }"#,
+    )
+    .unwrap();
+
+    let engine = Engine::builder()
+        .with_workflows(vec![wf_a, wf_b])
+        .register("fail", FailingTask)
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    // Four entries on the message: two validation rules, the task error, and
+    // the workflow wrapper. Only three records — the wrapper re-reports the
+    // same underlying failure, so mirroring it would double-count.
+    let codes: Vec<&str> = message.errors().iter().map(|e| e.code.as_str()).collect();
+    assert_eq!(
+        codes,
+        vec![
+            "VALIDATION_ERROR",
+            "VALIDATION_ERROR",
+            "TASK_ERROR",
+            "WORKFLOW_ERROR"
+        ]
+    );
+    assert_eq!(
+        records(&message),
+        vec![
+            json!({ "workflow_id": "wf_a", "task_id": "check",
+                    "code": "VALIDATION_ERROR", "status": 400 }),
+            json!({ "workflow_id": "wf_a", "task_id": "check",
+                    "code": "VALIDATION_ERROR", "status": 400 }),
+            json!({ "workflow_id": "wf_b", "task_id": "boom",
+                    "code": "TASK_ERROR", "status": 500 }),
+        ],
+        "each record carries its own workflow_id; WORKFLOW_ERROR is excluded"
+    );
+}
+
+#[tokio::test]
+async fn a_looping_workflow_records_one_entry_per_failing_sweep() {
+    let workflow = r#"{
+        "id": "wf", "name": "W", "priority": 0, "condition": true,
+        "continue_on_error": true,
+        "loop": { "counter": "i", "max": 3 },
+        "tasks": [{
+            "id": "boom", "name": "Boom", "continue_on_error": true,
+            "function": { "name": "fail", "input": {} }
+        }]
+    }"#;
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(workflow).unwrap())
+        .register("fail", FailingTask)
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(records(&message).len(), 3, "one record per sweep");
+}
+
+#[tokio::test]
+async fn the_cap_keeps_the_most_recent_records() {
+    let workflow = r#"{
+        "id": "wf", "name": "W", "priority": 0, "condition": true,
+        "continue_on_error": true,
+        "loop": { "counter": "i", "max": 10 },
+        "tasks": [{
+            "id": "boom", "name": "Boom", "continue_on_error": true,
+            "function": { "name": "fail", "input": {} }
+        }]
+    }"#;
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(workflow).unwrap())
+        .register("fail", FailingTask)
+        .with_error_context_path("metadata.errors")
+        .with_error_context_limit(4)
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    // Ten sweeps, four retained — the memory cost is bounded by the limit, not
+    // by the loop's iteration count.
+    assert_eq!(records(&message).len(), 4);
+    assert_eq!(message.errors().len(), 10, "the message keeps all of them");
+}
+
+#[tokio::test]
+async fn the_record_shape_is_exactly_four_keys_in_a_fixed_order() {
+    // Wire-shape guard. The string assertion is load-bearing: `OwnedDataValue`'s
+    // object equality is key-lookup based and therefore order-insensitive, so
+    // comparing values alone would not pin the key order.
+    let engine = Engine::builder()
+        .with_workflow(failing_validation_workflow("wf", true))
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    let ctx = serde_json::to_string(&message.context).unwrap();
+    assert!(
+        ctx.contains(
+            r#"{"workflow_id":"wf","task_id":"check","code":"VALIDATION_ERROR","status":400}"#
+        ),
+        "record shape/order changed: {ctx}"
+    );
+}
+
+#[tokio::test]
+async fn the_operator_only_detail_never_reaches_the_context() {
+    // `ErrorInfo::detail` is documented as unsafe to hand to an untrusted
+    // caller, and `Message.context` is serialized straight back to callers.
+    let engine = Engine::builder()
+        .with_workflow(service_workflow(true))
+        .register("svc_fail", ServiceFailingTask)
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    let ctx = serde_json::to_string(&message.context).unwrap();
+    assert!(
+        ctx.contains(r#""code":"circuit_open""#),
+        "the service kind is the code: {ctx}"
+    );
+    assert!(
+        !ctx.contains("detail") && !ctx.contains("breaker open"),
+        "operator-only detail must not reach the context: {ctx}"
+    );
+    assert!(
+        !ctx.contains("upstream unavailable"),
+        "the error message is excluded too: {ctx}"
+    );
+}
+
+#[tokio::test]
+async fn a_non_array_already_at_the_path_is_replaced() {
+    let workflow = r#"{
+        "id": "wf", "name": "W", "priority": 0, "condition": true,
+        "tasks": [
+            { "id": "squat", "name": "Squat",
+              "function": { "name": "map", "input": { "mappings": [
+                  { "path": "metadata.errors", "logic": "oops" }
+              ] } } },
+            { "id": "check", "name": "Check", "continue_on_error": true,
+              "function": { "name": "validation", "input": { "rules": [
+                  { "logic": false, "message": "nope" }
+              ] } } }
+        ]
+    }"#;
+    let engine = Engine::builder()
+        .with_workflow(Workflow::from_json(workflow).unwrap())
+        .with_error_context_path("metadata.errors")
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        records(&message),
+        vec![json!({ "workflow_id": "wf", "task_id": "check",
+                     "code": "VALIDATION_ERROR", "status": 400 })],
+        "the engine owns the configured path; a squatting scalar is replaced \
+         rather than silently swallowing the records"
+    );
+}
+
+#[tokio::test]
+async fn the_option_survives_a_hot_reload_and_a_with_observer_rebuild() {
+    // Both rebuild the executor from scratch. `with_observer` is the easy one
+    // to miss: it is applied *after* the error context inside `build()`.
+    let engine = Engine::builder()
+        .with_workflow(failing_validation_workflow("wf", true))
+        .with_error_context_path("metadata.errors")
+        .with_observer(std::sync::Arc::new(common::RecordingObserver::default()))
+        .build()
+        .unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+    assert_eq!(
+        records(&message).len(),
+        2,
+        "with_observer must not drop the error context path"
+    );
+
+    let reloaded = engine
+        .with_new_workflows(vec![failing_validation_workflow("wf2", true)])
+        .unwrap();
+    let mut message = Message::from_value(&json!({}));
+    reloaded.process_message(&mut message).await.unwrap();
+    assert_eq!(
+        records(&message).len(),
+        2,
+        "a hot reload must not drop the error context path"
+    );
+}
+
+#[test]
+fn build_rejects_a_path_the_eval_context_cannot_see() {
+    for bad in [
+        "",
+        "errors",
+        "payload.errors",
+        "metadata.",
+        "metadata.progress",
+    ] {
+        let result = Engine::builder()
+            .with_workflow(failing_validation_workflow("wf", true))
+            .with_error_context_path(bad)
+            .build();
+        assert!(
+            result.is_err(),
+            "{bad:?} must be rejected at build, not silently write nowhere"
+        );
+    }
+
+    // A valid path still builds, and a zero limit does not.
+    assert!(
+        Engine::builder()
+            .with_workflow(failing_validation_workflow("wf", true))
+            .with_error_context_path("temp_data.failures")
+            .build()
+            .is_ok()
+    );
+    assert!(
+        Engine::builder()
+            .with_workflow(failing_validation_workflow("wf", true))
+            .with_error_context_path("metadata.errors")
+            .with_error_context_limit(0)
+            .build()
+            .is_err()
+    );
 }

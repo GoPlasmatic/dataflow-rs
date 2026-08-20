@@ -37,10 +37,13 @@ pub fn new(
 
 `EngineBuilder` (`#[must_use]`) chains
 `.register("name", handler)`, `.register_boxed(name, boxed)`,
-`.with_workflow(w)`, `.with_workflows(iter)`, then
+`.with_workflow(w)`, `.with_workflows(iter)`, `.with_handlers(map)`,
+`.with_observer(obs)`, `.with_datalogic_operator(name, op)`,
+`.with_error_context_path(path)`, `.with_error_context_limit(n)`, then
 `.build() -> Result<Engine>`. All JSONLogic is compiled and Custom
 inputs are pre-parsed into their typed `Self::Input` at `.build()` —
-config-shape errors fail there, not on first message.
+config-shape errors fail there, not on first message. An error-context
+path that the JSONLogic evaluation context cannot see fails there too.
 
 ### Methods
 

@@ -57,6 +57,37 @@ impl AsyncFunctionHandler for FivehundredTask {
     }
 }
 
+// Handler that fails with an engine-owned variant carrying its own
+// classification — used by the error-code tests, which pin that the live path
+// records `TIMEOUT_ERROR` rather than collapsing every variant to `TASK_ERROR`.
+pub struct TimingOutTask;
+
+#[async_trait]
+impl AsyncFunctionHandler for TimingOutTask {
+    type Input = Value;
+
+    async fn execute(&self, _ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        Err(dataflow_rs::DataflowError::Timeout(
+            "provider timed out".to_string(),
+        ))
+    }
+}
+
+// Handler that records an error and still succeeds. Reaches neither failure arm
+// of `handle_task_result`, so it pins that the error-context path follows
+// `message.errors()` rather than the failure arms.
+pub struct AddErrorTask;
+
+#[async_trait]
+impl AsyncFunctionHandler for AddErrorTask {
+    type Input = Value;
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        ctx.add_error(dataflow_rs::ErrorInfo::builder("CUSTOM_CODE", "handler-recorded").build());
+        Ok(TaskOutcome::Success)
+    }
+}
+
 // An async task implementation
 pub struct AsyncLoggingTask;
 

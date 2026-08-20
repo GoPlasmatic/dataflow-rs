@@ -3,7 +3,9 @@
 //! This module handles the execution of workflows and their associated tasks.
 //! It provides a clean separation between workflow orchestration and task execution.
 
-use crate::engine::error::{DataflowError, ErrorInfo, Result, service_error_code};
+use crate::engine::error::{
+    DataflowError, ErrorContextConfig, ErrorInfo, Result, service_error_code,
+};
 use crate::engine::executor::{
     ArenaContext, evaluate_condition, evaluate_condition_in_arena, with_arena,
 };
@@ -14,7 +16,9 @@ use crate::engine::task::Task;
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::trace::{ExecutionStep, ExecutionTrace, StepTiming, duration_us_between};
-use crate::engine::utils::{compute_path_parts, set_nested_value, set_nested_value_parts};
+use crate::engine::utils::{
+    compute_path_parts, set_nested_value, set_nested_value_parts, strip_hash_prefix,
+};
 use crate::engine::workflow::{LoopConfig, Workflow};
 use chrono::{DateTime, Utc};
 use core::time::Duration;
@@ -57,6 +61,21 @@ impl PassCtx {
             loop_counter: None,
         }
     }
+}
+
+/// The two per-*task* values `handle_task_result` needs beyond the shared
+/// [`PassCtx`].
+///
+/// Bundled rather than passed separately because `handle_task_result` already
+/// sits at clippy's `too_many_arguments` threshold, and `PassCtx` cannot carry
+/// them — it is per-pass and shared by every task in a sweep.
+#[derive(Clone, Copy)]
+struct TaskPass {
+    /// The task-level `continue_on_error` flag.
+    continue_on_error: bool,
+    /// `message.errors.len()` immediately before this task ran, so the errors it
+    /// contributed can be identified as the tail beyond this index.
+    errors_before: usize,
 }
 
 /// Result of one pass over a workflow's task list.
@@ -277,6 +296,127 @@ fn write_progress_metadata(
     );
 }
 
+/// Build one context record for a failed task.
+///
+/// `workflow_id`, `task_id` and `status` come from the executor rather than from
+/// the `ErrorInfo`: `validation` builds its entries with `ErrorInfo::simple_ref`,
+/// which leaves both ids `None`, and `ErrorInfo` carries no status at all.
+///
+/// The error `message` and the operator-only `detail` are deliberately omitted —
+/// this value lands in `Message.context`, which is serialized back to callers.
+fn new_error_record(workflow_id: &str, task_id: &str, code: &str, status: u16) -> OwnedDataValue {
+    OwnedDataValue::Object(vec![
+        ("workflow_id".to_string(), OwnedDataValue::from(workflow_id)),
+        ("task_id".to_string(), OwnedDataValue::from(task_id)),
+        ("code".to_string(), OwnedDataValue::from(code)),
+        (
+            "status".to_string(),
+            OwnedDataValue::from(u64::from(status)),
+        ),
+    ])
+}
+
+/// Take `node` as an `Object`, replacing whatever non-`Object` sat there.
+///
+/// Normalise first, then destructure — the inverse order (match, then assign in
+/// the fallback arm and re-match the same binding) is NLL problem case #3 and
+/// does not compile.
+fn as_object_slot(node: &mut OwnedDataValue) -> &mut Vec<(String, OwnedDataValue)> {
+    if !matches!(node, OwnedDataValue::Object(_)) {
+        *node = OwnedDataValue::Object(Vec::new());
+    }
+    match node {
+        OwnedDataValue::Object(fields) => fields,
+        _ => unreachable!("just normalised to an Object"),
+    }
+}
+
+/// Append one record per entry in `new_errors` to the configured context path,
+/// keeping at most `cfg.limit` of them.
+///
+/// Hand-walks to the slot the way [`write_progress_metadata`] does. The generic
+/// [`set_nested_value`] cannot express an append — it indexes arrays by numeric
+/// segment and `Null`-pads the gap — and silently no-ops when a non-numeric
+/// segment meets an `Array`. A slot holding something other than an `Array` is
+/// replaced wholesale rather than skipped, so the shape a workflow author reads
+/// is predictable even if a `map` task wrote over the path first.
+///
+/// The array is created lazily, only when there is something to push, so a
+/// message whose tasks all succeed keeps the exact wire shape it had before the
+/// option existed — the key is absent, not `[]`.
+fn append_error_records(
+    context: &mut OwnedDataValue,
+    cfg: &ErrorContextConfig,
+    workflow_id: &str,
+    task_id: &str,
+    status: u16,
+    new_errors: &[ErrorInfo],
+) {
+    if new_errors.is_empty() {
+        return;
+    }
+    // Walk to the parent of the final segment, creating containers as needed,
+    // then take the slot itself.
+    let Some((last, parents)) = cfg.path_parts.split_last() else {
+        return;
+    };
+
+    let mut node = context;
+    for part in parents {
+        let key = strip_hash_prefix(part);
+        if !matches!(node, OwnedDataValue::Object(_)) {
+            // A scalar or array on the way down cannot hold a named child. The
+            // host declared the engine owns this path, so resolve the conflict
+            // in favour of the records rather than dropping them — but say so:
+            // whatever was written here is being discarded.
+            warn!(
+                "error context path `{}` runs through a non-object at `{}` — replacing it",
+                cfg.path, key
+            );
+        }
+        let fields = as_object_slot(node);
+        let idx = match fields.iter().position(|(k, _)| k == key) {
+            Some(i) => i,
+            None => {
+                fields.push((key.to_string(), OwnedDataValue::Object(Vec::new())));
+                fields.len() - 1
+            }
+        };
+        node = &mut fields[idx].1;
+    }
+
+    let key = strip_hash_prefix(last);
+    let fields = as_object_slot(node);
+    let idx = match fields.iter().position(|(k, _)| k == key) {
+        Some(i) => i,
+        None => {
+            fields.push((key.to_string(), OwnedDataValue::Array(Vec::new())));
+            fields.len() - 1
+        }
+    };
+    let slot = &mut fields[idx].1;
+    if !matches!(slot, OwnedDataValue::Array(_)) {
+        warn!(
+            "error context path `{}` held a non-array — replacing it",
+            cfg.path
+        );
+        *slot = OwnedDataValue::Array(Vec::new());
+    }
+    let OwnedDataValue::Array(items) = slot else {
+        unreachable!("just ensured an Array");
+    };
+
+    for error in new_errors {
+        items.push(new_error_record(workflow_id, task_id, &error.code, status));
+    }
+    // Keep-newest: a looping workflow with a failing body would otherwise grow
+    // this list once per sweep, and `Message.context` is deep-cloned into every
+    // trace snapshot.
+    if items.len() > cfg.limit {
+        items.drain(..items.len() - cfg.limit);
+    }
+}
+
 /// Handles the execution of workflows and their tasks
 ///
 /// The `WorkflowExecutor` is responsible for:
@@ -292,6 +432,9 @@ pub struct WorkflowExecutor {
     /// Optional per-task observer. `None` keeps the instrumentation — and its
     /// clock reads — entirely out of the dispatch path.
     observer: Option<Arc<dyn ExecutionObserver>>,
+    /// Optional context path where per-task failure codes are mirrored. `None`
+    /// keeps the whole mechanism out of the dispatch path.
+    error_context: Option<Arc<ErrorContextConfig>>,
 }
 
 impl WorkflowExecutor {
@@ -301,6 +444,7 @@ impl WorkflowExecutor {
             task_executor,
             engine,
             observer: None,
+            error_context: None,
         }
     }
 
@@ -316,6 +460,22 @@ impl WorkflowExecutor {
     /// reload — without it, metrics would stop silently at the first reload.
     pub fn observer(&self) -> Option<&Arc<dyn ExecutionObserver>> {
         self.observer.as_ref()
+    }
+
+    /// Attach an error-context path to an existing executor. Replaces any
+    /// previous one.
+    pub(crate) fn with_error_context(mut self, cfg: Arc<ErrorContextConfig>) -> Self {
+        self.error_context = Some(cfg);
+        self
+    }
+
+    /// The configured error-context path, if any.
+    ///
+    /// Used by `Engine`'s executor rebuilds to carry the setting across a hot
+    /// reload or a `with_observer` call — without it, failure codes would stop
+    /// being recorded silently.
+    pub(crate) fn error_context(&self) -> Option<&Arc<ErrorContextConfig>> {
+        self.error_context.as_ref()
     }
 
     /// Emit a task event, deriving the status from the dispatch result.
@@ -772,16 +932,25 @@ impl WorkflowExecutor {
                 };
                 let obs_start = trace_start.or_else(|| self.observer_clock());
 
+                // Sampled before the body runs — see the sync-stretch site.
+                let errors_before = message.errors.len();
+
                 let result = self.task_executor.execute(task, message).await;
 
                 // Before `handle_task_result`, whose `?` would drop failed tasks.
                 self.emit_task_event(workflow, task, &result, obs_start);
 
+                // No arena refresh here: no `ArenaContext` is live on this path,
+                // and `run_sync_stretch` rebuilds one from `message.context` at
+                // the start of the next stretch.
                 let control_flow = self.handle_task_result(
                     result,
                     &workflow.id_arc,
                     &task.id_arc,
-                    task.continue_on_error,
+                    TaskPass {
+                        continue_on_error: task.continue_on_error,
+                        errors_before,
+                    },
                     message,
                     pass,
                 )?;
@@ -905,28 +1074,50 @@ impl WorkflowExecutor {
             };
             let obs_start = trace_start.or_else(|| self.observer_clock());
 
+            // Sampled before the body runs: `validation` and
+            // `TaskContext::add_error` both push during it, so the tail beyond
+            // this index is exactly what this task contributed.
+            let errors_before = message.errors.len();
+
             let result =
                 self.execute_sync_task_in_arena(task, message, arena_ctx, mapping_snapshots_buf);
 
             // Before `handle_task_result`, whose `?` would drop failed tasks.
             self.emit_task_event(workflow, task, &result, obs_start);
 
-            let control_flow = self.handle_task_result(
+            let flow = self.handle_task_result(
                 result,
                 &workflow.id_arc,
                 &task.id_arc,
-                task.continue_on_error,
+                TaskPass {
+                    continue_on_error: task.continue_on_error,
+                    errors_before,
+                },
                 message,
                 pass,
-            )?;
+            );
 
-            // The only context write `handle_task_result` performs is
-            // `metadata.progress`. Refresh exactly that depth-2 slot so the
-            // next task — and, in the cross-workflow path, the next
-            // workflow's condition — sees it, without re-arenaing unrelated
-            // metadata children (mapped `metadata.routing.*`, chained
-            // workflow state, …) after every task.
+            // Refresh the slots `handle_task_result` wrote so the next task —
+            // and, in the cross-workflow path, the next workflow's condition —
+            // sees them, without re-arenaing unrelated metadata children
+            // (mapped `metadata.routing.*`, chained workflow state, …) after
+            // every task.
+            //
+            // Deliberately *before* the `?`. An `Err` here does not necessarily
+            // end this arena scope: `execute_sync_workflow_run` continues into
+            // the next workflow carrying this same `ArenaContext` whenever the
+            // failing task had `continue_on_error: false` but its workflow had
+            // `continue_on_error: true`, and that workflow's condition would
+            // otherwise be evaluated against a stale `metadata.progress`.
             arena_ctx.refresh_for_path(&message.context, "metadata.progress");
+            // Gated on a failure actually being recorded: this walk deep-copies
+            // the target subtree into the arena, so running it after every
+            // successful task would be a permanent cost on the hot path.
+            if let Some(cfg) = self.error_context_refresh(message, errors_before) {
+                arena_ctx.refresh_for_path_parts(&message.context, &cfg.path_parts);
+            }
+
+            let control_flow = flow?;
 
             if let Some(t) = trace.as_deref_mut() {
                 let started_at = trace_start.unwrap_or(pass.now);
@@ -1147,6 +1338,62 @@ impl WorkflowExecutor {
             })?
     }
 
+    /// Mirror every error this task contributed to `message.errors` into the
+    /// configured context path.
+    ///
+    /// Taking the delta beyond `task.errors_before` rather than recording at each
+    /// push site is what makes coverage match `errors()` exactly. Two of the four
+    /// per-task producers never reach a failure arm at all: the `validation`
+    /// built-in appends its per-rule failures and then returns `Status(400)`,
+    /// which lands in the *success* arm, and `TaskContext::add_error` can fire on
+    /// a task that succeeds outright. Neither is visible to a host that wraps
+    /// handlers either, since the sync built-ins never reach the registry.
+    ///
+    /// Must run *after* the two pushes `handle_task_result` performs itself
+    /// (`TASK_STATUS_ERROR` and the task error), or they fall outside the delta —
+    /// which would silently drop every `map` failure, since `map` returns
+    /// `Status(500)` without touching `errors` itself.
+    ///
+    /// Returns nothing — the sync stretch reads [`Self::error_context_refresh`]
+    /// instead, so the arena refresh stays off the no-failure path.
+    #[inline]
+    fn mirror_task_errors(
+        &self,
+        message: &mut Message,
+        workflow_id: &str,
+        task_id: &str,
+        status: u16,
+        task: TaskPass,
+    ) {
+        let Some(cfg) = self.error_context.as_ref() else {
+            return;
+        };
+        // Disjoint borrows of two fields of `Message`, so the split is needed to
+        // read the error tail while mutating the context.
+        let Message {
+            context, errors, ..
+        } = message;
+        let new_errors = errors.get(task.errors_before..).unwrap_or(&[]);
+        append_error_records(context, cfg, workflow_id, task_id, status, new_errors);
+    }
+
+    /// Whether the sync stretch must refresh the arena for the error-context
+    /// path after this task — i.e. the option is on and the task contributed at
+    /// least one error.
+    #[inline]
+    fn error_context_refresh<'a>(
+        &'a self,
+        message: &Message,
+        errors_before: usize,
+    ) -> Option<&'a Arc<ErrorContextConfig>> {
+        let cfg = self.error_context.as_ref()?;
+        if message.errors.len() > errors_before {
+            Some(cfg)
+        } else {
+            None
+        }
+    }
+
     /// Handle the result of a task execution.
     ///
     /// `workflow_id_arc` and `task_id_arc` are the compile-time cached
@@ -1157,16 +1404,23 @@ impl WorkflowExecutor {
         result: Result<(TaskOutcome, Vec<Change>)>,
         workflow_id_arc: &Arc<str>,
         task_id_arc: &Arc<str>,
-        continue_on_error: bool,
+        task: TaskPass,
         message: &mut Message,
         pass: PassCtx,
     ) -> Result<TaskControlFlow> {
         let workflow_id: &str = workflow_id_arc;
         let task_id: &str = task_id_arc;
+        let continue_on_error = task.continue_on_error;
         match result {
             Ok((TaskOutcome::Skip, _)) => {
-                // No audit trail, no progress write — task has explicitly opted
-                // out (filter gate set to `Skip`).
+                // No audit trail, no progress write, and no error-context record
+                // — the task has explicitly opted out of the per-task record
+                // (filter gate set to `Skip`). `audit_status()` is `None` here,
+                // so a record would need a fabricated `status`, breaking the
+                // fixed four-key shape that makes the path predictable to branch
+                // on. Reaching this with errors recorded takes a handler that
+                // calls `add_error` and *then* skips; the entry is still on
+                // `message.errors()`.
                 debug!("Task {} signaled skip", task_id);
                 Ok(TaskControlFlow::Continue)
             }
@@ -1204,14 +1458,17 @@ impl WorkflowExecutor {
                 // the realistic workload.)
                 write_progress_metadata(&mut message.context, workflow_id, task_id, status);
 
-                if halt {
+                // Decide the control flow first rather than returning from
+                // inside each branch, so the error-context mirror below runs on
+                // exactly one path. The halt and `!continue_on_error` exits would
+                // otherwise each need their own call, and a future exit added
+                // without one would silently stop recording.
+                let flow = if halt {
                     info!("Task {} halted workflow {}", task_id, workflow_id);
-                    return Ok(TaskControlFlow::HaltWorkflow);
-                }
-
-                // Check status code
-                if (400..500).contains(&status) {
+                    Ok(TaskControlFlow::HaltWorkflow)
+                } else if (400..500).contains(&status) {
                     warn!("Task {} returned client error status: {}", task_id, status);
+                    Ok(TaskControlFlow::Continue)
                 } else if status >= 500 {
                     error!("Task {} returned server error status: {}", task_id, status);
                     // Single-channel contract: surface 5xx outcomes through
@@ -1227,14 +1484,22 @@ impl WorkflowExecutor {
                         .task_id(task_id)
                         .build(),
                     );
-                    if !continue_on_error {
-                        return Err(DataflowError::Task(format!(
+                    if continue_on_error {
+                        Ok(TaskControlFlow::Continue)
+                    } else {
+                        Err(DataflowError::Task(format!(
                             "Task {} failed with status {}",
                             task_id, status
-                        )));
+                        )))
                     }
-                }
-                Ok(TaskControlFlow::Continue)
+                } else {
+                    Ok(TaskControlFlow::Continue)
+                };
+
+                // After the `TASK_STATUS_ERROR` push above, so it lands inside
+                // this task's delta.
+                self.mirror_task_errors(message, workflow_id, task_id, status, task);
+                flow
             }
             Err(e) => {
                 error!("Task {} failed: {:?}", task_id, e);
@@ -1256,7 +1521,7 @@ impl WorkflowExecutor {
 
                 // Add error to message. A service-classified error contributes
                 // its own `kind` as the code and carries its operator-only
-                // `detail`; everything else keeps the historical `TASK_ERROR`.
+                // `detail`; everything else takes its variant's code.
                 // Deliberately lifted at the task site only: the two
                 // `WORKFLOW_ERROR` wrappers wrap the same propagated error, so
                 // lifting there too would put two entries with the same
@@ -1277,6 +1542,10 @@ impl WorkflowExecutor {
                     info = info.detail(detail);
                 }
                 message.errors.push(info.build());
+
+                // `500` matches the audit entry and the progress write above: a
+                // handler `Err` has no status of its own.
+                self.mirror_task_errors(message, workflow_id, task_id, 500, task);
 
                 if !continue_on_error {
                     Err(e)
@@ -1320,6 +1589,69 @@ mod tests {
             Arc::clone(&engine),
         ));
         WorkflowExecutor::new(task_executor, engine)
+    }
+
+    /// A `WorkflowExecutor` that mirrors failure codes to `metadata.errors`.
+    fn executor_with_error_context(engine: Arc<datalogic_rs::Engine>) -> WorkflowExecutor {
+        let cfg = ErrorContextConfig::new("metadata.errors".to_string(), 32)
+            .expect("metadata.errors is a valid path");
+        executor(engine).with_error_context(Arc::new(cfg))
+    }
+
+    #[tokio::test]
+    async fn appending_records_mid_stretch_keeps_the_arena_cache_consistent() {
+        // A failing `validation` followed by a `map`, both sync built-ins, so
+        // they share one `ArenaContext`. Two things are under test:
+        //
+        // 1. the `map` reads the record appended by the `validation`, which only
+        //    works if the append refreshed the arena; and
+        // 2. `apply_mutation_parts_write_through`'s `#[cfg(test)]`
+        //    `assert_matches_owned` runs on the `map`'s write, giving free
+        //    differential verification that the refresh left the arena cache
+        //    identical to a from-scratch rebuild of the owned context. That
+        //    assertion is compiled out for the `tests/` binaries, so it can only
+        //    be exercised from here.
+        let (workflow, engine) = compiled(
+            r#"{ "id": "w", "name": "w", "tasks": [
+                { "id": "check", "name": "check", "continue_on_error": true,
+                  "function": {"name": "validation", "input": {"rules": [
+                      {"logic": false, "message": "nope"}]}}},
+                { "id": "react", "name": "react",
+                  "function": {"name": "map", "input": {"mappings": [
+                      {"path": "data.seen", "logic": {"var": "metadata.errors.0.code"}}]}}}
+            ]}"#,
+        );
+        let mut message = Message::from_value(&json!({}));
+
+        executor_with_error_context(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("continue_on_error keeps the workflow running");
+
+        assert_eq!(
+            message.context["data"].get("seen"),
+            Some(&dv(json!("VALIDATION_ERROR"))),
+            "the map must read the record the validation appended in the same stretch"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_error_context_path_is_untouched_when_every_task_succeeds() {
+        let (workflow, engine) = compiled(&format!(
+            r#"{{ "id": "w", "name": "w", "tasks": [{COUNTER_BODY}] }}"#
+        ));
+        let mut message = Message::from_value(&json!({}));
+
+        executor_with_error_context(engine)
+            .execute(&workflow, &mut message, Utc::now())
+            .await
+            .expect("workflow should complete");
+
+        assert_eq!(
+            message.context["metadata"].get("errors"),
+            None,
+            "a clean run leaves the key absent, not an empty array"
+        );
     }
 
     /// Every `loop_counter` recorded on the audit trail, in order.

@@ -81,7 +81,7 @@ If you need dynamic business rules or user-customizable workflows, writing manua
 
 ```toml
 [dependencies]
-dataflow-rs = "3.4"
+dataflow-rs = "3.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1.0"
 ```
@@ -91,7 +91,7 @@ JSONLogic only. Add the families your rules use:
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "3.4", features = ["ext-string", "ext-control"] }
+dataflow-rs = { version = "3.5", features = ["ext-string", "ext-control"] }
 ```
 
 Read [JSONLogic → Operator Families](docs/src/advanced/jsonlogic.md#operator-families-cargo-features)
@@ -271,6 +271,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Branching on Why a Task Failed
+
+Both channels above are host-side. A rule's condition can't reach them — the
+JSONLogic context is `data`, `metadata` and `temp_data`, and the error list isn't
+in it. Point the engine at a context path and it mirrors each failure's code
+there as it happens:
+
+```rust,ignore
+let engine = Engine::builder()
+    .with_workflows(workflows)
+    .with_error_context_path("metadata.errors")
+    .build()?;
+```
+
+Each record is `{workflow_id, task_id, code, status}`, so a later rule can treat
+a transient failure differently from a permanent one:
+
+```json
+{"in": [{"var": "metadata.errors.0.code"}, ["TIMEOUT_ERROR", "IO_ERROR"]]}
+```
+
+Off unless called, and coverage matches `message.errors()` — handler `Err`s, 5xx
+outcomes, every failing `validation` rule, and anything a handler records itself.
+The error text and the operator-only `detail` are deliberately left out, since
+the context is serialized back to callers. See the
+[error handling guide](https://goplasmatic.github.io/dataflow-rs/core-concepts/error-handling.html)
+for the full rules.
+
 ### Classifying Your Own Errors
 
 The built-in error variants describe engine concerns — a missing function, a
@@ -321,6 +349,7 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 - **Extensible:** Add custom async actions by implementing the `AsyncFunctionHandler` trait, with typed config fields that are themselves JSONLogic (`Template`).
 - **Typed Integration Configs:** Pre-validated configs for HTTP, Enrich, and Kafka integrations, with `resolve_*` helpers and an `HttpMethod` enum your client can convert directly.
 - **Service-Classified Errors:** Handlers attach their own error `kind`, `detail`, and `retryable` via `DataflowError::Service`, without a parallel error channel.
+- **Branch on Why a Task Failed:** Opt in with `with_error_context_path` and the engine mirrors each failure's code into the message context, so a downstream rule can route a timeout differently from a rejected request.
 - **WebAssembly Support:** Run rules in the browser with `@goplasmatic/dataflow-wasm`.
 - **React UI Components:** Visualize and debug rules with `@goplasmatic/dataflow-ui`.
 - **Auditing:** Full audit trail of all changes as data flows through the pipeline.

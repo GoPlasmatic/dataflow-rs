@@ -158,6 +158,23 @@ matching version.
   `metadata.progress = {workflow_id, task_id, status_code}` after every task.
   Cross-workflow chaining depends on downstream conditions reading it, so do not
   gate, skip, or make this write conditional.
+- **Context writes from `handle_task_result` need an arena refresh.** It writes
+  `metadata.progress` always, and — when a host called
+  `EngineBuilder::with_error_context_path` — appends failure records at the
+  configured path. The sync stretch runs JSONLogic against a snapshot arena
+  cache, so each write needs a matching `refresh_for_path` in
+  `run_tasks_slice_in_arena`, placed **before** the `?`: an `Err` there does not
+  end the arena scope, since `execute_sync_workflow_run` carries the same
+  `ArenaContext` into the next workflow when the task has
+  `continue_on_error: false` inside a workflow with `continue_on_error: true`.
+  Appending to an *existing* array does not change the metadata child count, so
+  the divergence rebuild in `executor.rs` will not save you.
+- **Error codes come from one classifier.** `service_error_code`
+  (`src/engine/error.rs`) is the single mapping — a `Service` error's `kind`
+  verbatim, otherwise the variant's own code — and `ErrorInfo::new` routes
+  through it so the two cannot drift. Do not reintroduce a flat `TASK_ERROR`
+  fallback; that is what made every engine variant indistinguishable before
+  3.5.0.
 - **Operator families are opt-in, and enabling one is not a no-op.** The
   `datalogic-rs` extension operators ship behind cargo features (`ext-string`,
   `ext-array`, `ext-math`, `ext-control`, `ext-object`, `error-handling`,
@@ -228,8 +245,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 451 passing.
-`cargo test -p dataflow-rs` (default features) should report 377 — the operator
+`cargo test --workspace --all-features` should report 472 passing.
+`cargo test -p dataflow-rs` (default features) should report 397 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

@@ -70,6 +70,7 @@ pub mod workflow;
 pub mod workflow_executor;
 
 // Re-export key types for easier access
+use error::{DEFAULT_ERROR_CONTEXT_LIMIT, ErrorContextConfig};
 pub use error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use functions::{
     AsyncFunctionHandler, BoxedFunctionHandler, CompiledCustomInput, DynAsyncFunctionHandler,
@@ -287,6 +288,11 @@ impl Engine {
         if let Some(observer) = self.workflow_executor.observer() {
             executor = executor.with_observer(Arc::clone(observer));
         }
+        // Same reasoning as the observer: dropping this would silently stop
+        // recording failure codes at the first hot reload.
+        if let Some(cfg) = self.workflow_executor.error_context() {
+            executor = executor.with_error_context(Arc::clone(cfg));
+        }
         let workflow_executor = Arc::new(executor);
 
         // Build channel index for O(1) channel-based routing
@@ -312,18 +318,46 @@ impl Engine {
     /// Carried across [`Engine::with_new_workflows`], so a hot reload does not
     /// silently stop reporting.
     pub fn with_observer(self, observer: Arc<dyn ExecutionObserver>) -> Self {
+        self.rebuild_executor(|executor| executor.with_observer(observer))
+    }
+
+    /// Mirror per-task failure codes into the message context, returning the
+    /// updated engine.
+    ///
+    /// The escape hatch matching [`Engine::new`];
+    /// [`EngineBuilder::with_error_context_path`] is the recommended path and the
+    /// only one that validates the path. Carried across
+    /// [`Engine::with_new_workflows`] and [`Engine::with_observer`].
+    pub(crate) fn with_error_context(self, cfg: Arc<ErrorContextConfig>) -> Self {
+        self.rebuild_executor(|executor| executor.with_error_context(cfg))
+    }
+
+    /// Rebuild the executor stack around the existing handler registry and
+    /// datalogic engine, applying `configure` to the fresh executor.
+    ///
+    /// Nothing is recompiled; the cost is a few `Arc` bumps. Every knob the old
+    /// executor held is re-applied first, because the rebuild otherwise drops
+    /// them — that is what would make `.with_error_context(..)` followed by
+    /// `.with_observer(..)` silently lose the former.
+    fn rebuild_executor(
+        self,
+        configure: impl FnOnce(WorkflowExecutor) -> WorkflowExecutor,
+    ) -> Self {
         let task_executor = Arc::new(TaskExecutor::new(
             self.workflow_executor.task_functions(),
             Arc::clone(&self.datalogic),
         ));
-        let workflow_executor = Arc::new(
-            WorkflowExecutor::new(task_executor, Arc::clone(&self.datalogic))
-                .with_observer(observer),
-        );
+        let mut executor = WorkflowExecutor::new(task_executor, Arc::clone(&self.datalogic));
+        if let Some(observer) = self.workflow_executor.observer() {
+            executor = executor.with_observer(Arc::clone(observer));
+        }
+        if let Some(cfg) = self.workflow_executor.error_context() {
+            executor = executor.with_error_context(Arc::clone(cfg));
+        }
         Self {
             workflows: self.workflows,
             channel_index: self.channel_index,
-            workflow_executor,
+            workflow_executor: Arc::new(configure(executor)),
             datalogic: self.datalogic,
             datalogic_operators: self.datalogic_operators,
             engine_version: self.engine_version,
@@ -626,6 +660,8 @@ pub struct EngineBuilder {
     handlers: HashMap<String, BoxedFunctionHandler>,
     observer: Option<Arc<dyn ExecutionObserver>>,
     datalogic_operators: HashMap<String, Arc<dyn datalogic_rs::CustomOperator>>,
+    error_context_path: Option<String>,
+    error_context_limit: Option<usize>,
 }
 
 impl EngineBuilder {
@@ -698,6 +734,69 @@ impl EngineBuilder {
         self
     }
 
+    /// Mirror per-task failure codes into the message context at `path`, so a
+    /// downstream `condition` or `map` can branch on *why* a task failed.
+    ///
+    /// Off unless called: with no path configured nothing is written and the
+    /// mechanism costs one `Option` check on a path that only runs after a task
+    /// has already failed.
+    ///
+    /// One record is appended per error a task contributes to
+    /// [`Message::errors`](crate::engine::message::Message::errors):
+    ///
+    /// ```json
+    /// { "workflow_id": "place_order", "task_id": "charge_payment",
+    ///   "code": "TIMEOUT_ERROR", "status": 500 }
+    /// ```
+    ///
+    /// so a later task can gate on the reason:
+    ///
+    /// ```json
+    /// { "in": [ { "var": "metadata.errors.0.code" },
+    ///           ["TIMEOUT_ERROR", "IO_ERROR"] ] }
+    /// ```
+    ///
+    /// Coverage matches `errors()` exactly — a handler returning `Err`, a task
+    /// returning a 5xx outcome, the `validation` built-in's per-rule failures, and
+    /// anything a handler adds through
+    /// [`TaskContext::add_error`](crate::engine::task_context::TaskContext::add_error)
+    /// all appear. The workflow-level `WORKFLOW_ERROR` wrapper does not: it
+    /// re-reports the same underlying failure, so mirroring it would double-count.
+    ///
+    /// `status` is the task's own status — `500` when the handler returned `Err`,
+    /// otherwise the status the outcome carried (`400` for `validation`). That is
+    /// the distinction `metadata.progress` cannot make, since its failure arm
+    /// hard-codes `500`.
+    ///
+    /// The error `message` and the operator-only `detail` are deliberately **not**
+    /// recorded: the context is serialized back to callers, and `detail` is
+    /// documented as unsafe to hand to an untrusted one. Read those from
+    /// `message.errors()` host-side.
+    ///
+    /// `path` must start with `data`, `metadata` or `temp_data` — the JSONLogic
+    /// evaluation context is exactly those three slots — and may not be
+    /// `metadata.progress`. Violations fail [`EngineBuilder::build`].
+    pub fn with_error_context_path(mut self, path: impl Into<String>) -> Self {
+        self.error_context_path = Some(path.into());
+        self
+    }
+
+    /// Cap the number of records retained at the error-context path, keeping the
+    /// most recent (default 32).
+    ///
+    /// The bound is what keeps the option's memory cost independent of a looping
+    /// workflow's iteration count: `Message.context` is deep-cloned into every
+    /// trace snapshot, so an uncapped list in a loop with a failing body grows the
+    /// trace quadratically. Conditions overwhelmingly read the latest failure, so
+    /// the oldest records are the ones dropped.
+    ///
+    /// Setting a limit without a path is inert, not an error. A limit of `0` fails
+    /// [`EngineBuilder::build`].
+    pub fn with_error_context_limit(mut self, limit: usize) -> Self {
+        self.error_context_limit = Some(limit);
+        self
+    }
+
     /// Register a custom JSONLogic operator on the engine's internal datalogic
     /// instance, under `name`. Later calls with the same name replace the
     /// earlier registration.
@@ -728,11 +827,26 @@ impl EngineBuilder {
     /// engine. Compile errors and missing handler references surface here —
     /// the engine never deserializes Custom config on the hot path.
     pub fn build(self) -> Result<Engine> {
+        // Validated here rather than at the setter so an invalid path fails at
+        // engine construction alongside every other config-shape error, instead
+        // of on the first message that happens to fail a task.
+        let error_context = match self.error_context_path {
+            Some(path) => Some(Arc::new(ErrorContextConfig::new(
+                path,
+                self.error_context_limit
+                    .unwrap_or(DEFAULT_ERROR_CONTEXT_LIMIT),
+            )?)),
+            None => None,
+        };
         let engine = Engine::new_with_operators(
             self.workflows,
             self.handlers,
             Arc::new(self.datalogic_operators),
         )?;
+        let engine = match error_context {
+            Some(cfg) => engine.with_error_context(cfg),
+            None => engine,
+        };
         Ok(match self.observer {
             Some(observer) => engine.with_observer(observer),
             None => engine,

@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] — 2026-08-20
+
+Failed-task error codes are now reachable from workflow logic, and the codes
+themselves are worth branching on.
+
+### Added
+
+- **engine:** `EngineBuilder::with_error_context_path` — mirror per-task failure
+  codes into a host-chosen path inside the message context, so a downstream
+  `condition` or `map` can branch on *why* a task failed. `message.errors()` is
+  `pub(crate)` and the JSONLogic evaluation context is exactly
+  `{data, metadata, temp_data}`, so this was previously unreachable from a
+  workflow; `metadata.progress` carries no reason and is overwritten by every
+  task. One `{workflow_id, task_id, code, status}` record is appended per error a
+  task contributes, covering handler `Err`s, 5xx outcomes, each failing
+  `validation` rule, and `TaskContext::add_error` alike — the sync built-ins
+  never reach the handler registry, so a host wrapper cannot see them. The error
+  `message` and the operator-only `detail` are excluded, since `context` is
+  serialized back to callers. Off unless called.
+- **engine:** `EngineBuilder::with_error_context_limit` — cap the records
+  retained (default 32, newest kept), so the cost stays independent of a looping
+  workflow's iteration count.
+
+### Changed
+
+- **errors:** every `DataflowError` variant now contributes its own
+  `ErrorInfo.code` on the live path — `TIMEOUT_ERROR`, `IO_ERROR`, `HTTP_ERROR`,
+  `VALIDATION_ERROR`, and the rest. Previously only `Service` was lifted and
+  every other variant collapsed to `TASK_ERROR`, so a timeout, a dropped
+  connection and a rejected request were indistinguishable; the variant→code
+  table existed in `ErrorInfo::new` but had no non-test caller. `Service` still
+  passes its `kind` through verbatim and `DataflowError::Task` still maps to
+  `TASK_ERROR`, so code matching on either is unaffected. Code matching
+  `TASK_ERROR` to mean "the handler returned `Err`" should match the specific
+  codes instead.
+
+### Fixed
+
+- **engine:** the sync stretch skipped its `metadata.progress` arena refresh when
+  a task returned `Err`, because the refresh sat after the `?`. A task with
+  `continue_on_error: false` inside a workflow with `continue_on_error: true`
+  leaves `execute_sync_workflow_run` carrying the same `ArenaContext` into the
+  next workflow, whose condition then evaluated against a stale
+  `metadata.progress`. The refresh now runs before the `?`. Pinned by
+  `a_task_error_still_advances_the_shared_arena_for_the_next_workflow` in
+  `tests/engine_execution.rs`, which fails against 3.4.0.
+
+### Compatibility
+
+No function or method signature changes shape, no type changes shape, and no
+struct gains or loses a field. Everything added is additive: two new
+`EngineBuilder` methods, both opt-in, both inert unless called.
+
+One **runtime behaviour change**, and it is the one to read before upgrading:
+`ErrorInfo.code` now reports the failing `DataflowError`'s own variant code
+rather than a blanket `TASK_ERROR`. Concretely, a handler returning
+`DataflowError::Timeout` used to land `TASK_ERROR` in `message.errors()` and now
+lands `TIMEOUT_ERROR`; the same applies to `Validation`, `Http`, `Io`,
+`Deserialization`, `Unknown`, `FunctionNotFound`, `FunctionExecution` and
+`LogicEvaluation`. Nothing fails to compile — code that switches on `code` keeps
+switching, it just sees a more specific string.
+
+Unaffected, deliberately:
+
+- `DataflowError::Task` still maps to `TASK_ERROR`.
+- `DataflowError::Service` still contributes its `kind` verbatim, including
+  through a `FunctionExecution` wrapper.
+- `TASK_STATUS_ERROR` (5xx outcomes), `WORKFLOW_ERROR` (the workflow wrapper) and
+  the `validation` built-in's three codes are all unchanged.
+- The wire JSON shape of `ErrorInfo` is unchanged in both directions.
+- Nothing in `wasm/` or `ui/` reads `code`.
+
+**What to check:** code that treats `TASK_ERROR` as meaning "the handler returned
+`Err`". That reading was never guaranteed — the docs already described the code
+list as not closed and told callers to switch with a default arm — but it did
+happen to hold for engine-owned variants before this release. Match the specific
+codes instead, or return `DataflowError::Task` where the generic code is what you
+want. Note that a default `^3` Cargo requirement upgrades into this release
+automatically, so the version bump alone will not gate it.
+
 ## [3.4.0] — 2026-08-19
 
 Custom JSONLogic operators can now be registered on the engine, and the

@@ -467,3 +467,53 @@ async fn cross_workflow_false_condition_skips_only_that_workflow() {
         .collect();
     assert_eq!(task_ids, vec!["map_x", "map_z"]);
 }
+
+#[tokio::test]
+async fn a_task_error_still_advances_the_shared_arena_for_the_next_workflow() {
+    // Regression: the sync stretch refreshed `metadata.progress` *after* the `?`
+    // on `handle_task_result`, so a task returning `Err` skipped the refresh.
+    //
+    // That is reachable whenever the task has `continue_on_error: false` but its
+    // workflow has `continue_on_error: true`: `record_workflow_error` then
+    // returns `false` and `execute_sync_workflow_run` continues into the next
+    // workflow carrying the *same* `ArenaContext`. Both workflows here are fully
+    // sync, so they share one — and wf_b's condition would be evaluated against a
+    // stale snapshot in which the failing task never ran.
+    let wf_a = r#"{
+        "id": "wf_a", "name": "A", "priority": 0, "condition": true,
+        "continue_on_error": true,
+        "tasks": [{
+            "id": "parse", "name": "Parse", "continue_on_error": false,
+            "function": { "name": "parse_xml",
+                          "input": { "source": "payload.n", "target": "out" } }
+        }]
+    }"#;
+    let wf_b = r#"{
+        "id": "wf_b", "name": "B", "priority": 1,
+        "condition": { "==": [ { "var": "metadata.progress.task_id" }, "parse" ] },
+        "tasks": [{
+            "id": "m", "name": "M",
+            "function": { "name": "map", "input": { "mappings": [
+                { "path": "data.b_ran", "logic": true }
+            ] } }
+        }]
+    }"#;
+
+    let engine = Engine::builder()
+        .with_workflows(vec![
+            Workflow::from_json(wf_a).unwrap(),
+            Workflow::from_json(wf_b).unwrap(),
+        ])
+        .build()
+        .unwrap();
+
+    // `payload.n` is a number, so `parse_xml` returns `Err`.
+    let mut message = Message::from_value(&json!({ "n": 42 }));
+    engine.process_message(&mut message).await.unwrap();
+
+    assert_eq!(
+        message.context["data"]["b_ran"],
+        dv(json!(true)),
+        "wf_b gates on wf_a's progress write and shares its arena — it must still run"
+    );
+}
