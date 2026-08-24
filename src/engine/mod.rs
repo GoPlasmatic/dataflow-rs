@@ -93,6 +93,10 @@ use datavalue::OwnedDataValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::engine::functions::config::{
+    DispatchableFunction, can_dispatch_in, dispatchable_functions_in,
+};
+
 use compiler::LogicCompiler;
 use task_executor::TaskExecutor;
 use workflow_executor::WorkflowExecutor;
@@ -630,6 +634,75 @@ impl Engine {
     }
 
     /// Get a reference to the underlying datalogic v5 engine.
+    /// Every function this engine will dispatch: self-contained built-ins,
+    /// plus [`BuiltinKind::RequiresHandler`] built-ins and custom names with a
+    /// registered handler.
+    ///
+    /// This is the authoring-side vocabulary — what a host needs to screen a
+    /// workflow definition, build a completion catalogue, or offer a
+    /// did-you-mean on an unknown name, without keeping its own copy of the
+    /// list.
+    ///
+    /// Aliases are grouped: `validate` is yielded once carrying
+    /// `["validation"]`, not twice. [`Engine::can_dispatch`] does accept an
+    /// alias, so the two are deliberately different sets.
+    ///
+    /// **Ordering is not meaningful** and may change without notice; treat the
+    /// result as a set, and collect and sort if you need stable output.
+    ///
+    /// ```
+    /// use dataflow_rs::{BuiltinKind, Engine};
+    ///
+    /// let engine = Engine::builder().build().unwrap();
+    /// let mut names: Vec<&str> = engine.dispatchable_functions().map(|f| f.name).collect();
+    /// names.sort_unstable();
+    ///
+    /// // Self-contained built-ins need no registration…
+    /// assert!(names.contains(&"map"));
+    /// // …but `enrich` ships as a config schema only, so with no handler
+    /// // registered this engine cannot run it.
+    /// assert!(!names.contains(&"enrich"));
+    ///
+    /// let validate = engine
+    ///     .dispatchable_functions()
+    ///     .find(|f| f.name == "validate")
+    ///     .unwrap();
+    /// assert_eq!(validate.kind, Some(BuiltinKind::SelfContained));
+    /// assert_eq!(validate.aliases, &["validation"]);
+    /// ```
+    pub fn dispatchable_functions(&self) -> impl Iterator<Item = DispatchableFunction<'_>> {
+        dispatchable_functions_in(self.workflow_executor.registry())
+    }
+
+    /// Whether this engine can actually run a task named `name`.
+    ///
+    /// `true` for a [`BuiltinKind::SelfContained`] built-in, which this crate
+    /// executes itself, and for any name with a registered handler — including
+    /// an alias such as `validation`.
+    ///
+    /// `false` means the opposite is guaranteed: a task naming it fails with
+    /// [`DataflowError::FunctionNotFound`] on the first message that reaches
+    /// it. That is the whole point of the method — `Engine::build` is
+    /// deliberately permissive about `http_call` / `enrich` / `publish_kafka`,
+    /// which deserialize into typed built-in variants and so pass construction
+    /// even with no handler behind them.
+    ///
+    /// ```
+    /// use dataflow_rs::Engine;
+    ///
+    /// let engine = Engine::builder().build().unwrap();
+    ///
+    /// assert!(engine.can_dispatch("map"));
+    /// assert!(engine.can_dispatch("validation")); // alias of `validate`
+    ///
+    /// // Builds fine, would fail every message — this is the check that catches it.
+    /// assert!(!engine.can_dispatch("enrich"));
+    /// assert!(!engine.can_dispatch("never_registered"));
+    /// ```
+    pub fn can_dispatch(&self, name: &str) -> bool {
+        can_dispatch_in(self.workflow_executor.registry(), name)
+    }
+
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {
         &self.datalogic
     }
@@ -691,6 +764,59 @@ impl EngineBuilder {
     ) -> Self {
         self.handlers.insert(name.into(), handler);
         self
+    }
+
+    /// Every function this builder will dispatch once built.
+    ///
+    /// The pre-build twin of [`Engine::dispatchable_functions`], with identical
+    /// semantics — the two agree by construction, since `build()` moves this
+    /// registry into the engine unchanged. Takes `&self`, so screening a batch
+    /// of definitions does not consume the builder.
+    ///
+    /// ```
+    /// use dataflow_rs::Engine;
+    ///
+    /// let builder = Engine::builder();
+    /// let names: Vec<&str> = builder.dispatchable_functions().map(|f| f.name).collect();
+    ///
+    /// assert!(names.contains(&"parse_json"));
+    /// assert!(!names.contains(&"publish_kafka")); // config schema, no handler
+    /// ```
+    pub fn dispatchable_functions(&self) -> impl Iterator<Item = DispatchableFunction<'_>> {
+        dispatchable_functions_in(&self.handlers)
+    }
+
+    /// Whether the engine this builder produces will run a task named `name`.
+    ///
+    /// The pre-build twin of [`Engine::can_dispatch`]. Screening a workflow is
+    /// then a filter over its tasks — note that `Workflow::tasks` is already
+    /// flattened, so this covers members of task groups too:
+    ///
+    /// ```
+    /// use dataflow_rs::{Engine, Workflow};
+    ///
+    /// let workflow = Workflow::from_json(r#"{
+    ///     "id": "w", "name": "w", "priority": 0,
+    ///     "tasks": [
+    ///         {"id": "a", "name": "a", "function": {"name": "map", "input": {"mappings": []}}},
+    ///         {"id": "b", "name": "b",
+    ///          "function": {"name": "enrich",
+    ///                       "input": {"connector": "c", "merge_path": "data.out"}}}
+    ///     ]
+    /// }"#).unwrap();
+    ///
+    /// let builder = Engine::builder();
+    /// let unrunnable: Vec<&str> = workflow
+    ///     .tasks
+    ///     .iter()
+    ///     .map(|t| t.function.function_name())
+    ///     .filter(|name| !builder.can_dispatch(name))
+    ///     .collect();
+    ///
+    /// assert_eq!(unrunnable, vec!["enrich"]);
+    /// ```
+    pub fn can_dispatch(&self, name: &str) -> bool {
+        can_dispatch_in(&self.handlers, name)
     }
 
     /// Add a single workflow. Subsequent calls append.

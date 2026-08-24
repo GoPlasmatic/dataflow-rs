@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **engine:** `Engine::can_dispatch` / `EngineBuilder::can_dispatch` — whether a
+  task named `name` will actually run. `true` for a self-contained built-in and
+  for any name with a registered handler, including an alias such as
+  `validation`; `false` guarantees the opposite, that a task naming it fails
+  with `FunctionNotFound` on the first message that reaches it. This closes the
+  half of the question `builtin_function_kind` could not answer: it reports that
+  `enrich` *needs* a handler, but not whether one is registered. A workflow
+  using a config-only integration with nothing behind it still builds cleanly —
+  that permissiveness is deliberate — so this is the check that catches it
+  before activation rather than on the first request.
+- **engine:** `Engine::dispatchable_functions` /
+  `EngineBuilder::dispatchable_functions` — the full vocabulary an engine will
+  dispatch, for completion tooling, admin catalogues and did-you-mean
+  suggestions. Yields `DispatchableFunction { name, kind, aliases }`. Aliases
+  are grouped, so `validate` appears once carrying `["validation"]` rather than
+  twice; `kind` is `Option<BuiltinKind>`, where `None` means a registered custom
+  handler — the same convention `builtin_function_kind` already uses, chosen so
+  `BuiltinKind` need not gain a third variant and break every downstream
+  `match`. Ordering is not meaningful, matching `BUILTIN_FUNCTION_NAMES`.
+
+### Changed
+
+- **engine:** `TaskExecutor::has_function` now delegates to the same predicate
+  `can_dispatch` exposes. Internal, but it is the point of the change: the
+  question the engine answers when dispatching and the question a host asks when
+  screening are one definition rather than two that happen to agree.
+- **docs:** `built-in-functions/integrations.md` — the "detecting a missing
+  handler" section previously stopped at classifying the name and advised
+  requiring a registration for *every* `RequiresHandler` name, because the
+  registry was unreachable. It now shows the real check.
+
+### Notes
+
+- Registering a handler under a self-contained built-in name (`map`) is inert:
+  the deserializer routes it to the crate's own implementation, which never
+  consults the registry. Such a name is reported once, as a built-in. Previously
+  undocumented; unchanged in behaviour.
+
 ## [3.6.0] — 2026-08-24
 
 Guard clauses. A workflow's `tasks` array now holds *steps* — a task or a group

@@ -119,10 +119,93 @@ assert_eq!(
 assert_eq!(builtin_function_kind("my_handler"), None);
 ```
 
-So a validator that gates workflow authoring can require a registration for
-every `RequiresHandler` and `None` name, and accept `SelfContained` names
-outright. `BUILTIN_FUNCTION_NAMES` gives the full set if you need to enumerate
-it. Prefer these over parsing the text of `FunctionNotFound`, which is a
+That tells you a name *needs* a handler. It cannot tell you whether one is
+registered — for that, ask the engine or the builder directly.
+
+### Asking whether a name will actually run
+
+`can_dispatch` answers the whole question in one call:
+
+```rust
+use dataflow_rs::Engine;
+
+let engine = Engine::builder().build().unwrap();
+
+// Executed by the crate itself.
+assert!(engine.can_dispatch("map"));
+assert!(engine.can_dispatch("validation")); // alias of `validate`
+
+// Config schema with nothing behind it — this is the case that builds
+// cleanly and then fails every message.
+assert!(!engine.can_dispatch("enrich"));
+```
+
+The guarantee runs both ways: a name `can_dispatch` accepts will execute, and a
+name it rejects fails with `FunctionNotFound` on the first message that reaches
+it. So screening a definition is a filter over its tasks — and because
+`Workflow::tasks` is already flattened, this covers tasks inside groups too:
+
+```rust
+use dataflow_rs::{Engine, Workflow};
+
+let workflow = Workflow::from_json(r#"{
+    "id": "w", "name": "w", "priority": 0,
+    "tasks": [
+        {"id": "a", "name": "a", "function": {"name": "map", "input": {"mappings": []}}},
+        {"id": "b", "name": "b",
+         "function": {"name": "enrich",
+                      "input": {"connector": "c", "merge_path": "data.out"}}}
+    ]
+}"#).unwrap();
+
+let builder = Engine::builder();
+let unrunnable: Vec<&str> = workflow
+    .tasks
+    .iter()
+    .map(|t| t.function.function_name())
+    .filter(|name| !builder.can_dispatch(name))
+    .collect();
+
+assert_eq!(unrunnable, vec!["enrich"]);
+```
+
+Both `Engine` and `EngineBuilder` carry the method, with identical semantics —
+check before you build, or against the engine you are already running.
+
+### Enumerating the whole vocabulary
+
+`dispatchable_functions()` lists every name that will run, for completion
+tooling, an admin catalogue, or a did-you-mean on an unknown name:
+
+```rust
+use dataflow_rs::{BuiltinKind, Engine};
+
+let engine = Engine::builder().build().unwrap();
+
+let validate = engine
+    .dispatchable_functions()
+    .find(|f| f.name == "validate")
+    .unwrap();
+
+assert_eq!(validate.kind, Some(BuiltinKind::SelfContained));
+assert_eq!(validate.aliases, &["validation"]);
+```
+
+Three things to know about the result:
+
+- **Aliases are grouped.** `validate` is yielded once carrying `["validation"]`,
+  not twice. `can_dispatch` still accepts either spelling, so the two are
+  deliberately different sets.
+- **`kind` is `Option<BuiltinKind>`.** `None` means a registered custom handler,
+  matching what `builtin_function_kind` already returns for a non-built-in name.
+- **Ordering is not meaningful.** Treat it as a set; collect and sort if you
+  need stable output.
+
+Registering a handler under a `SelfContained` name is inert — `map` deserializes
+to the crate's own implementation, which never consults the registry — so such a
+name still appears exactly once, as a built-in.
+
+Prefer all of these over parsing the text of `FunctionNotFound`, which is a
 human-facing diagnostic and may be reworded at any time.
 
 ---

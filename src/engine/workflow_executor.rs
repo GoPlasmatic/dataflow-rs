@@ -628,6 +628,12 @@ impl WorkflowExecutor {
         self.task_executor.task_functions()
     }
 
+    /// Borrow the handler registry, for enumeration keyed to this executor's
+    /// lifetime. See `TaskExecutor::registry`.
+    pub fn registry(&self) -> &HashMap<String, BoxedFunctionHandler> {
+        self.task_executor.registry()
+    }
+
     /// Execute a workflow if its condition is met
     ///
     /// This method:

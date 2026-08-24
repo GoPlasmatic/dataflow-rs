@@ -126,6 +126,242 @@ fn builtin_classification_is_reachable_from_the_crate_root() {
 }
 
 // =============================================================================
+// Dispatch vocabulary — `dispatchable_functions` / `can_dispatch`. The half of
+// the enrich trap `builtin_function_kind` could not answer: not "does this name
+// need a handler" but "and is one registered?".
+// =============================================================================
+
+fn sorted_names(engine: &Engine) -> Vec<String> {
+    let mut names: Vec<String> = engine
+        .dispatchable_functions()
+        .map(|f| f.name.to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+fn enrich_workflow() -> Workflow {
+    Workflow::from_json(
+        r#"{
+        "id": "w", "name": "w", "priority": 0, "condition": true,
+        "tasks": [{ "id": "t", "name": "t",
+                    "function": { "name": "enrich",
+                                  "input": { "connector": "c",
+                                             "merge_path": "data.out" } } }]
+    }"#,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_handler_less_enrich_is_not_dispatchable_and_really_does_fail() {
+    // The load-bearing test: it ties the API's central claim — "a name
+    // can_dispatch rejects fails with FunctionNotFound on the first message" —
+    // to observed behaviour, so the claim is checked rather than merely written
+    // in a docstring.
+    let builder = Engine::builder().with_workflow(enrich_workflow());
+
+    assert!(
+        !builder.can_dispatch("enrich"),
+        "no handler registered, so the builder predicts failure"
+    );
+
+    let engine = builder.build().expect("build stays permissive on purpose");
+
+    assert!(
+        !engine.can_dispatch("enrich"),
+        "and the built engine agrees"
+    );
+    assert!(
+        !sorted_names(&engine).contains(&"enrich".to_string()),
+        "an unrunnable name is absent from the vocabulary"
+    );
+
+    // Now show the prediction was right.
+    let mut message = Message::from_value(&json!({}));
+    let result = engine.process_message(&mut message).await;
+    assert!(
+        result.is_err(),
+        "can_dispatch == false predicted exactly this"
+    );
+}
+
+#[tokio::test]
+async fn registering_the_handler_flips_both_answers() {
+    let engine = Engine::builder()
+        .with_workflow(enrich_workflow())
+        .register("enrich", MockEnrich)
+        .build()
+        .unwrap();
+
+    assert!(engine.can_dispatch("enrich"));
+
+    let entry = engine
+        .dispatchable_functions()
+        .find(|f| f.name == "enrich")
+        .expect("a backed integration is enumerated");
+    assert_eq!(
+        entry.kind,
+        Some(BuiltinKind::RequiresHandler),
+        "it stays a built-in — registration backs it, it does not reclassify it"
+    );
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+}
+
+#[test]
+fn self_contained_builtins_dispatch_with_nothing_registered() {
+    let builder = Engine::builder();
+    for name in ["map", "validate", "parse_json", "filter", "log"] {
+        assert!(
+            builder.can_dispatch(name),
+            "'{name}' is executed by the crate itself"
+        );
+    }
+}
+
+#[test]
+fn aliases_dispatch_but_are_reported_under_their_canonical_name() {
+    let engine = Engine::builder().build().unwrap();
+
+    assert!(
+        engine.can_dispatch("validation"),
+        "a task named `validation` really does execute"
+    );
+    assert!(
+        !sorted_names(&engine).contains(&"validation".to_string()),
+        "but it is not a separate entry"
+    );
+
+    let validate = engine
+        .dispatchable_functions()
+        .find(|f| f.name == "validate")
+        .expect("the canonical spelling is the entry");
+    assert_eq!(validate.aliases, &["validation"]);
+}
+
+#[test]
+fn registering_over_a_self_contained_name_is_inert() {
+    // `map` deserializes to FunctionConfig::Map, which the crate executes
+    // without consulting the registry — so this registration never runs, and
+    // the vocabulary is unchanged.
+    let bare = Engine::builder().build().unwrap();
+    let shadowed = Engine::builder()
+        .register("map", LoggingTask)
+        .build()
+        .unwrap();
+
+    assert_eq!(sorted_names(&bare), sorted_names(&shadowed));
+    assert_eq!(
+        shadowed
+            .dispatchable_functions()
+            .filter(|f| f.name == "map")
+            .count(),
+        1,
+        "`map` is reported once, not once per source"
+    );
+}
+
+#[test]
+fn the_builder_and_the_engine_it_builds_agree() {
+    let builder = Engine::builder()
+        .register("enrich", MockEnrich)
+        .register("shout", LoggingTask);
+
+    let mut before: Vec<String> = builder
+        .dispatchable_functions()
+        .map(|f| f.name.to_string())
+        .collect();
+    before.sort();
+
+    let engine = builder.build().unwrap();
+    assert_eq!(before, sorted_names(&engine));
+}
+
+#[tokio::test]
+async fn the_vocabulary_survives_a_hot_reload() {
+    let engine = Engine::builder()
+        .register("enrich", MockEnrich)
+        .register("shout", LoggingTask)
+        .build()
+        .unwrap();
+
+    let before = sorted_names(&engine);
+    let reloaded = engine.with_new_workflows(vec![enrich_workflow()]).unwrap();
+
+    assert_eq!(
+        before,
+        sorted_names(&reloaded),
+        "with_new_workflows reuses the handler registry, so the vocabulary is stable"
+    );
+    assert!(reloaded.can_dispatch("shout"));
+}
+
+#[test]
+fn every_builtin_name_is_accounted_for_exactly_once() {
+    // Acceptance criterion: the enumeration covers BUILTIN_FUNCTION_NAMES
+    // exactly once, aliases grouped, RequiresHandler names present iff backed.
+    let engine = Engine::builder()
+        .register("http_call", SpyHttpCall)
+        .build()
+        .unwrap();
+
+    let entries: Vec<_> = engine.dispatchable_functions().collect();
+
+    for name in BUILTIN_FUNCTION_NAMES {
+        let as_canonical = entries.iter().filter(|f| f.name == *name).count();
+        let as_alias = entries.iter().filter(|f| f.aliases.contains(name)).count();
+
+        let backed = matches!(
+            builtin_function_kind(name),
+            Some(BuiltinKind::SelfContained)
+        ) || engine.can_dispatch(name);
+
+        if backed {
+            assert_eq!(
+                as_canonical + as_alias,
+                1,
+                "'{name}' must appear exactly once, as an entry or an alias \
+                 (entry={as_canonical}, alias={as_alias})"
+            );
+        } else {
+            assert_eq!(
+                as_canonical + as_alias,
+                0,
+                "'{name}' has no handler, so it must not appear at all"
+            );
+        }
+    }
+
+    // The two config-only integrations left unregistered are absent; the
+    // registered one is present.
+    let names = sorted_names(&engine);
+    assert!(names.contains(&"http_call".to_string()));
+    assert!(!names.contains(&"enrich".to_string()));
+    assert!(!names.contains(&"publish_kafka".to_string()));
+}
+
+#[test]
+fn an_unregistered_custom_name_is_absent_from_the_vocabulary() {
+    let engine = Engine::builder().build().unwrap();
+    assert!(!engine.can_dispatch("shout"));
+    assert!(!sorted_names(&engine).contains(&"shout".to_string()));
+
+    let engine = Engine::builder()
+        .register("shout", LoggingTask)
+        .build()
+        .unwrap();
+    assert!(engine.can_dispatch("shout"));
+    let entry = engine
+        .dispatchable_functions()
+        .find(|f| f.name == "shout")
+        .unwrap();
+    assert_eq!(entry.kind, None, "custom handlers report kind: None");
+    assert!(entry.aliases.is_empty());
+}
+
+// =============================================================================
 // http_call destination field — regression coverage for the silent discard
 // =============================================================================
 

@@ -226,10 +226,10 @@ pub mod prelude;
 // Re-export all public APIs for easier access
 pub use engine::error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use engine::functions::{
-    AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind, EnrichConfig,
-    FilterConfig, FunctionConfig, HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping,
-    PublishKafkaConfig, Template, TemplateCompiler, ValidationConfig, ValidationRule,
-    builtin_function_kind, is_builtin_function,
+    AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind,
+    DispatchableFunction, EnrichConfig, FilterConfig, FunctionConfig, HttpCallConfig, HttpMethod,
+    LogConfig, MapConfig, MapMapping, PublishKafkaConfig, Template, TemplateCompiler,
+    ValidationConfig, ValidationRule, builtin_function_kind, is_builtin_function,
 };
 pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
 pub use engine::observer::{ExecutionObserver, TaskEvent};

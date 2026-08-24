@@ -7,7 +7,7 @@
 //! routed to the matching registered handler.
 
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::functions::config::{BuiltinKind, builtin_function_kind};
+use crate::engine::functions::config::can_dispatch_in;
 use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig};
 use crate::engine::message::{Change, Message};
 use crate::engine::task::Task;
@@ -162,11 +162,18 @@ impl TaskExecutor {
     /// deliberately narrower than "is this a known name"; use
     /// [`crate::is_builtin_function`] for that.
     pub fn has_function(&self, name: &str) -> bool {
-        match builtin_function_kind(name) {
-            Some(BuiltinKind::SelfContained) => true,
-            // RequiresHandler and Custom alike: only if a handler was registered.
-            _ => self.task_functions.contains_key(name),
-        }
+        can_dispatch_in(&self.task_functions, name)
+    }
+
+    /// Borrow the handler registry.
+    ///
+    /// [`Self::task_functions`] hands back an owned `Arc` clone for rebuilding
+    /// an executor; this borrows in place, so callers can yield `&str` keyed to
+    /// the executor's own lifetime — which
+    /// [`crate::Engine::dispatchable_functions`] needs and an `Arc` temporary
+    /// cannot provide.
+    pub fn registry(&self) -> &HashMap<String, BoxedFunctionHandler> {
+        &self.task_functions
     }
 
     /// Get a clone of the task_functions Arc for reuse in new engines
