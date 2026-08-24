@@ -73,6 +73,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **docs:** `advanced/authoring-validation.md`, covering the submission-time
   sequence — shape, then parse, then the handler registry.
 
+- **retry:** `RetryPolicy` and `retry_with_policy` — the mechanism half of a
+  retryability model the crate has carried since 3.0 with nothing acting on it.
+  Retries only while `DataflowError::retryable()` says so, backs off
+  exponentially with a 60s ceiling, and takes a **whole-loop** deadline: a
+  per-attempt timeout says nothing about the total, so a 30s-per-call operation
+  under capped backoff can otherwise run to ~127s inside a 30s caller budget. A
+  backoff that would cross the deadline is skipped rather than slept, because
+  sleeping and then failing spends latency the caller is already waiting on.
+
+  Deliberately not engine-level automatic retry: the engine cannot know which
+  handlers are idempotent — an SMTP send that times out after `DATA` is
+  indistinguishable from one that succeeded — so this stays a per-call-site
+  decision.
+- **retry:** `retry_with_attempts` returns the attempt count alongside the
+  result, which is what fills `ErrorInfo::retry_attempted` / `retry_count` —
+  fields that existed with nothing to populate them.
+- **deps:** the `time` feature is enabled on tokio for non-wasm targets. The
+  `retry` module is `cfg`-gated off `wasm32`, where tokio's time driver does not
+  run.
+
 - **rollout:** `Rollout::partition` — turn an ordered percentage split into
   contiguous half-open ranges covering exactly `0..100`, input order being
   traffic order. Percentages must sum to 100, and the error names the

@@ -232,6 +232,9 @@ pub use engine::functions::{
     LogConfig, MapConfig, MapMapping, PublishKafkaConfig, Template, TemplateCompiler,
     ValidationConfig, ValidationRule, builtin_function_kind, is_builtin_function,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use engine::retry::{RetryPolicy, retry_with_attempts, retry_with_policy};
+
 pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
 pub use engine::observer::{ExecutionObserver, TaskEvent};
 pub use engine::steps::{

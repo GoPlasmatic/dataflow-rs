@@ -119,6 +119,7 @@ matching version.
 - `task_context.rs`: `TaskContext` — accessors and audit-recording setters for handlers
 - `task_outcome.rs`: `TaskOutcome` and `HALT_STATUS_CODE`
 - `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
+- `retry.rs`: `RetryPolicy` / `retry_with_policy` — native-only (tokio time)
 - `rollout.rs`: `Rollout` traffic-split range, `partition` / `validate_set`,
   `RolloutError`
 - `workflow.rs`: `Workflow` definition, lifecycle fields, `LoopConfig`, validation
@@ -251,6 +252,7 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
 | `task_groups.rs` | `Task::terminal` and task groups — the guard-clause shape |
 | `task_identity.rs` | `TaskContext` workflow/task ids and `loop_counter` |
+| `retry.rs` | `RetryPolicy` backoff, deadline and retryability, under a paused clock |
 | `authoring_validation.rs` | `validate_authored` and `check_workflow` — codes, paths, the parse backstop |
 
 Each file under `tests/` compiles as its own crate, so fixtures used by more

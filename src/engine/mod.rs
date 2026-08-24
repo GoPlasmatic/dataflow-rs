@@ -61,6 +61,10 @@ pub mod executor;
 pub mod functions;
 pub mod message;
 pub mod observer;
+/// Retrying a failed operation. Not available on `wasm32` — tokio's time
+/// driver, which the backoff needs, does not run there.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod retry;
 pub mod rollout;
 pub mod steps;
 pub mod task;
@@ -82,6 +86,8 @@ pub use functions::{
 };
 pub use message::Message;
 pub use observer::{ExecutionObserver, TaskEvent};
+#[cfg(not(target_arch = "wasm32"))]
+pub use retry::{RetryPolicy, retry_with_attempts, retry_with_policy};
 pub use rollout::{Rollout, RolloutError};
 pub use steps::{
     AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
