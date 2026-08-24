@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Layers } from 'lucide-react';
 import type { Workflow } from '../../../types';
+import { flattenSteps } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useDebuggerOptional } from '../context';
 import { TreeNode, WorkflowNode, FolderNode, TREE_COLORS } from '../components';
@@ -125,7 +126,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
 
     // Auto-select the current task or workflow
     if (task_id) {
-      const task = workflow?.tasks.find(t => t.id === task_id);
+      const task = workflow && flattenSteps(workflow.tasks).find(t => t.id === task_id);
       if (workflow && task) {
         lastSelectedRef.current = { workflowId: workflow_id, taskId: task_id };
         onSelect({ type: 'task', task, workflow });

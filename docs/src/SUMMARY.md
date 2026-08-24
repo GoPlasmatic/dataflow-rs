@@ -38,6 +38,7 @@
 
 - [Custom Functions](./advanced/custom-functions.md)
 - [JSONLogic](./advanced/jsonlogic.md)
+- [Control Flow](./advanced/control-flow.md)
 - [Audit Trails](./advanced/audit-trails.md)
 - [Loops](./advanced/loops.md)
 - [Performance](./advanced/performance.md)

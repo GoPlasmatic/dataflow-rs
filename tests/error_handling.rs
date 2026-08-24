@@ -36,6 +36,8 @@ async fn task_err_with_continue_on_error_false_pushes_wrapper_to_errors() {
             condition: json!(true),
             compiled_condition: None,
             continue_on_error: false,
+            terminal: false,
+            group_starts: Vec::new(),
             function: FunctionConfig::Custom {
                 name: "fail".to_string(),
                 input: json!({}),
@@ -92,6 +94,8 @@ async fn task_status_500_pushes_status_error_to_message() {
             // Continue past the 500 so we can assert on the *push*
             // independently of the `Result::Err` path.
             continue_on_error: true,
+            terminal: false,
+            group_starts: Vec::new(),
             function: FunctionConfig::Custom {
                 name: "five_hundred".to_string(),
                 input: json!({}),

@@ -154,6 +154,22 @@ matching version.
   counter, so a body task writing that path is overwritten at the next
   increment. Looping workflows are excluded from the shared-arena fully-sync
   run (`joins_sync_run`) so bump-arena memory is freed between sweeps.
+- **A group's condition is evaluated once, on entry — not per member.** An
+  element of `tasks` carrying a `tasks` key parses as a `TaskGroup`; the tree is
+  flattened into `Workflow::tasks` at parse time and each span is recorded on
+  the task that opens it (`Task::group_starts`, outermost first). `GroupGate`
+  closes spans by comparing `end` against the cursor, **not** by a per-task
+  close count: with `A { B { t } }` and `B` false, nothing inside `A` ever runs,
+  so the task that would carry "A closes here" is jumped straight over — yet `A`
+  was entered and, if terminal, must still halt. Do not replace that with a
+  counter.
+- **`Task::terminal` is applied *after* the status classification in
+  `handle_task_result`, never before.** It only upgrades a `Continue` to a
+  `HaltWorkflow`. Folding it into the `let halt = …` that starts the if-chain
+  makes halting the first branch, so a terminal task returning 500 stops without
+  recording `TASK_STATUS_ERROR` and without propagating when
+  `continue_on_error` is false. Pinned by
+  `terminal_task_returning_5xx_still_records_and_propagates`.
 - **`metadata.progress` is load-bearing.** The workflow executor writes
   `metadata.progress = {workflow_id, task_id, status_code}` after every task.
   Cross-workflow chaining depends on downstream conditions reading it, so do not
@@ -226,6 +242,7 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `rollout.rs` | Traffic splits gated on `Message::routing_bucket` |
 | `templates.rs` | `Template` config fields on custom handlers |
 | `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
+| `task_groups.rs` | `Task::terminal` and task groups — the guard-clause shape |
 
 Each file under `tests/` compiles as its own crate, so fixtures used by more
 than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
@@ -245,8 +262,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 472 passing.
-`cargo test -p dataflow-rs` (default features) should report 397 — the operator
+`cargo test --workspace --all-features` should report 495 passing.
+`cargo test -p dataflow-rs` (default features) should report 420 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

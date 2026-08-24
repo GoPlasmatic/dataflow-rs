@@ -41,6 +41,7 @@ Actions are the building blocks of rules. Each action:
 | `name` | string | No | Human-readable name |
 | `condition` | JSONLogic | No | When to execute action (evaluated against full context) |
 | `continue_on_error` | boolean | No | Continue rule on failure |
+| `terminal` | boolean | No | End the workflow once this action has run (default: `false`) — see [Control Flow](../advanced/control-flow.md) |
 | `function` | object | Yes | Function to execute |
 
 ## Creating Actions Programmatically

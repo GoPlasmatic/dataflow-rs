@@ -189,6 +189,15 @@ pub struct Workflow {
     #[doc(hidden)]
     #[serde(skip, default)]
     pub fully_sync: bool,
+    /// The workflow's steps, flattened.
+    ///
+    /// The JSON `tasks` array holds *steps*: an element carrying a `tasks` key
+    /// is a [`TaskGroup`](crate::TaskGroup), anything else is a [`Task`]. The
+    /// parser flattens the
+    /// tree in document order and records each group's span on the task that
+    /// opens it ([`Task::group_starts`]), so this stays a flat list and the
+    /// executor keeps walking `&[Task]` slices.
+    #[serde(deserialize_with = "crate::engine::task::steps::flatten")]
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub continue_on_error: bool,
@@ -332,10 +341,20 @@ impl Workflow {
             ));
         }
 
-        // Validate that task IDs are unique
-        let mut task_ids = std::collections::HashSet::new();
+        // Validate that task and group IDs are unique. Groups share the task
+        // id namespace: both name a step, both surface in traces and error
+        // messages, and a collision would make either ambiguous.
+        let mut step_ids = std::collections::HashSet::new();
         for task in &self.tasks {
-            if !task_ids.insert(&task.id) {
+            for group in &task.group_starts {
+                if !step_ids.insert(group.id.as_str()) {
+                    return Err(DataflowError::Workflow(format!(
+                        "Duplicate step ID '{}' in workflow — task group IDs share the task ID namespace",
+                        group.id
+                    )));
+                }
+            }
+            if !step_ids.insert(task.id.as_str()) {
                 return Err(DataflowError::Workflow(format!(
                     "Duplicate task ID '{}' in workflow",
                     task.id

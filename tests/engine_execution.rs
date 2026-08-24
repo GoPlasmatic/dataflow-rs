@@ -48,6 +48,8 @@ async fn test_workflow_execution() {
             condition: json!(true),
             compiled_condition: None,
             continue_on_error: false,
+            terminal: false,
+            group_starts: Vec::new(),
             function: FunctionConfig::Custom {
                 name: "log".to_string(),
                 input: json!({}),
@@ -109,6 +111,8 @@ async fn test_async_workflow_execution() {
             condition: json!(true),
             compiled_condition: None,
             continue_on_error: false,
+            terminal: false,
+            group_starts: Vec::new(),
             function: FunctionConfig::Custom {
                 name: "async_log".to_string(),
                 input: json!({}),

@@ -37,6 +37,61 @@ export interface Task {
   function: FunctionConfig;
   /** Whether to continue workflow if this task fails */
   continue_on_error?: boolean;
+  /**
+   * End the workflow once this task has run. Defaults to `false`.
+   *
+   * A statement about *position*, not outcome: a false `condition` or a
+   * `Skip` outcome does not halt, but a task that failed under
+   * `continue_on_error` still does. Halting stops this workflow only.
+   */
+  terminal?: boolean;
+}
+
+/**
+ * A contiguous run of tasks sharing one condition.
+ *
+ * Mirrors `TaskGroup` in `src/engine/task.rs`. In a workflow's `tasks` array a
+ * group is an element carrying a `tasks` key; a plain task carries `function`.
+ * The group condition is evaluated **once, on entry** — a false result skips
+ * the whole span without evaluating the members' own conditions.
+ */
+export interface TaskGroup {
+  /** Unique identifier, sharing the task ID namespace */
+  id: string;
+  /** Human-readable name */
+  name?: string;
+  /** Optional description */
+  description?: string;
+  /** JSONLogic condition gating the whole span (evaluated once on entry) */
+  condition?: JsonLogicValue;
+  /** End the workflow once the group completes */
+  terminal?: boolean;
+  /** The nested steps. Must not be empty. */
+  tasks: Step[];
+}
+
+/** One element of a workflow's `tasks` array: a task or a group of them. */
+export type Step = Task | TaskGroup;
+
+/** Whether a step is a group rather than a plain task. */
+export function isTaskGroup(step: Step): step is TaskGroup {
+  return Array.isArray((step as TaskGroup).tasks);
+}
+
+/**
+ * The leaf tasks of a step tree, in document order — what the engine actually
+ * runs, and what task-counting or task-lookup consumers want.
+ */
+export function flattenSteps(steps: Step[]): Task[] {
+  const out: Task[] = [];
+  for (const step of steps) {
+    if (isTaskGroup(step)) {
+      out.push(...flattenSteps(step.tasks));
+    } else {
+      out.push(step);
+    }
+  }
+  return out;
 }
 
 /**
@@ -86,8 +141,11 @@ export interface Workflow {
   path?: string;
   /** JSONLogic condition (evaluated against full context: data, metadata, temp_data) */
   condition?: JsonLogicValue;
-  /** Tasks in this workflow */
-  tasks: Task[];
+  /**
+   * Steps in this workflow: each element is a {@link Task} or a
+   * {@link TaskGroup}. Use {@link flattenSteps} for the leaf tasks.
+   */
+  tasks: Step[];
   /** Whether to continue processing other workflows if this one fails */
   continue_on_error?: boolean;
   /**

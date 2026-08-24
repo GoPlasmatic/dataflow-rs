@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Play, CheckCircle, ArrowRight, Check, GitBranch, ExternalLink } from 'lucide-react';
 import type { Workflow, Task, JsonLogicValue } from '../../../types';
+import { flattenSteps } from '../../../types';
 import { FunctionTypeBadge } from '../cards/FunctionTypeBadge';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 
@@ -96,7 +97,7 @@ export function WorkflowFlowView({
                   </div>
 
                   <div className="df-flow-tasks">
-                    {workflow.tasks.map((task, index) => {
+                    {flattenSteps(workflow.tasks).map((task, index) => {
                       const isTaskSelected = selection?.type === 'task' && selection.task.id === task.id;
                       const isTaskConditionSelected = selection?.type === 'task-condition' && selection.task.id === task.id;
 

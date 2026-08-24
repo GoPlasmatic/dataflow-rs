@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { Workflow } from '../../../types';
+import type { Task, Workflow } from '../../../types';
+import { flattenSteps } from '../../../types';
 import { TaskRow } from './TaskRow';
 import { ConditionBadge } from './ConditionBadge';
 import { LoopBadge } from './LoopBadge';
@@ -8,7 +9,7 @@ interface WorkflowCardProps {
   workflow: Workflow;
   isExpanded: boolean;
   onToggle: () => void;
-  onTaskSelect?: (task: Workflow['tasks'][0], workflow: Workflow) => void;
+  onTaskSelect?: (task: Task, workflow: Workflow) => void;
   highlightedTaskIds?: Set<string>;
 }
 
@@ -20,6 +21,8 @@ export function WorkflowCard({
   highlightedTaskIds,
 }: WorkflowCardProps) {
   const priorityDisplay = workflow.priority ?? 0;
+  // Groups are an authoring convenience; the card lists the tasks that run.
+  const tasks = flattenSteps(workflow.tasks);
 
   return (
     <div className={`df-workflow-card ${isExpanded ? 'df-workflow-card-expanded' : ''}`}>
@@ -50,7 +53,7 @@ export function WorkflowCard({
           <LoopBadge loop={workflow.loop} />
           <span className="df-workflow-priority">Priority: {priorityDisplay}</span>
           <span className="df-workflow-task-count">
-            {workflow.tasks.length} task{workflow.tasks.length !== 1 ? 's' : ''}
+            {tasks.length} task{tasks.length !== 1 ? 's' : ''}
           </span>
         </div>
       </div>
@@ -73,7 +76,7 @@ export function WorkflowCard({
           <div className="df-workflow-tasks-section">
             <span className="df-section-label">Tasks:</span>
             <div className="df-task-list">
-              {workflow.tasks.map((task, index) => (
+              {tasks.map((task, index) => (
                 <TaskRow
                   key={task.id}
                   task={task}

@@ -139,6 +139,14 @@ impl LogicCompiler {
     /// Compile task conditions and function logic for a workflow
     fn compile_workflow_tasks(&self, workflow: &mut Workflow) -> Result<()> {
         for task in &mut workflow.tasks {
+            // Groups opening at this task, outermost first. Compiled here so a
+            // group condition folds the literal `true` to `None` exactly like a
+            // task condition, and so a malformed one fails at build time.
+            for group in &mut task.group_starts {
+                let label = format!("group {} condition (workflow {})", group.id, workflow.id);
+                group.compiled_condition = self.compile_condition(&group.condition, &label)?;
+            }
+
             let label = format!("task {} condition (workflow {})", task.id, workflow.id);
             task.compiled_condition = self.compile_condition(&task.condition, &label)?;
 

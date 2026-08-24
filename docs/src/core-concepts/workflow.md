@@ -48,7 +48,7 @@ Rules provide:
 | `priority` | number | No | Execution order (default: 0, lower = first) |
 | `condition` | JSONLogic | No | When to execute rule (evaluated against full context) |
 | `continue_on_error` | boolean | No | Continue on action failure (default: false) |
-| `tasks` | array | Yes | Actions to execute |
+| `tasks` | array | Yes | Steps to execute — an action, or a group of actions sharing one condition (see [Control Flow](../advanced/control-flow.md)) |
 | `channel` | string | No | Channel for message routing (default: `"default"`) |
 | `version` | number | No | Workflow version number (default: `1`) |
 | `status` | string | No | Lifecycle status: `active`, `paused`, or `archived` (default: `active`) |

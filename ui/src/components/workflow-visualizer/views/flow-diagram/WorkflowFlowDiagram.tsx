@@ -1,6 +1,7 @@
 import { useMemo, useCallback } from 'react';
 import { ReactFlow, Background, Controls, type NodeTypes, type NodeMouseHandler } from '@xyflow/react';
 import type { Workflow, Task, JsonLogicValue } from '../../../../types';
+import { flattenSteps } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
 import { useTheme } from '../../context';
 import { FlowStartEndNode, FlowConditionNode, FlowTaskNode, FlowSkipNode, FlowLoopNode } from './nodes';
@@ -28,7 +29,7 @@ export function WorkflowFlowDiagram({ workflow, onSelect }: WorkflowFlowDiagramP
   const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
     if (node.type === 'task') {
       const taskId = node.data.taskId as string;
-      const task = workflow.tasks.find((t: Task) => t.id === taskId);
+      const task = flattenSteps(workflow.tasks).find((t: Task) => t.id === taskId);
       if (task) {
         onSelect({ type: 'task', task, workflow });
       }
@@ -44,7 +45,7 @@ export function WorkflowFlowDiagram({ workflow, onSelect }: WorkflowFlowDiagramP
         // Find the task by matching the label
         const label = (node.data.label as string) ?? '';
         const taskName = label.replace('\nCondition', '');
-        const task = workflow.tasks.find((t: Task) => t.name === taskName);
+        const task = flattenSteps(workflow.tasks).find((t: Task) => t.name === taskName);
         if (task?.condition) {
           onSelect({
             type: 'task-condition',

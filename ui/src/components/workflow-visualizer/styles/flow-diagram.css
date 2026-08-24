@@ -224,6 +224,15 @@
   flex-shrink: 0;
 }
 
+/* `terminal`: the workflow ends after this task. Violet rather than amber —
+   it is a control-flow marker, not a warning. */
+.df-flow-task-node-terminal {
+  color: var(--accent-violet);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .df-flow-task-node-badge {
   margin-bottom: 4px;
 }

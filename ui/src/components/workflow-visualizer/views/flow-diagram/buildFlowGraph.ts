@@ -1,7 +1,7 @@
 import dagre from '@dagrejs/dagre';
 import type { Node, Edge } from '@xyflow/react';
-import type { Workflow, Task } from '../../../../types';
-import { loopGuardLabel, loopStepLabel } from '../../../../types';
+import type { Workflow, Task, Step, TaskGroup } from '../../../../types';
+import { isTaskGroup, loopGuardLabel, loopStepLabel } from '../../../../types';
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT_PILL = 40;
@@ -52,6 +52,7 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
     functionName: task.function.name,
     description: task.description,
     continueOnError: task.continue_on_error,
+    terminal: task.terminal,
     taskId: task.id,
     workflowId: workflow.id,
   });
@@ -170,8 +171,57 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
     prevSourceHandle = undefined;
   };
 
-  for (const task of workflow.tasks) {
-    emitTask(task);
+  /**
+   * A group is one condition node gating a whole span: the "Yes" branch runs
+   * the member steps in order, the "No" branch bypasses them, and both
+   * converge afterwards. That mirrors the engine, which evaluates the group
+   * condition once on entry rather than per member.
+   */
+  const emitGroup = (group: TaskGroup) => {
+    if (!hasCondition(group.condition)) {
+      for (const child of group.tasks) emitStep(child);
+      return;
+    }
+
+    const groupCondId = addNode('condition', {
+      label: `${group.name ?? group.id}\nGroup Condition`,
+      conditionType: 'task',
+    });
+    connect(groupCondId);
+
+    const bypassId = addNode('skip', {});
+    edges.push({
+      id: `e-${groupCondId}-${bypassId}`,
+      source: groupCondId,
+      target: bypassId,
+      sourceHandle: 'false',
+      label: 'No',
+      style: { strokeDasharray: '6 3' },
+      className: 'df-flow-edge-false',
+    });
+
+    prevNodeId = groupCondId;
+    prevSourceHandle = 'true';
+    for (const child of group.tasks) emitStep(child);
+
+    const mergeId = addNode('skip', { merge: true });
+    connect(mergeId);
+    edges.push({ id: `e-${bypassId}-${mergeId}`, source: bypassId, target: mergeId });
+
+    prevNodeId = mergeId;
+    prevSourceHandle = undefined;
+  };
+
+  const emitStep = (step: Step) => {
+    if (isTaskGroup(step)) {
+      emitGroup(step);
+    } else {
+      emitTask(step);
+    }
+  };
+
+  for (const step of workflow.tasks) {
+    emitStep(step);
   }
 
   // ---- Loop tail ----

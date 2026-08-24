@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] — 2026-08-24
+
+Guard clauses. A workflow's `tasks` array now holds *steps* — a task or a group
+of them — and any step can end the workflow, so a condition no longer has to
+re-encode the negation of every branch above it.
+
+### Added
+
+- **task:** `terminal` — a task that, having run, ends the workflow. It is a
+  statement about *position*, not outcome: a false `condition` or a
+  `TaskOutcome::Skip` does not halt, but a task that *failed* under
+  `continue_on_error: true` does — the author said "nothing after this runs".
+  Halting scopes to the workflow, exactly like `TaskOutcome::Halt`; inside a
+  workflow carrying a `loop` it breaks the whole loop, not one sweep. The audit
+  entry keeps the task's **own** status (`200`, `404`, …) rather than
+  `HALT_STATUS_CODE`, so a `map` that wrote a 404 response body does not report
+  "a filter halted here".
+- **workflow:** task groups. An element of `tasks` carrying a `tasks` key is a
+  `TaskGroup` — `{id, condition, terminal, tasks}` — stating one condition for a
+  contiguous run of tasks instead of repeating it on each. The condition is
+  evaluated **once, on entry**: a false result skips the whole span without
+  evaluating the members' own conditions, so a task inside the block that
+  mutates what the condition reads cannot switch off its own siblings. Groups
+  nest, up to 8 levels, and a group with `terminal: true` is the full guard
+  clause — `if (…) { …; return; }`.
+- **docs:** `advanced/control-flow.md`, covering both constructs and when each
+  beats a `filter` + `on_reject: "halt"` pair.
+
+### Changed
+
+- **workflow:** `Workflow::validate` now rejects a group id that duplicates
+  another group's or a task's. Groups share the task id namespace — both name a
+  step, and both surface in traces.
+- **ui:** `Workflow.tasks` is typed `Step[]` (`Task | TaskGroup`). A new
+  `flattenSteps()` helper returns the leaf tasks for consumers that count or
+  look up tasks; the flow diagram renders a group as one condition node gating
+  the whole span, and marks terminal tasks.
+
+### Compatibility
+
+- **Wire format is additive.** Every existing workflow JSON parses unchanged and
+  behaves identically: `terminal` defaults to `false`, and a workflow with no
+  group objects records no spans.
+- **`Task` gains three public fields** — `terminal`, plus the `#[doc(hidden)]`
+  engine-internal `group_starts`. Struct-literal construction of `Task` breaks;
+  field access does not. Same shape as 3.3.0 adding `Workflow::loop`.
+- **Older engines.** A group sent to a pre-3.6.0 engine **fails loudly** — the
+  group object has no `function`, so it is rejected at parse. A bare
+  `terminal: true` is silently ignored there and every later task runs; gate on
+  the engine version if you deploy definitions to engines you do not control.
+
 ## [3.5.0] — 2026-08-20
 
 Failed-task error codes are now reachable from workflow logic, and the codes

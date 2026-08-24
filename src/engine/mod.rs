@@ -78,7 +78,7 @@ pub use functions::{
 };
 pub use message::Message;
 pub use observer::{ExecutionObserver, TaskEvent};
-pub use task::Task;
+pub use task::{Task, TaskGroup};
 pub use task_context::TaskContext;
 pub use task_outcome::{HALT_STATUS_CODE, TaskOutcome};
 pub use trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};

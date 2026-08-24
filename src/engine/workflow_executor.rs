@@ -22,7 +22,7 @@ use crate::engine::utils::{
 use crate::engine::workflow::{LoopConfig, Workflow};
 use chrono::{DateTime, Utc};
 use core::time::Duration;
-use datalogic_rs::Engine;
+use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
 use log::{debug, error, info, warn};
 use serde_json::Value;
@@ -73,9 +73,114 @@ impl PassCtx {
 struct TaskPass {
     /// The task-level `continue_on_error` flag.
     continue_on_error: bool,
+    /// The task-level `terminal` flag — halt the workflow once this task has
+    /// run, whatever it returned.
+    terminal: bool,
     /// `message.errors.len()` immediately before this task ran, so the errors it
     /// contributed can be identified as the tail beyond this index.
     errors_before: usize,
+}
+
+/// One slice of a workflow's task list, plus the group state that spans slices.
+///
+/// Bundled into a single parameter because `run_tasks_slice_in_arena` already
+/// sits at clippy's `too_many_arguments` threshold, and because the three
+/// travel together: an absolute task index is `offset + i`, and `gate` is the
+/// only thing that has to survive from one slice to the next.
+struct TaskSlice<'a, 'arena> {
+    /// The tasks to run — a sub-slice of `workflow.tasks`.
+    tasks: &'arena [Task],
+    /// Index of `tasks[0]` within `workflow.tasks`.
+    offset: usize,
+    /// Group state for the whole pass, shared across every slice in it.
+    gate: &'a mut GroupGate,
+}
+
+/// Result of running one slice of a workflow's task list.
+enum SliceOutcome {
+    /// The slice ran to its end.
+    Completed,
+    /// A task halted the workflow — `TaskOutcome::Halt`, `Task::terminal`, or
+    /// the end of a terminal group.
+    Halted,
+    /// A group condition was false and its span ends beyond this slice, so the
+    /// caller must resume at this absolute task index.
+    JumpTo(usize),
+}
+
+/// Tracks which task groups are currently open during one pass over a
+/// workflow's task list.
+///
+/// Group spans are recorded at parse time on the task that opens them
+/// (`Task::group_starts`), so the executor keeps walking a flat `&[Task]`.
+/// This gate turns those spans back into control flow: evaluate a group's
+/// condition **once** on entry, jump past the span when it is false, and halt
+/// when a terminal group closes.
+///
+/// A workflow using no groups never pushes, so the gate costs one
+/// `Vec::is_empty` check per task and never allocates.
+#[derive(Default)]
+struct GroupGate {
+    /// `(end, terminal)` for each open group, outermost first.
+    open: Vec<(usize, bool)>,
+}
+
+impl GroupGate {
+    /// Close every open group whose span ends at or before `idx`, returning
+    /// `true` if any of them was `terminal`.
+    ///
+    /// Driven by `end` rather than by a per-task close count because a jump can
+    /// skip straight past the task that would have carried the count: with
+    /// `group A { group B { t1 } }` and `B`'s condition false, nothing in `A`
+    /// ever executes, yet `A` was entered and — if terminal — must still halt.
+    fn close_through(&mut self, idx: usize) -> bool {
+        let mut terminal = false;
+        while let Some(&(end, is_terminal)) = self.open.last() {
+            if end > idx {
+                break;
+            }
+            self.open.pop();
+            terminal |= is_terminal;
+        }
+        terminal
+    }
+
+    /// Evaluate the groups opening at `task`, outermost first. Returns
+    /// `Some(end)` when one's condition is false and the cursor must jump past
+    /// its span; the groups outside it stay open.
+    fn enter<F>(&mut self, task: &Task, mut eval: F) -> Result<Option<usize>>
+    where
+        F: FnMut(&Arc<Logic>) -> Result<bool>,
+    {
+        for group in &task.group_starts {
+            let entered = match group.compiled_condition.as_ref() {
+                None => true,
+                Some(compiled) => eval(compiled)?,
+            };
+            if !entered {
+                return Ok(Some(group.end));
+            }
+            self.open.push((group.end, group.terminal));
+        }
+        Ok(None)
+    }
+}
+
+/// Record the skip of every task in `workflow.tasks[from..to]` — the span of a
+/// group whose condition was false.
+///
+/// The trace stays task-granular rather than growing a group-level step, so
+/// `StepResult` and the npm wire type it mirrors are unchanged.
+fn note_group_skip(
+    mut trace: Option<&mut ExecutionTrace>,
+    workflow: &Workflow,
+    from: usize,
+    to: usize,
+    loop_counter: Option<i64>,
+) {
+    for task in &workflow.tasks[from..to.min(workflow.tasks.len())] {
+        note_task_skip(trace.as_deref_mut(), &workflow.id, &task.id, loop_counter);
+    }
 }
 
 /// Result of one pass over a workflow's task list.
@@ -753,19 +858,23 @@ impl WorkflowExecutor {
             Skipped,
             /// A filter task halted the workflow inside the first stretch.
             Halted,
-            /// Continue with the remaining tasks (from the first async
-            /// boundary onward).
-            Continue,
+            /// Continue with the remaining tasks, resuming at this index —
+            /// the first async boundary, or further on when a skipped group's
+            /// span reached past it.
+            Continue(usize),
         }
 
         let tasks = &workflow.tasks;
         let first_boundary = next_async_boundary(tasks, 0);
+        // One gate for the whole pass: a group can open in the folded first
+        // stretch and close somewhere in the async tail.
+        let mut gate = GroupGate::default();
 
         let first: Result<FirstStretch> =
             if workflow.compiled_condition.is_none() && first_boundary == 0 {
                 // No condition and the workflow leads with an async task —
                 // nothing to fold; don't build an arena context for nothing.
-                Ok(FirstStretch::Continue)
+                Ok(FirstStretch::Continue(0))
             } else {
                 with_arena(|arena| -> Result<FirstStretch> {
                     let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
@@ -783,20 +892,24 @@ impl WorkflowExecutor {
                         return Ok(FirstStretch::Skipped);
                     }
                     if first_boundary == 0 {
-                        return Ok(FirstStretch::Continue);
+                        return Ok(FirstStretch::Continue(0));
                     }
-                    let halted = self.run_tasks_slice_in_arena(
-                        &tasks[..first_boundary],
+                    let outcome = self.run_tasks_slice_in_arena(
+                        TaskSlice {
+                            tasks: &tasks[..first_boundary],
+                            offset: 0,
+                            gate: &mut gate,
+                        },
                         workflow,
                         message,
                         &mut arena_ctx,
                         trace.as_deref_mut(),
                         pass,
                     )?;
-                    Ok(if halted {
-                        FirstStretch::Halted
-                    } else {
-                        FirstStretch::Continue
+                    Ok(match outcome {
+                        SliceOutcome::Halted => FirstStretch::Halted,
+                        SliceOutcome::JumpTo(target) => FirstStretch::Continue(target),
+                        SliceOutcome::Completed => FirstStretch::Continue(first_boundary),
                     })
                 })
             };
@@ -807,9 +920,9 @@ impl WorkflowExecutor {
         match first? {
             FirstStretch::Skipped => Ok(PassOutcome::ConditionFalse),
             FirstStretch::Halted => Ok(PassOutcome::Halted),
-            FirstStretch::Continue => {
+            FirstStretch::Continue(resume_at) => {
                 let halted = self
-                    .execute_tasks(workflow, message, trace, pass, first_boundary)
+                    .execute_tasks(workflow, message, trace, pass, resume_at, &mut gate)
                     .await?;
                 Ok(if halted {
                     PassOutcome::Halted
@@ -873,7 +986,7 @@ impl WorkflowExecutor {
     /// after each task (skipped/executed) including per-mapping snapshots
     /// for `Map` tasks.
     ///
-    /// Returns `Ok(true)` when a filter task halted the workflow.
+    /// Returns `Ok(true)` when a task halted the workflow.
     async fn execute_tasks(
         &self,
         workflow: &Workflow,
@@ -881,6 +994,7 @@ impl WorkflowExecutor {
         mut trace: Option<&mut ExecutionTrace>,
         pass: PassCtx,
         start: usize,
+        gate: &mut GroupGate,
     ) -> Result<bool> {
         let tasks = &workflow.tasks;
         let mut idx = start;
@@ -889,22 +1003,50 @@ impl WorkflowExecutor {
 
             if stretch_end > idx {
                 // Run [idx, stretch_end) as a sync stretch inside one arena.
-                let halt = self.run_sync_stretch(
-                    &tasks[idx..stretch_end],
+                match self.run_sync_stretch(
+                    TaskSlice {
+                        tasks: &tasks[idx..stretch_end],
+                        offset: idx,
+                        gate,
+                    },
                     workflow,
                     message,
                     trace.as_deref_mut(),
                     pass,
-                )?;
-                if halt {
-                    return Ok(true);
+                )? {
+                    SliceOutcome::Halted => return Ok(true),
+                    // A group opening inside the stretch was skipped and its
+                    // span reaches past the stretch — resume where it ends.
+                    SliceOutcome::JumpTo(target) => {
+                        idx = target;
+                        continue;
+                    }
+                    SliceOutcome::Completed => idx = stretch_end,
                 }
-                idx = stretch_end;
             }
 
             if idx < tasks.len() {
                 // Single async task (or non-sync-builtin) at `idx`.
                 let task = &tasks[idx];
+
+                if gate.close_through(idx) {
+                    return Ok(true);
+                }
+                let jump = gate.enter(task, |compiled| {
+                    evaluate_condition(&self.engine, Some(compiled), &message.context)
+                })?;
+                if let Some(target) = jump {
+                    note_group_skip(
+                        trace.as_deref_mut(),
+                        workflow,
+                        idx,
+                        target,
+                        pass.loop_counter,
+                    );
+                    idx = target;
+                    continue;
+                }
+
                 let should_execute = evaluate_condition(
                     &self.engine,
                     task.compiled_condition.as_ref(),
@@ -949,6 +1091,7 @@ impl WorkflowExecutor {
                     &task.id_arc,
                     TaskPass {
                         continue_on_error: task.continue_on_error,
+                        terminal: task.terminal,
                         errors_before,
                     },
                     message,
@@ -979,7 +1122,10 @@ impl WorkflowExecutor {
             }
         }
 
-        Ok(false)
+        // A terminal group closing on the last task still has to halt: for a
+        // workflow carrying a `loop`, halting breaks the loop where completing
+        // would start another sweep.
+        Ok(gate.close_through(tasks.len()))
     }
 
     /// Execute a contiguous run of sync-builtin tasks inside one
@@ -993,15 +1139,15 @@ impl WorkflowExecutor {
     /// workflows.
     fn run_sync_stretch(
         &self,
-        tasks: &[Task],
+        slice: TaskSlice<'_, '_>,
         workflow: &Workflow,
         message: &mut Message,
         trace: Option<&mut ExecutionTrace>,
         pass: PassCtx,
-    ) -> Result<bool> {
-        with_arena(|arena| -> Result<bool> {
+    ) -> Result<SliceOutcome> {
+        with_arena(|arena| -> Result<SliceOutcome> {
             let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
-            self.run_tasks_slice_in_arena(tasks, workflow, message, &mut arena_ctx, trace, pass)
+            self.run_tasks_slice_in_arena(slice, workflow, message, &mut arena_ctx, trace, pass)
         })
     }
 
@@ -1016,16 +1162,58 @@ impl WorkflowExecutor {
     /// `message.context` across consecutive workflows instead of rebuilding it.
     fn run_tasks_slice_in_arena<'arena>(
         &self,
-        tasks: &'arena [Task],
+        slice: TaskSlice<'_, 'arena>,
         workflow: &Workflow,
         message: &mut Message,
         arena_ctx: &mut ArenaContext<'arena>,
         mut trace: Option<&mut ExecutionTrace>,
         pass: PassCtx,
-    ) -> Result<bool> {
+    ) -> Result<SliceOutcome> {
         let arena = arena_ctx.arena();
+        let TaskSlice {
+            tasks,
+            offset,
+            gate,
+        } = slice;
+        let slice_end = offset + tasks.len();
 
-        for task in tasks {
+        let mut i = 0;
+        while i < tasks.len() {
+            let task = &tasks[i];
+            let abs = offset + i;
+
+            // Close any group whose span ended before this task. A terminal one
+            // ends the workflow here, before the next task runs.
+            if gate.close_through(abs) {
+                return Ok(SliceOutcome::Halted);
+            }
+
+            // Open the groups that start here, evaluating each condition once.
+            // A false one skips the whole span without touching the member
+            // tasks' own conditions.
+            let jump = gate.enter(task, |compiled| {
+                evaluate_condition_in_arena(
+                    &self.engine,
+                    Some(compiled),
+                    arena_ctx.as_data_value(),
+                    arena,
+                )
+            })?;
+            if let Some(target) = jump {
+                note_group_skip(
+                    trace.as_deref_mut(),
+                    workflow,
+                    abs,
+                    target,
+                    pass.loop_counter,
+                );
+                if target >= slice_end {
+                    return Ok(SliceOutcome::JumpTo(target));
+                }
+                i = target - offset;
+                continue;
+            }
+
             // Task condition — evaluate against the arena form so we don't
             // re-borrow the thread-local `RefCell`. A `None` compiled
             // condition (compiler folds the default literal `true` to
@@ -1048,6 +1236,7 @@ impl WorkflowExecutor {
                     &task.id,
                     pass.loop_counter,
                 );
+                i += 1;
                 continue;
             }
 
@@ -1091,6 +1280,7 @@ impl WorkflowExecutor {
                 &task.id_arc,
                 TaskPass {
                     continue_on_error: task.continue_on_error,
+                    terminal: task.terminal,
                     errors_before,
                 },
                 message,
@@ -1140,10 +1330,11 @@ impl WorkflowExecutor {
             }
 
             if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
-                return Ok(true);
+                return Ok(SliceOutcome::Halted);
             }
+            i += 1;
         }
-        Ok(false)
+        Ok(SliceOutcome::Completed)
     }
 
     /// Drive a message through `workflows` in order, grouping maximal runs of
@@ -1275,17 +1466,25 @@ impl WorkflowExecutor {
                     continue;
                 }
 
+                // Group state is per-workflow: this run carries one arena
+                // across several workflows, but never a group.
+                let mut gate = GroupGate::default();
                 match self.run_tasks_slice_in_arena(
-                    &workflow.tasks,
+                    TaskSlice {
+                        tasks: &workflow.tasks,
+                        offset: 0,
+                        gate: &mut gate,
+                    },
                     workflow,
                     message,
                     &mut arena_ctx,
                     trace.as_deref_mut(),
                     pass,
                 ) {
-                    // Filter-halt stops only this workflow; carry on with the
-                    // next one (and keep the shared arena context).
-                    Ok(_halted) => {
+                    // A halt stops only this workflow; carry on with the next
+                    // one (and keep the shared arena context). The slice spans
+                    // the whole task list, so a jump can only land at its end.
+                    Ok(_outcome) => {
                         info!("Successfully completed workflow: {}", workflow.id);
                     }
                     Err(e) => {
@@ -1431,7 +1630,13 @@ impl WorkflowExecutor {
                 let status = outcome
                     .audit_status()
                     .expect("Skip handled above; remaining variants emit audit status");
-                let halt = outcome.halts_workflow();
+                // `Task::terminal` reaches the same halt as `TaskOutcome::Halt`,
+                // but it is applied *after* the status classification below —
+                // see the `flow` fold. Deciding here would make halting the
+                // first branch of the chain, so a terminal task returning 500
+                // would stop without recording `TASK_STATUS_ERROR` and without
+                // propagating when `continue_on_error` is false.
+                let halt_requested = outcome.halts_workflow() || task.terminal;
 
                 // Record audit trail. workflow_id_arc/task_id_arc are populated
                 // by LogicCompiler at engine construction; cloning them is a
@@ -1463,10 +1668,7 @@ impl WorkflowExecutor {
                 // exactly one path. The halt and `!continue_on_error` exits would
                 // otherwise each need their own call, and a future exit added
                 // without one would silently stop recording.
-                let flow = if halt {
-                    info!("Task {} halted workflow {}", task_id, workflow_id);
-                    Ok(TaskControlFlow::HaltWorkflow)
-                } else if (400..500).contains(&status) {
+                let flow = if (400..500).contains(&status) {
                     warn!("Task {} returned client error status: {}", task_id, status);
                     Ok(TaskControlFlow::Continue)
                 } else if status >= 500 {
@@ -1494,6 +1696,17 @@ impl WorkflowExecutor {
                     }
                 } else {
                     Ok(TaskControlFlow::Continue)
+                };
+
+                // Upgrade a `Continue` to a halt, leaving the 5xx `Err` and the
+                // recording above untouched. `TaskOutcome::Halt`'s own status is
+                // 299 — neither 4xx nor 5xx — so its behaviour is unchanged.
+                let flow = match flow {
+                    Ok(TaskControlFlow::Continue) if halt_requested => {
+                        info!("Task {} halted workflow {}", task_id, workflow_id);
+                        Ok(TaskControlFlow::HaltWorkflow)
+                    }
+                    other => other,
                 };
 
                 // After the `TASK_STATUS_ERROR` push above, so it lands inside
@@ -1549,6 +1762,15 @@ impl WorkflowExecutor {
 
                 if !continue_on_error {
                     Err(e)
+                } else if task.terminal {
+                    // `terminal` is about position, not outcome: the author said
+                    // "nothing after this runs". The error stays on
+                    // `message.errors()` either way.
+                    info!(
+                        "Terminal task {} halted workflow {} after failing",
+                        task_id, workflow_id
+                    );
+                    Ok(TaskControlFlow::HaltWorkflow)
                 } else {
                     Ok(TaskControlFlow::Continue)
                 }

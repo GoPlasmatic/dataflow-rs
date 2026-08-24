@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import type { Workflow } from '../../../types';
+import { flattenSteps } from '../../../types';
 
 interface SearchResult {
   workflows: Workflow[];
@@ -40,7 +41,7 @@ export function useSearch(workflows: Workflow[]) {
         workflow.description?.toLowerCase().includes(query) ||
         safeStringify(workflow.condition).toLowerCase().includes(query);
 
-      const matchingTasks = workflow.tasks.filter((task) => {
+      const matchingTasks = flattenSteps(workflow.tasks).filter((task) => {
         const taskMatches =
           task.id.toLowerCase().includes(query) ||
           task.name.toLowerCase().includes(query) ||
