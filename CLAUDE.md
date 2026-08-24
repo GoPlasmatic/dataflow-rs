@@ -119,6 +119,8 @@ matching version.
 - `task_context.rs`: `TaskContext` — accessors and audit-recording setters for handlers
 - `task_outcome.rs`: `TaskOutcome` and `HALT_STATUS_CODE`
 - `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
+- `rollout.rs`: `Rollout` traffic-split range, `partition` / `validate_set`,
+  `RolloutError`
 - `workflow.rs`: `Workflow` definition, lifecycle fields, `LoopConfig`, validation
 - `task.rs`: `Task` structure
 - `steps.rs`: The authored step grammar — `flatten` (the parser) and
@@ -266,8 +268,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 544 passing.
-`cargo test -p dataflow-rs` (default features) should report 463 — the operator
+`cargo test --workspace --all-features` should report 562 passing.
+`cargo test -p dataflow-rs` (default features) should report 479 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

@@ -9,31 +9,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Half-open bucket range `[bucket_start, bucket_end)` over `0..100`, giving this
-/// workflow a slice of the traffic on its channel.
-///
-/// Compared against [`crate::Message::routing_bucket`]. The engine does **not**
-/// derive the bucket: how a caller maps to one — a sticky hash of some request
-/// identity, a per-message random draw, round-robin — is entirely the caller's
-/// policy and deliberately stays outside this crate.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct Rollout {
-    /// Inclusive lower bound.
-    pub bucket_start: u8,
-    /// Exclusive upper bound. `100` means "up to and including bucket 99".
-    pub bucket_end: u8,
-}
-
-impl Rollout {
-    /// Whether this range serves `bucket` (`0..=99`).
-    ///
-    /// `[0, 100)` accepts everything. An empty or inverted range
-    /// (`bucket_end <= bucket_start`) accepts nothing.
-    #[inline]
-    pub fn accepts(&self, bucket: u8) -> bool {
-        bucket >= self.bucket_start && bucket < self.bucket_end
-    }
-}
+pub use crate::engine::rollout::{Rollout, RolloutError};
 
 /// Engine-managed `for` loop over a workflow's task list.
 ///
@@ -530,70 +506,6 @@ mod tests {
             }
             other => panic!("expected Custom, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn rollout_accepts_is_a_half_open_range() {
-        let all = Rollout {
-            bucket_start: 0,
-            bucket_end: 100,
-        };
-        assert!(all.accepts(0));
-        assert!(all.accepts(99));
-
-        let lower = Rollout {
-            bucket_start: 0,
-            bucket_end: 50,
-        };
-        assert!(lower.accepts(0));
-        assert!(lower.accepts(49));
-        assert!(!lower.accepts(50), "bucket_end is exclusive");
-        assert!(!lower.accepts(99));
-
-        // `start` inclusive, `end` exclusive — boundary exactness.
-        let upper = Rollout {
-            bucket_start: 50,
-            bucket_end: 100,
-        };
-        assert!(upper.accepts(50), "bucket_start is inclusive");
-        assert!(upper.accepts(99));
-        assert!(!upper.accepts(49));
-
-        // The two halves partition 0..=99 exactly.
-        for b in 0u8..=99 {
-            assert_ne!(
-                lower.accepts(b),
-                upper.accepts(b),
-                "bucket {b} must be served by exactly one half"
-            );
-        }
-    }
-
-    #[test]
-    fn rollout_empty_and_inverted_ranges_accept_nothing() {
-        let empty = Rollout {
-            bucket_start: 50,
-            bucket_end: 50,
-        };
-        let inverted = Rollout {
-            bucket_start: 60,
-            bucket_end: 20,
-        };
-        for b in 0u8..=99 {
-            assert!(!empty.accepts(b), "empty range accepted {b}");
-            assert!(!inverted.accepts(b), "inverted range accepted {b}");
-        }
-    }
-
-    #[test]
-    fn rollout_end_of_100_is_representable_without_overflow() {
-        // `bucket_end = 100` fits a u8 and `accepts` does no arithmetic on it.
-        let r = Rollout {
-            bucket_start: 99,
-            bucket_end: 100,
-        };
-        assert!(r.accepts(99));
-        assert!(!r.accepts(98));
     }
 
     #[test]

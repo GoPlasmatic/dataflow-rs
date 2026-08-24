@@ -60,6 +60,7 @@ pub mod executor;
 pub mod functions;
 pub mod message;
 pub mod observer;
+pub mod rollout;
 pub mod steps;
 pub mod task;
 pub mod task_context;
@@ -79,6 +80,7 @@ pub use functions::{
 };
 pub use message::Message;
 pub use observer::{ExecutionObserver, TaskEvent};
+pub use rollout::{Rollout, RolloutError};
 pub use steps::{
     AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
 };
@@ -86,7 +88,7 @@ pub use task::{Task, TaskGroup};
 pub use task_context::TaskContext;
 pub use task_outcome::{HALT_STATUS_CODE, TaskOutcome};
 pub use trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
-pub use workflow::{ConnectorRef, Rollout, Workflow, WorkflowStatus};
+pub use workflow::{ConnectorRef, Workflow, WorkflowStatus};
 
 // `EngineBuilder` is defined further down in this file but exposed here so
 // downstream paths can import it via `dataflow_rs::engine::EngineBuilder`.

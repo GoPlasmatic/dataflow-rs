@@ -29,6 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BuiltinKind` need not gain a third variant and break every downstream
   `match`. Ordering is not meaningful, matching `BUILTIN_FUNCTION_NAMES`.
 
+- **rollout:** `Rollout::partition` — turn an ordered percentage split into
+  contiguous half-open ranges covering exactly `0..100`, input order being
+  traffic order. Percentages must sum to 100, and the error names the
+  direction: `Under` leaves buckets matching nothing, `Over` pushes later
+  entries past the end of the bucket space. A `0` entry is allowed and yields an
+  empty range, the natural way to express a version staged at no traffic.
+- **rollout:** `Rollout::validate_set` — check that a set of ranges partitions
+  `0..100`. Both failures are otherwise silent in production: a `Gap`
+  blackholes a slice of traffic, an `Overlap` makes which version answers depend
+  on workflow ordering rather than on the rollout. Individual ranges are checked
+  first, so an inverted range or one reaching past bucket 100 is reported as
+  itself rather than as whatever downstream gap it produces. Order-independent;
+  coverage failures are reported at the lowest affected bucket.
+- **rollout:** `RolloutError`, its own type rather than a `DataflowError`
+  variant — these are pure arithmetic checks, and routing them through the
+  engine error would attach retryability classification that means nothing here.
+
 - **task context:** `TaskContext::workflow_id` / `task_id` — the identity of the
   task a handler is currently running, so it can label a log line, a metric or a
   recorded call without re-deriving it afterwards. `task_id` is always a leaf
@@ -55,6 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **engine:** `Rollout` moved to `src/engine/rollout.rs` with its new helpers.
+  Re-exported from every path it previously occupied, so no import breaks.
 - **engine:** the step grammar moved to `src/engine/steps.rs`, which now holds
   both the parser and the public walker. `task.rs` is back to being about
   `Task`. No API change; `Workflow` parsing is unaffected.
