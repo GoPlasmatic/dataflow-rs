@@ -121,6 +121,9 @@ matching version.
 - `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
 - `workflow.rs`: `Workflow` definition, lifecycle fields, `LoopConfig`, validation
 - `task.rs`: `Task` structure
+- `steps.rs`: The authored step grammar — `flatten` (the parser) and
+  `walk_authored_steps` (the public walker), plus the `is_group` /
+  `MAX_GROUP_DEPTH` facts both read
 - `trace.rs`: `ExecutionTrace` / `ExecutionStep` for step-through debugging
 - `error.rs`: `DataflowError`, `ErrorInfo`, retryability classification
 - `utils.rs`: Path splitting and nested get/set helpers
@@ -262,8 +265,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 520 passing.
-`cargo test -p dataflow-rs` (default features) should report 442 — the operator
+`cargo test --workspace --all-features` should report 535 passing.
+`cargo test -p dataflow-rs` (default features) should report 455 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

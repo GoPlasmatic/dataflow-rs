@@ -29,8 +29,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BuiltinKind` need not gain a third variant and break every downstream
   `match`. Ordering is not meaningful, matching `BUILTIN_FUNCTION_NAMES`.
 
+- **engine:** `walk_authored_steps` — a total walker over a workflow's authored
+  `tasks` JSON, yielding every node with the coordinate the author typed
+  (`tasks[1].tasks[0]`), its `StepKind` (`Leaf` / `Group` / `TooDeep`) and its
+  nesting depth. Where parsing stops at the first bad element, this reports
+  malformed elements, empty groups and over-deep nesting as nodes, so a
+  validator collects every problem in one pass. Filtering to `Leaf` reproduces
+  the engine's flattened `Workflow::tasks` exactly, pinned by an equivalence
+  test.
+- **engine:** `is_group` and `MAX_GROUP_DEPTH` are now public — the two facts a
+  host validating authored JSON would otherwise mirror. A host that reads them
+  follows a future change to either automatically.
+
 ### Changed
 
+- **engine:** the step grammar moved to `src/engine/steps.rs`, which now holds
+  both the parser and the public walker. `task.rs` is back to being about
+  `Task`. No API change; `Workflow` parsing is unaffected.
+- **ui:** `isTaskGroup` now tests for the presence of a `tasks` key rather than
+  `Array.isArray(tasks)`, matching the engine's parser. The two had diverged: on
+  `{"id": "x", "tasks": "oops"}` the engine reported a malformed *group* while
+  the UI read a *task*. A new `groupMembers()` accessor supplies a group's
+  members — empty when `tasks` is malformed — so renderers descend only into a
+  real array, mirroring the walker.
+- **ui:** `TaskGroup`, `Step`, `isTaskGroup`, `flattenSteps` and `groupMembers`
+  are now exported from the package root. The 3.6.0 changelog described
+  `flattenSteps` as consumer-facing, but it was never re-exported.
 - **engine:** `TaskExecutor::has_function` now delegates to the same predicate
   `can_dispatch` exposes. Internal, but it is the point of the change: the
   question the engine answers when dispatching and the question a host asks when

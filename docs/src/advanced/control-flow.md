@@ -187,6 +187,66 @@ negations of each other:
 Nothing keeps those two conditions in sync. `terminal: true` on the first task
 says the same thing once.
 
+## Inspecting the authored shape
+
+The parser flattens the step tree: by the time you hold a `Workflow`, `tasks` is
+a flat list and the grouping survives only as internal span bookkeeping. That is
+right for the executor, but a tool that *validates* or *lints* definitions needs
+the shape the author typed, so it can point at `tasks[1].tasks[0].id` rather
+than a flat index.
+
+`walk_authored_steps` walks the authored JSON without building any `Task`s:
+
+```rust
+use dataflow_rs::engine::steps::{StepKind, walk_authored_steps};
+use serde_json::json;
+
+let tasks = json!([
+    {"id": "load", "function": {"name": "map", "input": {"mappings": []}}},
+    {"id": "have_user", "condition": true, "tasks": [
+        {"id": "greet", "function": {"name": "map", "input": {"mappings": []}}}
+    ]}
+]);
+
+for step in walk_authored_steps(&tasks) {
+    match step.kind {
+        StepKind::Leaf => println!("task at {}", step.path),
+        StepKind::Group => println!("group at {} (depth {})", step.path, step.depth),
+        StepKind::TooDeep => println!("too deeply nested: {}", step.path),
+    }
+}
+// task at tasks[0]
+// group at tasks[1] (depth 0)
+// task at tasks[1].tasks[0]
+```
+
+Traversal is document order, groups before their members — so filtering to
+`StepKind::Leaf` gives you exactly the tasks the engine will run, in the order
+it will run them.
+
+Two properties matter for a validator:
+
+- **The walk never fails.** Parsing stops at the first bad element; this walk
+  reports malformed elements, empty groups and over-deep nesting as *nodes*, so
+  you can collect every problem in one pass instead of one per round trip.
+- **The rules are the engine's own.** `is_group` is the same test the parser
+  makes — presence of a `tasks` key, nothing else — and `MAX_GROUP_DEPTH` is the
+  limit it enforces. Read them rather than copying them, and a future change to
+  either follows automatically:
+
+```rust
+use dataflow_rs::engine::steps::{MAX_GROUP_DEPTH, is_group};
+use serde_json::json;
+
+assert!(is_group(&json!({"id": "g", "tasks": []})));
+assert!(!is_group(&json!({"id": "t", "function": {"name": "map"}})));
+assert_eq!(MAX_GROUP_DEPTH, 8);
+```
+
+Note that a `tasks` key holding something that is not an array is still a
+*group* — a malformed one, which the parser rejects as such. Reading it as a
+task instead would classify it differently from the engine that has to run it.
+
 ## Version note
 
 `terminal` and groups need engine **3.6.0** or newer.

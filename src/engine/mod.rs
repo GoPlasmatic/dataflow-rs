@@ -60,6 +60,7 @@ pub mod executor;
 pub mod functions;
 pub mod message;
 pub mod observer;
+pub mod steps;
 pub mod task;
 pub mod task_context;
 pub mod task_executor;
@@ -78,6 +79,9 @@ pub use functions::{
 };
 pub use message::Message;
 pub use observer::{ExecutionObserver, TaskEvent};
+pub use steps::{
+    AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
+};
 pub use task::{Task, TaskGroup};
 pub use task_context::TaskContext;
 pub use task_outcome::{HALT_STATUS_CODE, TaskOutcome};

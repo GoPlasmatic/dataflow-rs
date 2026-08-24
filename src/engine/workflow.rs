@@ -197,7 +197,7 @@ pub struct Workflow {
     /// tree in document order and records each group's span on the task that
     /// opens it ([`Task::group_starts`]), so this stays a flat list and the
     /// executor keeps walking `&[Task]` slices.
-    #[serde(deserialize_with = "crate::engine::task::steps::flatten")]
+    #[serde(deserialize_with = "crate::engine::steps::flatten")]
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub continue_on_error: bool,

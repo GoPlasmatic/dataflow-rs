@@ -52,6 +52,8 @@ export { SearchInput, JsonViewer, ErrorBoundary } from './components/common';
 export type {
   Workflow,
   Task,
+  TaskGroup,
+  Step,
   FunctionConfig,
   JsonLogicValue,
   MapMapping,
@@ -82,6 +84,9 @@ export type {
 } from './types';
 
 export {
+  isTaskGroup,
+  groupMembers,
+  flattenSteps,
   isBuiltinFunction,
   getFunctionDisplayInfo,
   loopBadgeLabel,

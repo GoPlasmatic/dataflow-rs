@@ -233,6 +233,9 @@ pub use engine::functions::{
 };
 pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
 pub use engine::observer::{ExecutionObserver, TaskEvent};
+pub use engine::steps::{
+    AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
+};
 pub use engine::task_context::TaskContext;
 pub use engine::task_outcome::{HALT_STATUS_CODE, TaskOutcome};
 pub use engine::trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
