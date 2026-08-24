@@ -61,6 +61,7 @@ pub mod executor;
 pub mod functions;
 pub mod message;
 pub mod observer;
+pub mod operators;
 /// Retrying a failed operation. Not available on `wasm32` — tokio's time
 /// driver, which the backoff needs, does not run there.
 #[cfg(not(target_arch = "wasm32"))]
@@ -760,6 +761,51 @@ impl Engine {
     pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue> {
         let compiler = TemplateCompiler::new(Arc::clone(&self.datalogic));
         authoring::check_against_registry(workflow, self.workflow_executor.registry(), &compiler)
+    }
+
+    /// Every operator name this build evaluates: datalogic's core vocabulary,
+    /// the extension families compiled in, and operators registered via
+    /// [`EngineBuilder::with_datalogic_operator`].
+    ///
+    /// Because the engine runs datalogic in templating mode, an unknown
+    /// operator is not an error — the object echoes back as literal data. That
+    /// makes this the only way to answer the authoring-side question a lint
+    /// needs: **is this single-key object a live operator call, or inert
+    /// data?**
+    ///
+    /// Turning a family on is therefore not a no-op. With `ext-string`
+    /// disabled, `{"length": …}` is a value; with it enabled, the same JSON is
+    /// a call. The enumeration moves with the feature.
+    ///
+    /// **Ordering is not meaningful** and may change without notice; treat the
+    /// result as a set, matching
+    /// [`BUILTIN_FUNCTION_NAMES`](crate::BUILTIN_FUNCTION_NAMES) and
+    /// [`Engine::dispatchable_functions`].
+    ///
+    /// ```
+    /// use dataflow_rs::Engine;
+    /// use std::collections::HashSet;
+    ///
+    /// let engine = Engine::builder().build().unwrap();
+    /// let vocabulary: HashSet<&str> = engine.operator_names().collect();
+    ///
+    /// // Core datalogic, always present.
+    /// assert!(vocabulary.contains("var"));
+    /// assert!(vocabulary.contains("if"));
+    ///
+    /// // A name outside the vocabulary is inert data, not a call — which is
+    /// // exactly what a lint wants to warn about.
+    /// assert!(!vocabulary.contains("lenght"));
+    /// ```
+    pub fn operator_names(&self) -> impl Iterator<Item = &str> + '_ {
+        // A custom registration under a built-in name is still that one name;
+        // filtering here is what dedups the two sources.
+        let customs = self
+            .datalogic_operators
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !operators::builtin_operator_names().any(|b| b == *name));
+        operators::builtin_operator_names().chain(customs)
     }
 
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {

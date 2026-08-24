@@ -73,6 +73,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **docs:** `advanced/authoring-validation.md`, covering the submission-time
   sequence — shape, then parse, then the handler registry.
 
+- **engine:** `Engine::operator_names` — every operator this build evaluates:
+  datalogic's core vocabulary, the extension families compiled in, and
+  operators registered via `with_datalogic_operator`. Because the engine runs
+  datalogic in templating mode an unknown operator is not an error — the object
+  echoes back as literal data — so this is the only way to answer the question a
+  lint needs: is this single-key object a live call, or inert data?
+
+  Enabling a family is not a no-op, and the enumeration says so: with
+  `ext-string` off, `{"length": …}` is a value; with it on, the same JSON is a
+  call.
+
+  The core names are mirrored here because datalogic keeps its own table
+  private with no accessor. That replaces N host-side copies with one, beside
+  the `#[cfg]` gates that decide which families are live — and every name in it
+  is checked against the running engine by evaluating it, so a name that stops
+  being an operator fails a test rather than silently weakening a downstream
+  lint. The proper fix is a `builtin_operator_names()` upstream; this signature
+  does not change when that lands.
+
 - **observer:** `ExecutionObserver` gains four defaulted callbacks —
   `message_started` / `message_finished` / `workflow_started` /
   `workflow_finished` — so engine overhead is measurable directly rather than

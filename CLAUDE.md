@@ -119,6 +119,8 @@ matching version.
 - `task_context.rs`: `TaskContext` — accessors and audit-recording setters for handlers
 - `task_outcome.rs`: `TaskOutcome` and `HALT_STATUS_CODE`
 - `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
+- `operators.rs`: the operator vocabulary this build evaluates, `#[cfg]`-gated
+  per family
 - `retry.rs`: `RetryPolicy` / `retry_with_policy` — native-only (tokio time)
 - `rollout.rs`: `Rollout` traffic-split range, `partition` / `validate_set`,
   `RolloutError`
@@ -252,6 +254,7 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
 | `task_groups.rs` | `Task::terminal` and task groups — the guard-clause shape |
 | `task_identity.rs` | `TaskContext` workflow/task ids and `loop_counter` |
+| `operator_vocabulary.rs` | `operator_names` — every mirrored name checked live |
 | `retry.rs` | `RetryPolicy` backoff, deadline and retryability, under a paused clock |
 | `authoring_validation.rs` | `validate_authored` and `check_workflow` — codes, paths, the parse backstop |
 
@@ -273,8 +276,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 612 passing.
-`cargo test -p dataflow-rs` (default features) should report 523 — the operator
+`cargo test --workspace --all-features` should report 622 passing.
+`cargo test -p dataflow-rs` (default features) should report 533 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:
