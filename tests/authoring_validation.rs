@@ -334,3 +334,316 @@ fn the_validate_failed_backstop_stays_unreached() {
         );
     }
 }
+
+// =============================================================================
+// check_workflow — the registry half. `validate_authored` proves a definition
+// parses and validates; this proves the engine can actually run it.
+// =============================================================================
+
+use async_trait::async_trait;
+use dataflow_rs::engine::functions::AsyncFunctionHandler;
+use dataflow_rs::{Engine, Result, TaskContext, TaskOutcome, Template};
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct StrictInput {
+    #[allow(dead_code)]
+    required_field: String,
+}
+
+/// Declares a typed Input, so a mismatched config fails at parse.
+struct Strict;
+
+#[async_trait]
+impl AsyncFunctionHandler for Strict {
+    type Input = StrictInput;
+    async fn execute(&self, _c: &mut TaskContext<'_>, _i: &Self::Input) -> Result<TaskOutcome> {
+        Ok(TaskOutcome::Success)
+    }
+}
+
+#[derive(Deserialize)]
+struct TemplatedInput {
+    expr: Template,
+    #[serde(default)]
+    reject: bool,
+}
+
+/// Compiles a `Template` field, and rejects when asked.
+///
+/// The rejection matters: the engine runs datalogic in *templating* mode, where
+/// an unknown or malformed operator is inert data rather than an error, so a
+/// bare expression essentially cannot fail `Template::compile`. What `compile_input`
+/// really guards is a handler's own construction-time validation — and that is
+/// what aborts `Engine::build()` today, so it is what `check_workflow` must report.
+struct Templated;
+
+#[async_trait]
+impl AsyncFunctionHandler for Templated {
+    type Input = TemplatedInput;
+
+    fn compile_input(input: &mut Self::Input, c: &dataflow_rs::TemplateCompiler) -> Result<()> {
+        input.expr.compile(c, "expr")?;
+        if input.reject {
+            return Err(dataflow_rs::DataflowError::LogicEvaluation(
+                "expr: this handler rejects it at construction".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn execute(&self, _c: &mut TaskContext<'_>, _i: &Self::Input) -> Result<TaskOutcome> {
+        Ok(TaskOutcome::Success)
+    }
+}
+
+fn wf(task: Value) -> Workflow {
+    Workflow::from_json(&workflow(json!([task])).to_string()).expect("fixture parses")
+}
+
+fn call(name: &str, input: Value) -> Value {
+    json!({"id": "t", "name": "t", "function": {"name": name, "input": input}})
+}
+
+#[test]
+fn a_clean_workflow_produces_no_issues() {
+    let workflow = wf(task("ok"));
+    assert!(Engine::builder().check_workflow(&workflow).is_empty());
+
+    let engine = Engine::builder().build().unwrap();
+    assert!(engine.check_workflow(&workflow).is_empty());
+}
+
+#[test]
+fn an_unregistered_custom_name_is_an_unknown_function() {
+    let workflow = wf(call("typo_handler", json!({})));
+    let issues = Engine::builder().check_workflow(&workflow);
+
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].code, IssueCode::UnknownFunction);
+    assert_eq!(issues[0].task_id.as_deref(), Some("t"));
+    assert_eq!(issues[0].path.as_deref(), Some("function.name"));
+}
+
+#[test]
+fn a_config_only_integration_with_no_handler_is_a_missing_handler() {
+    // The enrich trap, given its own code: the name is real, so "unknown
+    // function" would send the author looking for a typo that isn't there.
+    let workflow = wf(call(
+        "enrich",
+        json!({"connector": "c", "merge_path": "data.out"}),
+    ));
+    let issues = Engine::builder().check_workflow(&workflow);
+
+    assert_eq!(issues[0].code, IssueCode::MissingHandler);
+    assert!(
+        issues[0].message.contains("config schema only"),
+        "the message must say what to do, got: {}",
+        issues[0].message
+    );
+
+    // Registering one closes it.
+    let ok = Engine::builder().register("enrich", Strict);
+    assert!(ok.check_workflow(&workflow).is_empty());
+}
+
+#[test]
+fn a_custom_input_that_does_not_deserialize_is_an_input_parse_issue() {
+    let workflow = wf(call("strict", json!({"wrong": 1})));
+    let issues = Engine::builder()
+        .register("strict", Strict)
+        .check_workflow(&workflow);
+
+    assert_eq!(issues[0].code, IssueCode::InputParse);
+    assert_eq!(issues[0].task_id.as_deref(), Some("t"));
+    assert_eq!(issues[0].path.as_deref(), Some("function.input"));
+    assert!(
+        issues[0].message.contains("required_field"),
+        "carries the underlying reason, got: {}",
+        issues[0].message
+    );
+}
+
+#[test]
+fn a_rejected_compile_input_is_a_template_compile_issue() {
+    let workflow = wf(call(
+        "templated",
+        json!({"expr": {"var": "data.x"}, "reject": true}),
+    ));
+    let issues = Engine::builder()
+        .register("templated", Templated)
+        .check_workflow(&workflow);
+
+    assert_eq!(issues[0].code, IssueCode::TemplateCompile);
+    assert_eq!(issues[0].path.as_deref(), Some("function.input"));
+    assert_eq!(issues[0].task_id.as_deref(), Some("t"));
+
+    // And it is the same rejection that would abort a build.
+    let build = Engine::builder()
+        .register("templated", Templated)
+        .with_workflow(wf(call(
+            "templated",
+            json!({"expr": {"var": "data.x"}, "reject": true}),
+        )))
+        .build();
+    assert!(
+        build.is_err(),
+        "check_workflow reported what build enforces"
+    );
+
+    // Not rejected: clean on both sides.
+    let ok = wf(call("templated", json!({"expr": {"var": "data.x"}})));
+    assert!(
+        Engine::builder()
+            .register("templated", Templated)
+            .check_workflow(&ok)
+            .is_empty()
+    );
+}
+
+/// The property the issue asks for, in both directions: `check_workflow` is
+/// empty exactly when `build()` **and first dispatch** would run clean.
+///
+/// The distinction is the whole point. `build()` alone is deliberately
+/// permissive about the config-only integrations — a workflow naming `enrich`
+/// with no handler builds without complaint and then fails every message — so
+/// testing against `build()` alone would have declared that case healthy.
+#[tokio::test]
+async fn check_workflow_agrees_with_build_plus_first_dispatch() {
+    let cases: Vec<(&str, Value, bool)> = vec![
+        ("clean", task("ok"), true),
+        ("unregistered name", call("typo_handler", json!({})), false),
+        (
+            "config-only integration, no handler",
+            call(
+                "enrich",
+                json!({"connector": "c", "merge_path": "data.out"}),
+            ),
+            false,
+        ),
+        (
+            "bad custom input",
+            call("strict", json!({"wrong": 1})),
+            false,
+        ),
+        (
+            "good custom input",
+            call("strict", json!({"required_field": "here"})),
+            true,
+        ),
+    ];
+
+    for (label, task_json, should_run) in cases {
+        let issues = Engine::builder()
+            .register("strict", Strict)
+            .check_workflow(&wf(task_json.clone()));
+
+        // Build, then actually push a message through.
+        let runs = match Engine::builder()
+            .register("strict", Strict)
+            .with_workflow(wf(task_json))
+            .build()
+        {
+            Err(_) => false,
+            Ok(engine) => {
+                let mut message = dataflow_rs::engine::message::Message::from_value(&json!({}));
+                engine.process_message(&mut message).await.is_ok()
+            }
+        };
+
+        assert_eq!(
+            runs, should_run,
+            "{label}: build+dispatch disagreed with the fixture's expectation"
+        );
+        assert_eq!(
+            issues.is_empty(),
+            runs,
+            "{label}: check_workflow said {:?}, build+dispatch said {runs}",
+            issues.iter().map(|i| i.code).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// The case that makes the property non-trivial, stated on its own.
+#[tokio::test]
+async fn build_alone_would_have_called_the_enrich_trap_healthy() {
+    let workflow = wf(call(
+        "enrich",
+        json!({"connector": "c", "merge_path": "data.out"}),
+    ));
+
+    let engine = Engine::builder()
+        .with_workflow(wf(call(
+            "enrich",
+            json!({"connector": "c", "merge_path": "data.out"}),
+        )))
+        .build()
+        .expect("build accepts it — that permissiveness is deliberate");
+
+    let mut message = dataflow_rs::engine::message::Message::from_value(&json!({}));
+    assert!(
+        engine.process_message(&mut message).await.is_err(),
+        "and every message then fails"
+    );
+
+    assert_eq!(
+        Engine::builder().check_workflow(&workflow)[0].code,
+        IssueCode::MissingHandler,
+        "which is exactly what check_workflow catches before activation"
+    );
+}
+
+#[test]
+fn a_task_inside_a_group_is_checked_too() {
+    // `Workflow::tasks` is flattened, so a bad function inside a guard clause
+    // cannot escape the check.
+    let json = workflow(json!([
+        task("before"),
+        {"id": "guard", "condition": true, "tasks": [call("typo_handler", json!({}))]}
+    ]));
+    let workflow = Workflow::from_json(&json.to_string()).unwrap();
+
+    let issues = Engine::builder().check_workflow(&workflow);
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].code, IssueCode::UnknownFunction);
+    assert_eq!(
+        issues[0].task_id.as_deref(),
+        Some("t"),
+        "anchored on the leaf task, never the enclosing group"
+    );
+}
+
+#[test]
+fn the_builder_and_the_engine_it_builds_agree() {
+    let workflow = wf(call(
+        "enrich",
+        json!({"connector": "c", "merge_path": "data.out"}),
+    ));
+
+    let from_builder = Engine::builder().check_workflow(&workflow);
+    let from_engine = Engine::builder().build().unwrap().check_workflow(&workflow);
+
+    assert_eq!(from_builder, from_engine);
+}
+
+#[test]
+fn every_bad_task_is_reported_not_just_the_first() {
+    let json = workflow(json!([
+        call("typo_one", json!({})),
+        {"id": "t2", "name": "t2", "function": {"name": "typo_two", "input": {}}},
+        {"id": "t3", "name": "t3", "function": {"name": "enrich",
+                                                "input": {"connector": "c", "merge_path": "d"}}}
+    ]));
+    let workflow = Workflow::from_json(&json.to_string()).unwrap();
+
+    let issues = Engine::builder().check_workflow(&workflow);
+    assert_eq!(issues.len(), 3, "got {issues:?}");
+    assert_eq!(
+        issues
+            .iter()
+            .map(|i| i.task_id.clone().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["t", "t2", "t3"],
+        "in task order"
+    );
+}

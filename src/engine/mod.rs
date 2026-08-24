@@ -711,6 +711,48 @@ impl Engine {
         can_dispatch_in(self.workflow_executor.registry(), name)
     }
 
+    /// Check a workflow against this engine's registered handlers, without
+    /// building anything.
+    ///
+    /// Answers the half of the question [`Workflow::validate_authored`] cannot:
+    /// that method proves the definition *parses and validates*, but
+    /// [`Engine::build`] also resolves every task to a handler and parses
+    /// custom inputs. A definition can therefore be structurally perfect and
+    /// still abort a build — which, in a host that builds one engine over many
+    /// stored definitions, takes down every workflow in the process.
+    ///
+    /// Reports rather than aborts, so a host screens one definition at a time.
+    /// Issues are anchored on [`WorkflowIssue::task_id`] — step ids are unique
+    /// across tasks and groups — with a path relative to that task
+    /// (`function.input`). Join it with the coordinate
+    /// [`walk_authored_steps`](crate::walk_authored_steps) reports for that id
+    /// to point at the authored document.
+    ///
+    /// `Workflow::tasks` is already flattened, so tasks inside groups are
+    /// covered with no extra traversal.
+    ///
+    /// ```
+    /// use dataflow_rs::{Engine, IssueCode, Workflow};
+    ///
+    /// let workflow = Workflow::from_json(r#"{
+    ///     "id": "w", "name": "w", "priority": 0,
+    ///     "tasks": [{"id": "lookup", "name": "lookup",
+    ///                "function": {"name": "enrich",
+    ///                             "input": {"connector": "c", "merge_path": "data.out"}}}]
+    /// }"#).unwrap();
+    ///
+    /// // Builds cleanly — that permissiveness is deliberate.
+    /// let engine = Engine::builder().build().unwrap();
+    ///
+    /// let issues = engine.check_workflow(&workflow);
+    /// assert_eq!(issues[0].code, IssueCode::MissingHandler);
+    /// assert_eq!(issues[0].task_id.as_deref(), Some("lookup"));
+    /// ```
+    pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue> {
+        let compiler = TemplateCompiler::new(Arc::clone(&self.datalogic));
+        authoring::check_against_registry(workflow, self.workflow_executor.registry(), &compiler)
+    }
+
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {
         &self.datalogic
     }
@@ -825,6 +867,39 @@ impl EngineBuilder {
     /// ```
     pub fn can_dispatch(&self, name: &str) -> bool {
         can_dispatch_in(&self.handlers, name)
+    }
+
+    /// Check a workflow against this builder's registered handlers and
+    /// operators, without consuming the builder or building an engine.
+    ///
+    /// The pre-build twin of [`Engine::check_workflow`], with identical
+    /// semantics. Takes `&self`, so a host can screen a batch of definitions
+    /// against the registrations it is about to build with.
+    ///
+    /// Templates are compiled against a datalogic engine configured exactly as
+    /// [`Self::build`] will configure it — same custom operators, same
+    /// templating mode — so a template that passes here compiles there.
+    ///
+    /// ```
+    /// use dataflow_rs::{Engine, IssueCode, Workflow};
+    ///
+    /// let workflow = Workflow::from_json(r#"{
+    ///     "id": "w", "name": "w", "priority": 0,
+    ///     "tasks": [{"id": "t", "name": "t",
+    ///                "function": {"name": "typo_handler", "input": {}}}]
+    /// }"#).unwrap();
+    ///
+    /// let issues = Engine::builder().check_workflow(&workflow);
+    /// assert_eq!(issues[0].code, IssueCode::UnknownFunction);
+    /// assert_eq!(issues[0].task_id.as_deref(), Some("t"));
+    /// ```
+    pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue> {
+        // Build the datalogic engine the same way `build()` does, so template
+        // compilation here is the same operation it will be there — rather than
+        // an approximation a caller has to keep in step by hand.
+        let compiler = LogicCompiler::with_operators(&self.datalogic_operators);
+        let template_compiler = TemplateCompiler::new(compiler.into_engine());
+        authoring::check_against_registry(workflow, &self.handlers, &template_compiler)
     }
 
     /// Add a single workflow. Subsequent calls append.

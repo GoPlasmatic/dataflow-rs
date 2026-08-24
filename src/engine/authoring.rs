@@ -18,6 +18,8 @@
 //! That biconditional is true *by construction*, not by keeping a rule list in
 //! sync — see the stages below.
 
+use crate::engine::functions::config::{BuiltinKind, builtin_function_kind, can_dispatch_in};
+use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig, TemplateCompiler};
 use crate::engine::steps::{StepKind, walk_authored_steps};
 use crate::engine::workflow::Workflow;
 use serde_json::Value;
@@ -106,6 +108,18 @@ pub enum IssueCode {
     LoopBoundEmpty,
     /// `loop.counter` is not a non-empty dotted path.
     LoopCounterInvalid,
+    /// No handler will dispatch this function name, and it is not a built-in.
+    /// Usually a typo or a handler the host forgot to register.
+    UnknownFunction,
+    /// The name *is* a built-in, but one that ships as a config schema only
+    /// (`http_call`, `enrich`, `publish_kafka`) and no handler is registered
+    /// under it. The workflow builds cleanly and then fails every message.
+    MissingHandler,
+    /// A custom task's `input` does not deserialize into its handler's declared
+    /// `Input` type.
+    InputParse,
+    /// A `Template` field of a custom task's input does not compile.
+    TemplateCompile,
     /// The document does not deserialize into a [`Workflow`]. Carries the
     /// parser's own message, which names the offending field and type.
     ParseFailed,
@@ -131,6 +145,10 @@ impl IssueCode {
             Self::LoopIncrementTooSmall => "LOOP_INCREMENT_TOO_SMALL",
             Self::LoopBoundEmpty => "LOOP_BOUND_EMPTY",
             Self::LoopCounterInvalid => "LOOP_COUNTER_INVALID",
+            Self::UnknownFunction => "UNKNOWN_FUNCTION",
+            Self::MissingHandler => "MISSING_HANDLER",
+            Self::InputParse => "INPUT_PARSE",
+            Self::TemplateCompile => "TEMPLATE_COMPILE",
             Self::ParseFailed => "PARSE_FAILED",
             Self::ValidateFailed => "VALIDATE_FAILED",
         }
@@ -147,9 +165,14 @@ impl Workflow {
     /// Check authored workflow JSON without building an engine.
     ///
     /// Returns empty **if and only if** the JSON parses into a [`Workflow`] and
-    /// that workflow validates — so an empty result is a promise the engine
-    /// will accept the definition, not merely that a list of rules was
-    /// satisfied.
+    /// that workflow validates.
+    ///
+    /// That is the *shape* question, and it is the whole of it. It is not the
+    /// same as "this engine can run it": [`Engine::build`](crate::Engine::build)
+    /// also resolves every task to a handler and parses custom inputs, so a
+    /// structurally perfect definition naming an unregistered function still
+    /// aborts a build. [`Engine::check_workflow`](crate::Engine::check_workflow)
+    /// answers that half; run both.
     ///
     /// # How the guarantee holds
     ///
@@ -229,6 +252,86 @@ impl Workflow {
         }
         issues
     }
+}
+
+/// Check a parsed workflow against a handler registry.
+///
+/// Shared by [`crate::EngineBuilder::check_workflow`] and
+/// [`crate::Engine::check_workflow`] so the two cannot answer differently, and
+/// run against the crate's *real* `TemplateCompiler` rather than a host's
+/// reconstruction of one.
+///
+/// `workflow.tasks` is already flattened, so iterating it covers members of
+/// task groups without any extra traversal.
+pub(crate) fn check_against_registry(
+    workflow: &Workflow,
+    registry: &std::collections::HashMap<String, BoxedFunctionHandler>,
+    template_compiler: &TemplateCompiler,
+) -> Vec<WorkflowIssue> {
+    let mut issues = Vec::new();
+
+    for task in &workflow.tasks {
+        let name = task.function.function_name();
+
+        if !can_dispatch_in(registry, name) {
+            // Distinguish the two reasons, because the fixes differ: a
+            // `RequiresHandler` built-in is a real name awaiting a
+            // registration, while anything else is likely a typo.
+            let (code, message) = match builtin_function_kind(name) {
+                Some(BuiltinKind::RequiresHandler) => (
+                    IssueCode::MissingHandler,
+                    format!(
+                        "'{name}' ships as a config schema only — register a handler under \
+                         that name, or this workflow will build cleanly and fail every message"
+                    ),
+                ),
+                _ => (
+                    IssueCode::UnknownFunction,
+                    format!("no handler is registered for '{name}', and it is not a built-in"),
+                ),
+            };
+            issues.push(WorkflowIssue {
+                code,
+                message,
+                path: Some("function.name".to_string()),
+                task_id: Some(task.id.clone()),
+            });
+            continue;
+        }
+
+        // Only `Custom` inputs are still raw at this point: the built-in
+        // variants were typed by serde when the workflow parsed.
+        let FunctionConfig::Custom { name, input, .. } = &task.function else {
+            continue;
+        };
+        let Some(handler) = registry.get(name) else {
+            continue;
+        };
+
+        let mut parsed = match handler.parse_input_box(input) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                issues.push(WorkflowIssue {
+                    code: IssueCode::InputParse,
+                    message: format!("input does not match the handler's Input type: {err}"),
+                    path: Some("function.input".to_string()),
+                    task_id: Some(task.id.clone()),
+                });
+                continue;
+            }
+        };
+
+        if let Err(err) = handler.compile_input_box(&mut *parsed, template_compiler) {
+            issues.push(WorkflowIssue {
+                code: IssueCode::TemplateCompile,
+                message: format!("a template field does not compile: {err}"),
+                path: Some("function.input".to_string()),
+                task_id: Some(task.id.clone()),
+            });
+        }
+    }
+
+    issues
 }
 
 /// Stage 1: every semantic violation, with authored coordinates.

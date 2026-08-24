@@ -42,6 +42,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wider than the semantic rules — `"priority": "high"`, a `map` task missing
   `mappings`, a misspelled `status` break no rule and still cannot load — so a
   host no longer needs its own round-trip check as a drift net.
+
+  Note the promise is about *shape*: it does not assert the engine can run the
+  definition, since `build()` also resolves handlers and parses custom inputs.
+  `check_workflow` answers that half.
+- **authoring:** `Engine::check_workflow` / `EngineBuilder::check_workflow` —
+  check a workflow against the registered handlers without building anything,
+  reporting rather than aborting. Covers the three ways `Engine::build` can
+  reject a structurally valid definition: `UnknownFunction`, `MissingHandler`,
+  `InputParse`, plus `TemplateCompile` for a handler that rejects its input at
+  construction. Being inside the crate, it compiles templates with the real
+  `TemplateCompiler` against a datalogic engine configured exactly as `build()`
+  configures it, ending the host-side approximation.
+
+  `MissingHandler` is deliberately distinct from `UnknownFunction`: `enrich`,
+  `http_call` and `publish_kafka` are real names awaiting a registration, and
+  reporting them as unknown would send an author hunting a typo that is not
+  there.
+
+  Issues anchor on `task_id` with a task-relative path (`function.input`).
+  `check_workflow` receives an already-flattened `Workflow`, so an authored
+  coordinate cannot be derived from it — and a flat `tasks[3]` would point at
+  the wrong element in the author's document. Join the anchor with
+  `walk_authored_steps` to get one.
+
 - **authoring:** `WorkflowIssue` and `#[non_exhaustive] IssueCode` (with
   `as_str()`), the shared reporting vocabulary. An enum rather than string
   codes: a host branching on a string literal has no protection against a typo

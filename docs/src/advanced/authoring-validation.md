@@ -67,11 +67,14 @@ index that task ends up at once the engine flattens the group.
 > `validate_authored` returns empty **if and only if** the JSON parses into a
 > `Workflow` and that workflow validates.
 
-Empty is therefore a promise that the engine will accept the definition, not
-merely that some list of rules was satisfied. That matters, because the schema
-is much larger than the semantic rules: `"priority": "high"`, a `map` task
-missing its `mappings`, a misspelled `status` — none of these break a *rule*,
-and none of them can load.
+That is the *shape* question, and it is the whole of it — but it is not the
+same as "this engine can run it". `Engine::build()` also resolves every task to
+a handler, so a structurally perfect definition naming an unregistered function
+still aborts a build. The next section covers that half.
+
+The guarantee still matters, because the schema is much larger than the semantic
+rules: `"priority": "high"`, a `map` task missing its `mappings`, a misspelled
+`status` — none of these break a *rule*, and none of them can load.
 
 Rather than mirror the whole schema, `validate_authored` finishes by actually
 parsing the document and reports any failure as `IssueCode::ParseFailed`,
@@ -120,43 +123,74 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `LOOP_COUNTER_INVALID` | `counter` is not a non-empty dotted path |
 | `PARSE_FAILED` | Does not deserialize; message carries the field and type |
 | `VALIDATE_FAILED` | Backstop — parses, but `validate()` still rejects it |
+| `UNKNOWN_FUNCTION` | No handler registered, and not a built-in — usually a typo |
+| `MISSING_HANDLER` | A config-only integration with nothing registered under its name |
+| `INPUT_PARSE` | A custom task's `input` does not match its handler's `Input` type |
+| `TEMPLATE_COMPILE` | A handler rejected the input at construction time |
 
 ## Checking against the handlers
 
 Shape is only half the question. The other half needs the *registry*: will every
-task name a function this engine can actually run?
+task name a function this engine can actually run, with an input its handler can
+parse? That is what `Engine::build()` decides — and a host that lets it decide
+finds out at reload, when one bad row takes down every workflow in the process.
 
-That is a separate check, because it depends on what you registered rather than
-on the document:
+`check_workflow` asks the same questions and reports instead of aborting:
 
 ```rust
-use dataflow_rs::{Engine, Workflow};
+use dataflow_rs::{Engine, IssueCode, Workflow};
 
 let workflow = Workflow::from_json(r#"{
     "id": "w", "name": "w", "priority": 0,
-    "tasks": [
-        {"id": "a", "name": "a", "function": {"name": "map", "input": {"mappings": []}}},
-        {"id": "b", "name": "b",
-         "function": {"name": "enrich",
-                      "input": {"connector": "c", "merge_path": "data.out"}}}
-    ]
+    "tasks": [{"id": "lookup", "name": "lookup",
+               "function": {"name": "enrich",
+                            "input": {"connector": "c", "merge_path": "data.out"}}}]
 }"#).unwrap();
 
-let builder = Engine::builder();
-let unrunnable: Vec<&str> = workflow
-    .tasks
-    .iter()
-    .map(|t| t.function.function_name())
-    .filter(|name| !builder.can_dispatch(name))
-    .collect();
+let issues = Engine::builder().check_workflow(&workflow);
 
-assert_eq!(unrunnable, vec!["enrich"]);
+assert_eq!(issues[0].code, IssueCode::MissingHandler);
+assert_eq!(issues[0].task_id.as_deref(), Some("lookup"));
 ```
 
-`Workflow::tasks` is already flattened, so this covers tasks inside groups
-without any extra traversal. See
-[Integrations](../built-in-functions/integrations.md) for why `enrich` builds
-cleanly and then fails every message.
+Both `EngineBuilder` and `Engine` carry it, with identical semantics — screen
+before you build, or against the engine you are already running. The second is
+usually what a live host wants: the submission endpoint holds a built engine
+behind its reload mechanism, not the builder that made it.
+
+### Why `MISSING_HANDLER` is its own code
+
+`enrich`, `http_call` and `publish_kafka` ship as config schemas with no
+implementation. A workflow using one deserializes into a *typed* variant, so
+`Engine::build()` accepts it without complaint — and then every message fails
+with `FunctionNotFound`. Reporting that as `UNKNOWN_FUNCTION` would send the
+author hunting for a typo that isn't there; the fix is a registration, and the
+code says so.
+
+### Anchoring and paths
+
+Issues from `check_workflow` are anchored on `task_id` — step ids are unique
+across tasks and groups — with a path *relative to that task*:
+
+```text
+task_id: "lookup"
+path:    "function.input"
+```
+
+To point at the authored document, join it with the coordinate
+`walk_authored_steps` reports for that id:
+
+```text
+tasks[1].tasks[0]  +  function.input
+```
+
+The reason it works this way is that `check_workflow` receives an already-parsed
+`Workflow`, whose `tasks` is flattened — the authored nesting is gone. Emitting a
+flat `tasks[3]` would point at the wrong element in the author's document, which
+is worse than not pointing at all.
+
+That flattening does mean tasks inside groups are checked automatically, with no
+extra traversal.
 
 ## Walking the authored tree yourself
 
@@ -195,8 +229,8 @@ reports anything:
    with a `400` listing every issue.
 2. **`Workflow::from_json(&text)`** — now guaranteed to succeed if step 1 was
    empty, so `unwrap` is honest here if you prefer.
-3. **`builder.can_dispatch(..)` over the tasks** — will this engine run it?
-   Reject with a `400` naming the unrunnable functions.
+3. **`engine.check_workflow(&workflow)`** — will this engine run it? Reject
+   with a `400` naming the tasks and what each needs.
 
 Only then store and activate the definition. `Engine::build()` stays
 deliberately permissive — it is not a validation gate, and a host that treats it
