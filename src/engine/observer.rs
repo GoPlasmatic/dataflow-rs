@@ -48,6 +48,72 @@ pub struct TaskEvent<'a> {
     pub duration: Duration,
 }
 
+/// A message run beginning.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct MessageStarted<'a> {
+    /// The message's id.
+    pub message_id: &'a str,
+    /// How many workflows are about to be considered. Not how many will run —
+    /// conditions and rollout gates have not been evaluated yet.
+    ///
+    /// How many actually ran is deliberately absent here and from
+    /// [`MessageFinished`]: it is exactly the number of
+    /// [`ExecutionObserver::workflow_started`] callbacks between the two, so
+    /// carrying it as well would duplicate the event stream and cost a counter
+    /// threaded through the execution path.
+    pub workflows_considered: usize,
+}
+
+/// A message run finishing, whether it completed or stopped early.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct MessageFinished<'a> {
+    /// The message's id.
+    pub message_id: &'a str,
+    /// Wall-clock duration of the whole run, from the first workflow gate to
+    /// the last. Subtracting the workflow durations inside it gives the
+    /// engine's own between-workflow cost.
+    pub duration: Duration,
+    /// `message.errors().len()` at the end of the run.
+    pub errors: usize,
+    /// Whether the run stopped early with an `Err`.
+    pub stopped_early: bool,
+}
+
+/// A workflow beginning to run.
+///
+/// Fires only for a workflow that a rollout gate **and** its condition both
+/// admitted — a skipped workflow never starts, mirroring how a skipped task is
+/// not reported today.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct WorkflowStarted<'a> {
+    /// `Workflow::id`.
+    pub workflow_id: &'a str,
+}
+
+/// A workflow finishing.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct WorkflowFinished<'a> {
+    /// `Workflow::id`.
+    pub workflow_id: &'a str,
+    /// Wall-clock duration of the whole workflow, task bodies included.
+    ///
+    /// `duration - Σ task durations` for this workflow is the engine's own
+    /// overhead: condition evaluation, group gating, loop bookkeeping,
+    /// audit-trail writes and arena management. That figure was previously
+    /// only reachable as a whole-message residual.
+    pub duration: Duration,
+    /// Sweeps run. `1` for a workflow with no `loop`; a looping workflow
+    /// reports one event for the whole loop, with the count here — per-sweep
+    /// events would explode cardinality.
+    pub sweeps: u32,
+    /// Whether the workflow ended by halting rather than running out of tasks.
+    pub halted: bool,
+}
+
 /// Receives one callback per dispatched task.
 ///
 /// Object-safe by construction — no generic methods, no associated types — so
@@ -90,6 +156,18 @@ pub struct TaskEvent<'a> {
 /// }
 /// ```
 pub trait ExecutionObserver: Send + Sync + 'static {
+    /// A message run is beginning. Defaulted to a no-op.
+    fn message_started(&self, _event: &MessageStarted<'_>) {}
+
+    /// A message run has finished. Defaulted to a no-op.
+    fn message_finished(&self, _event: &MessageFinished<'_>) {}
+
+    /// A workflow admitted by its gates is beginning. Defaulted to a no-op.
+    fn workflow_started(&self, _event: &WorkflowStarted<'_>) {}
+
+    /// A workflow has finished. Defaulted to a no-op.
+    fn workflow_finished(&self, _event: &WorkflowFinished<'_>) {}
+
     /// Called once per dispatched task, immediately after its body returns.
     fn task_finished(&self, event: &TaskEvent<'_>);
 }

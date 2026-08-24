@@ -73,6 +73,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **docs:** `advanced/authoring-validation.md`, covering the submission-time
   sequence — shape, then parse, then the handler registry.
 
+- **observer:** `ExecutionObserver` gains four defaulted callbacks —
+  `message_started` / `message_finished` / `workflow_started` /
+  `workflow_finished` — so engine overhead is measurable directly rather than
+  as a host-side residual. `workflow_finished.duration - Σ task durations` is
+  the condition evaluation, group gating, loop bookkeeping, audit writes and
+  arena management for that workflow.
+
+  A workflow that a rollout gate or its condition rejected never starts. A
+  looping workflow reports **one** pair for the whole loop with the sweep count
+  on the finished event, rather than one pair per sweep.
+
+  Departs from the issue's sketch in two ways. The started and finished events
+  are separate types, so no field is meaningless on one of them. And
+  `workflows_run` is deliberately absent: it is exactly the number of
+  `workflow_started` callbacks, so carrying it would duplicate the event stream
+  and cost a counter threaded through the execution path — the same reasoning
+  that keeps per-workflow task counts off the event, since `task_finished`
+  already reports them.
+
 - **retry:** `RetryPolicy` and `retry_with_policy` — the mechanism half of a
   retryability model the crate has carried since 3.0 with nothing acting on it.
   Retries only while `DataflowError::retryable()` says so, backs off

@@ -11,7 +11,10 @@ use crate::engine::executor::{
 };
 use crate::engine::functions::BoxedFunctionHandler;
 use crate::engine::message::{AuditTrail, Change, Message};
-use crate::engine::observer::{ExecutionObserver, TaskEvent};
+use crate::engine::observer::{
+    ExecutionObserver, MessageFinished, MessageStarted, TaskEvent, WorkflowFinished,
+    WorkflowStarted,
+};
 use crate::engine::task::Task;
 use crate::engine::task_context::TaskIdentity;
 use crate::engine::task_executor::TaskExecutor;
@@ -40,6 +43,17 @@ enum TaskControlFlow {
 
 /// Constants shared by every task in one pass over a workflow's task list.
 ///
+/// Tracks one workflow's observer span across however many sweeps it runs.
+///
+/// `started_at` doubles as "has `workflow_started` been emitted": a looping
+/// workflow opens the span on its first admitted sweep and closes it once, so
+/// the observer sees one pair for the whole loop rather than one per sweep.
+#[derive(Default)]
+struct WorkflowSpan {
+    started_at: Option<DateTime<Utc>>,
+    sweeps: u32,
+}
+
 /// Bundles the per-message timestamp with the loop counter so that threading
 /// the counter through the task loop did not push `run_tasks_slice_in_arena`
 /// and `handle_task_result` past clippy's argument-count threshold.
@@ -615,6 +629,43 @@ impl WorkflowExecutor {
         }
     }
 
+    /// Emit `workflow_started` the first time a workflow is admitted, and
+    /// remember when — so a looping workflow reports one pair for the whole
+    /// loop rather than one per sweep.
+    fn begin_workflow(&self, span: &mut WorkflowSpan, workflow: &Workflow) {
+        span.sweeps += 1;
+        // Unobserved: no clock read, and `started_at` stays `None` so
+        // `end_workflow` is a no-op too. The crate's documented
+        // one-`Utc::now()`-per-message invariant holds unchanged.
+        let Some(observer) = self.observer.as_ref() else {
+            return;
+        };
+        if span.started_at.is_some() {
+            return;
+        }
+        span.started_at = Some(Utc::now());
+        observer.workflow_started(&WorkflowStarted {
+            workflow_id: &workflow.id,
+        });
+    }
+
+    /// Close a span opened by [`Self::begin_workflow`]. A no-op when the
+    /// workflow was never admitted, so a skipped workflow emits nothing.
+    fn end_workflow(&self, span: &WorkflowSpan, workflow: &Workflow, halted: bool) {
+        let Some(observer) = self.observer.as_ref() else {
+            return;
+        };
+        let Some(started) = span.started_at else {
+            return;
+        };
+        observer.workflow_finished(&WorkflowFinished {
+            workflow_id: &workflow.id,
+            duration: Duration::from_micros(duration_us_between(started, Utc::now())),
+            sweeps: span.sweeps,
+            halted,
+        });
+    }
+
     /// Clock read for the observer, only when one is attached.
     ///
     /// Gated so that `process_message`'s documented "one `Utc::now()` per
@@ -700,10 +751,21 @@ impl WorkflowExecutor {
                 .await;
         }
 
-        match self
-            .execute_pass(workflow, message, trace.as_deref_mut(), PassCtx::once(now))
-            .await
-        {
+        // Opened inside `execute_pass` the moment the condition admits, so a
+        // skipped workflow leaves it closed and emits nothing.
+        let mut span = WorkflowSpan::default();
+        let outcome = self
+            .execute_pass(
+                workflow,
+                message,
+                trace.as_deref_mut(),
+                PassCtx::once(now),
+                &mut span,
+            )
+            .await;
+        self.end_workflow(&span, workflow, matches!(outcome, Ok(PassOutcome::Halted)));
+
+        match outcome {
             Ok(PassOutcome::ConditionFalse) => {
                 // Last use of `trace` on this path — no reborrow needed.
                 note_workflow_skip(trace, &workflow.id, "condition not met");
@@ -749,6 +811,10 @@ impl WorkflowExecutor {
         let mut counter = config.init;
         let mut sweeps_run: u32 = 0;
         let counter_parts = resolve_counter_parts(config);
+        // One span for the whole loop: per-sweep events would explode
+        // cardinality, so the sweep count goes on the single finished event.
+        let mut span = WorkflowSpan::default();
+        let mut halted = false;
 
         loop {
             // Written before the bound and condition checks so a condition
@@ -788,7 +854,7 @@ impl WorkflowExecutor {
             };
 
             match self
-                .execute_pass(workflow, message, trace.as_deref_mut(), pass)
+                .execute_pass(workflow, message, trace.as_deref_mut(), pass, &mut span)
                 .await
             {
                 Ok(PassOutcome::ConditionFalse) => {
@@ -810,6 +876,7 @@ impl WorkflowExecutor {
                         "Workflow {} loop halted at counter {}",
                         workflow.id, counter
                     );
+                    halted = true;
                     break;
                 }
                 Ok(PassOutcome::Completed) => {
@@ -822,6 +889,10 @@ impl WorkflowExecutor {
                     // sweep rather than abandoning the rest — the per-item case
                     // wants item 8 processed after item 7 failed.
                     if self.record_workflow_error(workflow, message, &e) {
+                        // Closed on the error path too: an observer measuring
+                        // engine overhead must not lose the span of the
+                        // workflow that actually failed.
+                        self.end_workflow(&span, workflow, halted);
                         return Err(e);
                     }
                 }
@@ -829,6 +900,8 @@ impl WorkflowExecutor {
 
             counter = counter.saturating_add(config.increment);
         }
+
+        self.end_workflow(&span, workflow, halted);
 
         if sweeps_run > 0 {
             info!(
@@ -858,6 +931,7 @@ impl WorkflowExecutor {
         message: &mut Message,
         mut trace: Option<&mut ExecutionTrace>,
         pass: PassCtx,
+        span: &mut WorkflowSpan,
     ) -> Result<PassOutcome> {
         /// Outcome of the folded condition-plus-first-stretch arena scope.
         enum FirstStretch {
@@ -881,6 +955,8 @@ impl WorkflowExecutor {
             if workflow.compiled_condition.is_none() && first_boundary == 0 {
                 // No condition and the workflow leads with an async task —
                 // nothing to fold; don't build an arena context for nothing.
+                // Unconditional, so the workflow runs and the span opens here.
+                self.begin_workflow(span, workflow);
                 Ok(FirstStretch::Continue(0))
             } else {
                 with_arena(|arena| -> Result<FirstStretch> {
@@ -898,6 +974,10 @@ impl WorkflowExecutor {
                     if !should_execute {
                         return Ok(FirstStretch::Skipped);
                     }
+                    // Admitted: this is the earliest point the workflow is
+                    // known to run, so it is where the span opens. Emitting any
+                    // earlier would report a workflow its condition rejected.
+                    self.begin_workflow(span, workflow);
                     if first_boundary == 0 {
                         return Ok(FirstStretch::Continue(0));
                     }
@@ -1384,6 +1464,37 @@ impl WorkflowExecutor {
         &self,
         workflows: &[W],
         message: &mut Message,
+        trace: Option<&mut ExecutionTrace>,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let started_at = self.observer_clock();
+        if let Some(observer) = self.observer.as_ref() {
+            observer.message_started(&MessageStarted {
+                message_id: message.id(),
+                workflows_considered: workflows.len(),
+            });
+        }
+        let outcome = self.run_all_inner(workflows, message, trace, now).await;
+        if let Some(observer) = self.observer.as_ref() {
+            observer.message_finished(&MessageFinished {
+                message_id: message.id(),
+                duration: started_at
+                    .map(|s| Duration::from_micros(duration_us_between(s, Utc::now())))
+                    .unwrap_or_default(),
+                errors: message.errors().len(),
+                stopped_early: outcome.is_err(),
+            });
+        }
+        outcome
+    }
+
+    /// The driver proper. Split out so `message_finished` fires on the early
+    /// `Err` path too — an observer measuring a run must see the runs that
+    /// stopped, which are the interesting ones.
+    async fn run_all_inner<W: std::borrow::Borrow<Workflow>>(
+        &self,
+        workflows: &[W],
+        message: &mut Message,
         mut trace: Option<&mut ExecutionTrace>,
         now: DateTime<Utc>,
     ) -> Result<()> {
@@ -1484,6 +1595,11 @@ impl WorkflowExecutor {
                     continue;
                 }
 
+                // Admitted, so the span opens here — the sync run's own gate
+                // site, which `execute_inner` never sees for these workflows.
+                let mut span = WorkflowSpan::default();
+                self.begin_workflow(&mut span, workflow);
+
                 // Group state is per-workflow: this run carries one arena
                 // across several workflows, but never a group.
                 let mut gate = GroupGate::default();
@@ -1502,10 +1618,15 @@ impl WorkflowExecutor {
                     // A halt stops only this workflow; carry on with the next
                     // one (and keep the shared arena context). The slice spans
                     // the whole task list, so a jump can only land at its end.
-                    Ok(_outcome) => {
+                    Ok(outcome) => {
+                        self.end_workflow(&span, workflow, matches!(outcome, SliceOutcome::Halted));
                         info!("Successfully completed workflow: {}", workflow.id);
                     }
                     Err(e) => {
+                        // Closed before the early return, for the same reason
+                        // as the loop path: the failing workflow's span is the
+                        // one an observer most wants.
+                        self.end_workflow(&span, workflow, false);
                         // Single-channel contract — mirror `execute_inner`.
                         if self.record_workflow_error(workflow, message, &e) {
                             return Err(e);

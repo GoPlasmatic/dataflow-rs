@@ -236,7 +236,10 @@ pub use engine::functions::{
 pub use engine::retry::{RetryPolicy, retry_with_attempts, retry_with_policy};
 
 pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
-pub use engine::observer::{ExecutionObserver, TaskEvent};
+pub use engine::observer::{
+    ExecutionObserver, MessageFinished, MessageStarted, TaskEvent, WorkflowFinished,
+    WorkflowStarted,
+};
 pub use engine::steps::{
     AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
 };

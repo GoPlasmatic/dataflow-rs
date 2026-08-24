@@ -85,7 +85,10 @@ pub use functions::{
     FunctionConfig, Template, TemplateCompiler,
 };
 pub use message::Message;
-pub use observer::{ExecutionObserver, TaskEvent};
+pub use observer::{
+    ExecutionObserver, MessageFinished, MessageStarted, TaskEvent, WorkflowFinished,
+    WorkflowStarted,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use retry::{RetryPolicy, retry_with_attempts, retry_with_policy};
 pub use rollout::{Rollout, RolloutError};
