@@ -54,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 */
 
+pub mod authoring;
 pub mod compiler;
 pub mod error;
 pub mod executor;
@@ -72,6 +73,7 @@ pub mod workflow;
 pub mod workflow_executor;
 
 // Re-export key types for easier access
+pub use authoring::{IssueCode, WorkflowIssue};
 use error::{DEFAULT_ERROR_CONTEXT_LIMIT, ErrorContextConfig};
 pub use error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use functions::{

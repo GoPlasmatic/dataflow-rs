@@ -224,6 +224,7 @@ pub mod engine;
 pub mod prelude;
 
 // Re-export all public APIs for easier access
+pub use engine::authoring::{IssueCode, WorkflowIssue};
 pub use engine::error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use engine::functions::{
     AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind,

@@ -29,6 +29,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BuiltinKind` need not gain a third variant and break every downstream
   `match`. Ordering is not meaningful, matching `BUILTIN_FUNCTION_NAMES`.
 
+- **authoring:** `Workflow::validate_authored` — check a definition's JSON
+  without building an engine. Collects *every* problem rather than failing at
+  the first, each carrying the coordinate the author typed
+  (`tasks[1].tasks[0].id`, not the flat index the task ends up at), a stable
+  `IssueCode`, and a human message.
+
+  It returns empty **if and only if** the JSON parses into a `Workflow` and that
+  workflow validates. The guarantee holds by construction, not by keeping a rule
+  list in sync: after the structural checks it parses the document for real and
+  reports any failure as `ParseFailed`. This matters because the schema is far
+  wider than the semantic rules — `"priority": "high"`, a `map` task missing
+  `mappings`, a misspelled `status` break no rule and still cannot load — so a
+  host no longer needs its own round-trip check as a drift net.
+- **authoring:** `WorkflowIssue` and `#[non_exhaustive] IssueCode` (with
+  `as_str()`), the shared reporting vocabulary. An enum rather than string
+  codes: a host branching on a string literal has no protection against a typo
+  that compiles and silently never matches.
+- **docs:** `advanced/authoring-validation.md`, covering the submission-time
+  sequence — shape, then parse, then the handler registry.
+
 - **rollout:** `Rollout::partition` — turn an ordered percentage split into
   contiguous half-open ranges covering exactly `0..100`, input order being
   traffic order. Percentages must sum to 100, and the error names the
