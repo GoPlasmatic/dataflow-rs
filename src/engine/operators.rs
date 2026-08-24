@@ -23,8 +23,9 @@
 //! silently weakening a downstream lint.
 //!
 //! The real fix is upstream: a `builtin_operator_names()` on datalogic's own
-//! engine, next to the table it describes. The signature here does not change
-//! when that lands.
+//! engine, next to the table it describes — tracked as
+//! <https://github.com/GoPlasmatic/datalogic-rs/issues/65>. The signature here
+//! does not change when that lands, so adopting it is an internal edit.
 
 /// Names datalogic evaluates with no extension family enabled.
 const CORE: &[&str] = &[
