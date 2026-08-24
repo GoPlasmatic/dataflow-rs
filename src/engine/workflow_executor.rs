@@ -13,6 +13,7 @@ use crate::engine::functions::BoxedFunctionHandler;
 use crate::engine::message::{AuditTrail, Change, Message};
 use crate::engine::observer::{ExecutionObserver, TaskEvent};
 use crate::engine::task::Task;
+use crate::engine::task_context::TaskIdentity;
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::trace::{ExecutionStep, ExecutionTrace, StepTiming, duration_us_between};
@@ -1083,7 +1084,18 @@ impl WorkflowExecutor {
                 // Sampled before the body runs — see the sync-stretch site.
                 let errors_before = message.errors.len();
 
-                let result = self.task_executor.execute(task, message).await;
+                let result = self
+                    .task_executor
+                    .execute_in_workflow(
+                        task,
+                        message,
+                        Some(TaskIdentity {
+                            workflow_id: &workflow.id_arc,
+                            task_id: &task.id_arc,
+                        }),
+                        pass.loop_counter,
+                    )
+                    .await;
 
                 // Before `handle_task_result`, whose `?` would drop failed tasks.
                 self.emit_task_event(workflow, task, &result, obs_start);

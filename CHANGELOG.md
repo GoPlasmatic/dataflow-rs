@@ -29,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BuiltinKind` need not gain a third variant and break every downstream
   `match`. Ordering is not meaningful, matching `BUILTIN_FUNCTION_NAMES`.
 
+- **task context:** `TaskContext::workflow_id` / `task_id` — the identity of the
+  task a handler is currently running, so it can label a log line, a metric or a
+  recorded call without re-deriving it afterwards. `task_id` is always a leaf
+  task: handlers dispatch only on leaves, so a group id can never appear.
+  Both are `None` for a context built with `TaskContext::new`, the documented
+  way to drive a handler from a test or benchmark — there is no workflow run to
+  describe, and the `Option` says so rather than inventing an id.
+- **task context:** `TaskContext::loop_counter` — the sweep index inside a
+  workflow carrying a `loop`, `None` otherwise. This is the only way to read it
+  when the `loop` has no `counter` name: a named counter is written to
+  `temp_data.<name>`, but an unnamed one is written nowhere, so the engine's own
+  count was previously unreachable.
 - **engine:** `walk_authored_steps` — a total walker over a workflow's authored
   `tasks` JSON, yielding every node with the coordinate the author typed
   (`tasks[1].tasks[0]`), its `StepKind` (`Leaf` / `Group` / `TooDeep`) and its

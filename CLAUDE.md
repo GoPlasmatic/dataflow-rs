@@ -246,6 +246,7 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `templates.rs` | `Template` config fields on custom handlers |
 | `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
 | `task_groups.rs` | `Task::terminal` and task groups — the guard-clause shape |
+| `task_identity.rs` | `TaskContext` workflow/task ids and `loop_counter` |
 
 Each file under `tests/` compiles as its own crate, so fixtures used by more
 than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
@@ -265,8 +266,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 535 passing.
-`cargo test -p dataflow-rs` (default features) should report 455 — the operator
+`cargo test --workspace --all-features` should report 544 passing.
+`cargo test -p dataflow-rs` (default features) should report 463 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:
