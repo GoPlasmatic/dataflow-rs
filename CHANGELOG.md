@@ -52,6 +52,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tracks support, targeted at TS >= 7.1). `@goplasmatic/dataflow-wasm` keeps its
   `^3.6.0` floor, which `release.yml` rewrites at publish time.
 
+### Fixed
+
+- **deps:** `ui` — pin `@xyflow/react` to exactly `12.11.3`. `12.11.4`, published
+  2026-08-25, is broken as shipped: its bundle imports `handleAttributionWarning`
+  from `@xyflow/system`, but its manifest pins `@xyflow/system` at exactly
+  `0.0.80`, and no published `@xyflow/system` exports that symbol — not `0.0.80`,
+  not the `1.0.0-next` prereleases. Any bundler that resolves into the package
+  fails with `[MISSING_EXPORT]`.
+
+  The previous entry moved the declared range to `^12.11.4`, which is how the
+  broken release got in. It passed verification because `lint` and `build:lib`
+  do not catch it: `vite.lib.config.ts` externalizes every `dependency` and
+  `peerDependency`, so `@xyflow/react` is never resolved into during the library
+  build. Only `npm run build` — the app bundle, which `docs.yml` runs to publish
+  the debugger — actually links the import, and that is the job that failed.
+
+  The pin is exact rather than a range because `docs.yml` installs with
+  `npm install --no-package-lock`; a caret would resolve straight back to
+  `12.11.4` regardless of the lockfile. Revert to a range once upstream ships a
+  `@xyflow/system` that exports the symbol, or a `@xyflow/react` that does not
+  need it.
+
 ## [3.7.0] — 2026-08-25
 
 The host surface. Everything a service that stores, validates and operates
