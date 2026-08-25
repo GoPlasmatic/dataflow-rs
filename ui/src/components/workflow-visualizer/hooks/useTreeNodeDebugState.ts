@@ -1,6 +1,12 @@
 import { useMemo } from 'react';
 import type { Workflow, Task, DebugNodeState } from '../../../types';
-import { getWorkflowState, getTaskState, isTaskCurrent } from '../../../types';
+import {
+  getWorkflowState,
+  getTaskState,
+  isTaskCurrent,
+  findTaskStepIndex,
+  errorsIntroducedAt,
+} from '../../../types';
 import { useDebuggerOptional } from '../context';
 
 /**
@@ -183,16 +189,16 @@ export function useTaskConditionDebugState(task: Task, workflow: Workflow): Tree
 
     const { trace, currentStepIndex } = dbgContext.state;
 
-    // Find the step for this task
-    const taskStep = trace.steps.find(
-      s => s.workflow_id === workflow.id && s.task_id === task.id
-    );
+    // The current sweep's step, for a looping workflow — taking the first
+    // match would pin this node to sweep 0 while the task node it sits under
+    // advances, showing two iterations side by side.
+    const stepIndex = findTaskStepIndex(trace, currentStepIndex, workflow.id, task.id);
 
-    if (!taskStep) {
+    if (stepIndex === -1) {
       return nullState;
     }
 
-    const stepIndex = trace.steps.indexOf(taskStep);
+    const taskStep = trace.steps[stepIndex];
     const isCurrent = stepIndex === currentStepIndex;
 
     // If step is after current position, it's pending
@@ -283,9 +289,9 @@ export function useValidationRuleDebugState(task: Task, workflow: Workflow, rule
 
     const { trace, currentStepIndex } = dbgContext.state;
 
-    const taskStepIndex = trace.steps.findIndex(
-      s => s.workflow_id === workflow.id && s.task_id === task.id
-    );
+    // The current sweep's step, for the same reason as the task-condition
+    // node above.
+    const taskStepIndex = findTaskStepIndex(trace, currentStepIndex, workflow.id, task.id);
 
     if (taskStepIndex === -1 || taskStepIndex > currentStepIndex) {
       return { ...nullState, state: 'pending' as DebugNodeState };
@@ -303,16 +309,20 @@ export function useValidationRuleDebugState(task: Task, workflow: Workflow, rule
       };
     }
 
-    // Check if this specific rule produced an error
+    // Check if this specific rule produced an error. Match against the errors
+    // *this step* introduced, not the message's cumulative list — a rule whose
+    // message happens to be a substring of an earlier workflow's error would
+    // otherwise light up red without having failed.
     const isCurrent = taskStepIndex === currentStepIndex;
     let hasError = false;
-    if (taskStep.message && taskStep.message.errors.length > 0) {
+    const stepErrors = errorsIntroducedAt(trace, taskStepIndex);
+    if (stepErrors.length > 0) {
       // Validation errors include the rule message; check if any error matches
       const rules = (task.function?.input as Record<string, unknown> | undefined);
       const rulesList = (rules?.rules as Array<{ message: string }>) || [];
       const rule = rulesList[ruleIndex];
       if (rule) {
-        hasError = taskStep.message.errors.some(e => e.message.includes(rule.message));
+        hasError = stepErrors.some(e => e.message.includes(rule.message));
       }
     }
 

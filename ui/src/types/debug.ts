@@ -7,8 +7,15 @@ import type { JsonLogicValue } from './workflow';
 export interface Message {
   /** Unique message ID */
   id: string;
-  /** Original payload */
-  payload: Record<string, unknown>;
+  /**
+   * Original payload, exactly as handed to the engine.
+   *
+   * Not necessarily an object: the WASM engine stores the payload as the raw
+   * **string** it was given, leaving parsing to a `parse_json` / `parse_xml`
+   * task. It is also not part of the JSONLogic evaluation context, which sees
+   * `context` only.
+   */
+  payload: unknown;
   /** Context containing data, metadata, temp_data */
   context: {
     data: Record<string, unknown>;
@@ -29,10 +36,31 @@ export interface ErrorInfo {
   code: string;
   /** Human-readable error message */
   message: string;
-  /** Task ID where error occurred */
-  task_id?: string;
-  /** Workflow ID where error occurred */
+  /**
+   * Context path the error refers to, when the error is about one.
+   * Always serialized, so it may be `null`.
+   */
+  path?: string | null;
+  /**
+   * Workflow ID where the error occurred.
+   *
+   * Absent for errors raised without executor identity — notably `validation`
+   * failures and errors a custom handler adds through `TaskContext::add_error`.
+   */
   workflow_id?: string;
+  /** Task ID where the error occurred. Absent for the same reasons. */
+  task_id?: string;
+  /** RFC 3339 timestamp, when the producer set one. */
+  timestamp?: string;
+  /** Whether a retry was attempted, for errors produced by a retry loop. */
+  retry_attempted?: boolean;
+  /** Number of retries performed, for errors produced by a retry loop. */
+  retry_count?: number;
+  /**
+   * Operator-only detail. Deliberately excluded from the error's `Display`
+   * form, so treat it as diagnostic output rather than a user-facing message.
+   */
+  detail?: string;
 }
 
 /**
@@ -81,8 +109,14 @@ export type StepResult = 'executed' | 'skipped';
 export interface ExecutionStep {
   /** ID of the workflow this step belongs to */
   workflow_id: string;
-  /** ID of the task (undefined for workflow-level skips) */
-  task_id?: string;
+  /**
+   * ID of the task.
+   *
+   * `null` for workflow-level skips — the Rust field is always serialized, so
+   * the key is present either way. Test it for truthiness rather than with
+   * `'task_id' in step` or `=== undefined`.
+   */
+  task_id?: string | null;
   /** Result of the step execution */
   result: StepResult;
   /**
@@ -304,6 +338,110 @@ export function getMappingContext(
 }
 
 /**
+ * Error count to diff `stepIndex`'s snapshot against, or `null` when there is
+ * no usable baseline.
+ *
+ * A *skipped* step ran nothing and so introduced nothing: walk back past it.
+ * An *executed* step with no snapshot is a hole punched by
+ * `max_snapshot_bytes` — that budget is checked per step and is not monotone,
+ * so a large snapshot is dropped while a later smaller one is still kept.
+ * Errors raised in the hole are folded into this step's cumulative list and
+ * cannot be separated out by counting, which is what `null` reports.
+ */
+function errorBaselineAt(trace: ExecutionTrace, stepIndex: number): number | null {
+  for (let i = stepIndex - 1; i >= 0; i--) {
+    const earlier = trace.steps[i];
+    if (earlier.message) return earlier.message.errors.length;
+    if (earlier.result === 'executed') return null;
+  }
+  return 0;
+}
+
+/** Whether an error belongs to this step by the ids its producer recorded. */
+function matchesStepIds(error: ErrorInfo, step: ExecutionStep): boolean {
+  return error.workflow_id === step.workflow_id && error.task_id === step.task_id;
+}
+
+/**
+ * Errors that first appear at `stepIndex`.
+ *
+ * `Message.errors` is cumulative for the whole run, so a snapshot taken during
+ * workflow B still carries workflow A's failures. Comparing against the most
+ * recent earlier snapshot isolates the ones this step actually produced.
+ *
+ * This is also the only way to attribute a `validation` failure or an error a
+ * custom handler added through `TaskContext::add_error`: those carry no
+ * `workflow_id` / `task_id`, so they cannot be matched by id. Where a dropped
+ * snapshot leaves no baseline, id matching is the fallback — exact for errors
+ * that do carry ids, and silent rather than wrong for the ones that do not.
+ *
+ * Returns `[]` when snapshots are disabled, since there is then nothing to diff.
+ */
+export function errorsIntroducedAt(trace: ExecutionTrace, stepIndex: number): ErrorInfo[] {
+  const step = trace.steps[stepIndex];
+  if (!step?.message) return [];
+
+  const baseline = errorBaselineAt(trace, stepIndex);
+  return baseline === null
+    ? step.message.errors.filter(e => matchesStepIds(e, step))
+    : step.message.errors.slice(baseline);
+}
+
+/**
+ * How many errors first appear at `stepIndex`.
+ *
+ * The allocation-free form of [`errorsIntroducedAt`], for callers that only
+ * ask whether the step introduced anything. `getWorkflowState` runs this once
+ * per step of the workflow on every playback tick.
+ */
+export function errorCountIntroducedAt(trace: ExecutionTrace, stepIndex: number): number {
+  const step = trace.steps[stepIndex];
+  if (!step?.message) return 0;
+
+  const errors = step.message.errors;
+  const baseline = errorBaselineAt(trace, stepIndex);
+  if (baseline !== null) return errors.length - baseline;
+
+  let count = 0;
+  for (const error of errors) {
+    if (matchesStepIds(error, step)) count++;
+  }
+  return count;
+}
+
+/**
+ * Index of the step to render for a task, given where playback is.
+ *
+ * A looping workflow records one step per task *per sweep*, all sharing the
+ * same `(workflow_id, task_id)`. Taking the first match would pin every node to
+ * sweep 0, so prefer the most recent sweep at or before the current position
+ * and fall back to the next upcoming one.
+ *
+ * Returns `-1` when the task has no step in the trace.
+ */
+export function findTaskStepIndex(
+  trace: ExecutionTrace,
+  currentStepIndex: number,
+  workflowId: string,
+  taskId: string
+): number {
+  let lastAtOrBefore = -1;
+  let firstAfter = -1;
+
+  for (let i = 0; i < trace.steps.length; i++) {
+    const s = trace.steps[i];
+    if (s.workflow_id !== workflowId || s.task_id !== taskId) continue;
+    if (i <= currentStepIndex) {
+      lastAtOrBefore = i;
+    } else if (firstAfter === -1) {
+      firstAfter = i;
+    }
+  }
+
+  return lastAtOrBefore !== -1 ? lastAtOrBefore : firstAfter;
+}
+
+/**
  * Get the state of a workflow based on the trace and current step
  * Returns:
  * - 'pending' if all workflow steps are after the current step
@@ -315,55 +453,55 @@ export function getWorkflowState(
   currentStepIndex: number,
   workflowId: string
 ): DebugNodeState {
-  // Find all step indices for this workflow
+  // One pass over the trace, collecting the indices this workflow owns. Every
+  // later question is answered from those indices directly — re-deriving them
+  // with `trace.steps.indexOf(step)` inside a predicate is what made this
+  // quadratic in trace length, on a function that re-runs on every tick.
   const workflowStepIndices: number[] = [];
-  trace.steps.forEach((s, idx) => {
-    if (s.workflow_id === workflowId) {
-      workflowStepIndices.push(idx);
+  for (let i = 0; i < trace.steps.length; i++) {
+    if (trace.steps[i].workflow_id === workflowId) {
+      workflowStepIndices.push(i);
     }
-  });
+  }
 
   if (workflowStepIndices.length === 0) {
     return 'pending';
   }
 
-  const firstStepIndex = Math.min(...workflowStepIndices);
-
-  // If all workflow steps are after the current step, workflow is pending
-  if (firstStepIndex > currentStepIndex) {
+  // Indices are collected in order, so the first is the smallest.
+  if (workflowStepIndices[0] > currentStepIndex) {
     return 'pending';
   }
 
-  // Check actual results for steps at or before current position
-  const workflowSteps = trace.steps.filter(s => s.workflow_id === workflowId);
+  let skipped = false;
+  let hasError = false;
+  let hasExecuted = false;
 
-  // Check if the workflow was skipped (no task_id means workflow-level skip)
-  const workflowSkipStep = workflowSteps.find(s => !s.task_id && s.result === 'skipped');
-  if (workflowSkipStep) {
-    const skipIndex = trace.steps.indexOf(workflowSkipStep);
-    if (skipIndex <= currentStepIndex) {
-      return 'skipped';
+  for (const stepIndex of workflowStepIndices) {
+    // Ascending, so everything from here on is after the current position.
+    if (stepIndex > currentStepIndex) {
+      break;
+    }
+    const step = trace.steps[stepIndex];
+
+    // No task_id means a workflow-level skip.
+    if (!step.task_id && step.result === 'skipped') {
+      skipped = true;
+    }
+    if (step.result === 'executed') {
+      hasExecuted = true;
+    }
+    // Whether this step introduced an error *of its own*. Testing
+    // `errors.length > 0` would report every workflow after the first failure
+    // as failed, since `Message.errors` is cumulative.
+    if (!hasError && errorCountIntroducedAt(trace, stepIndex) > 0) {
+      hasError = true;
     }
   }
 
-  // Check if any step has an error (only steps at or before current)
-  const hasError = workflowSteps.some(s => {
-    const stepIndex = trace.steps.indexOf(s);
-    return stepIndex <= currentStepIndex && s.message && s.message.errors.length > 0;
-  });
-  if (hasError) {
-    return 'error';
-  }
-
-  // Check if any task was executed (only steps at or before current)
-  const hasExecuted = workflowSteps.some(s => {
-    const stepIndex = trace.steps.indexOf(s);
-    return stepIndex <= currentStepIndex && s.result === 'executed';
-  });
-  if (hasExecuted) {
-    return 'executed';
-  }
-
+  if (skipped) return 'skipped';
+  if (hasError) return 'error';
+  if (hasExecuted) return 'executed';
   return 'pending';
 }
 
@@ -380,10 +518,8 @@ export function getTaskState(
   workflowId: string,
   taskId: string
 ): DebugNodeState {
-  // Find the step for this task
-  const taskStepIndex = trace.steps.findIndex(
-    s => s.workflow_id === workflowId && s.task_id === taskId
-  );
+  // Find the step for this task — the current sweep's, for a looping workflow.
+  const taskStepIndex = findTaskStepIndex(trace, currentStepIndex, workflowId, taskId);
 
   if (taskStepIndex === -1) {
     return 'pending';
@@ -402,15 +538,11 @@ export function getTaskState(
   }
 
   if (taskStep.result === 'executed') {
-    // Check for errors in the message
-    if (taskStep.message && taskStep.message.errors.length > 0) {
-      // Check if error is from this task
-      const taskError = taskStep.message.errors.find(
-        e => e.task_id === taskId && e.workflow_id === workflowId
-      );
-      if (taskError) {
-        return 'error';
-      }
+    // Errors this step introduced, rather than every error accumulated so far.
+    // Matching on `error.task_id` alone would miss `validation` failures, which
+    // carry no ids.
+    if (errorCountIntroducedAt(trace, taskStepIndex) > 0) {
+      return 'error';
     }
     return 'executed';
   }
@@ -427,8 +559,6 @@ export function isTaskCurrent(
   workflowId: string,
   taskId: string
 ): boolean {
-  const taskStepIndex = trace.steps.findIndex(
-    s => s.workflow_id === workflowId && s.task_id === taskId
-  );
-  return taskStepIndex === currentStepIndex;
+  const step = trace.steps[currentStepIndex];
+  return step?.workflow_id === workflowId && step?.task_id === taskId;
 }

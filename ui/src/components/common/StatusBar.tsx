@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle, Layers, Box, FileJson } from 'lucide-react';
+import { countLeafSteps } from '../../types';
 import type { Workflow } from '../../types';
 
 interface StatusBarProps {
@@ -16,7 +17,9 @@ export function StatusBar({
 }: StatusBarProps) {
   const hasErrors = workflowsError || messageError;
   const errorCount = (workflowsError ? 1 : 0) + (messageError ? 1 : 0);
-  const taskCount = workflows.reduce((sum, w) => sum + (w.tasks?.length || 0), 0);
+  // `tasks` holds *steps*, so a group counts as one element regardless of how
+  // many tasks it contains. Descend before counting.
+  const taskCount = workflows.reduce((sum, w) => sum + countLeafSteps(w.tasks ?? []), 0);
 
   return (
     <footer className="status-bar">

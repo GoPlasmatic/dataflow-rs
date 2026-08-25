@@ -515,6 +515,11 @@
   background: color-mix(in srgb, var(--df-function-validation) 15%, transparent);
 }
 
+.df-function-badge-builtin {
+  color: var(--df-function-builtin);
+  background: color-mix(in srgb, var(--df-function-builtin) 15%, transparent);
+}
+
 .df-function-badge-custom {
   color: var(--df-function-custom);
   background: color-mix(in srgb, var(--df-function-custom) 15%, transparent);
