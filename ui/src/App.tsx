@@ -170,8 +170,11 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
       <div className="app" data-theme={resolvedTheme}>
         <header className="app-header">
           <div className="header-title">
-            <h1>Dataflow Visualizer</h1>
-            <span className="header-subtitle">Workflow Engine Debugger</span>
+            <div className="brand-mark" aria-hidden="true" />
+            <div className="brand-text">
+              <h1>Dataflow Visualizer</h1>
+              <span className="header-subtitle">Workflow Engine Debugger</span>
+            </div>
           </div>
           <div className="header-controls">
             <button

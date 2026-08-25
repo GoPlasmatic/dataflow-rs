@@ -108,7 +108,7 @@
   border: 1px solid transparent;
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-debug-right-tab:hover {
@@ -128,7 +128,7 @@
   gap: 20px;
   padding: 12px 16px;
   background: var(--df-bg-secondary);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   min-width: 480px;
 }
 
@@ -162,10 +162,10 @@
   height: 40px;
   background: var(--df-bg-primary);
   border: 2px solid var(--df-border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--df-text-secondary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
   font-weight: 600;
 }
 
@@ -186,16 +186,16 @@
   height: 48px;
   background: var(--df-accent-primary);
   border-color: var(--df-accent-primary);
-  color: white;
-  box-shadow: 0 2px 8px rgba(0, 120, 212, 0.3);
+  color: var(--on-signal);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .df-debug-btn-primary:hover:not(:disabled) {
   background: var(--df-accent-secondary);
   border-color: var(--df-accent-secondary);
-  color: white;
+  color: var(--on-signal);
   transform: scale(1.05);
-  box-shadow: 0 4px 12px rgba(0, 120, 212, 0.4);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .df-debug-progress {
@@ -217,7 +217,7 @@
 .df-debug-progress-fill {
   height: 100%;
   background: var(--df-accent-primary);
-  transition: width 0.15s ease;
+  transition: width var(--motion-fast) var(--ease-out);
 }
 
 .df-debug-step-counter {
@@ -297,7 +297,7 @@
   border: 1px solid var(--df-border-color);
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-debug-btn-sm:hover {
@@ -335,7 +335,7 @@
   padding: 6px 8px;
   cursor: pointer;
   border-radius: 4px;
-  transition: background 0.1s ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .df-debug-input-section-header:hover {
@@ -369,7 +369,7 @@
   padding: 2px 6px;
   border-radius: 3px;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity var(--motion-fast);
 }
 
 .df-debug-input-section-header:hover .df-debug-section-edit {
@@ -387,7 +387,7 @@
 .df-debug-input-preview {
   margin: 0;
   padding: 8px;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   color: var(--df-text-secondary);
@@ -411,7 +411,7 @@
   min-height: 100px;
   max-height: 200px;
   padding: 8px;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   color: var(--df-text-primary);
@@ -456,12 +456,12 @@
   padding: 10px 16px;
   font-size: 13px;
   font-weight: 600;
-  color: white;
+  color: var(--on-signal);
   background: var(--df-accent-primary);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-debug-run-btn:hover:not(:disabled) {
@@ -521,7 +521,7 @@
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-debug-state-tab:hover {
@@ -626,7 +626,7 @@
   gap: 6px;
   padding: 8px 10px;
   cursor: pointer;
-  transition: background 0.1s ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .df-debug-message-section-header:hover {
@@ -647,7 +647,7 @@
 .df-debug-message-section-content {
   margin: 0;
   padding: 8px 10px;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   color: var(--df-text-secondary);
@@ -682,7 +682,7 @@
   align-items: flex-start;
   gap: 8px;
   padding: 6px 10px;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -795,7 +795,7 @@
 }
 
 .df-debug-change-path {
-  font-family: 'SF Mono', Monaco, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--df-accent-primary);
   flex: 1;
@@ -811,7 +811,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  font-family: 'SF Mono', Monaco, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   background: var(--df-bg-secondary);
   border-top: 1px solid var(--df-border-color);
@@ -835,7 +835,7 @@
   max-width: 320px;
   background: var(--df-bg-primary);
   border: 1px solid var(--df-border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   box-shadow: var(--df-shadow-lg);
   z-index: 10000;
   overflow: hidden;
@@ -998,12 +998,12 @@
   padding: 4px 10px;
   font-size: 11px;
   font-weight: 500;
-  color: white;
+  color: var(--on-signal);
   background: var(--df-success);
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--motion-fast);
 }
 
 .df-debug-btn-run:hover:not(:disabled) {
@@ -1026,7 +1026,7 @@
   border: 1px solid var(--df-border-color);
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--motion-fast);
 }
 
 .df-debug-btn-reset:hover {
@@ -1057,7 +1057,7 @@
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--motion-fast);
 }
 
 .df-debug-tab:hover {
@@ -1142,12 +1142,12 @@
 .df-debug-result-json {
   margin: 0;
   padding: 12px;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   color: var(--df-text-primary);
   background: var(--df-bg-secondary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1159,7 +1159,7 @@
   justify-content: space-between;
   padding: 6px 12px;
   background: var(--df-accent-primary);
-  color: white;
+  color: var(--on-signal);
   font-size: 11px;
   flex-shrink: 0;
   position: absolute;
@@ -1201,7 +1201,7 @@
 }
 
 .df-debug-statusbar-path {
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-mono);
   font-weight: 500;
 }
 
@@ -1282,7 +1282,7 @@
   border-radius: 4px;
   color: var(--df-text-secondary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-debug-toolbar-btn:hover:not(:disabled) {
@@ -1299,13 +1299,13 @@
 .df-debug-toolbar-btn-primary {
   background: var(--df-accent-primary);
   border-color: var(--df-accent-primary);
-  color: white;
+  color: var(--on-signal);
 }
 
 .df-debug-toolbar-btn-primary:hover:not(:disabled) {
   background: var(--df-accent-secondary);
   border-color: var(--df-accent-secondary);
-  color: white;
+  color: var(--on-signal);
 }
 
 .df-debug-toolbar-options {
@@ -1361,11 +1361,11 @@
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-debug-toolbar-btn-run {
-  color: white;
+  color: var(--on-signal);
   background: var(--df-success);
 }
 

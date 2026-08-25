@@ -1,63 +1,176 @@
-/* ============================================
-   VSCode-Inspired Color Scheme
-   ============================================ */
-
-/* Light Theme (VSCode Light+) */
+/*
+ * Dataflow Studio — app shell tokens (Signal Board)
+ * ============================================================
+ * These mirror the visualizer's own tokens (see
+ * src/components/workflow-visualizer/styles/theme.css) but live at :root so
+ * the Studio *chrome* — header, panels, editor, status bar — sits on the exact
+ * same "board" substrate as the .df-visualizer-container it wraps, and as the
+ * @goplasmatic/datalogic-ui logic editor nested inside that.
+ *
+ * The board tokens (--board / --ink / --hairline / --accent / --sig-*) are the
+ * primary axis. The --app-* names below are kept as aliases so the shell CSS
+ * reads the same, but they no longer hold literal colours.
+ */
 :root {
-  --app-bg: #f3f3f3;
-  --app-header-bg: #3c3c3c;
-  --app-header-text: #ffffff;
-  --app-panel-bg: #ffffff;
-  --app-editor-bg: #ffffff;
-  --app-border: #e5e5e5;
-  --app-border-subtle: #f0f0f0;
-  --app-text: #333333;
-  --app-text-secondary: #6e6e6e;
-  --app-text-muted: #999999;
-  --app-accent: #0078d4;
-  --app-accent-hover: #006cbd;
-  --app-accent-subtle: rgba(0, 120, 212, 0.1);
-  --app-error: #f14c4c;
-  --app-error-bg: rgba(241, 76, 76, 0.1);
-  --app-success: #388a34;
-  --app-success-bg: rgba(56, 138, 52, 0.1);
-  --app-warning: #cca700;
-  --app-warning-bg: rgba(204, 167, 0, 0.1);
-  --app-statusbar-bg: #007acc;
-  --app-statusbar-text: #ffffff;
-  --app-statusbar-item-hover: rgba(255, 255, 255, 0.12);
-  --app-scrollbar-bg: #e4e4e4;
-  --app-scrollbar-thumb: #c1c1c1;
-  --app-scrollbar-thumb-hover: #a8a8a8;
+  /* ---- Fonts ------------------------------------------------------ */
+  --font-ui: 'Space Grotesk', ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code',
+    'Consolas', monospace;
+
+  /* ---- Substrate — cool paper (light default) -------------------- */
+  --board: #eef1f5;
+  --board-grid: rgba(20, 40, 70, 0.05);
+  --surface: #ffffff;
+  --surface-2: #f6f8fb;
+  --chip: #ffffff;
+  --hairline: #d6dde6;
+  --hairline-2: #e6ebf1;
+
+  --ink: #0e1826;
+  --ink-2: #33475e;
+  --muted: #5b6a7d;
+  --faint: #9aa9ba; /* NON-TEXT only: hairlines, idle wires, dot-grid */
+
+  /* ---- Structural accent — selection / focus / active control ----- */
+  --accent: #4b56d6;
+  --accent-soft: #e7e9fb;
+  --accent-hover: #3a44c0;
+
+  /* ---- SIGNAL palette — colour = the value that flows OUT --------- */
+  --sig-bool-true: #1a7f37;
+  --sig-bool-false: #cf222e;
+  --sig-bool-rest: #57708a;
+  --sig-number: #0959c0;
+  --sig-string: #8a5a00;
+  --sig-collection: #8250df;
+  --sig-data: #1b7c83;
+  --sig-temporal: #bf3989;
+  --sig-null: #6e7781;
+
+  --sig-bool-true-bg: rgba(26, 127, 55, 0.10);
+  --sig-bool-false-bg: rgba(207, 34, 46, 0.10);
+  --sig-number-bg: rgba(9, 105, 218, 0.10);
+  --sig-string-bg: rgba(154, 103, 0, 0.12);
+  --sig-collection-bg: rgba(130, 80, 223, 0.10);
+  --sig-data-bg: rgba(27, 124, 131, 0.10);
+  --sig-temporal-bg: rgba(191, 57, 137, 0.10);
+  --sig-null-bg: rgba(110, 119, 129, 0.10);
+
+  /* ---- Radius & spacing scales ----------------------------------- */
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
+
+  /* ---- Elevation ------------------------------------------------- */
+  --shadow-sm: 0 1px 2px rgba(16, 30, 54, 0.05);
+  --shadow-md: 0 1px 2px rgba(16, 30, 54, 0.06), 0 2px 6px rgba(16, 30, 54, 0.06);
+  --shadow-lg: 0 8px 30px rgba(16, 30, 54, 0.14), 0 2px 8px rgba(16, 30, 54, 0.08);
+
+  /* ---- Motion ---------------------------------------------------- */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 260ms;
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Foreground for text sitting ON a filled signal/accent colour.
+     Light theme signals are dark, so this is white; dark theme signals
+     are bright, so it flips to the board. */
+  --on-signal: #ffffff;
+
+  --focus-ring: 0 0 0 2px var(--accent);
+
+  /* ============================================================
+     --app-* SHELL ALIASES — mapped onto the board.
+     ============================================================ */
+  --app-bg: var(--board);
+  --app-panel-bg: var(--surface);
+  --app-editor-bg: var(--surface);
+  --app-chip: var(--chip);
+  --app-border: var(--hairline);
+  --app-border-subtle: var(--hairline-2);
+
+  --app-text: var(--ink);
+  --app-text-secondary: var(--ink-2);
+  --app-text-muted: var(--muted);
+
+  --app-accent: var(--accent);
+  --app-accent-hover: var(--accent-hover);
+  --app-accent-subtle: var(--accent-soft);
+
+  --app-error: var(--sig-bool-false);
+  --app-error-bg: var(--sig-bool-false-bg);
+  --app-success: var(--sig-bool-true);
+  --app-success-bg: var(--sig-bool-true-bg);
+  --app-warning: var(--sig-string);
+  --app-warning-bg: var(--sig-string-bg);
+
+  /* Status bar is a quiet surface strip, not a saturated chrome bar */
+  --app-statusbar-bg: var(--surface);
+  --app-statusbar-text: var(--ink-2);
+  --app-statusbar-item-hover: var(--surface-2);
+
+  --app-scrollbar-thumb: var(--faint);
+  --app-scrollbar-thumb-hover: var(--muted);
+
+  color-scheme: light dark;
+  color: var(--ink);
+  background-color: var(--board);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Dark Theme (VSCode Dark+) */
+/* ============================================================
+   DARK — "lit logic board"
+   ============================================================ */
 [data-theme="dark"] {
-  --app-bg: #1e1e1e;
-  --app-header-bg: #323233;
-  --app-header-text: #cccccc;
-  --app-panel-bg: #252526;
-  --app-editor-bg: #1e1e1e;
-  --app-border: #3c3c3c;
-  --app-border-subtle: #2d2d2d;
-  --app-text: #cccccc;
-  --app-text-secondary: #9d9d9d;
-  --app-text-muted: #6e6e6e;
-  --app-accent: #0078d4;
-  --app-accent-hover: #1c97ea;
-  --app-accent-subtle: rgba(0, 120, 212, 0.2);
-  --app-error: #f14c4c;
-  --app-error-bg: rgba(241, 76, 76, 0.15);
-  --app-success: #4ec9b0;
-  --app-success-bg: rgba(78, 201, 176, 0.15);
-  --app-warning: #dcdcaa;
-  --app-warning-bg: rgba(220, 220, 170, 0.15);
-  --app-statusbar-bg: #007acc;
-  --app-statusbar-text: #ffffff;
-  --app-statusbar-item-hover: rgba(255, 255, 255, 0.12);
-  --app-scrollbar-bg: #1e1e1e;
-  --app-scrollbar-thumb: #424242;
-  --app-scrollbar-thumb-hover: #525252;
+  --board: #0a0f16;
+  --board-grid: rgba(120, 170, 255, 0.06);
+  --surface: #10161f;
+  --surface-2: #141b26;
+  --chip: #161d28;
+  --hairline: #263140;
+  --hairline-2: #1d2632;
+
+  --ink: #e6edf5;
+  --ink-2: #b3c1d1;
+  --muted: #8a9cb0;
+  --faint: #566172;
+
+  --accent: #7c86f5;
+  --accent-soft: #1b2140;
+  --accent-hover: #9aa2f8;
+  --on-signal: #0a0f16;
+
+  --sig-bool-true: #3fb950;
+  --sig-bool-false: #f85149;
+  --sig-bool-rest: #8098b0;
+  --sig-number: #58a6ff;
+  --sig-string: #e3b341;
+  --sig-collection: #bc8cff;
+  --sig-data: #39c5cf;
+  --sig-temporal: #db61a2;
+  --sig-null: #8b949e;
+
+  --sig-bool-true-bg: rgba(63, 185, 80, 0.13);
+  --sig-bool-false-bg: rgba(248, 81, 73, 0.13);
+  --sig-number-bg: rgba(88, 166, 255, 0.13);
+  --sig-string-bg: rgba(227, 179, 65, 0.14);
+  --sig-collection-bg: rgba(188, 140, 255, 0.13);
+  --sig-data-bg: rgba(57, 197, 207, 0.13);
+  --sig-temporal-bg: rgba(219, 97, 162, 0.14);
+  --sig-null-bg: rgba(139, 148, 158, 0.14);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
 }
 
 /* ============================================
@@ -71,7 +184,7 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--font-ui);
   background: var(--app-bg);
   color: var(--app-text);
   line-height: 1.5;
@@ -79,27 +192,31 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar styling */
+/* Scrollbar styling — the thumb is a hairline-weight mark on the board, not a
+   chrome slab, so it recedes the way the rest of the substrate does. */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--app-scrollbar-bg);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb);
-  border-radius: 0;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-sm);
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-corner {
-  background: var(--app-scrollbar-bg);
+  background: transparent;
 }
 
 /* ============================================
@@ -117,63 +234,106 @@ body {
    Header
    ============================================ */
 
+/* Signal Board "site" bar: translucent board substrate + hairline, so the
+   header reads as the top of the same surface rather than a chrome slab
+   bolted above it. */
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  height: 48px;
-  background: var(--app-header-bg);
-  color: var(--app-header-text);
+  padding: 0 var(--sp-5);
+  height: 52px;
+  background: color-mix(in srgb, var(--board) 82%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: var(--ink);
   flex-shrink: 0;
-  border-bottom: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--hairline);
+  position: relative;
+  z-index: 1000;
 }
 
 .header-title {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
+}
+
+/* Gradient "circuit" brand mark — indigo→teal square with a white cross-tap.
+   Matches the datalogic Studio mark so the two products share an identity. */
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  position: relative;
+  flex-shrink: 0;
+  background: linear-gradient(150deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--sig-data)));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.brand-mark::after {
+  content: "";
+  position: absolute;
+  inset: 8px 7px;
+  border-radius: 2px;
+  background:
+    linear-gradient(0deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.92)) 0 50% / 100% 2px no-repeat,
+    linear-gradient(0deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.55)) 50% 0 / 2px 100% no-repeat;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
 .header-title h1 {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 600;
   letter-spacing: -0.01em;
+  line-height: 1.15;
+  color: var(--ink);
 }
 
 .header-subtitle {
-  font-size: 12px;
-  color: var(--app-text-muted);
-  opacity: 0.8;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 
 .header-link {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 7px 11px;
   font-size: 13px;
-  color: var(--app-header-text);
+  color: var(--muted);
   text-decoration: none;
-  border-radius: 4px;
-  transition: background 0.1s;
+  border-radius: var(--radius-sm);
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .header-link:hover {
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+  background: var(--surface-2);
 }
 
 .header-divider {
   width: 1px;
   height: 20px;
-  background: rgba(255, 255, 255, 0.2);
-  margin: 0 8px;
+  background: var(--hairline);
+  margin: 0 var(--sp-2);
 }
 
 /* Action buttons (Format, etc.) */
@@ -181,23 +341,31 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 7px 11px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--app-header-text);
+  color: var(--muted);
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .header-action:hover {
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+  background: var(--surface-2);
 }
 
 .header-action:active {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--hairline-2);
+}
+
+.header-action:focus-visible,
+.header-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 /* ============================================
@@ -211,24 +379,32 @@ body {
 .examples-dropdown-trigger {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: var(--sp-2);
+  padding: 7px 11px;
   font-size: 12px;
-  color: var(--app-header-text);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .examples-dropdown-trigger:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.examples-dropdown-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .examples-dropdown-label {
-  color: var(--app-text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .examples-dropdown-value {
@@ -240,7 +416,7 @@ body {
 }
 
 .dropdown-icon {
-  transition: transform 0.15s;
+  transition: transform var(--motion-fast);
   opacity: 0.7;
 }
 
@@ -252,36 +428,39 @@ body {
   position: absolute;
   top: 100%;
   right: 0;
-  margin-top: 4px;
+  margin-top: var(--sp-1);
   min-width: 220px;
-  background: var(--app-panel-bg);
-  border: 1px solid var(--app-border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  background: var(--chip);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   z-index: 1000;
   overflow: hidden;
+  padding: var(--sp-1);
 }
 
 .examples-dropdown-item {
   display: block;
   width: 100%;
-  padding: 10px 14px;
+  padding: 9px 12px;
   font-size: 13px;
   text-align: left;
-  color: var(--app-text);
+  color: var(--ink);
   background: transparent;
   border: none;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .examples-dropdown-item:hover {
-  background: var(--app-bg);
+  background: var(--surface-2);
 }
 
 .examples-dropdown-item.selected {
-  background: var(--app-accent);
-  color: white;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
 }
 
 /* ============================================
@@ -295,15 +474,24 @@ body {
   width: 32px;
   height: 32px;
   background: transparent;
-  border: none;
-  border-radius: 4px;
-  color: var(--app-header-text);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
 }
 
 .theme-toggle:hover {
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--hairline);
+}
+
+.theme-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 /* ============================================
@@ -407,7 +595,7 @@ body {
   width: 1px;
   background: var(--app-border);
   cursor: col-resize;
-  transition: all 0.15s;
+  transition: all var(--motion-fast);
   flex-shrink: 0;
   position: relative;
 }
@@ -459,15 +647,19 @@ body {
    Status Bar
    ============================================ */
 
+/* A quiet surface strip with a hairline, not a saturated chrome bar — status
+   carries its meaning in the signal colour of each item, not in the bar. */
 .status-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 24px;
-  padding: 0 10px;
+  height: 26px;
+  padding: 0 var(--sp-3);
   background: var(--app-statusbar-bg);
   color: var(--app-statusbar-text);
-  font-size: 12px;
+  border-top: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 11px;
   flex-shrink: 0;
 }
 
@@ -482,37 +674,35 @@ body {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 0 8px;
-  height: 24px;
+  padding: 0 var(--sp-2);
+  height: 20px;
+  border-radius: var(--radius-sm);
   cursor: default;
-  transition: background 0.1s;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .status-item:hover {
   background: var(--app-statusbar-item-hover);
 }
 
-.status-item svg {
-  opacity: 0.9;
-}
-
 .status-divider {
   width: 1px;
   height: 14px;
-  background: rgba(255, 255, 255, 0.3);
-  margin: 0 4px;
+  background: var(--hairline);
+  margin: 0 var(--sp-1);
 }
 
 .status-error {
-  background: rgba(241, 76, 76, 0.3);
+  color: var(--sig-bool-false);
+  background: var(--sig-bool-false-bg);
 }
 
 .status-error:hover {
-  background: rgba(241, 76, 76, 0.4);
+  background: color-mix(in srgb, var(--sig-bool-false) 18%, transparent);
 }
 
 .status-success {
-  opacity: 0.9;
+  color: var(--sig-bool-true);
 }
 
 /* ============================================
@@ -533,9 +723,9 @@ body {
   color: var(--app-text-secondary);
   background: transparent;
   border: 1px solid var(--app-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--motion-fast);
 }
 
 .selected-task-info button:hover {
@@ -557,22 +747,27 @@ body {
 }
 
 .shortcut-hint kbd {
-  padding: 1px 4px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 2px;
-  font-family: inherit;
+  padding: 1px 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  font-family: var(--font-mono);
   font-size: 10px;
+  color: var(--muted);
 }
 
 /* ============================================
    Mode Toggle
    ============================================ */
 
+/* Segmented control: a recessed surface track with a raised active chip.
+   Radii are concentric — 10px track, 7px chip inside a 2px inset. */
 .mode-toggle {
   display: flex;
   align-items: center;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
   padding: 2px;
   gap: 2px;
 }
@@ -581,29 +776,31 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 5px 11px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--app-text-muted);
+  color: var(--muted);
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background var(--motion-base) var(--ease-out),
+    color var(--motion-base) var(--ease-out);
 }
 
 .mode-toggle-btn:hover {
-  color: var(--app-header-text);
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
 }
 
 .mode-toggle-btn.active {
-  color: var(--app-header-text);
-  background: var(--app-accent);
+  color: var(--accent);
+  background: var(--chip);
+  box-shadow: var(--shadow-sm);
 }
 
-.mode-toggle-btn.active:hover {
-  background: var(--app-accent-hover);
+.mode-toggle-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .mode-toggle-btn svg {
@@ -643,16 +840,22 @@ body {
   padding: 4px 12px;
   font-size: 12px;
   font-weight: 500;
-  color: white;
+  color: var(--on-signal);
   background: var(--app-success);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background var(--motion-base) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out);
 }
 
 .debug-btn-run:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--app-success) 85%, black);
+  background: color-mix(in srgb, var(--app-success) 82%, var(--ink));
+}
+
+.debug-btn-run:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .debug-btn-run:disabled {
@@ -669,9 +872,9 @@ body {
   color: var(--app-text-secondary);
   background: transparent;
   border: 1px solid var(--app-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--motion-fast);
 }
 
 .debug-btn-reset:hover {
@@ -697,7 +900,7 @@ body {
   gap: 2px;
   background: var(--app-bg);
   border: 1px solid var(--app-border);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   padding: 2px;
 }
 
@@ -709,20 +912,26 @@ body {
   height: 28px;
   background: transparent;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--app-text-secondary);
   cursor: pointer;
-  transition: all 0.1s ease;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .step-btn:hover:not(:disabled) {
-  background: var(--app-accent);
-  color: white;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .step-btn:active:not(:disabled) {
   background: var(--app-accent);
-  color: white;
+  color: var(--on-signal);
+}
+
+.step-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .step-btn:disabled {
@@ -737,29 +946,23 @@ body {
   color: var(--app-success);
   background: var(--app-success-bg);
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: 999px;
   margin-left: 8px;
 }
 
-/* Monaco editor highlighted lines */
+/* Monaco editor highlighted lines — the executing step reads as a live "true"
+   signal, so it carries --sig-bool-true and a rail matching the node chips.
+   Both themes resolve through the tokens, so there is no second rule: the
+   previous `:root .df-highlighted-line` light override outranked the bare
+   selector and left the dark variant dead. */
 .df-highlighted-line {
-  background-color: rgba(78, 201, 176, 0.15) !important;
-  border-left: 3px solid #4ec9b0 !important;
+  background-color: var(--sig-bool-true-bg) !important;
+  border-left: 3px solid var(--sig-bool-true) !important;
 }
 
 .df-highlighted-glyph {
-  background-color: #4ec9b0;
+  background-color: var(--sig-bool-true);
   width: 4px !important;
   margin-left: 3px;
-  border-radius: 2px;
-}
-
-/* Light theme adjustments */
-:root .df-highlighted-line {
-  background-color: rgba(56, 138, 52, 0.12) !important;
-  border-left: 3px solid #388a34 !important;
-}
-
-:root .df-highlighted-glyph {
-  background-color: #388a34;
+  border-radius: 3px;
 }

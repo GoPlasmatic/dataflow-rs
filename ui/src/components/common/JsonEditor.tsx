@@ -2,6 +2,7 @@ import { useRef, useCallback, useEffect } from 'react';
 import Editor, { OnMount, BeforeMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { findPathLineNumbers } from '../../utils';
+import { SIGNAL_BOARD, bare } from './signalBoardTokens';
 
 interface JsonEditorProps {
   value: string;
@@ -15,71 +16,62 @@ interface JsonEditorProps {
   highlightedPaths?: string[];
 }
 
-// Define VSCode-like themes
-const defineThemes: BeforeMount = (monaco) => {
-  // VSCode Dark+ theme
-  monaco.editor.defineTheme('vscode-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [
-      { token: 'string.key.json', foreground: '9CDCFE' },
-      { token: 'string.value.json', foreground: 'CE9178' },
-      { token: 'number', foreground: 'B5CEA8' },
-      { token: 'keyword', foreground: '569CD6' },
-      { token: 'delimiter', foreground: 'D4D4D4' },
-    ],
-    colors: {
-      'editor.background': '#1e1e1e',
-      'editor.foreground': '#d4d4d4',
-      'editor.lineHighlightBackground': '#2d2d2d',
-      'editor.selectionBackground': '#264f78',
-      'editorCursor.foreground': '#aeafad',
-      'editorLineNumber.foreground': '#858585',
-      'editorLineNumber.activeForeground': '#c6c6c6',
-      'editorIndentGuide.background': '#404040',
-      'editorIndentGuide.activeBackground': '#707070',
-      'editor.selectionHighlightBackground': '#3a3d41',
-      'editorBracketMatch.background': '#0064001a',
-      'editorBracketMatch.border': '#888888',
-      'editorGutter.background': '#1e1e1e',
-      'scrollbarSlider.background': '#79797966',
-      'scrollbarSlider.hoverBackground': '#646464b3',
-      'scrollbarSlider.activeBackground': '#bfbfbf66',
-      'minimap.background': '#1e1e1e',
-    },
-  });
+/**
+ * Signal Board Monaco themes.
+ *
+ * JSON syntax is coloured by the SIGNAL rule — the kind of value each token
+ * denotes — so the editor reads in the same colour language as the workflow
+ * tree and the flow diagram: keys tap into data (teal), string values are the
+ * string signal (amber), numbers the number signal (blue), and the literals
+ * true/false/null the boolean signal (red). The chrome — cursor, selection,
+ * gutter, indent guides — sits on the board neutrals, with --accent reserved
+ * for the cursor and selection as it is everywhere else.
+ */
+const signalBoardTheme = (
+  t: typeof SIGNAL_BOARD.light | typeof SIGNAL_BOARD.dark,
+  base: 'vs' | 'vs-dark'
+) => ({
+  base,
+  inherit: true,
+  rules: [
+    { token: 'string.key.json', foreground: bare(t.sigData) },
+    { token: 'string.value.json', foreground: bare(t.sigString) },
+    { token: 'number', foreground: bare(t.sigNumber) },
+    { token: 'keyword', foreground: bare(t.sigBoolFalse) },
+    { token: 'delimiter', foreground: bare(t.muted) },
+  ],
+  colors: {
+    'editor.background': t.surface,
+    'editor.foreground': t.ink,
+    'editor.lineHighlightBackground': t.surface2,
+    'editor.selectionBackground': t.accentSoft,
+    'editor.selectionHighlightBackground': t.surface2,
+    'editorCursor.foreground': t.accent,
+    'editorLineNumber.foreground': t.faint,
+    'editorLineNumber.activeForeground': t.ink2,
+    'editorIndentGuide.background': t.hairline2,
+    'editorIndentGuide.activeBackground': t.hairline,
+    'editorBracketMatch.background': t.accentSoft,
+    'editorBracketMatch.border': t.accent,
+    'editorGutter.background': t.surface,
+    'editorWidget.background': t.surface,
+    'editorWidget.border': t.hairline,
+    'scrollbarSlider.background': `${t.faint}59`,
+    'scrollbarSlider.hoverBackground': `${t.muted}99`,
+    'scrollbarSlider.activeBackground': `${t.muted}cc`,
+    'minimap.background': t.surface,
+  },
+});
 
-  // VSCode Light+ theme
-  monaco.editor.defineTheme('vscode-light', {
-    base: 'vs',
-    inherit: true,
-    rules: [
-      { token: 'string.key.json', foreground: '0451A5' },
-      { token: 'string.value.json', foreground: 'A31515' },
-      { token: 'number', foreground: '098658' },
-      { token: 'keyword', foreground: '0000FF' },
-      { token: 'delimiter', foreground: '000000' },
-    ],
-    colors: {
-      'editor.background': '#ffffff',
-      'editor.foreground': '#000000',
-      'editor.lineHighlightBackground': '#f5f5f5',
-      'editor.selectionBackground': '#add6ff',
-      'editorCursor.foreground': '#000000',
-      'editorLineNumber.foreground': '#999999',
-      'editorLineNumber.activeForeground': '#000000',
-      'editorIndentGuide.background': '#d3d3d3',
-      'editorIndentGuide.activeBackground': '#939393',
-      'editor.selectionHighlightBackground': '#add6ff4d',
-      'editorBracketMatch.background': '#0064001a',
-      'editorBracketMatch.border': '#b9b9b9',
-      'editorGutter.background': '#ffffff',
-      'scrollbarSlider.background': '#64646466',
-      'scrollbarSlider.hoverBackground': '#646464b3',
-      'scrollbarSlider.activeBackground': '#00000099',
-      'minimap.background': '#ffffff',
-    },
-  });
+const defineThemes: BeforeMount = (monaco) => {
+  monaco.editor.defineTheme(
+    'signal-board-dark',
+    signalBoardTheme(SIGNAL_BOARD.dark, 'vs-dark')
+  );
+  monaco.editor.defineTheme(
+    'signal-board-light',
+    signalBoardTheme(SIGNAL_BOARD.light, 'vs')
+  );
 };
 
 export function JsonEditor({
@@ -143,7 +135,10 @@ export function JsonEditor({
           className: 'df-highlighted-line',
           glyphMarginClassName: 'df-highlighted-glyph',
           overviewRuler: {
-            color: theme === 'dark' ? '#4ec9b0' : '#388a34',
+            color:
+              theme === 'dark'
+                ? SIGNAL_BOARD.dark.sigBoolTrue
+                : SIGNAL_BOARD.light.sigBoolTrue,
             position: 1, // Left
           },
         },
@@ -172,12 +167,14 @@ export function JsonEditor({
         onChange={handleChange}
         onMount={handleEditorMount}
         beforeMount={defineThemes}
-        theme={theme === 'dark' ? 'vscode-dark' : 'vscode-light'}
+        theme={theme === 'dark' ? 'signal-board-dark' : 'signal-board-light'}
         options={{
           readOnly,
           minimap: { enabled: false },
           fontSize: 13,
-          fontFamily: "'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace",
+          // Mirrors --font-mono. Monaco needs a literal stack, not a var().
+          fontFamily:
+            "'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', 'Consolas', monospace",
           lineHeight: 20,
           tabSize: 2,
           insertSpaces: true,

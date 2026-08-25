@@ -4,7 +4,7 @@
 
 /* Root */
 .df-root {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.5;
   color: var(--df-text-primary);
@@ -18,7 +18,7 @@
   flex-direction: column;
   height: 100%;
   background: var(--df-bg-secondary);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -105,7 +105,7 @@
   background: var(--df-border-color);
   cursor: col-resize;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
   position: relative;
 }
 
@@ -190,13 +190,13 @@
   padding: 8px 12px;
   background: var(--df-bg-secondary);
   border: 1px solid var(--df-border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   min-width: 280px;
 }
 
 .df-search-input:focus-within {
   border-color: var(--df-accent-primary);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  box-shadow: var(--focus-ring);
 }
 
 .df-search-icon {
@@ -257,9 +257,9 @@
   color: var(--df-text-secondary);
   background: var(--df-bg-primary);
   border: 1px solid var(--df-border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-action-button:hover {
@@ -280,7 +280,7 @@
 .df-workflow-card {
   background: var(--df-bg-primary);
   border: 1px solid var(--df-border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   box-shadow: var(--df-shadow);
 }
@@ -296,7 +296,7 @@
   padding: 14px 16px;
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .df-workflow-header:hover {
@@ -352,7 +352,7 @@
   color: var(--df-text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-workflow-header:hover .df-workflow-settings {
@@ -391,13 +391,13 @@
 .df-workflow-condition {
   background: var(--df-bg-primary);
   border: 1px solid var(--df-border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 12px;
 }
 
 .df-condition-code {
   margin: 0;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   color: var(--df-text-secondary);
   white-space: pre-wrap;
@@ -441,9 +441,9 @@
   padding: 10px 12px;
   background: var(--df-bg-primary);
   border: 1px solid var(--df-border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-task-row:hover {
@@ -453,7 +453,7 @@
 
 .df-task-row-highlighted {
   border-color: var(--df-accent-primary);
-  background: rgba(59, 130, 246, 0.05);
+  background: var(--accent-soft);
 }
 
 .df-task-index {
@@ -556,10 +556,10 @@
   max-width: var(--df-tooltip-width);
   max-height: var(--df-tooltip-max-height);
   overflow: hidden;
-  background: #1e293b;
-  border: 1px solid #334155;
-  border-radius: 8px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  background: var(--chip);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
 }
 
 .df-condition-tooltip-header {
@@ -568,9 +568,10 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #94a3b8;
-  background: #0f172a;
-  border-bottom: 1px solid #334155;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--hairline-2);
 }
 
 .df-condition-tooltip-content {
@@ -607,7 +608,7 @@
    ============================================ */
 
 .df-json-viewer {
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -733,7 +734,7 @@
   height: 48px;
   background: var(--df-bg-primary);
   border: 2px solid var(--df-accent-primary);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--df-accent-primary);
   font-weight: 600;
   font-size: 12px;
@@ -757,7 +758,7 @@
   width: 240px;
   background: var(--df-bg-primary);
   border: 1px solid var(--df-border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   box-shadow: var(--df-shadow);
   flex-shrink: 0;
@@ -770,9 +771,9 @@
   gap: 8px;
   padding: 10px 12px;
   background: var(--df-accent-primary);
-  color: white;
+  color: var(--on-signal);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .df-flow-workflow-header:hover {
@@ -783,8 +784,8 @@
   font-size: 10px;
   font-weight: 600;
   padding: 2px 6px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
+  background: color-mix(in srgb, var(--on-signal) 20%, transparent);
+  border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
 
@@ -821,13 +822,13 @@
 
 /* Workflow header condition icons */
 .df-flow-workflow-header .df-condition-icon-always {
-  color: #4ade80;
-  background: rgba(74, 222, 128, 0.2);
+  color: var(--on-signal);
+  background: color-mix(in srgb, var(--on-signal) 22%, transparent);
 }
 
 .df-flow-workflow-header .df-condition-icon-conditional {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.2);
+  color: var(--on-signal);
+  background: color-mix(in srgb, var(--on-signal) 22%, transparent);
 }
 
 /* Task list within workflow */
@@ -846,8 +847,8 @@
   padding: 10px;
   background: var(--df-bg-secondary);
   border: 1px solid var(--df-border-color);
-  border-radius: 6px;
-  transition: all 0.15s ease;
+  border-radius: var(--radius-sm);
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-flow-task:hover {
@@ -857,7 +858,7 @@
 
 .df-flow-task-highlighted {
   border-color: var(--df-accent-primary);
-  background: rgba(59, 130, 246, 0.05);
+  background: var(--accent-soft);
 }
 
 /* Task header row */
@@ -913,7 +914,7 @@
   border: 1px solid var(--df-border-color);
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
 }
 
 .df-flow-task-details-link:hover {
@@ -1010,7 +1011,7 @@
   border-radius: 4px;
   color: var(--df-text-muted);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: all var(--motion-fast);
 }
 
 .df-details-close:hover {
@@ -1102,9 +1103,9 @@
   padding: 10px 12px;
   background: var(--df-bg-secondary);
   border: 1px solid var(--df-border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--motion-fast);
 }
 
 .df-validation-rule-item:hover {
@@ -1133,7 +1134,7 @@
 
 .df-validation-rule-item.df-rule-selected .df-rule-index {
   background: var(--df-accent-primary);
-  color: white;
+  color: var(--on-signal);
 }
 
 .df-rule-message {
@@ -1166,12 +1167,12 @@
 .df-details-code {
   margin: 0;
   padding: 12px;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
   background: var(--df-bg-secondary);
   border: 1px solid var(--df-border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: auto;
   max-height: 150px;
 }
@@ -1179,12 +1180,12 @@
 /* Clickable condition icon */
 .df-condition-icon-clickable {
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform var(--motion-fast), box-shadow var(--motion-fast);
 }
 
 .df-condition-icon-clickable:hover {
   transform: scale(1.1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-md);
 }
 
 .df-condition-icon-selected {
@@ -1209,7 +1210,7 @@
   padding: 12px;
   background: var(--df-bg-secondary);
   border: 1px solid var(--df-border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: auto;
   max-height: 150px;
 }
@@ -1226,10 +1227,10 @@
   justify-content: center;
   padding: 4px 10px;
   background: var(--df-accent-primary);
-  color: white;
+  color: var(--on-signal);
   font-size: 12px;
   font-weight: 600;
-  font-family: 'SF Mono', Monaco, monospace;
+  font-family: var(--font-mono);
   border-radius: 4px;
   flex-shrink: 0;
 }
@@ -1259,7 +1260,7 @@
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
-  font-family: 'SF Mono', Monaco, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   border-radius: 4px;
   background: var(--df-bg-tertiary);
@@ -1284,7 +1285,7 @@
 
 .df-logic-bracket {
   color: var(--df-text-muted);
-  font-family: 'SF Mono', Monaco, monospace;
+  font-family: var(--font-mono);
 }
 
 .df-logic-comma {
@@ -1327,7 +1328,7 @@
 
 .df-logic-key {
   color: var(--df-accent-primary);
-  font-family: 'SF Mono', Monaco, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -1357,7 +1358,7 @@
   padding: var(--df-spacing-lg);
   background: var(--df-bg-primary);
   border: 1px solid var(--df-error);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   text-align: center;
 }
 
@@ -1378,12 +1379,12 @@
   padding: var(--df-spacing-sm) var(--df-spacing-lg);
   font-size: 14px;
   font-weight: 500;
-  color: white;
+  color: var(--on-signal);
   background: var(--df-accent-primary);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
 .df-error-boundary-button:hover {
@@ -1439,7 +1440,7 @@
   color: var(--df-success);
   background: color-mix(in srgb, var(--df-success) 15%, transparent);
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   margin-left: auto;
 }
 
@@ -1472,7 +1473,7 @@
 .df-result-json {
   margin: 0;
   padding: 12px;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   color: var(--df-text-primary);
@@ -1487,7 +1488,7 @@
   background: var(--df-border-color);
   cursor: row-resize;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: all var(--motion-fast) var(--ease-out);
   position: relative;
 }
 
@@ -1525,8 +1526,9 @@
   font-size: 11px;
   font-weight: 500;
   line-height: 1.6;
-  background: color-mix(in srgb, var(--accent-violet) 14%, transparent);
-  color: var(--accent-violet);
+  font-family: var(--font-mono);
+  background: var(--sig-collection-bg);
+  color: var(--sig-collection);
 }
 
 .df-loop-badge-text {

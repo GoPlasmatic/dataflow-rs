@@ -176,7 +176,13 @@ function VisualizerInner({
 
   return (
     <ErrorBoundary>
-      <div className={`df-visualizer-container df-theme-${resolvedTheme}`}>
+      {/* `data-theme` is the Signal Board switch, matching the embedded
+          datalogic logic editor. The `df-theme-*` class is kept alongside it
+          as a deprecated shim for consumers styling against the old pair. */}
+      <div
+        className={`df-visualizer-container df-theme-${resolvedTheme}`}
+        data-theme={resolvedTheme}
+      >
         {/* Title bar with debug controls */}
         <div className="df-visualizer-title-bar">
           <span className="df-visualizer-title">Workflows</span>

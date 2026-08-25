@@ -1,121 +1,294 @@
-/* ============================================
-   VSCode-Inspired Theme Variables
-   ============================================ */
+/*
+ * Dataflow UI — "Signal Board" theme tokens
+ * ============================================================
+ * The same visual language as @goplasmatic/datalogic-ui, so the workflow
+ * visualizer and the JSONLogic editor it embeds read as one product rather
+ * than two. Every design decision is a CSS custom property, all scoped to
+ * `.df-visualizer-container` so nothing leaks into the host app.
+ *
+ * THE SYSTEM
+ * ----------
+ * The SIGNAL palette (`--sig-*`) is the primary colour axis: a thing is
+ * coloured by the *kind of value it produces*. A `map` task writes data, so
+ * it is `--sig-data`; a `validation` task produces messages, so it is
+ * `--sig-string`. The neutral board tokens (`--board`, `--ink`, `--hairline`)
+ * set the calm substrate everything sits on, and `--accent` is reserved
+ * strictly for selection / focus / active control — never for decoration.
+ *
+ * OVERRIDING FROM A CONSUMER APP
+ * ------------------------------
+ * Import the stylesheet once, then redefine any token with equal-or-greater
+ * specificity:
+ *
+ *   1. Re-tune the whole component:
+ *        .df-visualizer-container { --accent: #db2777; --board: #f7f7f8; }
+ *        .df-visualizer-container[data-theme="dark"] { --board: #0b0b0f; }
+ *
+ *   2. Scope an override to one instance (pass className to WorkflowVisualizer):
+ *        .my-visualizer.df-visualizer-container { --sig-data: #0ea5e9; }
+ *
+ * The `--df-*` tokens are the stable public API and are kept, but they are now
+ * aliases onto the board rather than literals — override the board tokens
+ * above them and the whole component follows.
+ */
 
-.df-theme-light {
-  /* Colors - VSCode Light+ inspired */
-  --df-bg-primary: #ffffff;
-  --df-bg-secondary: #f3f3f3;
-  --df-bg-tertiary: #ececec;
-  --df-bg-hover: #e8e8e8;
-  --df-border-color: #e5e5e5;
-  --df-border-color-strong: #cccccc;
-  --df-text-primary: #333333;
-  --df-text-secondary: #6e6e6e;
-  --df-text-tertiary: #848484;
-  --df-text-muted: #999999;
-  --df-accent-primary: #0078d4;
-  --df-accent-secondary: #006cbd;
-  --df-success: #388a34;
-  --df-warning: #bf8803;
-  --df-error: #f14c4c;
-  --df-info: #1a85ff;
-  --df-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-  --df-shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.12);
+.df-visualizer-container {
+  /* ---- Fonts ------------------------------------------------------ */
+  /* Named, not loaded. The host app self-hosts the faces (see src/main.tsx);
+     absent them, the fallback stack carries the UI unchanged. */
+  --font-ui: 'Space Grotesk', ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code',
+    'Consolas', monospace;
 
-  /* Layout sizes */
+  /* ---- Substrate — cool paper (light default) -------------------- */
+  --board: #eef1f5;
+  --board-grid: rgba(20, 40, 70, 0.05);
+  --surface: #ffffff;
+  --surface-2: #f6f8fb;
+  --chip: #ffffff;
+  --hairline: #d6dde6;
+  --hairline-2: #e6ebf1;
+
+  --ink: #0e1826;
+  --ink-2: #33475e;
+  --muted: #5b6a7d;
+  --faint: #9aa9ba; /* NON-TEXT only: idle wires, dot-grid, dashed slots */
+
+  /* ---- Structural accent — used ONLY for selection/focus/active --- */
+  --accent: #4b56d6;
+  --accent-soft: #e7e9fb;
+  --accent-hover: #3a44c0;
+
+  /* ---- SIGNAL palette — colour = the value that flows OUT --------- */
+  --sig-bool-true: #1a7f37;
+  --sig-bool-false: #cf222e;
+  --sig-bool-rest: #57708a;
+  --sig-number: #0959c0;
+  --sig-string: #8a5a00;
+  --sig-collection: #8250df;
+  --sig-data: #1b7c83;
+  --sig-temporal: #bf3989;
+  --sig-null: #6e7781;
+
+  --sig-bool-true-bg: rgba(26, 127, 55, 0.10);
+  --sig-bool-false-bg: rgba(207, 34, 46, 0.10);
+  --sig-number-bg: rgba(9, 105, 218, 0.10);
+  --sig-string-bg: rgba(154, 103, 0, 0.12);
+  --sig-collection-bg: rgba(130, 80, 223, 0.10);
+  --sig-data-bg: rgba(27, 124, 131, 0.10);
+  --sig-temporal-bg: rgba(191, 57, 137, 0.10);
+  --sig-null-bg: rgba(110, 119, 129, 0.10);
+
+  /* ---- Radius & spacing scales ----------------------------------- */
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
+
+  /* ---- Elevation ------------------------------------------------- */
+  --shadow-sm: 0 1px 2px rgba(16, 30, 54, 0.05);
+  --shadow-md: 0 1px 2px rgba(16, 30, 54, 0.06), 0 2px 6px rgba(16, 30, 54, 0.06);
+  --shadow-lg: 0 8px 30px rgba(16, 30, 54, 0.14), 0 2px 8px rgba(16, 30, 54, 0.08);
+
+  /* ---- Motion ---------------------------------------------------- */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 260ms;
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Foreground for text sitting ON a filled signal/accent colour.
+     Light theme signals are dark, so this is white; dark theme signals
+     are bright, so it flips to the board. */
+  --on-signal: #ffffff;
+
+  --focus-ring: 0 0 0 2px var(--accent);
+
+  /* ============================================================
+     PUBLIC --df-* API — aliases onto the board, not literals.
+     Kept stable for consumers; prefer overriding the tokens above.
+     ============================================================ */
+  --df-bg-primary: var(--board);
+  --df-bg-secondary: var(--surface);
+  --df-bg-tertiary: var(--surface-2);
+  --df-bg-hover: var(--surface-2);
+  --df-bg-active: var(--hairline-2);
+  --df-chip: var(--chip);
+
+  --df-border-color: var(--hairline);
+  --df-border-color-strong: color-mix(in srgb, var(--hairline) 70%, var(--ink));
+
+  --df-text-primary: var(--ink);
+  --df-text-secondary: var(--ink-2);
+  --df-text-tertiary: var(--muted);
+  --df-text-muted: var(--muted);
+  --df-text-placeholder: var(--faint);
+
+  --df-accent-primary: var(--accent);
+  --df-accent-secondary: var(--accent-hover);
+  --df-accent-soft: var(--accent-soft);
+
+  /* Status — pass/fail is a boolean signal */
+  --df-success: var(--sig-bool-true);
+  --df-success-bg: var(--sig-bool-true-bg);
+  --df-warning: var(--sig-string);
+  --df-warning-bg: var(--sig-string-bg);
+  --df-error: var(--sig-bool-false);
+  --df-error-bg: var(--sig-bool-false-bg);
+  --df-info: var(--sig-number);
+  --df-info-bg: var(--sig-number-bg);
+
+  --df-shadow: var(--shadow-md);
+  --df-shadow-lg: var(--shadow-lg);
+
+  /* ---- Layout sizes ---------------------------------------------- */
   --df-tooltip-width: 360px;
   --df-tooltip-max-height: 300px;
   --df-flow-column-width: 240px;
   --df-icon-size-sm: 12px;
   --df-icon-size-md: 16px;
-  --df-spacing-xs: 4px;
-  --df-spacing-sm: 8px;
-  --df-spacing-md: 12px;
-  --df-spacing-lg: 16px;
+  --df-spacing-xs: var(--sp-1);
+  --df-spacing-sm: var(--sp-2);
+  --df-spacing-md: var(--sp-3);
+  --df-spacing-lg: var(--sp-4);
 
-  /* Function badge colors */
-  --df-function-map: #388a34;
-  --df-function-validation: #bf8803;
-  --df-function-builtin: #2f6fb3;
-  --df-function-custom: #6e6e6e;
+  --df-radius-sm: var(--radius-sm);
+  --df-radius-md: var(--radius-md);
+  --df-radius-lg: var(--radius-lg);
 
-  /* DataLogic UI theme variables (for diagram visualizer) - must match @goplasmatic/datalogic-ui :root */
-  --bg-primary: #f5f5f5;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #fafafa;
-  --bg-hover: #f0f0f0;
-  --text-primary: #333333;
-  --text-secondary: #555555;
-  --text-tertiary: #666666;
-  --text-muted: #999999;
-  --border-primary: #e0e0e0;
-  --border-light: #eeeeee;
-  --accent-blue: #3b82f6;
-  --accent-blue-hover: #2563eb;
-  --accent-blue-light: #dbeafe;
-  --accent-amber: #f59e0b;
-  --accent-violet: #8b5cf6;
-  --node-shadow: rgba(0, 0, 0, 0.1);
-  --node-shadow-hover: rgba(0, 0, 0, 0.15);
-  --node-bg: #ffffff;
+  /* ---- Function badges — coloured by what the task emits ---------- */
+  --df-function-map: var(--sig-data);          /* writes into data      */
+  --df-function-validation: var(--sig-string); /* emits messages        */
+  --df-function-builtin: var(--sig-number);    /* the structural spine  */
+  --df-function-custom: var(--sig-collection); /* open-ended            */
+
+  --df-function-map-bg: var(--sig-data-bg);
+  --df-function-validation-bg: var(--sig-string-bg);
+  --df-function-builtin-bg: var(--sig-number-bg);
+  --df-function-custom-bg: var(--sig-collection-bg);
+
+  font-family: var(--font-ui);
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--ink);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.df-theme-dark {
-  /* Colors - VSCode Dark+ inspired */
-  --df-bg-primary: #252526;
-  --df-bg-secondary: #1e1e1e;
-  --df-bg-tertiary: #2d2d2d;
-  --df-bg-hover: #3c3c3c;
-  --df-border-color: #3c3c3c;
-  --df-border-color-strong: #4d4d4d;
-  --df-text-primary: #cccccc;
-  --df-text-secondary: #9d9d9d;
-  --df-text-tertiary: #858585;
-  --df-text-muted: #6e6e6e;
-  --df-accent-primary: #0078d4;
-  --df-accent-secondary: #1c97ea;
-  --df-success: #4ec9b0;
-  --df-warning: #dcdcaa;
-  --df-error: #f14c4c;
-  --df-info: #75beff;
-  --df-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-  --df-shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.3);
+.df-visualizer-container *,
+.df-visualizer-container *::before,
+.df-visualizer-container *::after {
+  box-sizing: border-box;
+}
 
-  /* Layout sizes */
-  --df-tooltip-width: 360px;
-  --df-tooltip-max-height: 300px;
-  --df-flow-column-width: 240px;
-  --df-icon-size-sm: 12px;
-  --df-icon-size-md: 16px;
-  --df-spacing-xs: 4px;
-  --df-spacing-sm: 8px;
-  --df-spacing-md: 12px;
-  --df-spacing-lg: 16px;
+.df-visualizer-container button {
+  font-family: inherit;
+}
 
-  /* Function badge colors */
-  --df-function-map: #4ec9b0;
-  --df-function-validation: #dcdcaa;
-  --df-function-builtin: #6fb3e0;
-  --df-function-custom: #9d9d9d;
+/* ============================================================
+   DARK — "lit logic board"
+   ============================================================ */
+.df-visualizer-container[data-theme="dark"] {
+  --board: #0a0f16;
+  --board-grid: rgba(120, 170, 255, 0.06);
+  --surface: #10161f;
+  --surface-2: #141b26;
+  --chip: #161d28;
+  --hairline: #263140;
+  --hairline-2: #1d2632;
 
-  /* DataLogic UI theme variables (for diagram visualizer) - must match @goplasmatic/datalogic-ui [data-theme="dark"] */
-  --bg-primary: #1a1a1a;
-  --bg-secondary: #242424;
-  --bg-tertiary: #2a2a2a;
-  --bg-hover: #333333;
-  --text-primary: #e5e5e5;
-  --text-secondary: #cccccc;
-  --text-tertiary: #b3b3b3;
-  --text-muted: #888888;
-  --border-primary: #404040;
-  --border-light: #333333;
-  --accent-blue: #60a5fa;
-  --accent-blue-hover: #3b82f6;
-  --accent-blue-light: #1e3a5f;
-  --accent-amber: #fbbf24;
-  --accent-violet: #a78bfa;
-  --node-shadow: rgba(0, 0, 0, 0.3);
-  --node-shadow-hover: rgba(0, 0, 0, 0.4);
-  --node-bg: #2d2d2d;
+  --ink: #e6edf5;
+  --ink-2: #b3c1d1;
+  --muted: #8a9cb0;
+  --faint: #566172;
+
+  --accent: #7c86f5;
+  --accent-soft: #1b2140;
+  --accent-hover: #9aa2f8;
+  --on-signal: #0a0f16;
+
+  --sig-bool-true: #3fb950;
+  --sig-bool-false: #f85149;
+  --sig-bool-rest: #8098b0;
+  --sig-number: #58a6ff;
+  --sig-string: #e3b341;
+  --sig-collection: #bc8cff;
+  --sig-data: #39c5cf;
+  --sig-temporal: #db61a2;
+  --sig-null: #8b949e;
+
+  --sig-bool-true-bg: rgba(63, 185, 80, 0.13);
+  --sig-bool-false-bg: rgba(248, 81, 73, 0.13);
+  --sig-number-bg: rgba(88, 166, 255, 0.13);
+  --sig-string-bg: rgba(227, 179, 65, 0.14);
+  --sig-collection-bg: rgba(188, 140, 255, 0.13);
+  --sig-data-bg: rgba(57, 197, 207, 0.13);
+  --sig-temporal-bg: rgba(219, 97, 162, 0.14);
+  --sig-null-bg: rgba(139, 148, 158, 0.14);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.4);
+
+  --df-border-color-strong: color-mix(in srgb, var(--hairline) 65%, var(--ink));
+
+  color-scheme: dark;
+}
+
+/* ============================================================
+   DEPRECATED — the pre-3.8 class-pair theme switch.
+   `.df-theme-light` / `.df-theme-dark` are still emitted alongside the
+   `data-theme` attribute so consumers targeting them keep working. Only the
+   dark pairing needs a rule: light is the default declaration above.
+   Remove in the next major.
+   ============================================================ */
+.df-visualizer-container.df-theme-dark:not([data-theme]) {
+  --board: #0a0f16;
+  --board-grid: rgba(120, 170, 255, 0.06);
+  --surface: #10161f;
+  --surface-2: #141b26;
+  --chip: #161d28;
+  --hairline: #263140;
+  --hairline-2: #1d2632;
+
+  --ink: #e6edf5;
+  --ink-2: #b3c1d1;
+  --muted: #8a9cb0;
+  --faint: #566172;
+
+  --accent: #7c86f5;
+  --accent-soft: #1b2140;
+  --accent-hover: #9aa2f8;
+  --on-signal: #0a0f16;
+
+  --sig-bool-true: #3fb950;
+  --sig-bool-false: #f85149;
+  --sig-bool-rest: #8098b0;
+  --sig-number: #58a6ff;
+  --sig-string: #e3b341;
+  --sig-collection: #bc8cff;
+  --sig-data: #39c5cf;
+  --sig-temporal: #db61a2;
+  --sig-null: #8b949e;
+
+  --sig-bool-true-bg: rgba(63, 185, 80, 0.13);
+  --sig-bool-false-bg: rgba(248, 81, 73, 0.13);
+  --sig-number-bg: rgba(88, 166, 255, 0.13);
+  --sig-string-bg: rgba(227, 179, 65, 0.14);
+  --sig-collection-bg: rgba(188, 140, 255, 0.13);
+  --sig-data-bg: rgba(57, 197, 207, 0.13);
+  --sig-temporal-bg: rgba(219, 97, 162, 0.14);
+  --sig-null-bg: rgba(139, 148, 158, 0.14);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.4);
+
+  --df-border-color-strong: color-mix(in srgb, var(--hairline) 65%, var(--ink));
+
+  color-scheme: dark;
 }
