@@ -342,7 +342,7 @@ function initFullPlayground() {
             payload: '{"items":["a","special","b"],"values":[10,20,30]}'
         },
         'Conditional Workflow': {
-            workflows: '[{"id":"parse_input","name":"Parse Input","priority":1,"tasks":[' + parseTask + ']},{"id":"high_value","name":"High Value Order","priority":2,"condition":{">":[{"var":"data.input.amount"},100]},"tasks":[{"id":"flag","function":{"name":"map","input":{"mappings":[{"path":"data.message","logic":"High value order detected!"},{"path":"data.priority","logic":"high"}]}}}]},{"id":"standard","name":"Standard Order","priority":2,"condition":{"<=":[{"var":"data.input.amount"},100]},"tasks":[{"id":"flag","function":{"name":"map","input":{"mappings":[{"path":"data.message","logic":"Standard order"},{"path":"data.priority","logic":"normal"}]}}}]}]',
+            workflows: '[{"id":"parse_input","name":"Parse Input","priority":1,"tasks":[' + parseTask + ']},{"id":"high_value","name":"High Value Order","priority":2,"condition":{">":[{"var":"data.input.amount"},100]},"tasks":[{"id":"flag","name":"Flag Order","function":{"name":"map","input":{"mappings":[{"path":"data.message","logic":"High value order detected!"},{"path":"data.priority","logic":"high"}]}}}]},{"id":"standard","name":"Standard Order","priority":2,"condition":{"<=":[{"var":"data.input.amount"},100]},"tasks":[{"id":"flag","name":"Flag Order","function":{"name":"map","input":{"mappings":[{"path":"data.message","logic":"Standard order"},{"path":"data.priority","logic":"normal"}]}}}]}]',
             payload: '{"amount":150,"item":"widget"}'
         },
         'Complete Example': {

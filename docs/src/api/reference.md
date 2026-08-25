@@ -79,9 +79,157 @@ pub fn workflows(&self) -> &Arc<Vec<Workflow>>
 // Find a workflow by ID
 pub fn workflow_by_id(&self, id: &str) -> Option<&Workflow>
 
-// Create a new engine with different workflows, preserving custom functions
-pub fn with_new_workflows(&self, workflows: Vec<Workflow>) -> Self
+// Create a new engine with different workflows, preserving custom functions.
+// Fallible: the new definitions are compiled and validated here.
+pub fn with_new_workflows(&self, workflows: Vec<Workflow>) -> Result<Self>
+
+// Attach a lifecycle observer, consuming and returning the engine
+pub fn with_observer(self, observer: Arc<dyn ExecutionObserver>) -> Self
+
+// Borrow the underlying JSONLogic engine
+pub fn datalogic(&self) -> &Arc<datalogic_rs::Engine>
 ```
+
+### Introspection
+
+Added in 3.7.0, for hosts that store, validate and operate workflow
+definitions. `can_dispatch`, `dispatchable_functions` and `check_workflow` are
+available on both `Engine` and `EngineBuilder`, so a definition can be checked
+before anything is built. `operator_names` is on `Engine` only.
+
+```rust,ignore
+// Will a task named `name` actually run? `false` guarantees it fails with
+// FunctionNotFound on the first message that reaches it.
+pub fn can_dispatch(&self, name: &str) -> bool
+
+// The full vocabulary this engine dispatches. Aliases are grouped, so
+// `validate` appears once carrying ["validation"]. Ordering is not meaningful.
+pub fn dispatchable_functions(&self) -> impl Iterator<Item = DispatchableFunction<'_>>
+
+// Check a workflow against the registered handlers without building anything.
+// Reports rather than aborts; empty means build() will not reject it for these
+// reasons. Covers UnknownFunction, MissingHandler, InputParse, TemplateCompile.
+pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue>
+
+// Every operator name this build evaluates: core, plus enabled families, plus
+// custom registrations. See the JSONLogic page on operator families.
+pub fn operator_names(&self) -> impl Iterator<Item = &str> + '_
+```
+
+```rust,ignore
+pub struct DispatchableFunction<'a> {
+    pub name: &'a str,
+    /// `Some(..)` for a built-in; `None` for a registered custom handler.
+    pub kind: Option<BuiltinKind>,
+    pub aliases: &'static [&'static str],
+}
+```
+
+`can_dispatch` answers the half of the question `builtin_function_kind` cannot:
+that function reports `enrich` *needs* a handler, but not whether one is
+registered. A workflow using a config-only integration with nothing behind it
+still builds cleanly — deliberately — so this is the check that catches it
+before activation rather than on the first request.
+
+## Authoring-time validation
+
+Check a definition before it ever reaches an engine. See
+[Authoring-Time Validation](../advanced/authoring-validation.md) for the
+submission-time sequence.
+
+```rust,ignore
+// Check a definition's JSON without building an engine. Collects *every*
+// problem rather than failing at the first, each carrying the coordinate the
+// author typed (`tasks[1].tasks[0].id`), a stable code, and a message.
+//
+// Returns empty if and only if the JSON parses into a Workflow and that
+// workflow validates.
+impl Workflow {
+    pub fn validate_authored(json: &serde_json::Value) -> Vec<WorkflowIssue>
+}
+
+pub struct WorkflowIssue {
+    pub code: IssueCode,
+    /// Human-readable. Not stable — branch on `code`.
+    pub message: String,
+    /// Authored coordinate, e.g. `tasks[1].tasks[0].id`.
+    pub path: Option<String>,
+    pub step_id: Option<String>,
+}
+
+#[non_exhaustive]
+pub enum IssueCode { /* ... */ }
+
+impl IssueCode {
+    pub fn as_str(&self) -> &'static str
+}
+```
+
+`IssueCode` is an enum rather than string codes because a host branching on a
+string literal has no protection against a typo that compiles and silently
+never matches. Its variants cover the structural rules —
+`EmptyWorkflowId`, `EmptyWorkflowName`, `NoTasks`, `MissingStepId`,
+`DuplicateStepId`, `EmptyGroup`, `GroupTooDeep`, `MissingFunction`,
+`InvalidFunctionName`, `InvalidTerminal`, `LoopIncrementTooSmall`,
+`LoopBoundEmpty`, `LoopCounterInvalid` — the registry rules reported by
+`check_workflow` — `UnknownFunction`, `MissingHandler`, `InputParse`,
+`TemplateCompile` — and the two backstops, `ParseFailed` and `ValidateFailed`.
+
+`MissingHandler` is deliberately distinct from `UnknownFunction`: `enrich`,
+`http_call` and `publish_kafka` are real names awaiting a registration, and
+reporting them as unknown would send an author hunting a typo that is not there.
+
+`check_workflow` receives an already-flattened workflow, so its issues anchor on
+`task_id` with a task-relative path (`function.input`) rather than an authored
+coordinate. Join them with the walker to recover one:
+
+```rust,ignore
+// Walk the authored step tree — tasks and groups, in document order — yielding
+// each step with the coordinate the author typed.
+pub fn walk_authored_steps(tasks: &serde_json::Value) -> AuthoredSteps<'_>
+```
+
+## Retry
+
+Native only — the loop uses tokio time, so it is not compiled for
+`wasm32-unknown-unknown`. Nothing in the engine retries a task for you; this is
+the loop to wrap your own fallible calls in, typically inside a custom handler.
+
+```rust,ignore
+pub struct RetryPolicy {
+    /// Retries *after* the first attempt. `0` means try once and give up.
+    pub max_retries: u32,
+    /// Base delay in milliseconds. Doubles per attempt, capped at 60s.
+    pub retry_delay_ms: u64,
+    /// Wall-clock ceiling for the whole loop, sleeps included.
+    pub deadline: Option<Duration>,
+}
+
+impl RetryPolicy {
+    /// Three retries, 100ms base delay, no deadline.
+    fn default() -> Self
+    /// Never retries — an explicit opt-out at a call site that takes a policy.
+    pub fn none() -> Self
+}
+
+// Run `operation`, retrying while it fails *retryably* and budget remains.
+pub async fn retry_with_policy<T, F, Fut>(policy: RetryPolicy, label: &str, operation: F) -> Result<T>
+
+// As above, also reporting how many attempts were made — the count that fills
+// ErrorInfo::retry_attempted and retry_count.
+pub async fn retry_with_attempts<T, F, Fut>(policy: RetryPolicy, label: &str, operation: F) -> (Result<T>, u32)
+```
+
+Two behaviours worth knowing:
+
+- **Retryability is declared, not inferred.** The loop consults
+  `DataflowError::retryable()`, so a validation error fails once and returns
+  immediately. For your own failures, use
+  `DataflowError::service(..).retryable(true).build()`.
+- **A backoff that would cross the deadline is skipped, not slept**, and the
+  loop ends with the last error. The deadline bounds the sleeps; it does not
+  abort an attempt already in flight, so pair it with a per-attempt timeout if
+  your operation can hang.
 
 ## Workflow (Rule)
 
@@ -109,16 +257,18 @@ pub fn rule(id: &str, name: &str, condition: Value, tasks: Vec<Task>) -> Self
 ```json
 {
     "id": "string (required)",
-    "name": "string (optional)",
+    "name": "string (required)",
+    "description": "string (optional)",
     "priority": "number (optional, default: 0)",
     "condition": "JSONLogic (optional, evaluated against full context)",
     "continue_on_error": "boolean (optional, default: false)",
-    "tasks": "array of Task (required)",
+    "tasks": "array of Task or TaskGroup (required)",
     "channel": "string (optional, default: 'default')",
     "version": "number (optional, default: 1)",
     "status": "'active' | 'paused' | 'archived' (optional, default: 'active')",
     "tags": "array of string (optional, default: [])",
     "rollout": "{bucket_start, bucket_end} over 0..100 (optional, default: none)",
+    "loop": "{max, init, increment, counter} (optional, default: none)",
     "created_at": "ISO 8601 datetime (optional)",
     "updated_at": "ISO 8601 datetime (optional)"
 }
@@ -144,13 +294,29 @@ pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self
 ```json
 {
     "id": "string (required)",
-    "name": "string (optional)",
+    "name": "string (required)",
+    "description": "string (optional)",
     "condition": "JSONLogic (optional, evaluated against full context)",
-    "continue_on_error": "boolean (optional)",
+    "continue_on_error": "boolean (optional, default: false)",
+    "terminal": "boolean (optional, default: false)",
     "function": {
         "name": "string (required)",
         "input": "object (required)"
     }
+}
+```
+
+A step carrying a `tasks` key parses as a **group** instead, whose members share
+one condition evaluated once on entry:
+
+```json
+{
+    "id": "string (required)",
+    "name": "string (optional)",
+    "description": "string (optional)",
+    "condition": "JSONLogic (optional, evaluated once on entry)",
+    "terminal": "boolean (optional, default: false)",
+    "tasks": "array of Task or TaskGroup (required)"
 }
 ```
 
@@ -335,6 +501,14 @@ Per-call context handed to every `AsyncFunctionHandler::execute` call.
 pub struct TaskContext<'a> { /* ... */ }
 
 impl<'a> TaskContext<'a> {
+    // Execution identity. `None` only where the engine has no task to name —
+    // e.g. a handler invoked outside a workflow run in a host's own test.
+    pub fn workflow_id(&self) -> Option<&str>
+    pub fn task_id(&self) -> Option<&str>
+    /// Counter value of the sweep this call belongs to, for a looping
+    /// workflow; `None` otherwise.
+    pub fn loop_counter(&self) -> Option<i64>
+
     // Read accessors
     pub fn message(&self) -> &Message
     pub fn message_mut(&mut self) -> &mut Message
@@ -545,6 +719,10 @@ pub struct AuditTrail {
     pub timestamp: DateTime<Utc>,
     pub changes: Vec<Change>,
     pub status: usize,
+    /// Counter value of the sweep that produced this entry, for workflows
+    /// carrying a `loop`; `None` otherwise. Omitted when serializing, so a
+    /// non-looping workflow's audit JSON is unchanged.
+    pub loop_counter: Option<i64>,
 }
 ```
 
@@ -626,8 +804,34 @@ pub struct Rollout {
 impl Rollout {
     // `[0,100)` accepts everything; an empty or inverted range accepts nothing.
     pub fn accepts(&self, bucket: u8) -> bool
+
+    // Ordered percentages -> contiguous ranges covering exactly 0..100, in
+    // traffic order. A `0` entry yields an empty range that accepts nothing.
+    pub fn partition(percentages: &[u8]) -> Result<Vec<Rollout>, RolloutError>
+
+    // Check that a set — typically the live versions of one logical workflow —
+    // partitions 0..100: every bucket served, none served twice.
+    // Order-independent.
+    pub fn validate_set<'a>(
+        rollouts: impl IntoIterator<Item = &'a Rollout>,
+    ) -> Result<(), RolloutError>
+}
+
+// Its own error type rather than a DataflowError variant: pure arithmetic over
+// the bucket space, with no engine involvement and no retryability to classify.
+pub enum RolloutError {
+    Under { total: u32 },        // percentages sum below 100 — traffic silently dropped
+    Over { total: u32 },         // sum above 100 — later entries can never match
+    Gap { bucket: u8 },          // no range serves this bucket
+    Overlap { bucket: u8 },      // more than one range serves it
+    InvalidRange { rollout: Rollout },  // inverted, or reaching past bucket 100
 }
 ```
+
+`partition` and `validate_set` are the two halves of keeping a *set* correct:
+build the ranges from percentages, or check ranges you already hold. Neither is
+run by the engine — a single workflow's `rollout` is never validated at build
+time, so an inverted range simply serves nobody.
 
 `Workflow::rollout` is `Option<Rollout>`, defaulting to `None` (not part of a
 split). A message with **no** bucket is admitted by every workflow. See
@@ -715,28 +919,33 @@ Structured logging with JSONLogic expressions.
 
 Always returns `TaskOutcome::Success` — never modifies the message.
 
-## WASM API (dataflow-wasm)
+## WASM API (@goplasmatic/dataflow-wasm)
 
-For browser/JavaScript usage.
+For browser/JavaScript usage. Everything crossing the boundary is a string —
+see the [WASM Package](../wasm/overview.md) page for the full contract.
 
 ```javascript
-import init, { WasmEngine, process_message } from 'dataflow-wasm';
+import init, { WasmEngine, process_message, engine_version } from '@goplasmatic/dataflow-wasm';
 
-// Initialize
+// Initialize the module once, before touching any other export
 await init();
 
 // Create engine
 const engine = new WasmEngine(workflowsJson);
 
-// Process with payload string (returns Promise)
-const result = await engine.process(payloadStr);
+// Process a payload string; resolves to a serialized Message
+const result = JSON.parse(await engine.process(payloadStr));
+
+// Same run, with the execution trace instead
+const traced = JSON.parse(await engine.process_with_trace(payloadStr));
 
 // One-off convenience function (no engine needed)
-const result2 = await process_message(workflowsJson, payloadStr);
+const result2 = JSON.parse(await process_message(workflowsJson, payloadStr));
 
 // Get rule info
-const count = engine.workflow_count();
-const ids = engine.workflow_ids();
+const count = engine.workflow_count();          // number
+const ids = JSON.parse(engine.workflow_ids());  // JSON array, returned as a string
+const version = engine_version();               // e.g. "3.7.0"
 ```
 
 ## Full API Documentation

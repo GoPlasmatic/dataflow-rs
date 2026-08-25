@@ -20,6 +20,15 @@ task it always was.
 
 ## The problem they solve
 
+> The examples on this page use `length`, which belongs to the optional
+> `ext-string` operator family. Operator families are **off by default**, and
+> because the engine always evaluates in templating mode an operator whose
+> family is disabled is not an error — the object passes through as literal
+> data, and a condition built on it is silently never true. Build with
+> `--features ext-string` (or `all-operators`) to run these examples, or
+> rewrite them with core operators. See
+> [JSONLogic](./jsonlogic.md#operator-families-cargo-features) for the full list.
+
 Without them, every task after a branch has to restate that the branch did
 *not* fire, so conditions grow with position:
 

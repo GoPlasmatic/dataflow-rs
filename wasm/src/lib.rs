@@ -18,8 +18,8 @@
 //!         id: "parse_payload",
 //!         name: "Parse Payload",
 //!         function: {
-//!             name: "parse",
-//!             input: {}
+//!             name: "parse_json",
+//!             input: { source: "payload", target: "input" }
 //!         }
 //!     }, {
 //!         id: "task1",

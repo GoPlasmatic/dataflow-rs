@@ -332,6 +332,34 @@ durations:
 This is `false` without `datetime` and `true` with it — the two strings are
 different bytes naming the same instant.
 
+### Checking what a build evaluates
+
+Because a disabled operator is inert rather than an error, "does this expression
+do anything?" is not a question you can answer by reading the rule alone.
+`Engine::operator_names` reports the exact vocabulary of the running engine —
+core, plus whichever families were compiled in, plus anything registered through
+`EngineBuilder::with_datalogic_operator`:
+
+```rust
+# use dataflow_rs::Engine;
+# fn _demo() -> dataflow_rs::Result<()> {
+let engine = Engine::builder().build()?;
+let names: Vec<&str> = engine.operator_names().collect();
+
+assert!(names.contains(&"var"));      // core: always present
+// `length` appears here only when the `ext-string` feature is enabled.
+# Ok(()) }
+```
+
+That is the check an authoring tool should run before telling someone their
+expression is fine.
+
+> **Note for JavaScript users:** the WASM package is built with
+> `all-operators`, so every family in the table is live in the browser and in
+> the [Playground](../playground.md). A default `cargo add dataflow-rs` build
+> has none of them, so an expression using `length` or `switch` can work in the
+> playground and be silently inert in your Rust service.
+
 ## Best Practices
 
 1. **Use var Defaults** - Provide defaults for optional fields

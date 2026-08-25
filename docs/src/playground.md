@@ -10,12 +10,13 @@ Try dataflow-rs directly in your browser. Define rules, create messages, and see
 
 1. **Select an Example** - Choose from the dropdown or write your own
 2. **Edit Rules** - Modify the rule JSON on the left panel
-3. **Edit Message** - Customize the input message on the right panel
-4. **Process** - Click "Process Message" or press `Ctrl+Enter`
+3. **Edit Payload** - Customize the input payload on the right panel
+4. **Process** - Click "Process", or press `Ctrl`/`Cmd`+`Enter` with the cursor in either editor
 5. **View Results** - See the processed output with data, metadata, and audit trail
 
 ## Tips
 
+- **Parse First** - The payload is *not* part of the evaluation context. Start every rule with a `parse_json` action (`{"source": "payload", "target": "input"}`) and read the parsed value at `data.input.…` — that is what every built-in example does
 - **JSONLogic** - Use [JSONLogic](https://jsonlogic.com/) expressions in your rules for dynamic data access and transformation
 - **Multiple Actions** - Add multiple actions (tasks) to a rule for sequential processing
 - **Multiple Rules** - Define multiple rules that execute in priority order

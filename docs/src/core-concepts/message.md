@@ -134,6 +134,16 @@ From a handler, `ctx.set("metadata.X", v)` is the canonical write
 path. The engine also stamps `metadata.processed_at` and
 `metadata.engine_version` automatically on every `process_message` call.
 
+Two further keys under `metadata` belong to the engine — treat them as reserved:
+
+- **`metadata.progress`** — rewritten after **every** task that runs, as
+  `{"workflow_id": …, "task_id": …, "status_code": …}`. This is what makes
+  cross-rule chaining work: a later rule gates on
+  `{"var": "metadata.progress.task_id"}` or on `status_code` to decide whether
+  to run. Writing this path yourself is pointless — the next task overwrites it.
+- **`metadata.channel`** — the channel name, stamped only by
+  `process_message_for_channel` and its tracing variants.
+
 ### temp_data
 
 Temporary storage for intermediate processing results — useful for values
@@ -157,6 +167,10 @@ pub struct AuditTrail {
     pub timestamp: DateTime<Utc>,
     pub changes: Vec<Change>,
     pub status: usize,
+    /// Loop counter for the sweep that produced this entry; `None` for a
+    /// workflow with no `loop`. Omitted when serializing, so a non-looping
+    /// workflow's audit JSON is unchanged.
+    pub loop_counter: Option<i64>,
 }
 
 pub struct Change {
@@ -233,6 +247,12 @@ In rule conditions and mappings, access message fields using JSONLogic:
 // Access temp_data
 {"var": "temp_data.intermediate_result"}
 ```
+
+`payload` is **not** part of that tree. It is a separate field on `Message`, so
+`{"var": "payload.foo"}` resolves to nothing — and because expressions run in
+templating mode, it fails *silently* rather than erroring: the condition is
+simply never true. Run a `parse_json` (or `parse_xml`) task first to land the
+payload under `data`, then read it as `{"var": "data.…"}`.
 
 ## Try It
 

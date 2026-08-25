@@ -24,7 +24,10 @@ export function ResultPanel({
 }: ResultPanelProps) {
   const highlightedPaths = useMemo(() => {
     if (!currentChanges || currentChanges.length === 0) return undefined;
-    return currentChanges.map((change: Change) => change.path);
+    // `Change.path` is rooted at the evaluation context (`data.user.name`), but
+    // the JSON rendered here is the whole `Message`, where that tree lives under
+    // `context`. Without the prefix no highlight ever matches a line.
+    return currentChanges.map((change: Change) => `context.${change.path}`);
   }, [currentChanges]);
 
   return (

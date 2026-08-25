@@ -362,6 +362,13 @@ export function DebuggerProvider({
           if (engineRef.current?.dispose) {
             engineRef.current.dispose();
           }
+          // Drop both refs *before* building the replacement. `engineFactory`
+          // throws for a definition that no longer loads, and the disposed
+          // engine must not stay reachable: a later run that happens to match
+          // `lastWorkflowsJson` would skip the rebuild and call into a freed
+          // wasm handle ("null pointer passed to rust").
+          engineRef.current = null;
+          lastWorkflowsJsonRef.current = null;
           engineRef.current = engineFactory(workflows);
           lastWorkflowsJsonRef.current = workflowsJson;
         }

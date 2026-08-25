@@ -55,7 +55,8 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
-    "@goplasmatic/dataflow-wasm": "^3.0.4",
+    "@dagrejs/dagre": "^3.1.1",
+    "@goplasmatic/dataflow-wasm": "^3.6.0",
     "@goplasmatic/datalogic-ui": "^5.1.1",
     "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.11.2",

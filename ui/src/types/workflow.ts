@@ -1,4 +1,16 @@
-import { ArrowRightLeft, CheckCircle, Box, type LucideIcon } from 'lucide-react';
+import {
+  ArrowRightLeft,
+  Box,
+  CheckCircle,
+  FileCode,
+  FileJson,
+  Filter,
+  Globe,
+  ScrollText,
+  Send,
+  Sparkles,
+  type LucideIcon,
+} from 'lucide-react';
 
 /**
  * JSONLogic value type - can be any valid JSON value or JSONLogic expression
@@ -17,8 +29,14 @@ export type JsonLogicValue =
 export interface FunctionConfig {
   /** Function name (e.g., "map", "validation", or custom) */
   name: string;
-  /** Function-specific input configuration */
-  input?: Record<string, unknown>;
+  /**
+   * Function-specific input configuration.
+   *
+   * Required: the engine's `FunctionConfig` deserializer reads `{name, input}`
+   * with no default for `input`, so a task omitting it fails to load.
+   * Functions that take no configuration still need `input: {}`.
+   */
+  input: Record<string, unknown>;
 }
 
 /**
@@ -116,6 +134,20 @@ export function flattenSteps(steps: Step[]): Task[] {
 }
 
 /**
+ * How many leaf tasks a step tree holds.
+ *
+ * The same number as `flattenSteps(steps).length`, without building the list —
+ * for counters that render on every parent update.
+ */
+export function countLeafSteps(steps: Step[]): number {
+  let count = 0;
+  for (const step of steps) {
+    count += isTaskGroup(step) ? countLeafSteps(groupMembers(step)) : 1;
+  }
+  return count;
+}
+
+/**
  * Engine-managed `for` loop over a workflow's task list.
  *
  * Mirrors `LoopConfig` in `src/engine/workflow.rs`. A workflow carrying a
@@ -175,6 +207,41 @@ export interface Workflow {
    * `#[serde(rename = "loop")]`).
    */
   loop?: LoopConfig;
+  /** Channel this workflow is routed on. Defaults to `"default"`. */
+  channel?: string;
+  /** Lifecycle status. Defaults to `"active"`. */
+  status?: WorkflowStatus;
+  /**
+   * Traffic split. The workflow serves only messages whose routing bucket
+   * falls in the range; absent means it serves all of them.
+   */
+  rollout?: Rollout;
+  /** Definition version number. Defaults to `1`. */
+  version?: number;
+  /** Arbitrary organisational tags. Defaults to `[]`. */
+  tags?: string[];
+  /** Creation timestamp (RFC 3339). */
+  created_at?: string;
+  /** Last-update timestamp (RFC 3339). */
+  updated_at?: string;
+}
+
+/**
+ * Workflow lifecycle status.
+ *
+ * Mirrors `WorkflowStatus` in `src/engine/workflow.rs`.
+ */
+export type WorkflowStatus = 'active' | 'paused' | 'archived';
+
+/**
+ * Traffic-split range over the `0..100` bucket space.
+ *
+ * Half-open: `{bucket_start: 0, bucket_end: 10}` serves buckets 0 through 9,
+ * so adjacent ranges tile without overlapping.
+ */
+export interface Rollout {
+  bucket_start: number;
+  bucket_end: number;
 }
 
 /**
@@ -203,12 +270,16 @@ export interface MapFunctionInput {
  * Validation rule configuration
  */
 export interface ValidationRule {
-  /** JSONLogic expression that should return true for valid data */
+  /** JSONLogic expression that must evaluate to exactly `true` */
   logic: JsonLogicValue;
-  /** Error message if validation fails */
+  /**
+   * Error message recorded when the rule fails.
+   *
+   * Required, like `logic`: the engine's `ValidationRule` gives neither field a
+   * serde default, so a rule missing either one is rejected when the engine is
+   * built.
+   */
   message: string;
-  /** Optional path for the validation target */
-  path?: string;
 }
 
 /**
@@ -219,15 +290,58 @@ export interface ValidationFunctionInput {
 }
 
 /**
- * Built-in function types
+ * Built-in function names the engine recognises.
+ *
+ * Mirrors `BUILTIN_FUNCTION_NAMES` in `src/engine/functions/config.rs`.
+ * `validate` is an alias of `validation`.
+ *
+ * The last three are **config-only**: the crate supplies their schema but ships
+ * no handler, so a workflow using one loads cleanly and then fails at dispatch
+ * unless the host has registered an implementation.
  */
-export type BuiltinFunctionType = 'map' | 'validation' | 'validate';
+export type BuiltinFunctionType =
+  | 'map'
+  | 'validation'
+  | 'validate'
+  | 'parse_json'
+  | 'parse_xml'
+  | 'publish_json'
+  | 'publish_xml'
+  | 'filter'
+  | 'log'
+  | 'http_call'
+  | 'enrich'
+  | 'publish_kafka';
+
+const BUILTIN_FUNCTION_NAMES: readonly BuiltinFunctionType[] = [
+  'map',
+  'validation',
+  'validate',
+  'parse_json',
+  'parse_xml',
+  'publish_json',
+  'publish_xml',
+  'filter',
+  'log',
+  'http_call',
+  'enrich',
+  'publish_kafka',
+];
+
+/**
+ * Built-ins that need a handler registered by the host before they can run.
+ */
+export const INTEGRATION_FUNCTION_NAMES: readonly BuiltinFunctionType[] = [
+  'http_call',
+  'enrich',
+  'publish_kafka',
+];
 
 /**
  * Check if a function is a built-in type
  */
 export function isBuiltinFunction(name: string): name is BuiltinFunctionType {
-  return name === 'map' || name === 'validation' || name === 'validate';
+  return (BUILTIN_FUNCTION_NAMES as readonly string[]).includes(name);
 }
 
 /**
@@ -244,6 +358,24 @@ export function getFunctionDisplayInfo(name: string): {
     case 'validate':
     case 'validation':
       return { label: 'Validation', colorClass: 'df-function-badge-validation', Icon: CheckCircle };
+    case 'parse_json':
+      return { label: 'Parse JSON', colorClass: 'df-function-badge-builtin', Icon: FileJson };
+    case 'parse_xml':
+      return { label: 'Parse XML', colorClass: 'df-function-badge-builtin', Icon: FileCode };
+    case 'publish_json':
+      return { label: 'Publish JSON', colorClass: 'df-function-badge-builtin', Icon: Send };
+    case 'publish_xml':
+      return { label: 'Publish XML', colorClass: 'df-function-badge-builtin', Icon: Send };
+    case 'filter':
+      return { label: 'Filter', colorClass: 'df-function-badge-builtin', Icon: Filter };
+    case 'log':
+      return { label: 'Log', colorClass: 'df-function-badge-builtin', Icon: ScrollText };
+    case 'http_call':
+      return { label: 'HTTP Call', colorClass: 'df-function-badge-builtin', Icon: Globe };
+    case 'enrich':
+      return { label: 'Enrich', colorClass: 'df-function-badge-builtin', Icon: Sparkles };
+    case 'publish_kafka':
+      return { label: 'Publish Kafka', colorClass: 'df-function-badge-builtin', Icon: Send };
     default:
       return { label: name, colorClass: 'df-function-badge-custom', Icon: Box };
   }

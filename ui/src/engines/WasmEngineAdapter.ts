@@ -12,6 +12,7 @@ import { assertEngineVersion } from './versionCheck';
  */
 export class WasmEngineAdapter implements DataflowEngine {
   private engine: WasmEngine;
+  private disposed = false;
 
   constructor(workflows: Workflow[]) {
     // Every execution path builds an adapter, so this is the one chokepoint
@@ -28,6 +29,11 @@ export class WasmEngineAdapter implements DataflowEngine {
   }
 
   dispose(): void {
+    // Idempotent: the debugger disposes the previous adapter whenever workflows
+    // change, and a rebuild that throws can leave the same adapter reachable
+    // for a second dispose. `free()` twice on one wasm handle panics.
+    if (this.disposed) return;
+    this.disposed = true;
     this.engine.free();
   }
 }

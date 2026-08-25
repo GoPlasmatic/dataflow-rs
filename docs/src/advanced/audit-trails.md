@@ -35,7 +35,11 @@ heap allocation per recorded mutation. `workflow_id` / `task_id` are
 audit entry. `status` mirrors the `TaskOutcome` variant returned by the
 task: 200 for `Success`, the supplied code for `Status(u16)`, and 299
 (`HALT_STATUS_CODE`) for `Halt`. `TaskOutcome::Skip` is recorded as no
-audit entry at all.
+audit entry at all — and writes no `metadata.progress` either.
+
+A handler that returns `Err` still records an entry, with `status` 500 and an
+empty `changes` list. The error itself goes to `message.errors()`, and the entry
+is written whether or not `continue_on_error` lets the rule carry on.
 
 ## Accessing the Audit Trail
 
@@ -124,7 +128,12 @@ Ok(TaskOutcome::Success)
 
 ### Validation Function
 
-Validation is read-only, so it produces no audit trail entries.
+Validation writes nothing, so its entry carries an empty `changes` list — but it
+still records one. The entry's `status` is the outcome: `200` when every rule
+passed, `400` when one or more failed. The rules that failed land on
+`message.errors()`, not on the audit trail.
+
+Only `TaskOutcome::Skip` suppresses an audit entry entirely.
 
 ## Try It
 

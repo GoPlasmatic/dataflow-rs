@@ -37,6 +37,7 @@
   /* Function badge colors */
   --df-function-map: #388a34;
   --df-function-validation: #bf8803;
+  --df-function-builtin: #2f6fb3;
   --df-function-custom: #6e6e6e;
 
   /* DataLogic UI theme variables (for diagram visualizer) - must match @goplasmatic/datalogic-ui :root */
@@ -95,6 +96,7 @@
   /* Function badge colors */
   --df-function-map: #4ec9b0;
   --df-function-validation: #dcdcaa;
+  --df-function-builtin: #6fb3e0;
   --df-function-custom: #9d9d9d;
 
   /* DataLogic UI theme variables (for diagram visualizer) - must match @goplasmatic/datalogic-ui [data-theme="dark"] */

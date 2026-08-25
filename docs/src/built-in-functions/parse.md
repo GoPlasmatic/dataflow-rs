@@ -125,11 +125,38 @@ Parses an XML string from the source path, converts it to JSON, and stores it in
 
 ### XML to JSON Conversion
 
-The XML parser follows these conventions:
-- Element names become object keys
-- Text content is stored under the element key
-- Attributes are preserved in the JSON structure
-- Multiple child elements with the same name become arrays
+XML is converted with [`quick-xml`](https://docs.rs/quick-xml)'s serde
+deserializer, which reserves two key prefixes:
+
+Rows show whole documents, since that is what `source` hands the parser:
+
+| XML document | JSON at `data.<target>` |
+|-----|------|
+| `<root><name>Alice</name></root>` | `{"name": {"$text": "Alice"}}` |
+| `<root><person id="1" role="admin"/></root>` | `{"person": {"@id": "1", "@role": "admin"}}` |
+| `<root><empty/></root>` | `{"empty": {}}` |
+| `<root><a><b>x</b></a></root>` | `{"a": {"b": {"$text": "x"}}}` |
+
+Four consequences are worth planning for before you write the mappings that
+read the result:
+
+- **The outermost element is consumed, not represented.** `from_str`
+  deserializes the document *into* the target, so the root tag contributes no
+  key of its own: `<a><b>x</b></a>` on its own parses to `{"b": {"$text": "x"}}`.
+  Paths into the result start at the root's children, which is why every row
+  above needs a wrapper to show the element key at all.
+- **Text content lives under `$text`, not directly under the element key.** A
+  leaf element deserializes to an *object*, so the path to Alice's name is
+  `data.request.name.$text` — reading `data.request.name` hands you
+  `{"$text": "Alice"}`, and a condition comparing it to `"Alice"` is silently
+  false.
+- **Every value is a string.** `<age>30</age>` yields `{"$text": "30"}`: XML
+  carries no type information, so compare against `"30"` or convert explicitly.
+- **Repeated sibling elements do not become an array — only the last one
+  survives.** `<root><item>a</item><item>b</item></root>` parses to
+  `{"item": {"$text": "b"}}`, dropping `a`. For documents with repeated
+  elements, parse them in a [custom handler](../advanced/custom-functions.md)
+  that controls its own XML deserialization rather than using `parse_xml`.
 
 ### Examples
 
@@ -160,8 +187,25 @@ The XML parser follows these conventions:
 {
     "data": {
         "request": {
-            "name": "Alice",
-            "email": "alice@example.com"
+            "name": {"$text": "Alice"},
+            "email": {"$text": "alice@example.com"}
+        }
+    }
+}
+```
+
+To lift those leaves into plain scalars, follow the parse with a `map`:
+
+```json
+{
+    "id": "flatten_request",
+    "function": {
+        "name": "map",
+        "input": {
+            "mappings": [
+                {"path": "data.user.name", "logic": {"var": "data.request.name.$text"}},
+                {"path": "data.user.email", "logic": {"var": "data.request.email.$text"}}
+            ]
         }
     }
 }
@@ -231,7 +275,7 @@ The XML parser follows these conventions:
                 "name": "map",
                 "input": {
                     "mappings": [
-                        {"path": "data.result", "logic": {"var": "data.apiResponse.result"}}
+                        {"path": "data.result", "logic": {"var": "data.apiResponse.result.$text"}}
                     ]
                 }
             }
@@ -242,8 +286,14 @@ The XML parser follows these conventions:
 
 ## Error Handling
 
-- **parse_json**: Returns the source value as-is (even if null or not JSON)
+- **parse_json**: Never fails. A string source is parsed as JSON; if it does not
+  parse, the string is stored as-is. A non-string source is stored unchanged.
 - **parse_xml**: Returns an error if the source is not a string or if XML parsing fails
+
+Note that a *successful* `parse_xml` can still lose data — repeated sibling
+elements collapse to the last one, as described under
+[XML to JSON Conversion](#xml-to-json-conversion). That is not reported as an
+error.
 
 ## Next Steps
 

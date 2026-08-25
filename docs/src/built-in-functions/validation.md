@@ -1,6 +1,7 @@
 # Validation Function
 
-The `validation` function evaluates rules against message data and collects validation errors.
+The `validation` function — also spelled `validate`, which deserializes to the
+same config — evaluates rules against message data and collects validation errors.
 
 ## Overview
 
@@ -44,7 +45,11 @@ The validation function:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `logic` | JSONLogic | Yes | Expression that must evaluate to `true` |
-| `message` | string | No | Error message (default: "Validation failed") |
+| `message` | string | Yes | Error message recorded when the rule fails |
+
+Both fields are required: a rule missing either one fails to load, and the
+workflow is rejected when the engine is built rather than when the first
+message arrives.
 
 ## How Validation Works
 
@@ -167,8 +172,16 @@ for error in message.errors() {
 ```
 
 Error structure:
-- `code`: "VALIDATION_ERROR" for failed rules
-- `message`: The error message from the rule
+- `code`: one of three, depending on how the rule failed
+  - `VALIDATION_ERROR` — the rule evaluated and did not return `true`
+  - `EVALUATION_ERROR` — the rule's own expression failed to evaluate
+  - `COMPILATION_ERROR` — the rule's logic was never compiled (an engine-side fault)
+- `message`: the rule's `message` for `VALIDATION_ERROR`; a description of the
+  failure for the other two
+
+Note that all three carry no `workflow_id` or `task_id` — validation builds its
+entries without executor identity, so attribute them by position in
+`message.errors()` rather than by id.
 
 ## Try It
 
@@ -210,29 +223,50 @@ Combine validation with data transformation:
 }
 ```
 
-With `continue_on_error: true`, transformation proceeds even if validation fails.
+Transformation proceeds even if validation fails — but note that this is true
+with or without `continue_on_error`, for the reason below.
 
-## Stop on Validation Failure
+## Stopping on a validation failure
 
-For strict validation (stop on failure):
+**A failing `validation` task does not stop the workflow.** It returns status
+`400`, and the engine treats the `4xx` range as "logged as a warning, carry on";
+only `5xx` and a returned `Err` engage `continue_on_error` at all. So this does
+*not* do what it looks like:
 
 ```json
 {
     "continue_on_error": false,
     "tasks": [
-        {
-            "id": "validate",
-            "function": {"name": "validation", "input": {...}}
-        },
-        {
-            "id": "process",
-            "function": {"name": "map", "input": {...}}
-        }
+        {"id": "validate", "name": "Validate",
+         "function": {"name": "validation", "input": {"rules": []}}},
+        {"id": "process", "name": "Process",
+         "function": {"name": "map", "input": {"mappings": []}}}
     ]
 }
 ```
 
-If validation fails, subsequent tasks are skipped.
+`process` still runs. To actually gate on validity, follow the validation with
+a [`filter`](./filter.md) that halts when the errors are present — or read
+`metadata.progress.status_code`, which the engine rewrites after every task:
+
+```json
+{
+    "tasks": [
+        {"id": "validate", "name": "Validate",
+         "function": {"name": "validation", "input": {"rules": []}}},
+        {"id": "gate", "name": "Stop if invalid",
+         "function": {"name": "filter", "input": {
+             "condition": {"!=": [{"var": "metadata.progress.status_code"}, 400]},
+             "on_reject": "halt"}}},
+        {"id": "process", "name": "Process",
+         "function": {"name": "map", "input": {"mappings": []}}}
+    ]
+}
+```
+
+Alternatively, put the validation in its own rule and gate the *next* rule on
+that same `metadata.progress` key — the mechanism cross-rule chaining is built
+on.
 
 ## Best Practices
 

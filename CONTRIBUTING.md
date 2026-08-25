@@ -125,8 +125,12 @@ cd wasm && wasm-pack test --node
 If you touched `ui/`:
 
 ```bash
-cd ui && npm ci && npm run build:lib
+cd ui && npm ci && npm run lint && npm run build:lib
 ```
+
+`lint` runs with `--max-warnings 0`, so a single warning fails CI; `build:lib`
+is `tsc && vite build`, so it type-checks the whole package as well as producing
+the artifact, and its `postbuild:lib` hook verifies the emitted `lib.d.ts`.
 
 If you changed dependencies:
 
