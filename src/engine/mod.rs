@@ -61,7 +61,6 @@ pub mod executor;
 pub mod functions;
 pub mod message;
 pub mod observer;
-pub mod operators;
 /// Retrying a failed operation. Not available on `wasm32` — tokio's time
 /// driver, which the backoff needs, does not run there.
 #[cfg(not(target_arch = "wasm32"))]
@@ -798,14 +797,29 @@ impl Engine {
     /// assert!(!vocabulary.contains("lenght"));
     /// ```
     pub fn operator_names(&self) -> impl Iterator<Item = &str> + '_ {
+        // The built-in half comes from datalogic's own `OPCODE_NAMES` table
+        // (5.3.0's `builtin_operator_names`), the same table its compiler
+        // resolves keys against — so this cannot drift from dispatch the way a
+        // host-side copy of the list could. It moves with the compiled feature
+        // set on its side, including families this crate exposes no cargo
+        // feature for but that another crate in the graph turned on.
+        //
+        // The `map` is a lifetime coercion, not a transformation: datalogic
+        // yields `&'static str`, and `chain` needs both halves to agree on the
+        // item type with the `&'a str` borrowed from the custom registry.
+        let builtins = || {
+            self.datalogic
+                .builtin_operator_names()
+                .map(|name| -> &str { name })
+        };
         // A custom registration under a built-in name is still that one name;
         // filtering here is what dedups the two sources.
         let customs = self
             .datalogic_operators
             .keys()
             .map(String::as_str)
-            .filter(|name| !operators::builtin_operator_names().any(|b| b == *name));
-        operators::builtin_operator_names().chain(customs)
+            .filter(move |name| !builtins().any(|b| b == *name));
+        builtins().chain(customs)
     }
 
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {

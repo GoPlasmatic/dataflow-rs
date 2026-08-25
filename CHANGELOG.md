@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **deps:** `datalogic-rs` 5.2 → 5.3, and `Engine::operator_names` now takes its
+  built-in half from datalogic's own `Engine::builtin_operator_names` (new in
+  5.3.0) rather than the table this crate kept in `src/engine/operators.rs`.
+  That module is gone. It existed only because datalogic kept `OPCODE_NAMES`
+  private with no accessor, and it shipped in 3.7.0 saying the upstream fix was
+  tracked and that adopting it would be an internal edit. It is: the signature
+  of `operator_names` is unchanged, and it reports the same names for every
+  feature combination this crate exposes.
+
+  The adoption is also strictly more correct, because the two lists were not
+  computed the same way. The mirror enumerated the families `dataflow-rs` has
+  cargo features for; the upstream accessor is derived from the table
+  datalogic's compiler resolves operator keys against, so it reports what that
+  build actually dispatches. Those diverge under feature unification: if any
+  other crate in the graph enables a datalogic family this crate deliberately
+  exposes no feature for — `flagd`, whose `fractional` and `sem_ver` are the
+  one family `all-operators` omits — those names become live operators here,
+  and only the upstream-derived list says so. A lint reading the mirror would
+  have called them typos.
+
+  The three unit tests that guarded the mirror's shape are gone with it; the
+  properties they covered that still belong to this crate — no name reported
+  twice, and each family tracking its feature in *both* directions — moved to
+  `tests/operator_vocabulary.rs`, where they are checked against a running
+  engine instead of against a list. Suite counts move to 626 (`--all-features`)
+  and 534 (default).
+
+  Every other Rust dependency was already at its latest compatible version.
+  `quick-xml` is the one deliberate hold: 0.42 requires Rust 1.86 and this
+  crate's MSRV is 1.85. `cargo audit` reports zero advisories.
+
 ## [3.7.0] — 2026-08-25
 
 The host surface. Everything a service that stores, validates and operates

@@ -308,9 +308,9 @@ dependencies = [
 
 [[package]]
 name = "datalogic-rs"
-version = "5.2.0"
+version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42943370ab283c80c44926ad0d494104ca95f3efd00f699b8fd44eaaaaed9a6f"
+checksum = "ff3e8fc27c913f0265b2d699b59f45c4bebd5cc0f904f029eeb38735e9733fc9"
 dependencies = [
  "bumpalo",
  "chrono",

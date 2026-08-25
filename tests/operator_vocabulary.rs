@@ -1,10 +1,14 @@
 //! `Engine::operator_names` — the vocabulary a build actually evaluates.
 //!
-//! The mirror problem this API removes is also the risk it carries: the core
-//! names are listed in this crate because datalogic keeps its own table
-//! private. So the important test here is not that the list has the right
-//! shape, but that **every name in it is a live operator on the running
-//! engine** — checked by evaluating it, not by comparing two lists.
+//! Since datalogic 5.3.0 the built-in half of that vocabulary comes from
+//! `Engine::builtin_operator_names` — derived from the very table datalogic's
+//! compiler resolves operator keys against — so this crate no longer keeps a
+//! copy that could drift. What is still worth testing is that the *reported*
+//! vocabulary and the *evaluated* one are the same set: the report is now
+//! second-hand, and this crate's own feature flags are what forward to
+//! datalogic's. So the check here is that **every name reported is a live
+//! operator on the running engine** — checked by evaluating it, not by
+//! comparing two lists.
 //!
 //! That check works because the engine runs datalogic in templating mode: an
 //! unknown operator is not an error, the object echoes back as literal data.
@@ -99,9 +103,45 @@ fn the_vocabulary_tracks_the_compiled_families() {
     }
 
     #[cfg(feature = "ext-control")]
-    assert!(names.contains("switch"));
+    {
+        assert!(names.contains("switch"));
+        // `match` is an input alias of `switch`, and an alias is a live key
+        // too — a lint that flagged it would be wrong.
+        assert!(names.contains("match"));
+    }
     #[cfg(not(feature = "ext-control"))]
-    assert!(!names.contains("switch"));
+    {
+        assert!(!names.contains("switch"));
+        assert!(!names.contains("match"));
+    }
+
+    #[cfg(feature = "datetime")]
+    assert!(names.contains("now"));
+    #[cfg(not(feature = "datetime"))]
+    assert!(!names.contains("now"));
+
+    #[cfg(feature = "ext-object")]
+    assert!(names.contains("entries"));
+    #[cfg(not(feature = "ext-object"))]
+    assert!(!names.contains("entries"));
+}
+
+/// One name is one entry, even before any custom registration: the built-in
+/// half arrives from datalogic as a flat list of table keys, so a duplicate
+/// there would be double-reported here and make a `HashSet`-shaped consumer
+/// disagree with a `Vec`-shaped one about how large the vocabulary is.
+#[test]
+fn no_name_is_reported_twice() {
+    let engine = Engine::builder().build().unwrap();
+
+    let reported: Vec<&str> = engine.operator_names().collect();
+    let unique: HashSet<&str> = reported.iter().copied().collect();
+
+    assert_eq!(
+        reported.len(),
+        unique.len(),
+        "a name is reported more than once: {reported:?}"
+    );
 }
 
 #[test]

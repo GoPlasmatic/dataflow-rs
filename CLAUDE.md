@@ -119,8 +119,6 @@ matching version.
 - `task_context.rs`: `TaskContext` — accessors and audit-recording setters for handlers
 - `task_outcome.rs`: `TaskOutcome` and `HALT_STATUS_CODE`
 - `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
-- `operators.rs`: the operator vocabulary this build evaluates, `#[cfg]`-gated
-  per family
 - `retry.rs`: `RetryPolicy` / `retry_with_policy` — native-only (tokio time)
 - `rollout.rs`: `Rollout` traffic-split range, `partition` / `validate_set`,
   `RolloutError`
@@ -281,8 +279,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 628 passing.
-`cargo test -p dataflow-rs` (default features) should report 536 — the operator
+`cargo test --workspace --all-features` should report 626 passing.
+`cargo test -p dataflow-rs` (default features) should report 534 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

@@ -94,7 +94,7 @@ wasm-web = ["chrono/wasmbind", "uuid/js", "datalogic-rs/wasm-clock"]
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-datalogic-rs = { version = "5.2", features = ["serde_json", "templating"] }
+datalogic-rs = { version = "5.3", features = ["serde_json", "templating"] }
 datavalue = { package = "datavalue-rs", version = "0.2.3", features = ["serde", "serde_json"] }
 bumpalo = "3.20"
 uuid = { version = "1.25", default-features = false, features = ["v7", "std"] }
