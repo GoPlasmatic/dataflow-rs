@@ -285,6 +285,67 @@ If you build your handler map in one place rather than calling `register` per
 name, `EngineBuilder::with_handlers` takes the whole `HashMap` so you can still
 reach `with_observer`.
 
+### Message and rule lifecycle
+
+`ExecutionObserver` carries four more callbacks, all defaulted to no-ops so an
+existing observer keeps compiling: `message_started`, `message_finished`,
+`workflow_started` and `workflow_finished`.
+
+They make engine overhead directly measurable rather than a host-side residual:
+`workflow_finished.duration` minus the task durations inside that workflow is
+its condition evaluation, group gating, loop bookkeeping, audit writes and arena
+management.
+
+```rust
+use dataflow_rs::{ExecutionObserver, MessageFinished, TaskEvent, WorkflowFinished};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[derive(Default)]
+struct Overhead {
+    workflow_us: AtomicU64,
+    task_us: AtomicU64,
+}
+
+impl ExecutionObserver for Overhead {
+    fn workflow_finished(&self, event: &WorkflowFinished<'_>) {
+        self.workflow_us
+            .fetch_add(event.duration.as_micros() as u64, Ordering::Relaxed);
+        if event.halted {
+            println!("{} halted after {} sweep(s)", event.workflow_id, event.sweeps);
+        }
+    }
+
+    fn message_finished(&self, event: &MessageFinished<'_>) {
+        println!(
+            "{}: {} error(s), stopped_early={}",
+            event.message_id, event.errors, event.stopped_early
+        );
+    }
+
+    fn task_finished(&self, event: &TaskEvent<'_>) {
+        self.task_us
+            .fetch_add(event.duration.as_micros() as u64, Ordering::Relaxed);
+    }
+}
+```
+
+The edges mirror `task_finished`:
+
+- A rule that its **rollout gate or its condition rejected never starts** — no
+  `workflow_started`, no `workflow_finished`, exactly as a skipped task is not
+  reported.
+- `message_finished` fires whether the run completed or stopped early;
+  `stopped_early` distinguishes them, and `errors` is
+  `message.errors().len()` at the end of the run.
+- A **looping** rule reports **one** `workflow_finished` for the whole loop,
+  carrying `sweeps` — per-sweep events would explode cardinality.
+- `MessageStarted::workflows_considered` is how many rules are about to be
+  *considered*, not how many will run. How many actually ran is the number of
+  `workflow_started` callbacks in between.
+
+All four event types are `#[non_exhaustive]`, so matching on them uses field
+access rather than a struct pattern.
+
 ## Rule Execution Order
 
 Rules execute in priority order (lowest priority number first):
@@ -502,11 +563,15 @@ let result = engine
 
 Creates a new engine with different workflows while preserving custom function registrations. Useful for hot-reloading workflow definitions at runtime.
 
+It returns `Result<Engine>`, not `Engine`: the new definitions are compiled and
+validated here, so a bad reload surfaces as an error instead of replacing a
+working engine with a broken one.
+
 ```rust
 # use dataflow_rs::{Engine, Workflow};
 # fn _demo(engine: Engine) -> dataflow_rs::Result<()> {
 let new_workflows = vec![Workflow::from_json(r#"{ ... }"#)?];
-let new_engine = engine.with_new_workflows(new_workflows);
+let new_engine = engine.with_new_workflows(new_workflows)?;
 
 // Old engine is still valid for in-flight messages
 // New engine has freshly compiled logic + same custom functions

@@ -44,7 +44,8 @@ Rules provide:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | Yes | Unique rule identifier |
-| `name` | string | No | Human-readable name |
+| `name` | string | Yes | Human-readable name |
+| `description` | string | No | Free-text description |
 | `priority` | number | No | Execution order (default: 0, lower = first) |
 | `condition` | JSONLogic | No | When to execute rule (evaluated against full context) |
 | `continue_on_error` | boolean | No | Continue on action failure (default: false) |
@@ -54,6 +55,7 @@ Rules provide:
 | `status` | string | No | Lifecycle status: `active`, `paused`, or `archived` (default: `active`) |
 | `tags` | array | No | Arbitrary tags for organization (default: `[]`) |
 | `rollout` | object | No | Traffic split — `{bucket_start, bucket_end}` over `0..100` (default: none) |
+| `loop` | object | No | Run the task list as a bounded loop — see [Loops](../advanced/loops.md) (default: none) |
 | `created_at` | datetime | No | Creation timestamp (ISO 8601) |
 | `updated_at` | datetime | No | Last update timestamp (ISO 8601) |
 
@@ -86,6 +88,12 @@ let rule = Rule::rule(
     vec![/* actions */],
 );
 ```
+
+`Workflow` is `#[non_exhaustive]` as of 3.7.0, so struct-literal construction no
+longer compiles: build with `Workflow::new()`, `Workflow::rule()` or
+`Workflow::from_json()` and assign the optional fields afterwards. See
+[Creating Actions Programmatically](./task.md#creating-actions-programmatically)
+for the reasoning and the migration shape.
 
 ### From File
 
@@ -186,7 +194,15 @@ If any action fails, the rule stops and the error is recorded.
 }
 ```
 
-Actions continue executing even if previous actions fail. Errors are collected in `message.errors()`.
+A rule's `continue_on_error` governs what happens **after this rule fails** —
+subsequent rules still run, and `process_message` returns `Ok` rather than
+`Err`. It is *not* a default inherited by the rule's actions: whether the rule
+keeps going past a failing action is decided by that action's own
+`continue_on_error`. See
+[Error Handling](./error-handling.md#rule-level-error-handling) for the full
+matrix.
+
+Errors are collected in `message.errors()` either way.
 
 ## Action Dependencies
 

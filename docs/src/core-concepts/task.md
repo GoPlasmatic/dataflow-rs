@@ -38,9 +38,10 @@ Actions are the building blocks of rules. Each action:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | Yes | Unique action identifier within rule |
-| `name` | string | No | Human-readable name |
+| `name` | string | Yes | Human-readable name |
+| `description` | string | No | Free-text description |
 | `condition` | JSONLogic | No | When to execute action (evaluated against full context) |
-| `continue_on_error` | boolean | No | Continue rule on failure |
+| `continue_on_error` | boolean | No | Run the rule's remaining actions even if this one fails (default: `false`) |
 | `terminal` | boolean | No | End the workflow once this action has run (default: `false`) — see [Control Flow](../advanced/control-flow.md) |
 | `function` | object | Yes | Function to execute |
 
@@ -58,6 +59,29 @@ let action = Action::action(
 );
 # }
 ```
+
+`Task` is `#[non_exhaustive]` as of 3.7.0, so a struct literal no longer
+compiles from outside the crate: three of its fields — `id_arc`,
+`compiled_condition`, `group_starts` — are engine internals that a literal
+forced every caller to name. Field reads, writes and `..` patterns are
+unaffected, so the migration is a constructor plus assignment:
+
+```rust
+# use dataflow_rs::{FunctionConfig, Task};
+# use serde_json::json;
+# fn _demo(function_config: FunctionConfig) {
+let mut action = Task::action("apply_discount", "Apply Discount", function_config);
+action.condition = json!({">=": [{"var": "data.order.total"}, 1000]});
+action.continue_on_error = true;
+action.terminal = true;
+# }
+```
+
+`Workflow::new()`, `Workflow::rule()` and `Workflow::from_json()` are the
+equivalents for a rule, which is `#[non_exhaustive]` for the same reason.
+`TaskGroup` gets no constructor: groups are produced by the parser, and their
+`end` field indexes the *flattened* task list, so building one by hand was never
+meaningful.
 
 ## Function Configuration
 
@@ -174,7 +198,10 @@ When `continue_on_error` is true:
 
 ### Rule-Level Error Handling
 
-The rule's `continue_on_error` setting applies to all actions unless overridden.
+The rule's own `continue_on_error` is a separate switch, not a default for its
+actions: it decides whether *later rules* still run once this rule has failed.
+An action that omits the flag stops its rule on failure no matter what the rule
+says. See [Error Handling](./error-handling.md#rule-level-error-handling).
 
 ## Sequential Execution
 
@@ -213,7 +240,7 @@ Actions execute in order within a rule. Later actions can use results from earli
 
 > **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and rule visualization.
 
-<div class="playground-widget" data-workflows='[{"id":"conditional_tasks","name":"Conditional Actions","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"check_premium","name":"Check Premium","condition":{"==":[{"var":"data.input.tier"},"premium"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":20}]}}},{"id":"check_standard","name":"Check Standard","condition":{"==":[{"var":"data.input.tier"},"standard"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":5}]}}},{"id":"apply_discount","name":"Apply Discount","function":{"name":"map","input":{"mappings":[{"path":"data.final_price","logic":{"-":[{"var":"data.input.price"},{"/":{"*":[{"var":"data.input.price"},{"var":"data.discount"}]},100}]}}]}}}]}]' data-payload='{"tier":"premium","price":100}'>
+<div class="playground-widget" data-workflows='[{"id":"conditional_tasks","name":"Conditional Actions","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"check_premium","name":"Check Premium","condition":{"==":[{"var":"data.input.tier"},"premium"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":20}]}}},{"id":"check_standard","name":"Check Standard","condition":{"==":[{"var":"data.input.tier"},"standard"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":5}]}}},{"id":"apply_discount","name":"Apply Discount","function":{"name":"map","input":{"mappings":[{"path":"data.final_price","logic":{"-":[{"var":"data.input.price"},{"/":[{"*":[{"var":"data.input.price"},{"var":"data.discount"}]},100]}]}}]}}}]}]' data-payload='{"tier":"premium","price":100}'>
 </div>
 
 Try changing `tier` to "standard" to see different discount applied.

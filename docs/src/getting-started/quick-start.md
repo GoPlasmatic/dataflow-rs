@@ -98,6 +98,14 @@ Extend your rule with data validation:
     "name": "Validated Rule",
     "tasks": [
         {
+            "id": "load",
+            "name": "Load Payload",
+            "function": {
+                "name": "parse_json",
+                "input": { "source": "payload", "target": "input" }
+            }
+        },
+        {
             "id": "validate_input",
             "name": "Validate Input",
             "function": {
@@ -105,7 +113,7 @@ Extend your rule with data validation:
                 "input": {
                     "rules": [
                         {
-                            "logic": { "!!": {"var": "data.name"} },
+                            "logic": { "!!": {"var": "data.input.name"} },
                             "message": "Name is required"
                         }
                     ]
@@ -121,7 +129,7 @@ Extend your rule with data validation:
                     "mappings": [
                         {
                             "path": "data.greeting",
-                            "logic": { "cat": ["Hello, ", {"var": "data.name"}, "!"] }
+                            "logic": { "cat": ["Hello, ", {"var": "data.input.name"}, "!"] }
                         }
                     ]
                 }
@@ -130,6 +138,12 @@ Extend your rule with data validation:
     ]
 }
 ```
+
+The `load` action is not optional decoration. The payload is not part of the
+JSONLogic evaluation context, so `{"var": "data.name"}` would resolve to
+nothing and the validation rule would fail on every message — silently, because
+an unresolved path is simply falsy. `parse_json` copies the payload to
+`data.input`, which is why every path here reads `data.input.…`.
 
 ## Next Steps
 

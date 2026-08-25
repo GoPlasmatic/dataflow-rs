@@ -126,6 +126,13 @@ The serializer follows these rules:
 - Special characters are properly escaped (`<`, `>`, `&`, `"`, `'`)
 - Invalid XML element names are sanitized (e.g., names starting with numbers get an underscore prefix)
 
+`publish_xml` is **not** the inverse of `parse_xml`. It has no notion of the
+`$text` and `@name` keys `parse_xml` produces — they are ordinary object keys,
+and sanitization turns them into `<_text>` and `<_name>` *elements* rather than
+a text node or an attribute. Lift the `$text` leaves with a `map` before
+publishing; see
+[XML to JSON Conversion](./parse.md#xml-to-json-conversion).
+
 ### Examples
 
 #### Serialize Data to XML
@@ -235,7 +242,7 @@ The serializer follows these rules:
                 "name": "map",
                 "input": {
                     "mappings": [
-                        {"path": "data.output.result", "logic": {"var": "data.input.value"}}
+                        {"path": "data.output.result", "logic": {"var": "data.input.value.$text"}}
                     ]
                 }
             }

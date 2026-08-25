@@ -172,8 +172,13 @@ Use `skip` for non-critical conditional logic:
 | Code | Meaning | Behavior |
 |------|---------|----------|
 | `200` | Pass | Condition was true, continue normally |
-| `298` | Skip | Condition false + `on_reject: skip` — skip task, continue workflow |
-| `299` | Halt | Condition false + `on_reject: halt` — stop workflow execution |
+| *(none)* | Skip | Condition false + `on_reject: skip` — skip task, continue workflow |
+| `299` | Halt | Condition false + `on_reject: halt` — stop the remaining tasks in this workflow |
+
+A skip records **no** audit-trail entry and therefore no status code at all —
+`TaskOutcome::Skip` is the one outcome without one. Halt uses
+`HALT_STATUS_CODE` (`299`), which is a public constant you can compare against
+rather than a magic number.
 
 ## Notes
 
@@ -181,3 +186,9 @@ Use `skip` for non-critical conditional logic:
 - Filter never modifies the message — it only controls execution flow
 - When a workflow halts, the halt is recorded in the audit trail for debugging
 - When a task is skipped, no audit trail entry is created
+- An expression that **fails to evaluate** is treated exactly like a false
+  condition, so `on_reject` fires. With the default `halt` that stops the
+  workflow with a `299` and nothing on `message.errors()` — a malformed filter
+  is indistinguishable from a legitimate gate closing
+- A skipped task writes no `metadata.progress` either, so a downstream rule
+  reading `metadata.progress.task_id` still sees the *previous* task

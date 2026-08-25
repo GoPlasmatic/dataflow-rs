@@ -38,7 +38,11 @@ Dataflow-rs is built around a small set of core concepts that work together to e
 | **RulesEngine** | **Engine** | Orchestrates processing | Pre-compiled logic, rule management |
 | **Rule** | **Workflow** | Groups related actions | Priority ordering, conditions |
 | **Action** | **Task** | Individual processing unit | Built-in or custom functions |
-| — | — | **Message** | Data, metadata, audit trail |
+
+The [Message](./message.md) carries the data through them: a `payload`, the
+`{data, metadata, temp_data}` context every condition is evaluated against, an
+audit trail and a list of errors.
+
 
 ## Processing Flow
 
@@ -72,7 +76,8 @@ Rules are immutable after engine creation. This enables safe concurrent processi
 
 ### Separation of Concerns
 - **LogicCompiler** handles all compilation
-- **InternalExecutor** executes built-in functions
+- **WorkflowExecutor** orchestrates a rule's task list — conditions, groups, loops, audit trail
+- **TaskExecutor** dispatches one action; sync built-ins run inside the executor's arena scope
 - **Engine** orchestrates the flow
 
 ### Audit Trail

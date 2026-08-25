@@ -64,7 +64,11 @@ pub struct ValidationRule {
     pub logic: Value,
 
     /// Error message to display if validation fails.
-    /// Defaults to "Validation failed" if not specified.
+    ///
+    /// Required when a rule is deserialized as part of a workflow definition —
+    /// which is the path `Engine::build` takes, so a rule without it is
+    /// rejected at build time. [`ValidationConfig::from_json`], the standalone
+    /// parser, is the one path that substitutes `"Validation failed"`.
     pub message: String,
 
     /// Pre-compiled JSONLogic, populated by `LogicCompiler`. `None` is

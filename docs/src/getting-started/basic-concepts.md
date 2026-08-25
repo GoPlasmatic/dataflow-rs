@@ -109,6 +109,9 @@ An individual processing unit within a rule. Actions can:
 
 The data structure that flows through rules. Contains:
 
+- **payload** - The body as the engine received it. Read-only, and **not** part
+  of the JSONLogic evaluation context — a `parse_json` action is what copies it
+  into `data`
 - **context.data** - Main data payload
 - **context.metadata** - Message metadata
 - **context.temp_data** - Temporary processing data
@@ -119,6 +122,8 @@ The data structure that flows through rules. Contains:
 use dataflow_rs::Message;
 use serde_json::json;
 
+// `from_value` sets the *payload*. `context.data` starts empty — a
+// `parse_json` action is what lands the payload in `data`.
 let mut message = Message::from_value(&json!({
     "name": "John",
     "email": "john@example.com"

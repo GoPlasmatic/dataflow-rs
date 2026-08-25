@@ -101,25 +101,39 @@ interface DebugConfig {
 
 Enable step-by-step execution visualization with integrated debug controls:
 
+The WASM engine is a `--target web` wasm-bindgen build, so its module has to be
+initialised **once** before `defaultEngineFactory` constructs anything. Withhold
+`engineFactory` until it resolves — until then the run button is simply disabled:
+
 ```tsx
+import { useEffect, useState } from 'react';
+import initWasm from '@goplasmatic/dataflow-wasm';
 import { WorkflowVisualizer, defaultEngineFactory } from '@goplasmatic/dataflow-ui';
 
 function DebugView() {
-  const payload = { data: { input: 'hello' } };
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    initWasm().then(() => setReady(true));
+  }, []);
 
   return (
     <WorkflowVisualizer
       workflows={workflows}
       debugConfig={{
         enabled: true,
-        engineFactory: defaultEngineFactory,
+        engineFactory: ready ? defaultEngineFactory : undefined,
         autoExecute: true,
       }}
-      debugPayload={payload}
+      debugPayload={{ input: 'hello' }}
     />
   );
 }
 ```
+
+`debugPayload` is the **payload**, not the context. The engine receives it as an
+opaque string and it is not part of the JSONLogic evaluation context, so the
+workflow needs a `parse_json` action (`{"source": "payload", "target": "input"}`)
+before any expression can read it as `data.input.…`.
 
 The debug controls (play, pause, step forward/backward) are automatically displayed in the visualizer header when `debugConfig.enabled` is true.
 
@@ -160,7 +174,7 @@ function CustomDebugView() {
         engineFactory: customEngineFactory,
         autoExecute: true,
       }}
-      debugPayload={{ data: { input: 'test' } }}
+      debugPayload={{ input: 'test' }}
     />
   );
 }
@@ -170,24 +184,40 @@ function CustomDebugView() {
 
 ### Components
 - `WorkflowVisualizer` - Main visualization component with integrated debug controls
-- `TreeView` - Standalone tree view
+- `TreeView`, `RulesListView`, `WorkflowFlowView` - Standalone views
+- `WorkflowCard`, `TaskRow`, `FunctionTypeBadge`, `ConditionBadge` - Card primitives
 - `DebuggerProvider` - Debug state context provider (for advanced use cases)
+- `DebuggerControls`, `IntegratedDebugToolbar` - Playback controls
+- `MessageInputPanel`, `MessageStatePanel` - Debug input and state panels
+- `DebugInfoBubble`, `DebugStateBadge` - Per-node debug indicators
+- `JsonViewer`, `SearchInput`, `ErrorBoundary` - Common building blocks
 
 ### Hooks
-- `useTheme` - Access theme state
-- `useDebugger` - Access debugger state and controls
-- `useTaskDebugState` - Get debug state for a specific task
+- `useTheme`, `ThemeProvider` - Theme state
+- `useDebugger` - Debugger state and controls (throws outside a provider)
+- `useDebuggerOptional` - As above, returns `null` outside a provider
+- `useTreeNodeDebugState` - Debug state for any tree node
+- `useWorkflowDebugState`, `useWorkflowConditionDebugState` - Per-workflow state
+- `useTaskDebugState`, `useTaskConditionDebugState` - Per-task state
 
 ### Engine
 - `WasmEngineAdapter` - Default WASM engine adapter
 - `defaultEngineFactory` - Factory function for default engine
-- `DataflowEngine` - Interface for custom engines
-- `EngineFactory` - Type for engine factory functions
+- `assertEngineVersion` - Throws when the loaded engine predates this UI build
+- `DataflowEngine`, `EngineFactory` - Types for custom engines
+
+### Helpers
+- Steps: `isTaskGroup`, `groupMembers`, `flattenSteps`, `countLeafSteps`
+- Functions: `isBuiltinFunction`, `getFunctionDisplayInfo`, `INTEGRATION_FUNCTION_NAMES`
+- Loops: `loopBadgeLabel`, `loopGuardLabel`, `loopStepLabel`, `loopDescription`
+- Debug: `createEmptyMessage`, `cloneMessage`, `getMessageAtStep`,
+  `getChangesAtStep`, `getWorkflowState`, `getTaskState`, `traceHasSnapshots`
 
 ### Types
-- `Workflow`, `Task`, `Message` - Core workflow types
-- `ExecutionTrace`, `ExecutionStep` - Execution trace types
-- `DebugConfig` - Debug mode configuration
+- `Workflow`, `Task`, `TaskGroup`, `Step`, `Message`, `LoopConfig` - Core types
+- `WorkflowStatus`, `Rollout` - Lifecycle and traffic-split fields on `Workflow`
+- `ExecutionTrace`, `ExecutionStep`, `StepResult`, `AuditTrail`, `Change`, `ErrorInfo`
+- `DebugConfig`, `DebuggerState`, `DebugNodeState`, `Theme`, `WorkflowVisualizerProps`
 
 ## Peer Dependencies
 

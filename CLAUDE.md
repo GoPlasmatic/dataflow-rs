@@ -132,6 +132,8 @@ matching version.
 - `steps.rs`: The authored step grammar — `flatten` (the parser) and
   `walk_authored_steps` (the public walker), plus the `is_group` /
   `MAX_GROUP_DEPTH` facts both read
+- `observer.rs`: `ExecutionObserver` and its event types — task, workflow and
+  message lifecycle callbacks
 - `trace.rs`: `ExecutionTrace` / `ExecutionStep` for step-through debugging
 - `error.rs`: `DataflowError`, `ErrorInfo`, retryability classification
 - `utils.rs`: Path splitting and nested get/set helpers
@@ -145,9 +147,11 @@ matching version.
 - `filter.rs`: `filter` — pipeline control flow (`halt` / `skip`)
 - `log.rs`: `log` — structured logging at a configurable level
 - `publish.rs`: `publish_json`, `publish_xml`
-- `config.rs`: Typed config schemas, including the three integrations
-  (`http_call`, `enrich`, `publish_kafka`) that ship as *config only* — you must
-  register a matching handler yourself
+- `template.rs`: `Template` config fields and `TemplateCompiler`
+- `integration.rs`: The three integration configs (`http_call`, `enrich`,
+  `publish_kafka`) — config only, no handler ships
+- `config.rs`: The `FunctionConfig` dispatch enum, `BUILTIN_FUNCTION_NAMES`,
+  `BuiltinKind` and `DispatchableFunction`
 
 ### Key Implementation Details
 
@@ -238,7 +242,7 @@ matching version.
 
 ### Testing Patterns
 
-Unit tests live in `mod tests` blocks alongside the code they cover (17 modules).
+Unit tests live in `mod tests` blocks alongside the code they cover (20 modules).
 The integration suite is split by topic across `tests/`, one binary per file:
 
 | File | Covers |
@@ -277,7 +281,7 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 625 passing.
+`cargo test --workspace --all-features` should report 628 passing.
 `cargo test -p dataflow-rs` (default features) should report 536 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 

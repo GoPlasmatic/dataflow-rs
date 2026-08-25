@@ -44,6 +44,11 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 - **Full Context Access** - Conditions can access any field: `data`, `metadata`, `temp_data`
 - **Execution Tracing** - Step-by-step debugging with message snapshots after each action
 - **Built-in Functions** - Parse, Map, Validate, Filter, Log, and Publish for complete data pipelines
+- **Task Groups** - Nest actions under one shared condition, with a terminal action that ends a rule early
+- **Bounded Loops** - Re-run a rule's action list a fixed number of times, with the sweep counter in `temp_data`
+- **Traffic Splits** - Roll a rule out to a percentage of messages with `rollout`
+- **Retry Policies** - Retry a failing action with exponential backoff and a wall-clock deadline (native targets)
+- **Authoring-Time Validation** - Check a definition before it reaches an engine; every problem is reported at the coordinate the author typed
 - **Pipeline Control Flow** - Filter/gate function to halt workflows or skip tasks based on conditions
 - **Channel Routing** - Route messages to specific workflow channels with O(1) lookup
 - **Workflow Lifecycle** - Manage workflow status (active/paused/archived), versioning, and tagging
