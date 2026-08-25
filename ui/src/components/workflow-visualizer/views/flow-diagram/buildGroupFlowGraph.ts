@@ -1,4 +1,5 @@
 import dagre from '@dagrejs/dagre';
+import { assignBranchSides } from './assignBranchSides';
 import type { Node, Edge } from '@xyflow/react';
 import type { Workflow } from '../../../../types';
 
@@ -201,6 +202,9 @@ export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edg
       y: pos.y - height / 2,
     };
   }
+
+  // Handle sides follow the layout dagre just produced, not a fixed CSS rule.
+  assignBranchSides(nodes, edges);
 
   return { nodes, edges };
 }

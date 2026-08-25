@@ -1,4 +1,5 @@
 import dagre from '@dagrejs/dagre';
+import { assignBranchSides } from './assignBranchSides';
 import type { Node, Edge } from '@xyflow/react';
 import type { Workflow, Task, Step, TaskGroup } from '../../../../types';
 import { groupMembers, isTaskGroup, loopGuardLabel, loopStepLabel } from '../../../../types';
@@ -286,6 +287,12 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
       y: pos.y - nodeHeight(node.type) / 2,
     };
   }
+
+  // Handle sides follow the layout dagre just produced, not a fixed CSS rule.
+  // Runs before the loop back-edge is pushed: that edge is not a true/false
+  // branch, so it cannot affect the sides, and keeping it out keeps the scan
+  // over branch edges only.
+  assignBranchSides(nodes, edges);
 
   // ---- Loop back-edge ----
   // Deliberately added after dagre has run: dagre requires a DAG, and feeding

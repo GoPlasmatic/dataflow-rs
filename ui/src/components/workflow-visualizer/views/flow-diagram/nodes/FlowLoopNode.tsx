@@ -1,12 +1,15 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Repeat } from 'lucide-react';
+import { branchHandleOffsets } from '../assignBranchSides';
 
 export interface FlowLoopData {
   /** Text inside the node: `i < 10000` for a guard, `i += 1` for a tail. */
   label: string;
   /** `guard` renders the bound-check diamond, `tail` the counter advance. */
   variant: 'guard' | 'tail';
+  /** Set by assignBranchSides() from the post-layout geometry. */
+  trueOnLeft?: boolean;
   [key: string]: unknown;
 }
 
@@ -19,7 +22,8 @@ export interface FlowLoopData {
  * leaving on the left so it sweeps clear of the main column.
  */
 export const FlowLoopNode = memo(function FlowLoopNode({ data }: NodeProps) {
-  const { label, variant } = data as FlowLoopData;
+  const { label, variant, trueOnLeft } = data as FlowLoopData;
+  const { trueLeft, falseLeft } = branchHandleOffsets(trueOnLeft);
 
   if (variant === 'guard') {
     return (
@@ -42,12 +46,14 @@ export const FlowLoopNode = memo(function FlowLoopNode({ data }: NodeProps) {
           position={Position.Bottom}
           id="true"
           className="df-flow-handle df-flow-handle-true"
+          style={{ left: trueLeft }}
         />
         <Handle
           type="source"
           position={Position.Bottom}
           id="false"
           className="df-flow-handle df-flow-handle-false"
+          style={{ left: falseLeft }}
         />
       </div>
     );

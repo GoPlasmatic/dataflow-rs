@@ -187,14 +187,11 @@
   text-overflow: ellipsis;
 }
 
-/* Diamond handles positioned at bottom-left and bottom-right */
-.df-flow-diamond-wrapper .df-flow-handle-true {
-  left: 15% !important;
-}
-
-.df-flow-diamond-wrapper .df-flow-handle-false {
-  left: 85% !important;
-}
+/* Diamond branch handles sit at bottom-left and bottom-right, but WHICH of
+   true/false takes which side is decided per node by assignBranchSides() from
+   the post-dagre geometry, and applied as an inline `left`. Pinning the sides
+   here instead produced crossed Yes/No edges wherever dagre laid the branches
+   out the other way round. Do not reintroduce a fixed `left` for these two. */
 
 /* ---- Task Node — a chip on the board ---- */
 
