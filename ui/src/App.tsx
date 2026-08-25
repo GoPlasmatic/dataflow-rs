@@ -177,22 +177,6 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
             </div>
           </div>
           <div className="header-controls">
-            <button
-              className="header-action"
-              onClick={togglePanel}
-              title={isPanelCollapsed ? 'Show Editor (Ctrl+B)' : 'Hide Editor (Ctrl+B)'}
-            >
-              {isPanelCollapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
-            </button>
-            <button
-              className="header-action"
-              onClick={formatJson}
-              title="Format JSON (Ctrl+Shift+F)"
-            >
-              <Braces size={16} />
-              <span>Format</span>
-            </button>
-            <div className="header-divider" />
             <a
               href="https://github.com/GoPlasmatic/dataflow-rs"
               target="_blank"
@@ -245,8 +229,36 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
           {/* Left Panel - JSON Editors */}
           <div
             className={`panel editor-panel ${isPanelCollapsed ? 'collapsed' : ''}`}
-            style={{ width: isPanelCollapsed ? 0 : panelWidth }}
+            style={isPanelCollapsed ? undefined : { width: panelWidth }}
           >
+            {/* Panel-wide toolbar sitting above both editors. Collapsed, the
+                panel narrows to a rail and this keeps the expand button
+                reachable — Ctrl+B alone would be the only way back. */}
+            <div className="editor-panel-header">
+              {!isPanelCollapsed && <span className="editor-panel-title">Input</span>}
+              <div className="editor-panel-actions">
+                {!isPanelCollapsed && (
+                  <button
+                    className="editor-panel-action"
+                    onClick={formatJson}
+                    title="Format JSON (Ctrl+Shift+F)"
+                  >
+                    <Braces size={14} />
+                    <span>Format</span>
+                  </button>
+                )}
+                <button
+                  className="editor-panel-action editor-panel-action-icon"
+                  onClick={togglePanel}
+                  title={isPanelCollapsed ? 'Show Editor (Ctrl+B)' : 'Hide Editor (Ctrl+B)'}
+                  aria-label={isPanelCollapsed ? 'Show editor' : 'Hide editor'}
+                  aria-expanded={!isPanelCollapsed}
+                >
+                  {isPanelCollapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
+                </button>
+              </div>
+            </div>
+
             <div className="editor-section">
               <div className="editor-header">
                 <h3>Workflows</h3>

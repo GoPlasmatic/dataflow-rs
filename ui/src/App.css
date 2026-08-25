@@ -520,9 +520,85 @@ body {
   border-right: 1px solid var(--app-border);
 }
 
+/* Collapsed, the panel narrows to a rail rather than to zero. The rail still
+   shows the expand button; at width 0 the only way back would be Ctrl+B. */
 .editor-panel.collapsed {
-  width: 0 !important;
-  border-right: none;
+  width: 44px !important;
+}
+
+.editor-panel.collapsed .editor-section {
+  display: none;
+}
+
+/* ============================================
+   Editor Panel Header — toolbar over both editors
+   ============================================ */
+
+.editor-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  background: var(--app-bg);
+  border-bottom: 1px solid var(--app-border);
+}
+
+.editor-panel.collapsed .editor-panel-header {
+  justify-content: center;
+  padding: 0;
+}
+
+.editor-panel-title {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.editor-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.editor-panel-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.editor-panel-action:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.editor-panel-action:active {
+  background: var(--hairline-2);
+}
+
+.editor-panel-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.editor-panel-action-icon {
+  padding: 5px;
 }
 
 .visual-panel {
