@@ -7,74 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **deps:** `datalogic-rs` 5.2 → 5.3, and `Engine::operator_names` now takes its
-  built-in half from datalogic's own `Engine::builtin_operator_names` (new in
-  5.3.0) rather than the table this crate kept in `src/engine/operators.rs`.
-  That module is gone. It existed only because datalogic kept `OPCODE_NAMES`
-  private with no accessor, and it shipped in 3.7.0 saying the upstream fix was
-  tracked and that adopting it would be an internal edit. It is: the signature
-  of `operator_names` is unchanged, and it reports the same names for every
-  feature combination this crate exposes.
-
-  The adoption is also strictly more correct, because the two lists were not
-  computed the same way. The mirror enumerated the families `dataflow-rs` has
-  cargo features for; the upstream accessor is derived from the table
-  datalogic's compiler resolves operator keys against, so it reports what that
-  build actually dispatches. Those diverge under feature unification: if any
-  other crate in the graph enables a datalogic family this crate deliberately
-  exposes no feature for — `flagd`, whose `fractional` and `sem_ver` are the
-  one family `all-operators` omits — those names become live operators here,
-  and only the upstream-derived list says so. A lint reading the mirror would
-  have called them typos.
-
-  The three unit tests that guarded the mirror's shape are gone with it; the
-  properties they covered that still belong to this crate — no name reported
-  twice, and each family tracking its feature in *both* directions — moved to
-  `tests/operator_vocabulary.rs`, where they are checked against a running
-  engine instead of against a list. Suite counts move to 626 (`--all-features`)
-  and 534 (default).
-
-  Every other Rust dependency was already at its latest compatible version.
-  `quick-xml` is the one deliberate hold: 0.42 requires Rust 1.86 and this
-  crate's MSRV is 1.85. `cargo audit` reports zero advisories.
-
-- **deps:** `ui` — `@goplasmatic/datalogic-ui` 5.1.1 → 5.3.0 (tracking the same
-  datalogic release), plus in-range updates to `@xyflow/react`, `lucide-react`,
-  `vite`, `eslint`, `typescript-eslint`, `@vitejs/plugin-react`, `globals` and
-  the React type packages. `npm audit` reports zero vulnerabilities.
-
-  `typescript` is deliberately held on 6.x. 7.0 is released, but
-  `typescript-eslint` refuses to load against the TS 7.0 API and hard-fails
-  `npm run lint`, which CI gates on
-  ([typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940)
-  tracks support, targeted at TS >= 7.1). `@goplasmatic/dataflow-wasm` keeps its
-  `^3.6.0` floor, which `release.yml` rewrites at publish time.
-
-### Fixed
-
-- **deps:** `ui` — pin `@xyflow/react` to exactly `12.11.3`. `12.11.4`, published
-  2026-08-25, is broken as shipped: its bundle imports `handleAttributionWarning`
-  from `@xyflow/system`, but its manifest pins `@xyflow/system` at exactly
-  `0.0.80`, and no published `@xyflow/system` exports that symbol — not `0.0.80`,
-  not the `1.0.0-next` prereleases. Any bundler that resolves into the package
-  fails with `[MISSING_EXPORT]`.
-
-  The previous entry moved the declared range to `^12.11.4`, which is how the
-  broken release got in. It passed verification because `lint` and `build:lib`
-  do not catch it: `vite.lib.config.ts` externalizes every `dependency` and
-  `peerDependency`, so `@xyflow/react` is never resolved into during the library
-  build. Only `npm run build` — the app bundle, which `docs.yml` runs to publish
-  the debugger — actually links the import, and that is the job that failed.
-
-  The pin is exact rather than a range because `docs.yml` installs with
-  `npm install --no-package-lock`; a caret would resolve straight back to
-  `12.11.4` regardless of the lockfile. Revert to a range once upstream ships a
-  `@xyflow/system` that exports the symbol, or a `@xyflow/react` that does not
-  need it.
-
-## [3.7.0] — 2026-08-25
+## [3.7.0] — 2026-08-26
 
 The host surface. Everything a service that stores, validates and operates
 workflow definitions needed from this crate but had to re-implement: the
@@ -316,6 +249,126 @@ observability, and the operator vocabulary.
   handler" section previously stopped at classifying the name and advised
   requiring a registration for *every* `RequiresHandler` name, because the
   registry was unreachable. It now shows the real check.
+
+- **deps:** `datalogic-rs` 5.2 → 5.3, and `Engine::operator_names` now takes its
+  built-in half from datalogic's own `Engine::builtin_operator_names` (new in
+  5.3.0) rather than the table this crate kept in `src/engine/operators.rs`.
+  That module is gone. It existed only because datalogic kept `OPCODE_NAMES`
+  private with no accessor, and it shipped in 3.7.0 saying the upstream fix was
+  tracked and that adopting it would be an internal edit. It is: the signature
+  of `operator_names` is unchanged, and it reports the same names for every
+  feature combination this crate exposes.
+
+  The adoption is also strictly more correct, because the two lists were not
+  computed the same way. The mirror enumerated the families `dataflow-rs` has
+  cargo features for; the upstream accessor is derived from the table
+  datalogic's compiler resolves operator keys against, so it reports what that
+  build actually dispatches. Those diverge under feature unification: if any
+  other crate in the graph enables a datalogic family this crate deliberately
+  exposes no feature for — `flagd`, whose `fractional` and `sem_ver` are the
+  one family `all-operators` omits — those names become live operators here,
+  and only the upstream-derived list says so. A lint reading the mirror would
+  have called them typos.
+
+  The three unit tests that guarded the mirror's shape are gone with it; the
+  properties they covered that still belong to this crate — no name reported
+  twice, and each family tracking its feature in *both* directions — moved to
+  `tests/operator_vocabulary.rs`, where they are checked against a running
+  engine instead of against a list. Suite counts move to 626 (`--all-features`)
+  and 534 (default).
+
+  Every other Rust dependency was already at its latest compatible version.
+  `quick-xml` is the one deliberate hold: 0.42 requires Rust 1.86 and this
+  crate's MSRV is 1.85. `cargo audit` reports zero advisories.
+
+- **deps:** `ui` — `@goplasmatic/datalogic-ui` 5.1.1 → 5.3.0 (tracking the same
+  datalogic release), plus in-range updates to `@xyflow/react`, `lucide-react`,
+  `vite`, `eslint`, `typescript-eslint`, `@vitejs/plugin-react`, `globals` and
+  the React type packages. `npm audit` reports zero vulnerabilities.
+
+  `typescript` is deliberately held on 6.x. 7.0 is released, but
+  `typescript-eslint` refuses to load against the TS 7.0 API and hard-fails
+  `npm run lint`, which CI gates on
+  ([typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940)
+  tracks support, targeted at TS >= 7.1). `@goplasmatic/dataflow-wasm` keeps its
+  `^3.6.0` floor, which `release.yml` rewrites at publish time.
+- **ui:** the debugger adopts the datalogic "Signal Board" design system, so the
+  workflow visualizer and the `@goplasmatic/datalogic-ui` logic editor embedded
+  inside it stop rendering in two different visual languages — VSCode Light+ /
+  Dark+ chrome wrapping a Signal Board editor.
+
+  Tokens are declared at two scopes, mirroring datalogic:
+  `.df-visualizer-container` for the published component, `:root` for the demo
+  shell. The theme switch moves from the `.df-theme-light` / `.df-theme-dark`
+  class pair to a `data-theme` attribute, matching
+  `.logic-editor[data-theme="dark"]`. The old classes are still emitted and
+  still styled, marked deprecated, so a consumer targeting them keeps working;
+  they go in the next major.
+
+  `--df-*` remains the public token API but no longer holds literals. Every one
+  is an alias onto a board token, so overriding `--board` or a `--sig-*`
+  re-tints the component without touching `--df-*` at all. Colour follows the
+  signal rule — a thing is coloured by the kind of value it produces — which
+  reaches the function badges, the tree icons, the flow diagram and the Monaco
+  JSON theme alike. One accessibility consequence: `--df-text-tertiary` was
+  `#848484`, which fails WCAG AA on the light background; it now resolves to
+  `--muted` and passes. Every text/surface and foreground/fill pair in the
+  system was measured against AA in both themes.
+
+  Fonts are Space Grotesk + JetBrains Mono, named in `--font-ui` / `--font-mono`
+  but deliberately *not* loaded by the stylesheet — the demo self-hosts them via
+  `@fontsource`, so a consumer of this package is not forced into a font
+  download and the fallback stack carries the UI unchanged.
+
+- **ui:** `Format` and the show/hide-editor control move out of the app header
+  into a new toolbar above the Workflows and Payload editors, where their effect
+  is visible. Collapsing the editor panel now leaves a narrow rail rather than
+  zero width: the toggle lives inside the panel it collapses, and at zero width
+  the panel would hide the only control that reopens it. Demo shell only — not
+  part of the published component.
+
+### Fixed
+
+- **deps:** `ui` — pin `@xyflow/react` to exactly `12.11.3`. `12.11.4`, published
+  2026-08-25, is broken as shipped: its bundle imports `handleAttributionWarning`
+  from `@xyflow/system`, but its manifest pins `@xyflow/system` at exactly
+  `0.0.80`, and no published `@xyflow/system` exports that symbol — not `0.0.80`,
+  not the `1.0.0-next` prereleases. Any bundler that resolves into the package
+  fails with `[MISSING_EXPORT]`.
+
+  The previous entry moved the declared range to `^12.11.4`, which is how the
+  broken release got in. It passed verification because `lint` and `build:lib`
+  do not catch it: `vite.lib.config.ts` externalizes every `dependency` and
+  `peerDependency`, so `@xyflow/react` is never resolved into during the library
+  build. Only `npm run build` — the app bundle, which `docs.yml` runs to publish
+  the debugger — actually links the import, and that is the job that failed.
+
+  The pin is exact rather than a range because `docs.yml` installs with
+  `npm install --no-package-lock`; a caret would resolve straight back to
+  `12.11.4` regardless of the lockfile. Revert to a range once upstream ships a
+  `@xyflow/system` that exports the symbol, or a `@xyflow/react` that does not
+  need it.
+
+- **ui:** the `Yes` / `No` edges leaving a condition node crossed each other, in
+  the workflow-group diagram and in any workflow carrying a task-level
+  condition. The two branch handles had their sides pinned in CSS, but which
+  side each branch *target* lands on is decided by dagre from graph structure,
+  and the four sites that emit a branch do not push their true/false targets in
+  a consistent order — two happened to agree with the CSS and two did not.
+  Reordering the odd two would have lined them up only by depending on an
+  undocumented dagre ordering heuristic, and silently: nothing would fail, the
+  edges would simply cross again. The side is now read back off the post-layout
+  geometry, so it follows whatever dagre decides.
+
+- **ui:** Monaco's dark-theme step highlight had never applied. `:root
+  .df-highlighted-line` outranked the bare `.df-highlighted-line` it was meant
+  to complement, so the light rule won in both themes. Both now resolve through
+  tokens and the overriding rule is gone.
+
+- **ui:** the tree icons could not follow the theme — they were hardcoded hexes,
+  and the condition icon (`#dcdcaa`) sat on the light background at roughly
+  1.6:1. They are CSS variable references now, which also means a consumer
+  overriding `--sig-*` re-tints the tree along with everything else.
 
 ### Notes
 
