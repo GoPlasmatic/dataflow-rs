@@ -119,8 +119,19 @@ matching version.
 - `task_context.rs`: `TaskContext` — accessors and audit-recording setters for handlers
 - `task_outcome.rs`: `TaskOutcome` and `HALT_STATUS_CODE`
 - `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
+- `operators.rs`: the operator vocabulary this build evaluates, `#[cfg]`-gated
+  per family
+- `retry.rs`: `RetryPolicy` / `retry_with_policy` — native-only (tokio time)
+- `rollout.rs`: `Rollout` traffic-split range, `partition` / `validate_set`,
+  `RolloutError`
 - `workflow.rs`: `Workflow` definition, lifecycle fields, `LoopConfig`, validation
-- `task.rs`: `Task` structure
+- `task.rs`: `Task` and `TaskGroup` — both `#[non_exhaustive]`; construct via
+  `Task::action`
+- `authoring.rs`: `Workflow::validate_authored`, `WorkflowIssue`, `IssueCode` —
+  the authoring-time surface a host checks definitions against
+- `steps.rs`: The authored step grammar — `flatten` (the parser) and
+  `walk_authored_steps` (the public walker), plus the `is_group` /
+  `MAX_GROUP_DEPTH` facts both read
 - `trace.rs`: `ExecutionTrace` / `ExecutionStep` for step-through debugging
 - `error.rs`: `DataflowError`, `ErrorInfo`, retryability classification
 - `utils.rs`: Path splitting and nested get/set helpers
@@ -243,6 +254,10 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `templates.rs` | `Template` config fields on custom handlers |
 | `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
 | `task_groups.rs` | `Task::terminal` and task groups — the guard-clause shape |
+| `task_identity.rs` | `TaskContext` workflow/task ids and `loop_counter` |
+| `operator_vocabulary.rs` | `operator_names` — every mirrored name checked live |
+| `retry.rs` | `RetryPolicy` backoff, deadline and retryability, under a paused clock |
+| `authoring_validation.rs` | `validate_authored` and `check_workflow` — codes, paths, the parse backstop |
 
 Each file under `tests/` compiles as its own crate, so fixtures used by more
 than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
@@ -262,8 +277,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 495 passing.
-`cargo test -p dataflow-rs` (default features) should report 420 — the operator
+`cargo test --workspace --all-features` should report 625 passing.
+`cargo test -p dataflow-rs` (default features) should report 536 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

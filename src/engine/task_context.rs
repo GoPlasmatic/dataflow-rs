@@ -33,6 +33,27 @@ pub struct TaskContext<'a> {
     /// `message.capture_changes` is true; otherwise pushes are no-ops to
     /// keep the bulk-pipeline fast path allocation-free.
     changes: Vec<Change>,
+    /// Who is executing, when the engine built this context.
+    ///
+    /// Borrowed rather than `Arc`-cloned: the ids live on the `Workflow` and
+    /// `Task`, both of which outlive the dispatch call, and the accessors hand
+    /// back `&str` either way — so a refcount bump per task would buy nothing.
+    identity: Option<TaskIdentity<'a>>,
+    /// Sweep index of the enclosing looping workflow, if any.
+    loop_counter: Option<i64>,
+}
+
+/// Which task, in which workflow, the engine is currently running.
+///
+/// All-or-nothing by construction: the engine executing a task inside a
+/// workflow knows both ids, and every other path knows neither. Two separate
+/// `Option<&str>` fields would additionally allow "workflow known, task
+/// unknown" — a state that never occurs — and would be silently swappable at
+/// the call site, being adjacent and identically typed.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TaskIdentity<'a> {
+    pub workflow_id: &'a str,
+    pub task_id: &'a str,
 }
 
 impl<'a> TaskContext<'a> {
@@ -40,12 +61,83 @@ impl<'a> TaskContext<'a> {
     /// pre-built `&mut TaskContext` from the executor — but exposed `pub` so
     /// tests and benchmarks can drive `AsyncFunctionHandler::execute`
     /// directly without going through `Engine::process_message`.
+    /// A context built this way reports `None` from [`Self::workflow_id`],
+    /// [`Self::task_id`] and [`Self::loop_counter`] — there is no workflow run
+    /// to describe, and inventing ids would be worse than admitting their
+    /// absence.
     pub fn new(message: &'a mut Message, datalogic: &'a Arc<DatalogicEngine>) -> Self {
         Self {
             message,
             datalogic,
             changes: Vec::new(),
+            identity: None,
+            loop_counter: None,
         }
+    }
+
+    /// As [`Self::new`], with the identity of the executing task.
+    ///
+    /// Used by the task executor on the dispatch path. A separate constructor
+    /// rather than setters, so there is no window in which a context exists
+    /// with half its identity filled in.
+    pub(crate) fn with_identity(
+        message: &'a mut Message,
+        datalogic: &'a Arc<DatalogicEngine>,
+        identity: Option<TaskIdentity<'a>>,
+        loop_counter: Option<i64>,
+    ) -> Self {
+        Self {
+            message,
+            datalogic,
+            changes: Vec::new(),
+            identity,
+            loop_counter,
+        }
+    }
+
+    /// Id of the workflow being executed, when the engine built this context.
+    ///
+    /// `None` for a context built with [`Self::new`] — a test or benchmark
+    /// driving a handler directly is not inside a workflow run.
+    ///
+    /// ```
+    /// # use dataflow_rs::{TaskContext, engine::message::Message};
+    /// # use serde_json::json;
+    /// # let datalogic = std::sync::Arc::new(datalogic_rs::Engine::new());
+    /// # let mut message = Message::from_value(&json!({}));
+    /// let ctx = TaskContext::new(&mut message, &datalogic);
+    /// assert_eq!(ctx.workflow_id(), None);
+    /// ```
+    #[inline]
+    pub fn workflow_id(&self) -> Option<&str> {
+        self.identity.map(|i| i.workflow_id)
+    }
+
+    /// Id of the task being executed, when the engine built this context.
+    ///
+    /// Always a **leaf** task's id. Handlers run only on leaf tasks — a task
+    /// group is span bookkeeping recorded on the task that opens it, never a
+    /// dispatch target — so a group id can never appear here.
+    ///
+    /// `None` for a context built with [`Self::new`].
+    #[inline]
+    pub fn task_id(&self) -> Option<&str> {
+        self.identity.map(|i| i.task_id)
+    }
+
+    /// Sweep index of the enclosing looping workflow, or `None` when the
+    /// workflow does not carry a `loop`.
+    ///
+    /// This is a different fact from identity being unknown: a handler in a
+    /// non-looping workflow has both ids and no counter.
+    ///
+    /// Worth preferring over reading the counter out of `temp_data`, which
+    /// only works when the host gave `LoopConfig` a `counter` name and the
+    /// handler hardcodes that path. A loop with no named counter writes to no
+    /// path at all, and its sweep index is reachable no other way.
+    #[inline]
+    pub fn loop_counter(&self) -> Option<i64> {
+        self.loop_counter
     }
 
     /// Borrow the message under processing. Use this when you need to inspect

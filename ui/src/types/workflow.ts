@@ -73,9 +73,30 @@ export interface TaskGroup {
 /** One element of a workflow's `tasks` array: a task or a group of them. */
 export type Step = Task | TaskGroup;
 
-/** Whether a step is a group rather than a plain task. */
+/**
+ * Whether a step is a group rather than a plain task.
+ *
+ * The test is **presence of a `tasks` key, nothing else** — the same test the
+ * engine's parser makes (`is_group` in `src/engine/steps.rs`). A `tasks` key
+ * holding a non-array is still a group, and a malformed one; reading it as a
+ * task instead would classify it differently from the engine that has to run
+ * it.
+ */
 export function isTaskGroup(step: Step): step is TaskGroup {
-  return Array.isArray((step as TaskGroup).tasks);
+  return (step as TaskGroup).tasks !== undefined;
+}
+
+/**
+ * The members of a group, or none when `tasks` is malformed.
+ *
+ * `isTaskGroup` tests only for the presence of the key, so a group whose
+ * `tasks` is not an array is still a group — with no members. The engine
+ * rejects such a workflow at parse time; a renderer must not iterate the value
+ * (a string would iterate character by character). Mirrors the walker in
+ * `src/engine/steps.rs`, which descends only into a real array.
+ */
+export function groupMembers(group: TaskGroup): Step[] {
+  return Array.isArray(group.tasks) ? group.tasks : [];
 }
 
 /**
@@ -86,7 +107,7 @@ export function flattenSteps(steps: Step[]): Task[] {
   const out: Task[] = [];
   for (const step of steps) {
     if (isTaskGroup(step)) {
-      out.push(...flattenSteps(step.tasks));
+      out.push(...flattenSteps(groupMembers(step)));
     } else {
       out.push(step);
     }

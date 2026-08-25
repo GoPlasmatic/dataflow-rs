@@ -224,20 +224,31 @@ pub mod engine;
 pub mod prelude;
 
 // Re-export all public APIs for easier access
+pub use engine::authoring::{IssueCode, WorkflowIssue};
 pub use engine::error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use engine::functions::{
-    AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind, EnrichConfig,
-    FilterConfig, FunctionConfig, HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping,
-    PublishKafkaConfig, Template, TemplateCompiler, ValidationConfig, ValidationRule,
-    builtin_function_kind, is_builtin_function,
+    AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind,
+    DispatchableFunction, EnrichConfig, FilterConfig, FunctionConfig, HttpCallConfig, HttpMethod,
+    LogConfig, MapConfig, MapMapping, PublishKafkaConfig, Template, TemplateCompiler,
+    ValidationConfig, ValidationRule, builtin_function_kind, is_builtin_function,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use engine::retry::{RetryPolicy, retry_with_attempts, retry_with_policy};
+
 pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
-pub use engine::observer::{ExecutionObserver, TaskEvent};
+pub use engine::observer::{
+    ExecutionObserver, MessageFinished, MessageStarted, TaskEvent, WorkflowFinished,
+    WorkflowStarted,
+};
+pub use engine::steps::{
+    AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
+};
 pub use engine::task_context::TaskContext;
 pub use engine::task_outcome::{HALT_STATUS_CODE, TaskOutcome};
 pub use engine::trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
 pub use engine::{
-    ConnectorRef, Engine, EngineBuilder, Rollout, Task, TaskGroup, Workflow, WorkflowStatus,
+    ConnectorRef, Engine, EngineBuilder, Rollout, RolloutError, Task, TaskGroup, Workflow,
+    WorkflowStatus,
 };
 
 /// The [`datalogic_rs`] JSONLogic engine, re-exported.

@@ -22,33 +22,14 @@ use common::{AddErrorTask, FailingTask, FivehundredTask, TimingOutTask, dv};
 
 #[tokio::test]
 async fn task_err_with_continue_on_error_false_pushes_wrapper_to_errors() {
-    let workflow = Workflow {
-        id: "fail_workflow".to_string(),
-        id_arc: std::sync::Arc::from("fail_workflow"),
-        name: "Fail Workflow".to_string(),
-        priority: 0,
-        description: None,
-        tasks: vec![Task {
-            id: "boom".to_string(),
-            id_arc: std::sync::Arc::from("boom"),
-            name: "Boom".to_string(),
-            description: None,
-            condition: json!(true),
-            compiled_condition: None,
-            continue_on_error: false,
-            terminal: false,
-            group_starts: Vec::new(),
-            function: FunctionConfig::Custom {
-                name: "fail".to_string(),
-                input: json!({}),
-                compiled_input: None,
-            },
-        }],
-        condition: json!(true),
-        compiled_condition: None,
-        continue_on_error: false,
-        ..Default::default()
-    };
+    let workflow = custom_task_workflow(
+        "fail_workflow",
+        "Fail Workflow",
+        "boom",
+        "Boom",
+        "fail",
+        false,
+    );
 
     let engine = Engine::builder()
         .with_workflow(workflow)
@@ -78,35 +59,16 @@ async fn task_err_with_continue_on_error_false_pushes_wrapper_to_errors() {
 
 #[tokio::test]
 async fn task_status_500_pushes_status_error_to_message() {
-    let workflow = Workflow {
-        id: "five_hundred".to_string(),
-        id_arc: std::sync::Arc::from("five_hundred"),
-        name: "Five Hundred".to_string(),
-        priority: 0,
-        description: None,
-        tasks: vec![Task {
-            id: "task_500".to_string(),
-            id_arc: std::sync::Arc::from("task_500"),
-            name: "Task 500".to_string(),
-            description: None,
-            condition: json!(true),
-            compiled_condition: None,
-            // Continue past the 500 so we can assert on the *push*
-            // independently of the `Result::Err` path.
-            continue_on_error: true,
-            terminal: false,
-            group_starts: Vec::new(),
-            function: FunctionConfig::Custom {
-                name: "five_hundred".to_string(),
-                input: json!({}),
-                compiled_input: None,
-            },
-        }],
-        condition: json!(true),
-        compiled_condition: None,
-        continue_on_error: true,
-        ..Default::default()
-    };
+    // `continue_on_error` so the push can be asserted independently of the
+    // `Result::Err` path.
+    let workflow = custom_task_workflow(
+        "five_hundred",
+        "Five Hundred",
+        "task_500",
+        "Task 500",
+        "five_hundred",
+        true,
+    );
 
     let engine = Engine::builder()
         .with_workflow(workflow)
@@ -854,4 +816,38 @@ fn build_rejects_a_path_the_eval_context_cannot_see() {
             .build()
             .is_err()
     );
+}
+
+/// Build a single-custom-task workflow through the documented constructors.
+///
+/// Since `Task` and `Workflow` became `#[non_exhaustive]` this is the shape an
+/// external caller writes: a constructor, then assignment of the public fields
+/// it cares about. The engine internals — `id_arc`, `compiled_condition`,
+/// `group_starts` — are set correctly by `Task::action` and `Workflow::new`,
+/// and are no longer named here at all.
+fn custom_task_workflow(
+    workflow_id: &str,
+    workflow_name: &str,
+    task_id: &str,
+    task_name: &str,
+    function_name: &str,
+    continue_on_error: bool,
+) -> Workflow {
+    let mut task = Task::action(
+        task_id,
+        task_name,
+        FunctionConfig::Custom {
+            name: function_name.to_string(),
+            input: json!({}),
+            compiled_input: None,
+        },
+    );
+    task.continue_on_error = continue_on_error;
+
+    let mut workflow = Workflow::new();
+    workflow.id = workflow_id.to_string();
+    workflow.name = workflow_name.to_string();
+    workflow.tasks = vec![task];
+    workflow.continue_on_error = continue_on_error;
+    workflow
 }

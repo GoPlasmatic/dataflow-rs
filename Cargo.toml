@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "3.6.0"
+version = "3.7.0"
 edition = "2024"
 rust-version = "1.85"
 # Allowlist of what ships in the published .crate: the library, its examples
@@ -116,7 +116,10 @@ num_cpus = "1.17"
 members = [".", "wasm", "docs-tests"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["rt-multi-thread"] }
+# `time` drives the `retry` module's backoff and deadline. Native-only: tokio's
+# time driver does not run on wasm32-unknown-unknown, which is why `retry` is
+# itself `cfg`-gated off that target.
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # `fast-rng`: thread-local PRNG seeded once from the OS instead of one
 # `getrandom` syscall per `Uuid::now_v7()` — appropriate for v7 ids
 # (uniqueness, not secrecy). Native-only; features are additive per-target,

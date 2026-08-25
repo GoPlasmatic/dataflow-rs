@@ -1,7 +1,7 @@
 import dagre from '@dagrejs/dagre';
 import type { Node, Edge } from '@xyflow/react';
 import type { Workflow, Task, Step, TaskGroup } from '../../../../types';
-import { isTaskGroup, loopGuardLabel, loopStepLabel } from '../../../../types';
+import { groupMembers, isTaskGroup, loopGuardLabel, loopStepLabel } from '../../../../types';
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT_PILL = 40;
@@ -179,7 +179,7 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
    */
   const emitGroup = (group: TaskGroup) => {
     if (!hasCondition(group.condition)) {
-      for (const child of group.tasks) emitStep(child);
+      for (const child of groupMembers(group)) emitStep(child);
       return;
     }
 
@@ -202,7 +202,7 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
 
     prevNodeId = groupCondId;
     prevSourceHandle = 'true';
-    for (const child of group.tasks) emitStep(child);
+    for (const child of groupMembers(group)) emitStep(child);
 
     const mergeId = addNode('skip', { merge: true });
     connect(mergeId);

@@ -5,6 +5,256 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] — 2026-08-25
+
+The host surface. Everything a service that stores, validates and operates
+workflow definitions needed from this crate but had to re-implement: the
+dispatch vocabulary, the authored step grammar, definition and registry
+validation, execution identity, rollout invariants, a retry loop, lifecycle
+observability, and the operator vocabulary.
+
+### Added
+
+- **engine:** `Engine::can_dispatch` / `EngineBuilder::can_dispatch` — whether a
+  task named `name` will actually run. `true` for a self-contained built-in and
+  for any name with a registered handler, including an alias such as
+  `validation`; `false` guarantees the opposite, that a task naming it fails
+  with `FunctionNotFound` on the first message that reaches it. This closes the
+  half of the question `builtin_function_kind` could not answer: it reports that
+  `enrich` *needs* a handler, but not whether one is registered. A workflow
+  using a config-only integration with nothing behind it still builds cleanly —
+  that permissiveness is deliberate — so this is the check that catches it
+  before activation rather than on the first request.
+- **engine:** `Engine::dispatchable_functions` /
+  `EngineBuilder::dispatchable_functions` — the full vocabulary an engine will
+  dispatch, for completion tooling, admin catalogues and did-you-mean
+  suggestions. Yields `DispatchableFunction { name, kind, aliases }`. Aliases
+  are grouped, so `validate` appears once carrying `["validation"]` rather than
+  twice; `kind` is `Option<BuiltinKind>`, where `None` means a registered custom
+  handler — the same convention `builtin_function_kind` already uses, chosen so
+  `BuiltinKind` need not gain a third variant and break every downstream
+  `match`. Ordering is not meaningful, matching `BUILTIN_FUNCTION_NAMES`.
+
+- **authoring:** `Workflow::validate_authored` — check a definition's JSON
+  without building an engine. Collects *every* problem rather than failing at
+  the first, each carrying the coordinate the author typed
+  (`tasks[1].tasks[0].id`, not the flat index the task ends up at), a stable
+  `IssueCode`, and a human message.
+
+  It returns empty **if and only if** the JSON parses into a `Workflow` and that
+  workflow validates. The guarantee holds by construction, not by keeping a rule
+  list in sync: after the structural checks it parses the document for real and
+  reports any failure as `ParseFailed`. This matters because the schema is far
+  wider than the semantic rules — `"priority": "high"`, a `map` task missing
+  `mappings`, a misspelled `status` break no rule and still cannot load — so a
+  host no longer needs its own round-trip check as a drift net.
+
+  Note the promise is about *shape*: it does not assert the engine can run the
+  definition, since `build()` also resolves handlers and parses custom inputs.
+  `check_workflow` answers that half.
+- **authoring:** `Engine::check_workflow` / `EngineBuilder::check_workflow` —
+  check a workflow against the registered handlers without building anything,
+  reporting rather than aborting. Covers the three ways `Engine::build` can
+  reject a structurally valid definition: `UnknownFunction`, `MissingHandler`,
+  `InputParse`, plus `TemplateCompile` for a handler that rejects its input at
+  construction. Being inside the crate, it compiles templates with the real
+  `TemplateCompiler` against a datalogic engine configured exactly as `build()`
+  configures it, ending the host-side approximation.
+
+  `MissingHandler` is deliberately distinct from `UnknownFunction`: `enrich`,
+  `http_call` and `publish_kafka` are real names awaiting a registration, and
+  reporting them as unknown would send an author hunting a typo that is not
+  there.
+
+  Issues anchor on `task_id` with a task-relative path (`function.input`).
+  `check_workflow` receives an already-flattened `Workflow`, so an authored
+  coordinate cannot be derived from it — and a flat `tasks[3]` would point at
+  the wrong element in the author's document. Join the anchor with
+  `walk_authored_steps` to get one.
+
+- **authoring:** `WorkflowIssue` and `#[non_exhaustive] IssueCode` (with
+  `as_str()`), the shared reporting vocabulary. An enum rather than string
+  codes: a host branching on a string literal has no protection against a typo
+  that compiles and silently never matches.
+- **docs:** `advanced/authoring-validation.md`, covering the submission-time
+  sequence — shape, then parse, then the handler registry.
+
+### Changed
+
+- **BREAKING (construction only):** `Task`, `TaskGroup` and `Workflow` are now
+  `#[non_exhaustive]`. Struct-literal construction from outside the crate no
+  longer compiles; **field reads and writes are unaffected**, as are `..`
+  patterns.
+
+  This was already effectively broken. Three of `Task`'s fields — `id_arc`,
+  `compiled_condition`, `group_starts` — are `#[doc(hidden)]` and documented as
+  *not part of the stable API*, yet a struct literal forced every caller to name
+  them; `Workflow` and `TaskGroup` have the same shape. Field additions have
+  broken literal callers twice already (3.3.0 `Workflow::loop`, 3.6.0
+  `Task::terminal`), and doing this once now is what stops a third time.
+
+  Migration is a constructor plus assignment — the engine internals are set for
+  you and disappear from the call site:
+
+  ```rust
+  // before
+  let task = Task {
+      id: "charge".to_string(),
+      id_arc: std::sync::Arc::from("charge"),   // engine internal
+      name: "Charge".to_string(),
+      description: None,
+      condition: json!(true),
+      compiled_condition: None,                 // engine internal
+      continue_on_error: true,
+      terminal: false,
+      group_starts: Vec::new(),                 // engine internal
+      function: my_function,
+  };
+
+  // after
+  let mut task = Task::action("charge", "Charge", my_function);
+  task.continue_on_error = true;
+  ```
+
+  `Workflow::new()`, `Workflow::rule()` and `Workflow::from_json()` are the
+  equivalents for workflows. `TaskGroup` gets no constructor: it is produced by
+  the parser, and its `end` field indexes the flattened task list, so building
+  one by hand was never meaningful.
+
+  Matches the pattern `ErrorInfo` and `ExecutionStep` already follow in this
+  crate.
+
+- **engine:** `Engine::operator_names` — every operator this build evaluates:
+  datalogic's core vocabulary, the extension families compiled in, and
+  operators registered via `with_datalogic_operator`. Because the engine runs
+  datalogic in templating mode an unknown operator is not an error — the object
+  echoes back as literal data — so this is the only way to answer the question a
+  lint needs: is this single-key object a live call, or inert data?
+
+  Enabling a family is not a no-op, and the enumeration says so: with
+  `ext-string` off, `{"length": …}` is a value; with it on, the same JSON is a
+  call.
+
+  The core names are mirrored here because datalogic keeps its own table
+  private with no accessor. That replaces N host-side copies with one, beside
+  the `#[cfg]` gates that decide which families are live — and every name in it
+  is checked against the running engine by evaluating it, so a name that stops
+  being an operator fails a test rather than silently weakening a downstream
+  lint. The proper fix is a `builtin_operator_names()` upstream; this signature
+  does not change when that lands.
+
+- **observer:** `ExecutionObserver` gains four defaulted callbacks —
+  `message_started` / `message_finished` / `workflow_started` /
+  `workflow_finished` — so engine overhead is measurable directly rather than
+  as a host-side residual. `workflow_finished.duration - Σ task durations` is
+  the condition evaluation, group gating, loop bookkeeping, audit writes and
+  arena management for that workflow.
+
+  A workflow that a rollout gate or its condition rejected never starts. A
+  looping workflow reports **one** pair for the whole loop with the sweep count
+  on the finished event, rather than one pair per sweep.
+
+  Departs from the issue's sketch in two ways. The started and finished events
+  are separate types, so no field is meaningless on one of them. And
+  `workflows_run` is deliberately absent: it is exactly the number of
+  `workflow_started` callbacks, so carrying it would duplicate the event stream
+  and cost a counter threaded through the execution path — the same reasoning
+  that keeps per-workflow task counts off the event, since `task_finished`
+  already reports them.
+
+- **retry:** `RetryPolicy` and `retry_with_policy` — the mechanism half of a
+  retryability model the crate has carried since 3.0 with nothing acting on it.
+  Retries only while `DataflowError::retryable()` says so, backs off
+  exponentially with a 60s ceiling, and takes a **whole-loop** deadline: a
+  per-attempt timeout says nothing about the total, so a 30s-per-call operation
+  under capped backoff can otherwise run to ~127s inside a 30s caller budget. A
+  backoff that would cross the deadline is skipped rather than slept, because
+  sleeping and then failing spends latency the caller is already waiting on.
+
+  Deliberately not engine-level automatic retry: the engine cannot know which
+  handlers are idempotent — an SMTP send that times out after `DATA` is
+  indistinguishable from one that succeeded — so this stays a per-call-site
+  decision.
+- **retry:** `retry_with_attempts` returns the attempt count alongside the
+  result, which is what fills `ErrorInfo::retry_attempted` / `retry_count` —
+  fields that existed with nothing to populate them.
+- **deps:** the `time` feature is enabled on tokio for non-wasm targets. The
+  `retry` module is `cfg`-gated off `wasm32`, where tokio's time driver does not
+  run.
+
+- **rollout:** `Rollout::partition` — turn an ordered percentage split into
+  contiguous half-open ranges covering exactly `0..100`, input order being
+  traffic order. Percentages must sum to 100, and the error names the
+  direction: `Under` leaves buckets matching nothing, `Over` pushes later
+  entries past the end of the bucket space. A `0` entry is allowed and yields an
+  empty range, the natural way to express a version staged at no traffic.
+- **rollout:** `Rollout::validate_set` — check that a set of ranges partitions
+  `0..100`. Both failures are otherwise silent in production: a `Gap`
+  blackholes a slice of traffic, an `Overlap` makes which version answers depend
+  on workflow ordering rather than on the rollout. Individual ranges are checked
+  first, so an inverted range or one reaching past bucket 100 is reported as
+  itself rather than as whatever downstream gap it produces. Order-independent;
+  coverage failures are reported at the lowest affected bucket.
+- **rollout:** `RolloutError`, its own type rather than a `DataflowError`
+  variant — these are pure arithmetic checks, and routing them through the
+  engine error would attach retryability classification that means nothing here.
+
+- **task context:** `TaskContext::workflow_id` / `task_id` — the identity of the
+  task a handler is currently running, so it can label a log line, a metric or a
+  recorded call without re-deriving it afterwards. `task_id` is always a leaf
+  task: handlers dispatch only on leaves, so a group id can never appear.
+  Both are `None` for a context built with `TaskContext::new`, the documented
+  way to drive a handler from a test or benchmark — there is no workflow run to
+  describe, and the `Option` says so rather than inventing an id.
+- **task context:** `TaskContext::loop_counter` — the sweep index inside a
+  workflow carrying a `loop`, `None` otherwise. This is the only way to read it
+  when the `loop` has no `counter` name: a named counter is written to
+  `temp_data.<name>`, but an unnamed one is written nowhere, so the engine's own
+  count was previously unreachable.
+- **engine:** `walk_authored_steps` — a total walker over a workflow's authored
+  `tasks` JSON, yielding every node with the coordinate the author typed
+  (`tasks[1].tasks[0]`), its `StepKind` (`Leaf` / `Group` / `TooDeep`) and its
+  nesting depth. Where parsing stops at the first bad element, this reports
+  malformed elements, empty groups and over-deep nesting as nodes, so a
+  validator collects every problem in one pass. Filtering to `Leaf` reproduces
+  the engine's flattened `Workflow::tasks` exactly, pinned by an equivalence
+  test.
+- **engine:** `is_group` and `MAX_GROUP_DEPTH` are now public — the two facts a
+  host validating authored JSON would otherwise mirror. A host that reads them
+  follows a future change to either automatically.
+
+### Changed
+
+- **engine:** `Rollout` moved to `src/engine/rollout.rs` with its new helpers.
+  Re-exported from every path it previously occupied, so no import breaks.
+- **engine:** the step grammar moved to `src/engine/steps.rs`, which now holds
+  both the parser and the public walker. `task.rs` is back to being about
+  `Task`. No API change; `Workflow` parsing is unaffected.
+- **ui:** `isTaskGroup` now tests for the presence of a `tasks` key rather than
+  `Array.isArray(tasks)`, matching the engine's parser. The two had diverged: on
+  `{"id": "x", "tasks": "oops"}` the engine reported a malformed *group* while
+  the UI read a *task*. A new `groupMembers()` accessor supplies a group's
+  members — empty when `tasks` is malformed — so renderers descend only into a
+  real array, mirroring the walker.
+- **ui:** `TaskGroup`, `Step`, `isTaskGroup`, `flattenSteps` and `groupMembers`
+  are now exported from the package root. The 3.6.0 changelog described
+  `flattenSteps` as consumer-facing, but it was never re-exported.
+- **engine:** `TaskExecutor::has_function` now delegates to the same predicate
+  `can_dispatch` exposes. Internal, but it is the point of the change: the
+  question the engine answers when dispatching and the question a host asks when
+  screening are one definition rather than two that happen to agree.
+- **docs:** `built-in-functions/integrations.md` — the "detecting a missing
+  handler" section previously stopped at classifying the name and advised
+  requiring a registration for *every* `RequiresHandler` name, because the
+  registry was unreachable. It now shows the real check.
+
+### Notes
+
+- Registering a handler under a self-contained built-in name (`map`) is inert:
+  the deserializer routes it to the crate's own implementation, which never
+  consults the registry. Such a name is reported once, as a built-in. Previously
+  undocumented; unchanged in behaviour.
+
 ## [3.6.0] — 2026-08-24
 
 Guard clauses. A workflow's `tasks` array now holds *steps* — a task or a group

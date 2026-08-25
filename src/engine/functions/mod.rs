@@ -8,7 +8,7 @@ use std::any::Any;
 
 pub mod config;
 pub use config::{
-    BUILTIN_FUNCTION_NAMES, BuiltinKind, CompiledCustomInput, FunctionConfig,
+    BUILTIN_FUNCTION_NAMES, BuiltinKind, CompiledCustomInput, DispatchableFunction, FunctionConfig,
     builtin_function_kind, is_builtin_function,
 };
 

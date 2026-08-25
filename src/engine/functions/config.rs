@@ -273,6 +273,142 @@ pub fn is_builtin_function(name: &str) -> bool {
     builtin_function_kind(name).is_some()
 }
 
+/// One function an engine will actually dispatch.
+///
+/// Yielded by [`crate::Engine::dispatchable_functions`] and
+/// [`crate::EngineBuilder::dispatchable_functions`]. Together with
+/// [`BuiltinKind`] this is the whole authoring-side vocabulary: `kind` says how
+/// the name reaches an implementation, and `aliases` says which other spellings
+/// resolve to the same one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchableFunction<'a> {
+    /// The canonical name. Alternative spellings are listed in
+    /// [`Self::aliases`] rather than yielded as separate entries.
+    pub name: &'a str,
+    /// `Some(..)` for a built-in; `None` for a name backed only by a registered
+    /// custom handler.
+    ///
+    /// The `Option` deliberately mirrors [`builtin_function_kind`], where
+    /// `None` already means "not a built-in". [`BuiltinKind`] is not
+    /// `#[non_exhaustive]` on purpose, so widening it with a third variant
+    /// would break every downstream `match`; this carries the same fact
+    /// additively.
+    pub kind: Option<BuiltinKind>,
+    /// Other accepted spellings of this same function.
+    ///
+    /// `validate` carries `["validation"]`; every other name is empty today.
+    /// An alias never appears as its own entry, but
+    /// [`crate::Engine::can_dispatch`] does accept it — a task named
+    /// `validation` really does execute.
+    pub aliases: &'static [&'static str],
+}
+
+/// Aliases of `validate`. Both spellings deserialize to
+/// [`FunctionConfig::Validation`]; `function_name()` reports `"validate"`, which
+/// makes that the canonical one.
+const VALIDATE_ALIASES: &[&str] = &["validation"];
+
+/// The empty alias list, so [`builtin_aliases`] can return a `'static` slice for
+/// every name without allocating.
+const NO_ALIASES: &[&str] = &[];
+
+/// Map a built-in spelling to the canonical one for its function.
+///
+/// Every name is its own canonical form except `validation`, which is an alias
+/// of `validate`. Deliberately a match rather than a table: the alias relation
+/// is the *only* new fact here, and a table of canonical names would be a
+/// second copy of [`BUILTIN_FUNCTION_NAMES`] to keep in sync.
+pub(crate) fn canonical_builtin_name(name: &str) -> &str {
+    match name {
+        "validation" => "validate",
+        other => other,
+    }
+}
+
+/// The alternative spellings of `canonical`, which must already be a canonical
+/// name. Paired with [`canonical_builtin_name`]; the two are pinned to each
+/// other and to [`BUILTIN_FUNCTION_NAMES`] by `aliases_and_canonical_names_agree`.
+pub(crate) fn builtin_aliases(canonical: &str) -> &'static [&'static str] {
+    match canonical {
+        "validate" => VALIDATE_ALIASES,
+        _ => NO_ALIASES,
+    }
+}
+
+/// Whether a registry containing `registry`'s keys will dispatch `name`.
+///
+/// The single definition of "this engine can run it": a
+/// [`BuiltinKind::SelfContained`] built-in always can, and every other name —
+/// [`BuiltinKind::RequiresHandler`] built-ins and custom names alike — can only
+/// if a handler is registered under it. `TaskExecutor::has_function` and the
+/// two public `can_dispatch` methods all route through here so the predicate
+/// the engine dispatches on and the predicate hosts query cannot drift.
+///
+/// Generic over the map's value type so this module needs no dependency on
+/// `BoxedFunctionHandler`.
+pub(crate) fn can_dispatch_in<V>(
+    registry: &std::collections::HashMap<String, V>,
+    name: &str,
+) -> bool {
+    match builtin_function_kind(name) {
+        Some(BuiltinKind::SelfContained) => true,
+        // RequiresHandler and Custom alike: only if a handler was registered.
+        _ => registry.contains_key(name),
+    }
+}
+
+/// Every function a registry with these keys will dispatch.
+///
+/// Built-ins are yielded only when they are their own canonical name, which
+/// performs the alias grouping with no list to maintain. `RequiresHandler`
+/// built-ins appear only when backed by a registration; custom keys appear with
+/// `kind: None`.
+///
+/// A key that names a [`BuiltinKind::SelfContained`] built-in is skipped on the
+/// registry side — it is already yielded as a built-in, and the registration
+/// itself is inert (the deserializer routes `map` to [`FunctionConfig::Map`],
+/// which this crate executes without consulting the registry).
+pub(crate) fn dispatchable_functions_in<V>(
+    registry: &std::collections::HashMap<String, V>,
+) -> impl Iterator<Item = DispatchableFunction<'_>> {
+    let builtins = BUILTIN_FUNCTION_NAMES
+        .iter()
+        .copied()
+        // Skip aliases: `validation` is reported under `validate`.
+        .filter(|name| canonical_builtin_name(name) == *name)
+        .filter_map(move |name| match builtin_function_kind(name) {
+            // Always runnable, registered or not.
+            kind @ Some(BuiltinKind::SelfContained) => Some(DispatchableFunction {
+                name,
+                kind,
+                aliases: builtin_aliases(name),
+            }),
+            // Config schema only — present iff a handler backs it.
+            kind @ Some(BuiltinKind::RequiresHandler) if registry.contains_key(name) => {
+                Some(DispatchableFunction {
+                    name,
+                    kind,
+                    aliases: builtin_aliases(name),
+                })
+            }
+            _ => None,
+        });
+
+    let customs = registry
+        .keys()
+        .map(String::as_str)
+        // Built-in names are handled above; a registration under one is either
+        // already counted (RequiresHandler) or inert (SelfContained).
+        .filter(|name| builtin_function_kind(name).is_none())
+        .map(|name| DispatchableFunction {
+            name,
+            kind: None,
+            aliases: NO_ALIASES,
+        });
+
+    builtins.chain(customs)
+}
+
 /// Parse a `serde_json::Value` into a typed config, wrapping any error in a
 /// "config for function '<func>': …" envelope. Strips the trailing
 /// `" at line 0 column 0"` that `serde_json::from_value` always appends
@@ -974,6 +1110,208 @@ mod tests {
                 Some(BuiltinKind::SelfContained),
                 "'{name}' is executed by this crate"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod dispatch_vocabulary_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// A registry whose values are irrelevant — every function here keys off
+    /// name membership only.
+    fn registry(names: &[&str]) -> HashMap<String, ()> {
+        names.iter().map(|n| ((*n).to_string(), ())).collect()
+    }
+
+    fn names(registry: &HashMap<String, ()>) -> Vec<&str> {
+        let mut out: Vec<&str> = dispatchable_functions_in(registry)
+            .map(|f| f.name)
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Acceptance criterion: the enumeration accounts for every name in
+    /// `BUILTIN_FUNCTION_NAMES` exactly once, aliases grouped.
+    ///
+    /// This is the drift net for `canonical_builtin_name` / `builtin_aliases`.
+    /// Adding a built-in without teaching them about it fails here rather than
+    /// silently dropping the name from every host's vocabulary.
+    #[test]
+    fn aliases_and_canonical_names_agree() {
+        // Every canonical name is its own canonical form, and every alias
+        // resolves to a name that is.
+        for name in BUILTIN_FUNCTION_NAMES {
+            let canonical = canonical_builtin_name(name);
+            assert_eq!(
+                canonical_builtin_name(canonical),
+                canonical,
+                "'{name}' resolves to '{canonical}', which must itself be canonical"
+            );
+            assert!(
+                BUILTIN_FUNCTION_NAMES.contains(&canonical),
+                "'{canonical}' is a canonical name and must be an accepted spelling"
+            );
+            // An alias shares its canonical name's kind — both spellings
+            // deserialize to the same variant.
+            assert_eq!(
+                builtin_function_kind(name),
+                builtin_function_kind(canonical),
+                "'{name}' and '{canonical}' are one function and must classify alike"
+            );
+        }
+
+        // Each name is either a canonical entry or an alias of exactly one —
+        // never both, never neither.
+        for name in BUILTIN_FUNCTION_NAMES {
+            let is_canonical = canonical_builtin_name(name) == *name;
+            let alias_of: Vec<&str> = BUILTIN_FUNCTION_NAMES
+                .iter()
+                .copied()
+                .filter(|c| builtin_aliases(c).contains(name))
+                .collect();
+            assert_eq!(
+                is_canonical,
+                alias_of.is_empty(),
+                "'{name}' must be canonical XOR an alias, got canonical={is_canonical} \
+                 listed-as-alias-of={alias_of:?}"
+            );
+            assert!(
+                alias_of.len() <= 1,
+                "'{name}' is listed as an alias of more than one function: {alias_of:?}"
+            );
+        }
+
+        // And the two directions agree: every alias listed is a real spelling.
+        for canonical in BUILTIN_FUNCTION_NAMES {
+            for alias in builtin_aliases(canonical) {
+                assert_eq!(
+                    canonical_builtin_name(alias),
+                    *canonical,
+                    "'{alias}' is listed under '{canonical}' but does not resolve to it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validate_is_canonical_and_validation_is_its_alias() {
+        assert_eq!(canonical_builtin_name("validation"), "validate");
+        assert_eq!(canonical_builtin_name("validate"), "validate");
+        assert_eq!(builtin_aliases("validate"), &["validation"]);
+        assert!(builtin_aliases("validation").is_empty());
+        assert!(builtin_aliases("map").is_empty());
+    }
+
+    #[test]
+    fn an_empty_registry_dispatches_every_self_contained_builtin() {
+        assert_eq!(
+            names(&registry(&[])),
+            vec![
+                "filter",
+                "log",
+                "map",
+                "parse_json",
+                "parse_xml",
+                "publish_json",
+                "publish_xml",
+                "validate",
+            ],
+            "self-contained built-ins need no registration; `validation` is \
+             folded into `validate`, and the three config-only integrations are absent"
+        );
+    }
+
+    #[test]
+    fn requires_handler_builtins_appear_only_when_registered() {
+        let empty = registry(&[]);
+        assert!(!names(&empty).contains(&"enrich"));
+        assert!(!can_dispatch_in(&empty, "enrich"));
+
+        let backed = registry(&["enrich"]);
+        assert!(names(&backed).contains(&"enrich"));
+        assert!(can_dispatch_in(&backed, "enrich"));
+
+        // …and it keeps its built-in classification rather than reading as custom.
+        let entry = dispatchable_functions_in(&backed)
+            .find(|f| f.name == "enrich")
+            .expect("registered enrich is enumerated");
+        assert_eq!(entry.kind, Some(BuiltinKind::RequiresHandler));
+    }
+
+    #[test]
+    fn custom_names_are_enumerated_with_no_kind() {
+        let reg = registry(&["shout"]);
+        let entry = dispatchable_functions_in(&reg)
+            .find(|f| f.name == "shout")
+            .expect("a registered custom name is enumerated");
+        assert_eq!(entry.kind, None, "None is how a custom handler reports");
+        assert!(entry.aliases.is_empty());
+        assert!(can_dispatch_in(&reg, "shout"));
+        assert!(!can_dispatch_in(&registry(&[]), "shout"));
+    }
+
+    #[test]
+    fn registering_a_self_contained_name_is_inert_and_never_duplicates_it() {
+        // Registering under `map` does nothing: the deserializer routes `map`
+        // to FunctionConfig::Map, which the crate executes itself. The name is
+        // reported once either way.
+        let shadowed = registry(&["map"]);
+        assert_eq!(
+            names(&shadowed),
+            names(&registry(&[])),
+            "a shadowing registration changes nothing about the vocabulary"
+        );
+        assert_eq!(
+            dispatchable_functions_in(&shadowed)
+                .filter(|f| f.name == "map")
+                .count(),
+            1,
+            "`map` is yielded exactly once, not once per source"
+        );
+    }
+
+    #[test]
+    fn aliases_dispatch_but_are_not_enumerated() {
+        let reg = registry(&[]);
+        assert!(
+            can_dispatch_in(&reg, "validation"),
+            "a task named `validation` really does execute"
+        );
+        assert!(
+            !names(&reg).contains(&"validation"),
+            "but the enumeration reports it under `validate`"
+        );
+    }
+
+    #[test]
+    fn can_dispatch_rejects_names_the_crate_does_not_know() {
+        let reg = registry(&["shout"]);
+        assert!(!can_dispatch_in(&reg, "SHOUT"), "matching is exact");
+        assert!(!can_dispatch_in(&reg, "htttp_call"));
+        assert!(!can_dispatch_in(&reg, ""));
+    }
+
+    /// The predicate and the enumeration must describe the same set — with the
+    /// one documented exception that `can_dispatch` also accepts aliases.
+    #[test]
+    fn every_enumerated_name_is_dispatchable() {
+        let reg = registry(&["enrich", "shout"]);
+        for f in dispatchable_functions_in(&reg) {
+            assert!(
+                can_dispatch_in(&reg, f.name),
+                "'{}' is enumerated, so it must dispatch",
+                f.name
+            );
+            for alias in f.aliases {
+                assert!(
+                    can_dispatch_in(&reg, alias),
+                    "alias '{alias}' of '{}' must dispatch too",
+                    f.name
+                );
+            }
         }
     }
 }

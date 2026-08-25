@@ -249,6 +249,53 @@ Two things worth knowing:
 There is no derive macro for this — a hand-written `compile_input` is a few
 lines, and this crate has no proc-macro dependency to add one.
 
+## Knowing which task you are
+
+A handler often needs to label what it produces — a log line, a metric, a
+recorded call in a test harness — with the task that produced it.
+`TaskContext` reports the executing identity directly:
+
+```rust
+# use async_trait::async_trait;
+# use dataflow_rs::engine::functions::AsyncFunctionHandler;
+# use dataflow_rs::{Result, TaskContext, TaskOutcome};
+# use serde_json::Value;
+struct Timed;
+
+#[async_trait]
+impl AsyncFunctionHandler for Timed {
+    type Input = Value;
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        // Both are `Some` whenever the engine is running the task.
+        let workflow = ctx.workflow_id().unwrap_or("<none>");
+        let task = ctx.task_id().unwrap_or("<none>");
+
+        // `Some(n)` on sweep `n` of a workflow carrying a `loop`, else `None`.
+        match ctx.loop_counter() {
+            Some(sweep) => println!("{workflow}/{task} sweep {sweep}"),
+            None => println!("{workflow}/{task}"),
+        }
+
+        Ok(TaskOutcome::Success)
+    }
+}
+```
+
+Three things are worth knowing:
+
+- **`task_id` is always a leaf task.** Handlers dispatch only on leaf tasks; a
+  task group is evaluated on entry and recorded as a span, never dispatched. A
+  group's id can never appear here.
+- **All three are `None` for a context you built yourself** with
+  `TaskContext::new`, which is the supported way to drive a handler from a test
+  or benchmark. There is no workflow run to describe, and the `Option` says so
+  rather than inventing an id.
+- **`loop_counter` is the only way to see the sweep index** when the workflow's
+  `loop` has no `counter` name. A named counter is written to
+  `temp_data.<name>`, but an unnamed one is written nowhere — the engine still
+  tracks it, and this is where it surfaces.
+
 ## Async Operations
 
 The trait is async/await all the way through. Real I/O works naturally:

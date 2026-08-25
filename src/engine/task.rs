@@ -35,7 +35,12 @@ use std::sync::Arc;
 ///     ]
 /// }
 /// ```
+///
+/// `#[non_exhaustive]`: groups are produced by the workflow parser, never built
+/// by hand — `end` is an index into the *flattened* task list and means nothing
+/// on its own. Read the fields freely.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct TaskGroup {
     /// Unique identifier for the group within the workflow. Shares the task
     /// id namespace, so a group cannot reuse a task's id.
@@ -88,7 +93,19 @@ pub struct TaskGroup {
 ///     "terminal": false
 /// }
 /// ```
+/// A single unit of work inside a workflow.
+///
+/// `#[non_exhaustive]`: construct through [`Task::action`] and assign the
+/// public fields you need, or parse a workflow from JSON. Field reads and
+/// writes are unaffected, and `..` patterns keep working.
+///
+/// The attribute exists because three of this struct's fields — `id_arc`,
+/// `compiled_condition`, `group_starts` — are engine internals documented as
+/// *not part of the stable API*, yet struct-literal construction forced every
+/// caller to name them. Field additions had already broken those callers twice
+/// (3.3.0, 3.6.0); this is the change that stops it.
 #[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
 pub struct Task {
     /// Unique identifier for the task within the workflow.
     pub id: String,
@@ -184,103 +201,5 @@ impl Task {
             terminal: false,
             group_starts: Vec::new(),
         }
-    }
-}
-
-/// Parsing for a workflow's `tasks` list, which holds *steps* rather than
-/// plain tasks: an element carrying a `tasks` key is a [`TaskGroup`], anything
-/// else is a [`Task`].
-///
-/// The tree is flattened into the `Vec<Task>` the executor walks, with each
-/// group's span recorded on the task that opens it. Deliberately **not**
-/// `#[serde(untagged)]`: an untagged enum reports *"data did not match any
-/// variant"*, which would replace the precise `missing field 'function'` that
-/// makes a malformed task diagnosable at `Engine::build()` time.
-pub(crate) mod steps {
-    use super::{Task, TaskGroup};
-    use serde::Deserialize;
-    use serde::de::{Deserializer, Error as DeError};
-    use serde_json::Value;
-
-    /// Maximum group nesting. Deeper than this is a generated-JSON accident
-    /// rather than an authored control-flow shape, and the bound keeps the
-    /// per-task `group_starts` vector trivially small.
-    const MAX_GROUP_DEPTH: usize = 8;
-
-    /// The non-`tasks` half of a group element. `tasks` is carried too so the
-    /// whole element deserializes in one pass; unknown keys are ignored, as
-    /// everywhere else in the workflow schema.
-    #[derive(Deserialize)]
-    struct GroupHeader {
-        id: String,
-        #[serde(default)]
-        name: Option<String>,
-        #[serde(default)]
-        description: Option<String>,
-        #[serde(default = "crate::engine::utils::default_condition")]
-        condition: Value,
-        #[serde(default)]
-        terminal: bool,
-        tasks: Vec<Value>,
-    }
-
-    /// `deserialize_with` target for `Workflow::tasks`.
-    pub(crate) fn flatten<'de, D>(deserializer: D) -> Result<Vec<Task>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let steps = Vec::<Value>::deserialize(deserializer)?;
-        let mut tasks = Vec::with_capacity(steps.len());
-        walk(&steps, 0, &mut tasks).map_err(D::Error::custom)?;
-        Ok(tasks)
-    }
-
-    /// Append `steps` to `out` in document order, recording group spans.
-    fn walk(steps: &[Value], depth: usize, out: &mut Vec<Task>) -> Result<(), String> {
-        for step in steps {
-            let is_group = step.get("tasks").is_some();
-            if !is_group {
-                let task: Task = serde_json::from_value(step.clone())
-                    .map_err(|e| format!("invalid task in workflow tasks: {e}"))?;
-                out.push(task);
-                continue;
-            }
-
-            if depth >= MAX_GROUP_DEPTH {
-                return Err(format!(
-                    "task groups nested deeper than {MAX_GROUP_DEPTH} levels"
-                ));
-            }
-
-            let header: GroupHeader = serde_json::from_value(step.clone())
-                .map_err(|e| format!("invalid task group in workflow tasks: {e}"))?;
-
-            let start = out.len();
-            walk(&header.tasks, depth + 1, out)?;
-            let end = out.len();
-            if end == start {
-                return Err(format!(
-                    "task group '{}' contains no tasks — an empty group can only be a mistake",
-                    header.id
-                ));
-            }
-
-            // Outermost first: an inner group nested at the same start index
-            // has already pushed its own entry, so this one goes in front of
-            // it. Bounded by `MAX_GROUP_DEPTH`, so the shift is trivial.
-            out[start].group_starts.insert(
-                0,
-                TaskGroup {
-                    id: header.id,
-                    name: header.name,
-                    description: header.description,
-                    condition: header.condition,
-                    compiled_condition: None,
-                    terminal: header.terminal,
-                    end,
-                },
-            );
-        }
-        Ok(())
     }
 }

@@ -324,6 +324,60 @@ Two rules worth knowing:
 Values `>= 100` passed to `routing_bucket` are clamped to `99`, keeping the
 builder infallible.
 
+### Building and checking a split
+
+A single `rollout` is only half the picture. What makes a deployment correct is
+a property of the whole *set* — the versions of one logical workflow must
+partition `0..100` exactly. Both ways of getting that wrong are silent in
+production: a **gap** blackholes a slice of traffic, and an **overlap** makes
+which version answers depend on workflow ordering rather than on the rollout.
+
+`Rollout::partition` turns percentages into contiguous ranges, in traffic order:
+
+```rust
+use dataflow_rs::{Rollout, RolloutError};
+
+let split = Rollout::partition(&[90, 10]).unwrap();
+assert_eq!(split[0], Rollout { bucket_start: 0, bucket_end: 90 });
+assert_eq!(split[1], Rollout { bucket_start: 90, bucket_end: 100 });
+
+// The percentages must sum to exactly 100, and the error names the direction.
+assert_eq!(Rollout::partition(&[90, 9]), Err(RolloutError::Under { total: 99 }));
+assert_eq!(Rollout::partition(&[90, 11]), Err(RolloutError::Over { total: 101 }));
+```
+
+A `0` entry is allowed and yields an empty range, which serves nothing — the
+natural way to express a version that is staged but takes no traffic yet.
+
+`Rollout::validate_set` checks a set you already have, wherever it came from:
+
+```rust
+use dataflow_rs::{Rollout, RolloutError};
+
+let good = Rollout::partition(&[50, 50]).unwrap();
+assert!(Rollout::validate_set(&good).is_ok());
+
+// Order does not matter — partitioning is a property of the set.
+let reversed: Vec<_> = good.iter().rev().copied().collect();
+assert!(Rollout::validate_set(&reversed).is_ok());
+
+// A gap is reported at the lowest affected bucket.
+let gapped = [
+    Rollout { bucket_start: 0,  bucket_end: 40 },
+    Rollout { bucket_start: 41, bucket_end: 100 },
+];
+assert_eq!(Rollout::validate_set(&gapped), Err(RolloutError::Gap { bucket: 40 }));
+```
+
+Ranges are checked individually first, so an inverted range or one reaching past
+bucket 100 is reported as itself rather than as whatever downstream gap it
+happens to produce.
+
+`Engine::build()` does **not** run this check. A `Workflow` does not know which
+version-set it belongs to — that grouping lives in your storage schema — so
+calling `validate_set` before you activate a set of versions is the host's job,
+and these helpers are what it calls.
+
 ## Try It
 
 > **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and rule visualization.
