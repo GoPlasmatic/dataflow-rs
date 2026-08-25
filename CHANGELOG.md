@@ -73,6 +73,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **docs:** `advanced/authoring-validation.md`, covering the submission-time
   sequence — shape, then parse, then the handler registry.
 
+### Changed
+
+- **BREAKING (construction only):** `Task`, `TaskGroup` and `Workflow` are now
+  `#[non_exhaustive]`. Struct-literal construction from outside the crate no
+  longer compiles; **field reads and writes are unaffected**, as are `..`
+  patterns.
+
+  This was already effectively broken. Three of `Task`'s fields — `id_arc`,
+  `compiled_condition`, `group_starts` — are `#[doc(hidden)]` and documented as
+  *not part of the stable API*, yet a struct literal forced every caller to name
+  them; `Workflow` and `TaskGroup` have the same shape. Field additions have
+  broken literal callers twice already (3.3.0 `Workflow::loop`, 3.6.0
+  `Task::terminal`), and doing this once now is what stops a third time.
+
+  Migration is a constructor plus assignment — the engine internals are set for
+  you and disappear from the call site:
+
+  ```rust
+  // before
+  let task = Task {
+      id: "charge".to_string(),
+      id_arc: std::sync::Arc::from("charge"),   // engine internal
+      name: "Charge".to_string(),
+      description: None,
+      condition: json!(true),
+      compiled_condition: None,                 // engine internal
+      continue_on_error: true,
+      terminal: false,
+      group_starts: Vec::new(),                 // engine internal
+      function: my_function,
+  };
+
+  // after
+  let mut task = Task::action("charge", "Charge", my_function);
+  task.continue_on_error = true;
+  ```
+
+  `Workflow::new()`, `Workflow::rule()` and `Workflow::from_json()` are the
+  equivalents for workflows. `TaskGroup` gets no constructor: it is produced by
+  the parser, and its `end` field indexes the flattened task list, so building
+  one by hand was never meaningful.
+
+  Matches the pattern `ErrorInfo` and `ExecutionStep` already follow in this
+  crate.
+
 - **engine:** `Engine::operator_names` — every operator this build evaluates:
   datalogic's core vocabulary, the extension families compiled in, and
   operators registered via `with_datalogic_operator`. Because the engine runs

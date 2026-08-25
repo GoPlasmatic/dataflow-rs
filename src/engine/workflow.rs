@@ -135,7 +135,17 @@ pub enum WorkflowStatus {
 /// Workflow represents a collection of tasks that execute sequentially (also known as a Rule in rules-engine terminology).
 ///
 /// Conditions are evaluated against the full message context, including `data`, `metadata`, and `temp_data` fields.
+/// A collection of tasks with a condition, executed against a message.
+///
+/// `#[non_exhaustive]`: construct through [`Workflow::new`], [`Workflow::rule`]
+/// or [`Workflow::from_json`] and assign the public fields you need. Field
+/// reads and writes are unaffected.
+///
+/// Same reason as [`Task`](crate::Task): several fields are engine internals
+/// marked *not part of the stable API*, and struct-literal construction forced
+/// callers to name them.
 #[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
 pub struct Workflow {
     pub id: String,
     /// Engine-internal: `Arc<str>` mirror of `id`, populated by

@@ -7,8 +7,8 @@ use dataflow_rs::engine::functions::AsyncFunctionHandler;
 use dataflow_rs::engine::message::Message;
 use dataflow_rs::engine::utils::set_nested_value;
 use dataflow_rs::{
-    BUILTIN_FUNCTION_NAMES, BuiltinKind, Engine, Result, TaskContext, TaskOutcome, Workflow,
-    builtin_function_kind,
+    BUILTIN_FUNCTION_NAMES, BuiltinKind, Engine, FunctionConfig, Result, Task, TaskContext,
+    TaskOutcome, Workflow, builtin_function_kind,
 };
 use serde_json::{Value, json};
 
@@ -780,4 +780,111 @@ async fn unregistered_operator_name_stays_inert_template_data() {
         message.context["data"]["loud"],
         dv(json!({ "shout": ["quiet"] }))
     );
+}
+
+// =============================================================================
+// #[non_exhaustive] on Task / TaskGroup / Workflow — this file is a separate
+// crate, so the attribute is in force here exactly as it is for a downstream
+// user. These tests are the migration path, executed.
+// =============================================================================
+
+#[test]
+fn a_task_is_built_through_its_constructor_and_then_assigned() {
+    let mut task = Task::action(
+        "charge",
+        "Charge card",
+        FunctionConfig::Custom {
+            name: "billing".to_string(),
+            input: json!({}),
+            compiled_input: None,
+        },
+    );
+
+    // Every field a caller has business setting is still writable.
+    task.description = Some("Takes the payment".to_string());
+    task.condition = json!({"var": "data.ready"});
+    task.continue_on_error = true;
+    task.terminal = true;
+
+    // And readable.
+    assert_eq!(task.id, "charge");
+    assert_eq!(task.name, "Charge card");
+    assert!(task.terminal);
+    assert_eq!(task.function.function_name(), "billing");
+
+    // The engine internals a struct literal used to force callers to name are
+    // set correctly without being mentioned.
+    assert_eq!(
+        &*task.id_arc, "charge",
+        "Task::action keeps the Arc mirror in step with `id`"
+    );
+}
+
+#[tokio::test]
+async fn a_constructor_built_workflow_runs_the_same_as_a_parsed_one() {
+    // The two construction paths must agree, or the constructor route would be
+    // a second-class citizen after making struct literals unavailable.
+    let mut task = Task::action(
+        "greet",
+        "Greet",
+        FunctionConfig::Custom {
+            name: "shout".to_string(),
+            input: json!({}),
+            compiled_input: None,
+        },
+    );
+    task.continue_on_error = true;
+
+    let mut built = Workflow::new();
+    built.id = "w".to_string();
+    built.name = "w".to_string();
+    built.tasks = vec![task];
+
+    let parsed = Workflow::from_json(
+        r#"{"id": "w", "name": "w", "priority": 0,
+            "tasks": [{"id": "greet", "name": "Greet", "continue_on_error": true,
+                       "function": {"name": "shout", "input": {}}}]}"#,
+    )
+    .unwrap();
+
+    assert_eq!(built.id, parsed.id);
+    assert_eq!(built.tasks.len(), parsed.tasks.len());
+    assert_eq!(built.tasks[0].id, parsed.tasks[0].id);
+    assert_eq!(
+        built.tasks[0].continue_on_error,
+        parsed.tasks[0].continue_on_error
+    );
+
+    // And the constructor-built one actually executes.
+    let engine = Engine::builder()
+        .with_workflow(built)
+        .register("shout", LoggingTask)
+        .build()
+        .expect("a constructor-built workflow builds");
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+}
+
+#[test]
+fn task_groups_are_readable_from_a_parsed_workflow() {
+    // `TaskGroup` is never built by hand — `end` indexes the flattened task
+    // list and means nothing on its own — but a consumer inspecting a parsed
+    // workflow must still be able to read one.
+    let workflow = Workflow::from_json(
+        r#"{"id": "w", "name": "w", "priority": 0,
+            "tasks": [{"id": "guard", "condition": true, "terminal": true,
+                       "tasks": [{"id": "inner", "name": "inner",
+                                  "function": {"name": "map",
+                                               "input": {"mappings": []}}}]}]}"#,
+    )
+    .unwrap();
+
+    let group = workflow.tasks[0]
+        .group_starts
+        .first()
+        .expect("the group opens at the task it encloses");
+
+    assert_eq!(group.id, "guard");
+    assert!(group.terminal);
 }

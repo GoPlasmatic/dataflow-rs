@@ -35,7 +35,12 @@ use std::sync::Arc;
 ///     ]
 /// }
 /// ```
+///
+/// `#[non_exhaustive]`: groups are produced by the workflow parser, never built
+/// by hand — `end` is an index into the *flattened* task list and means nothing
+/// on its own. Read the fields freely.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct TaskGroup {
     /// Unique identifier for the group within the workflow. Shares the task
     /// id namespace, so a group cannot reuse a task's id.
@@ -88,7 +93,19 @@ pub struct TaskGroup {
 ///     "terminal": false
 /// }
 /// ```
+/// A single unit of work inside a workflow.
+///
+/// `#[non_exhaustive]`: construct through [`Task::action`] and assign the
+/// public fields you need, or parse a workflow from JSON. Field reads and
+/// writes are unaffected, and `..` patterns keep working.
+///
+/// The attribute exists because three of this struct's fields — `id_arc`,
+/// `compiled_condition`, `group_starts` — are engine internals documented as
+/// *not part of the stable API*, yet struct-literal construction forced every
+/// caller to name them. Field additions had already broken those callers twice
+/// (3.3.0, 3.6.0); this is the change that stops it.
 #[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
 pub struct Task {
     /// Unique identifier for the task within the workflow.
     pub id: String,
