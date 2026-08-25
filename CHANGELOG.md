@@ -40,6 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `quick-xml` is the one deliberate hold: 0.42 requires Rust 1.86 and this
   crate's MSRV is 1.85. `cargo audit` reports zero advisories.
 
+- **deps:** `ui` — `@goplasmatic/datalogic-ui` 5.1.1 → 5.3.0 (tracking the same
+  datalogic release), plus in-range updates to `@xyflow/react`, `lucide-react`,
+  `vite`, `eslint`, `typescript-eslint`, `@vitejs/plugin-react`, `globals` and
+  the React type packages. `npm audit` reports zero vulnerabilities.
+
+  `typescript` is deliberately held on 6.x. 7.0 is released, but
+  `typescript-eslint` refuses to load against the TS 7.0 API and hard-fails
+  `npm run lint`, which CI gates on
+  ([typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940)
+  tracks support, targeted at TS >= 7.1). `@goplasmatic/dataflow-wasm` keeps its
+  `^3.6.0` floor, which `release.yml` rewrites at publish time.
+
 ## [3.7.0] — 2026-08-25
 
 The host surface. Everything a service that stores, validates and operates
