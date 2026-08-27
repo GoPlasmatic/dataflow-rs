@@ -171,6 +171,58 @@ async fn an_unresolvable_secret_makes_a_condition_false_not_a_crash() {
     assert_eq!(message.context["data"]["ran"], dv(json!(null)));
 }
 
+#[test]
+fn a_secret_keeps_its_json_type_and_its_bytes() {
+    let engine = Engine::builder()
+        .with_secrets_json(&json!({
+            "n": 4242,
+            "f": 1.5,
+            "b": true,
+            "list": [1, "two"],
+            "obj": { "a": { "b": "deep" } },
+            "unicode": "clé-秘密-🔑",
+            "escaped": { "20": "twenty", "#": "hash" }
+        }))
+        .build()
+        .unwrap();
+
+    for (name, expected) in [
+        ("n", json!(4242)),
+        ("f", json!(1.5)),
+        ("b", json!(true)),
+        ("list", json!([1, "two"])),
+        ("list.1", json!("two")),
+        ("obj", json!({ "a": { "b": "deep" } })),
+        ("obj.a.b", json!("deep")),
+        ("unicode", json!("clé-秘密-🔑")),
+        // Same `#` escape as every other dotted path in the crate.
+        ("escaped.#20", json!("twenty")),
+        ("escaped.##", json!("hash")),
+    ] {
+        assert_eq!(
+            eval(&engine, json!({ "secret": name }), json!({})),
+            Ok(expected),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn the_last_with_secrets_call_wins() {
+    let engine = Engine::builder()
+        .with_secrets_json(&json!({ "old": "o" }))
+        .with_secrets_json(&json!({ "new": "n" }))
+        .build()
+        .unwrap();
+
+    assert_eq!(engine.declared_secrets().collect::<Vec<_>>(), vec!["new"]);
+    assert_eq!(
+        eval(&engine, json!({ "secret": "new" }), json!({})),
+        Ok(json!("n"))
+    );
+    assert!(eval(&engine, json!({ "secret": "old" }), json!({})).is_err());
+}
+
 // =============================================================================
 // Engine surface
 // =============================================================================

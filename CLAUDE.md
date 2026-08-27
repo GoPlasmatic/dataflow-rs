@@ -272,7 +272,8 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `operator_vocabulary.rs` | `operator_names` — every mirrored name checked live |
 | `retry.rs` | `RetryPolicy` backoff, deadline and retryability, under a paused clock |
 | `authoring_validation.rs` | `validate_authored` and `check_workflow` — codes, paths, the parse backstop |
-| `secrets.rs` | `{"secret": …}` resolution, the static rules, and the never-recorded guarantee |
+| `secrets.rs` | `{"secret": …}` resolution, the engine surface, and the static rules |
+| `secrets_isolation.rs` | The never-recorded guarantee, exit by exit — every `TraceOptions` shape, errors, observer, logs, and the access vectors that must not reach the store |
 
 Each file under `tests/` compiles as its own crate, so fixtures used by more
 than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
@@ -292,8 +293,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 652 passing.
-`cargo test -p dataflow-rs` (default features) should report 557 — the operator
+`cargo test --workspace --all-features` should report 667 passing.
+`cargo test -p dataflow-rs` (default features) should report 572 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:
