@@ -16,8 +16,10 @@
 //! inert?".
 
 use dataflow_rs::Engine;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::collections::HashSet;
+
+mod common;
 
 /// Evaluate `{name: args}` and report whether the engine treated it as a live
 /// operator rather than echoing it back as data.
@@ -26,17 +28,12 @@ use std::collections::HashSet;
 /// argument-arity complaint is itself proof the name dispatched.
 fn is_live_operator(engine: &Engine, name: &str) -> bool {
     let expression = json!({ name: [] });
-    let Ok(logic) = engine.datalogic().compile_arc(&expression) else {
-        return true; // refused to compile => the name means something
-    };
-
-    let arena = dataflow_rs::datalogic_rs::bumpalo::Bump::new();
-    match engine.datalogic().evaluate(&logic, &json!({}), &arena) {
+    // `common::eval` collapses a compile failure and an evaluation failure into
+    // one `Err`, which is exactly this probe's rule: either is proof the name
+    // dispatched.
+    match common::eval(engine, expression.clone(), json!({})) {
         Err(_) => true,
-        Ok(value) => {
-            let rendered = serde_json::to_value(value).unwrap_or(Value::Null);
-            rendered != expression
-        }
+        Ok(rendered) => rendered != expression,
     }
 }
 
@@ -150,7 +147,7 @@ fn a_registered_custom_operator_joins_the_vocabulary() {
     assert!(!bare.operator_names().any(|n| n == "shout"));
 
     let engine = Engine::builder()
-        .with_datalogic_operator("shout", common_ops::Shout)
+        .with_datalogic_operator("shout", common::Shout)
         .build()
         .unwrap();
 
@@ -163,7 +160,7 @@ fn a_registered_custom_operator_joins_the_vocabulary() {
 #[test]
 fn a_custom_operator_survives_a_hot_reload() {
     let engine = Engine::builder()
-        .with_datalogic_operator("shout", common_ops::Shout)
+        .with_datalogic_operator("shout", common::Shout)
         .build()
         .unwrap();
 
@@ -177,7 +174,7 @@ fn a_custom_operator_survives_a_hot_reload() {
 #[test]
 fn a_custom_name_shadowing_a_builtin_is_reported_once() {
     let engine = Engine::builder()
-        .with_datalogic_operator("cat", common_ops::Shout)
+        .with_datalogic_operator("cat", common::Shout)
         .build()
         .unwrap();
 
@@ -186,22 +183,4 @@ fn a_custom_name_shadowing_a_builtin_is_reported_once() {
         1,
         "one name is one entry, whichever side supplied it"
     );
-}
-
-mod common_ops {
-    pub struct Shout;
-
-    impl dataflow_rs::datalogic_rs::CustomOperator for Shout {
-        fn evaluate<'a>(
-            &self,
-            args: &[&'a dataflow_rs::datalogic_rs::DataValue<'a>],
-            _ctx: &mut dataflow_rs::datalogic_rs::operator::EvalContext<'_, 'a>,
-            arena: &'a dataflow_rs::datalogic_rs::bumpalo::Bump,
-        ) -> dataflow_rs::datalogic_rs::Result<&'a dataflow_rs::datalogic_rs::DataValue<'a>>
-        {
-            use dataflow_rs::datalogic_rs::ArenaExt;
-            let s = args.first().and_then(|v| v.as_str()).unwrap_or_default();
-            Ok(arena.string(&s.to_uppercase()))
-        }
-    }
 }

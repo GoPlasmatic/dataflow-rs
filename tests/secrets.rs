@@ -1,53 +1,32 @@
 //! `{"secret": "name"}` — the reserved operator that reads an engine-scoped
 //! secret store, so a workflow can use a value the engine never records.
 
-use dataflow_rs::datalogic_rs::bumpalo::Bump;
 use dataflow_rs::engine::message::Message;
-use dataflow_rs::{Engine, Workflow};
+use dataflow_rs::{Engine, IssueCode, Workflow};
 use serde_json::{Value, json};
 
 mod common;
 
-use common::dv;
+use common::{NESTED, SECRET, Shout, Sign, dv, eval, secrets, workflow};
 
-const SECRET: &str = "s3cr3t-XYZ";
-
-fn secrets() -> Value {
-    json!({
-        "partner_key": SECRET,
-        "partner": { "hmac": "nested-hmac-value" }
-    })
-}
-
-/// Evaluate `expr` against `data` on the engine's own datalogic instance —
-/// the same path a handler calling `ctx.datalogic()` takes.
-fn eval(engine: &Engine, expr: Value, data: Value) -> Result<Value, String> {
-    let logic = engine
-        .datalogic()
-        .compile_arc(&expr)
-        .map_err(|e| e.to_string())?;
-    let arena = Bump::new();
-    engine
-        .datalogic()
-        .evaluate(&logic, &data, &arena)
-        .map(|v| serde_json::to_value(v).unwrap())
-        .map_err(|e| e.to_string())
+/// An engine over the shared store and nothing else.
+fn engine() -> Engine {
+    Engine::builder()
+        .with_secrets_json(&secrets())
+        .build()
+        .unwrap()
 }
 
 fn gated_workflow(condition: Value) -> Workflow {
-    Workflow::from_json(
-        &json!({
-            "id": "w", "name": "w", "priority": 0,
-            "condition": condition,
-            "tasks": [
-                { "id": "mark", "name": "mark", "function": {
-                    "name": "map",
-                    "input": { "mappings": [ { "path": "data.ran", "logic": true } ] } } }
-            ]
-        })
-        .to_string(),
-    )
-    .unwrap()
+    workflow(json!({
+        "id": "w", "name": "w", "priority": 0,
+        "condition": condition,
+        "tasks": [
+            { "id": "mark", "name": "mark", "function": {
+                "name": "map",
+                "input": { "mappings": [ { "path": "data.ran", "logic": true } ] } } }
+        ]
+    }))
 }
 
 // =============================================================================
@@ -72,10 +51,7 @@ async fn a_secret_resolves_in_a_workflow_condition() {
 
 #[test]
 fn a_secret_resolves_through_the_engines_datalogic_directly() {
-    let engine = Engine::builder()
-        .with_secrets_json(&secrets())
-        .build()
-        .unwrap();
+    let engine = engine();
 
     assert_eq!(
         eval(&engine, json!({ "secret": "partner_key" }), json!({})),
@@ -84,7 +60,7 @@ fn a_secret_resolves_through_the_engines_datalogic_directly() {
     // Dotted paths walk into a nested store, so hosts can namespace.
     assert_eq!(
         eval(&engine, json!({ "secret": "partner.hmac" }), json!({})),
-        Ok(json!("nested-hmac-value"))
+        Ok(json!(NESTED))
     );
     // The single-element array form JSONLogic allows for every operator.
     assert_eq!(
@@ -95,14 +71,9 @@ fn a_secret_resolves_through_the_engines_datalogic_directly() {
 
 #[test]
 fn a_dynamic_key_resolves_at_runtime() {
-    let engine = Engine::builder()
-        .with_secrets_json(&secrets())
-        .build()
-        .unwrap();
-
     assert_eq!(
         eval(
-            &engine,
+            &engine(),
             json!({ "secret": { "var": "data.key_name" } }),
             json!({ "data": { "key_name": "partner_key" } })
         ),
@@ -112,10 +83,7 @@ fn a_dynamic_key_resolves_at_runtime() {
 
 #[test]
 fn an_unknown_key_is_an_error_that_names_the_key_and_no_value() {
-    let engine = Engine::builder()
-        .with_secrets_json(&secrets())
-        .build()
-        .unwrap();
+    let engine = engine();
 
     let err = eval(&engine, json!({ "secret": "nope" }), json!({})).unwrap_err();
     assert!(err.contains("nope"), "error should name the key: {err}");
@@ -133,10 +101,7 @@ fn an_unknown_key_is_an_error_that_names_the_key_and_no_value() {
 
 #[test]
 fn malformed_arguments_are_errors_and_never_the_whole_store() {
-    let engine = Engine::builder()
-        .with_secrets_json(&secrets())
-        .build()
-        .unwrap();
+    let engine = engine();
 
     for expr in [
         json!({ "secret": "" }),
@@ -147,7 +112,7 @@ fn malformed_arguments_are_errors_and_never_the_whole_store() {
     ] {
         let err = eval(&engine, expr.clone(), json!({})).unwrap_err();
         assert!(
-            !err.contains(SECRET) && !err.contains("nested-hmac-value"),
+            !err.contains(SECRET) && !err.contains(NESTED),
             "{expr} leaked a value: {err}"
         );
     }
@@ -229,10 +194,7 @@ fn the_last_with_secrets_call_wins() {
 
 #[test]
 fn declared_secrets_lists_names_never_values() {
-    let engine = Engine::builder()
-        .with_secrets_json(&secrets())
-        .build()
-        .unwrap();
+    let engine = engine();
 
     let mut names: Vec<&str> = engine.declared_secrets().collect();
     names.sort_unstable();
@@ -254,6 +216,47 @@ fn a_non_object_store_fails_build() {
     }
 }
 
+/// The malformed store is the problem, not the workflow. Checking against an
+/// empty store instead would report every literal name as unknown and bury it.
+#[test]
+fn a_non_object_store_is_reported_once_instead_of_as_unknown_names() {
+    let wf = workflow(json!({
+        "id": "w", "name": "w", "priority": 0,
+        "condition": { "!!": { "secret": "partner_key" } },
+        "tasks": [
+            { "id": "gate", "name": "gate", "function": { "name": "filter", "input": {
+                "condition": { "!!": { "secret": "partner.hmac" } } } } },
+            map_task("leak", json!({ "secret": "partner_key" }))
+        ]
+    }));
+
+    let issues = Engine::builder()
+        .with_secrets_json(&json!(["a"]))
+        .check_workflow(&wf);
+
+    let codes: Vec<IssueCode> = issues.iter().map(|i| i.code).collect();
+    assert_eq!(
+        codes,
+        vec![
+            IssueCode::InvalidSecretStore,
+            IssueCode::SecretInMessageWrite
+        ],
+        "{issues:?}"
+    );
+    assert!(issues[0].message.contains("object"), "{:?}", issues[0]);
+    assert!(issues[0].path.is_none(), "the store is not in the document");
+
+    // And a store that is simply absent still reports the names, because then
+    // the workflow really does name something undeclared.
+    let bare: Vec<IssueCode> = Engine::builder()
+        .check_workflow(&wf)
+        .iter()
+        .map(|i| i.code)
+        .collect();
+    assert!(bare.contains(&IssueCode::UnknownSecret), "{bare:?}");
+    assert!(!bare.contains(&IssueCode::InvalidSecretStore), "{bare:?}");
+}
+
 #[test]
 fn secret_is_part_of_the_operator_vocabulary_on_every_engine() {
     // Registered even with no store, so `{"secret": "k"}` is never inert data.
@@ -268,7 +271,7 @@ fn secret_is_part_of_the_operator_vocabulary_on_every_engine() {
 #[test]
 fn registering_an_operator_named_secret_fails_build() {
     let err = Engine::builder()
-        .with_datalogic_operator("secret", common_ops::Shout)
+        .with_datalogic_operator("secret", Shout)
         .build()
         .err()
         .expect("`secret` is reserved");
@@ -277,12 +280,7 @@ fn registering_an_operator_named_secret_fails_build() {
 
 #[tokio::test]
 async fn the_store_survives_a_hot_reload() {
-    let engine = Engine::builder()
-        .with_secrets_json(&secrets())
-        .build()
-        .unwrap();
-
-    let reloaded = engine
+    let reloaded = engine()
         .with_new_workflows(vec![gated_workflow(
             json!({ "==": [ { "secret": "partner_key" }, SECRET ] }),
         )])
@@ -329,15 +327,11 @@ impl dataflow_rs::engine::functions::AsyncFunctionHandler for KeyLengthHandler {
 
 #[tokio::test]
 async fn a_handler_reads_a_secret_by_name_through_task_context() {
-    let wf = Workflow::from_json(
-        &json!({
-            "id": "w", "name": "w", "priority": 0,
-            "tasks": [ { "id": "t", "name": "t", "function": {
-                "name": "key_len", "input": { "key_name": "partner_key" } } } ]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let wf = workflow(json!({
+        "id": "w", "name": "w", "priority": 0,
+        "tasks": [ { "id": "t", "name": "t", "function": {
+            "name": "key_len", "input": { "key_name": "partner_key" } } } ]
+    }));
     let engine = Engine::builder()
         .with_secrets_json(&secrets())
         .with_workflow(wf)
@@ -358,35 +352,12 @@ fn a_task_context_built_outside_the_engine_has_no_secrets() {
     assert!(ctx.secret("partner_key").is_none());
 }
 
-mod common_ops {
-    pub struct Shout;
-
-    impl dataflow_rs::datalogic_rs::CustomOperator for Shout {
-        fn evaluate<'a>(
-            &self,
-            args: &[&'a dataflow_rs::datalogic_rs::DataValue<'a>],
-            _ctx: &mut dataflow_rs::datalogic_rs::operator::EvalContext<'_, 'a>,
-            arena: &'a dataflow_rs::datalogic_rs::bumpalo::Bump,
-        ) -> dataflow_rs::datalogic_rs::Result<&'a dataflow_rs::datalogic_rs::DataValue<'a>>
-        {
-            use dataflow_rs::datalogic_rs::ArenaExt;
-            let s = args.first().and_then(|v| v.as_str()).unwrap_or_default();
-            Ok(arena.string(&s.to_uppercase()))
-        }
-    }
-}
-
 // =============================================================================
 // Static checks — `check_workflow` and `build()`
 // =============================================================================
 
-use dataflow_rs::IssueCode;
-
 fn wf(tasks: Value) -> Workflow {
-    Workflow::from_json(
-        &json!({ "id": "w", "name": "w", "priority": 0, "tasks": tasks }).to_string(),
-    )
-    .unwrap()
+    workflow(json!({ "id": "w", "name": "w", "priority": 0, "tasks": tasks }))
 }
 
 fn map_task(id: &str, logic: Value) -> Value {
@@ -415,30 +386,30 @@ fn triples(issues: &[dataflow_rs::WorkflowIssue]) -> Vec<(IssueCode, String, Opt
 
 #[test]
 fn an_undeclared_literal_key_is_reported_wherever_an_expression_lives() {
-    let workflow = Workflow::from_json(
-        &json!({
-            "id": "w", "name": "w", "priority": 0,
-            "condition": { "==": [ { "secret": "nope_wf" }, 1 ] },
-            "tasks": [
-                { "id": "gated", "name": "gated",
-                  "condition": { "secret": "nope_task" },
-                  "function": { "name": "validation", "input": { "rules": [
-                      { "logic": { "==": [ { "secret": "nope_rule" }, 1 ] }, "message": "m" } ] } } },
-                { "id": "gate", "name": "gate", "function": {
-                    "name": "filter", "input": { "condition": { "secret": ["nope_filter"] } } } },
-                { "id": "call", "name": "call", "function": {
-                    "name": "http_call", "input": {
-                        "connector": "c", "method": "GET",
-                        "path_logic": { "cat": ["/v1/", { "secret": "nope_http" }] } } } },
-                { "id": "custom", "name": "custom", "function": {
-                    "name": "logger", "input": {
-                        "headers": { "Authorization": { "secret": "nope_custom" } },
-                        "declared": { "secret": "partner_key" } } } }
-            ]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let workflow = workflow(json!({
+        "id": "w", "name": "w", "priority": 0,
+        "condition": { "==": [ { "secret": "nope_wf" }, 1 ] },
+        "tasks": [
+            { "id": "gated", "name": "gated",
+              "condition": { "secret": "nope_task" },
+              "function": { "name": "validation", "input": { "rules": [
+                  { "logic": { "==": [ { "secret": "nope_rule" }, 1 ] }, "message": "m" } ] } } },
+            { "id": "grp", "name": "grp",
+              "condition": { "secret": "nope_group" },
+              "tasks": [ { "id": "inner", "name": "inner", "function": {
+                  "name": "map", "input": { "mappings": [] } } } ] },
+            { "id": "gate", "name": "gate", "function": {
+                "name": "filter", "input": { "condition": { "secret": ["nope_filter"] } } } },
+            { "id": "call", "name": "call", "function": {
+                "name": "http_call", "input": {
+                    "connector": "c", "method": "GET",
+                    "path_logic": { "cat": ["/v1/", { "secret": "nope_http" }] } } } },
+            { "id": "custom", "name": "custom", "function": {
+                "name": "logger", "input": {
+                    "headers": { "Authorization": { "secret": "nope_custom" } },
+                    "declared": { "secret": "partner_key" } } } }
+        ]
+    }));
 
     let builder = Engine::builder()
         .with_secrets_json(&secrets())
@@ -456,6 +427,9 @@ fn an_undeclared_literal_key_is_reported_wherever_an_expression_lives() {
         vec![
             ("condition".to_string(), None),
             ("condition".to_string(), Some("gated".to_string())),
+            // A group condition is compiled like a task condition, so it is
+            // checked like one — reported on the group's own id.
+            ("condition".to_string(), Some("grp".to_string())),
             (
                 "function.input.condition".to_string(),
                 Some("gate".to_string())
@@ -570,10 +544,7 @@ fn a_secret_in_a_log_expression_is_refused() {
 
 #[test]
 fn a_built_engine_checks_workflows_against_its_own_store() {
-    let engine = Engine::builder()
-        .with_secrets_json(&secrets())
-        .build()
-        .unwrap();
+    let engine = engine();
     let ok = wf(json!([ { "id": "t", "name": "t",
         "condition": { "secret": "partner.hmac" },
         "function": { "name": "map", "input": { "mappings": [] } } } ]));
@@ -595,74 +566,42 @@ fn issue_codes_have_stable_string_forms() {
         IssueCode::SecretInMessageWrite.as_str(),
         "SECRET_IN_MESSAGE_WRITE"
     );
+    assert_eq!(
+        IssueCode::InvalidSecretStore.as_str(),
+        "INVALID_SECRET_STORE"
+    );
 }
 
 // =============================================================================
 // The guarantee
 // =============================================================================
 
-#[derive(serde::Deserialize)]
-struct SignInput {
-    key: dataflow_rs::Template,
-}
-
-/// The shape the store exists for: a handler reads the key through a
-/// `Template` and writes only a derived, non-secret value.
-struct SignHandler;
-
-#[async_trait::async_trait]
-impl dataflow_rs::engine::functions::AsyncFunctionHandler for SignHandler {
-    type Input = SignInput;
-
-    fn compile_input(
-        input: &mut Self::Input,
-        c: &dataflow_rs::TemplateCompiler,
-    ) -> dataflow_rs::Result<()> {
-        input.key.compile(c, "key")
-    }
-
-    async fn execute(
-        &self,
-        ctx: &mut dataflow_rs::TaskContext<'_>,
-        input: &Self::Input,
-    ) -> dataflow_rs::Result<dataflow_rs::TaskOutcome> {
-        let key: String = input.key.eval_into(ctx)?;
-        assert_eq!(key, SECRET);
-        ctx.set("data.sig_len", dv(json!(key.len())));
-        Ok(dataflow_rs::TaskOutcome::Success)
-    }
-}
-
 #[tokio::test]
 async fn a_secret_read_everywhere_it_may_be_read_appears_in_nothing_the_engine_records() {
-    let wf = Workflow::from_json(
-        &json!({
-            "id": "w", "name": "w", "priority": 0,
-            "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
-            "tasks": [
-                { "id": "seed", "name": "seed", "function": { "name": "map", "input": {
-                    "mappings": [ { "path": "data.body", "logic": "payload" } ] } } },
-                { "id": "check", "name": "check",
-                  "condition": { "!!": { "secret": "partner.hmac" } },
-                  "function": { "name": "validation", "input": { "rules": [
-                      { "logic": { "==": [ { "secret": "partner_key" }, SECRET ] },
-                        "message": "key mismatch" } ] } } },
-                { "id": "gate", "name": "gate", "function": { "name": "filter", "input": {
-                    "condition": { "!=": [ { "secret": "partner_key" }, "" ] } } } },
-                { "id": "sign", "name": "sign", "function": { "name": "sign", "input": {
-                    "key": { "secret": "partner_key" } } } },
-                { "id": "after", "name": "after", "function": { "name": "map", "input": {
-                    "mappings": [ { "path": "data.done", "logic": { "var": "data.sig_len" } } ] } } }
-            ]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let wf = workflow(json!({
+        "id": "w", "name": "w", "priority": 0,
+        "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
+        "tasks": [
+            { "id": "seed", "name": "seed", "function": { "name": "map", "input": {
+                "mappings": [ { "path": "data.body", "logic": "payload-body" } ] } } },
+            { "id": "check", "name": "check",
+              "condition": { "!!": { "secret": "partner.hmac" } },
+              "function": { "name": "validation", "input": { "rules": [
+                  { "logic": { "==": [ { "secret": "partner_key" }, SECRET ] },
+                    "message": "key mismatch" } ] } } },
+            { "id": "gate", "name": "gate", "function": { "name": "filter", "input": {
+                "condition": { "!=": [ { "secret": "partner_key" }, "" ] } } } },
+            { "id": "sign", "name": "sign", "function": { "name": "sign", "input": {
+                "key": { "secret": "partner_key" }, "body": { "var": "data.body" } } } },
+            { "id": "after", "name": "after", "function": { "name": "map", "input": {
+                "mappings": [ { "path": "data.done", "logic": { "var": "data.sig" } } ] } } }
+        ]
+    }));
 
     let engine = Engine::builder()
         .with_secrets_json(&secrets())
         .with_workflow(wf)
-        .register("sign", SignHandler)
+        .register("sign", Sign)
         .build()
         .unwrap();
 
@@ -675,7 +614,10 @@ async fn a_secret_read_everywhere_it_may_be_read_appears_in_nothing_the_engine_r
     // Every task ran and the derived value landed.
     assert!(message.errors().is_empty(), "{:?}", message.errors());
     assert_eq!(trace.executed_count(), 5);
-    assert_eq!(message.context["data"]["done"], dv(json!(SECRET.len())));
+    assert_eq!(
+        message.context["data"]["done"],
+        dv(json!(format!("{}:{}", "payload-body".len(), SECRET.len())))
+    );
 
     // Full snapshots, mapping contexts and the audit trail are all on; none of
     // it can contain the value, because none of it ever held it.
@@ -687,10 +629,7 @@ async fn a_secret_read_everywhere_it_may_be_read_appears_in_nothing_the_engine_r
     ];
     for text in &recorded {
         assert!(!text.contains(SECRET), "secret value leaked: {text}");
-        assert!(
-            !text.contains("nested-hmac-value"),
-            "secret value leaked: {text}"
-        );
+        assert!(!text.contains(NESTED), "secret value leaked: {text}");
     }
     assert!(
         recorded[0].contains("mapping_contexts"),

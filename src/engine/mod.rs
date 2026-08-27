@@ -264,10 +264,11 @@ impl Engine {
         // already typed by serde and need no second pass.
         precompile_custom_inputs(&mut sorted_workflows, &task_functions, &datalogic)?;
 
-        let task_executor = Arc::new(
-            TaskExecutor::new(Arc::new(task_functions), Arc::clone(&datalogic))
-                .with_secrets(Arc::clone(&secrets)),
-        );
+        let task_executor = Arc::new(TaskExecutor::with_secrets(
+            Arc::new(task_functions),
+            Arc::clone(&datalogic),
+            Arc::clone(&secrets),
+        ));
 
         let workflow_executor =
             Arc::new(WorkflowExecutor::new(task_executor, Arc::clone(&datalogic)));
@@ -348,10 +349,11 @@ impl Engine {
         precompile_custom_inputs(&mut sorted_workflows, &task_functions, &datalogic)?;
 
         // Rebuild the executor stack, reusing the existing function registry
-        let task_executor = Arc::new(
-            TaskExecutor::new(task_functions, Arc::clone(&datalogic))
-                .with_secrets(Arc::clone(&self.secrets)),
-        );
+        let task_executor = Arc::new(TaskExecutor::with_secrets(
+            task_functions,
+            Arc::clone(&datalogic),
+            Arc::clone(&self.secrets),
+        ));
 
         // Carry the observer across the reload. Dropping it here would stop
         // metrics silently at the first hot reload.
@@ -415,13 +417,11 @@ impl Engine {
         self,
         configure: impl FnOnce(WorkflowExecutor) -> WorkflowExecutor,
     ) -> Self {
-        let task_executor = Arc::new(
-            TaskExecutor::new(
-                self.workflow_executor.task_functions(),
-                Arc::clone(&self.datalogic),
-            )
-            .with_secrets(Arc::clone(&self.secrets)),
-        );
+        let task_executor = Arc::new(TaskExecutor::with_secrets(
+            self.workflow_executor.task_functions(),
+            Arc::clone(&self.datalogic),
+            Arc::clone(&self.secrets),
+        ));
         let mut executor = WorkflowExecutor::new(task_executor, Arc::clone(&self.datalogic));
         if let Some(observer) = self.workflow_executor.observer() {
             executor = executor.with_observer(Arc::clone(observer));
@@ -918,7 +918,9 @@ pub struct EngineBuilder {
     datalogic_operators: HashMap<String, Arc<dyn datalogic_rs::CustomOperator>>,
     error_context_path: Option<String>,
     error_context_limit: Option<usize>,
-    secrets: Option<OwnedDataValue>,
+    /// Validated on the way in, so `build()` and `check_workflow` read one
+    /// store; the `Err` is what `build()` returns for a non-object value.
+    secrets: Option<Result<Secrets>>,
 }
 
 impl EngineBuilder {
@@ -1033,14 +1035,33 @@ impl EngineBuilder {
         // an approximation a caller has to keep in step by hand.
         let compiler = LogicCompiler::with_operators(&self.datalogic_operators);
         let template_compiler = TemplateCompiler::new(compiler.into_engine());
-        // A store that is not an object fails `build()`; here it simply
-        // declares nothing, so every literal secret name reports as unknown.
-        let secrets = self
-            .secrets
-            .as_ref()
-            .and_then(|v| Secrets::new(v.clone()).ok())
-            .unwrap_or_else(Secrets::empty);
-        authoring::check_against_registry(workflow, &self.handlers, &template_compiler, &secrets)
+        // With no store configured, nothing is declared and a literal name is
+        // genuinely unknown — reporting it is the right answer. A store that is
+        // *malformed* is a different problem: it fails `build()`, and checking
+        // against the empty store would report every literal name as unknown
+        // and bury the one thing actually wrong. So that case reports the store
+        // instead, and drops the name verdicts — the only ones that depend on
+        // it — below.
+        let store = match &self.secrets {
+            Some(Ok(secrets)) => secrets,
+            None | Some(Err(_)) => &secrets::EMPTY,
+        };
+        let mut issues =
+            authoring::check_against_registry(workflow, &self.handlers, &template_compiler, store);
+
+        if let Some(Err(err)) = &self.secrets {
+            issues.retain(|issue| issue.code != IssueCode::UnknownSecret);
+            issues.insert(
+                0,
+                WorkflowIssue {
+                    code: IssueCode::InvalidSecretStore,
+                    message: format!("the configured secret store is unusable: {err}"),
+                    path: None,
+                    task_id: None,
+                },
+            );
+        }
+        issues
     }
 
     /// Add a single workflow. Subsequent calls append.
@@ -1160,7 +1181,7 @@ impl EngineBuilder {
     /// point of the store, and the reason the values are not simply seeded into
     /// `metadata`.
     pub fn with_secrets(mut self, secrets: OwnedDataValue) -> Self {
-        self.secrets = Some(secrets);
+        self.secrets = Some(Secrets::new(secrets));
         self
     }
 
@@ -1214,7 +1235,7 @@ impl EngineBuilder {
             None => None,
         };
         let secrets = Arc::new(match self.secrets {
-            Some(value) => Secrets::new(value)?,
+            Some(secrets) => secrets?,
             None => Secrets::empty(),
         });
         let engine = Engine::new_inner(

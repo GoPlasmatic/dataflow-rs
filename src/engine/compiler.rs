@@ -296,13 +296,21 @@ impl LogicCompiler {
         // Compile each field expression. Collect into a fresh Vec, then
         // assign — keeps the immutable borrow of `config.fields` from
         // overlapping with the mutable borrow of `config.compiled_fields`.
+        // Sorted, because `fields` is a `HashMap` and this Vec is the order the
+        // fields are emitted in: unsorted, a log line's field order — and which
+        // field a compile error names first — varies per process.
+        let mut keys: Vec<&String> = config.fields.keys().collect();
+        keys.sort_unstable();
         let mut compiled_fields = Vec::with_capacity(config.fields.len());
-        for (key, logic) in &config.fields {
+        for key in keys {
             let label = format!(
                 "log field '{}' for task {} in workflow {}",
                 key, task_id, workflow_id
             );
-            compiled_fields.push((key.clone(), Some(self.compile(logic, &label)?)));
+            compiled_fields.push((
+                key.clone(),
+                Some(self.compile(&config.fields[key], &label)?),
+            ));
         }
         config.compiled_fields = compiled_fields;
         Ok(())

@@ -35,9 +35,9 @@ pub struct TaskExecutor {
     task_functions: Arc<HashMap<String, BoxedFunctionHandler>>,
     /// Shared datalogic Engine (Send + Sync; Arc-shared across tasks)
     engine: Arc<Engine>,
-    /// The engine's secret store, for [`TaskContext::secret`]. `None` only
-    /// for an executor built directly through [`Self::new`].
-    secrets: Option<Arc<Secrets>>,
+    /// The engine's secret store, for [`TaskContext::secret`]. Empty for an
+    /// executor built directly through [`Self::new`].
+    secrets: Arc<Secrets>,
 }
 
 impl TaskExecutor {
@@ -46,20 +46,23 @@ impl TaskExecutor {
         task_functions: Arc<HashMap<String, BoxedFunctionHandler>>,
         engine: Arc<Engine>,
     ) -> Self {
+        Self::with_secrets(task_functions, engine, Arc::new(Secrets::empty()))
+    }
+
+    /// As [`Self::new`], handing handlers `secrets` through
+    /// [`TaskContext::secret`]. A separate constructor rather than a `new`
+    /// parameter for the same reason `execute_in_workflow` is a separate
+    /// method: `new` is public.
+    pub(crate) fn with_secrets(
+        task_functions: Arc<HashMap<String, BoxedFunctionHandler>>,
+        engine: Arc<Engine>,
+        secrets: Arc<Secrets>,
+    ) -> Self {
         Self {
             task_functions,
             engine,
-            secrets: None,
+            secrets,
         }
-    }
-
-    /// Hand handlers the engine's secret store through
-    /// [`TaskContext::secret`]. A separate setter rather than a `new`
-    /// parameter for the same reason `execute_in_workflow` is a separate
-    /// method: `new` is public.
-    pub(crate) fn with_secrets(mut self, secrets: Arc<Secrets>) -> Self {
-        self.secrets = Some(secrets);
-        self
     }
 
     /// Execute a single task. Sync built-ins reach here only when called from
@@ -203,7 +206,7 @@ impl TaskExecutor {
             &self.engine,
             identity,
             loop_counter,
-            self.secrets.as_deref(),
+            &self.secrets,
         );
         let outcome = handler.dyn_execute(&mut ctx, any_input).await?;
         let changes = ctx.into_changes();

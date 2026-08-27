@@ -293,8 +293,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 667 passing.
-`cargo test -p dataflow-rs` (default features) should report 572 — the operator
+`cargo test --workspace --all-features` should report 668 passing.
+`cargo test -p dataflow-rs` (default features) should report 573 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

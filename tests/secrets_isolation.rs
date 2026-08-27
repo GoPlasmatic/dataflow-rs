@@ -14,30 +14,19 @@
 //! and a message that carries its own `secret` / `secrets` keys.
 
 use async_trait::async_trait;
-use dataflow_rs::datalogic_rs::bumpalo::Bump;
 use dataflow_rs::engine::functions::AsyncFunctionHandler;
 use dataflow_rs::engine::message::Message;
 use dataflow_rs::{
     AuditTrailScope, DataflowError, Engine, EngineBuilder, ExecutionTrace, Result, TaskContext,
-    TaskOutcome, Template, TemplateCompiler, TraceOptions, Workflow,
+    TaskOutcome, TemplateCompiler, TraceOptions, Workflow,
 };
+use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 mod common;
 
-use common::{RecordingObserver, dv};
-
-/// Distinctive enough that a substring search is a real test.
-const SECRET: &str = "s3cr3t-value-7f2a";
-const NESTED: &str = "nested-hmac-91c0";
-
-fn secrets() -> Value {
-    json!({
-        "partner_key": SECRET,
-        "partner": { "hmac": NESTED }
-    })
-}
+use common::{NESTED, RecordingObserver, SECRET, Sign, SignInput, dv, eval, secrets, workflow};
 
 /// Fail if `text` carries either secret value.
 fn assert_clean(label: &str, text: &str) {
@@ -88,46 +77,9 @@ fn captured_logs() -> Vec<String> {
 // Handlers
 // -----------------------------------------------------------------------------
 
-#[derive(serde::Deserialize)]
-struct SignInput {
-    key: Template,
-    body: Template,
-}
-
-/// Reads the key through a `Template` in every projection the API offers, and
-/// writes only a derived value.
-struct Sign;
-
-#[async_trait]
-impl AsyncFunctionHandler for Sign {
-    type Input = SignInput;
-
-    fn compile_input(input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> {
-        input.key.compile(c, "key")?;
-        input.body.compile(c, "body")
-    }
-
-    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Self::Input) -> Result<TaskOutcome> {
-        let key: String = input.key.eval_into(ctx)?;
-        assert_eq!(key, SECRET, "Template::eval_into");
-        assert_eq!(input.key.eval(ctx)?, dv(json!(SECRET)), "Template::eval");
-        assert_eq!(
-            input.key.eval_to_plain_string(ctx)?,
-            SECRET,
-            "Template::eval_to_plain_string"
-        );
-        let body: String = input.body.eval_into(ctx)?;
-        ctx.set(
-            "data.sig",
-            dv(json!(format!("{}:{}", body.len(), key.len()))),
-        );
-        Ok(TaskOutcome::Success)
-    }
-}
-
-/// Asserts, from inside a handler, that nothing but the operator reaches the
-/// store — and records each finding into `data.probe` so a failure is visible
-/// in the message rather than only as a panic inside the executor.
+/// Asserts, from inside a handler, that nothing but the operator and the
+/// accessor reach the store. A failed assertion propagates out of
+/// `process_message` like any other panic — the engine catches nothing.
 struct Probe;
 
 #[async_trait]
@@ -138,30 +90,52 @@ impl AsyncFunctionHandler for Probe {
         let dl = Arc::clone(ctx.datalogic());
         let compile = |v: Value| dl.compile_arc(&v).unwrap();
 
-        let context_keys: Vec<String> = match ctx.context() {
-            datavalue::OwnedDataValue::Object(pairs) => {
-                pairs.iter().map(|(k, _)| k.clone()).collect()
-            }
-            other => panic!("context is not an object: {other:?}"),
-        };
+        let context_keys: Vec<&str> = ctx
+            .context()
+            .as_object()
+            .expect("context is an object")
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
+        assert_eq!(
+            context_keys,
+            ["data", "metadata", "temp_data"],
+            "the context has exactly the three recorded roots"
+        );
         let whole = serde_json::to_string(&ctx.eval(&compile(json!({ "var": "" })))?).unwrap();
-        let findings = json!({
-            "context_keys": context_keys,
-            "get_secret_is_none": ctx.get("secret").is_none(),
-            "get_secrets_is_none": ctx.get("secrets").is_none(),
-            "get_secrets_key_is_none": ctx.get("secrets.partner_key").is_none(),
-            "var_secrets_is_null": ctx.eval(&compile(json!({ "var": "secrets.partner_key" })))?
-                == datavalue::OwnedDataValue::Null,
-            "var_secret_is_null": ctx.eval(&compile(json!({ "var": "secret" })))?
-                == datavalue::OwnedDataValue::Null,
-            "whole_context_is_clean": !whole.contains(SECRET) && !whole.contains(NESTED),
-            "accessor_sees_store": ctx.secret("partner_key").and_then(|v| v.as_str()) == Some(SECRET),
-            "accessor_walks_nested": ctx.secret("partner.hmac").and_then(|v| v.as_str()) == Some(NESTED),
-            "accessor_rejects_unknown": ctx.secret("nope").is_none(),
-            "accessor_rejects_empty": ctx.secret("").is_none(),
-            "eval_json_sees_store": ctx.eval_json(&compile(json!({ "secret": "partner_key" })))? == json!(SECRET),
-        });
-        ctx.set("data.probe", dv(findings));
+        assert_clean("whole-context read", &whole);
+
+        assert!(ctx.get("secret").is_none());
+        assert!(ctx.get("secrets").is_none());
+        assert!(ctx.get("secrets.partner_key").is_none());
+        assert_eq!(
+            ctx.eval(&compile(json!({ "var": "secrets.partner_key" })))?,
+            OwnedDataValue::Null
+        );
+        assert_eq!(
+            ctx.eval(&compile(json!({ "var": "secret" })))?,
+            OwnedDataValue::Null
+        );
+
+        assert_eq!(
+            ctx.secret("partner_key").and_then(|v| v.as_str()),
+            Some(SECRET)
+        );
+        assert_eq!(
+            ctx.secret("partner.hmac").and_then(|v| v.as_str()),
+            Some(NESTED)
+        );
+        assert!(ctx.secret("nope").is_none());
+        assert!(ctx.secret("").is_none());
+        assert_eq!(
+            ctx.eval_json(&compile(json!({ "secret": "partner_key" })))?,
+            json!(SECRET)
+        );
+        // The anchor for `assert_ran`: every assertion above is silent when it
+        // passes, so without a mark the task could stop running — skipped by a
+        // condition, dropped from the workflow — and every test in this file
+        // would still pass while checking nothing.
+        ctx.set("data.probe_ran", dv(json!(true)));
         Ok(TaskOutcome::Success)
     }
 }
@@ -191,67 +165,59 @@ impl AsyncFunctionHandler for FailAfterReading {
 // -----------------------------------------------------------------------------
 
 fn everything_workflow() -> Workflow {
-    Workflow::from_json(
-        &json!({
-            "id": "all", "name": "all", "priority": 0,
-            "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
-            "tasks": [
-                { "id": "seed", "name": "seed", "function": { "name": "map", "input": {
-                    "mappings": [
-                        { "path": "data.body", "logic": "payload-body" },
-                        { "path": "data.dump", "logic": { "var": "" } }
-                    ] } } },
-                { "id": "check", "name": "check",
-                  "condition": { "!!": { "secret": "partner.hmac" } },
-                  "function": { "name": "validation", "input": { "rules": [
-                      { "logic": { "==": [ { "secret": "partner_key" }, SECRET ] },
-                        "message": "key mismatch" } ] } } },
-                { "id": "gate", "name": "gate", "function": { "name": "filter", "input": {
-                    "condition": { "!=": [ { "secret": "partner_key" }, "" ] } } } },
-                { "id": "grouped", "name": "grouped",
-                  "condition": { "==": [ { "secret": "partner.hmac" }, NESTED ] },
-                  "tasks": [
-                      { "id": "note", "name": "note", "function": { "name": "log", "input": {
-                          "level": "info",
-                          "message": { "cat": [ "body=", { "var": "data.body" } ] },
-                          "fields": { "len": { "var": "data.sig" } } } } }
-                  ] },
-                { "id": "sign", "name": "sign", "function": { "name": "sign", "input": {
-                    "key": { "secret": "partner_key" },
-                    "body": { "var": "data.body" } } } },
-                { "id": "probe", "name": "probe", "function": { "name": "probe", "input": {} } },
-                { "id": "after", "name": "after",
-                  "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
-                  "function": { "name": "map", "input": {
-                    "mappings": [ { "path": "data.done", "logic": { "var": "data.sig" } } ] } } }
-            ]
-        })
-        .to_string(),
-    )
-    .unwrap()
+    workflow(json!({
+        "id": "all", "name": "all", "priority": 0,
+        "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
+        "tasks": [
+            { "id": "seed", "name": "seed", "function": { "name": "map", "input": {
+                "mappings": [
+                    { "path": "data.body", "logic": "payload-body" },
+                    { "path": "data.dump", "logic": { "var": "" } }
+                ] } } },
+            { "id": "check", "name": "check",
+              "condition": { "!!": { "secret": "partner.hmac" } },
+              "function": { "name": "validation", "input": { "rules": [
+                  { "logic": { "==": [ { "secret": "partner_key" }, SECRET ] },
+                    "message": "key mismatch" } ] } } },
+            { "id": "gate", "name": "gate", "function": { "name": "filter", "input": {
+                "condition": { "!=": [ { "secret": "partner_key" }, "" ] } } } },
+            { "id": "grouped", "name": "grouped",
+              "condition": { "==": [ { "secret": "partner.hmac" }, NESTED ] },
+              "tasks": [
+                  { "id": "note", "name": "note", "function": { "name": "log", "input": {
+                      "level": "info",
+                      "message": { "cat": [ "body=", { "var": "data.body" } ] },
+                      "fields": { "len": { "var": "data.sig" } } } } }
+              ] },
+            { "id": "sign", "name": "sign", "function": { "name": "sign", "input": {
+                "key": { "secret": "partner_key" },
+                "body": { "var": "data.body" } } } },
+            { "id": "probe", "name": "probe", "function": { "name": "probe", "input": {} } },
+            { "id": "after", "name": "after",
+              "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
+              "function": { "name": "map", "input": {
+                "mappings": [ { "path": "data.done", "logic": { "var": "data.sig" } } ] } } }
+        ]
+    }))
 }
 
 /// A second workflow whose secret-reading rules *fail*, so the error list, the
 /// error-context mirror and the error log all carry something.
 fn failing_workflow() -> Workflow {
-    Workflow::from_json(
-        &json!({
-            "id": "failing", "name": "failing", "priority": 1, "continue_on_error": true,
-            "tasks": [
-                { "id": "mismatch", "name": "mismatch", "continue_on_error": true,
-                  "function": { "name": "validation", "input": { "rules": [
-                      { "logic": { "==": [ { "secret": "partner_key" }, "something-else" ] },
-                        "message": "expected mismatch" },
-                      { "logic": { "==": [ { "secret": { "var": "data.missing_key" } }, 1 ] },
-                        "message": "dynamic name that does not exist" } ] } } },
-                { "id": "boom", "name": "boom", "continue_on_error": true,
-                  "function": { "name": "fail_after_reading", "input": {
-                    "key": { "secret": "partner_key" }, "body": "x" } } }
-            ]
-        })
-        .to_string(),
-    )
-    .unwrap()
+    workflow(json!({
+        "id": "failing", "name": "failing", "priority": 1, "continue_on_error": true,
+        "tasks": [
+            { "id": "mismatch", "name": "mismatch", "continue_on_error": true,
+              "function": { "name": "validation", "input": { "rules": [
+                  { "logic": { "==": [ { "secret": "partner_key" }, "something-else" ] },
+                    "message": "expected mismatch" },
+                  { "logic": { "==": [ { "secret": { "var": "data.missing_key" } }, 1 ] },
+                    "message": "dynamic name that does not exist" } ] } } },
+            { "id": "boom", "name": "boom", "continue_on_error": true,
+              "function": { "name": "fail_after_reading", "input": {
+                "key": { "secret": "partner_key" }, "body": "x" } } }
+        ]
+    }))
 }
 
 fn builder() -> EngineBuilder {
@@ -271,71 +237,51 @@ fn fresh_message() -> Message {
         .build()
 }
 
-/// Everything a host could observe after a run, as text.
-fn observable(message: &Message, trace: Option<&ExecutionTrace>) -> Vec<(String, String)> {
-    let mut out = vec![
-        (
-            "Serialize for Message".into(),
-            serde_json::to_string(message).unwrap(),
-        ),
-        ("Debug for Message".into(), format!("{message:?}")),
-        (
-            "audit_trail".into(),
-            serde_json::to_string(message.audit_trail()).unwrap(),
-        ),
-        (
-            "errors".into(),
-            serde_json::to_string(message.errors()).unwrap(),
-        ),
-        ("errors Debug".into(), format!("{:?}", message.errors())),
-        (
-            "context".into(),
-            serde_json::to_string(&message.context).unwrap(),
-        ),
-    ];
+/// Every surface a host could observe after a run, checked for the value.
+/// `run` names the run in a failure message.
+fn assert_exits_clean(run: &str, message: &Message, trace: Option<&ExecutionTrace>) {
+    let clean = |label: &str, text: &str| assert_clean(&format!("[{run}] {label}"), text);
+
+    clean(
+        "Serialize for Message",
+        &serde_json::to_string(message).unwrap(),
+    );
+    clean("Debug for Message", &format!("{message:?}"));
+    clean(
+        "audit_trail",
+        &serde_json::to_string(message.audit_trail()).unwrap(),
+    );
+    clean("errors", &serde_json::to_string(message.errors()).unwrap());
+    clean("errors Debug", &format!("{:?}", message.errors()));
+    clean("context", &serde_json::to_string(&message.context).unwrap());
     if let Some(trace) = trace {
-        out.push((
-            "Serialize for ExecutionTrace".into(),
-            serde_json::to_string(trace).unwrap(),
-        ));
-        out.push(("Debug for ExecutionTrace".into(), format!("{trace:?}")));
+        clean(
+            "Serialize for ExecutionTrace",
+            &serde_json::to_string(trace).unwrap(),
+        );
+        clean("Debug for ExecutionTrace", &format!("{trace:?}"));
         if let Some(last) = trace.final_message() {
-            out.push(("final_message".into(), serde_json::to_string(last).unwrap()));
+            clean("final_message", &serde_json::to_string(last).unwrap());
         }
     }
-    out
 }
 
 /// The run did what it should — every allowed read resolved, the derived
-/// value landed, the failing workflow failed the way it was told to.
+/// value landed, the failing workflow failed the way it was told to. The
+/// probe's own assertions ran on the way here, or the run would have panicked.
 fn assert_ran(message: &Message) {
+    assert_eq!(
+        message.context["data"]["probe_ran"],
+        dv(json!(true)),
+        "the probe task ran, so its isolation assertions were exercised: {:?}",
+        message.context
+    );
     assert_eq!(
         message.context["data"]["done"],
         dv(json!("12:17")),
         "every task on the happy path ran: {:?}",
         message.context
     );
-    let probe = &message.context["data"]["probe"];
-    assert_eq!(
-        probe["context_keys"],
-        dv(json!(["data", "metadata", "temp_data"])),
-        "the context has exactly the three recorded roots"
-    );
-    for finding in [
-        "get_secret_is_none",
-        "get_secrets_is_none",
-        "get_secrets_key_is_none",
-        "var_secrets_is_null",
-        "var_secret_is_null",
-        "whole_context_is_clean",
-        "accessor_sees_store",
-        "accessor_walks_nested",
-        "accessor_rejects_unknown",
-        "accessor_rejects_empty",
-        "eval_json_sees_store",
-    ] {
-        assert_eq!(probe[finding], dv(json!(true)), "probe finding {finding}");
-    }
     let codes: Vec<&str> = message.errors().iter().map(|e| e.code.as_str()).collect();
     assert!(codes.contains(&"VALIDATION_ERROR"), "{codes:?}");
     assert!(codes.contains(&"EVALUATION_ERROR"), "{codes:?}");
@@ -365,9 +311,7 @@ async fn no_exit_carries_the_value_without_a_trace() {
     engine.process_message(&mut message).await.unwrap();
     assert_ran(&message);
 
-    for (label, text) in observable(&message, None) {
-        assert_clean(&label, &text);
-    }
+    assert_exits_clean("no trace", &message, None);
     assert_clean("observer events", &format!("{:?}", observer.seen()));
     assert!(!observer.seen().is_empty());
 }
@@ -433,9 +377,7 @@ async fn no_exit_carries_the_value_under_any_trace_policy() {
             "{policy}: {}",
             trace.executed_count()
         );
-        for (label, text) in observable(&message, Some(&trace)) {
-            assert_clean(&format!("[{policy}] {label}"), &text);
-        }
+        assert_exits_clean(policy, &message, Some(&trace));
     }
 }
 
@@ -455,9 +397,7 @@ async fn the_default_trace_entry_points_and_the_channel_path_are_clean() {
         serialized.contains("mapping_contexts"),
         "the default trace keeps mapping contexts"
     );
-    for (label, text) in observable(&message, Some(&trace)) {
-        assert_clean(&label, &text);
-    }
+    assert_exits_clean("with_trace", &message, Some(&trace));
 
     let mut message = fresh_message();
     let trace = engine
@@ -469,9 +409,7 @@ async fn the_default_trace_entry_points_and_the_channel_path_are_clean() {
         .await
         .unwrap();
     assert_ran(&message);
-    for (label, text) in observable(&message, Some(&trace)) {
-        assert_clean(&format!("[channel] {label}"), &text);
-    }
+    assert_exits_clean("channel", &message, Some(&trace));
 
     // Caller-owned trace survives a hard failure; still clean.
     let mut message = fresh_message();
@@ -480,9 +418,7 @@ async fn the_default_trace_entry_points_and_the_channel_path_are_clean() {
         .process_message_tracing(&mut message, &mut trace)
         .await
         .unwrap();
-    for (label, text) in observable(&message, Some(&trace)) {
-        assert_clean(&format!("[tracing] {label}"), &text);
-    }
+    assert_exits_clean("tracing", &message, Some(&trace));
 }
 
 #[tokio::test]
@@ -536,19 +472,6 @@ async fn the_process_log_never_carries_the_value() {
 // Access vectors that must not reach the store
 // =============================================================================
 
-fn eval(engine: &Engine, expr: Value, data: Value) -> Result<Value> {
-    let logic = engine
-        .datalogic()
-        .compile_arc(&expr)
-        .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))?;
-    let arena = Bump::new();
-    engine
-        .datalogic()
-        .evaluate(&logic, &data, &arena)
-        .map(|v| serde_json::to_value(v).unwrap())
-        .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))
-}
-
 #[test]
 fn no_var_path_reaches_the_store() {
     let engine = builder().build().unwrap();
@@ -574,21 +497,17 @@ fn no_var_path_reaches_the_store() {
 
 #[tokio::test]
 async fn context_keys_named_secret_neither_shadow_nor_expose_the_store() {
-    let wf = Workflow::from_json(
-        &json!({
-            "id": "w", "name": "w", "priority": 0,
-            "tasks": [ { "id": "t", "name": "t",
-              "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
-              "function": { "name": "map", "input": {
-                "mappings": [
-                    { "path": "data.from_store_matches", "logic": true },
-                    { "path": "data.from_context", "logic": { "var": "data.secret.partner_key" } },
-                    { "path": "data.from_metadata", "logic": { "var": "metadata.secrets.partner_key" } }
-                ] } } } ]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let wf = workflow(json!({
+        "id": "w", "name": "w", "priority": 0,
+        "tasks": [ { "id": "t", "name": "t",
+          "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
+          "function": { "name": "map", "input": {
+            "mappings": [
+                { "path": "data.from_store_matches", "logic": true },
+                { "path": "data.from_context", "logic": { "var": "data.secret.partner_key" } },
+                { "path": "data.from_metadata", "logic": { "var": "metadata.secrets.partner_key" } }
+            ] } } } ]
+    }));
     let engine = Engine::builder()
         .with_secrets_json(&secrets())
         .with_workflow(wf)
@@ -661,16 +580,12 @@ fn build_errors_and_issues_never_carry_a_value() {
     }
 
     // Unknown-name and message-write refusals name keys and paths only.
-    let leaky = Workflow::from_json(
-        &json!({
-            "id": "w", "name": "w", "priority": 0,
-            "condition": { "secret": "nope" },
-            "tasks": [ { "id": "t", "name": "t", "function": { "name": "map", "input": {
-                "mappings": [ { "path": "data.x", "logic": { "secret": "partner_key" } } ] } } } ]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let leaky = workflow(json!({
+        "id": "w", "name": "w", "priority": 0,
+        "condition": { "secret": "nope" },
+        "tasks": [ { "id": "t", "name": "t", "function": { "name": "map", "input": {
+            "mappings": [ { "path": "data.x", "logic": { "secret": "partner_key" } } ] } } } ]
+    }));
     let b = Engine::builder().with_secrets_json(&secrets());
     let issues = b.check_workflow(&leaky);
     assert_eq!(issues.len(), 2);
@@ -691,16 +606,12 @@ fn build_errors_and_issues_never_carry_a_value() {
 #[tokio::test]
 async fn a_hard_failure_after_reading_a_secret_is_clean_on_both_error_channels() {
     install_logger();
-    let wf = Workflow::from_json(
-        &json!({
-            "id": "strict", "name": "strict", "priority": 0, "continue_on_error": false,
-            "tasks": [ { "id": "boom", "name": "boom", "function": {
-                "name": "fail_after_reading",
-                "input": { "key": { "secret": "partner_key" }, "body": "x" } } } ]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let wf = workflow(json!({
+        "id": "strict", "name": "strict", "priority": 0, "continue_on_error": false,
+        "tasks": [ { "id": "boom", "name": "boom", "function": {
+            "name": "fail_after_reading",
+            "input": { "key": { "secret": "partner_key" }, "body": "x" } } } ]
+    }));
     let engine = Engine::builder()
         .with_secrets_json(&secrets())
         .with_workflow(wf)
@@ -717,9 +628,7 @@ async fn a_hard_failure_after_reading_a_secret_is_clean_on_both_error_channels()
 
     assert_clean("Result::Err Display", &err.to_string());
     assert_clean("Result::Err Debug", &format!("{err:?}"));
-    for (label, text) in observable(&message, Some(&trace)) {
-        assert_clean(&label, &text);
-    }
+    assert_exits_clean("hard failure", &message, Some(&trace));
 }
 
 // =============================================================================
@@ -729,21 +638,17 @@ async fn a_hard_failure_after_reading_a_secret_is_clean_on_both_error_channels()
 #[tokio::test]
 async fn a_looping_workflow_reading_a_secret_each_sweep_is_clean() {
     install_logger();
-    let wf = Workflow::from_json(
-        &json!({
-            "id": "loop", "name": "loop", "priority": 0,
-            "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
-            "loop": { "counter": "i", "max": 4 },
-            "tasks": [
-                { "id": "step", "name": "step",
-                  "condition": { "!!": { "secret": "partner.hmac" } },
-                  "function": { "name": "map", "input": { "mappings": [
-                      { "path": "data.sweeps", "logic": { "+": [ { "var": "data.sweeps" }, 1 ] } } ] } } }
-            ]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let wf = workflow(json!({
+        "id": "loop", "name": "loop", "priority": 0,
+        "condition": { "==": [ { "secret": "partner_key" }, SECRET ] },
+        "loop": { "counter": "i", "max": 4 },
+        "tasks": [
+            { "id": "step", "name": "step",
+              "condition": { "!!": { "secret": "partner.hmac" } },
+              "function": { "name": "map", "input": { "mappings": [
+                  { "path": "data.sweeps", "logic": { "+": [ { "var": "data.sweeps" }, 1 ] } } ] } } }
+        ]
+    }));
     let engine = Engine::builder()
         .with_secrets_json(&secrets())
         .with_workflow(wf)
@@ -760,9 +665,7 @@ async fn a_looping_workflow_reading_a_secret_each_sweep_is_clean() {
 
     assert_eq!(message.context["data"]["sweeps"], dv(json!(4)));
     assert_eq!(trace.executed_count(), 4);
-    for (label, text) in observable(&message, Some(&trace)) {
-        assert_clean(&label, &text);
-    }
+    assert_exits_clean("loop", &message, Some(&trace));
 }
 
 #[tokio::test]
@@ -779,9 +682,7 @@ async fn concurrent_messages_on_one_engine_all_resolve_and_stay_clean() {
                 .await
                 .unwrap();
             assert_ran(&message);
-            for (label, text) in observable(&message, Some(&trace)) {
-                assert_clean(&label, &text);
-            }
+            assert_exits_clean("concurrent", &message, Some(&trace));
         }));
     }
     for handle in handles {
@@ -802,9 +703,7 @@ async fn a_hot_reload_keeps_the_guarantee_and_still_refuses_a_leak() {
         .await
         .unwrap();
     assert_ran(&message);
-    for (label, text) in observable(&message, Some(&trace)) {
-        assert_clean(&format!("[reloaded] {label}"), &text);
-    }
+    assert_exits_clean("reloaded", &message, Some(&trace));
 
     // The old engine is untouched.
     let mut message = fresh_message();
@@ -812,15 +711,11 @@ async fn a_hot_reload_keeps_the_guarantee_and_still_refuses_a_leak() {
     assert_ran(&message);
 
     // A reload cannot smuggle in what a build refuses.
-    let leaky = Workflow::from_json(
-        &json!({
-            "id": "leak", "name": "leak", "priority": 0,
-            "tasks": [ { "id": "t", "name": "t", "function": { "name": "map", "input": {
-                "mappings": [ { "path": "data.x", "logic": { "secret": "partner_key" } } ] } } } ]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let leaky = workflow(json!({
+        "id": "leak", "name": "leak", "priority": 0,
+        "tasks": [ { "id": "t", "name": "t", "function": { "name": "map", "input": {
+            "mappings": [ { "path": "data.x", "logic": { "secret": "partner_key" } } ] } } } ]
+    }));
     let err = engine.with_new_workflows(vec![leaky]).err().unwrap();
     assert_clean("reload refusal", &err.to_string());
     assert!(err.to_string().contains("SECRET_IN_MESSAGE_WRITE"), "{err}");
@@ -829,23 +724,20 @@ async fn a_hot_reload_keeps_the_guarantee_and_still_refuses_a_leak() {
 #[tokio::test]
 async fn a_message_processed_with_no_store_is_unchanged_in_shape() {
     // The operator exists on every engine but adds nothing to the context.
-    let wf = Workflow::from_json(
-        &json!({
-            "id": "w", "name": "w", "priority": 0,
-            "tasks": [ { "id": "t", "name": "t", "function": { "name": "map", "input": {
-                "mappings": [ { "path": "data.dump", "logic": { "var": "" } } ] } } } ]
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let wf = workflow(json!({
+        "id": "w", "name": "w", "priority": 0,
+        "tasks": [ { "id": "t", "name": "t", "function": { "name": "map", "input": {
+            "mappings": [ { "path": "data.dump", "logic": { "var": "" } } ] } } } ]
+    }));
     let engine = Engine::builder().with_workflow(wf).build().unwrap();
     let mut message = Message::from_value(&json!({}));
     engine.process_message(&mut message).await.unwrap();
 
-    let dump = &message.context["data"]["dump"];
-    let keys: Vec<&str> = match dump {
-        datavalue::OwnedDataValue::Object(pairs) => pairs.iter().map(|(k, _)| k.as_str()).collect(),
-        other => panic!("{other:?}"),
-    };
+    let keys: Vec<&str> = message.context["data"]["dump"]
+        .as_object()
+        .expect("the dump is the whole context object")
+        .iter()
+        .map(|(k, _)| k.as_str())
+        .collect();
     assert_eq!(keys, ["data", "metadata", "temp_data"]);
 }

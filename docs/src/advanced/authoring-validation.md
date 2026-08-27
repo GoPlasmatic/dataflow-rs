@@ -129,6 +129,7 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `TEMPLATE_COMPILE` | A handler rejected the input at construction time |
 | `UNKNOWN_SECRET` | An expression names a secret the engine does not declare — see [Secrets](./secrets.md) |
 | `SECRET_IN_MESSAGE_WRITE` | A `map` mapping or `log` expression reads a secret, which the engine would record |
+| `INVALID_SECRET_STORE` | The store given to `with_secrets` is not an object — reported in place of the `UNKNOWN_SECRET` issues every name would otherwise produce |
 
 ## Checking against the handlers
 

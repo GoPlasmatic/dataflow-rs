@@ -131,6 +131,15 @@ pub enum IssueCode {
     /// record it is refused outright, derived or not. Compute derived values in
     /// a custom handler.
     SecretInMessageWrite,
+    /// The store passed to
+    /// [`EngineBuilder::with_secrets`](crate::EngineBuilder::with_secrets) is
+    /// not a JSON object, so no name resolves and
+    /// [`EngineBuilder::build`](crate::EngineBuilder::build) will fail.
+    /// Reported by
+    /// [`EngineBuilder::check_workflow`](crate::EngineBuilder::check_workflow)
+    /// *instead of* the [`Self::UnknownSecret`] issues every literal name would
+    /// otherwise produce — the workflow is not what is wrong.
+    InvalidSecretStore,
     /// The document does not deserialize into a [`Workflow`]. Carries the
     /// parser's own message, which names the offending field and type.
     ParseFailed,
@@ -162,6 +171,7 @@ impl IssueCode {
             Self::TemplateCompile => "TEMPLATE_COMPILE",
             Self::UnknownSecret => "UNKNOWN_SECRET",
             Self::SecretInMessageWrite => "SECRET_IN_MESSAGE_WRITE",
+            Self::InvalidSecretStore => "INVALID_SECRET_STORE",
             Self::ParseFailed => "PARSE_FAILED",
             Self::ValidateFailed => "VALIDATE_FAILED",
         }
@@ -348,20 +358,46 @@ pub(crate) fn check_against_registry(
     issues
 }
 
-/// Stage 1: every semantic violation, with authored coordinates.
 /// Where an expression's result ends up — what decides whether it may read a
 /// secret.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sink {
-    /// Collapses to a bool the engine acts on: workflow and task conditions,
-    /// `validation` rules, `filter`. Nothing of the value survives.
+    /// Collapses to a bool the engine acts on: workflow, group and task
+    /// conditions, `validation` rules, `filter`. Nothing of the value survives.
     Bool,
-    /// Handed to a handler: `Template` fields, integration `*_logic`, a custom
-    /// task's raw input. What happens next is the handler's business.
+    /// Handed to a handler: `Template` fields and integration `*_logic`. What
+    /// happens next is the handler's business.
     Handler,
+    /// A custom task's whole raw input, handed to the handler untyped. The
+    /// same rule as [`Sink::Handler`]; it differs only in that the document
+    /// is not one expression, so an issue carries the deep path to the
+    /// reference rather than the field.
+    Input,
     /// Written to the message or emitted to a log by the engine itself:
     /// `map` mappings, `log` message and fields. Recorded by construction.
     Message,
+}
+
+impl Sink {
+    /// Whether the engine itself records this expression's result. Such an
+    /// expression may not read a secret *at all* — the store exists so a value
+    /// is never recorded, and there is no static line between a copy and a
+    /// derived value.
+    ///
+    /// The four variants are a map of where an expression's result goes;
+    /// [`Sink::Bool`] and [`Sink::Handler`] answer this question the same way
+    /// today and are kept apart because the reasons differ — nothing survives
+    /// versus the handler owns what happens next.
+    fn records(self) -> bool {
+        matches!(self, Self::Message)
+    }
+
+    /// Whether an issue points at the reference's own deep path rather than at
+    /// the field. True only where the field is not itself a single expression,
+    /// so the field name alone would not locate the reference.
+    fn points_at_reference(self) -> bool {
+        matches!(self, Self::Input)
+    }
 }
 
 /// Check every expression in `workflow` for `{"secret": …}` references.
@@ -385,6 +421,13 @@ pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<Workf
     check(&workflow.condition, "condition", None, Sink::Bool);
 
     for task in &workflow.tasks {
+        // Groups opening at this task, outermost first — compiled alongside
+        // the task condition, so checked alongside it.
+        for group in &task.group_starts {
+            let id = Some(group.id.as_str());
+            check(&group.condition, "condition", id, Sink::Bool);
+        }
+
         let id = Some(task.id.as_str());
         check(&task.condition, "condition", id, Sink::Bool);
 
@@ -406,9 +449,14 @@ pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<Workf
             }
             FunctionConfig::Log { input, .. } => {
                 check(&input.message, "function.input.message", id, Sink::Message);
-                for (name, logic) in &input.fields {
+                // `fields` is a `HashMap`, so iterate it in name order — issue
+                // order is what a host logs, diffs, or asserts on, and what
+                // `refuse_secret_issues` joins into a `build()` error message.
+                let mut names: Vec<&String> = input.fields.keys().collect();
+                names.sort_unstable();
+                for name in names {
                     let field = format!("function.input.fields.{name}");
-                    check(logic, &field, id, Sink::Message);
+                    check(&input.fields[name], &field, id, Sink::Message);
                 }
             }
             FunctionConfig::HttpCall { input, .. } => {
@@ -439,7 +487,7 @@ pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<Workf
                 }
             }
             FunctionConfig::Custom { input, .. } => {
-                check(input, "function.input", id, Sink::Handler);
+                check(input, "function.input", id, Sink::Input);
             }
             FunctionConfig::ParseJson { .. }
             | FunctionConfig::ParseXml { .. }
@@ -465,7 +513,7 @@ fn check_expression(
     if refs.is_empty() {
         return;
     }
-    if sink == Sink::Message {
+    if sink.records() {
         issues.push(
             WorkflowIssue::at(
                 IssueCode::SecretInMessageWrite,
@@ -482,10 +530,7 @@ fn check_expression(
         if secrets.get(key).is_some() {
             continue;
         }
-        // A custom task's input is not one expression, so the deep path is
-        // the useful coordinate; for a typed expression field the field
-        // itself is.
-        let at = if field == "function.input" {
+        let at = if sink.points_at_reference() {
             path.as_str()
         } else {
             field
@@ -532,6 +577,7 @@ fn collect_secret_refs<'v>(value: &'v Value, path: &str, out: &mut Vec<(String, 
     }
 }
 
+/// Stage 1: every semantic violation, with authored coordinates.
 fn check_shape(json: &Value) -> Vec<WorkflowIssue> {
     let mut issues = Vec::new();
 

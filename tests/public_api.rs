@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 mod common;
 
-use common::{LoggingTask, dv};
+use common::{LoggingTask, Shout, dv};
 
 // =============================================================================
 // Built-in function classification — regression coverage for the
@@ -691,23 +691,6 @@ async fn task_context_eval_surface_is_reachable_from_outside_the_crate() {
 // =============================================================================
 // Custom JSONLogic operators — EngineBuilder::with_datalogic_operator
 // =============================================================================
-
-/// Uppercases its first argument. Small enough that the test reads as a test
-/// of the *registration path*, not of an operator.
-struct Shout;
-
-impl dataflow_rs::datalogic_rs::CustomOperator for Shout {
-    fn evaluate<'a>(
-        &self,
-        args: &[&'a dataflow_rs::datalogic_rs::DataValue<'a>],
-        _ctx: &mut dataflow_rs::datalogic_rs::operator::EvalContext<'_, 'a>,
-        arena: &'a dataflow_rs::datalogic_rs::bumpalo::Bump,
-    ) -> dataflow_rs::datalogic_rs::Result<&'a dataflow_rs::datalogic_rs::DataValue<'a>> {
-        use dataflow_rs::datalogic_rs::ArenaExt;
-        let s = args.first().and_then(|v| v.as_str()).unwrap_or_default();
-        Ok(arena.string(&s.to_uppercase()))
-    }
-}
 
 /// One workflow whose `map` logic calls the custom operator.
 fn shout_workflow() -> Workflow {

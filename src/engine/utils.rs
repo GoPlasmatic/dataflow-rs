@@ -30,8 +30,7 @@ pub fn get_nested_value<'b>(data: &'b OwnedDataValue, path: &str) -> Option<&'b 
     if path.is_empty() {
         return Some(data);
     }
-    let parts: Vec<&str> = path.split('.').collect();
-    get_nested_value_impl(data, &parts)
+    get_nested_value_impl(data, path.split('.'))
 }
 
 /// Set the value at `path`, creating intermediate containers as needed.
@@ -66,20 +65,20 @@ pub fn get_nested_value_parts<'b>(
     data: &'b OwnedDataValue,
     parts: &[Arc<str>],
 ) -> Option<&'b OwnedDataValue> {
-    if parts.is_empty() {
-        return Some(data);
-    }
-    let parts: Vec<&str> = parts.iter().map(Arc::as_ref).collect();
-    get_nested_value_impl(data, &parts)
+    get_nested_value_impl(data, parts.iter().map(Arc::as_ref))
 }
 
 /// Shared tree-walk behind [`get_nested_value`] and [`get_nested_value_parts`].
 /// `#`-prefix escape is applied at lookup time via `strip_hash_prefix`, so a
 /// caller passing raw (unstripped) parts — as `get_nested_value_parts` does —
 /// still gets `#20` → object key `"20"` semantics.
-fn get_nested_value_impl<'b>(
+///
+/// Takes the parts as an iterator so neither caller collects them first: a
+/// read is one heap allocation cheaper, which matters on the paths that run
+/// per message — `TaskContext::get` and the `secret` operator among them.
+fn get_nested_value_impl<'b, 'p>(
     data: &'b OwnedDataValue,
-    parts: &[&str],
+    parts: impl Iterator<Item = &'p str>,
 ) -> Option<&'b OwnedDataValue> {
     let mut current = data;
     for part in parts {

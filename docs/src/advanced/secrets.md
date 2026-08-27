@@ -61,8 +61,8 @@ that is an environment variable, a vault call, or a file. The store must be an
 object; nested objects are allowed so a host can namespace, and a dotted name
 walks into them.
 
-`{"secret": "name"}` works anywhere JSONLogic runs on this engine: workflow and
-task conditions, `validation` rules, `filter`, a custom handler's
+`{"secret": "name"}` works anywhere JSONLogic runs on this engine: workflow,
+group and task conditions, `validation` rules, `filter`, a custom handler's
 [`Template`](./custom-functions.md) fields, the integration configs'
 `path_logic` / `body_logic` / `key_logic` / `value_logic`, and a handler's own
 `ctx.eval(..)`. A handler configured with a key *name* rather than an

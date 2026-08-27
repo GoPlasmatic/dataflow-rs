@@ -46,11 +46,16 @@ pub struct Secrets {
     root: OwnedDataValue,
 }
 
+/// [`Secrets::empty`] with a `'static` address — what a
+/// [`crate::TaskContext`] built outside the engine reads, and what
+/// `EngineBuilder::check_workflow` checks against when no store is set.
+pub(crate) static EMPTY: Secrets = Secrets::empty();
+
 impl Secrets {
     /// A store with nothing in it. What every engine carries when the host
     /// configured no secrets — the operator still exists, and every lookup
     /// fails.
-    pub(crate) fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
             root: OwnedDataValue::Object(Vec::new()),
         }
@@ -77,10 +82,11 @@ impl Secrets {
 
     /// Top-level key names. Never values.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        match &self.root {
-            OwnedDataValue::Object(pairs) => pairs.iter().map(|(k, _)| k.as_str()),
-            _ => unreachable!("Secrets::new only accepts objects"),
-        }
+        self.root
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(k, _)| k.as_str())
     }
 }
 

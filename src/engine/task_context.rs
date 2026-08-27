@@ -13,7 +13,7 @@
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::message::{Change, Message};
-use crate::engine::secrets::Secrets;
+use crate::engine::secrets::{self, Secrets};
 use crate::engine::utils::{get_nested_value, set_nested_value};
 use datalogic_rs::{Engine as DatalogicEngine, Logic};
 use datavalue::OwnedDataValue;
@@ -42,9 +42,9 @@ pub struct TaskContext<'a> {
     identity: Option<TaskIdentity<'a>>,
     /// Sweep index of the enclosing looping workflow, if any.
     loop_counter: Option<i64>,
-    /// The engine's secret store. `None` for a context built with
-    /// [`Self::new`], for the same reason `identity` is.
-    secrets: Option<&'a Secrets>,
+    /// The engine's secret store — empty for a context built with
+    /// [`Self::new`], for the same reason `identity` is `None` there.
+    secrets: &'a Secrets,
 }
 
 /// Which task, in which workflow, the engine is currently running.
@@ -76,7 +76,7 @@ impl<'a> TaskContext<'a> {
             changes: Vec::new(),
             identity: None,
             loop_counter: None,
-            secrets: None,
+            secrets: &secrets::EMPTY,
         }
     }
 
@@ -90,7 +90,7 @@ impl<'a> TaskContext<'a> {
         datalogic: &'a Arc<DatalogicEngine>,
         identity: Option<TaskIdentity<'a>>,
         loop_counter: Option<i64>,
-        secrets: Option<&'a Secrets>,
+        secrets: &'a Secrets,
     ) -> Self {
         Self {
             message,
@@ -161,7 +161,7 @@ impl<'a> TaskContext<'a> {
     /// stays unrecorded is the handler's business from here on.
     #[inline]
     pub fn secret(&self, name: &str) -> Option<&OwnedDataValue> {
-        self.secrets.and_then(|s| s.get(name))
+        self.secrets.get(name)
     }
 
     /// Borrow the message under processing. Use this when you need to inspect
