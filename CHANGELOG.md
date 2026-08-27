@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.0] — 2026-08-27
+
+Secrets. Values a workflow may *read* but the engine must never *record* — a
+signing key, a partner credential — reached through one reserved operator and
+held nowhere a message can carry them.
+
 ### Added
 
 - **engine:** `EngineBuilder::with_secrets` / `with_secrets_json` and the
@@ -33,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine does not declare. Both are reported by `check_workflow` with the task
   id and a path such as `function.input.mappings[1].logic`, and both fail
   `Engine::build`, from one implementation so the two cannot disagree.
+- **authoring:** `IssueCode::InvalidSecretStore` — the store handed to
+  `with_secrets` is not a JSON object, so nothing resolves and `build()` will
+  fail. `EngineBuilder::check_workflow` reports it *instead of* the
+  `UnknownSecret` issue every literal name would otherwise produce: the store
+  is what is wrong, not the workflow.
 - **wasm:** `WasmEngine.with_secrets(workflowsJson, secretsJson)` — a second
   constructor, so a workflow that reads a secret can run in the playground with
   stand-in values. `new WasmEngine(workflowsJson)` is unchanged.
@@ -46,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{"secret": "k"}` is never inert data: on an engine with no store a literal
   name fails `build()` and a dynamic one fails at evaluation, never `null`.
   `Engine::operator_names` lists it.
+- **engine:** `log` fields are now compiled, emitted and reported in name
+  order. `LogConfig::fields` is a `HashMap`, so a log line's field order — and
+  which field a compile error or an authoring issue named first — previously
+  varied from process to process.
 
 ## [3.7.0] — 2026-08-26
 
