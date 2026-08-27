@@ -133,7 +133,7 @@ Rules execute in priority order (lowest first). This enables the **THAT** (chain
 
 ## Conditional Execution
 
-Use JSONLogic conditions to control when rules run. Conditions evaluate against the **full message context** — `data`, `metadata`, and `temp_data`:
+Use JSONLogic conditions to control when rules run. Conditions evaluate against the **full message context** — `data`, `metadata`, and `temp_data` — and may also read `{"secret": "name"}` from the engine's [secret store](../advanced/secrets.md), which is never part of the message:
 
 ```json
 {

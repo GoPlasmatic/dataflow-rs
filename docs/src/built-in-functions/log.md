@@ -144,3 +144,4 @@ env_logger::Builder::new()
 - If the configured level is **filtered out** for the `dataflow::log` target (e.g. via `RUST_LOG`), the task short-circuits before evaluating any expression — disabled log tasks cost effectively nothing
 - If a JSONLogic expression fails to evaluate, the raw expression value is logged instead
 - The `fields` are formatted as `key=value` pairs appended to the log message
+- Neither `message` nor any field may read `{"secret": "name"}` — a log line is an exit the engine does not control, so `Engine::build()` rejects it with `SECRET_IN_MESSAGE_WRITE`. See [Secrets](../advanced/secrets.md)

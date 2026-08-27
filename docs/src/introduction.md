@@ -42,6 +42,7 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 - **Async-First Architecture** - Native async/await support with Tokio for high-throughput processing
 - **Zero Runtime Compilation** - All JSONLogic expressions pre-compiled at startup for optimal performance
 - **Full Context Access** - Conditions can access any field: `data`, `metadata`, `temp_data`
+- **Secrets Outside the Record** - `{"secret": "name"}` reads an engine-scoped store that no trace, snapshot or serialized message ever contains
 - **Execution Tracing** - Step-by-step debugging with message snapshots after each action
 - **Built-in Functions** - Parse, Map, Validate, Filter, Log, and Publish for complete data pipelines
 - **Task Groups** - Nest actions under one shared condition, with a terminal action that ends a rule early

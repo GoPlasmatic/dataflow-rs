@@ -20,8 +20,9 @@ The trait has three moving parts:
   startup.
 - **`TaskContext`** — handed to every call. Read the message context
   (`ctx.data()`, `ctx.metadata()`, `ctx.temp_data()`, `ctx.get(path)`),
-  mutate it through `ctx.set(path, value)` which records audit-trail
-  changes automatically, and append errors via `ctx.add_error(...)`.
+  read a secret by name (`ctx.secret(name)`), mutate the context through
+  `ctx.set(path, value)` which records audit-trail changes automatically,
+  and append errors via `ctx.add_error(...)`.
 - **`TaskOutcome`** — the return value: `Success`, `Status(u16)`,
   `Skip`, or `Halt`. Replaces the magic-number `usize` of earlier
   versions.
@@ -245,6 +246,12 @@ Two things worth knowing:
   walk the collection in `compile_input` and call `.compile(..)` on each one, as
   the example above's single field does trivially and a list of rules would do
   in a loop.
+- **A `Template` may read `{"secret": "name"}`.** That is the intended way for
+  a handler to receive a signing key or token: the value comes from the
+  engine's store, is never part of the message, and appears in no trace. What
+  the handler then does with it is the handler's business — the one rule is
+  that it must not write a secret-derived value back into the message. See
+  [Secrets](./secrets.md).
 
 There is no derive macro for this — a hand-written `compile_input` is a few
 lines, and this crate has no proc-macro dependency to add one.

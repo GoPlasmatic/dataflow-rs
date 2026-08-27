@@ -132,6 +132,17 @@ Merges into existing data rather than replacing it.
 }
 ```
 
+### Secrets Are Refused
+
+A mapping's result is written to the message, and the message is what the
+engine records. So a mapping may not read `{"secret": "name"}` at all — not
+verbatim, not through `cat` or a custom operator, not with a dynamic name.
+`Engine::build()` rejects it with `SECRET_IN_MESSAGE_WRITE`, and
+`check_workflow` reports it at `function.input.mappings[i].logic`. Compute a
+derived value (an HMAC, a signed URL) in a
+[custom handler](../advanced/custom-functions.md) that reads the key through a
+`Template`; see [Secrets](../advanced/secrets.md).
+
 ## Null Handling
 
 If a JSONLogic expression evaluates to `null`, the mapping is skipped:

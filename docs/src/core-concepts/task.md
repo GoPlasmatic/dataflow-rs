@@ -144,7 +144,7 @@ Then reference them by name in actions:
 
 ## Conditional Execution
 
-Actions can have conditions that determine if they should run. Conditions evaluate against the **full context** (`data`, `metadata`, `temp_data`):
+Actions can have conditions that determine if they should run. Conditions evaluate against the **full context** (`data`, `metadata`, `temp_data`), and may read `{"secret": "name"}` from the engine's [secret store](../advanced/secrets.md) — a condition collapses to a bool, so nothing of the value is recorded:
 
 ```json
 {

@@ -39,11 +39,14 @@ pub fn new(
 `.register("name", handler)`, `.register_boxed(name, boxed)`,
 `.with_workflow(w)`, `.with_workflows(iter)`, `.with_handlers(map)`,
 `.with_observer(obs)`, `.with_datalogic_operator(name, op)`,
-`.with_error_context_path(path)`, `.with_error_context_limit(n)`, then
+`.with_error_context_path(path)`, `.with_error_context_limit(n)`,
+`.with_secrets(value)` / `.with_secrets_json(&json)`, then
 `.build() -> Result<Engine>`. All JSONLogic is compiled and Custom
 inputs are pre-parsed into their typed `Self::Input` at `.build()` —
 config-shape errors fail there, not on first message. An error-context
-path that the JSONLogic evaluation context cannot see fails there too.
+path that the JSONLogic evaluation context cannot see fails there too, as
+does a workflow that reads an undeclared secret or reads any secret from a
+`map` or `log` expression (see [Secrets](../advanced/secrets.md)).
 
 ### Methods
 
@@ -95,7 +98,8 @@ pub fn datalogic(&self) -> &Arc<datalogic_rs::Engine>
 Added in 3.7.0, for hosts that store, validate and operate workflow
 definitions. `can_dispatch`, `dispatchable_functions` and `check_workflow` are
 available on both `Engine` and `EngineBuilder`, so a definition can be checked
-before anything is built. `operator_names` is on `Engine` only.
+before anything is built. `operator_names` and `declared_secrets` are on
+`Engine` only.
 
 ```rust,ignore
 // Will a task named `name` actually run? `false` guarantees it fails with
@@ -106,10 +110,16 @@ pub fn can_dispatch(&self, name: &str) -> bool
 // `validate` appears once carrying ["validation"]. Ordering is not meaningful.
 pub fn dispatchable_functions(&self) -> impl Iterator<Item = DispatchableFunction<'_>>
 
-// Check a workflow against the registered handlers without building anything.
-// Reports rather than aborts; empty means build() will not reject it for these
-// reasons. Covers UnknownFunction, MissingHandler, InputParse, TemplateCompile.
+// Check a workflow against the registered handlers and the secret store
+// without building anything. Reports rather than aborts; empty means build()
+// will not reject it for these reasons. Covers UnknownFunction,
+// MissingHandler, InputParse, TemplateCompile, UnknownSecret,
+// SecretInMessageWrite.
 pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue>
+
+// The names in the secret store — what {"secret": "name"} can resolve. Names
+// only, never values. Ordering is not meaningful.
+pub fn declared_secrets(&self) -> impl Iterator<Item = &str>
 
 // Every operator name this build evaluates: core, plus enabled families, plus
 // custom registrations. See the JSONLogic page on operator families.
@@ -173,7 +183,8 @@ never matches. Its variants cover the structural rules —
 `InvalidFunctionName`, `InvalidTerminal`, `LoopIncrementTooSmall`,
 `LoopBoundEmpty`, `LoopCounterInvalid` — the registry rules reported by
 `check_workflow` — `UnknownFunction`, `MissingHandler`, `InputParse`,
-`TemplateCompile` — and the two backstops, `ParseFailed` and `ValidateFailed`.
+`TemplateCompile`, `UnknownSecret`, `SecretInMessageWrite` — and the two
+backstops, `ParseFailed` and `ValidateFailed`.
 
 `MissingHandler` is deliberately distinct from `UnknownFunction`: `enrich`,
 `http_call` and `publish_kafka` are real names awaiting a registration, and
@@ -508,6 +519,11 @@ impl<'a> TaskContext<'a> {
     /// Counter value of the sweep this call belongs to, for a looping
     /// workflow; `None` otherwise.
     pub fn loop_counter(&self) -> Option<i64>
+
+    // A secret by dotted name, from the store the host configured with
+    // `with_secrets`. `None` when undeclared, and always `None` for a context
+    // built with `TaskContext::new`. See the Secrets page for the contract.
+    pub fn secret(&self, name: &str) -> Option<&OwnedDataValue>
 
     // Read accessors
     pub fn message(&self) -> &Message

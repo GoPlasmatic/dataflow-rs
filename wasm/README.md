@@ -85,6 +85,10 @@ class WasmEngine {
   // Create engine from JSON string of workflow definitions
   constructor(workflows_json: string);
 
+  // As the constructor, with a JSON object of secrets the workflows read
+  // through {"secret": "name"}. Held by the engine, never by a message.
+  static with_secrets(workflows_json: string, secrets_json: string): WasmEngine;
+
   // Process a raw payload string through all workflows
   // The payload is stored as-is and should be parsed by the parse plugin
   process(payload: string): Promise<string>;
