@@ -11,6 +11,7 @@ use crate::engine::error::{DataflowError, Result};
 use crate::engine::functions::integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
 use crate::engine::functions::template::{Template, TemplateCompiler};
 use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
+use crate::engine::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
 use crate::engine::{FunctionConfig, Workflow};
 use datalogic_rs::{CustomOperator, Engine, Logic};
 use log::debug;
@@ -66,10 +67,22 @@ impl LogicCompiler {
     /// engine before it is built — registration there is builder-only, so this
     /// is the single point where custom operators can enter.
     pub fn with_operators(operators: &HashMap<String, Arc<dyn CustomOperator>>) -> Self {
+        Self::with_operators_and_secrets(operators, &Arc::new(Secrets::empty()))
+    }
+
+    /// As [`LogicCompiler::with_operators`], with the `secret` operator backed
+    /// by `secrets`. Every datalogic engine this crate builds goes through
+    /// here, so the operator is registered whether or not the store is empty —
+    /// see the `secrets` module for why that matters in templating mode.
+    pub(crate) fn with_operators_and_secrets(
+        operators: &HashMap<String, Arc<dyn CustomOperator>>,
+        secrets: &Arc<Secrets>,
+    ) -> Self {
         let mut builder = Engine::builder().with_templating(true);
         for (name, op) in operators {
             builder = builder.add_operator(name.clone(), SharedOperator(Arc::clone(op)));
         }
+        builder = builder.add_operator(SECRET_OPERATOR, SecretOperator(Arc::clone(secrets)));
         let engine = Arc::new(builder.build());
         let template_compiler = TemplateCompiler::new(Arc::clone(&engine));
         Self {

@@ -56,6 +56,11 @@ Access fields with:
 {"var": "temp_data.intermediate"}
 ```
 
+Values the engine must never record — signing keys, partner tokens — are
+deliberately *not* in this tree. They live in an engine-scoped store and are
+read with the reserved operator `{"secret": "name"}`; see
+[Secrets](./secrets.md) for where that is allowed and what it guarantees.
+
 ## Comparison Operators
 
 ### Equality

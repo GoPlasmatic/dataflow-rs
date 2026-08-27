@@ -88,6 +88,31 @@ impl WasmEngine {
     /// ```
     #[wasm_bindgen(constructor)]
     pub fn new(workflows_json: &str) -> Result<WasmEngine, String> {
+        Self::build(workflows_json, None)
+    }
+
+    /// As the constructor, with a secret store the workflows can read through
+    /// `{"secret": "name"}`.
+    ///
+    /// A second constructor rather than an optional argument, so `new`'s
+    /// signature — and every existing caller — is untouched. The values are
+    /// held by the engine, never by a message, so they appear in no processed
+    /// message and no trace this engine returns.
+    ///
+    /// # Arguments
+    /// * `workflows_json` - JSON array of workflow definitions
+    /// * `secrets_json` - JSON object of name → value
+    ///
+    /// # Example
+    /// ```javascript
+    /// const engine = WasmEngine.with_secrets(workflows, JSON.stringify({ token: "…" }));
+    /// ```
+    #[wasm_bindgen]
+    pub fn with_secrets(workflows_json: &str, secrets_json: &str) -> Result<WasmEngine, String> {
+        Self::build(workflows_json, Some(secrets_json))
+    }
+
+    fn build(workflows_json: &str, secrets_json: Option<&str>) -> Result<WasmEngine, String> {
         let workflows_value: Value = serde_json::from_str(workflows_json)
             .map_err(|e| format!("Invalid workflows JSON: {}", e))?;
 
@@ -103,8 +128,13 @@ impl WasmEngine {
             workflows.push(workflow);
         }
 
-        let engine = Engine::builder()
-            .with_workflows(workflows)
+        let mut builder = Engine::builder().with_workflows(workflows);
+        if let Some(secrets_json) = secrets_json {
+            let secrets: Value = serde_json::from_str(secrets_json)
+                .map_err(|e| format!("Invalid secrets JSON: {}", e))?;
+            builder = builder.with_secrets_json(&secrets);
+        }
+        let engine = builder
             .build()
             .map_err(|e| format!("Engine construction failed: {}", e))?;
         Ok(WasmEngine {

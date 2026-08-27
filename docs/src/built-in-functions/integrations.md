@@ -398,6 +398,12 @@ struct HttpCallHandler {
 This separation keeps secrets out of workflow JSON and lets you swap
 endpoints (staging / prod) without touching rule definitions.
 
+When a request does need a per-workflow credential — a partner token in the
+body, a signed path — read it with `{"secret": "name"}` inside `path_logic` or
+`body_logic` rather than seeding it into `metadata`, which every trace
+snapshot would then carry. The value comes from the engine's secret store and
+is never recorded; see [Secrets](../advanced/secrets.md).
+
 ## Why typed configs matter
 
 Compared to free-form `Custom` configs:

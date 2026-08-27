@@ -450,8 +450,19 @@ Returns an [`EngineBuilder`](../api/reference.md). Chain
 `.register("name", handler)`, `.register_boxed(name, boxed)`,
 `.with_workflow(w)`, `.with_workflows(iter)`, `.with_handlers(map)`,
 `.with_observer(obs)`, `.with_datalogic_operator(name, op)`,
-`.with_error_context_path(path)`, `.with_error_context_limit(n)`, then
+`.with_error_context_path(path)`, `.with_error_context_limit(n)`,
+`.with_secrets(value)` / `.with_secrets_json(&json)`, then
 `.build() -> Result<Engine>`. Recommended construction path.
+
+### `EngineBuilder::with_secrets(secrets)`
+
+Values expressions may read through `{"secret": "name"}` but the engine never
+records — not in a serialized message, a trace snapshot or a mapping context,
+because the store is never part of a `Message`. Must be a JSON object; nested
+objects are reached with a dotted name. `build()` refuses a workflow that
+reads an undeclared name, or reads any secret from a `map` or `log`
+expression. `engine.declared_secrets()` lists the names. See
+[Secrets](../advanced/secrets.md).
 
 ### `EngineBuilder::with_error_context_path(path)`
 

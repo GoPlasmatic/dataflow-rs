@@ -337,6 +337,7 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 - **IF → THEN → THAT Model:** Define rules with JSONLogic conditions, execute actions, chain with priority ordering.
 - **Zero Runtime Compilation:** All JSONLogic expressions pre-compiled at startup for optimal performance.
 - **Full Context Access:** Conditions can access any field — `data`, `metadata`, `temp_data`.
+- **Secrets Outside the Record:** `{"secret": "name"}` reads an engine-scoped store that no trace, snapshot or serialized message ever contains — and `build()` refuses a workflow that would copy one into the message.
 - **Async-First Architecture:** Native async/await support with Tokio for high-throughput processing.
 - **Execution Tracing:** Step-by-step debugging with message snapshots after each action, bounded by `TraceOptions` (snapshot budget, redaction, timings-only mode) when you need it in production.
 - **Always-On Observability:** Attach an `ExecutionObserver` for per-task timing, including the sync built-ins a trace or a wrapped handler can't reach on their own.
@@ -624,6 +625,31 @@ caller that predates rollouts — including the WASM entry points, which have no
 way to set one — keeps working unchanged. An excluded workflow is skipped
 exactly like a false condition: no audit entry, and the gate runs before any
 other per-message work.
+
+## Secrets
+
+A signing key or partner token has to be readable by a condition and must never
+appear in a trace. `Message.context` cannot express that — everything in it is
+recorded — so secrets live in a store on the engine and are read through one
+reserved operator:
+
+```rust,ignore
+let engine = Engine::builder()
+    .with_secrets_json(&json!({ "webhook_token": std::env::var("WEBHOOK_TOKEN")? }))
+    .with_workflows(workflows)
+    .build()?;
+```
+
+```json
+{ "condition": { "==": [ { "var": "metadata.headers.x-token" }, { "secret": "webhook_token" } ] } }
+```
+
+The value never enters a `Message`, so it cannot appear in anything derived
+from one. A `map` mapping or `log` expression that reads a secret is refused at
+`build()` (`SECRET_IN_MESSAGE_WRITE`), as is a name the engine does not declare
+(`UNKNOWN_SECRET`); derived values such as an HMAC belong in a custom handler
+reading the key through a `Template`. See the
+[Secrets](https://goplasmatic.github.io/dataflow-rs/advanced/secrets.html) page.
 
 ## Engine Hot Reload
 

@@ -251,3 +251,27 @@ async fn test_workflow_with_condition() {
     let parsed: serde_json::Value = serde_json::from_str(&result.as_string().unwrap()).unwrap();
     assert!(parsed["context"]["data"]["ran"].is_null());
 }
+
+#[wasm_bindgen_test]
+fn with_secrets_lets_a_workflow_read_a_secret_and_new_refuses_it() {
+    let workflows = r#"[{
+        "id": "gated", "name": "gated", "priority": 0,
+        "condition": { "==": [ { "secret": "token" }, "t0k" ] },
+        "tasks": [{ "id": "mark", "name": "mark", "function": {
+            "name": "map",
+            "input": { "mappings": [ { "path": "data.ran", "logic": true } ] } } }]
+    }]"#;
+
+    // Without a store the literal name is undeclared, and that is a build error.
+    let err = WasmEngine::new(workflows)
+        .err()
+        .expect("undeclared secret must not build");
+    assert!(err.contains("token"), "{err}");
+
+    let engine = WasmEngine::with_secrets(workflows, r#"{ "token": "t0k" }"#).unwrap();
+    assert_eq!(engine.workflow_count(), 1);
+
+    // A store that is not an object is refused up front.
+    assert!(WasmEngine::with_secrets(workflows, r#"["t0k"]"#).is_err());
+    assert!(WasmEngine::with_secrets(workflows, "not json").is_err());
+}

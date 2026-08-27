@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **engine:** `EngineBuilder::with_secrets` / `with_secrets_json` and the
+  reserved JSONLogic operator `{"secret": "name"}` — values a workflow may read
+  but the engine never records. The store is held by the engine, not the
+  message, so a secret cannot appear in `Serialize for Message`, an
+  `ExecutionTrace` snapshot, a `mapping_contexts` clone, or anything a host
+  derives from a message: there is nothing to exclude. Resolves anywhere
+  JSONLogic runs on the engine — conditions, `validation`, `filter`, `Template`
+  fields, the integration `*_logic` fields, `TaskContext::eval` — with no
+  change to the evaluation hot path for expressions that do not use it. Nested
+  objects are reached with a dotted name. `Engine::declared_secrets` lists the
+  names, never the values; the store's `Debug` masks them, and it implements
+  neither `Serialize` nor `Clone`. Carried across `with_new_workflows`.
+  (#50)
+- **engine:** `TaskContext::secret(name)` — a handler configured with a key
+  *name* reads the value directly. `None` for a context built with
+  `TaskContext::new`, like the identity accessors.
+- **authoring:** `IssueCode::SecretInMessageWrite` — a `map` mapping or a `log`
+  message or field reads a secret, literal or dynamic, and the engine would
+  record the result. The rule is deliberately blunt: there is no static line
+  between a verbatim copy and a derived value, so derived values belong in a
+  custom handler. `IssueCode::UnknownSecret` — an expression names a secret the
+  engine does not declare. Both are reported by `check_workflow` with the task
+  id and a path such as `function.input.mappings[1].logic`, and both fail
+  `Engine::build`, from one implementation so the two cannot disagree.
+- **wasm:** `WasmEngine.with_secrets(workflowsJson, secretsJson)` — a second
+  constructor, so a workflow that reads a secret can run in the playground with
+  stand-in values. `new WasmEngine(workflowsJson)` is unchanged.
+
+### Changed
+
+- **engine:** `secret` is now a reserved operator name. `with_datalogic_operator("secret", …)`
+  fails `build()` (and `Engine::new_with_operators` refuses it), whether or not
+  a store is configured — otherwise adding one later would silently shadow a
+  host's operator. The operator is registered on every engine, so
+  `{"secret": "k"}` is never inert data: on an engine with no store a literal
+  name fails `build()` and a dynamic one fails at evaluation, never `null`.
+  `Engine::operator_names` lists it.
+
 ## [3.7.0] — 2026-08-26
 
 The host surface. Everything a service that stores, validates and operates

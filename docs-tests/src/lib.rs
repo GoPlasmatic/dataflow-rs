@@ -74,6 +74,7 @@ doc_pages! {
     AdvancedJsonLogic => "../../docs/src/advanced/jsonlogic.md",
     AdvancedControlFlow => "../../docs/src/advanced/control-flow.md",
     AdvancedAuthoringValidation => "../../docs/src/advanced/authoring-validation.md",
+    AdvancedSecrets => "../../docs/src/advanced/secrets.md",
     AdvancedAuditTrails => "../../docs/src/advanced/audit-trails.md",
     AdvancedLoops => "../../docs/src/advanced/loops.md",
     AdvancedPerformance => "../../docs/src/advanced/performance.md",

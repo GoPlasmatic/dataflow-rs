@@ -10,6 +10,7 @@ use crate::engine::error::{DataflowError, Result};
 use crate::engine::functions::config::can_dispatch_in;
 use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig};
 use crate::engine::message::{Change, Message};
+use crate::engine::secrets::Secrets;
 use crate::engine::task::Task;
 use crate::engine::task_context::{TaskContext, TaskIdentity};
 use crate::engine::task_outcome::TaskOutcome;
@@ -34,6 +35,9 @@ pub struct TaskExecutor {
     task_functions: Arc<HashMap<String, BoxedFunctionHandler>>,
     /// Shared datalogic Engine (Send + Sync; Arc-shared across tasks)
     engine: Arc<Engine>,
+    /// The engine's secret store, for [`TaskContext::secret`]. `None` only
+    /// for an executor built directly through [`Self::new`].
+    secrets: Option<Arc<Secrets>>,
 }
 
 impl TaskExecutor {
@@ -45,7 +49,17 @@ impl TaskExecutor {
         Self {
             task_functions,
             engine,
+            secrets: None,
         }
+    }
+
+    /// Hand handlers the engine's secret store through
+    /// [`TaskContext::secret`]. A separate setter rather than a `new`
+    /// parameter for the same reason `execute_in_workflow` is a separate
+    /// method: `new` is public.
+    pub(crate) fn with_secrets(mut self, secrets: Arc<Secrets>) -> Self {
+        self.secrets = Some(secrets);
+        self
     }
 
     /// Execute a single task. Sync built-ins reach here only when called from
@@ -184,7 +198,13 @@ impl TaskExecutor {
             error!("Function handler not found: {}", name);
             DataflowError::FunctionNotFound(name.to_string())
         })?;
-        let mut ctx = TaskContext::with_identity(message, &self.engine, identity, loop_counter);
+        let mut ctx = TaskContext::with_identity(
+            message,
+            &self.engine,
+            identity,
+            loop_counter,
+            self.secrets.as_deref(),
+        );
         let outcome = handler.dyn_execute(&mut ctx, any_input).await?;
         let changes = ctx.into_changes();
         Ok((outcome, changes))

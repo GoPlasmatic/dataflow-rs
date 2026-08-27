@@ -122,6 +122,8 @@ matching version.
 - `retry.rs`: `RetryPolicy` / `retry_with_policy` — native-only (tokio time)
 - `rollout.rs`: `Rollout` traffic-split range, `partition` / `validate_set`,
   `RolloutError`
+- `secrets.rs`: `Secrets` store and the reserved `secret` operator — values
+  expressions read but the engine never records
 - `workflow.rs`: `Workflow` definition, lifecycle fields, `LoopConfig`, validation
 - `task.rs`: `Task` and `TaskGroup` — both `#[non_exhaustive]`; construct via
   `Task::action`
@@ -215,6 +217,16 @@ matching version.
   date-shaped strings. Both directions are pinned by `#[cfg]`-gated tests in
   `src/engine/compiler.rs`; keep them that way, and never test only
   `--all-features`.
+- **Secrets are an operator, not a context root.** `{"secret": "name"}` reads
+  an engine-held `Secrets` store (`src/engine/secrets.rs`) through a custom
+  datalogic operator registered at every `LogicCompiler::with_operators` site.
+  Nothing is composed into `message.context`, so `ArenaContext`,
+  `evaluate_condition`, validation's raw `to_arena` and the trace code stay
+  untouched — that is the whole guarantee. Do not "simplify" it into a
+  `secrets` key on the context. `authoring::check_secrets` is the single
+  implementation behind both `build()` refusal and `check_workflow`; `map`
+  mappings and `log` expressions may not read a secret at all (blunt on
+  purpose — there is no static line between a copy and a derived value).
 - **Handler contract**: implement `AsyncFunctionHandler` with a
   `type Input: DeserializeOwned`, and
 
@@ -260,6 +272,7 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `operator_vocabulary.rs` | `operator_names` — every mirrored name checked live |
 | `retry.rs` | `RetryPolicy` backoff, deadline and retryability, under a paused clock |
 | `authoring_validation.rs` | `validate_authored` and `check_workflow` — codes, paths, the parse backstop |
+| `secrets.rs` | `{"secret": …}` resolution, the static rules, and the never-recorded guarantee |
 
 Each file under `tests/` compiles as its own crate, so fixtures used by more
 than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
@@ -279,8 +292,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 626 passing.
-`cargo test -p dataflow-rs` (default features) should report 534 — the operator
+`cargo test --workspace --all-features` should report 652 passing.
+`cargo test -p dataflow-rs` (default features) should report 557 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

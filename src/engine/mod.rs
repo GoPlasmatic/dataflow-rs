@@ -66,6 +66,7 @@ pub mod observer;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod retry;
 pub mod rollout;
+pub mod secrets;
 pub mod steps;
 pub mod task;
 pub mod task_context;
@@ -92,6 +93,7 @@ pub use observer::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use retry::{RetryPolicy, retry_with_attempts, retry_with_policy};
 pub use rollout::{Rollout, RolloutError};
+pub use secrets::Secrets;
 pub use steps::{
     AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
 };
@@ -157,6 +159,10 @@ pub struct Engine {
     /// the inner `String` — the context owns its values, so the cached
     /// form only saves re-formatting, not the (small) allocation.
     engine_version: Arc<OwnedDataValue>,
+    /// The secret store behind the `secret` operator. Never part of a
+    /// `Message`; carried across [`Engine::with_new_workflows`] like the
+    /// custom operators, and for the same reason.
+    secrets: Arc<Secrets>,
 }
 
 /// The custom-operator registrations an engine carries across rebuilds.
@@ -215,10 +221,38 @@ impl Engine {
         task_functions: HashMap<String, BoxedFunctionHandler>,
         datalogic_operators: DatalogicOperators,
     ) -> Result<Self> {
+        Self::new_inner(
+            workflows,
+            task_functions,
+            datalogic_operators,
+            Arc::new(Secrets::empty()),
+        )
+    }
+
+    /// The one constructor every public entry point funnels into. `secrets`
+    /// is builder-only — `Engine::new*` are escape hatches whose signatures
+    /// stay put.
+    fn new_inner(
+        workflows: Vec<Workflow>,
+        task_functions: HashMap<String, BoxedFunctionHandler>,
+        datalogic_operators: DatalogicOperators,
+        secrets: Arc<Secrets>,
+    ) -> Result<Self> {
+        // Checked here rather than in the builder so the `Engine::new*` escape
+        // hatches refuse too: a host operator under this name would be
+        // shadowed by the engine's own, silently, on every engine.
+        if datalogic_operators.contains_key(secrets::SECRET_OPERATOR) {
+            return Err(DataflowError::Validation(format!(
+                "'{}' is a reserved operator name — it reads the engine's secret store \
+                 (see EngineBuilder::with_secrets) and cannot be registered by a host",
+                secrets::SECRET_OPERATOR
+            )));
+        }
+        refuse_secret_issues(&workflows, &secrets)?;
         // Compile workflows (sorted by priority at compile time). Each
         // workflow/task/config owns its own `Arc<Logic>` slots — no central
         // cache to return. Any compile failure bubbles up immediately.
-        let compiler = LogicCompiler::with_operators(&datalogic_operators);
+        let compiler = LogicCompiler::with_operators_and_secrets(&datalogic_operators, &secrets);
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
 
@@ -230,10 +264,10 @@ impl Engine {
         // already typed by serde and need no second pass.
         precompile_custom_inputs(&mut sorted_workflows, &task_functions, &datalogic)?;
 
-        let task_executor = Arc::new(TaskExecutor::new(
-            Arc::new(task_functions),
-            Arc::clone(&datalogic),
-        ));
+        let task_executor = Arc::new(
+            TaskExecutor::new(Arc::new(task_functions), Arc::clone(&datalogic))
+                .with_secrets(Arc::clone(&secrets)),
+        );
 
         let workflow_executor =
             Arc::new(WorkflowExecutor::new(task_executor, Arc::clone(&datalogic)));
@@ -250,6 +284,7 @@ impl Engine {
             engine_version: Arc::new(OwnedDataValue::String(
                 env!("CARGO_PKG_VERSION").to_string(),
             )),
+            secrets,
         })
     }
 
@@ -275,6 +310,16 @@ impl Engine {
         &self.engine_version
     }
 
+    /// The top-level names in the secret store — what `{"secret": "name"}` can
+    /// resolve. Names only, never values; for a host's admin surface or a
+    /// did-you-mean on [`IssueCode::UnknownSecret`].
+    ///
+    /// Empty when the host configured no secrets. **Ordering is not
+    /// meaningful**, matching [`Engine::operator_names`].
+    pub fn declared_secrets(&self) -> impl Iterator<Item = &str> {
+        self.secrets.names()
+    }
+
     /// Creates a new Engine with different workflows but the same custom function handlers.
     ///
     /// This is the hot-reload path. The existing engine remains valid for any
@@ -291,7 +336,9 @@ impl Engine {
         // Compile new workflows with a fresh datalogic engine instance —
         // re-registering the retained custom operators, so a hot reload keeps
         // the same operator vocabulary as the engine it replaces.
-        let compiler = LogicCompiler::with_operators(&self.datalogic_operators);
+        refuse_secret_issues(&workflows, &self.secrets)?;
+        let compiler =
+            LogicCompiler::with_operators_and_secrets(&self.datalogic_operators, &self.secrets);
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
 
@@ -301,7 +348,10 @@ impl Engine {
         precompile_custom_inputs(&mut sorted_workflows, &task_functions, &datalogic)?;
 
         // Rebuild the executor stack, reusing the existing function registry
-        let task_executor = Arc::new(TaskExecutor::new(task_functions, Arc::clone(&datalogic)));
+        let task_executor = Arc::new(
+            TaskExecutor::new(task_functions, Arc::clone(&datalogic))
+                .with_secrets(Arc::clone(&self.secrets)),
+        );
 
         // Carry the observer across the reload. Dropping it here would stop
         // metrics silently at the first hot reload.
@@ -326,6 +376,7 @@ impl Engine {
             datalogic,
             datalogic_operators: Arc::clone(&self.datalogic_operators),
             engine_version: Arc::clone(&self.engine_version),
+            secrets: Arc::clone(&self.secrets),
         })
     }
 
@@ -364,10 +415,13 @@ impl Engine {
         self,
         configure: impl FnOnce(WorkflowExecutor) -> WorkflowExecutor,
     ) -> Self {
-        let task_executor = Arc::new(TaskExecutor::new(
-            self.workflow_executor.task_functions(),
-            Arc::clone(&self.datalogic),
-        ));
+        let task_executor = Arc::new(
+            TaskExecutor::new(
+                self.workflow_executor.task_functions(),
+                Arc::clone(&self.datalogic),
+            )
+            .with_secrets(Arc::clone(&self.secrets)),
+        );
         let mut executor = WorkflowExecutor::new(task_executor, Arc::clone(&self.datalogic));
         if let Some(observer) = self.workflow_executor.observer() {
             executor = executor.with_observer(Arc::clone(observer));
@@ -382,6 +436,7 @@ impl Engine {
             datalogic: self.datalogic,
             datalogic_operators: self.datalogic_operators,
             engine_version: self.engine_version,
+            secrets: self.secrets,
         }
     }
 
@@ -720,8 +775,8 @@ impl Engine {
         can_dispatch_in(self.workflow_executor.registry(), name)
     }
 
-    /// Check a workflow against this engine's registered handlers, without
-    /// building anything.
+    /// Check a workflow against this engine's registered handlers and secret
+    /// store, without building anything.
     ///
     /// Answers the half of the question [`Workflow::validate_authored`] cannot:
     /// that method proves the definition *parses and validates*, but
@@ -759,7 +814,12 @@ impl Engine {
     /// ```
     pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue> {
         let compiler = TemplateCompiler::new(Arc::clone(&self.datalogic));
-        authoring::check_against_registry(workflow, self.workflow_executor.registry(), &compiler)
+        authoring::check_against_registry(
+            workflow,
+            self.workflow_executor.registry(),
+            &compiler,
+            &self.secrets,
+        )
     }
 
     /// Every operator name this build evaluates: datalogic's core vocabulary,
@@ -819,7 +879,11 @@ impl Engine {
             .keys()
             .map(String::as_str)
             .filter(move |name| !builtins().any(|b| b == *name));
-        builtins().chain(customs)
+        // The engine's own `secret` operator is live on every build; it cannot
+        // be in `datalogic_operators` (construction refuses the name).
+        builtins()
+            .chain(customs)
+            .chain(std::iter::once(secrets::SECRET_OPERATOR))
     }
 
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {
@@ -854,6 +918,7 @@ pub struct EngineBuilder {
     datalogic_operators: HashMap<String, Arc<dyn datalogic_rs::CustomOperator>>,
     error_context_path: Option<String>,
     error_context_limit: Option<usize>,
+    secrets: Option<OwnedDataValue>,
 }
 
 impl EngineBuilder {
@@ -938,8 +1003,8 @@ impl EngineBuilder {
         can_dispatch_in(&self.handlers, name)
     }
 
-    /// Check a workflow against this builder's registered handlers and
-    /// operators, without consuming the builder or building an engine.
+    /// Check a workflow against this builder's registered handlers, operators
+    /// and secrets, without consuming the builder or building an engine.
     ///
     /// The pre-build twin of [`Engine::check_workflow`], with identical
     /// semantics. Takes `&self`, so a host can screen a batch of definitions
@@ -968,7 +1033,14 @@ impl EngineBuilder {
         // an approximation a caller has to keep in step by hand.
         let compiler = LogicCompiler::with_operators(&self.datalogic_operators);
         let template_compiler = TemplateCompiler::new(compiler.into_engine());
-        authoring::check_against_registry(workflow, &self.handlers, &template_compiler)
+        // A store that is not an object fails `build()`; here it simply
+        // declares nothing, so every literal secret name reports as unknown.
+        let secrets = self
+            .secrets
+            .as_ref()
+            .and_then(|v| Secrets::new(v.clone()).ok())
+            .unwrap_or_else(Secrets::empty);
+        authoring::check_against_registry(workflow, &self.handlers, &template_compiler, &secrets)
     }
 
     /// Add a single workflow. Subsequent calls append.
@@ -1075,6 +1147,28 @@ impl EngineBuilder {
         self
     }
 
+    /// Values expressions may read through `{"secret": "name"}` but the engine
+    /// never records.
+    ///
+    /// `secrets` must be a JSON object; [`Self::build`] rejects anything else.
+    /// Nested objects are allowed and reached with a dotted path
+    /// (`{"secret": "partner.hmac"}`). The host owns resolution — pass the
+    /// values, not references to a vault. Later calls replace the earlier store.
+    ///
+    /// The store never enters a [`Message`]: not its `Serialize`, not an
+    /// [`ExecutionTrace`] snapshot, not a `mapping_contexts` clone. That is the
+    /// point of the store, and the reason the values are not simply seeded into
+    /// `metadata`.
+    pub fn with_secrets(mut self, secrets: OwnedDataValue) -> Self {
+        self.secrets = Some(secrets);
+        self
+    }
+
+    /// [`Self::with_secrets`] from a `serde_json::Value`.
+    pub fn with_secrets_json(self, secrets: &serde_json::Value) -> Self {
+        self.with_secrets(OwnedDataValue::from(secrets))
+    }
+
     /// Register a custom JSONLogic operator on the engine's internal datalogic
     /// instance, under `name`. Later calls with the same name replace the
     /// earlier registration.
@@ -1092,6 +1186,9 @@ impl EngineBuilder {
     /// echoes back as literal data, exactly like a disabled operator family.
     /// Registering a name therefore converts previously-inert values into
     /// live operator calls, the same caveat the cargo features carry.
+    ///
+    /// `secret` is reserved for the engine's own operator (see
+    /// [`Self::with_secrets`]); registering it fails [`Self::build`].
     pub fn with_datalogic_operator<T>(mut self, name: impl Into<String>, operator: T) -> Self
     where
         T: datalogic_rs::CustomOperator + 'static,
@@ -1116,10 +1213,15 @@ impl EngineBuilder {
             )?)),
             None => None,
         };
-        let engine = Engine::new_with_operators(
+        let secrets = Arc::new(match self.secrets {
+            Some(value) => Secrets::new(value)?,
+            None => Secrets::empty(),
+        });
+        let engine = Engine::new_inner(
             self.workflows,
             self.handlers,
             Arc::new(self.datalogic_operators),
+            secrets,
         )?;
         let engine = match error_context {
             Some(cfg) => engine.with_error_context(cfg),
@@ -1130,6 +1232,25 @@ impl EngineBuilder {
             None => engine,
         })
     }
+}
+
+/// Fail construction on the first workflow with a secret issue — the same
+/// check `check_workflow` reports, so what builds and what checks clean are
+/// one set. Runs on the authored workflows before compilation; nothing here
+/// needs compiled logic.
+fn refuse_secret_issues(workflows: &[Workflow], secrets: &Secrets) -> Result<()> {
+    for workflow in workflows {
+        let issues = authoring::check_secrets(workflow, secrets);
+        if !issues.is_empty() {
+            let listed: Vec<String> = issues.iter().map(ToString::to_string).collect();
+            return Err(DataflowError::Validation(format!(
+                "workflow '{}': {}",
+                workflow.id,
+                listed.join("; ")
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Walk every task in every workflow; for each `FunctionConfig::Custom`,

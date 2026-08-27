@@ -20,6 +20,7 @@
 
 use crate::engine::functions::config::{BuiltinKind, builtin_function_kind, can_dispatch_in};
 use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig, TemplateCompiler};
+use crate::engine::secrets::{SECRET_OPERATOR, Secrets};
 use crate::engine::steps::{StepKind, walk_authored_steps};
 use crate::engine::workflow::Workflow;
 use serde_json::Value;
@@ -120,6 +121,16 @@ pub enum IssueCode {
     InputParse,
     /// A `Template` field of a custom task's input does not compile.
     TemplateCompile,
+    /// An expression reads `{"secret": "name"}` and no secret of that name is
+    /// declared on the engine (`EngineBuilder::with_secrets`). Only literal
+    /// names are checked; a dynamic name fails at evaluation instead.
+    UnknownSecret,
+    /// An expression whose result the engine writes to the message or emits to
+    /// a log reads a secret — a `map` mapping, or a `log` message or field. The
+    /// store exists so a value is never recorded; an expression that would
+    /// record it is refused outright, derived or not. Compute derived values in
+    /// a custom handler.
+    SecretInMessageWrite,
     /// The document does not deserialize into a [`Workflow`]. Carries the
     /// parser's own message, which names the offending field and type.
     ParseFailed,
@@ -149,6 +160,8 @@ impl IssueCode {
             Self::MissingHandler => "MISSING_HANDLER",
             Self::InputParse => "INPUT_PARSE",
             Self::TemplateCompile => "TEMPLATE_COMPILE",
+            Self::UnknownSecret => "UNKNOWN_SECRET",
+            Self::SecretInMessageWrite => "SECRET_IN_MESSAGE_WRITE",
             Self::ParseFailed => "PARSE_FAILED",
             Self::ValidateFailed => "VALIDATE_FAILED",
         }
@@ -267,8 +280,9 @@ pub(crate) fn check_against_registry(
     workflow: &Workflow,
     registry: &std::collections::HashMap<String, BoxedFunctionHandler>,
     template_compiler: &TemplateCompiler,
+    secrets: &Secrets,
 ) -> Vec<WorkflowIssue> {
-    let mut issues = Vec::new();
+    let mut issues = check_secrets(workflow, secrets);
 
     for task in &workflow.tasks {
         let name = task.function.function_name();
@@ -335,6 +349,189 @@ pub(crate) fn check_against_registry(
 }
 
 /// Stage 1: every semantic violation, with authored coordinates.
+/// Where an expression's result ends up — what decides whether it may read a
+/// secret.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sink {
+    /// Collapses to a bool the engine acts on: workflow and task conditions,
+    /// `validation` rules, `filter`. Nothing of the value survives.
+    Bool,
+    /// Handed to a handler: `Template` fields, integration `*_logic`, a custom
+    /// task's raw input. What happens next is the handler's business.
+    Handler,
+    /// Written to the message or emitted to a log by the engine itself:
+    /// `map` mappings, `log` message and fields. Recorded by construction.
+    Message,
+}
+
+/// Check every expression in `workflow` for `{"secret": …}` references.
+///
+/// One implementation for two callers: `Engine::build` refuses a workflow that
+/// produces any issue here, and `check_workflow` reports the same issues, so the
+/// two cannot disagree about what is loadable.
+///
+/// A reference is any single-key object whose key is the reserved operator
+/// name — datalogic compiles exactly that shape as an operator call in
+/// templating mode, at any depth. A string (or one-element array) argument is
+/// a literal name and is checked against `secrets`; anything else is dynamic
+/// and only fails at evaluation. Both forms are refused in a
+/// [`Sink::Message`] expression.
+pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<WorkflowIssue> {
+    let mut issues = Vec::new();
+    let mut check = |value: &Value, field: &str, task_id: Option<&str>, sink: Sink| {
+        check_expression(value, field, task_id, sink, secrets, &mut issues);
+    };
+
+    check(&workflow.condition, "condition", None, Sink::Bool);
+
+    for task in &workflow.tasks {
+        let id = Some(task.id.as_str());
+        check(&task.condition, "condition", id, Sink::Bool);
+
+        match &task.function {
+            FunctionConfig::Map { input, .. } => {
+                for (i, mapping) in input.mappings.iter().enumerate() {
+                    let field = format!("function.input.mappings[{i}].logic");
+                    check(&mapping.logic, &field, id, Sink::Message);
+                }
+            }
+            FunctionConfig::Validation { input, .. } => {
+                for (i, rule) in input.rules.iter().enumerate() {
+                    let field = format!("function.input.rules[{i}].logic");
+                    check(&rule.logic, &field, id, Sink::Bool);
+                }
+            }
+            FunctionConfig::Filter { input, .. } => {
+                check(&input.condition, "function.input.condition", id, Sink::Bool);
+            }
+            FunctionConfig::Log { input, .. } => {
+                check(&input.message, "function.input.message", id, Sink::Message);
+                for (name, logic) in &input.fields {
+                    let field = format!("function.input.fields.{name}");
+                    check(logic, &field, id, Sink::Message);
+                }
+            }
+            FunctionConfig::HttpCall { input, .. } => {
+                for (name, template) in [
+                    ("path_logic", &input.path_logic),
+                    ("body_logic", &input.body_logic),
+                ] {
+                    if let Some(t) = template {
+                        let field = format!("function.input.{name}");
+                        check(t.as_json(), &field, id, Sink::Handler);
+                    }
+                }
+            }
+            FunctionConfig::Enrich { input, .. } => {
+                if let Some(t) = &input.path_logic {
+                    check(t.as_json(), "function.input.path_logic", id, Sink::Handler);
+                }
+            }
+            FunctionConfig::PublishKafka { input, .. } => {
+                for (name, template) in [
+                    ("key_logic", &input.key_logic),
+                    ("value_logic", &input.value_logic),
+                ] {
+                    if let Some(t) = template {
+                        let field = format!("function.input.{name}");
+                        check(t.as_json(), &field, id, Sink::Handler);
+                    }
+                }
+            }
+            FunctionConfig::Custom { input, .. } => {
+                check(input, "function.input", id, Sink::Handler);
+            }
+            FunctionConfig::ParseJson { .. }
+            | FunctionConfig::ParseXml { .. }
+            | FunctionConfig::PublishJson { .. }
+            | FunctionConfig::PublishXml { .. } => {}
+        }
+    }
+
+    issues
+}
+
+/// One expression's worth of [`check_secrets`].
+fn check_expression(
+    value: &Value,
+    field: &str,
+    task_id: Option<&str>,
+    sink: Sink,
+    secrets: &Secrets,
+    issues: &mut Vec<WorkflowIssue>,
+) {
+    let mut refs = Vec::new();
+    collect_secret_refs(value, field, &mut refs);
+    if refs.is_empty() {
+        return;
+    }
+    if sink == Sink::Message {
+        issues.push(
+            WorkflowIssue::at(
+                IssueCode::SecretInMessageWrite,
+                field,
+                "reads a secret, and the engine records this expression's result — \
+                 compute derived values in a custom handler instead",
+            )
+            .with_step(task_id),
+        );
+        return;
+    }
+    for (path, key) in &refs {
+        let Some(key) = key else { continue };
+        if secrets.get(key).is_some() {
+            continue;
+        }
+        // A custom task's input is not one expression, so the deep path is
+        // the useful coordinate; for a typed expression field the field
+        // itself is.
+        let at = if field == "function.input" {
+            path.as_str()
+        } else {
+            field
+        };
+        issues.push(
+            WorkflowIssue::at(
+                IssueCode::UnknownSecret,
+                at,
+                format!("secret '{key}' is not declared on the engine"),
+            )
+            .with_step(task_id),
+        );
+    }
+}
+
+/// Collect every `{"secret": …}` reference under `value` as
+/// `(path, literal name)` — `None` for a dynamic name. Descends into the
+/// argument too, since a dynamic name may itself contain a reference.
+fn collect_secret_refs<'v>(value: &'v Value, path: &str, out: &mut Vec<(String, Option<&'v str>)>) {
+    match value {
+        Value::Object(map) => {
+            if map.len() == 1 {
+                if let Some(arg) = map.get(SECRET_OPERATOR) {
+                    let literal = match arg {
+                        Value::String(s) => Some(s.as_str()),
+                        Value::Array(items) if items.len() == 1 => items[0].as_str(),
+                        _ => None,
+                    };
+                    out.push((path.to_string(), literal));
+                    collect_secret_refs(arg, &format!("{path}.{SECRET_OPERATOR}"), out);
+                    return;
+                }
+            }
+            for (key, child) in map {
+                collect_secret_refs(child, &format!("{path}.{key}"), out);
+            }
+        }
+        Value::Array(items) => {
+            for (i, child) in items.iter().enumerate() {
+                collect_secret_refs(child, &format!("{path}[{i}]"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn check_shape(json: &Value) -> Vec<WorkflowIssue> {
     let mut issues = Vec::new();
 

@@ -254,6 +254,10 @@ templating mode, it fails *silently* rather than erroring: the condition is
 simply never true. Run a `parse_json` (or `parse_xml`) task first to land the
 payload under `data`, then read it as `{"var": "data.…"}`.
 
+Secrets are not in the tree either, on purpose: everything in it is recorded.
+A signing key is read with `{"secret": "name"}` from a store the engine holds
+outside the message — see [Secrets](../advanced/secrets.md).
+
 ## Try It
 
 > **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.

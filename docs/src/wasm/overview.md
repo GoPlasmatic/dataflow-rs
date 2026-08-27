@@ -67,6 +67,14 @@ class WasmEngine {
   /** Throws if the JSON is invalid, is not an array, or any workflow fails to load. */
   constructor(workflowsJson: string);
 
+  /**
+   * As the constructor, with a JSON object of secrets the workflows read through
+   * `{"secret": "name"}`. Held by the engine, never by a message — see the
+   * Secrets page. Throws on invalid JSON, a non-object store, or a workflow
+   * that reads an undeclared name.
+   */
+  static with_secrets(workflowsJson: string, secretsJson: string): WasmEngine;
+
   /** Resolves to a serialized Message; rejects with an error string. */
   process(payload: string): Promise<string>;
 

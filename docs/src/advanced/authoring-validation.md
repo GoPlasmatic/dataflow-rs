@@ -127,6 +127,8 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `MISSING_HANDLER` | A config-only integration with nothing registered under its name |
 | `INPUT_PARSE` | A custom task's `input` does not match its handler's `Input` type |
 | `TEMPLATE_COMPILE` | A handler rejected the input at construction time |
+| `UNKNOWN_SECRET` | An expression names a secret the engine does not declare — see [Secrets](./secrets.md) |
+| `SECRET_IN_MESSAGE_WRITE` | A `map` mapping or `log` expression reads a secret, which the engine would record |
 
 ## Checking against the handlers
 

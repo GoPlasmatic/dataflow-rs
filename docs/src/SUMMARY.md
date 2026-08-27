@@ -40,6 +40,7 @@
 - [JSONLogic](./advanced/jsonlogic.md)
 - [Control Flow](./advanced/control-flow.md)
 - [Authoring-Time Validation](./advanced/authoring-validation.md)
+- [Secrets](./advanced/secrets.md)
 - [Audit Trails](./advanced/audit-trails.md)
 - [Loops](./advanced/loops.md)
 - [Performance](./advanced/performance.md)
