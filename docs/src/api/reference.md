@@ -114,7 +114,8 @@ pub fn dispatchable_functions(&self) -> impl Iterator<Item = DispatchableFunctio
 // without building anything. Reports rather than aborts; empty means build()
 // will not reject it for these reasons. Covers UnknownFunction,
 // MissingHandler, InputParse, TemplateCompile, UnknownSecret,
-// SecretInMessageWrite.
+// SecretInMessageWrite, DuplicateTemplateKey — plus EscapedTemplateKey, which
+// is informational and never refused by build().
 pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue>
 
 // The names in the secret store — what {"secret": "name"} can resolve. Names
@@ -183,8 +184,14 @@ never matches. Its variants cover the structural rules —
 `InvalidFunctionName`, `InvalidTerminal`, `LoopIncrementTooSmall`,
 `LoopBoundEmpty`, `LoopCounterInvalid` — the registry rules reported by
 `check_workflow` — `UnknownFunction`, `MissingHandler`, `InputParse`,
-`TemplateCompile`, `UnknownSecret`, `SecretInMessageWrite` — and the two
-backstops, `ParseFailed` and `ValidateFailed`.
+`TemplateCompile`, `UnknownSecret`, `SecretInMessageWrite`,
+`DuplicateTemplateKey`, `EscapedTemplateKey` — and the two backstops,
+`ParseFailed` and `ValidateFailed`.
+
+`EscapedTemplateKey` is the one **informational** code: `check_workflow` reports
+it and `build()` never refuses it. It lists every `$`-prefixed template key, so
+a host upgrading to 3.9 can find each place the escape changed what a template
+emits. `DuplicateTemplateKey`, by contrast, is always a bug and is refused.
 
 `MissingHandler` is deliberately distinct from `UnknownFunction`: `enrich`,
 `http_call` and `publish_kafka` are real names awaiting a registration, and
@@ -462,9 +469,10 @@ the registered handler's typed `Self::Input` at `Engine::builder().build()`
 
 ### Template
 
-A config field whose authored JSON is JSONLogic, for custom handlers — the same
-shape this crate's own `*_logic` fields (`path_logic`, `body_logic`, `key_logic`,
-`value_logic`) use.
+A config field whose authored JSON is JSONLogic. Every parameter of every
+built-in is one, and custom handlers declare them for their own config. A
+literal is JSONLogic for itself, so the static spelling an author already writes
+folds to a constant at `build()` and is cached.
 
 ```rust,ignore
 pub struct Template { /* opaque */ }
@@ -473,12 +481,28 @@ impl Template {
     // Called from `AsyncFunctionHandler::compile_input`.
     pub fn compile(&mut self, c: &TemplateCompiler, label: &str) -> Result<()>
 
+    // The sanctioned reads: the cached constant when the expression folded,
+    // otherwise a fresh evaluation.
+    pub fn resolve(&self, ctx: &TaskContext<'_>) -> Result<OwnedDataValue>
+    pub fn resolve_string(&self, ctx: &TaskContext<'_>) -> Result<String>
+    pub fn resolve_u64(&self, ctx: &TaskContext<'_>, label: &str) -> Result<u64>
+
     pub fn eval(&self, ctx: &TaskContext<'_>) -> Result<OwnedDataValue>
     pub fn eval_into<T: serde::de::DeserializeOwned>(&self, ctx: &TaskContext<'_>) -> Result<T>
 
     pub fn as_json(&self) -> &serde_json::Value
     pub fn is_compiled(&self) -> bool
+    // Whether the expression folded to a compile-time constant, so every
+    // resolve_* returns a cached value instead of evaluating.
+    pub fn is_constant(&self) -> bool
+    pub fn constant_string(&self) -> Option<String>
 }
+
+// A config field naming a *write destination*. `R` fixes the rooting:
+// ContextRoot for a path that names its own root (`data.x`), DataRoot for one
+// relative to `data`. A constant destination precomputes its split write path
+// at build(), which is what keeps the map hot loop allocation-free.
+pub struct PathTemplate<R: PathRoot = ContextRoot> { /* opaque */ }
 
 // Handed to `compile_input`; wraps the same shared datalogic engine
 // `LogicCompiler` uses internally, so a compiled `Template` evaluates against
@@ -489,10 +513,12 @@ impl TemplateCompiler {
 }
 ```
 
-Declare `Template` only on fields the workflow author is told are JSONLogic — the
-engine compiles with templating enabled, so a single-key object whose key
-matches an operator name evaluates as that operator rather than as a literal.
-See [Config fields that are JSONLogic](../advanced/custom-functions.md#config-fields-that-are-jsonlogic-template).
+Any config field may be a `Template`. The engine compiles with templating
+enabled, so a single-key object whose key matches an operator name evaluates as
+that operator — write `{"$cat": …}` for the literal object. A `Template` that
+folds to a constant is evaluated once at `build()` and cached. See
+[Config fields that are JSONLogic](../advanced/custom-functions.md#config-fields-that-are-jsonlogic-template)
+and [Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape).
 
 ### Boxing
 

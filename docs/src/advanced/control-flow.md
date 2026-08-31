@@ -26,7 +26,8 @@ task it always was.
 > family is disabled is not an error — the object passes through as literal
 > data, and a condition built on it is silently never true. Build with
 > `--features ext-string` (or `all-operators`) to run these examples, or
-> rewrite them with core operators. See
+> rewrite them with core operators. (Going the other way, `{"$length": …}`
+> is a literal object whatever is enabled.) See
 > [JSONLogic](./jsonlogic.md#operator-families-cargo-features) for the full list.
 
 Without them, every task after a branch has to restate that the branch did

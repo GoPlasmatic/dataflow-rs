@@ -63,10 +63,10 @@ walks into them.
 
 `{"secret": "name"}` works anywhere JSONLogic runs on this engine: workflow,
 group and task conditions, `validation` rules, `filter`, a custom handler's
-[`Template`](./custom-functions.md) fields, the integration configs'
-`path_logic` / `body_logic` / `key_logic` / `value_logic`, and a handler's own
-`ctx.eval(..)`. A handler configured with a key *name* rather than an
-expression reads it directly:
+[`Template`](./custom-functions.md) fields, every parameter of the integration
+configs — including `http_call`'s `headers` values, which is usually where a
+credential belongs — and a handler's own `ctx.eval(..)`. A handler configured
+with a key *name* rather than an expression reads it directly:
 
 ```rust,ignore
 let key = ctx.secret(&input.key_name);   // Option<&OwnedDataValue>

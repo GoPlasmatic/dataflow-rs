@@ -147,7 +147,11 @@ matching version.
 - `filter.rs`: `filter` — pipeline control flow (`halt` / `skip`)
 - `log.rs`: `log` — structured logging at a configurable level
 - `publish.rs`: `publish_json`, `publish_xml`
-- `template.rs`: `Template` config fields and `TemplateCompiler`
+- `template.rs`: `Template` — the JSONLogic type behind *every* config
+  parameter, its compile-time constant cache, and `TemplateCompiler`
+- `path_template.rs`: `PathTemplate<R>` — a parameter naming a *write
+  destination*, with `ContextRoot`/`DataRoot` fixing the rooting in the type;
+  plus `ParamCtx`, the evaluation handle the sync built-ins resolve against
 - `integration.rs`: The three integration configs (`http_call`, `enrich`,
   `publish_kafka`) — config only, no handler ships
 - `config.rs`: The `FunctionConfig` dispatch enum, `BUILTIN_FUNCTION_NAMES`,
@@ -217,6 +221,35 @@ matching version.
   date-shaped strings. Both directions are pinned by `#[cfg]`-gated tests in
   `src/engine/compiler.rs`; keep them that way, and never test only
   `--all-features`.
+- **Every function parameter is JSONLogic, and the static spelling is free.**
+  A JSON literal *is* JSONLogic for itself, so `"path": "data.out"` and
+  `"timeout_ms": 5000` mean what they always did. `Template::compile` asks
+  `Logic::is_constant()` and, when the expression folded, evaluates it once at
+  construction and caches the result; `PathTemplate` additionally precomputes
+  the `(dotted, parts)` write pair. Only a parameter that reads the message
+  does per-message work. Use `is_constant`, **not** `is_static`: the latter is
+  true for rules that fail to fold *because they error* (`{"/": [1, 0]}`), so
+  pre-evaluating those would move a runtime error to build time.
+- **Resolution borrows; it must not clone.** `Template::resolve_str_in_arena`
+  returns `Cow<'_, str>` and `PathTemplate::resolve_in_arena` returns
+  `Cow<'_, ResolvedPath>`. Returning owned values instead costs a `String`
+  allocation per parse/publish task per message and two atomic `Arc` bumps per
+  `map` write — measured at ~9.6% of `realistic_benchmark` throughput. Borrowing
+  is why 3.9 is *faster* than 3.8 rather than slower.
+- **The template-key escape (`$`) is always on** —
+  `compiler::TEMPLATE_KEY_ESCAPE`, applied at the one
+  `datalogic_engine_builder()` every engine in this crate goes through, tests
+  included. `{"$cat": …}` is the literal object; `{"cat": …}` is still the
+  operator. Exactly one prefix is stripped from **every** template key, not only
+  colliding ones, so a template emitting genuinely `$`-prefixed keys must double
+  them. An escaped key does *not* constant-fold (pinned by
+  `an_escaped_key_does_not_fold_to_a_constant`).
+- **A single-key object with an unknown key is not inert.** It evaluates its
+  argument and emits a structured object: `{"result": {"var": "x"}}` yields
+  `{"result": 5}`. That is the ordinary single-key output template, which is why
+  there is no "unknown operator key" lint — it could not be distinguished from a
+  typo without firing on most correct workflows. Only *multi*-key objects and
+  escaped keys go through the template-key checks.
 - **Secrets are an operator, not a context root.** `{"secret": "name"}` reads
   an engine-held `Secrets` store (`src/engine/secrets.rs`) through a custom
   datalogic operator registered at every `LogicCompiler::with_operators` site.
@@ -274,6 +307,8 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `authoring_validation.rs` | `validate_authored` and `check_workflow` — codes, paths, the parse backstop |
 | `secrets.rs` | `{"secret": …}` resolution, the engine surface, and the static rules |
 | `secrets_isolation.rs` | The never-recorded guarantee, exit by exit — every `TraceOptions` shape, errors, observer, logs, and the access vectors that must not reach the store |
+| `template_keys.rs` | The `$` escape end-to-end, and the two template-key issue codes |
+| `jsonlogic_params.rs` | Computed parameters — map destinations, parse/publish targets, validation messages |
 
 Each file under `tests/` compiles as its own crate, so fixtures used by more
 than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
@@ -293,8 +328,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 668 passing.
-`cargo test -p dataflow-rs` (default features) should report 573 — the operator
+`cargo test --workspace --all-features` should report 703 passing.
+`cargo test -p dataflow-rs` (default features) should report 608 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

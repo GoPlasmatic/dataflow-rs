@@ -12,7 +12,7 @@ The engine itself is I/O-agnostic: it doesn't bundle an HTTP client, a Kafka
 producer, or any other transport. But the *shape* of these integrations is
 predictable enough that dataflow-rs provides typed config structs so that:
 
-- JSONLogic expressions inside the config (`path_logic`, `body_logic`, `key_logic`, …)
+- JSONLogic expressions inside the config — since 3.9, that is every parameter
   are **pre-compiled at engine startup** — same fail-loud behaviour as `map` rules
 - Misshapen config fails at `Engine::new()`, not at first message
 - Your handler receives an already-validated `HttpCallConfig` / `EnrichConfig` /
@@ -39,15 +39,19 @@ impl AsyncFunctionHandler for HttpCallHandler {
         ctx: &mut TaskContext<'_>,
         cfg: &HttpCallConfig,
     ) -> Result<TaskOutcome> {
-        // `resolve_*` applies the logic-then-static fallback for you and
+        // Every parameter is JSONLogic, so read each through its `resolve_*`
+        // method. A statically-authored one is already computed; a dynamic one
         // evaluates on the worker thread's pooled arena.
-        let path = cfg.resolve_path(ctx)?;      // path_logic, else static path
-        let body = cfg.resolve_body(ctx)?;      // body_logic, else static body
+        let connector = cfg.resolve_connector(ctx)?;
+        let path = cfg.resolve_path(ctx)?;
+        let headers = cfg.resolve_headers(ctx)?;
+        let body = cfg.resolve_body(ctx)?;
+        let timeout_ms = cfg.resolve_timeout_ms(ctx)?;
         let method = cfg.method.as_str();       // canonical token for your client
 
-        // Resolve cfg.connector against your own registry, make the call, then
-        // merge the response into ctx at cfg.response_path…
-        let _ = (path, body, method);
+        // Resolve `connector` against your own registry, make the call, then
+        // merge the response into ctx at cfg.resolve_response_path(ctx)?…
+        let _ = (connector, path, headers, body, timeout_ms, method);
         Ok(TaskOutcome::Success)
     }
 }
@@ -61,32 +65,57 @@ let engine = Engine::builder()
 Skip the registration step and any workflow that uses these variants will fail
 with `DataflowError::FunctionNotFound("http_call")` at dispatch time.
 
-## Reading a config's dynamic fields
+## Every parameter is JSONLogic
 
-Each integration config pairs a static field with a `*_logic` JSONLogic field, and
-the engine pre-compiles the latter at `build()`. Read them through the
-`resolve_*` methods rather than the `compiled_*` slots:
+Since 3.9 every field of every integration config is an expression, and the
+engine compiles it at `build()`. Read them through the `resolve_*` methods:
 
-| Method | Logic field | Static fallback |
-|---|---|---|
-| `HttpCallConfig::resolve_path` | `path_logic` | `path` |
-| `HttpCallConfig::resolve_body` | `body_logic` | `body` |
-| `EnrichConfig::resolve_path` | `path_logic` | `path` |
-| `PublishKafkaConfig::resolve_key` | `key_logic` | none — `Ok(None)` |
-| `PublishKafkaConfig::resolve_value` | `value_logic` | none — `Ok(None)` |
+| Config | Methods |
+|---|---|
+| `HttpCallConfig` | `resolve_connector`, `resolve_path`, `resolve_headers`, `resolve_body`, `resolve_body_format`, `resolve_response_path`, `resolve_response_format`, `resolve_timeout_ms` |
+| `EnrichConfig` | `resolve_connector`, `resolve_path`, `resolve_merge_path`, `resolve_timeout_ms` |
+| `PublishKafkaConfig` | `resolve_connector`, `resolve_topic`, `resolve_key`, `resolve_value` |
 
-Three things they guarantee that a hand-rolled read does not:
+**The static spelling is unchanged and costs nothing.** A JSON literal *is*
+JSONLogic for itself, so `"connector": "user_service"` and `"timeout_ms": 5000`
+mean exactly what they did. Those fold to a constant at `build()` and are cached,
+so only a parameter that actually reads the message does per-message work.
 
-- **Logic wins over the static field** when both are set, consistently across all
-  five.
+What the methods guarantee that a hand-rolled read does not:
+
 - **An evaluation failure propagates** as `DataflowError::LogicEvaluation` rather
-  than silently falling back to the static value — substituting a different URL
-  because an expression errored would hide a real problem.
-- **Path and key results are coerced to a plain string** — a number becomes its
-  digits, a container its compact JSON — because those values go into a URL or a
-  partition key. `resolve_value` deliberately returns `Option<Value>` instead, so a
-  producer that serializes unconditionally is not forced through the key's
-  coercion and end up with different bytes on the wire.
+  than substituting something else — a different URL because an expression
+  errored would hide a real problem.
+- **Path, key, header and connector results are coerced to a plain string** — a
+  number becomes its digits, a container its compact JSON — because those values
+  go into a URL, a header or a partition key. `resolve_value` deliberately
+  returns `Option<Value>` instead, so a producer that serializes unconditionally
+  is not forced through the key's coercion and end up with different bytes on
+  the wire.
+- **A failing header value fails the whole call** rather than sending the
+  request with that header missing, which would surface as a confusing 401.
+
+### Migrating from `*_logic`
+
+`path`/`path_logic` and `body`/`body_logic` were separate fields because a
+single field could not be *either* a literal or an expression: a literal object
+whose key matched an operator name would evaluate. The [`$`
+escape](../advanced/jsonlogic.md#literal-keys-and-the--escape) removes that, so
+the pairs collapsed:
+
+| Pre-3.9 | 3.9 |
+|---|---|
+| `path_logic` | `path` |
+| `body_logic` | `body` |
+| `key_logic` | `key` |
+| `value_logic` | `value` |
+
+The old names are kept as **serde aliases**, so existing workflow definitions
+load unchanged. Supplying both spellings is a `duplicate field` error rather
+than a precedence rule.
+
+One case needs the escape: a literal object body with a field named after an
+operator. Write `{"$cat": …}` for a body field actually called `cat`.
 
 Each `*_logic` field is a [`Template`](../advanced/custom-functions.md#config-fields-that-are-jsonlogic-template)
 — the same type available for your own handler's config. There is no separate
@@ -223,8 +252,12 @@ Issue an HTTP request and optionally merge the response into the message context
         "input": {
             "connector": "user_service",
             "method": "GET",
-            "path_logic": { "cat": ["/users/", {"var": "data.user_id"}] },
-            "headers": { "X-Request-Id": "abc" },
+            "path": { "cat": ["/users/", {"var": "data.user_id"}] },
+            "headers": {
+                "X-Request-Id": { "var": "metadata.request_id" },
+                "Authorization": { "cat": ["Bearer ", {"secret": "user_service_token"}] },
+                "X-Env": "prod"
+            },
             "response_path": "data.user_profile",
             "timeout_ms": 5000
         }
@@ -234,19 +267,26 @@ Issue an HTTP request and optionally merge the response into the message context
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
+Every parameter except `method` is JSONLogic. A plain string or number is a
+literal, so the static spelling below is unchanged and costs nothing — see
+[Every parameter is JSONLogic](#every-parameter-is-jsonlogic).
+
+| Parameter | Resolves to | Required | Description |
 |-----------|------|----------|-------------|
 | `connector` | string | Yes | Named reference resolved by your service layer |
-| `method` | string | No | `GET` (default), `POST`, `PUT`, `PATCH`, `DELETE` — uppercase only |
-| `path` | string | No | Static request path |
-| `path_logic` | JSONLogic | No | Computed path; pre-compiled at startup |
-| `headers` | object | No | Static request headers |
-| `body` | any | No | Static request body |
-| `body_logic` | JSONLogic | No | Computed body; pre-compiled at startup |
+| `method` | — | No | `GET` (default), `POST`, `PUT`, `PATCH`, `DELETE` — uppercase only. **Static**, so the request shape is known at build time |
+| `path` | string | No | Request path. Accepts `path_logic` as a back-compat alias |
+| `headers` | — | No | Object of header name → expression. Names are static; each **value** is JSONLogic |
+| `body` | any | No | Request body. Accepts `body_logic` as a back-compat alias |
 | `body_format` | string | No | How the resolved body becomes request bytes (e.g. `"json"`, `"form"`, `"text"`). Uninterpreted by this crate — see below |
 | `response_path` | string | No | Dot-path to merge response into the message context. Also accepted as `output` |
 | `response_format` | string | No | How response bytes become the captured value (e.g. `"json"`, `"text"`). Uninterpreted by this crate — see below |
-| `timeout_ms` | u64 | No | Request timeout in milliseconds (default: `30000`) |
+| `timeout_ms` | number | No | Request timeout in milliseconds (default: `30000`) |
+
+A header value is where a credential belongs: `{"secret": "name"}` reads the
+engine's [secret store](../advanced/secrets.md), which no message ever carries.
+Before 3.9 header values were plain strings, so a token had to be injected by
+the service layer.
 
 `body_format` and `response_format` are **data, not API surface**: dataflow-rs
 carries them but neither validates nor interprets their values — the service
@@ -273,6 +313,9 @@ its request and silently throw the response away — no error at
 config for function 'http_call': unknown field `outputs`, expected one of
 `connector`, `method`, `path`, `path_logic`, `headers`, `body`, `body_logic`,
 `body_format`, `output`, `response_path`, `response_format`, `timeout_ms`
+
+(`path_logic` and `body_logic` appear because they are still accepted as
+back-compat aliases for `path` and `body`.)
 ```
 
 Note this fails when the workflow definition is parsed, so a host loading stored
@@ -305,7 +348,8 @@ assert_eq!(HttpMethod::ALL.len(), 5);
 general list of HTTP methods — don't reuse it to validate inbound routes, which
 may legitimately accept `HEAD` or `OPTIONS`.
 
-Use `path` **or** `path_logic`, not both. Same for `body` / `body_logic`.
+`path_logic` is an alias for `path`, not a second field — supplying both is a
+`duplicate field` error. Same for `body_logic` / `body`.
 
 ---
 
@@ -323,7 +367,7 @@ A specialization of `http_call` aimed at the "look up and attach" pattern.
         "input": {
             "connector": "customer_lookup",
             "method": "GET",
-            "path_logic": { "cat": ["/customers/", {"var": "data.customer_id"}] },
+            "path": { "cat": ["/customers/", {"var": "data.customer_id"}] },
             "merge_path": "data.customer",
             "timeout_ms": 5000,
             "on_error": "skip"
@@ -334,15 +378,14 @@ A specialization of `http_call` aimed at the "look up and attach" pattern.
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
+| Parameter | Resolves to | Required | Description |
 |-----------|------|----------|-------------|
 | `connector` | string | Yes | Named reference resolved by your service layer |
-| `method` | string | No | HTTP method (default `GET`) |
-| `path` | string | No | Static request path |
-| `path_logic` | JSONLogic | No | Computed request path |
+| `method` | — | No | HTTP method (default `GET`). **Static** |
+| `path` | string | No | Request path. Accepts `path_logic` as a back-compat alias |
 | `merge_path` | string | Yes | Dot-path where the response is merged into the context |
-| `timeout_ms` | u64 | No | Request timeout in milliseconds (default: `30000`) |
-| `on_error` | `"fail"` \| `"skip"` | No | Behaviour on lookup failure (default: `fail`) |
+| `timeout_ms` | number | No | Request timeout in milliseconds (default: `30000`) |
+| `on_error` | — | No | `"fail"` (default) or `"skip"`. **Static**, so the failure policy is known at build time |
 
 `on_error: skip` is useful when enrichment is best-effort and an absent
 upstream service shouldn't fail the workflow.
@@ -361,9 +404,9 @@ Emit the message (or a derived value) to a Kafka topic.
         "name": "publish_kafka",
         "input": {
             "connector": "events_cluster",
-            "topic": "orders.processed",
-            "key_logic": { "var": "data.order_id" },
-            "value_logic": { "var": "data" }
+            "topic": { "cat": ["orders.", {"var": "data.region"}] },
+            "key": { "var": "data.order_id" },
+            "value": { "var": "data" }
         }
     }
 }
@@ -371,15 +414,15 @@ Emit the message (or a derived value) to a Kafka topic.
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
+| Parameter | Resolves to | Required | Description |
 |-----------|------|----------|-------------|
 | `connector` | string | Yes | Named reference resolved by your service layer |
-| `topic` | string | Yes | Target Kafka topic |
-| `key_logic` | JSONLogic | No | Computed message key |
-| `value_logic` | JSONLogic | No | Computed message value (default: serialize the message) |
+| `topic` | string | Yes | Target Kafka topic. Computing it is the ordinary routing pattern, and was impossible before 3.9 |
+| `key` | string | No | Message key. Accepts `key_logic` as a back-compat alias |
+| `value` | any | No | Message value (default: serialize the message). Accepts `value_logic` as a back-compat alias |
 
 The handler decides exactly how to render the produced value — for example,
-sending the entire message JSON when `value_logic` is omitted.
+sending the entire message JSON when `value` is omitted.
 
 ---
 
@@ -398,11 +441,18 @@ struct HttpCallHandler {
 This separation keeps secrets out of workflow JSON and lets you swap
 endpoints (staging / prod) without touching rule definitions.
 
-When a request does need a per-workflow credential — a partner token in the
-body, a signed path — read it with `{"secret": "name"}` inside `path_logic` or
-`body_logic` rather than seeding it into `metadata`, which every trace
-snapshot would then carry. The value comes from the engine's secret store and
-is never recorded; see [Secrets](../advanced/secrets.md).
+When a request does need a per-workflow credential — a bearer token, a partner
+key in the body, a signed path — read it with `{"secret": "name"}` inside the
+relevant parameter rather than seeding it into `metadata`, which every trace
+snapshot would then carry. Since 3.9 that includes `headers`, which is usually
+where it belongs:
+
+```json
+"headers": { "Authorization": { "cat": ["Bearer ", {"secret": "partner_token"}] } }
+```
+
+The value comes from the engine's secret store and is never recorded; see
+[Secrets](../advanced/secrets.md).
 
 ## Why typed configs matter
 

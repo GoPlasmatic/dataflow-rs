@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.9.0] — 2026-08-31
+
+Every built-in function parameter is JSONLogic, and a literal object is finally
+expressible.
+
+Because the engine always evaluates in templating mode, a single-key object
+whose key matched an operator name *was* that operator — so a literal
+`{"cat": …}` could not be written at all. That one fact is what forced the
+`path`/`path_logic` field pairs, kept `Template` opt-in per field, and made
+enabling an operator family a silent breaking change for existing data.
+`datalogic-rs` 5.4's template-key escape removes it, and with literals
+expressible there is no longer a reason for any parameter to be a static string.
+
+### Migration
+
+- **`$` is now stripped from every template key.** `{"$cat": …}` emits the
+  literal `{"cat": …}`; `{"$$oid": …}` emits `{"$oid": …}`. This is uniform, not
+  conditional on the key colliding with an operator — so a template that emits
+  genuinely `$`-prefixed keys (MongoDB's `$set`/`$oid`, JSON Schema's
+  `$schema`/`$ref`) must double them. `Engine::check_workflow` reports
+  `ESCAPED_TEMPLATE_KEY` for every `$`-prefixed key so the audit is mechanical.
+- **Hosts implementing `http_call` / `enrich` / `publish_kafka` break at compile
+  time, deliberately.** These ship as config schemas only, so a host reads
+  `config.connector` directly today. Every parameter is now a `Template`: read
+  them through `resolve_connector(ctx)?`, `resolve_headers(ctx)?`,
+  `resolve_topic(ctx)?`, `resolve_timeout_ms(ctx)?` and the rest, which
+  evaluate against the message and return the same types as before.
+- **`FunctionConfig::connector()` returns `Option<ConnectorName<'_>>`** rather
+  than `Option<&str>`, and `ConnectorRef::connector` follows. A computed
+  connector names nothing until a message is in hand, and a host enumerating
+  connectors to validate or pre-warm them must decide what to do with those
+  rather than have them silently vanish from `Workflow::connector_refs`. Use
+  `ConnectorName::as_static()` for the literal case.
+- **`execute_parse_json` / `execute_parse_xml` / `execute_publish_json` /
+  `execute_publish_xml` take the datalogic engine.** Their parameters are
+  expressions now, so resolving one needs an evaluator.
+- **Workflow JSON needs no changes.** The static spelling of every parameter is
+  a JSON literal, which *is* JSONLogic for itself, and the pre-3.9 `*_logic`
+  field names are kept as serde aliases.
+
+### Added
+
+- **Every built-in parameter accepts JSONLogic.** `http_call` gains computed
+  `connector`, `headers` values, `body_format`, `response_path`,
+  `response_format` and `timeout_ms`; `enrich` gains `connector`, `merge_path`
+  and `timeout_ms`; `publish_kafka` gains `connector` and — the one that
+  matters most in practice — `topic`, so one task can route by message content.
+  `map` gains a computed destination `path`, `validation` a computed `message`
+  that can name the value that failed, `parse_*`/`publish_*` computed `source`
+  and `target`, and `publish_xml` a computed `root_element`.
+
+  Notably, `http_call.headers` could not carry a computed value *at all*
+  before: values were `String`, so a bearer token or a correlation id had to be
+  injected by the service layer.
+- **`Template` is no longer opt-in per field.** Any config field may be one.
+  It gained `resolve`, `resolve_string`, `resolve_u64`, `is_constant` and
+  `constant_string`; the existing `eval*` methods are unchanged.
+- **`PathTemplate<R>`** — a config field naming a *write destination*, with
+  `ContextRoot` / `DataRoot` fixing the rooting in the type. Splitting it from
+  `Template` is what keeps the pre-split write path the hot loop needs.
+- **`Engine::template_key_escape()`** — the escape prefix, so authoring tools
+  render and validate the spelling without hardcoding it.
+- **`IssueCode::DuplicateTemplateKey`** — two keys that collapse to the same
+  name once the escape is stripped. `Engine::build` refuses it: the context is a
+  `Vec` of pairs, so both survive and a later read sees only the first while
+  serialization emits both.
+- **`IssueCode::EscapedTemplateKey`** — informational, reported by
+  `check_workflow` and never by `build`. The migration audit above.
+
+### Changed
+
+- **`datalogic-rs` 5.4.** Brings the template-key escape, and three fixes this
+  crate inherits: `try` now hands engine errors to the catch arm, `and`/`or`
+  constant folding no longer drops dynamic arguments, and `to_json` round-trips
+  a misused `and`/`or`/`if` instead of turning an erroring rule into a
+  successful one returning `{"<invalid args>": null}` — which the trace surface
+  read.
+- **A statically-authored parameter costs nothing.** `Template::compile` asks
+  `Logic::is_constant()` and, when the expression folded, evaluates it once at
+  engine construction and caches the result. `PathTemplate` goes further and
+  precomputes the `(dotted, parts)` write pair, exactly as the hand-rolled
+  precompute did before. Only a parameter that actually reads the message pays
+  per message.
+- **Throughput improved.** `realistic_benchmark` is ~6.7% faster and
+  `benchmark` ~4.4% (means of 4 and 3 runs against 3.8.0), with realistic P99
+  down from ~105-126μs to ~78-85μs. Resolution borrows the cached constant
+  rather than cloning it, which removed `Arc` traffic the previous `map` loop
+  paid on every write.
+- **`MapMapping` lost `path_arc` and `path_parts`**, and `ParseConfig` /
+  `PublishConfig` lost `target_path_arc` / `target_path_parts`. All four were
+  `#[doc(hidden)]` engine-internal caches now held inside `PathTemplate`.
+- **`validation` renders a rule's `message` only when the rule fails**, so a
+  computed message costs nothing on the passing path.
+
 ## [3.8.0] — 2026-08-27
 
 Secrets. Values a workflow may *read* but the engine must never *record* — a

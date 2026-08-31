@@ -299,7 +299,7 @@ default**:
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "3.8", features = ["ext-string", "ext-control"] }
+dataflow-rs = { version = "3.9", features = ["ext-string", "ext-control"] }
 ```
 
 `error-handling` names the JSONLogic `try`/`throw` operators. It has nothing to
@@ -326,6 +326,10 @@ stores that object verbatim. After `ext-string`, the same mapping stores a
 number. Audit your rules for object keys matching any operator in the table
 above before enabling its family.
 
+The fix is to say which you meant. `{"$length": …}` is a *literal* object with a
+`length` field, whatever families are enabled — see
+[Literal keys and the `$` escape](#literal-keys-and-the--escape) below.
+
 `datetime` goes further and changes **core** operators. With it on, `==`, `<`,
 `<=`, `>` and `>=` first try to parse plain string operands as datetimes or
 durations:
@@ -336,6 +340,46 @@ durations:
 
 This is `false` without `datetime` and `true` with it — the two strings are
 different bytes naming the same instant.
+
+### Literal keys and the `$` escape
+
+Templating mode makes every single-key object an operator invocation. So
+`{"cat": ["a", "b"]}` is the `cat` operator and evaluates to `"ab"` — there was,
+until 3.9, no way to write an object with a field genuinely called `cat`.
+
+Prefixing a key with `$` says "this is data, not a call":
+
+| You write | You get |
+|---|---|
+| `{"cat": ["a", "b"]}` | `"ab"` — the operator |
+| `{"$cat": ["a", "b"]}` | `{"cat": ["a", "b"]}` — the object |
+| `{"$$oid": "abc"}` | `{"$oid": "abc"}` |
+| `{"$total": 1}` | `{"total": 1}` |
+
+Three things to know:
+
+1. **Exactly one prefix is stripped from every key**, not only from keys that
+   collide with an operator. `$total` is not an operator name and is still
+   stripped. So a template that emits genuinely `$`-prefixed keys — MongoDB's
+   `$set` and `$oid`, JSON Schema's `$schema` and `$ref` — must double them.
+   `Engine::check_workflow` reports `ESCAPED_TEMPLATE_KEY` for every escaped
+   key, which is how you find them all when upgrading.
+2. **It applies at every depth**, including inside a `map` body or an `if`
+   branch — anywhere a template key appears.
+3. **Two keys may not collapse to the same name.** `{"$a": 1, "a": 2}` would
+   emit `a` twice, so `Engine::build` refuses it (`DUPLICATE_TEMPLATE_KEY`).
+
+A *multi-key* object is always an output template, so its keys need no escape
+unless one of them starts with `$`:
+
+```json
+{"amount": {"var": "data.total"}, "currency": "EUR"}
+```
+
+The same is true of a single-key object whose key names no operator:
+`{"result": {"var": "data.x"}}` evaluates its argument and emits
+`{"result": …}`. Escaping is only needed when the key *is* an operator name, or
+when the key really starts with `$`.
 
 ### Checking what a build evaluates
 

@@ -237,11 +237,16 @@ matching this crate's stance for the built-in `*_logic` fields.
 
 Two things worth knowing:
 
-- **Declare `Template` only on fields the workflow author is told are
-  JSONLogic.** The engine compiles with templating enabled, so a single-key
-  object whose key happens to match an operator name — `{"cat": ["a", "b"]}` —
-  evaluates as that operator rather than being treated as a literal object. Do
-  not use `Template` as a blanket "accept any JSON" wrapper.
+- **Any config field may be a `Template`.** It used to be opt-in per field,
+  because a single-key object whose key matched an operator name —
+  `{"cat": ["a", "b"]}` — evaluated as that operator and a literal object was
+  inexpressible. Since 3.9 the author writes `{"$cat": ["a", "b"]}` for the
+  literal, so the restriction is gone. See
+  [Literal keys and the `$` escape](./jsonlogic.md#literal-keys-and-the--escape).
+- **A literal costs nothing.** A `Template` whose expression folds to a
+  constant — which is what any statically-authored value does — is evaluated
+  once at `build()` and cached, so per-message work happens only for a field
+  that actually reads the message. `Template::is_constant` reports which.
 - **`Template` fields nested inside a `Vec<T>` or a nested struct work fine** —
   walk the collection in `compile_input` and call `.compile(..)` on each one, as
   the example above's single field does trivially and a list of rules would do
