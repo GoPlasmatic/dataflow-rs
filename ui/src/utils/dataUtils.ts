@@ -1,12 +1,25 @@
 import type { JsonLogicValue, MappingItem } from '../types';
 
 /**
+ * How to label a mapping's destination.
+ *
+ * A destination is a plain string in the ordinary case, but since dataflow-rs
+ * 3.9 it may be a JSONLogic expression resolved per message — which has no
+ * single value to show. Rendering that directly would yield "[object Object]",
+ * so name it by the expression instead, which is what an author would search
+ * their workflow for.
+ */
+export function describeMappingPath(path: MappingItem['path']): string {
+  return typeof path === 'string' ? path : JSON.stringify(path);
+}
+
+/**
  * Convert mappings array to object notation for DataLogic visualization
  */
 export function convertMappingsToObject(mappings: MappingItem[]): Record<string, JsonLogicValue> {
   const result: Record<string, JsonLogicValue> = {};
   for (const mapping of mappings) {
-    result[mapping.path] = mapping.logic;
+    result[describeMappingPath(mapping.path)] = mapping.logic;
   }
   return result;
 }

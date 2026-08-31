@@ -375,7 +375,9 @@ impl AsyncFunctionHandler for SpyHttpCall {
     type Input = dataflow_rs::HttpCallConfig;
 
     async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Self::Input) -> Result<TaskOutcome> {
-        let observed = input.response_path.clone().unwrap_or_default();
+        // Every parameter is JSONLogic since 3.9, so a handler reads it
+        // through the config's resolver rather than off the field.
+        let observed = input.resolve_response_path(ctx)?.unwrap_or_default();
         ctx.set("data.observed_response_path", dv(json!(observed)));
         ctx.set("data.observed_method", dv(json!(input.method.as_str())));
         Ok(TaskOutcome::Success)
@@ -542,18 +544,28 @@ async fn connector_refs_across_a_built_engine() {
 
     // Workflow provenance survives, so a diagnostic can name where a reference
     // lives — and the Custom convention is picked up alongside the typed field.
-    let located: Vec<(&str, &str, &str)> = refs
+    let located: Vec<(&str, &str, Option<&str>)> = refs
         .iter()
-        .map(|r| (r.workflow_id, r.task_id, r.connector))
+        .map(|r| (r.workflow_id, r.task_id, r.connector.as_static()))
         .collect();
     assert_eq!(
         located,
-        vec![("wf_a", "call", "user_service"), ("wf_b", "db", "pg_main"),]
+        vec![
+            ("wf_a", "call", Some("user_service")),
+            ("wf_b", "db", Some("pg_main")),
+        ]
     );
 
     // The rename guard itself.
-    assert!(refs.iter().any(|r| r.connector == "pg_main"));
-    assert!(!refs.iter().any(|r| r.connector == "retired_connector"));
+    assert!(
+        refs.iter()
+            .any(|r| r.connector.as_static() == Some("pg_main"))
+    );
+    assert!(
+        !refs
+            .iter()
+            .any(|r| r.connector.as_static() == Some("retired_connector"))
+    );
 }
 
 #[test]

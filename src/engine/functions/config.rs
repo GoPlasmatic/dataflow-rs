@@ -4,10 +4,10 @@ use crate::engine::functions::filter::FilterConfig;
 use crate::engine::functions::integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
 use crate::engine::functions::log::LogConfig;
 use crate::engine::functions::map::MapConfig;
-use crate::engine::functions::parse::{
-    ParseConfig, execute_parse_json_in_arena, execute_parse_xml,
-};
-use crate::engine::functions::publish::{PublishConfig, execute_publish_json, execute_publish_xml};
+use crate::engine::functions::parse::{ParseConfig, execute_parse_json_in_arena, parse_xml_in};
+use crate::engine::functions::path_template::ParamCtx;
+use crate::engine::functions::publish::{PublishConfig, publish_json_in, publish_xml_in};
+use crate::engine::functions::template::Template;
 use crate::engine::functions::validation::ValidationConfig;
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
@@ -41,6 +41,44 @@ impl CompiledCustomInput {
 impl std::fmt::Debug for CompiledCustomInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("CompiledCustomInput(<opaque>)")
+    }
+}
+
+/// How a task names its connector.
+///
+/// `connector` is JSONLogic like every other parameter, so it may be a literal
+/// the host can read at authoring time or an expression that only resolves per
+/// message. Splitting the two is what keeps a computed connector from vanishing
+/// out of [`crate::Workflow::connector_refs`] — a host pre-warming connection
+/// pools needs to know it exists even when it cannot know its name yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectorName<'a> {
+    /// Authored as a literal string. Known without a message.
+    Static(&'a str),
+    /// Authored as an expression, carrying the authored JSON. Resolve it per
+    /// message with the config's `resolve_connector`.
+    Computed(&'a Value),
+}
+
+impl<'a> ConnectorName<'a> {
+    /// Classify an authored `connector` parameter.
+    fn of(template: &'a Template) -> Self {
+        match template.as_json() {
+            Value::String(s) => Self::Static(s),
+            other => Self::Computed(other),
+        }
+    }
+
+    /// The literal name, or `None` when the connector is computed.
+    ///
+    /// The narrowing accessor for callers that genuinely only handle static
+    /// connectors. Prefer matching the enum, so the computed case is a decision
+    /// rather than an omission.
+    pub fn as_static(&self) -> Option<&'a str> {
+        match self {
+            Self::Static(s) => Some(s),
+            Self::Computed(_) => None,
+        }
     }
 }
 
@@ -552,6 +590,14 @@ impl FunctionConfig {
     /// verbatim — including an empty string. Whether an empty connector name is
     /// acceptable is a validation question for the host, not this accessor's.
     ///
+    /// Since 3.9 `connector` is JSONLogic, so the answer is
+    /// [`ConnectorName::Static`] only when it was authored as a literal string.
+    /// A computed connector yields [`ConnectorName::Computed`], which names no
+    /// single connector until a message is in hand. A host enumerating
+    /// connectors to validate or pre-warm them must decide what to do with
+    /// those rather than have them silently disappear from the list — which is
+    /// why this returns an enum instead of `Option<&str>`.
+    ///
     /// [`FunctionConfig::Custom`] returns `input["connector"]` when that key
     /// holds a string. That is the convention for service-registered integration
     /// handlers, mirroring the three built-in schemas; a `Custom` input whose
@@ -565,12 +611,15 @@ impl FunctionConfig {
     ///
     /// The match is exhaustive on purpose — a future connector-bearing config
     /// cannot be silently omitted.
-    pub fn connector(&self) -> Option<&str> {
+    pub fn connector(&self) -> Option<ConnectorName<'_>> {
         match self {
-            FunctionConfig::HttpCall { input, .. } => Some(&input.connector),
-            FunctionConfig::Enrich { input, .. } => Some(&input.connector),
-            FunctionConfig::PublishKafka { input, .. } => Some(&input.connector),
-            FunctionConfig::Custom { input, .. } => input.get("connector").and_then(Value::as_str),
+            FunctionConfig::HttpCall { input, .. } => Some(ConnectorName::of(&input.connector)),
+            FunctionConfig::Enrich { input, .. } => Some(ConnectorName::of(&input.connector)),
+            FunctionConfig::PublishKafka { input, .. } => Some(ConnectorName::of(&input.connector)),
+            FunctionConfig::Custom { input, .. } => input
+                .get("connector")
+                .and_then(Value::as_str)
+                .map(ConnectorName::Static),
             FunctionConfig::Map { .. }
             | FunctionConfig::Validation { .. }
             | FunctionConfig::ParseJson { .. }
@@ -623,24 +672,27 @@ impl FunctionConfig {
             FunctionConfig::Validation { input, .. } => {
                 Some(input.execute_in_arena(message, arena_ctx, engine))
             }
-            FunctionConfig::ParseJson { input, .. } => {
-                Some(execute_parse_json_in_arena(message, input, arena_ctx))
-            }
+            FunctionConfig::ParseJson { input, .. } => Some(execute_parse_json_in_arena(
+                message, input, engine, arena_ctx,
+            )),
             FunctionConfig::ParseXml { input, .. } => {
                 // parse_xml/publish_json/publish_xml all write through
                 // `set_nested_value` on the owned context rather than the
                 // arena, so the arena's "data" slot needs a manual refresh —
                 // but only on success; on error the context didn't change
                 // either, so the arena cache is still in sync.
-                let result = execute_parse_xml(message, input);
+                let p = ParamCtx::from_arena(engine, arena_ctx);
+                let result = parse_xml_in(message, input, p);
                 Some(refresh_data_on_success(message, arena_ctx, result))
             }
             FunctionConfig::PublishJson { input, .. } => {
-                let result = execute_publish_json(message, input);
+                let p = ParamCtx::from_arena(engine, arena_ctx);
+                let result = publish_json_in(message, input, p);
                 Some(refresh_data_on_success(message, arena_ctx, result))
             }
             FunctionConfig::PublishXml { input, .. } => {
-                let result = execute_publish_xml(message, input);
+                let p = ParamCtx::from_arena(engine, arena_ctx);
+                let result = publish_xml_in(message, input, p);
                 Some(refresh_data_on_success(message, arena_ctx, result))
             }
             FunctionConfig::Filter { input, .. } => {
@@ -816,7 +868,10 @@ mod tests {
     fn http_call_response_path_is_read_under_its_own_name() {
         let cfg = parse_http_call(json!({ "connector": "c", "response_path": "data.x" }))
             .expect("response_path should parse");
-        assert_eq!(cfg.response_path.as_deref(), Some("data.x"));
+        assert_eq!(
+            cfg.response_path.as_ref().map(Template::as_json),
+            Some(&json!("data.x"))
+        );
     }
 
     #[test]
@@ -825,13 +880,16 @@ mod tests {
         // was made and the response thrown away.
         let cfg = parse_http_call(json!({ "connector": "c", "output": "data.x" }))
             .expect("output should be accepted as an alias");
-        assert_eq!(cfg.response_path.as_deref(), Some("data.x"));
+        assert_eq!(
+            cfg.response_path.as_ref().map(Template::as_json),
+            Some(&json!("data.x"))
+        );
     }
 
     #[test]
     fn http_call_response_path_is_optional() {
         let cfg = parse_http_call(json!({ "connector": "c" })).expect("no destination is valid");
-        assert_eq!(cfg.response_path, None);
+        assert!(cfg.response_path.is_none());
     }
 
     #[test]
@@ -939,7 +997,11 @@ mod tests {
         ];
         for (input, expected) in cases {
             let cfg = parse(input.clone()).expect("should parse");
-            assert_eq!(cfg.connector(), Some(expected), "for {input}");
+            assert_eq!(
+                cfg.connector().and_then(|c| c.as_static()),
+                Some(expected),
+                "for {input}"
+            );
         }
     }
 
@@ -966,7 +1028,7 @@ mod tests {
             }
             let cfg = parse(json!({ "name": name, "input": minimal_input(name) }))
                 .unwrap_or_else(|e| panic!("'{name}' should parse: {e}"));
-            assert_eq!(cfg.connector(), None, "'{name}' names no connector");
+            assert!(cfg.connector().is_none(), "'{name}' names no connector");
         }
     }
 
@@ -977,7 +1039,7 @@ mod tests {
             "input": { "connector": "pg_main", "database": "orders" }
         }))
         .unwrap();
-        assert_eq!(cfg.connector(), Some("pg_main"));
+        assert_eq!(cfg.connector().and_then(|c| c.as_static()), Some("pg_main"));
     }
 
     #[test]
@@ -1005,10 +1067,10 @@ mod tests {
         // never disagrees with itself across the typed and Custom arms. Whether
         // an empty connector is acceptable is the host's validation question.
         let typed = parse(json!({ "name": "http_call", "input": { "connector": "" } })).unwrap();
-        assert_eq!(typed.connector(), Some(""));
+        assert_eq!(typed.connector().and_then(|c| c.as_static()), Some(""));
 
         let custom = parse(json!({ "name": "x", "input": { "connector": "" } })).unwrap();
-        assert_eq!(custom.connector(), Some(""));
+        assert_eq!(custom.connector().and_then(|c| c.as_static()), Some(""));
     }
 
     #[test]
@@ -1016,7 +1078,7 @@ mod tests {
         // A pin against a future "normalize or trim it here" change.
         let cfg =
             parse(json!({ "name": "http_call", "input": { "connector": "連携先" } })).unwrap();
-        assert_eq!(cfg.connector(), Some("連携先"));
+        assert_eq!(cfg.connector().and_then(|c| c.as_static()), Some("連携先"));
     }
 
     #[test]

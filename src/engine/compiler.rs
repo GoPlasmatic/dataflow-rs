@@ -10,7 +10,9 @@
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::functions::integration::{EnrichConfig, HttpCallConfig, PublishKafkaConfig};
 use crate::engine::functions::template::{Template, TemplateCompiler};
-use crate::engine::functions::{FilterConfig, LogConfig, MapConfig, ValidationConfig};
+use crate::engine::functions::{
+    FilterConfig, LogConfig, MapConfig, ParseConfig, PublishConfig, ValidationConfig,
+};
 use crate::engine::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
 use crate::engine::{FunctionConfig, Workflow};
 use datalogic_rs::{CustomOperator, Engine, Logic};
@@ -18,6 +20,39 @@ use log::debug;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// The template-key escape prefix, stripped from every object key in a
+/// JSONLogic template and blocking that key from resolving as an operator.
+///
+/// `{"$cat": ["a", "b"]}` is the literal object `{"cat": ["a", "b"]}`;
+/// `{"cat": ["a", "b"]}` is still the `cat` operator; `{"$$cat": …}` is the
+/// literal `{"$cat": …}`. Exactly one prefix is stripped per key.
+///
+/// Always on and not configurable. Templating mode makes every single-key
+/// object an operator invocation, so before this a literal object whose key
+/// collided with an operator name was *inexpressible* — which is what forced
+/// the `path`/`path_logic`-style field pairs and kept `Template` opt-in per
+/// field. One prefix everywhere is what lets those collapse.
+///
+/// `$` rather than a rarer sigil because it is the spelling `datalogic-rs`'s
+/// own JS bindings document. The cost is that a template emitting genuinely
+/// `$`-prefixed keys — MongoDB (`$set`, `$oid`), JSON Schema (`$schema`,
+/// `$ref`) — must double them to `$$set`. [`crate::IssueCode::EscapedTemplateKey`]
+/// reports every escaped key so that migration is mechanical.
+pub(crate) const TEMPLATE_KEY_ESCAPE: char = '$';
+
+/// The datalogic engine configuration this crate evaluates against: templating
+/// mode plus [`TEMPLATE_KEY_ESCAPE`].
+///
+/// Every datalogic engine built anywhere in this crate — production and tests
+/// alike — starts here. Both settings change what an expression *means*, so a
+/// second construction site that forgot one would make tests agree with an
+/// engine that never runs.
+pub(crate) fn datalogic_engine_builder() -> datalogic_rs::EngineBuilder {
+    Engine::builder()
+        .with_templating(true)
+        .with_template_key_escape(TEMPLATE_KEY_ESCAPE)
+}
 
 /// Adapter handing a shared operator to the datalogic builder, which takes
 /// ownership of what it registers. The `Arc` is the point: one registration
@@ -78,7 +113,7 @@ impl LogicCompiler {
         operators: &HashMap<String, Arc<dyn CustomOperator>>,
         secrets: &Arc<Secrets>,
     ) -> Self {
-        let mut builder = Engine::builder().with_templating(true);
+        let mut builder = datalogic_engine_builder();
         for (name, op) in operators {
             builder = builder.add_operator(name.clone(), SharedOperator(Arc::clone(op)));
         }
@@ -198,17 +233,12 @@ impl LogicCompiler {
             FunctionConfig::PublishKafka { input, .. } => {
                 self.compile_publish_kafka_logic(input, task_id, workflow_id)
             }
-            // No JSONLogic to compile, but the `data.{target}` write path is
-            // precomputed here (path string + pre-split parts) so the hot
-            // path never re-formats or re-splits it.
             FunctionConfig::ParseJson { input, .. } | FunctionConfig::ParseXml { input, .. } => {
-                input.precompute_target_path();
-                Ok(())
+                self.compile_parse_logic(input, task_id, workflow_id)
             }
             FunctionConfig::PublishJson { input, .. }
             | FunctionConfig::PublishXml { input, .. } => {
-                input.precompute_target_path();
-                Ok(())
+                self.compile_publish_logic(input, task_id, workflow_id)
             }
             // Custom and other functions don't need pre-compilation
             _ => Ok(()),
@@ -240,6 +270,42 @@ impl LogicCompiler {
         Ok(Some(self.compile(condition, ctx_label)?))
     }
 
+    /// Compile the `parse_json` / `parse_xml` parameters. A literal `target`
+    /// folds here and keeps the precomputed `data.{target}` write path the hot
+    /// path has always used.
+    fn compile_parse_logic(
+        &self,
+        config: &mut ParseConfig,
+        task_id: &str,
+        workflow_id: &str,
+    ) -> Result<()> {
+        self.compile_template(&mut config.source, "parse source", task_id, workflow_id)?;
+        config.target.compile(
+            &self.template_compiler,
+            &label("parse target", task_id, workflow_id),
+        )
+    }
+
+    /// Compile the `publish_json` / `publish_xml` parameters.
+    fn compile_publish_logic(
+        &self,
+        config: &mut PublishConfig,
+        task_id: &str,
+        workflow_id: &str,
+    ) -> Result<()> {
+        self.compile_template(&mut config.source, "publish source", task_id, workflow_id)?;
+        self.compile_template(
+            &mut config.root_element,
+            "publish root_element",
+            task_id,
+            workflow_id,
+        )?;
+        config.target.compile(
+            &self.template_compiler,
+            &label("publish target", task_id, workflow_id),
+        )
+    }
+
     /// Compile map transformation logic
     fn compile_map_logic(
         &self,
@@ -248,18 +314,18 @@ impl LogicCompiler {
         workflow_id: &str,
     ) -> Result<()> {
         for mapping in &mut config.mappings {
-            // Pre-split the dot path so the hot path doesn't re-split per
-            // write. The `#` prefix is preserved here — it's the explicit
-            // "treat this as an object key, not an array index" hint that
-            // `set_nested_value` consumes when deciding container shape; the
-            // strip happens at lookup time inside `*_parts` helpers.
-            let parts: Vec<Arc<str>> = mapping.path.split('.').map(Arc::from).collect();
-            mapping.path_parts = Arc::from(parts.into_boxed_slice());
-            mapping.path_arc = Arc::from(mapping.path.as_str());
+            // The destination. A literal folds to a constant here and keeps its
+            // `(dotted, parts)` pair precomputed, so the hot loop never
+            // re-splits — the same guarantee the old hand-rolled split gave,
+            // now with a computed destination possible alongside it.
+            let path_label = format!("map path for task {task_id} in workflow {workflow_id}");
+            mapping.path.compile(&self.template_compiler, &path_label)?;
 
             let label = format!(
                 "map logic for task {} in workflow {} (path {})",
-                task_id, workflow_id, mapping.path
+                task_id,
+                workflow_id,
+                mapping.describe_path()
             );
             mapping.compiled_logic = Some(self.compile(&mapping.logic, &label)?);
         }
@@ -279,6 +345,12 @@ impl LogicCompiler {
                 idx, task_id, workflow_id
             );
             rule.compiled_logic = Some(self.compile(&rule.logic, &label)?);
+
+            let message_label = format!(
+                "validation rule {idx} message for task {task_id} in workflow {workflow_id}"
+            );
+            rule.message
+                .compile(&self.template_compiler, &message_label)?;
         }
         Ok(())
     }
@@ -328,70 +400,115 @@ impl LogicCompiler {
         Ok(())
     }
 
-    /// Compile http_call JSONLogic expressions (path_logic, body_logic)
+    /// Compile every `http_call` parameter.
     fn compile_http_call_logic(
         &self,
         config: &mut HttpCallConfig,
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        self.compile_template_field(
-            &mut config.path_logic,
-            "http_call path_logic",
+        self.compile_template(
+            &mut config.connector,
+            "http_call connector",
             task_id,
             workflow_id,
         )?;
-        self.compile_template_field(
-            &mut config.body_logic,
-            "http_call body_logic",
+        self.compile_template(
+            &mut config.timeout_ms,
+            "http_call timeout_ms",
             task_id,
             workflow_id,
         )?;
+        for (name, value) in &mut config.headers {
+            let what = format!("http_call header {name}");
+            self.compile_template(value, &what, task_id, workflow_id)?;
+        }
+        for (what, field) in [
+            ("http_call path", &mut config.path),
+            ("http_call body", &mut config.body),
+            ("http_call body_format", &mut config.body_format),
+            ("http_call response_path", &mut config.response_path),
+            ("http_call response_format", &mut config.response_format),
+        ] {
+            self.compile_template_field(field, what, task_id, workflow_id)?;
+        }
         Ok(())
     }
 
-    /// Compile enrich JSONLogic expressions (path_logic)
+    /// Compile every `enrich` parameter.
     fn compile_enrich_logic(
         &self,
         config: &mut EnrichConfig,
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        self.compile_template_field(
-            &mut config.path_logic,
-            "enrich path_logic",
+        self.compile_template(
+            &mut config.connector,
+            "enrich connector",
             task_id,
             workflow_id,
-        )
+        )?;
+        self.compile_template(
+            &mut config.merge_path,
+            "enrich merge_path",
+            task_id,
+            workflow_id,
+        )?;
+        self.compile_template(
+            &mut config.timeout_ms,
+            "enrich timeout_ms",
+            task_id,
+            workflow_id,
+        )?;
+        self.compile_template_field(&mut config.path, "enrich path", task_id, workflow_id)
     }
 
-    /// Compile publish_kafka JSONLogic expressions (key_logic, value_logic)
+    /// Compile every `publish_kafka` parameter.
     fn compile_publish_kafka_logic(
         &self,
         config: &mut PublishKafkaConfig,
         task_id: &str,
         workflow_id: &str,
     ) -> Result<()> {
-        self.compile_template_field(
-            &mut config.key_logic,
-            "publish_kafka key_logic",
+        self.compile_template(
+            &mut config.connector,
+            "publish_kafka connector",
             task_id,
             workflow_id,
         )?;
-        self.compile_template_field(
-            &mut config.value_logic,
-            "publish_kafka value_logic",
+        self.compile_template(
+            &mut config.topic,
+            "publish_kafka topic",
             task_id,
             workflow_id,
         )?;
-        Ok(())
+        self.compile_template_field(&mut config.key, "publish_kafka key", task_id, workflow_id)?;
+        self.compile_template_field(
+            &mut config.value,
+            "publish_kafka value",
+            task_id,
+            workflow_id,
+        )
+    }
+
+    /// Compile a required `Template` parameter against `self.template_compiler`.
+    /// `what` labels the compile-error context as `"{what} for task {task_id}
+    /// in workflow {workflow_id}"`, e.g. `"http_call connector"`.
+    fn compile_template(
+        &self,
+        field: &mut Template,
+        what: &str,
+        task_id: &str,
+        workflow_id: &str,
+    ) -> Result<()> {
+        field.compile(&self.template_compiler, &label(what, task_id, workflow_id))
     }
 
     /// Compile an optional built-in integration `Template` field — `path_logic`,
-    /// `body_logic`, `key_logic`, `value_logic` — against `self.template_compiler`.
+    /// against `self.template_compiler`.
     /// A `None` field is a no-op, matching every one of these fields being
     /// optional. `what` labels the compile-error context as `"{what} for task
-    /// {task_id} in workflow {workflow_id}"`, e.g. `"http_call body_logic"`.
+    /// {task_id} in workflow {workflow_id}"`, e.g. `"http_call body"`.
     fn compile_template_field(
         &self,
         field: &mut Option<Template>,
@@ -447,7 +564,7 @@ mod tests {
     /// fixed at compile time, so a test whose result depends on one must be
     /// `#[cfg]`-gated rather than assuming the default build.
     fn engine() -> Engine {
-        Engine::builder().with_templating(true).build()
+        crate::engine::compiler::datalogic_engine_builder().build()
     }
 
     fn eval(engine: &Engine, logic: &Value) -> Value {

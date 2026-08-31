@@ -18,6 +18,7 @@
 //! That biconditional is true *by construction*, not by keeping a rule list in
 //! sync — see the stages below.
 
+use crate::engine::compiler::TEMPLATE_KEY_ESCAPE;
 use crate::engine::functions::config::{BuiltinKind, builtin_function_kind, can_dispatch_in};
 use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig, TemplateCompiler};
 use crate::engine::secrets::{SECRET_OPERATOR, Secrets};
@@ -140,6 +141,23 @@ pub enum IssueCode {
     /// *instead of* the [`Self::UnknownSecret`] issues every literal name would
     /// otherwise produce — the workflow is not what is wrong.
     InvalidSecretStore,
+    /// Two keys in one template object collapse to the same name once the
+    /// template-key escape is stripped — `{"$a": 1, "a": 2}` emits `a` twice.
+    /// The context is a `Vec` of pairs, so both survive: a later read sees only
+    /// the first while serialization emits both. Always a bug, so
+    /// [`crate::Engine::build`] refuses it.
+    DuplicateTemplateKey,
+    /// A template key carries the escape prefix, so it is emitted with one
+    /// prefix stripped: `$type` emits `type`. **Informational** — reported by
+    /// [`crate::Engine::check_workflow`] and never by
+    /// [`crate::Engine::build`].
+    ///
+    /// Exists for migration. The escape strips uniformly from every template
+    /// key, so a workflow written before 3.9 that emits genuinely `$`-prefixed
+    /// keys — MongoDB's `$set`/`$oid`, JSON Schema's `$schema`/`$ref` — changes
+    /// what it produces, silently. This lists every one so the audit is
+    /// mechanical rather than archaeological.
+    EscapedTemplateKey,
     /// The document does not deserialize into a [`Workflow`]. Carries the
     /// parser's own message, which names the offending field and type.
     ParseFailed,
@@ -172,6 +190,8 @@ impl IssueCode {
             Self::UnknownSecret => "UNKNOWN_SECRET",
             Self::SecretInMessageWrite => "SECRET_IN_MESSAGE_WRITE",
             Self::InvalidSecretStore => "INVALID_SECRET_STORE",
+            Self::DuplicateTemplateKey => "DUPLICATE_TEMPLATE_KEY",
+            Self::EscapedTemplateKey => "ESCAPED_TEMPLATE_KEY",
             Self::ParseFailed => "PARSE_FAILED",
             Self::ValidateFailed => "VALIDATE_FAILED",
         }
@@ -293,6 +313,10 @@ pub(crate) fn check_against_registry(
     secrets: &Secrets,
 ) -> Vec<WorkflowIssue> {
     let mut issues = check_secrets(workflow, secrets);
+    // All three template-key findings, including the two `build()` does not
+    // refuse — this surface is where a host looks before activating a
+    // definition, and the migration audit is the point of reporting them.
+    issues.extend(check_template_keys(workflow));
 
     for task in &workflow.tasks {
         let name = task.function.function_name();
@@ -414,10 +438,22 @@ impl Sink {
 /// [`Sink::Message`] expression.
 pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<WorkflowIssue> {
     let mut issues = Vec::new();
-    let mut check = |value: &Value, field: &str, task_id: Option<&str>, sink: Sink| {
+    for_each_expression(workflow, &mut |value, field, task_id, sink| {
         check_expression(value, field, task_id, sink, secrets, &mut issues);
-    };
+    });
+    issues
+}
 
+/// Visit every JSONLogic expression in `workflow`, with where it lives and
+/// where its result goes.
+///
+/// The single enumeration of "which config fields are expressions". Both
+/// [`check_secrets`] and [`check_template_keys`] walk it, so a parameter added
+/// to a built-in cannot be checked by one and silently skipped by the other.
+fn for_each_expression(
+    workflow: &Workflow,
+    check: &mut impl FnMut(&Value, &str, Option<&str>, Sink),
+) {
     check(&workflow.condition, "condition", None, Sink::Bool);
 
     for task in &workflow.tasks {
@@ -436,12 +472,21 @@ pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<Workf
                 for (i, mapping) in input.mappings.iter().enumerate() {
                     let field = format!("function.input.mappings[{i}].logic");
                     check(&mapping.logic, &field, id, Sink::Message);
+                    // The destination is itself recorded — in `Change.path` and
+                    // on the audit trail — so it may not read a secret either.
+                    let field = format!("function.input.mappings[{i}].path");
+                    check(mapping.path.as_json(), &field, id, Sink::Message);
                 }
             }
             FunctionConfig::Validation { input, .. } => {
                 for (i, rule) in input.rules.iter().enumerate() {
                     let field = format!("function.input.rules[{i}].logic");
                     check(&rule.logic, &field, id, Sink::Bool);
+                    // The message is `Sink::Message`, not `Sink::Bool`: it is
+                    // recorded in `Message::errors`, which is serialized. A
+                    // rule may *test* a secret; it may not *report* one.
+                    let field = format!("function.input.rules[{i}].message");
+                    check(rule.message.as_json(), &field, id, Sink::Message);
                 }
             }
             FunctionConfig::Filter { input, .. } => {
@@ -460,9 +505,38 @@ pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<Workf
                 }
             }
             FunctionConfig::HttpCall { input, .. } => {
+                // Everything here is handed to the host's handler, so a secret
+                // is allowed — an `Authorization` header reading
+                // `{"secret": "api_token"}` is the reason headers became
+                // expressions at all. What the handler does with it from there
+                // is the handler's business.
+                check(
+                    input.connector.as_json(),
+                    "function.input.connector",
+                    id,
+                    Sink::Handler,
+                );
+                check(
+                    input.timeout_ms.as_json(),
+                    "function.input.timeout_ms",
+                    id,
+                    Sink::Handler,
+                );
+                // `headers` is a `HashMap`, so iterate in name order — issue
+                // order is what a host logs, diffs, or asserts on, matching the
+                // `log` fields treatment above.
+                let mut names: Vec<&String> = input.headers.keys().collect();
+                names.sort_unstable();
+                for name in names {
+                    let field = format!("function.input.headers.{name}");
+                    check(input.headers[name].as_json(), &field, id, Sink::Handler);
+                }
                 for (name, template) in [
-                    ("path_logic", &input.path_logic),
-                    ("body_logic", &input.body_logic),
+                    ("path", &input.path),
+                    ("body", &input.body),
+                    ("body_format", &input.body_format),
+                    ("response_path", &input.response_path),
+                    ("response_format", &input.response_format),
                 ] {
                     if let Some(t) = template {
                         let field = format!("function.input.{name}");
@@ -471,15 +545,24 @@ pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<Workf
                 }
             }
             FunctionConfig::Enrich { input, .. } => {
-                if let Some(t) = &input.path_logic {
-                    check(t.as_json(), "function.input.path_logic", id, Sink::Handler);
+                for (name, template) in [
+                    ("connector", &input.connector),
+                    ("merge_path", &input.merge_path),
+                    ("timeout_ms", &input.timeout_ms),
+                ] {
+                    let field = format!("function.input.{name}");
+                    check(template.as_json(), &field, id, Sink::Handler);
+                }
+                if let Some(t) = &input.path {
+                    check(t.as_json(), "function.input.path", id, Sink::Handler);
                 }
             }
             FunctionConfig::PublishKafka { input, .. } => {
-                for (name, template) in [
-                    ("key_logic", &input.key_logic),
-                    ("value_logic", &input.value_logic),
-                ] {
+                for (name, template) in [("connector", &input.connector), ("topic", &input.topic)] {
+                    let field = format!("function.input.{name}");
+                    check(template.as_json(), &field, id, Sink::Handler);
+                }
+                for (name, template) in [("key", &input.key), ("value", &input.value)] {
                     if let Some(t) = template {
                         let field = format!("function.input.{name}");
                         check(t.as_json(), &field, id, Sink::Handler);
@@ -489,14 +572,159 @@ pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<Workf
             FunctionConfig::Custom { input, .. } => {
                 check(input, "function.input", id, Sink::Input);
             }
-            FunctionConfig::ParseJson { .. }
-            | FunctionConfig::ParseXml { .. }
-            | FunctionConfig::PublishJson { .. }
-            | FunctionConfig::PublishXml { .. } => {}
+            // `Sink::Message`, not `Sink::Handler`: these expressions name
+            // where the engine itself writes, and the destination is recorded
+            // in `Change.path` and the audit trail. `root_element` goes further
+            // — it is written into the serialized document that lands in
+            // `data.{target}`.
+            FunctionConfig::ParseJson { input, .. } | FunctionConfig::ParseXml { input, .. } => {
+                check(
+                    input.source.as_json(),
+                    "function.input.source",
+                    id,
+                    Sink::Message,
+                );
+                check(
+                    input.target.as_json(),
+                    "function.input.target",
+                    id,
+                    Sink::Message,
+                );
+            }
+            FunctionConfig::PublishJson { input, .. }
+            | FunctionConfig::PublishXml { input, .. } => {
+                check(
+                    input.source.as_json(),
+                    "function.input.source",
+                    id,
+                    Sink::Message,
+                );
+                check(
+                    input.target.as_json(),
+                    "function.input.target",
+                    id,
+                    Sink::Message,
+                );
+                check(
+                    input.root_element.as_json(),
+                    "function.input.root_element",
+                    id,
+                    Sink::Message,
+                );
+            }
         }
     }
+}
 
+/// Check every expression in `workflow` for object keys the template-key
+/// escape makes newly significant.
+///
+/// Three findings, and only the first is fatal:
+///
+/// - [`IssueCode::DuplicateTemplateKey`] — two keys in one object that collapse
+///   to the same name after the escape is stripped. Always a bug, so
+///   `Engine::build` refuses it.
+/// - [`IssueCode::EscapedTemplateKey`] — a `$`-prefixed key, reported so a host
+///   migrating to 3.9 can audit every place the escape changed what a template
+///   emits. Informational: after migration these are deliberate.
+///
+/// A third check — flagging a single-key object whose key names no live
+/// operator — was designed and then dropped, because it cannot be made
+/// precise. In templating mode an unrecognised single key is *not* inert: it
+/// evaluates its argument and emits a structured object, so
+/// `{"result": {"var": "x"}}` yields `{"result": 5}`. That is the ordinary
+/// single-key output template and the most common shape in a `map` mapping,
+/// indistinguishable from a misspelled `lenght`. Flagging it would fire on
+/// almost every correct workflow.
+pub(crate) fn check_template_keys(workflow: &Workflow) -> Vec<WorkflowIssue> {
+    let mut issues = Vec::new();
+    for_each_expression(workflow, &mut |value, field, task_id, sink| {
+        // A custom task's `input` is a config document, not an expression: only
+        // the `Template` fields inside it are JSONLogic, and which those are is
+        // the handler's business. Treating the whole document as a template
+        // would flag ordinary config keys — and `DuplicateTemplateKey` is
+        // fatal, so a false positive there refuses a valid workflow.
+        if sink != Sink::Input {
+            walk_template_keys(value, field, task_id, &mut issues);
+        }
+    });
     issues
+}
+
+/// The fatal subset of [`check_template_keys`] — what `Engine::build` refuses.
+pub(crate) fn refusing_template_key_issues(workflow: &Workflow) -> Vec<WorkflowIssue> {
+    let mut issues = check_template_keys(workflow);
+    issues.retain(|i| i.code == IssueCode::DuplicateTemplateKey);
+    issues
+}
+
+/// Recursive half of [`check_template_keys`].
+fn walk_template_keys(
+    value: &Value,
+    path: &str,
+    task_id: Option<&str>,
+    issues: &mut Vec<WorkflowIssue>,
+) {
+    match value {
+        Value::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                walk_template_keys(item, &format!("{path}[{i}]"), task_id, issues);
+            }
+        }
+        Value::Object(map) => {
+            report_escaped_and_duplicate_keys(map, path, task_id, issues);
+            for (key, child) in map {
+                walk_template_keys(child, &format!("{path}.{key}"), task_id, issues);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The two key-level findings for one template object: escaped keys, and keys
+/// that collide once the escape is stripped.
+fn report_escaped_and_duplicate_keys(
+    map: &serde_json::Map<String, Value>,
+    path: &str,
+    task_id: Option<&str>,
+    issues: &mut Vec<WorkflowIssue>,
+) {
+    let mut emitted: HashMap<String, &str> = HashMap::new();
+    for key in map.keys() {
+        if let Some(stripped) = key.strip_prefix(TEMPLATE_KEY_ESCAPE) {
+            issues.push(
+                WorkflowIssue::at(
+                    IssueCode::EscapedTemplateKey,
+                    format!("{path}.{key}"),
+                    format!(
+                        "'{key}' is emitted as '{stripped}' — one \
+                         '{TEMPLATE_KEY_ESCAPE}' is stripped from every template key. Double it \
+                         to '{TEMPLATE_KEY_ESCAPE}{key}' to emit '{key}' itself"
+                    ),
+                )
+                .with_step(task_id),
+            );
+        }
+        // What this key actually emits, which is what can collide.
+        let out = key
+            .strip_prefix(TEMPLATE_KEY_ESCAPE)
+            .unwrap_or(key)
+            .to_string();
+        if let Some(other) = emitted.insert(out.clone(), key) {
+            issues.push(
+                WorkflowIssue::at(
+                    IssueCode::DuplicateTemplateKey,
+                    format!("{path}.{key}"),
+                    format!(
+                        "'{other}' and '{key}' both emit the key '{out}', so this object would \
+                         carry it twice — later reads see only the first while serialization \
+                         emits both"
+                    ),
+                )
+                .with_step(task_id),
+            );
+        }
+    }
 }
 
 /// One expression's worth of [`check_secrets`].

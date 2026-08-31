@@ -309,34 +309,6 @@ pub(crate) fn compute_path_parts(prefix: &str, target: &str) -> Arc<[Arc<str>]> 
         .collect()
 }
 
-/// Populate `*path_arc`/`*path_parts` from `target` via [`compute_data_path`].
-/// Shared body behind `ParseConfig::precompute_target_path` and
-/// `PublishConfig::precompute_target_path` — both configs cache the same
-/// `data.{target}` shape and populate it identically.
-pub(crate) fn precompute_target_path(
-    target: &str,
-    path_arc: &mut Arc<str>,
-    path_parts: &mut Arc<[Arc<str>]>,
-) {
-    (*path_arc, *path_parts) = compute_data_path(target);
-}
-
-/// Precomputed `(path, parts)` for `data.{target}` — falls back to computing on
-/// the fly when `path_parts` is empty (a directly-constructed config, e.g. the
-/// test surface, that skipped `precompute_target_path`). Shared body behind
-/// `ParseConfig::resolve_target_path` and `PublishConfig::resolve_target_path`.
-pub(crate) fn resolve_target_path(
-    target: &str,
-    path_arc: &Arc<str>,
-    path_parts: &Arc<[Arc<str>]>,
-) -> (Arc<str>, Arc<[Arc<str>]>) {
-    if path_parts.is_empty() {
-        compute_data_path(target)
-    } else {
-        (Arc::clone(path_arc), Arc::clone(path_parts))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

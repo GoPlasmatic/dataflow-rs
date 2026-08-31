@@ -248,8 +248,15 @@ export interface Rollout {
  * Map function mapping configuration
  */
 export interface MapMapping {
-  /** Target path for the mapped value */
-  path: string;
+  /**
+   * Target path for the mapped value.
+   *
+   * A plain string is the ordinary case. Since dataflow-rs 3.9 it may also be
+   * a JSONLogic expression that resolves to a path per message, which has no
+   * single value to display — use `describeMappingPath` rather than rendering
+   * it directly.
+   */
+  path: string | JsonLogicValue;
   /** JSONLogic expression to compute the value */
   logic: JsonLogicValue;
 }

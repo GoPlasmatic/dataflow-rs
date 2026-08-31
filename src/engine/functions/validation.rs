@@ -33,6 +33,8 @@
 
 use crate::engine::error::{DataflowError, ErrorInfo, Result};
 use crate::engine::executor::{ArenaContext, with_arena};
+use crate::engine::functions::path_template::ParamCtx;
+use crate::engine::functions::template::Template;
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
 use datalogic_rs::{Engine, Logic};
@@ -69,7 +71,18 @@ pub struct ValidationRule {
     /// which is the path `Engine::build` takes, so a rule without it is
     /// rejected at build time. [`ValidationConfig::from_json`], the standalone
     /// parser, is the one path that substitutes `"Validation failed"`.
-    pub message: String,
+    ///
+    /// JSONLogic, so a message can name the value that failed:
+    /// `{"cat": ["age must be positive, got ", {"var": "data.age"}]}`. A plain
+    /// string is a literal, so the static spelling is unchanged.
+    ///
+    /// Evaluated **only when the rule fails**, so a passing validation — the
+    /// common case — costs nothing for a computed message.
+    ///
+    /// This message is recorded in [`Message::errors`], which is serialized, so
+    /// it may not read a secret. `Engine::build` refuses one that does; see
+    /// [`crate::IssueCode::SecretInMessageWrite`].
+    pub message: Template,
 
     /// Pre-compiled JSONLogic, populated by `LogicCompiler`. `None` is
     /// recorded as a `COMPILATION_ERROR` at execute time.
@@ -105,11 +118,11 @@ impl ValidationConfig {
                 .ok_or_else(|| DataflowError::Validation("Missing 'logic' in rule".to_string()))?
                 .clone();
 
-            let message = rule
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("Validation failed")
-                .to_string();
+            let message = Template::from(
+                rule.get("message")
+                    .cloned()
+                    .unwrap_or_else(|| Value::from("Validation failed")),
+            );
 
             parsed_rules.push(ValidationRule {
                 logic,
@@ -179,7 +192,7 @@ impl ValidationConfig {
         let mut validation_errors = Vec::new();
 
         for (idx, rule) in self.rules.iter().enumerate() {
-            debug!("Processing validation rule {}: {}", idx, rule.message);
+            debug!("Processing validation rule {idx}");
 
             let compiled_logic = match &rule.compiled_logic {
                 Some(logic) => logic,
@@ -201,10 +214,22 @@ impl ValidationConfig {
             match engine.evaluate(compiled_logic, ctx_av, arena) {
                 Ok(value) => {
                     if !matches!(value, DataValue::Bool(true)) {
-                        debug!("Validation failed for rule {}: {}", idx, rule.message);
+                        // Resolved here, not up front: a computed message costs
+                        // nothing on the passing path. A message that fails to
+                        // evaluate still reports the validation failure — the
+                        // rule did fail, and losing that to a broken message
+                        // expression would be the worse outcome.
+                        let text = rule
+                            .message
+                            .resolve_string_in_arena(ParamCtx::new(engine, ctx_av, arena))
+                            .unwrap_or_else(|e| {
+                                error!("Validation: rule {idx} message failed to render: {e:?}");
+                                "Validation failed".to_string()
+                            });
+                        debug!("Validation failed for rule {idx}: {text}");
                         validation_errors.push(ErrorInfo::simple_ref(
                             "VALIDATION_ERROR",
-                            &rule.message,
+                            &text,
                             None,
                         ));
                     } else {
@@ -255,8 +280,11 @@ mod tests {
 
         let config = ValidationConfig::from_json(&input).unwrap();
         assert_eq!(config.rules.len(), 2);
-        assert_eq!(config.rules[0].message, "Required field is missing");
-        assert_eq!(config.rules[1].message, "Must be over 18");
+        assert_eq!(
+            config.rules[0].message.as_json(),
+            &json!("Required field is missing")
+        );
+        assert_eq!(config.rules[1].message.as_json(), &json!("Must be over 18"));
     }
 
     #[test]
@@ -300,7 +328,10 @@ mod tests {
         });
 
         let config = ValidationConfig::from_json(&input).unwrap();
-        assert_eq!(config.rules[0].message, "Validation failed");
+        assert_eq!(
+            config.rules[0].message.as_json(),
+            &json!("Validation failed")
+        );
     }
 
     fn dv(v: serde_json::Value) -> OwnedDataValue {
@@ -322,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_validation_execute_passes() {
-        let engine = Arc::new(Engine::builder().with_templating(true).build());
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
 
         let mut message = message_with_data(json!({
             "email": "test@example.com",
@@ -333,12 +364,12 @@ mod tests {
             rules: vec![
                 ValidationRule {
                     logic: json!({"!!": [{"var": "data.email"}]}),
-                    message: "Email is required".to_string(),
+                    message: Template::from(json!("Email is required")),
                     compiled_logic: None,
                 },
                 ValidationRule {
                     logic: json!({">": [{"var": "data.age"}, 18]}),
-                    message: "Must be over 18".to_string(),
+                    message: Template::from(json!("Must be over 18")),
                     compiled_logic: None,
                 },
             ],
@@ -356,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_validation_execute_fails() {
-        let engine = Arc::new(Engine::builder().with_templating(true).build());
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
 
         let mut message = message_with_data(json!({ "age": 15 }));
 
@@ -364,12 +395,12 @@ mod tests {
             rules: vec![
                 ValidationRule {
                     logic: json!({"!!": [{"var": "data.email"}]}),
-                    message: "Email is required".to_string(),
+                    message: Template::from(json!("Email is required")),
                     compiled_logic: None,
                 },
                 ValidationRule {
                     logic: json!({">": [{"var": "data.age"}, 18]}),
-                    message: "Must be over 18".to_string(),
+                    message: Template::from(json!("Must be over 18")),
                     compiled_logic: None,
                 },
             ],
@@ -392,14 +423,14 @@ mod tests {
     fn test_validation_uncompiled_logic() {
         use crate::engine::message::Message;
 
-        let engine = Arc::new(Engine::builder().with_templating(true).build());
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
 
         let mut message = Message::new(Arc::new(dv(json!({}))));
 
         let config = ValidationConfig {
             rules: vec![ValidationRule {
                 logic: json!(true),
-                message: "Test".to_string(),
+                message: Template::from(json!("Test")),
                 compiled_logic: None,
             }],
         };

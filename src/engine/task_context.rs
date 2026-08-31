@@ -335,7 +335,7 @@ mod tests {
     }
 
     fn engine() -> Arc<DatalogicEngine> {
-        Arc::new(DatalogicEngine::builder().with_templating(true).build())
+        Arc::new(crate::engine::compiler::datalogic_engine_builder().build())
     }
 
     /// A message with one key in each of the three context slots.

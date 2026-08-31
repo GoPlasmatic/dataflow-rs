@@ -6,49 +6,40 @@
 //! `serde_json::Value` since neither is on the hot path.
 
 use crate::engine::error::{DataflowError, Result};
+use crate::engine::executor::{ArenaContext, with_arena};
+use crate::engine::functions::path_template::{DataRoot, ParamCtx, PathTemplate, ResolvedPath};
+use crate::engine::functions::template::Template;
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::utils::{
-    get_nested_value, get_nested_value_parts, precompute_target_path, resolve_target_path,
-    set_nested_value_parts,
-};
+use crate::engine::utils::{get_nested_value, get_nested_value_parts, set_nested_value_parts};
+use datalogic_rs::Engine;
 use datavalue::OwnedDataValue;
 use log::debug;
 use serde::Deserialize;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Configuration for publish functions.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PublishConfig {
-    /// Source field path inside `data` to serialize.
-    pub source: String,
+    /// Source field path inside `data` to serialize, as JSONLogic. Resolves to
+    /// the *name* of a location, not the value at one.
+    pub source: Template,
 
-    /// Target field name inside `data` to receive the serialised string.
-    pub target: String,
+    /// Target field name inside `data` to receive the serialised string, as
+    /// JSONLogic. A literal folds at compile time and keeps the precomputed
+    /// split this always had.
+    pub target: PathTemplate<DataRoot>,
 
     /// Whether to pretty-print the output (JSON only).
     #[serde(default)]
     pub pretty: bool,
 
-    /// Root element name for XML output.
+    /// Root element name for XML output, as JSONLogic — so the element can
+    /// follow the message type: `{"var": "data.doc_type"}`.
     #[serde(default = "default_root_element")]
-    pub root_element: String,
-
-    /// Engine-internal: precomputed `"data.{target}"`, populated by
-    /// `LogicCompiler` (and eagerly by [`Self::from_json`]). Cloned
-    /// (refcount bump) into `Change.path` instead of re-allocating per
-    /// call. Not part of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub target_path_arc: Arc<str>,
-
-    /// Engine-internal: pre-split segments of the target path, consumed by
-    /// the `*_parts` tree walkers so the hot path never re-splits. Not part
-    /// of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub target_path_parts: Arc<[Arc<str>]>,
+    pub root_element: Template,
 }
 
 // Manual impl so `..Default::default()` construction gets the same
@@ -56,37 +47,30 @@ pub struct PublishConfig {
 impl Default for PublishConfig {
     fn default() -> Self {
         Self {
-            source: String::new(),
-            target: String::new(),
+            source: Template::from(Value::String(String::new())),
+            target: PathTemplate::default(),
             pretty: false,
             root_element: default_root_element(),
-            target_path_arc: Arc::from(""),
-            target_path_parts: Vec::new().into(),
         }
     }
 }
 
-fn default_root_element() -> String {
-    "root".to_string()
+fn default_root_element() -> Template {
+    Template::from(Value::from(DEFAULT_ROOT_ELEMENT))
 }
+
+/// The `root_element` default, as a plain name.
+pub const DEFAULT_ROOT_ELEMENT: &str = "root";
 
 impl PublishConfig {
     pub fn from_json(input: &Value) -> Result<Self> {
-        let source = input
-            .get("source")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                DataflowError::Validation("Missing 'source' in publish config".to_string())
-            })?
-            .to_string();
+        let source = input.get("source").cloned().ok_or_else(|| {
+            DataflowError::Validation("Missing 'source' in publish config".to_string())
+        })?;
 
-        let target = input
-            .get("target")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                DataflowError::Validation("Missing 'target' in publish config".to_string())
-            })?
-            .to_string();
+        let target = input.get("target").cloned().ok_or_else(|| {
+            DataflowError::Validation("Missing 'target' in publish config".to_string())
+        })?;
 
         let pretty = input
             .get("pretty")
@@ -95,56 +79,45 @@ impl PublishConfig {
 
         let root_element = input
             .get("root_element")
-            .and_then(Value::as_str)
-            .map(String::from)
+            .cloned()
+            .map(Template::from)
             .unwrap_or_else(default_root_element);
 
-        let mut config = PublishConfig {
-            source,
-            target,
+        Ok(PublishConfig {
+            source: Template::from(source),
+            target: PathTemplate::from(target),
             pretty,
             root_element,
-            ..Default::default()
-        };
-        config.precompute_target_path();
-        Ok(config)
+        })
     }
 
-    /// Populate the precomputed target-path fields from `target`. Called by
-    /// `LogicCompiler` for serde-built configs and by `from_json`.
-    pub(crate) fn precompute_target_path(&mut self) {
-        precompute_target_path(
-            &self.target,
-            &mut self.target_path_arc,
-            &mut self.target_path_parts,
-        );
-    }
-
-    /// Precomputed `(path, parts)` for `data.{target}` — falls back to
-    /// computing on the fly for directly-constructed configs (the test
-    /// surface), mirroring the `MapMapping` fallback pattern.
-    fn resolve_target_path(&self) -> (Arc<str>, Arc<[Arc<str>]>) {
-        resolve_target_path(&self.target, &self.target_path_arc, &self.target_path_parts)
+    /// The write destination for this message, as `(dotted, parts)`.
+    ///
+    /// # Errors
+    ///
+    /// [`DataflowError::LogicEvaluation`] if the expression fails to evaluate.
+    pub(crate) fn resolve_target_path(&self, p: ParamCtx<'_>) -> Result<Cow<'_, ResolvedPath>> {
+        self.target.resolve_in_arena(p)
     }
 
     /// Resolve the source value as a borrow into the message context. The
     /// serializers below only read the value, so no deep clone of the source
     /// subtree is needed — the borrow ends before the context mutation.
     /// Returns `None` when the path doesn't resolve.
-    fn resolve_source<'m>(&self, message: &'m Message) -> Option<&'m OwnedDataValue> {
+    fn resolve_source<'m>(&self, message: &'m Message, source: &str) -> Option<&'m OwnedDataValue> {
         // Direct field in `data` (also matches keys containing literal dots,
         // which the nested walk below would split).
-        if let Some(value) = message.data().get(&self.source) {
+        if let Some(value) = message.data().get(source) {
             return Some(value);
         }
 
         // Nested path inside `data`.
-        if let Some(value) = get_nested_value(message.data(), &self.source) {
+        if let Some(value) = get_nested_value(message.data(), source) {
             return Some(value);
         }
 
         // `data.<path>` shorthand pointing back into `data`.
-        if let Some(path) = self.source.strip_prefix("data.") {
+        if let Some(path) = source.strip_prefix("data.") {
             return get_nested_value(message.data(), path);
         }
 
@@ -159,21 +132,21 @@ impl PublishConfig {
 /// it land" onward is identical.
 fn finish_publish(
     message: &mut Message,
-    config: &PublishConfig,
+    target: &ResolvedPath,
     serialized: String,
 ) -> (TaskOutcome, Vec<Change>) {
-    let (target_path_arc, target_parts) = config.resolve_target_path();
-    let old_value = get_nested_value_parts(&message.context, &target_parts)
+    let (target_path_arc, target_parts) = (&target.0, &*target.1);
+    let old_value = get_nested_value_parts(&message.context, target_parts)
         .cloned()
         .unwrap_or(OwnedDataValue::Null);
     let new_value = OwnedDataValue::String(serialized);
 
-    set_nested_value_parts(&mut message.context, &target_parts, new_value.clone());
+    set_nested_value_parts(&mut message.context, target_parts, new_value.clone());
 
     (
         TaskOutcome::Success,
         vec![Change {
-            path: target_path_arc,
+            path: Arc::clone(target_path_arc),
             old_value,
             new_value,
         }],
@@ -185,20 +158,30 @@ fn finish_publish(
 pub fn execute_publish_json(
     message: &mut Message,
     config: &PublishConfig,
+    engine: &Engine,
 ) -> Result<(TaskOutcome, Vec<Change>)> {
-    debug!(
-        "PublishJson: Serializing 'data.{}' to 'data.{}'",
-        config.source, config.target
-    );
+    with_arena(|arena| {
+        let arena_ctx = ArenaContext::from_owned(&message.context, arena);
+        publish_json_in(message, config, ParamCtx::from_arena(engine, &arena_ctx))
+    })
+}
+
+pub(crate) fn publish_json_in(
+    message: &mut Message,
+    config: &PublishConfig,
+    p: ParamCtx<'_>,
+) -> Result<(TaskOutcome, Vec<Change>)> {
+    let source = config.source.resolve_str_in_arena(p)?;
+    let target = config.resolve_target_path(p)?;
+    debug!("PublishJson: Serializing 'data.{source}' to '{}'", target.0);
 
     // Borrowed resolve — a missing path and an explicit Null both reject,
     // matching the historical extract_source contract.
-    let source_data = match config.resolve_source(message) {
+    let source_data = match config.resolve_source(message, &source) {
         Some(v) if !matches!(v, OwnedDataValue::Null) => v,
         _ => {
             return Err(DataflowError::Validation(format!(
-                "PublishJson: Source 'data.{}' not found or is null",
-                config.source
+                "PublishJson: Source 'data.{source}' not found or is null"
             )));
         }
     };
@@ -216,7 +199,7 @@ pub fn execute_publish_json(
         source_data.to_json_string()
     };
 
-    Ok(finish_publish(message, config, json_string))
+    Ok(finish_publish(message, &target, json_string))
 }
 
 /// Execute `publish_xml`: serialise `data.{source}` to an XML string and
@@ -225,28 +208,39 @@ pub fn execute_publish_json(
 pub fn execute_publish_xml(
     message: &mut Message,
     config: &PublishConfig,
+    engine: &Engine,
 ) -> Result<(TaskOutcome, Vec<Change>)> {
-    debug!(
-        "PublishXml: Serializing 'data.{}' to 'data.{}'",
-        config.source, config.target
-    );
+    with_arena(|arena| {
+        let arena_ctx = ArenaContext::from_owned(&message.context, arena);
+        publish_xml_in(message, config, ParamCtx::from_arena(engine, &arena_ctx))
+    })
+}
+
+pub(crate) fn publish_xml_in(
+    message: &mut Message,
+    config: &PublishConfig,
+    p: ParamCtx<'_>,
+) -> Result<(TaskOutcome, Vec<Change>)> {
+    let source = config.source.resolve_str_in_arena(p)?;
+    let target = config.resolve_target_path(p)?;
+    debug!("PublishXml: Serializing 'data.{source}' to '{}'", target.0);
 
     // Borrowed resolve — same contract as the JSON path: missing and
     // explicit-Null sources both reject, no source deep clone.
-    let source_data = match config.resolve_source(message) {
+    let source_data = match config.resolve_source(message, &source) {
         Some(v) if !matches!(v, OwnedDataValue::Null) => v,
         _ => {
             return Err(DataflowError::Validation(format!(
-                "PublishXml: Source 'data.{}' not found or is null",
-                config.source
+                "PublishXml: Source 'data.{source}' not found or is null"
             )));
         }
     };
 
     let bridge = Value::from(source_data);
-    let xml_string = json_to_xml(&bridge, &config.root_element)?;
+    let root_element = config.root_element.resolve_str_in_arena(p)?;
+    let xml_string = json_to_xml(&bridge, &root_element)?;
 
-    Ok(finish_publish(message, config, xml_string))
+    Ok(finish_publish(message, &target, xml_string))
 }
 
 /// Convert JSON Value to XML string. Recursive walker; same shape as before
@@ -372,6 +366,13 @@ fn sanitize_xml_name(name: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Arc;
+
+    /// The engine parameters are resolved against — the same construction
+    /// production uses, so a test cannot agree with an engine that never runs.
+    fn test_engine() -> Engine {
+        crate::engine::compiler::datalogic_engine_builder().build()
+    }
 
     fn dv(v: serde_json::Value) -> OwnedDataValue {
         OwnedDataValue::from(&v)
@@ -385,10 +386,10 @@ mod tests {
     fn test_publish_config_from_json() {
         let input = json!({"source": "output", "target": "json_string"});
         let config = PublishConfig::from_json(&input).unwrap();
-        assert_eq!(config.source, "output");
-        assert_eq!(config.target, "json_string");
+        assert_eq!(config.source.as_json(), &json!("output"));
+        assert_eq!(config.target.as_json(), &json!("json_string"));
         assert!(!config.pretty);
-        assert_eq!(config.root_element, "root");
+        assert_eq!(config.root_element.as_json(), &json!("root"));
     }
 
     #[test]
@@ -401,10 +402,10 @@ mod tests {
         });
 
         let config = PublishConfig::from_json(&input).unwrap();
-        assert_eq!(config.source, "data");
-        assert_eq!(config.target, "xml_output");
+        assert_eq!(config.source.as_json(), &json!("data"));
+        assert_eq!(config.target.as_json(), &json!("xml_output"));
         assert!(config.pretty);
-        assert_eq!(config.root_element, "document");
+        assert_eq!(config.root_element.as_json(), &json!("document"));
     }
 
     #[test]
@@ -422,14 +423,13 @@ mod tests {
         let mut message = message_with_data(json!({"user": {"name": "John", "age": 30}}));
 
         let config = PublishConfig {
-            source: "user".to_string(),
-            target: "user_json".to_string(),
+            source: Template::from(json!("user")),
+            target: PathTemplate::from("user_json"),
             pretty: false,
-            root_element: "root".to_string(),
-            ..Default::default()
+            root_element: Template::from(json!("root")),
         };
 
-        let result = execute_publish_json(&mut message, &config);
+        let result = execute_publish_json(&mut message, &config, &test_engine());
         assert!(result.is_ok());
 
         let (outcome, changes) = result.unwrap();
@@ -446,14 +446,13 @@ mod tests {
         let mut message = message_with_data(json!({"user": {"name": "Alice"}}));
 
         let config = PublishConfig {
-            source: "user".to_string(),
-            target: "output".to_string(),
+            source: Template::from(json!("user")),
+            target: PathTemplate::from("output"),
             pretty: true,
-            root_element: "root".to_string(),
-            ..Default::default()
+            root_element: Template::from(json!("root")),
         };
 
-        let result = execute_publish_json(&mut message, &config);
+        let result = execute_publish_json(&mut message, &config, &test_engine());
         assert!(result.is_ok());
 
         let json_string = message.data()["output"].as_str().unwrap();
@@ -465,14 +464,13 @@ mod tests {
         let mut message = Message::new(Arc::new(dv(json!({}))));
 
         let config = PublishConfig {
-            source: "nonexistent".to_string(),
-            target: "output".to_string(),
+            source: Template::from(json!("nonexistent")),
+            target: PathTemplate::from("output"),
             pretty: false,
-            root_element: "root".to_string(),
-            ..Default::default()
+            root_element: Template::from(json!("root")),
         };
 
-        assert!(execute_publish_json(&mut message, &config).is_err());
+        assert!(execute_publish_json(&mut message, &config, &test_engine()).is_err());
     }
 
     #[test]
@@ -480,14 +478,13 @@ mod tests {
         let mut message = message_with_data(json!({"user": {"name": "John", "age": 30}}));
 
         let config = PublishConfig {
-            source: "user".to_string(),
-            target: "user_xml".to_string(),
+            source: Template::from(json!("user")),
+            target: PathTemplate::from("user_xml"),
             pretty: false,
-            root_element: "user".to_string(),
-            ..Default::default()
+            root_element: Template::from(json!("user")),
         };
 
-        let result = execute_publish_xml(&mut message, &config);
+        let result = execute_publish_xml(&mut message, &config, &test_engine());
         assert!(result.is_ok());
 
         let (outcome, _) = result.unwrap();
@@ -504,14 +501,13 @@ mod tests {
         let mut message = Message::new(Arc::new(dv(json!({}))));
 
         let config = PublishConfig {
-            source: "nonexistent".to_string(),
-            target: "output".to_string(),
+            source: Template::from(json!("nonexistent")),
+            target: PathTemplate::from("output"),
             pretty: false,
-            root_element: "root".to_string(),
-            ..Default::default()
+            root_element: Template::from(json!("root")),
         };
 
-        assert!(execute_publish_xml(&mut message, &config).is_err());
+        assert!(execute_publish_xml(&mut message, &config, &test_engine()).is_err());
     }
 
     #[test]
@@ -576,14 +572,13 @@ mod tests {
         }));
 
         let config = PublishConfig {
-            source: "response.body".to_string(),
-            target: "output".to_string(),
+            source: Template::from(json!("response.body")),
+            target: PathTemplate::from("output"),
             pretty: false,
-            root_element: "root".to_string(),
-            ..Default::default()
+            root_element: Template::from(json!("root")),
         };
 
-        let result = execute_publish_json(&mut message, &config);
+        let result = execute_publish_json(&mut message, &config, &test_engine());
         assert!(result.is_ok());
 
         let json_string = message.data()["output"].as_str().unwrap();

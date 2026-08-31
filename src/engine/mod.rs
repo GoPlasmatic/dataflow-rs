@@ -248,11 +248,15 @@ impl Engine {
                 secrets::SECRET_OPERATOR
             )));
         }
-        refuse_secret_issues(&workflows, &secrets)?;
         // Compile workflows (sorted by priority at compile time). Each
         // workflow/task/config owns its own `Arc<Logic>` slots — no central
         // cache to return. Any compile failure bubbles up immediately.
+        //
+        // The compiler is built first only to read the operator vocabulary —
+        // the key checks need it. Refusal still runs before compilation, so an
+        // authoring issue is reported ahead of any compile error.
         let compiler = LogicCompiler::with_operators_and_secrets(&datalogic_operators, &secrets);
+        refuse_authoring_issues(&workflows, &secrets)?;
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
 
@@ -337,9 +341,9 @@ impl Engine {
         // Compile new workflows with a fresh datalogic engine instance —
         // re-registering the retained custom operators, so a hot reload keeps
         // the same operator vocabulary as the engine it replaces.
-        refuse_secret_issues(&workflows, &self.secrets)?;
         let compiler =
             LogicCompiler::with_operators_and_secrets(&self.datalogic_operators, &self.secrets);
+        refuse_authoring_issues(&workflows, &self.secrets)?;
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
 
@@ -886,6 +890,30 @@ impl Engine {
             .chain(std::iter::once(secrets::SECRET_OPERATOR))
     }
 
+    /// The prefix that escapes an object key in a JSONLogic template, so the
+    /// key is emitted as data instead of resolving as an operator.
+    ///
+    /// Exactly one leading prefix is stripped from every template key.
+    /// `{"$cat": …}` emits the key `cat`; `{"$$cat": …}` emits the literal
+    /// `$cat`; an unprefixed `{"cat": …}` is still the `cat` operator.
+    ///
+    /// Fixed for the life of the engine and identical on every build — this
+    /// accessor exists so an authoring tool can render or validate the spelling
+    /// without hardcoding it, not because it varies.
+    ///
+    /// This is the companion to [`Self::operator_names`]. That answers *which
+    /// names are live*; this answers *how to opt a key out of being one*.
+    ///
+    /// ```
+    /// use dataflow_rs::Engine;
+    ///
+    /// let engine = Engine::builder().build().unwrap();
+    /// assert_eq!(engine.template_key_escape(), '$');
+    /// ```
+    pub fn template_key_escape(&self) -> char {
+        compiler::TEMPLATE_KEY_ESCAPE
+    }
+
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {
         &self.datalogic
     }
@@ -1255,13 +1283,19 @@ impl EngineBuilder {
     }
 }
 
-/// Fail construction on the first workflow with a secret issue — the same
-/// check `check_workflow` reports, so what builds and what checks clean are
-/// one set. Runs on the authored workflows before compilation; nothing here
-/// needs compiled logic.
-fn refuse_secret_issues(workflows: &[Workflow], secrets: &Secrets) -> Result<()> {
+/// Fail construction on the first workflow with a refusable authoring issue —
+/// a secret an expression may not read, or a template object whose keys
+/// collide. The same checks `check_workflow` reports, so what builds and what
+/// checks clean are one set. Runs on the authored workflows before
+/// compilation; nothing here needs compiled logic.
+///
+/// `check_workflow` additionally reports the two informational template-key
+/// findings; those are deliberately *not* refused, because after a migration a
+/// `$`-escaped key is exactly what the author meant.
+fn refuse_authoring_issues(workflows: &[Workflow], secrets: &Secrets) -> Result<()> {
     for workflow in workflows {
-        let issues = authoring::check_secrets(workflow, secrets);
+        let mut issues = authoring::check_secrets(workflow, secrets);
+        issues.extend(authoring::refusing_template_key_issues(workflow));
         if !issues.is_empty() {
             let listed: Vec<String> = issues.iter().map(ToString::to_string).collect();
             return Err(DataflowError::Validation(format!(

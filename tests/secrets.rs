@@ -438,10 +438,7 @@ fn an_undeclared_literal_key_is_reported_wherever_an_expression_lives() {
                 "function.input.headers.Authorization".to_string(),
                 Some("custom".to_string())
             ),
-            (
-                "function.input.path_logic".to_string(),
-                Some("call".to_string())
-            ),
+            ("function.input.path".to_string(), Some("call".to_string())),
             (
                 "function.input.rules[0].logic".to_string(),
                 Some("gated".to_string())
@@ -634,5 +631,134 @@ async fn a_secret_read_everywhere_it_may_be_read_appears_in_nothing_the_engine_r
     assert!(
         recorded[0].contains("mapping_contexts"),
         "the test must be exercising the mapping-context clones"
+    );
+}
+
+// =============================================================================
+// Sink classification for the parameters that became JSONLogic in 3.9
+// =============================================================================
+//
+// Every newly-expression parameter is a new place a secret could be read, and
+// each needs the right verdict. Getting one wrong either blocks the intended
+// use (a token in an `Authorization` header) or leaks a secret into something
+// the engine records. These enumerate both directions.
+
+/// A one-task workflow whose `function` is `function`.
+fn task_wf(function: Value) -> Workflow {
+    workflow(json!({
+        "id": "w", "name": "w", "priority": 0,
+        "tasks": [{ "id": "t", "name": "t", "function": function }]
+    }))
+}
+
+/// The issue codes `check_workflow` reports for a one-task workflow, against a
+/// builder with the shared store and a handler for every integration name.
+fn verdict(function: Value) -> Vec<IssueCode> {
+    Engine::builder()
+        .with_secrets_json(&secrets())
+        .register("http_call", common::LoggingTask)
+        .register("enrich", common::LoggingTask)
+        .register("publish_kafka", common::LoggingTask)
+        .check_workflow(&task_wf(function))
+        .iter()
+        .map(|i| i.code)
+        .collect()
+}
+
+#[test]
+fn handler_bound_parameters_may_read_a_secret() {
+    // The point of making these expressions: a signing key or bearer token
+    // reaching a handler without ever entering the message.
+    let allowed = [
+        json!({"name": "http_call", "input": {
+            "connector": "c",
+            "headers": {"Authorization": {"cat": ["Bearer ", {"secret": "partner_key"}]}}
+        }}),
+        json!({"name": "http_call", "input": {
+            "connector": "c", "path": {"cat": ["/x/", {"secret": "partner_key"}]}
+        }}),
+        json!({"name": "http_call", "input": {
+            "connector": "c", "body": {"token": {"secret": "partner_key"}}
+        }}),
+        json!({"name": "http_call", "input": {"connector": {"secret": "partner_key"}}}),
+        json!({"name": "enrich", "input": {
+            "connector": "c", "merge_path": "data.out",
+            "path": {"cat": ["/x/", {"secret": "partner_key"}]}
+        }}),
+        json!({"name": "publish_kafka", "input": {
+            "connector": "c", "topic": {"cat": ["t.", {"secret": "partner_key"}]}
+        }}),
+    ];
+
+    for function in allowed {
+        let codes = verdict(function.clone());
+        assert!(
+            !codes.contains(&IssueCode::SecretInMessageWrite),
+            "a handler-bound parameter must accept a secret, got {codes:?} for {function}"
+        );
+    }
+}
+
+#[test]
+fn parameters_the_engine_records_may_not_read_a_secret() {
+    // Each of these ends up somewhere the engine serializes: a validation
+    // message in `Message::errors`, a map destination in `Change.path` and the
+    // audit trail, a parse/publish path likewise, and an XML root element in
+    // the document written to `data.{target}`.
+    let refused = [
+        json!({"name": "validation", "input": {"rules": [
+            {"logic": true, "message": {"cat": ["bad ", {"secret": "partner_key"}]}}
+        ]}}),
+        json!({"name": "map", "input": {"mappings": [
+            {"path": {"cat": ["data.", {"secret": "partner_key"}]}, "logic": 1}
+        ]}}),
+        json!({"name": "parse_json", "input": {
+            "source": "payload", "target": {"secret": "partner_key"}
+        }}),
+        json!({"name": "publish_xml", "input": {
+            "source": "d", "target": "x", "root_element": {"secret": "partner_key"}
+        }}),
+    ];
+
+    for function in refused {
+        let codes = verdict(function.clone());
+        assert!(
+            codes.contains(&IssueCode::SecretInMessageWrite),
+            "a recorded parameter must refuse a secret, got {codes:?} for {function}"
+        );
+    }
+}
+
+#[test]
+fn a_recorded_parameter_reading_a_secret_fails_build() {
+    // `check_workflow` and `build()` must agree — a refusal that only the
+    // checker reports would let the leak through.
+    let err = Engine::builder()
+        .with_secrets_json(&secrets())
+        .with_workflow(task_wf(json!({"name": "map", "input": {"mappings": [
+            {"path": {"cat": ["data.", {"secret": "partner_key"}]}, "logic": 1}
+        ]}})))
+        .build()
+        .err()
+        .expect("build must refuse a secret in a recorded parameter");
+    assert!(err.to_string().contains("mappings[0].path"), "{err}");
+}
+
+#[test]
+fn an_escaped_secret_key_is_a_literal_object_not_a_read() {
+    // `{"$secret": …}` is data — the escape stops the key resolving as the
+    // operator. The reference detector matches source text, so it must not see
+    // one here. Pinned because a refactor that stripped the prefix before
+    // matching would turn every escaped literal into a false refusal.
+    let codes = verdict(json!({"name": "map", "input": {"mappings": [
+        {"path": "data.out", "logic": {"$secret": "partner_key"}}
+    ]}}));
+    assert!(
+        !codes.contains(&IssueCode::SecretInMessageWrite),
+        "an escaped key is a literal, not a secret read: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&IssueCode::UnknownSecret),
+        "an escaped key names no secret: {codes:?}"
     );
 }

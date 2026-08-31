@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "3.8.0"
+version = "3.9.0"
 edition = "2024"
 rust-version = "1.85"
 # Allowlist of what ships in the published .crate: the library, its examples
@@ -54,7 +54,8 @@ default = []
 # Off by default, and enabling one is *not* a no-op for existing workflows: this
 # crate always runs datalogic in templating mode, where an unknown operator name
 # passes through as literal data. A `{"length": ...}` value that used to survive
-# a `map` mapping intact starts evaluating instead. `datetime` goes further and
+# a `map` mapping intact starts evaluating instead — write `{"$length": ...}` to
+# pin the literal reading whatever is enabled. `datetime` goes further and
 # changes `==` and the ordering operators on plain date-shaped strings. Enable
 # only the families your rules actually use.
 datetime = ["datalogic-rs/datetime"]
@@ -94,10 +95,10 @@ wasm-web = ["chrono/wasmbind", "uuid/js", "datalogic-rs/wasm-clock"]
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-datalogic-rs = { version = "5.3", features = ["serde_json", "templating"] }
+datalogic-rs = { version = "5.4", features = ["serde_json", "templating"] }
 datavalue = { package = "datavalue-rs", version = "0.2.3", features = ["serde", "serde_json"] }
 bumpalo = "3.20"
-uuid = { version = "1.25", default-features = false, features = ["v7", "std"] }
+uuid = { version = "1.26", default-features = false, features = ["v7", "std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 thiserror = "2.0"
 log = "0.4"
@@ -124,7 +125,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # `getrandom` syscall per `Uuid::now_v7()` — appropriate for v7 ids
 # (uniqueness, not secrecy). Native-only; features are additive per-target,
 # so the wasm build keeps the lean `v7`+`std` set from the main table.
-uuid = { version = "1.25", default-features = false, features = ["fast-rng"] }
+uuid = { version = "1.26", default-features = false, features = ["fast-rng"] }
 
 # Native release profile: maximize throughput. `lto = "fat"` plus
 # `codegen-units = 1` lets the compiler propagate inlining across crate

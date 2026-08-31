@@ -11,102 +11,92 @@
 //! - `"<path>"` — anything else is resolved against the full context
 
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::executor::ArenaContext;
+use crate::engine::executor::{ArenaContext, with_arena};
+use crate::engine::functions::path_template::{DataRoot, ParamCtx, PathTemplate, ResolvedPath};
+use crate::engine::functions::template::Template;
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::utils::{
-    get_nested_value, get_nested_value_parts, precompute_target_path, resolve_target_path,
-    set_nested_value_parts,
-};
+use crate::engine::utils::{get_nested_value, get_nested_value_parts, set_nested_value_parts};
+use datalogic_rs::Engine;
 use datavalue::OwnedDataValue;
 use log::debug;
 use serde::Deserialize;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Configuration for parse functions.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ParseConfig {
-    /// Source path to read from.
-    pub source: String,
+    /// Source location to read from — `"payload"`, `"payload.<path>"`,
+    /// `"data.<path>"`, or a bare context path.
+    ///
+    /// JSONLogic, so the location can be computed:
+    /// `{"cat": ["data.batches.", {"var": "temp_data.i"}]}`. It resolves to the
+    /// *name* of a location, never to the value at one — `payload` is not in
+    /// the JSONLogic evaluation context, so an expression could not read it
+    /// even if it tried. Read it through [`Self::resolve_source`].
+    pub source: Template,
 
     /// Target field name in `data` (stored at `data.{target}`).
-    pub target: String,
-
-    /// Engine-internal: precomputed `"data.{target}"`, populated by
-    /// `LogicCompiler` (and eagerly by [`Self::from_json`]). Cloned
-    /// (refcount bump) into `Change.path` instead of re-allocating per
-    /// call. Not part of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub target_path_arc: Arc<str>,
-
-    /// Engine-internal: pre-split segments of the target path, consumed by
-    /// the `*_parts` tree walkers so the hot path never re-splits. Not part
-    /// of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub target_path_parts: Arc<[Arc<str>]>,
+    ///
+    /// JSONLogic. A literal folds at compile time and keeps the precomputed
+    /// split this always had.
+    pub target: PathTemplate<DataRoot>,
 }
 
 impl ParseConfig {
     pub fn from_json(input: &Value) -> Result<Self> {
-        let source = input
-            .get("source")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                DataflowError::Validation("Missing 'source' in parse config".to_string())
-            })?
-            .to_string();
+        let source = input.get("source").cloned().ok_or_else(|| {
+            DataflowError::Validation("Missing 'source' in parse config".to_string())
+        })?;
 
-        let target = input
-            .get("target")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                DataflowError::Validation("Missing 'target' in parse config".to_string())
-            })?
-            .to_string();
+        let target = input.get("target").cloned().ok_or_else(|| {
+            DataflowError::Validation("Missing 'target' in parse config".to_string())
+        })?;
 
-        let mut config = ParseConfig {
-            source,
-            target,
-            ..Default::default()
-        };
-        config.precompute_target_path();
-        Ok(config)
+        Ok(ParseConfig {
+            source: Template::from(source),
+            target: PathTemplate::from(target),
+        })
     }
 
-    /// Populate the precomputed target-path fields from `target`. Called by
-    /// `LogicCompiler` for serde-built configs and by `from_json`.
-    pub(crate) fn precompute_target_path(&mut self) {
-        precompute_target_path(
-            &self.target,
-            &mut self.target_path_arc,
-            &mut self.target_path_parts,
-        );
+    /// The source location for this message.
+    ///
+    /// # Errors
+    ///
+    /// [`DataflowError::LogicEvaluation`] if the expression fails to evaluate.
+    pub(crate) fn resolve_source(&self, p: ParamCtx<'_>) -> Result<Cow<'_, str>> {
+        self.source.resolve_str_in_arena(p)
     }
 
-    /// Precomputed `(path, parts)` for `data.{target}` — falls back to
-    /// computing on the fly for directly-constructed configs (the test
-    /// surface), mirroring the `MapMapping` fallback pattern.
-    fn resolve_target_path(&self) -> (Arc<str>, Arc<[Arc<str>]>) {
-        resolve_target_path(&self.target, &self.target_path_arc, &self.target_path_parts)
+    /// The write destination for this message, as `(dotted, parts)`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::resolve_source`].
+    pub(crate) fn resolve_target_path(&self, p: ParamCtx<'_>) -> Result<Cow<'_, ResolvedPath>> {
+        self.target.resolve_in_arena(p)
     }
 
-    /// Extract the source value as an owned `OwnedDataValue`.
-    fn extract_source(&self, message: &Message) -> OwnedDataValue {
-        if self.source == "payload" {
+    /// Extract the value at `source` as an owned `OwnedDataValue`.
+    ///
+    /// `payload` is reachable here and nowhere else: it is a separate field on
+    /// `Message`, not part of the JSONLogic evaluation context, so this
+    /// dispatch on the *resolved name* is the only way to read it.
+    fn extract_source(&self, message: &Message, source: &str) -> OwnedDataValue {
+        if source == "payload" {
             (*message.payload).clone()
-        } else if let Some(path) = self.source.strip_prefix("payload.") {
+        } else if let Some(path) = source.strip_prefix("payload.") {
             get_nested_value(&message.payload, path)
                 .cloned()
                 .unwrap_or(OwnedDataValue::Null)
-        } else if let Some(path) = self.source.strip_prefix("data.") {
+        } else if let Some(path) = source.strip_prefix("data.") {
             get_nested_value(message.data(), path)
                 .cloned()
                 .unwrap_or(OwnedDataValue::Null)
         } else {
-            get_nested_value(&message.context, &self.source)
+            get_nested_value(&message.context, source)
                 .cloned()
                 .unwrap_or(OwnedDataValue::Null)
         }
@@ -119,45 +109,55 @@ impl ParseConfig {
 pub fn execute_parse_json(
     message: &mut Message,
     config: &ParseConfig,
+    engine: &Engine,
 ) -> Result<(TaskOutcome, Vec<Change>)> {
-    debug!(
-        "ParseJson: Extracting from '{}' to 'data.{}'",
-        config.source, config.target
-    );
+    // Opens its own arena, as `MapConfig::execute` does — this entry point is
+    // for callers outside a workflow sync stretch. Inside one,
+    // `execute_parse_json_in_arena` reuses the stretch's context instead.
+    with_arena(|arena| {
+        let arena_ctx = ArenaContext::from_owned(&message.context, arena);
+        parse_json_in(message, config, ParamCtx::from_arena(engine, &arena_ctx))
+    })
+}
 
-    let (target_path_arc, target_parts) = config.resolve_target_path();
+fn parse_json_in(
+    message: &mut Message,
+    config: &ParseConfig,
+    p: ParamCtx<'_>,
+) -> Result<(TaskOutcome, Vec<Change>)> {
+    let source = config.resolve_source(p)?;
+    let target = config.resolve_target_path(p)?;
+    let (target_path_arc, target_parts) = (&target.0, &*target.1);
+    debug!("ParseJson: Extracting from '{source}' to '{target_path_arc}'");
 
     // Hot path: source == "payload" and not a JSON-string payload. The
     // payload Arc is already on the message; clone-into-context once, reuse
     // the Arc for the audit entry (refcount bump). This is the realistic
     // benchmark's exact shape.
     let payload_fast_path =
-        config.source == "payload" && !matches!(*message.payload, OwnedDataValue::String(_));
+        source == "payload" && !matches!(*message.payload, OwnedDataValue::String(_));
 
     if message.capture_changes {
-        let old_value = get_nested_value_parts(&message.context, &target_parts)
+        let old_value = get_nested_value_parts(&message.context, target_parts)
             .cloned()
             .unwrap_or(OwnedDataValue::Null);
 
         // Resolve the source value once. For the payload fast-path we clone
         // out of the shared `Arc<OwnedDataValue>` payload; for the slow path
         // we extract from a sub-tree and re-parse JSON-string payloads.
-        let source_data = resolve_parsed_source(config, message, payload_fast_path);
+        let source_data = resolve_parsed_source(config, message, &source, payload_fast_path);
 
         // Clone the source value once for the audit `new_value`; the original
         // is moved into the context below. (No `Arc` wrapping in the audit
         // entry — `Change` owns its values directly.)
         let new_value = source_data.clone();
 
-        set_nested_value_parts(&mut message.context, &target_parts, source_data);
-        debug!(
-            "ParseJson: Successfully stored data to 'data.{}'",
-            config.target
-        );
+        set_nested_value_parts(&mut message.context, target_parts, source_data);
+        debug!("ParseJson: Successfully stored data to '{target_path_arc}'");
         return Ok((
             TaskOutcome::Success,
             vec![Change {
-                path: target_path_arc,
+                path: Arc::clone(target_path_arc),
                 old_value,
                 new_value,
             }],
@@ -165,13 +165,11 @@ pub fn execute_parse_json(
     }
 
     // Audit-off fast path: only the deep clone into the context survives.
-    let source_data_for_context = resolve_parsed_source(config, message, payload_fast_path);
-    set_nested_value_parts(&mut message.context, &target_parts, source_data_for_context);
+    let source_data_for_context =
+        resolve_parsed_source(config, message, &source, payload_fast_path);
+    set_nested_value_parts(&mut message.context, target_parts, source_data_for_context);
 
-    debug!(
-        "ParseJson: Successfully stored data to 'data.{}'",
-        config.target
-    );
+    debug!("ParseJson: Successfully stored data to '{target_path_arc}'");
 
     Ok((TaskOutcome::Success, Vec::new()))
 }
@@ -183,12 +181,13 @@ pub fn execute_parse_json(
 fn resolve_parsed_source(
     config: &ParseConfig,
     message: &Message,
+    source: &str,
     payload_fast_path: bool,
 ) -> OwnedDataValue {
     if payload_fast_path {
         (*message.payload).clone()
     } else {
-        let raw = config.extract_source(message);
+        let raw = config.extract_source(message, source);
         match &raw {
             OwnedDataValue::String(s) => {
                 OwnedDataValue::from_json(s).unwrap_or_else(|_| raw.clone())
@@ -201,18 +200,21 @@ fn resolve_parsed_source(
 /// Same as `execute_parse_json` but also refreshes the supplied
 /// `ArenaContext` so subsequent sync tasks in the same workflow stretch see
 /// the written `data.<target>` slot without rebuilding the whole arena form.
-pub(crate) fn execute_parse_json_in_arena(
+pub(crate) fn execute_parse_json_in_arena<'a>(
     message: &mut Message,
     config: &ParseConfig,
-    arena_ctx: &mut ArenaContext<'_>,
+    engine: &datalogic_rs::Engine,
+    arena_ctx: &mut ArenaContext<'a>,
 ) -> Result<(TaskOutcome, Vec<Change>)> {
-    let result = execute_parse_json(message, config)?;
+    let p = ParamCtx::from_arena(engine, arena_ctx);
+    let result = parse_json_in(message, config, p)?;
     // Refresh ONLY the affected depth-2 slot in the arena cache. For
     // source == "payload" target = "input", this is `data.input` — the
     // heavy slot — but it's re-arena'd exactly once per workflow stretch
     // here, not once per subsequent map mapping.
-    let (_, target_parts) = config.resolve_target_path();
-    arena_ctx.refresh_for_path_parts(&message.context, &target_parts);
+    let target = config.resolve_target_path(p)?;
+    let target_parts = &*target.1;
+    arena_ctx.refresh_for_path_parts(&message.context, target_parts);
     Ok(result)
 }
 
@@ -222,20 +224,28 @@ pub(crate) fn execute_parse_json_in_arena(
 pub fn execute_parse_xml(
     message: &mut Message,
     config: &ParseConfig,
+    engine: &Engine,
 ) -> Result<(TaskOutcome, Vec<Change>)> {
-    debug!(
-        "ParseXml: Extracting from '{}' to 'data.{}'",
-        config.source, config.target
-    );
+    with_arena(|arena| {
+        let arena_ctx = ArenaContext::from_owned(&message.context, arena);
+        parse_xml_in(message, config, ParamCtx::from_arena(engine, &arena_ctx))
+    })
+}
 
-    let source_data = config.extract_source(message);
+pub(crate) fn parse_xml_in(
+    message: &mut Message,
+    config: &ParseConfig,
+    p: ParamCtx<'_>,
+) -> Result<(TaskOutcome, Vec<Change>)> {
+    let source = config.resolve_source(p)?;
+    debug!("ParseXml: Extracting from '{source}'");
+    let source_data = config.extract_source(message, &source);
 
     let xml_string = match &source_data {
         OwnedDataValue::String(s) => s.clone(),
         _ => {
             return Err(DataflowError::Validation(format!(
-                "ParseXml: Source '{}' is not a string",
-                config.source
+                "ParseXml: Source '{source}' is not a string"
             )));
         }
     };
@@ -243,22 +253,20 @@ pub fn execute_parse_xml(
     let parsed_json = xml_to_json(&xml_string)?;
     let parsed_owned = OwnedDataValue::from(&parsed_json);
 
-    let (target_path_arc, target_parts) = config.resolve_target_path();
-    let old_value = get_nested_value_parts(&message.context, &target_parts)
+    let target = config.resolve_target_path(p)?;
+    let (target_path_arc, target_parts) = (&target.0, &*target.1);
+    let old_value = get_nested_value_parts(&message.context, target_parts)
         .cloned()
         .unwrap_or(OwnedDataValue::Null);
 
-    set_nested_value_parts(&mut message.context, &target_parts, parsed_owned.clone());
+    set_nested_value_parts(&mut message.context, target_parts, parsed_owned.clone());
 
-    debug!(
-        "ParseXml: Successfully parsed and stored XML to 'data.{}'",
-        config.target
-    );
+    debug!("ParseXml: Successfully parsed and stored XML to '{target_path_arc}'");
 
     Ok((
         TaskOutcome::Success,
         vec![Change {
-            path: target_path_arc,
+            path: Arc::clone(target_path_arc),
             old_value,
             new_value: parsed_owned,
         }],
@@ -280,6 +288,13 @@ mod tests {
     use super::*;
     use crate::engine::utils::set_nested_value;
     use serde_json::json;
+    use std::sync::Arc;
+
+    /// The engine parameters are resolved against — the same construction
+    /// production uses, so a test cannot agree with an engine that never runs.
+    fn test_engine() -> Engine {
+        crate::engine::compiler::datalogic_engine_builder().build()
+    }
 
     fn dv(v: serde_json::Value) -> OwnedDataValue {
         OwnedDataValue::from(&v)
@@ -289,8 +304,8 @@ mod tests {
     fn test_parse_config_from_json() {
         let input = json!({"source": "payload", "target": "input_data"});
         let config = ParseConfig::from_json(&input).unwrap();
-        assert_eq!(config.source, "payload");
-        assert_eq!(config.target, "input_data");
+        assert_eq!(config.source.as_json(), &json!("payload"));
+        assert_eq!(config.target.as_json(), &json!("input_data"));
     }
 
     #[test]
@@ -309,12 +324,11 @@ mod tests {
         let mut message = Message::from_value(&payload);
 
         let config = ParseConfig {
-            source: "payload".to_string(),
-            target: "input".to_string(),
-            ..Default::default()
+            source: Template::from(json!("payload")),
+            target: PathTemplate::from("input"),
         };
 
-        let result = execute_parse_json(&mut message, &config);
+        let result = execute_parse_json(&mut message, &config, &test_engine());
         assert!(result.is_ok());
 
         let (outcome, changes) = result.unwrap();
@@ -332,12 +346,11 @@ mod tests {
         let mut message = Message::from_value(&payload);
 
         let config = ParseConfig {
-            source: "payload.body.user".to_string(),
-            target: "user_data".to_string(),
-            ..Default::default()
+            source: Template::from(json!("payload.body.user")),
+            target: PathTemplate::from("user_data"),
         };
 
-        let result = execute_parse_json(&mut message, &config);
+        let result = execute_parse_json(&mut message, &config, &test_engine());
         assert!(result.is_ok());
 
         let (outcome, _) = result.unwrap();
@@ -355,12 +368,11 @@ mod tests {
         );
 
         let config = ParseConfig {
-            source: "data.existing".to_string(),
-            target: "copied".to_string(),
-            ..Default::default()
+            source: Template::from(json!("data.existing")),
+            target: PathTemplate::from("copied"),
         };
 
-        let result = execute_parse_json(&mut message, &config);
+        let result = execute_parse_json(&mut message, &config, &test_engine());
         assert!(result.is_ok());
 
         assert_eq!(message.data()["copied"]["value"], dv(json!(42)));
@@ -372,12 +384,11 @@ mod tests {
         let mut message = Message::from_value(&xml_payload);
 
         let config = ParseConfig {
-            source: "payload".to_string(),
-            target: "parsed".to_string(),
-            ..Default::default()
+            source: Template::from(json!("payload")),
+            target: PathTemplate::from("parsed"),
         };
 
-        let result = execute_parse_xml(&mut message, &config);
+        let result = execute_parse_xml(&mut message, &config, &test_engine());
         assert!(result.is_ok());
 
         let (outcome, _) = result.unwrap();
@@ -393,12 +404,11 @@ mod tests {
         let mut message = Message::from_value(&payload);
 
         let config = ParseConfig {
-            source: "payload".to_string(),
-            target: "parsed".to_string(),
-            ..Default::default()
+            source: Template::from(json!("payload")),
+            target: PathTemplate::from("parsed"),
         };
 
-        assert!(execute_parse_xml(&mut message, &config).is_err());
+        assert!(execute_parse_xml(&mut message, &config, &test_engine()).is_err());
     }
 
     #[test]
@@ -437,12 +447,11 @@ mod tests {
         let mut message = Message::from_value(&payload);
 
         let config = ParseConfig {
-            source: "payload".to_string(),
-            target: "input".to_string(),
-            ..Default::default()
+            source: Template::from(json!("payload")),
+            target: PathTemplate::from("input"),
         };
 
-        let result = execute_parse_json(&mut message, &config);
+        let result = execute_parse_json(&mut message, &config, &test_engine());
         assert!(result.is_ok());
 
         let (outcome, _) = result.unwrap();

@@ -227,10 +227,11 @@ pub mod prelude;
 pub use engine::authoring::{IssueCode, WorkflowIssue};
 pub use engine::error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use engine::functions::{
-    AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind,
-    DispatchableFunction, EnrichConfig, FilterConfig, FunctionConfig, HttpCallConfig, HttpMethod,
-    LogConfig, MapConfig, MapMapping, PublishKafkaConfig, Template, TemplateCompiler,
-    ValidationConfig, ValidationRule, builtin_function_kind, is_builtin_function,
+    AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind, ConnectorName,
+    ContextRoot, DataRoot, DispatchableFunction, EnrichConfig, FilterConfig, FunctionConfig,
+    HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping, PathRoot, PathTemplate,
+    PublishKafkaConfig, Template, TemplateCompiler, ValidationConfig, ValidationRule,
+    builtin_function_kind, is_builtin_function,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine::retry::{RetryPolicy, retry_with_attempts, retry_with_policy};
@@ -291,9 +292,11 @@ pub use engine::{
 ///   always runs `datalogic-rs` in templating mode, where an unrecognised
 ///   operator name is not an error — the object echoes back verbatim. So a
 ///   `{"length": …}` value that used to pass through a `map` mapping as literal
-///   data starts *evaluating* once `ext-string` is on. `datetime` goes further
-///   and changes core operators: with it enabled, `==` and the ordering
-///   operators parse plain date-shaped strings as instants, so
+///   data starts *evaluating* once `ext-string` is on. Writing it as
+///   `{"$length": …}` pins the literal reading whatever families are enabled —
+///   see [`Engine::template_key_escape`]. `datetime` goes further and changes
+///   core operators: with it enabled, `==` and the ordering operators parse
+///   plain date-shaped strings as instants, so
 ///   `{"==": ["2024-01-15T00:00:00Z", "2024-01-15T01:00:00+01:00"]}` is `true`
 ///   rather than `false`. Enable only the families your rules use.
 ///

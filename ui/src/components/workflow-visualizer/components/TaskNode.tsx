@@ -5,6 +5,7 @@ import { useTaskDebugState, useTaskConditionDebugState, useMappingDebugState, us
 import { TreeNode } from './TreeNode';
 import { TREE_COLORS } from './colors';
 import { NODE_IDS } from '../constants';
+import { describeMappingPath } from '../../../utils/dataUtils';
 
 interface TaskNodeProps {
   task: Task;
@@ -33,7 +34,7 @@ function MappingTreeNode({ mapping, index, task, workflow, level, selection, onS
 
   return (
     <TreeNode
-      label={mapping.path}
+      label={describeMappingPath(mapping.path)}
       icon={<ArrowRightLeft size={14} />}
       iconColor={TREE_COLORS.mapping}
       level={level}

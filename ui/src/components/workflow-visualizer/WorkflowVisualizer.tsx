@@ -10,6 +10,7 @@ import { LAYOUT } from './constants';
 import type { Theme } from './context';
 
 import './styles/index.css';
+import { describeMappingPath } from '../../utils/dataUtils';
 
 // Extended selection types for tree view
 export type TreeSelectionType =
@@ -78,7 +79,7 @@ function getSelectionInfo(selection: TreeSelectionType): { title: string; subtit
       };
     case 'mapping':
       return {
-        title: selection.mapping.path,
+        title: describeMappingPath(selection.mapping.path),
         subtitle: `${selection.workflow.name} / ${selection.task.name}`,
       };
     case 'validation-rule':

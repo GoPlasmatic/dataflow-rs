@@ -102,16 +102,20 @@ impl TaskExecutor {
             FunctionConfig::Map { input, .. } => input.execute(message, &self.engine),
             FunctionConfig::Validation { input, .. } => input.execute(message, &self.engine),
             FunctionConfig::ParseJson { input, .. } => {
-                crate::engine::functions::parse::execute_parse_json(message, input)
+                crate::engine::functions::parse::execute_parse_json(message, input, &self.engine)
             }
             FunctionConfig::ParseXml { input, .. } => {
-                crate::engine::functions::parse::execute_parse_xml(message, input)
+                crate::engine::functions::parse::execute_parse_xml(message, input, &self.engine)
             }
             FunctionConfig::PublishJson { input, .. } => {
-                crate::engine::functions::publish::execute_publish_json(message, input)
+                crate::engine::functions::publish::execute_publish_json(
+                    message,
+                    input,
+                    &self.engine,
+                )
             }
             FunctionConfig::PublishXml { input, .. } => {
-                crate::engine::functions::publish::execute_publish_xml(message, input)
+                crate::engine::functions::publish::execute_publish_xml(message, input, &self.engine)
             }
             FunctionConfig::Filter { input, .. } => input.execute(message, &self.engine),
             FunctionConfig::Log { input, .. } => input.execute(message, &self.engine),

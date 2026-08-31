@@ -15,6 +15,7 @@
 
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::{ArenaContext, with_arena};
+use crate::engine::functions::path_template::{ContextRoot, ParamCtx, PathTemplate};
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::utils::{get_nested_value_parts, set_nested_value_parts};
@@ -35,9 +36,16 @@ pub struct MapConfig {
 /// A single mapping that transforms and assigns data.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct MapMapping {
-    /// Target path where the result will be stored (e.g., "data.user.name").
-    /// Supports dot notation for nested paths and `#` prefix for numeric field names.
-    pub path: String,
+    /// Target path where the result will be stored (e.g., `"data.user.name"`).
+    /// Supports dot notation for nested paths and `#` prefix for numeric field
+    /// names.
+    ///
+    /// JSONLogic, so a mapping can compute where it writes:
+    /// `{"cat": ["data.accounts.", {"var": "data.id"}, ".balance"]}`. The
+    /// static spelling is a literal string, which folds at compile time and
+    /// keeps the precomputed split this hot loop has always used — a dynamic
+    /// path is the only one that pays to split per write.
+    pub path: PathTemplate<ContextRoot>,
 
     /// JSONLogic expression (kept as `serde_json::Value` since this is the
     /// shape the compiler accepts; not runtime data).
@@ -49,23 +57,21 @@ pub struct MapMapping {
     #[doc(hidden)]
     #[serde(skip)]
     pub compiled_logic: Option<Arc<Logic>>,
+}
 
-    /// Engine-internal: `Arc<str>` mirror of `path`, populated by
-    /// `LogicCompiler`. Cloned (refcount bump) into `Change.path` per audit
-    /// emission so the hot path avoids `Arc::from(&path)` allocations.
-    /// Not part of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub path_arc: Arc<str>,
-
-    /// Engine-internal: pre-split path segments (with the `#`-prefix escape
-    /// already applied, matching `utils::strip_hash_prefix`). Populated by
-    /// `LogicCompiler`. The hot path consumes this directly instead of running
-    /// `path.split('.')` — saves ~3% on `CharSearcher::next_match` per the
-    /// flamegraph. Not part of the stable API.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub path_parts: Arc<[Arc<str>]>,
+impl MapMapping {
+    /// How to name this mapping's destination in a log line or error, without a
+    /// message in hand.
+    ///
+    /// A constant path is its dotted form. A computed one has no single answer
+    /// before evaluation, so it is named by the expression that produces it —
+    /// which is what an author would search their workflow for.
+    pub(crate) fn describe_path(&self) -> String {
+        self.path
+            .constant_path()
+            .map(str::to_string)
+            .unwrap_or_else(|| self.path.as_json().to_string())
+    }
 }
 
 impl MapConfig {
@@ -84,9 +90,8 @@ impl MapConfig {
         for mapping in mappings_arr {
             let path = mapping
                 .get("path")
-                .and_then(Value::as_str)
                 .ok_or_else(|| DataflowError::Validation("Missing 'path' in mapping".to_string()))?
-                .to_string();
+                .clone();
 
             let logic = mapping
                 .get("logic")
@@ -94,9 +99,7 @@ impl MapConfig {
                 .clone();
 
             parsed_mappings.push(MapMapping {
-                path_arc: Arc::from(path.as_str()),
-                path_parts: Arc::from(Vec::<Arc<str>>::new().into_boxed_slice()),
-                path,
+                path: PathTemplate::from(path),
                 logic,
                 compiled_logic: None,
             });
@@ -159,7 +162,7 @@ impl MapConfig {
 
         let arena = arena_ctx.arena();
         for mapping in &self.mappings {
-            debug!("Processing mapping to path: {}", mapping.path);
+            debug!("Processing mapping to path: {}", mapping.describe_path());
 
             // Trace mode: snapshot the context as a serde_json::Value *before*
             // applying this mapping. Bridge cost is acceptable on the debug
@@ -175,7 +178,10 @@ impl MapConfig {
             let compiled_logic = match &mapping.compiled_logic {
                 Some(logic) => logic,
                 None => {
-                    error!("Map: Logic not compiled for mapping to {}", mapping.path);
+                    error!(
+                        "Map: Logic not compiled for mapping to {}",
+                        mapping.describe_path()
+                    );
                     errors_encountered = true;
                     continue;
                 }
@@ -187,7 +193,8 @@ impl MapConfig {
                 Err(e) => {
                     error!(
                         "Map: Error evaluating logic for path {}: {:?}",
-                        mapping.path, e
+                        mapping.describe_path(),
+                        e
                     );
                     errors_encountered = true;
                     continue;
@@ -197,33 +204,39 @@ impl MapConfig {
             let transformed_value = result_av.to_owned();
             debug!(
                 "Map: Evaluated logic for path {} resulted in: {:?}",
-                mapping.path, transformed_value
+                mapping.describe_path(),
+                transformed_value
             );
 
             if matches!(transformed_value, OwnedDataValue::Null) {
                 debug!(
                     "Map: Skipping mapping for path {} as result is null",
-                    mapping.path
+                    mapping.describe_path()
                 );
                 continue;
             }
 
-            // Compiler populates `path_parts`. For callers that build a
-            // `MapConfig` directly (the test surface and a few in-tree
-            // helpers) fall back to splitting on the fly — same semantics,
-            // one extra allocation per mapping per call.
-            let fallback_parts: Vec<Arc<str>>;
-            let parts: &[Arc<str>] = if mapping.path_parts.is_empty() && !mapping.path.is_empty() {
-                fallback_parts = mapping.path.split('.').map(Arc::from).collect();
-                &fallback_parts
-            } else {
-                &mapping.path_parts
+            // Where this mapping writes. A constant path — the static
+            // spelling, and the overwhelmingly common case — hands back the
+            // pair precomputed at engine construction as two refcount bumps;
+            // only a computed path splits here. Resolved *after* the logic so
+            // a dynamic destination sees the same context the value did.
+            let resolved = match mapping
+                .path
+                .resolve_in_arena(ParamCtx::new(engine, ctx_av, arena))
+            {
+                Ok(pair) => pair,
+                Err(e) => {
+                    error!(
+                        "Map: Error resolving destination path {}: {:?}",
+                        mapping.describe_path(),
+                        e
+                    );
+                    errors_encountered = true;
+                    continue;
+                }
             };
-            let path_arc: Arc<str> = if mapping.path_arc.is_empty() && !mapping.path.is_empty() {
-                Arc::from(mapping.path.as_str())
-            } else {
-                Arc::clone(&mapping.path_arc)
-            };
+            let (path_arc, parts) = (&resolved.0, &*resolved.1);
 
             if message.capture_changes {
                 // Audit-on: capture old/new values directly into the `Change`.
@@ -235,7 +248,7 @@ impl MapConfig {
                 let new_value = transformed_value.clone();
 
                 changes.push(Change {
-                    path: path_arc,
+                    path: Arc::clone(path_arc),
                     old_value,
                     new_value,
                 });
@@ -249,10 +262,10 @@ impl MapConfig {
                 parts,
                 *result_av,
                 |ctx| {
-                    apply_mapping_parts(ctx, parts, &mapping.path, transformed_value);
+                    apply_mapping_parts(ctx, parts, path_arc, transformed_value);
                 },
             );
-            debug!("Successfully mapped to path: {}", mapping.path);
+            debug!("Successfully mapped to path: {path_arc}");
         }
 
         let outcome = if errors_encountered {
@@ -346,8 +359,8 @@ mod tests {
 
         let config = MapConfig::from_json(&input).unwrap();
         assert_eq!(config.mappings.len(), 2);
-        assert_eq!(config.mappings[0].path, "data.field1");
-        assert_eq!(config.mappings[1].path, "data.field2");
+        assert_eq!(config.mappings[0].path.as_json(), &json!("data.field1"));
+        assert_eq!(config.mappings[1].path.as_json(), &json!("data.field2"));
     }
 
     #[test]
@@ -383,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_map_metadata_assignment() {
-        let engine = Arc::new(Engine::builder().with_templating(true).build());
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
 
         let mut message = fresh_message(json!({
             "SwiftMT": { "message_type": "103" }
@@ -391,7 +404,7 @@ mod tests {
 
         let mut config = MapConfig {
             mappings: vec![MapMapping {
-                path: "metadata.SwiftMT.message_type".to_string(),
+                path: PathTemplate::from("metadata.SwiftMT.message_type"),
                 logic: json!({"var": "data.SwiftMT.message_type"}),
                 ..Default::default()
             }],
@@ -415,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_map_null_values_skip_assignment() {
-        let engine = Arc::new(Engine::builder().with_templating(true).build());
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
 
         let mut message = fresh_message(json!({ "existing_field": "should_remain" }));
         set_nested_value(
@@ -427,17 +440,17 @@ mod tests {
         let mut config = MapConfig {
             mappings: vec![
                 MapMapping {
-                    path: "data.new_field".to_string(),
+                    path: PathTemplate::from("data.new_field"),
                     logic: json!({"var": "data.non_existent_field"}),
                     ..Default::default()
                 },
                 MapMapping {
-                    path: "metadata.new_meta".to_string(),
+                    path: PathTemplate::from("metadata.new_meta"),
                     logic: json!({"var": "data.another_non_existent"}),
                     ..Default::default()
                 },
                 MapMapping {
-                    path: "data.actual_field".to_string(),
+                    path: PathTemplate::from("data.actual_field"),
                     logic: json!("actual_value"),
                     ..Default::default()
                 },
@@ -473,19 +486,19 @@ mod tests {
 
     #[test]
     fn test_map_execute_with_trace_captures_context_snapshots() {
-        let engine = Arc::new(Engine::builder().with_templating(true).build());
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
 
         let mut message = fresh_message(json!({ "first": "Alice", "last": "Smith" }));
 
         let mut config = MapConfig {
             mappings: vec![
                 MapMapping {
-                    path: "data.full_name".to_string(),
+                    path: PathTemplate::from("data.full_name"),
                     logic: json!({"cat": [{"var": "data.first"}, " ", {"var": "data.last"}]}),
                     ..Default::default()
                 },
                 MapMapping {
-                    path: "data.greeting".to_string(),
+                    path: PathTemplate::from("data.greeting"),
                     logic: json!({"cat": ["Hello, ", {"var": "data.full_name"}]}),
                     ..Default::default()
                 },
@@ -520,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_map_multiple_fields_including_metadata() {
-        let engine = Arc::new(Engine::builder().with_templating(true).build());
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
 
         let mut message = fresh_message(json!({
             "ISO20022_MX": {
@@ -536,17 +549,17 @@ mod tests {
         let mut config = MapConfig {
             mappings: vec![
                 MapMapping {
-                    path: "data.SwiftMT.message_type".to_string(),
+                    path: PathTemplate::from("data.SwiftMT.message_type"),
                     logic: json!("103"),
                     ..Default::default()
                 },
                 MapMapping {
-                    path: "metadata.SwiftMT.message_type".to_string(),
+                    path: PathTemplate::from("metadata.SwiftMT.message_type"),
                     logic: json!({"var": "data.SwiftMT.message_type"}),
                     ..Default::default()
                 },
                 MapMapping {
-                    path: "temp_data.original_msg_type".to_string(),
+                    path: PathTemplate::from("temp_data.original_msg_type"),
                     logic: json!({"var": "data.ISO20022_MX.document.TxInf.OrgnlGrpInf.OrgnlMsgNmId"}),
                     ..Default::default()
                 },

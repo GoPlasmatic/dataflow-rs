@@ -16,36 +16,50 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpCallConfig {
-    /// Named connector reference (resolved by service layer)
-    pub connector: String,
+    /// Named connector reference (resolved by the service layer).
+    ///
+    /// A JSONLogic expression, so one task can route by message content:
+    /// `{"if": [{"var": "data.is_eu"}, "eu_gateway", "us_gateway"]}`. The
+    /// static spelling `"payments_api"` is a literal and costs nothing. Read it
+    /// through [`Self::resolve_connector`].
+    pub connector: Template,
 
     /// HTTP method
     #[serde(default = "default_method")]
     pub method: HttpMethod,
 
-    /// Static path string
-    #[serde(default)]
-    pub path: Option<String>,
+    /// Request path, as a JSONLogic expression. Read it through
+    /// [`Self::resolve_path`].
+    ///
+    /// Back-compat: before 3.9 this was a static `String` with a separate
+    /// `path_logic` twin holding the expression, because a field could not be
+    /// both. It can now, so the two collapsed and `path_logic` is kept as an
+    /// alias so pre-3.9 definitions keep loading. Supplying both spellings is a
+    /// `duplicate field` error, not a precedence rule.
+    #[serde(default, alias = "path_logic")]
+    pub path: Option<Template>,
 
-    /// JSONLogic expression to compute path dynamically. Compiled once at
-    /// engine construction (`LogicCompiler`); read it through
-    /// [`HttpCallConfig::resolve_path`] rather than directly — that method
-    /// applies the static-`path` fallback and is the sanctioned read.
+    /// Request headers. Each value is a JSONLogic expression, so a header can
+    /// carry a secret or a computed value:
+    /// `{"Authorization": {"cat": ["Bearer ", {"secret": "api_token"}]}}`.
+    ///
+    /// A plain string value is a literal, so the static spelling is unchanged.
+    /// Header *names* stay static — a name is not a computed value, and keeping
+    /// them literal means no name can be swallowed as an operator.
     #[serde(default)]
-    pub path_logic: Option<Template>,
+    pub headers: HashMap<String, Template>,
 
-    /// Static headers
-    #[serde(default)]
-    pub headers: HashMap<String, String>,
-
-    /// Static request body
-    #[serde(default)]
-    pub body: Option<Value>,
-
-    /// JSONLogic expression to compute body dynamically. Compiled once at
-    /// engine construction; read it through [`HttpCallConfig::resolve_body`].
-    #[serde(default)]
-    pub body_logic: Option<Template>,
+    /// Request body, as a JSONLogic expression. Read it through
+    /// [`Self::resolve_body`].
+    ///
+    /// Back-compat: as [`Self::path`], `body_logic` is kept as an alias for the
+    /// pre-3.9 spelling.
+    ///
+    /// A literal object body needs its keys escaped when they collide with an
+    /// operator name — `{"$cat": …}` for a body field actually called `cat` —
+    /// because the engine evaluates in templating mode. See [`Template`].
+    #[serde(default, alias = "body_logic")]
+    pub body: Option<Template>,
 
     /// How the resolved body becomes request bytes (e.g. `"json"`, `"form"`,
     /// `"text"`).
@@ -56,7 +70,7 @@ pub struct HttpCallConfig {
     /// *names* are fixed here by `deny_unknown_fields`, but a service layer can
     /// grow new *values* (say, `"multipart"`) without touching this crate.
     #[serde(default)]
-    pub body_format: Option<String>,
+    pub body_format: Option<Template>,
 
     /// JSONPath/dot-path to extract from response and merge into context.
     ///
@@ -64,18 +78,19 @@ pub struct HttpCallConfig {
     /// destination-field name across its whole function catalogue. Supplying
     /// both keys is a `duplicate field` error rather than a precedence rule.
     #[serde(default, alias = "output")]
-    pub response_path: Option<String>,
+    pub response_path: Option<Template>,
 
     /// How response bytes become the captured value (e.g. `"json"`, `"text"`).
     ///
     /// As [`Self::body_format`]: data, not API surface — uninterpreted by this
     /// crate, owned by the service layer.
     #[serde(default)]
-    pub response_format: Option<String>,
+    pub response_format: Option<Template>,
 
-    /// Request timeout in milliseconds (default: 30000)
+    /// Request timeout in milliseconds (default: 30000). Read it through
+    /// [`Self::resolve_timeout_ms`].
     #[serde(default = "default_timeout")]
-    pub timeout_ms: u64,
+    pub timeout_ms: Template,
 }
 
 /// HTTP methods supported by `http_call`.
@@ -151,9 +166,13 @@ fn default_method() -> HttpMethod {
     HttpMethod::Get
 }
 
-fn default_timeout() -> u64 {
-    30000
+fn default_timeout() -> Template {
+    Template::from(Value::from(DEFAULT_TIMEOUT_MS))
 }
+
+/// The `timeout_ms` default, as a number rather than a `Template`, for hosts
+/// that want the value without resolving an expression.
+pub const DEFAULT_TIMEOUT_MS: u64 = 30000;
 
 /// Configuration for the enrich integration function.
 ///
@@ -165,37 +184,40 @@ fn default_timeout() -> u64 {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnrichConfig {
-    /// Named connector reference
-    pub connector: String,
+    /// Named connector reference. A JSONLogic expression, as
+    /// [`HttpCallConfig::connector`]; read it through
+    /// [`Self::resolve_connector`].
+    pub connector: Template,
 
     /// HTTP method for the enrichment call
     #[serde(default = "default_method")]
     pub method: HttpMethod,
 
-    /// Static path
-    #[serde(default)]
-    pub path: Option<String>,
+    /// Enrichment path, as a JSONLogic expression. Read it through
+    /// [`Self::resolve_path`].
+    ///
+    /// Back-compat: `path_logic` is kept as an alias for the pre-3.9 spelling,
+    /// as on [`HttpCallConfig::path`].
+    #[serde(default, alias = "path_logic")]
+    pub path: Option<Template>,
 
-    /// JSONLogic expression to compute path dynamically. Compiled once at
-    /// engine construction; read it through [`EnrichConfig::resolve_path`].
-    #[serde(default)]
-    pub path_logic: Option<Template>,
+    /// Dot-path where enrichment data is merged into the message context, as a
+    /// JSONLogic expression. Read it through [`Self::resolve_merge_path`].
+    pub merge_path: Template,
 
-    /// Dot-path where enrichment data is merged into the message context
-    pub merge_path: String,
-
-    /// Request timeout in milliseconds (default: 30000)
+    /// Request timeout in milliseconds (default: 30000). Read it through
+    /// [`Self::resolve_timeout_ms`].
     #[serde(default = "default_timeout")]
-    pub timeout_ms: u64,
+    pub timeout_ms: Template,
 
     /// What to do on enrichment failure
     #[serde(default)]
     pub on_error: EnrichErrorAction,
 }
 
-/// Shared shape behind every `resolve_*` method below: `logic`, evaluated as a
-/// plain string, wins over `static_value` when both are set; `Ok(None)` when
-/// neither is.
+/// Shared shape behind the optional `resolve_*` methods below: evaluate the
+/// expression to a plain string when the field is set, `Ok(None)` when it is
+/// not.
 ///
 /// A non-string result is coerced to its compact JSON form — `7` becomes `"7"`,
 /// `{"a":1}` becomes `"{\"a\":1}"` — because these values end up in a URL or a
@@ -203,80 +225,169 @@ pub struct EnrichConfig {
 ///
 /// # Errors
 ///
-/// Propagates [`crate::DataflowError::LogicEvaluation`] if `logic` fails to
-/// evaluate. It does **not** fall back to `static_value` on failure: a compiled
-/// expression that errors is a real problem, and silently substituting a
-/// different value would hide it.
-fn resolve_string_field(
-    logic: &Option<Template>,
-    static_value: Option<String>,
-    ctx: &TaskContext<'_>,
-) -> Result<Option<String>> {
-    match logic {
-        Some(t) => Ok(Some(t.eval_to_plain_string(ctx)?)),
-        None => Ok(static_value),
-    }
+/// Propagates [`crate::DataflowError::LogicEvaluation`] if the expression fails
+/// to evaluate. There is deliberately no fallback value: a compiled expression
+/// that errors is a real problem, and silently substituting something else
+/// would hide it.
+fn resolve_opt_string(field: &Option<Template>, ctx: &TaskContext<'_>) -> Result<Option<String>> {
+    field.as_ref().map(|t| t.resolve_string(ctx)).transpose()
 }
 
-/// As [`resolve_string_field`], but for a `logic` field evaluated into a
-/// [`Value`] rather than coerced to a string — for fields (like a request body)
-/// where the caller wants the JSON shape, not a stringified one.
+/// As [`resolve_opt_string`], but evaluated into a [`Value`] rather than
+/// coerced to a string — for fields (like a request body) where the caller
+/// wants the JSON shape, not a stringified one.
 ///
 /// # Errors
 ///
-/// As [`resolve_string_field`].
-fn resolve_value_field(
-    logic: &Option<Template>,
-    static_value: Option<Value>,
-    ctx: &TaskContext<'_>,
-) -> Result<Option<Value>> {
-    match logic {
-        Some(t) => Ok(Some(t.eval_into(ctx)?)),
-        None => Ok(static_value),
-    }
+/// As [`resolve_opt_string`].
+fn resolve_opt_value(field: &Option<Template>, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
+    field.as_ref().map(|t| t.eval_into(ctx)).transpose()
 }
 
 impl HttpCallConfig {
-    /// Resolve the request path: `path_logic` evaluated against the message
-    /// context when compiled, otherwise the static `path`. `Ok(None)` when
-    /// neither is set.
+    /// Resolve the connector name for this message.
     ///
     /// # Errors
     ///
-    /// As [`resolve_string_field`] — an evaluation failure propagates rather
-    /// than falling back to the static `path`.
-    pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
-        resolve_string_field(&self.path_logic, self.path.clone(), ctx)
+    /// As [`resolve_opt_string`].
+    pub fn resolve_connector(&self, ctx: &TaskContext<'_>) -> Result<String> {
+        self.connector.resolve_string(ctx)
     }
 
-    /// Resolve the request body: `body_logic` when compiled, otherwise the
-    /// static `body`. `Ok(None)` when neither is set.
+    /// Resolve the request path. `Ok(None)` when no path is configured.
     ///
     /// # Errors
     ///
-    /// As [`Self::resolve_path`] — an evaluation failure propagates rather than
-    /// falling back.
+    /// As [`resolve_opt_string`].
+    pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
+        resolve_opt_string(&self.path, ctx)
+    }
+
+    /// Resolve every request header for this message.
+    ///
+    /// Header names are copied through unchanged; only the values are
+    /// expressions. A value that fails to evaluate fails the whole call rather
+    /// than sending the request with that header missing — a dropped
+    /// `Authorization` would otherwise surface as a confusing 401.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_opt_string`], for the first header value that fails.
+    pub fn resolve_headers(&self, ctx: &TaskContext<'_>) -> Result<HashMap<String, String>> {
+        self.headers
+            .iter()
+            .map(|(name, value)| Ok((name.clone(), value.resolve_string(ctx)?)))
+            .collect()
+    }
+
+    /// Resolve the request body. `Ok(None)` when no body is configured.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::resolve_path`].
     pub fn resolve_body(&self, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
-        resolve_value_field(&self.body_logic, self.body.clone(), ctx)
+        resolve_opt_value(&self.body, ctx)
+    }
+
+    /// Resolve the body encoding name. `Ok(None)` when unset — what that means
+    /// is the service layer's call.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_opt_string`].
+    pub fn resolve_body_format(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
+        resolve_opt_string(&self.body_format, ctx)
+    }
+
+    /// Resolve the dot-path the response is captured to. `Ok(None)` when unset.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_opt_string`].
+    pub fn resolve_response_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
+        resolve_opt_string(&self.response_path, ctx)
+    }
+
+    /// Resolve the response decoding name. `Ok(None)` when unset.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_opt_string`].
+    pub fn resolve_response_format(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
+        resolve_opt_string(&self.response_format, ctx)
+    }
+
+    /// Resolve the request timeout in milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// As [`Template::resolve_u64`] — a non-numeric result is a configuration
+    /// error, not something to silently default.
+    pub fn resolve_timeout_ms(&self, ctx: &TaskContext<'_>) -> Result<u64> {
+        self.timeout_ms.resolve_u64(ctx, "http_call timeout_ms")
     }
 }
 
 impl EnrichConfig {
-    /// Resolve the enrichment path: `path_logic` when compiled, otherwise the
-    /// static `path`. `Ok(None)` when neither is set.
+    /// Resolve the connector name for this message.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_opt_string`].
+    pub fn resolve_connector(&self, ctx: &TaskContext<'_>) -> Result<String> {
+        self.connector.resolve_string(ctx)
+    }
+
+    /// Resolve the enrichment path. `Ok(None)` when no path is configured.
     ///
     /// # Errors
     ///
     /// As [`HttpCallConfig::resolve_path`].
     pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
-        resolve_string_field(&self.path_logic, self.path.clone(), ctx)
+        resolve_opt_string(&self.path, ctx)
+    }
+
+    /// Resolve the dot-path enrichment data is merged into.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_opt_string`].
+    pub fn resolve_merge_path(&self, ctx: &TaskContext<'_>) -> Result<String> {
+        self.merge_path.resolve_string(ctx)
+    }
+
+    /// Resolve the request timeout in milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// As [`HttpCallConfig::resolve_timeout_ms`].
+    pub fn resolve_timeout_ms(&self, ctx: &TaskContext<'_>) -> Result<u64> {
+        self.timeout_ms.resolve_u64(ctx, "enrich timeout_ms")
     }
 }
 
 impl PublishKafkaConfig {
-    /// Resolve the message key from `key_logic`. `Ok(None)` when it is not set —
-    /// there is no static key field, so a `None` key is the caller's to interpret
-    /// (Kafka treats a null key as "partition round-robin").
+    /// Resolve the connector name for this message.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_opt_string`].
+    pub fn resolve_connector(&self, ctx: &TaskContext<'_>) -> Result<String> {
+        self.connector.resolve_string(ctx)
+    }
+
+    /// Resolve the target topic for this message.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_opt_string`].
+    pub fn resolve_topic(&self, ctx: &TaskContext<'_>) -> Result<String> {
+        self.topic.resolve_string(ctx)
+    }
+
+    /// Resolve the message key. `Ok(None)` when it is not set — Kafka treats a
+    /// null key as "partition round-robin", so a `None` key is the caller's to
+    /// interpret.
     ///
     /// Coerced to a plain string, matching [`HttpCallConfig::resolve_path`].
     ///
@@ -284,12 +395,11 @@ impl PublishKafkaConfig {
     ///
     /// As [`HttpCallConfig::resolve_path`].
     pub fn resolve_key(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
-        resolve_string_field(&self.key_logic, None, ctx)
+        resolve_opt_string(&self.key, ctx)
     }
 
-    /// Resolve the message value from `value_logic`. `Ok(None)` when it is not
-    /// set — the fallback (typically "serialize the whole message") stays the
-    /// caller's policy.
+    /// Resolve the message value. `Ok(None)` when it is not set — the fallback
+    /// (typically "serialize the whole message") stays the caller's policy.
     ///
     /// Returns `Option<Value>`, **not** `Option<String>`, deliberately: a
     /// producer that does `serde_json::to_string` unconditionally would put
@@ -301,7 +411,7 @@ impl PublishKafkaConfig {
     ///
     /// As [`HttpCallConfig::resolve_path`].
     pub fn resolve_value(&self, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
-        resolve_value_field(&self.value_logic, None, ctx)
+        resolve_opt_value(&self.value, ctx)
     }
 }
 
@@ -324,29 +434,45 @@ pub enum EnrichErrorAction {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublishKafkaConfig {
-    /// Named connector reference
-    pub connector: String,
+    /// Named connector reference. A JSONLogic expression, as
+    /// [`HttpCallConfig::connector`]; read it through
+    /// [`Self::resolve_connector`].
+    pub connector: Template,
 
-    /// Target topic name
-    pub topic: String,
+    /// Target topic name, as a JSONLogic expression — so one task can route by
+    /// message content, which is the ordinary Kafka pattern:
+    /// `{"cat": ["orders.", {"var": "data.region"}]}`. Read it through
+    /// [`Self::resolve_topic`].
+    pub topic: Template,
 
-    /// JSONLogic expression to compute the message key. Compiled once at
-    /// engine construction; read it through
-    /// [`PublishKafkaConfig::resolve_key`].
-    #[serde(default)]
-    pub key_logic: Option<Template>,
+    /// The message key, as a JSONLogic expression. Read it through
+    /// [`Self::resolve_key`].
+    ///
+    /// Back-compat: `key_logic` is kept as an alias for the pre-3.9 spelling.
+    /// This field was always an expression — the rename is for consistency with
+    /// the other configs, where the `_logic` suffix marked the twin of a static
+    /// field that no longer exists.
+    #[serde(default, alias = "key_logic")]
+    pub key: Option<Template>,
 
-    /// JSONLogic expression to compute the message value. Compiled once at
-    /// engine construction; read it through
-    /// [`PublishKafkaConfig::resolve_value`].
-    #[serde(default)]
-    pub value_logic: Option<Template>,
+    /// The message value, as a JSONLogic expression. Read it through
+    /// [`Self::resolve_value`].
+    ///
+    /// Back-compat: `value_logic` is kept as an alias, as for [`Self::key`].
+    #[serde(default, alias = "value_logic")]
+    pub value: Option<Template>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::compiler::datalogic_engine_builder;
+    use crate::engine::functions::template::TemplateCompiler;
+    use crate::engine::message::Message;
+    use crate::engine::utils::set_nested_value;
+    use datavalue::OwnedDataValue;
     use serde_json::json;
+    use std::sync::Arc;
 
     #[test]
     fn as_str_round_trips_through_deserialize() {
@@ -409,28 +535,60 @@ mod tests {
         assert_eq!(default_method(), HttpMethod::Get);
     }
 
+    fn engine() -> Arc<datalogic_rs::Engine> {
+        Arc::new(datalogic_engine_builder().build())
+    }
+
+    fn dv(v: serde_json::Value) -> OwnedDataValue {
+        OwnedDataValue::from(&v)
+    }
+
+    /// A message with a few readable values in `data`.
+    fn fresh_message() -> Message {
+        let mut m = Message::from_value(&json!({}));
+        set_nested_value(&mut m.context, "data.id", dv(json!("abc")));
+        set_nested_value(&mut m.context, "data.n", dv(json!(7)));
+        set_nested_value(&mut m.context, "data.obj", dv(json!({"a": 1})));
+        m
+    }
+
+    /// Parse a config and compile every parameter, exactly as `LogicCompiler`
+    /// does — so these tests exercise the state the engine produces.
+    fn http_config(extra: serde_json::Value) -> HttpCallConfig {
+        let mut base = json!({ "connector": "c" });
+        let obj = base.as_object_mut().unwrap();
+        for (k, v) in extra.as_object().unwrap() {
+            obj.insert(k.clone(), v.clone());
+        }
+        let mut cfg: HttpCallConfig = serde_json::from_value(base).expect("config should parse");
+        let c = TemplateCompiler::new(engine());
+        cfg.connector.compile(&c, "connector").unwrap();
+        cfg.timeout_ms.compile(&c, "timeout_ms").unwrap();
+        for v in cfg.headers.values_mut() {
+            v.compile(&c, "header").unwrap();
+        }
+        for t in [
+            &mut cfg.path,
+            &mut cfg.body,
+            &mut cfg.body_format,
+            &mut cfg.response_path,
+            &mut cfg.response_format,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            t.compile(&c, "field").unwrap();
+        }
+        cfg
+    }
+
     #[test]
     fn format_fields_default_to_none() {
         // Every pre-existing config deserializes unchanged: absent format
         // fields are `None`, and what `None` means is the service layer's call.
-        let cfg = http_config();
-        assert_eq!(cfg.body_format, None);
-        assert_eq!(cfg.response_format, None);
-    }
-
-    #[test]
-    fn format_values_are_data_not_api_surface() {
-        // The crate accepts any string value — validation belongs to the
-        // service layer's value table, so a new encoding must not need a
-        // release of this crate.
-        let cfg: HttpCallConfig = serde_json::from_value(json!({
-            "connector": "c",
-            "body_format": "form",
-            "response_format": "some-future-encoding",
-        }))
-        .expect("format values must parse as plain data");
-        assert_eq!(cfg.body_format.as_deref(), Some("form"));
-        assert_eq!(cfg.response_format.as_deref(), Some("some-future-encoding"));
+        let cfg = http_config(json!({}));
+        assert!(cfg.body_format.is_none());
+        assert!(cfg.response_format.is_none());
     }
 
     #[test]
@@ -450,146 +608,148 @@ mod tests {
         assert!(msg.contains("`response_format`"), "{msg}");
     }
 
-    use crate::engine::functions::template::TemplateCompiler;
-    use crate::engine::message::Message;
-    use crate::engine::utils::set_nested_value;
-    use datavalue::OwnedDataValue;
-    use std::sync::Arc;
+    #[test]
+    fn the_pre_39_logic_spellings_still_deserialize() {
+        // The back-compat aliases. A workflow written against 3.8 must load
+        // unchanged — this is the whole reason the aliases exist.
+        let http: HttpCallConfig = serde_json::from_value(json!({
+            "connector": "c",
+            "path_logic": {"var": "data.id"},
+            "body_logic": {"var": "data.obj"},
+        }))
+        .expect("pre-3.9 http_call spelling must still load");
+        assert_eq!(http.path.unwrap().as_json(), &json!({"var": "data.id"}));
+        assert_eq!(http.body.unwrap().as_json(), &json!({"var": "data.obj"}));
 
-    fn dv(v: serde_json::Value) -> OwnedDataValue {
-        OwnedDataValue::from(&v)
-    }
+        let enrich: EnrichConfig = serde_json::from_value(json!({
+            "connector": "c",
+            "merge_path": "data.out",
+            "path_logic": {"var": "data.id"},
+        }))
+        .expect("pre-3.9 enrich spelling must still load");
+        assert_eq!(enrich.path.unwrap().as_json(), &json!({"var": "data.id"}));
 
-    fn engine() -> Arc<datalogic_rs::Engine> {
-        Arc::new(
-            datalogic_rs::Engine::builder()
-                .with_templating(true)
-                .build(),
-        )
-    }
-
-    /// A message with a few readable values in `data`.
-    fn fresh_message() -> Message {
-        let mut m = Message::from_value(&json!({}));
-        set_nested_value(&mut m.context, "data.id", dv(json!("abc")));
-        set_nested_value(&mut m.context, "data.n", dv(json!(7)));
-        set_nested_value(&mut m.context, "data.obj", dv(json!({"a": 1})));
-        m
-    }
-
-    /// Build a compiled `Template` for a slot, mirroring what `LogicCompiler`
-    /// does — so these tests exercise the same slot state the engine produces.
-    fn compile(dl: &Arc<datalogic_rs::Engine>, logic: serde_json::Value) -> Option<Template> {
-        let c = TemplateCompiler::new(Arc::clone(dl));
-        let mut t: Template = serde_json::from_value(logic).expect("Template::deserialize");
-        t.compile(&c, "test").expect("logic should compile");
-        Some(t)
-    }
-
-    fn http_config() -> HttpCallConfig {
-        serde_json::from_value(json!({ "connector": "c" })).unwrap()
-    }
-
-    fn enrich_config() -> EnrichConfig {
-        serde_json::from_value(json!({ "connector": "c", "merge_path": "data.out" })).unwrap()
-    }
-
-    fn kafka_config() -> PublishKafkaConfig {
-        serde_json::from_value(json!({ "connector": "c", "topic": "t" })).unwrap()
+        let kafka: PublishKafkaConfig = serde_json::from_value(json!({
+            "connector": "c",
+            "topic": "t",
+            "key_logic": {"var": "data.id"},
+            "value_logic": {"var": "data.obj"},
+        }))
+        .expect("pre-3.9 publish_kafka spelling must still load");
+        assert_eq!(kafka.key.unwrap().as_json(), &json!({"var": "data.id"}));
+        assert_eq!(kafka.value.unwrap().as_json(), &json!({"var": "data.obj"}));
     }
 
     #[test]
-    fn http_resolve_path_covers_all_four_slot_combinations() {
+    fn supplying_both_spellings_is_a_duplicate_field_error() {
+        // Not a precedence rule — the same contract `response_path`/`output`
+        // has always had. An author who set both did not mean one to win.
+        let err = serde_json::from_value::<HttpCallConfig>(json!({
+            "connector": "c",
+            "path": "/a",
+            "path_logic": {"var": "data.id"},
+        }))
+        .expect_err("both spellings must be rejected");
+        assert!(err.to_string().contains("duplicate field"), "{err}");
+    }
+
+    #[test]
+    fn a_static_config_resolves_to_exactly_what_was_authored() {
+        // The static spelling of every parameter is a literal, so a 3.8-era
+        // config behaves identically — and folds, so it costs no evaluation.
         let dl = engine();
         let mut m = fresh_message();
         let ctx = TaskContext::new(&mut m, &dl);
 
-        // logic present -> evaluated string
-        let mut cfg = http_config();
-        cfg.path_logic = compile(&dl, json!({"var": "data.id"}));
-        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
+        let cfg = http_config(json!({
+            "path": "/static",
+            "headers": {"X-Env": "prod"},
+            "body_format": "json",
+            "response_path": "data.out",
+        }));
+        assert_eq!(cfg.resolve_connector(&ctx).unwrap(), "c");
+        assert_eq!(cfg.resolve_path(&ctx).unwrap().as_deref(), Some("/static"));
+        assert_eq!(cfg.resolve_headers(&ctx).unwrap()["X-Env"], "prod");
+        assert_eq!(
+            cfg.resolve_body_format(&ctx).unwrap().as_deref(),
+            Some("json")
+        );
+        assert_eq!(
+            cfg.resolve_response_path(&ctx).unwrap().as_deref(),
+            Some("data.out")
+        );
+        assert_eq!(cfg.resolve_timeout_ms(&ctx).unwrap(), DEFAULT_TIMEOUT_MS);
 
-        // logic absent, static path present
-        let mut cfg = http_config();
-        cfg.path = Some("/static".to_string());
-        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("/static".to_string()));
-
-        // both absent
-        assert_eq!(http_config().resolve_path(&ctx).unwrap(), None);
-
-        // both present -> logic wins
-        let mut cfg = http_config();
-        cfg.path = Some("/static".to_string());
-        cfg.path_logic = compile(&dl, json!({"var": "data.id"}));
-        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
+        assert!(cfg.connector.is_constant(), "a literal connector must fold");
+        assert!(
+            cfg.timeout_ms.is_constant(),
+            "the default timeout must fold"
+        );
     }
 
     #[test]
-    fn http_resolve_body_covers_all_four_slot_combinations() {
+    fn every_parameter_can_be_computed_from_the_message() {
         let dl = engine();
         let mut m = fresh_message();
         let ctx = TaskContext::new(&mut m, &dl);
 
-        let mut cfg = http_config();
-        cfg.body_logic = compile(&dl, json!({"var": "data.obj"}));
+        let cfg = http_config(json!({
+            "connector": {"cat": ["gw_", {"var": "data.id"}]},
+            "path": {"cat": ["/orders/", {"var": "data.id"}]},
+            "headers": {"X-Request-Id": {"var": "data.id"}},
+            "body": {"var": "data.obj"},
+            "timeout_ms": {"var": "data.n"},
+        }));
+
+        assert_eq!(cfg.resolve_connector(&ctx).unwrap(), "gw_abc");
+        assert_eq!(
+            cfg.resolve_path(&ctx).unwrap().as_deref(),
+            Some("/orders/abc")
+        );
+        assert_eq!(cfg.resolve_headers(&ctx).unwrap()["X-Request-Id"], "abc");
         assert_eq!(cfg.resolve_body(&ctx).unwrap(), Some(json!({"a": 1})));
+        assert_eq!(cfg.resolve_timeout_ms(&ctx).unwrap(), 7);
+    }
 
-        let mut cfg = http_config();
-        cfg.body = Some(json!({"static": true}));
+    #[test]
+    fn an_escaped_body_key_is_sent_as_data_not_evaluated() {
+        // The reason `body` and `body_logic` could collapse at all: a literal
+        // body field named after an operator is now expressible.
+        let dl = engine();
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        let cfg = http_config(json!({ "body": {"$cat": ["a", "b"]} }));
         assert_eq!(
             cfg.resolve_body(&ctx).unwrap(),
-            Some(json!({"static": true}))
+            Some(json!({"cat": ["a", "b"]}))
         );
 
-        assert_eq!(http_config().resolve_body(&ctx).unwrap(), None);
-
-        let mut cfg = http_config();
-        cfg.body = Some(json!({"static": true}));
-        cfg.body_logic = compile(&dl, json!({"var": "data.obj"}));
-        assert_eq!(cfg.resolve_body(&ctx).unwrap(), Some(json!({"a": 1})));
+        // Unescaped, the same key is still the operator.
+        let cfg = http_config(json!({ "body": {"cat": ["a", "b"]} }));
+        assert_eq!(cfg.resolve_body(&ctx).unwrap(), Some(json!("ab")));
     }
 
     #[test]
-    fn enrich_resolve_path_covers_all_four_slot_combinations() {
+    fn header_values_are_coerced_to_plain_strings() {
+        // A header carries bytes, not JSON — a number must not arrive quoted.
         let dl = engine();
         let mut m = fresh_message();
         let ctx = TaskContext::new(&mut m, &dl);
 
-        let mut cfg = enrich_config();
-        cfg.path_logic = compile(&dl, json!({"var": "data.id"}));
-        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
-
-        let mut cfg = enrich_config();
-        cfg.path = Some("/lookup".to_string());
-        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("/lookup".to_string()));
-
-        assert_eq!(enrich_config().resolve_path(&ctx).unwrap(), None);
-
-        let mut cfg = enrich_config();
-        cfg.path = Some("/lookup".to_string());
-        cfg.path_logic = compile(&dl, json!({"var": "data.id"}));
-        assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("abc".to_string()));
+        let cfg = http_config(json!({ "headers": {"X-Count": {"var": "data.n"}} }));
+        assert_eq!(cfg.resolve_headers(&ctx).unwrap()["X-Count"], "7");
     }
 
     #[test]
-    fn kafka_resolve_key_and_value() {
+    fn a_failing_header_fails_the_call_rather_than_being_dropped() {
+        // A silently missing `Authorization` surfaces as a confusing 401.
         let dl = engine();
         let mut m = fresh_message();
         let ctx = TaskContext::new(&mut m, &dl);
 
-        // No static fallback exists for either, so absent logic is Ok(None).
-        let cfg = kafka_config();
-        assert_eq!(cfg.resolve_key(&ctx).unwrap(), None);
-        assert_eq!(cfg.resolve_value(&ctx).unwrap(), None);
-
-        let mut cfg = kafka_config();
-        cfg.key_logic = compile(&dl, json!({"var": "data.id"}));
-        cfg.value_logic = compile(&dl, json!({"var": "data.obj"}));
-        assert_eq!(cfg.resolve_key(&ctx).unwrap(), Some("abc".to_string()));
-        // `resolve_value` returns a Value, not a String — a producer that
-        // serializes unconditionally must not be forced through the key's
-        // plain-string coercion.
-        assert_eq!(cfg.resolve_value(&ctx).unwrap(), Some(json!({"a": 1})));
+        let cfg = http_config(json!({ "headers": {"X-Bad": {"+": ["abc", 1]}} }));
+        assert!(cfg.resolve_headers(&ctx).is_err());
     }
 
     #[test]
@@ -599,13 +759,11 @@ mod tests {
         let ctx = TaskContext::new(&mut m, &dl);
 
         // A number becomes its digits, not "7" with quotes.
-        let mut cfg = http_config();
-        cfg.path_logic = compile(&dl, json!({"var": "data.n"}));
+        let cfg = http_config(json!({ "path": {"var": "data.n"} }));
         assert_eq!(cfg.resolve_path(&ctx).unwrap(), Some("7".to_string()));
 
         // A container becomes compact JSON.
-        let mut cfg = http_config();
-        cfg.path_logic = compile(&dl, json!({"var": "data.obj"}));
+        let cfg = http_config(json!({ "path": {"var": "data.obj"} }));
         assert_eq!(
             cfg.resolve_path(&ctx).unwrap(),
             Some("{\"a\":1}".to_string())
@@ -618,11 +776,7 @@ mod tests {
         let mut m = fresh_message();
         let ctx = TaskContext::new(&mut m, &dl);
 
-        // Static field is set, so a silent fallback would look like success.
-        let mut cfg = http_config();
-        cfg.path = Some("/static".to_string());
-        cfg.path_logic = compile(&dl, json!({"+": ["abc", 1]}));
-
+        let cfg = http_config(json!({ "path": {"+": ["abc", 1]} }));
         match cfg.resolve_path(&ctx) {
             Err(crate::engine::error::DataflowError::LogicEvaluation(msg)) => {
                 assert!(!msg.is_empty());
@@ -630,10 +784,86 @@ mod tests {
             other => panic!("expected LogicEvaluation, got {other:?}"),
         }
 
-        // Same for body.
-        let mut cfg = http_config();
-        cfg.body = Some(json!({"static": true}));
-        cfg.body_logic = compile(&dl, json!({"+": ["abc", 1]}));
+        let cfg = http_config(json!({ "body": {"+": ["abc", 1]} }));
         assert!(cfg.resolve_body(&ctx).is_err());
+    }
+
+    #[test]
+    fn a_non_numeric_timeout_is_a_configuration_error() {
+        // `resolve_u64` refuses rather than defaulting: a `timeout_ms` whose
+        // path is missing resolves to null, and silently becoming 0 would make
+        // every request fail instantly with no explanation.
+        let dl = engine();
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        let cfg = http_config(json!({ "timeout_ms": {"var": "data.nope"} }));
+        let err = cfg
+            .resolve_timeout_ms(&ctx)
+            .expect_err("a null timeout must be rejected");
+        assert!(err.to_string().contains("timeout_ms"), "{err}");
+    }
+
+    #[test]
+    fn enrich_and_kafka_resolve_their_own_parameters() {
+        let dl = engine();
+        let c = TemplateCompiler::new(engine());
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        let mut enrich: EnrichConfig = serde_json::from_value(json!({
+            "connector": "lookup",
+            "path": {"cat": ["/users/", {"var": "data.id"}]},
+            "merge_path": {"cat": ["data.users.", {"var": "data.id"}]},
+        }))
+        .unwrap();
+        enrich.connector.compile(&c, "connector").unwrap();
+        enrich.merge_path.compile(&c, "merge_path").unwrap();
+        enrich.timeout_ms.compile(&c, "timeout_ms").unwrap();
+        enrich.path.as_mut().unwrap().compile(&c, "path").unwrap();
+
+        assert_eq!(enrich.resolve_connector(&ctx).unwrap(), "lookup");
+        assert_eq!(
+            enrich.resolve_path(&ctx).unwrap().as_deref(),
+            Some("/users/abc")
+        );
+        assert_eq!(enrich.resolve_merge_path(&ctx).unwrap(), "data.users.abc");
+        assert_eq!(enrich.resolve_timeout_ms(&ctx).unwrap(), DEFAULT_TIMEOUT_MS);
+
+        // Dynamic topic routing is the ordinary Kafka pattern and was
+        // impossible before 3.9.
+        let mut kafka: PublishKafkaConfig = serde_json::from_value(json!({
+            "connector": "bus",
+            "topic": {"cat": ["orders.", {"var": "data.id"}]},
+            "key": {"var": "data.id"},
+            "value": {"var": "data.obj"},
+        }))
+        .unwrap();
+        kafka.connector.compile(&c, "connector").unwrap();
+        kafka.topic.compile(&c, "topic").unwrap();
+        kafka.key.as_mut().unwrap().compile(&c, "key").unwrap();
+        kafka.value.as_mut().unwrap().compile(&c, "value").unwrap();
+
+        assert_eq!(kafka.resolve_connector(&ctx).unwrap(), "bus");
+        assert_eq!(kafka.resolve_topic(&ctx).unwrap(), "orders.abc");
+        assert_eq!(kafka.resolve_key(&ctx).unwrap().as_deref(), Some("abc"));
+        // A `Value`, not a `String` — a producer that serializes
+        // unconditionally must not be forced through the key's coercion.
+        assert_eq!(kafka.resolve_value(&ctx).unwrap(), Some(json!({"a": 1})));
+    }
+
+    #[test]
+    fn absent_optional_fields_resolve_to_none() {
+        let dl = engine();
+        let mut m = fresh_message();
+        let ctx = TaskContext::new(&mut m, &dl);
+
+        let cfg = http_config(json!({}));
+        assert_eq!(cfg.resolve_path(&ctx).unwrap(), None);
+        assert_eq!(cfg.resolve_body(&ctx).unwrap(), None);
+        assert_eq!(cfg.resolve_body_format(&ctx).unwrap(), None);
+        assert_eq!(cfg.resolve_response_path(&ctx).unwrap(), None);
+        assert_eq!(cfg.resolve_response_format(&ctx).unwrap(), None);
+        assert!(cfg.resolve_headers(&ctx).unwrap().is_empty());
     }
 }

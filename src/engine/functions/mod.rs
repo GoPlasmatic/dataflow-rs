@@ -8,8 +8,8 @@ use std::any::Any;
 
 pub mod config;
 pub use config::{
-    BUILTIN_FUNCTION_NAMES, BuiltinKind, CompiledCustomInput, DispatchableFunction, FunctionConfig,
-    builtin_function_kind, is_builtin_function,
+    BUILTIN_FUNCTION_NAMES, BuiltinKind, CompiledCustomInput, ConnectorName, DispatchableFunction,
+    FunctionConfig, builtin_function_kind, is_builtin_function,
 };
 
 pub mod validation;
@@ -35,6 +35,9 @@ pub use integration::{EnrichConfig, HttpCallConfig, HttpMethod, PublishKafkaConf
 
 pub mod template;
 pub use template::{Template, TemplateCompiler};
+
+pub mod path_template;
+pub use path_template::{ContextRoot, DataRoot, PathRoot, PathTemplate, ResolvedPath};
 
 /// Async interface for task functions that operate on messages.
 ///

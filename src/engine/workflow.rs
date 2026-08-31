@@ -1,5 +1,5 @@
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::functions::FunctionConfig;
+use crate::engine::functions::{ConnectorName, FunctionConfig};
 use crate::engine::task::Task;
 use chrono::{DateTime, Utc};
 use datalogic_rs::Logic;
@@ -375,8 +375,9 @@ pub struct ConnectorRef<'a> {
     pub task_id: &'a str,
     /// Canonical function name, as [`FunctionConfig::function_name`].
     pub function: &'a str,
-    /// The connector name, exactly as authored.
-    pub connector: &'a str,
+    /// The connector name when authored as a literal, or the expression when
+    /// computed. See [`ConnectorName`].
+    pub connector: ConnectorName<'a>,
     /// The whole function config, for cross-field rules.
     pub config: &'a FunctionConfig,
 }
@@ -439,10 +440,10 @@ mod tests {
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0].task_id, "call");
         assert_eq!(refs[0].function, "http_call");
-        assert_eq!(refs[0].connector, "user_service");
+        assert_eq!(refs[0].connector.as_static(), Some("user_service"));
         assert_eq!(refs[1].task_id, "pub");
         assert_eq!(refs[1].function, "publish_kafka");
-        assert_eq!(refs[1].connector, "events");
+        assert_eq!(refs[1].connector.as_static(), Some("events"));
     }
 
     #[test]
@@ -474,7 +475,7 @@ mod tests {
 
         let refs: Vec<_> = workflow.connector_refs().collect();
         assert_eq!(refs.len(), 2, "one item per task, not a distinct set");
-        assert!(refs.iter().all(|r| r.connector == "same"));
+        assert!(refs.iter().all(|r| r.connector.as_static() == Some("same")));
     }
 
     #[test]
@@ -506,7 +507,7 @@ mod tests {
         let workflow = wf(custom);
 
         let r = workflow.connector_refs().next().expect("custom connector");
-        assert_eq!(r.connector, "pg_main");
+        assert_eq!(r.connector.as_static(), Some("pg_main"));
         match r.config {
             FunctionConfig::Custom { input, .. } => {
                 assert_eq!(
