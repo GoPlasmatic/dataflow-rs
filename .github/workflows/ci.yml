@@ -32,6 +32,18 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Every job starts on a fresh runner, so incremental artifacts are written,
+  # never read, and thrown away with the VM — 6.8 GB of the 25 GB `target/`
+  # this workflow produces. Off is smaller and marginally faster for a build
+  # that is always cold by construction.
+  CARGO_INCREMENTAL: 0
+  # Full debug info is the bulk of a test or example binary and nothing here
+  # reads it: no debugger attaches, no core dumps are collected. Line tables
+  # keep file-and-line in a panic backtrace, which is the only part a CI
+  # failure actually needs, and dropping the rest speeds up linking.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
 jobs:
   check:
     name: Check
@@ -45,16 +57,33 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo
+      # Crate downloads only — `target/` is deliberately absent. This job
+      # builds eleven distinct feature configurations (all-features, default,
+      # and seven families in isolation) across `--all-targets`, so its
+      # `target/` reached 17 GB: `actions/cache` never prunes, and with
+      # `restore-keys` every lockfile change restored the previous tree, added
+      # another configuration's artifacts, and saved a larger superset.
+      #
+      # Measured on this workflow: a cold run compiled everything in 238 s; a
+      # run with a warm 17 GB cache compiled in 221 s but spent 303 s
+      # restoring it, and a key miss spent 684 s restoring plus 1662 s saving.
+      # The cache bought ~17 s of compilation for five to thirty-nine minutes
+      # of transfer, and at 17 GB against a 10 GB repository budget it evicted
+      # the wasm, ui and msrv caches — which do pay for themselves — on every
+      # run. The registry alone is ~200 MB and restores in seconds.
+      #
+      # The key prefix changed with this: a restore extracts the whole saved
+      # archive regardless of `path`, so reusing `-cargo-` would have kept
+      # pulling the 17 GB entry down.
+      - name: Cache cargo registry
         uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
