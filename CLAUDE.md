@@ -48,14 +48,25 @@ cargo test -- --nocapture                # with output
 
 ### Code Quality
 
-Run both of these before handing back any Rust change — CI enforces them and
+Run all of these before handing back any Rust change — CI enforces them and
 treats warnings as errors:
 
 ```bash
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo clippy -p dataflow-rs --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
+
+The doc check is not optional politeness. Clippy does not lint rustdoc, so
+nothing else catches a broken intra-doc link, a link from public docs into a
+private item, or an unbackticked generic like `Arc<Logic>` that rustdoc parses
+as an HTML tag — all of which ship silently to docs.rs as dead or mangled text.
+
+Lint *policy* lives in `[workspace.lints]` in the root `Cargo.toml`, inherited
+by all three members, so a bare `cargo clippy` and rust-analyzer enforce what CI
+enforces. Adding a lint there means fixing every existing violation in the same
+change — CI's `-D warnings` gives no grace period.
 
 `--all-targets` covers examples, tests and benches; `--all-features` covers the
 `wasm-web` feature, which is otherwise silently skipped. Never leave clippy
@@ -93,10 +104,24 @@ cargo run --example benchmark --release             # Throughput + latency perce
 cargo run --example realistic_benchmark --release   # ISO 20022 -> SwiftMT-style workload
 cargo run --example micro_cond_bench --release      # Condition-eval / trivially-true folding
 cargo run --example micro_aggregate_bench --release # Aggregate-heavy (reduce/map)
+cargo run --example micro_subtree_write_bench --release   # k map writes into one depth-2 subtree
+cargo run --example micro_multiworkflow_bench --release   # N chained workflows, one message
+cargo run --example async_handler_benchmark --release     # Marginal cost of one custom handler
+cargo run --example map_performance_test --release        # 10 chained mappings across all 3 roots
 ```
+
+The last four are regression guards for optimizations that have already landed
+(the arena write-through splice and the shared-arena workflow run), not open
+investigations — read them as "this must stay flat", not "this is the plan".
 
 Benchmark numbers carry roughly ±2-3% run-to-run noise and occasional transient
 P99 spikes. Compare the mean of 3+ runs before claiming a regression or a win.
+
+**Interleave A/B runs.** Running all the "before" runs and then all the "after"
+runs conflates the change with thermal drift: a measured -8.5% on
+`realistic_benchmark` collapsed to +0.2% once the same two binaries were
+alternated round-robin instead. Build both binaries first, copy them out of
+`target/`, discard the first run of each as cold, and alternate.
 
 ### Release Process
 
@@ -328,8 +353,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 703 passing.
-`cargo test -p dataflow-rs` (default features) should report 608 — the operator
+`cargo test --workspace --all-features` should report 704 passing.
+`cargo test -p dataflow-rs` (default features) should report 609 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

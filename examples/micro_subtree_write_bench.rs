@@ -1,9 +1,8 @@
 //! # Same-subtree map-write scaling microbenchmark
 //!
-//! Isolates the write-path cost item #1 of the perf proposal attacks: k map
-//! mappings all targeting the same depth-2 subtree (`data.DOC.f{i}`), the
-//! canonical shape of document-assembly workloads (e.g. 25 mappings into
-//! `data.MT103` in the realistic bench).
+//! Isolates the write path: k map mappings all targeting the same depth-2
+//! subtree (`data.DOC.f{i}`), the canonical shape of document-assembly
+//! workloads (e.g. 25 mappings into `data.MT103` in the realistic bench).
 //!
 //! Before the arena write-through, every mapping's cache refresh re-arena'd
 //! the ENTIRE owned `data.DOC` subtree (`to_arena` deep clone, string copies
@@ -13,11 +12,12 @@
 //! only the spine (shallow pair copies), leaving the per-message write cost
 //! ~linear in k.
 //!
-//! The k-sweep makes the difference visible as a scaling slope: with each
-//! mapping performing one identical JSONLogic eval (linear in k), any
-//! superlinear growth in ns/mapping as k rises is write-path overhead.
-//! Compare binaries built before/after the write-through commit to quantify
-//! the win; on a fixed binary, watch that ns/mapping stays ~flat across k.
+//! The write-through has landed, so this is a regression guard rather than a
+//! measurement of it. The k-sweep exposes the property to watch as a scaling
+//! slope: each mapping performs one identical JSONLogic eval (linear in k), so
+//! **ns/mapping must stay ~flat as k rises**. Superlinear growth means a write
+//! is falling back to `refresh_after_write_parts` — the correctness backstop
+//! for shapes the splice does not cover — on a path that used to splice.
 //!
 //! Methodology matches `micro_multiworkflow_bench.rs`: `current_thread`
 //! runtime, tight single-threaded loop, default `capture_changes = true`.

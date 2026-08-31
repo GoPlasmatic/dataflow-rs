@@ -7,32 +7,37 @@
 //! ## What it measures and why
 //!
 //! The arena form of `message.context` is deep-walked (`ArenaContext::from_owned`
-//! → `to_arena`) once per sync stretch, and today every workflow opens its own
-//! `with_arena` scope. So a message through N consecutive fully-sync workflows
-//! pays the heavy `data.input` deep-walk N times even though the context is the
-//! same tree (just mutated between workflows). On top of that, a real (non-`true`)
-//! workflow condition is evaluated via the OWNED path (`eval_to_owned`), which
-//! deep-walks the whole context into the arena AGAIN per conditioned workflow.
+//! → `to_arena`) once per sync stretch. This bench was written when every
+//! workflow opened its own `with_arena` scope, so a message through N
+//! consecutive fully-sync workflows paid the heavy `data.input` deep-walk N
+//! times over the same tree, and a real (non-`true`) workflow condition was
+//! evaluated via the OWNED path (`eval_to_owned`), deep-walking the whole
+//! context AGAIN per conditioned workflow.
 //!
-//! To quantify the headroom **without implementing the hoist**, this bench runs
-//! the SAME task work in three layouts:
+//! **Both are fixed.** `WorkflowExecutor::execute_sync_workflow_run` carries one
+//! `ArenaContext` across a maximal run of consecutive fully-sync workflows, and
+//! evaluates each workflow condition in-arena. So this is now a regression
+//! guard, not a proposal: the three layouts below should sit close together, and
+//! `split-*` drifting away from `grouped` means the shared-arena run stopped
+//! applying — most likely because a workflow stopped qualifying for
+//! `joins_sync_run`.
+//!
+//! It runs the SAME task work in three layouts:
 //!
 //! - `grouped`: ONE workflow whose tasks are `parse + N×(map+validate)`, all in a
-//!   single sync stretch → **1** `from_owned`/msg. The lower bound a per-message
-//!   arena hoist targets.
+//!   single sync stretch → **1** `from_owned`/msg. The lower bound.
 //! - `split-true`: N workflows, one stage each, all `condition: true` (folds to
-//!   `None`) → **N** `from_owned`/msg. Today's cost.
+//!   `None`) → **1** `from_owned`/msg now that the run is shared; **N** before.
 //! - `split-progress`: N workflows gated on `metadata.progress.workflow_id` (the
-//!   documented chaining pattern) → N `from_owned` PLUS (N-1) owned-path condition
-//!   deep-walks/msg.
+//!   documented chaining pattern) → also **1** `from_owned`/msg, with each
+//!   condition evaluated against the carried arena view; **N** plus (N-1)
+//!   owned-path condition deep-walks before.
 //!
 //! `grouped` and `split-*` perform identical map/validate evals, identical writes,
 //! identical audit entries — they differ only in how many times the context is
-//! deep-walked. So `headroom(arena hoist) ≈ split-true − grouped` and
-//! `headroom(+ in-arena condition) ≈ split-progress − grouped`.
-//!
-//! `micro_cond_bench.rs` (single workflow) and `benchmark.rs` are the regression
-//! guard — they must not move when the hoist lands; only this bench should.
+//! deep-walked. `split-true − grouped` is therefore what the shared-arena run
+//! recovers, and `split-progress − grouped` what it recovers plus the in-arena
+//! condition eval. Both should now be small.
 //!
 //! Run with: `cargo run --example micro_multiworkflow_bench --release`
 
@@ -242,8 +247,10 @@ async fn main() {
     let sp = time_engine("split-progress(N)", &split_prog, &payload, expected_audit).await;
 
     println!(
-        "\nHeadroom estimate (work is identical; only deep-walk count differs):\n  \
-         arena hoist        : split-true     - grouped = {:>7.1} ns/msg ({:+.1}%)\n  \
+        "\nSplit-vs-grouped gap (work is identical; only deep-walk count differs).\n\
+         Both should stay near zero — a gap means the shared-arena run stopped \
+         applying:\n  \
+         shared arena       : split-true     - grouped = {:>7.1} ns/msg ({:+.1}%)\n  \
          + in-arena cond    : split-progress - grouped = {:>7.1} ns/msg ({:+.1}%)",
         st - g,
         (st - g) / g * 100.0,

@@ -76,6 +76,113 @@ impl PassCtx {
             loop_counter: None,
         }
     }
+
+    /// Record the executed-step trace entry for one task.
+    ///
+    /// Emitted identically by both task loops — only `mapping_contexts`
+    /// differs, since the sync stretch collects per-mapping snapshots for `map`
+    /// tasks and the async boundary never has any. Shared so a field added to
+    /// the step cannot be added to one loop and forgotten in the other.
+    fn note_executed(
+        self,
+        trace: Option<&mut ExecutionTrace>,
+        workflow_id: &str,
+        task_id: &str,
+        message: &Message,
+        clocks: TaskClocks,
+        mapping_contexts: Option<Vec<Value>>,
+    ) {
+        let Some(t) = trace else {
+            return;
+        };
+        let started_at = clocks.trace_start.unwrap_or(self.now);
+        t.add_executed_step(
+            workflow_id,
+            task_id,
+            message,
+            StepTiming {
+                started_at,
+                duration_us: duration_us_between(started_at, Utc::now()),
+            },
+            mapping_contexts,
+            self.loop_counter,
+        );
+    }
+}
+
+/// The two clock reads and the error watermark a task takes before its body
+/// runs.
+///
+/// Bundled and sampled in one place because *when* they are read is the whole
+/// contract: a `trace_start` taken after the body would mistime the step, and
+/// an `errors_before` taken after it would drop every error the task
+/// contributed. Both task loops spelled the three out identically, where a
+/// one-sided edit had nothing to catch it.
+#[derive(Clone, Copy)]
+struct TaskClocks {
+    /// `Utc::now()` at task start, but only when a trace is live.
+    trace_start: Option<DateTime<Utc>>,
+    /// `trace_start`, or the observer's own clock read when only an observer is
+    /// attached. `None` on the plain path, which is what keeps the documented
+    /// one-`Utc::now()`-per-message invariant.
+    obs_start: Option<DateTime<Utc>>,
+    /// `message.errors.len()` immediately before the body ran, so the errors
+    /// this task contributed are exactly the tail beyond this index.
+    errors_before: usize,
+}
+
+/// What the group gate and the two conditions decided about one task.
+enum Admission {
+    /// A terminal group closed at this task — the workflow halts before it.
+    Halt,
+    /// A group's condition was false; resume at this absolute task index.
+    Jump(usize),
+    /// The task's own condition was false; move on to the next task.
+    Skip,
+    /// Run it.
+    Run,
+}
+
+/// Run the group gate and both conditions for one task, recording the skips
+/// they imply.
+///
+/// This is the identical opening of both task loops: close spans that ended
+/// before this task (a terminal one halts), open the spans that start here (a
+/// false condition jumps past the span without consulting the member tasks'
+/// own conditions), then the task's own condition. Only the *evaluation*
+/// differs between the loops — the owned context on the async path, the shared
+/// arena view on the sync one — so it arrives as `eval`. Both flavours already
+/// map a `None` condition to `true`, so `eval` takes the `Option` directly.
+fn admit_task(
+    workflow: &Workflow,
+    task: &Task,
+    abs: usize,
+    gate: &mut GroupGate,
+    mut trace: Option<&mut ExecutionTrace>,
+    pass: PassCtx,
+    mut eval: impl FnMut(Option<&Arc<Logic>>) -> Result<bool>,
+) -> Result<Admission> {
+    if gate.close_through(abs) {
+        return Ok(Admission::Halt);
+    }
+
+    if let Some(target) = gate.enter(task, &mut eval)? {
+        note_group_skip(
+            trace.as_deref_mut(),
+            workflow,
+            abs,
+            target,
+            pass.loop_counter,
+        );
+        return Ok(Admission::Jump(target));
+    }
+
+    if !eval(task.compiled_condition.as_ref())? {
+        note_task_skip(trace, &workflow.id, &task.id, pass.loop_counter);
+        return Ok(Admission::Skip);
+    }
+
+    Ok(Admission::Run)
 }
 
 /// The two per-*task* values `handle_task_result` needs beyond the shared
@@ -165,14 +272,10 @@ impl GroupGate {
     /// its span; the groups outside it stay open.
     fn enter<F>(&mut self, task: &Task, mut eval: F) -> Result<Option<usize>>
     where
-        F: FnMut(&Arc<Logic>) -> Result<bool>,
+        F: FnMut(Option<&Arc<Logic>>) -> Result<bool>,
     {
         for group in &task.group_starts {
-            let entered = match group.compiled_condition.as_ref() {
-                None => true,
-                Some(compiled) => eval(compiled)?,
-            };
-            if !entered {
+            if !eval(group.compiled_condition.as_ref())? {
                 return Ok(Some(group.end));
             }
             self.open.push((group.end, group.terminal));
@@ -675,6 +778,24 @@ impl WorkflowExecutor {
         self.observer.as_ref().map(|_| Utc::now())
     }
 
+    /// Sample the per-task clocks and error watermark. See [`TaskClocks`] for
+    /// why the three are taken together, and here rather than in each loop.
+    #[inline]
+    fn open_task_clocks(&self, tracing: bool, message: &Message) -> TaskClocks {
+        // Clock reads only when a trace is live or an observer is attached, so
+        // the plain path keeps its documented one-`Utc::now()`-per-message
+        // invariant.
+        let trace_start = if tracing { Some(Utc::now()) } else { None };
+        TaskClocks {
+            trace_start,
+            obs_start: trace_start.or_else(|| self.observer_clock()),
+            // Sampled before the body runs: `validation` and
+            // `TaskContext::add_error` both push during it, so the tail beyond
+            // this index is exactly what this task contributed.
+            errors_before: message.errors.len(),
+        }
+    }
+
     /// Get a clone of the task_functions Arc for reuse in new engines
     pub fn task_functions(&self) -> Arc<HashMap<String, BoxedFunctionHandler>> {
         self.task_executor.task_functions()
@@ -1116,53 +1237,28 @@ impl WorkflowExecutor {
                 // Single async task (or non-sync-builtin) at `idx`.
                 let task = &tasks[idx];
 
-                if gate.close_through(idx) {
-                    return Ok(true);
-                }
-                let jump = gate.enter(task, |compiled| {
-                    evaluate_condition(&self.engine, Some(compiled), &message.context)
-                })?;
-                if let Some(target) = jump {
-                    note_group_skip(
-                        trace.as_deref_mut(),
-                        workflow,
-                        idx,
-                        target,
-                        pass.loop_counter,
-                    );
-                    idx = target;
-                    continue;
-                }
-
-                let should_execute = evaluate_condition(
-                    &self.engine,
-                    task.compiled_condition.as_ref(),
-                    &message.context,
-                )?;
-
-                if !should_execute {
-                    note_task_skip(
-                        trace.as_deref_mut(),
-                        &workflow.id,
-                        &task.id,
-                        pass.loop_counter,
-                    );
-                    idx += 1;
-                    continue;
+                match admit_task(
+                    workflow,
+                    task,
+                    idx,
+                    gate,
+                    trace.as_deref_mut(),
+                    pass,
+                    |compiled| evaluate_condition(&self.engine, compiled, &message.context),
+                )? {
+                    Admission::Halt => return Ok(true),
+                    Admission::Jump(target) => {
+                        idx = target;
+                        continue;
+                    }
+                    Admission::Skip => {
+                        idx += 1;
+                        continue;
+                    }
+                    Admission::Run => {}
                 }
 
-                // Clock reads only when a trace is live or an observer is
-                // attached, so the plain path keeps its documented
-                // one-`Utc::now()`-per-message invariant.
-                let trace_start = if trace.is_some() {
-                    Some(Utc::now())
-                } else {
-                    None
-                };
-                let obs_start = trace_start.or_else(|| self.observer_clock());
-
-                // Sampled before the body runs — see the sync-stretch site.
-                let errors_before = message.errors.len();
+                let clocks = self.open_task_clocks(trace.is_some(), message);
 
                 let result = self
                     .task_executor
@@ -1178,7 +1274,7 @@ impl WorkflowExecutor {
                     .await;
 
                 // Before `handle_task_result`, whose `?` would drop failed tasks.
-                self.emit_task_event(workflow, task, &result, obs_start);
+                self.emit_task_event(workflow, task, &result, clocks.obs_start);
 
                 // No arena refresh here: no `ArenaContext` is live on this path,
                 // and `run_sync_stretch` rebuilds one from `message.context` at
@@ -1190,7 +1286,7 @@ impl WorkflowExecutor {
                     TaskPass {
                         continue_on_error: task.continue_on_error,
                         terminal: task.terminal,
-                        errors_before,
+                        errors_before: clocks.errors_before,
                     },
                     message,
                     pass,
@@ -1198,20 +1294,14 @@ impl WorkflowExecutor {
 
                 // Async tasks at the boundary have no per-mapping snapshots —
                 // they're either HTTP/Kafka/Enrich or a custom handler.
-                if let Some(t) = trace.as_deref_mut() {
-                    let started_at = trace_start.unwrap_or(pass.now);
-                    t.add_executed_step(
-                        &workflow.id,
-                        &task.id,
-                        message,
-                        StepTiming {
-                            started_at,
-                            duration_us: duration_us_between(started_at, Utc::now()),
-                        },
-                        None,
-                        pass.loop_counter,
-                    );
-                }
+                pass.note_executed(
+                    trace.as_deref_mut(),
+                    &workflow.id,
+                    &task.id,
+                    message,
+                    clocks,
+                    None,
+                );
 
                 if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
                     return Ok(true);
@@ -1280,62 +1370,41 @@ impl WorkflowExecutor {
             let task = &tasks[i];
             let abs = offset + i;
 
-            // Close any group whose span ended before this task. A terminal one
-            // ends the workflow here, before the next task runs.
-            if gate.close_through(abs) {
-                return Ok(SliceOutcome::Halted);
-            }
-
-            // Open the groups that start here, evaluating each condition once.
-            // A false one skips the whole span without touching the member
-            // tasks' own conditions.
-            let jump = gate.enter(task, |compiled| {
-                evaluate_condition_in_arena(
-                    &self.engine,
-                    Some(compiled),
-                    arena_ctx.as_data_value(),
-                    arena,
-                )
-            })?;
-            if let Some(target) = jump {
-                note_group_skip(
-                    trace.as_deref_mut(),
-                    workflow,
-                    abs,
-                    target,
-                    pass.loop_counter,
-                );
-                if target >= slice_end {
-                    return Ok(SliceOutcome::JumpTo(target));
+            // Conditions evaluate against the arena form so we don't re-borrow
+            // the thread-local `RefCell`. A `None` compiled condition (the
+            // compiler folds the default literal `true` to `None`) skips both
+            // the eval and the per-task arena context slice build.
+            match admit_task(
+                workflow,
+                task,
+                abs,
+                gate,
+                trace.as_deref_mut(),
+                pass,
+                |compiled| {
+                    evaluate_condition_in_arena(
+                        &self.engine,
+                        compiled,
+                        arena_ctx.as_data_value(),
+                        arena,
+                    )
+                },
+            )? {
+                Admission::Halt => return Ok(SliceOutcome::Halted),
+                Admission::Jump(target) => {
+                    // A span reaching past this slice is the caller's to
+                    // resume — it owns the tasks beyond `slice_end`.
+                    if target >= slice_end {
+                        return Ok(SliceOutcome::JumpTo(target));
+                    }
+                    i = target - offset;
+                    continue;
                 }
-                i = target - offset;
-                continue;
-            }
-
-            // Task condition — evaluate against the arena form so we don't
-            // re-borrow the thread-local `RefCell`. A `None` compiled
-            // condition (compiler folds the default literal `true` to
-            // `None`) skips both the eval and the per-task arena context
-            // slice build.
-            let should_execute = match task.compiled_condition.as_ref() {
-                None => true,
-                Some(compiled) => evaluate_condition_in_arena(
-                    &self.engine,
-                    Some(compiled),
-                    arena_ctx.as_data_value(),
-                    arena,
-                )?,
-            };
-
-            if !should_execute {
-                note_task_skip(
-                    trace.as_deref_mut(),
-                    &workflow.id,
-                    &task.id,
-                    pass.loop_counter,
-                );
-                i += 1;
-                continue;
+                Admission::Skip => {
+                    i += 1;
+                    continue;
+                }
+                Admission::Run => {}
             }
 
             // Per-task snapshot buffer — only used for Map tasks in trace
@@ -1351,26 +1420,13 @@ impl WorkflowExecutor {
                 None
             };
 
-            // Clock reads only when a trace is live or an observer is attached,
-            // so the plain path keeps its documented
-            // one-`Utc::now()`-per-message invariant.
-            let trace_start = if trace.is_some() {
-                Some(Utc::now())
-            } else {
-                None
-            };
-            let obs_start = trace_start.or_else(|| self.observer_clock());
-
-            // Sampled before the body runs: `validation` and
-            // `TaskContext::add_error` both push during it, so the tail beyond
-            // this index is exactly what this task contributed.
-            let errors_before = message.errors.len();
+            let clocks = self.open_task_clocks(trace.is_some(), message);
 
             let result =
                 self.execute_sync_task_in_arena(task, message, arena_ctx, mapping_snapshots_buf);
 
             // Before `handle_task_result`, whose `?` would drop failed tasks.
-            self.emit_task_event(workflow, task, &result, obs_start);
+            self.emit_task_event(workflow, task, &result, clocks.obs_start);
 
             let flow = self.handle_task_result(
                 result,
@@ -1379,7 +1435,7 @@ impl WorkflowExecutor {
                 TaskPass {
                     continue_on_error: task.continue_on_error,
                     terminal: task.terminal,
-                    errors_before,
+                    errors_before: clocks.errors_before,
                 },
                 message,
                 pass,
@@ -1401,31 +1457,22 @@ impl WorkflowExecutor {
             // Gated on a failure actually being recorded: this walk deep-copies
             // the target subtree into the arena, so running it after every
             // successful task would be a permanent cost on the hot path.
-            if let Some(cfg) = self.error_context_refresh(message, errors_before) {
+            if let Some(cfg) = self.error_context_refresh(message, clocks.errors_before) {
                 arena_ctx.refresh_for_path_parts(&message.context, &cfg.path_parts);
             }
 
             let control_flow = flow?;
 
-            if let Some(t) = trace.as_deref_mut() {
-                let started_at = trace_start.unwrap_or(pass.now);
-                let mapping_contexts = if mapping_snapshots.is_empty() {
-                    None
-                } else {
-                    Some(mapping_snapshots)
-                };
-                t.add_executed_step(
-                    &workflow.id,
-                    &task.id,
-                    message,
-                    StepTiming {
-                        started_at,
-                        duration_us: duration_us_between(started_at, Utc::now()),
-                    },
-                    mapping_contexts,
-                    pass.loop_counter,
-                );
-            }
+            pass.note_executed(
+                trace.as_deref_mut(),
+                &workflow.id,
+                &task.id,
+                message,
+                clocks,
+                // A `map` task in trace mode collects one snapshot per mapping;
+                // every other sync built-in leaves the buffer empty.
+                Some(mapping_snapshots).filter(|s| !s.is_empty()),
+            );
 
             if matches!(control_flow, TaskControlFlow::HaltWorkflow) {
                 return Ok(SliceOutcome::Halted);

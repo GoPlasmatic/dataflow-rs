@@ -631,17 +631,27 @@ impl FunctionConfig {
         }
     }
 
+    /// Whether the workflow executor runs this task itself, inside the shared
+    /// arena, rather than breaking the sync stretch to `.await` a handler.
+    ///
+    /// Spelled as the *complement* of the handler-backed set rather than as the
+    /// list of sync built-ins, and that is load-bearing. This must agree with
+    /// `Self::try_execute_in_arena` exactly — a `true` here that meets a
+    /// `None` there is the "engine bug" arm of
+    /// `WorkflowExecutor::execute_sync_task_in_arena`. Adding a variant forces
+    /// an arm in `try_execute_in_arena` (that match is exhaustive), and with
+    /// the negation form a *new sync built-in* then classifies correctly here
+    /// with no second edit. Only a new handler-backed variant needs adding to
+    /// the list below, and
+    /// `is_sync_builtin_agrees_with_arena_dispatch_for_every_builtin` fails if
+    /// it is forgotten.
     pub fn is_sync_builtin(&self) -> bool {
-        matches!(
+        !matches!(
             self,
-            Self::Map { .. }
-                | Self::Validation { .. }
-                | Self::ParseJson { .. }
-                | Self::ParseXml { .. }
-                | Self::PublishJson { .. }
-                | Self::PublishXml { .. }
-                | Self::Filter { .. }
-                | Self::Log { .. }
+            Self::HttpCall { .. }
+                | Self::Enrich { .. }
+                | Self::PublishKafka { .. }
+                | Self::Custom { .. }
         )
     }
 
@@ -655,9 +665,14 @@ impl FunctionConfig {
     /// context before each mapping (for the trace surface). All other
     /// variants ignore it. Pass `None` from the production path.
     ///
-    /// This is the single source of truth for the sync-stretch dispatch:
-    /// adding a new sync built-in only requires adding an arm here (and the
-    /// matching variant to `is_sync_builtin` above).
+    /// This is the single source of truth for the sync-stretch dispatch, and
+    /// the match is exhaustive, so a new variant cannot be added without
+    /// deciding here. A new *sync* built-in needs nothing else:
+    /// [`Self::is_sync_builtin`] is written as the complement of the
+    /// handler-backed set, so it classifies the newcomer correctly on its own.
+    /// A new *handler-backed* one must also join that set, and
+    /// `is_sync_builtin_agrees_with_arena_dispatch_for_every_builtin` fails if
+    /// it does not.
     pub(crate) fn try_execute_in_arena<'arena>(
         &'arena self,
         message: &mut Message,
@@ -712,6 +727,29 @@ mod tests {
 
     fn parse(value: serde_json::Value) -> std::result::Result<FunctionConfig, serde_json::Error> {
         serde_json::from_value(value)
+    }
+
+    /// The smallest `input` that parses for each built-in name.
+    ///
+    /// Shared by every table-driven test below that walks
+    /// [`BUILTIN_FUNCTION_NAMES`], so a new built-in is described once. A name
+    /// with required fields that is not listed here falls to `{}` and fails
+    /// loudly at the parse in each caller, rather than silently skewing a
+    /// partition.
+    fn minimal_input(name: &str) -> serde_json::Value {
+        match name {
+            "map" => json!({ "mappings": [] }),
+            "validation" | "validate" => json!({ "rules": [] }),
+            "parse_json" | "parse_xml" | "publish_json" | "publish_xml" => {
+                json!({ "source": "data.in", "target": "out" })
+            }
+            "filter" => json!({ "condition": true }),
+            "log" => json!({ "message": "hi" }),
+            "http_call" => json!({ "connector": "c" }),
+            "enrich" => json!({ "connector": "c", "merge_path": "data.out" }),
+            "publish_kafka" => json!({ "connector": "c", "topic": "t" }),
+            _ => json!({}),
+        }
     }
 
     #[test]
@@ -1005,19 +1043,6 @@ mod tests {
     fn connector_is_none_for_every_non_connector_builtin() {
         // Table-driven over BUILTIN_FUNCTION_NAMES minus the three integration
         // names, so this cannot go stale when a built-in is added.
-        let minimal_input = |name: &str| -> serde_json::Value {
-            match name {
-                "map" => json!({ "mappings": [] }),
-                "validation" | "validate" => json!({ "rules": [] }),
-                "parse_json" | "parse_xml" | "publish_json" | "publish_xml" => {
-                    json!({ "source": "data.in", "target": "out" })
-                }
-                "filter" => json!({ "condition": true }),
-                "log" => json!({ "message": "hi" }),
-                _ => json!({}),
-            }
-        };
-
         for name in BUILTIN_FUNCTION_NAMES {
             if matches!(*name, "http_call" | "enrich" | "publish_kafka") {
                 continue;
@@ -1098,31 +1123,13 @@ mod tests {
     }
 
     #[test]
-    fn builtin_kinds_partition_matches_real_dispatch_behaviour() {
-        // Tie the classifier to executed code rather than to a second
-        // hand-maintained list: `is_sync_builtin` decides whether the workflow
-        // executor runs a task itself in the arena, and `try_execute_in_arena`
-        // returns `None` for exactly the handler-backed variants. So a
-        // SelfContained name must be a sync built-in and a RequiresHandler name
-        // must not be.
-        let minimal_input = |name: &str| -> serde_json::Value {
-            match name {
-                "map" => json!({ "mappings": [] }),
-                "validation" | "validate" => json!({ "rules": [] }),
-                "parse_json" | "parse_xml" | "publish_json" | "publish_xml" => {
-                    json!({ "source": "data.in", "target": "out" })
-                }
-                "filter" => json!({ "condition": true }),
-                "log" => json!({ "message": "hi" }),
-                "http_call" => json!({ "connector": "c" }),
-                "enrich" => json!({ "connector": "c", "merge_path": "data.out" }),
-                "publish_kafka" => json!({ "connector": "c", "topic": "t" }),
-                // A new built-in with required fields will fail loudly below
-                // rather than silently skewing the partition.
-                _ => json!({}),
-            }
-        };
-
+    fn builtin_kinds_partition_matches_the_sync_builtin_classifier() {
+        // `builtin_function_kind` and `is_sync_builtin` are two hand-maintained
+        // views of one partition, so they must agree: a SelfContained name is a
+        // sync built-in and a RequiresHandler name is not. That
+        // `is_sync_builtin` in turn agrees with the *dispatch* is the separate
+        // claim `is_sync_builtin_agrees_with_arena_dispatch_for_every_builtin`
+        // proves — by calling it, rather than by asserting it in prose here.
         for name in BUILTIN_FUNCTION_NAMES {
             let kind = builtin_function_kind(name)
                 .unwrap_or_else(|| panic!("'{name}' must classify as a built-in"));
@@ -1134,6 +1141,72 @@ mod tests {
                 matches!(kind, BuiltinKind::SelfContained),
                 "'{name}' classifies as {kind:?} but is_sync_builtin() is {}",
                 cfg.is_sync_builtin()
+            );
+        }
+    }
+
+    /// `is_sync_builtin` is what `next_async_boundary` chunks the task list
+    /// with, and `try_execute_in_arena` is what actually runs those chunks. A
+    /// `true` that meets a `None` is the "engine bug" arm of
+    /// `WorkflowExecutor::execute_sync_task_in_arena` — reachable only at
+    /// runtime, on the first message that touches the task.
+    ///
+    /// Nothing checked that before: the partition test above compares
+    /// `is_sync_builtin` against `builtin_function_kind`, a third hand-written
+    /// list, and merely *asserts in a comment* that the dispatch agrees. This
+    /// calls the dispatch instead, for every built-in plus a custom name.
+    #[test]
+    fn is_sync_builtin_agrees_with_arena_dispatch_for_every_builtin() {
+        use crate::engine::compiler::LogicCompiler;
+        use crate::engine::executor::with_arena;
+        use crate::engine::workflow::Workflow;
+
+        // Every built-in, plus an unregistered custom name — the fourth
+        // handler-backed variant, which `BUILTIN_FUNCTION_NAMES` cannot cover.
+        let names: Vec<&str> = BUILTIN_FUNCTION_NAMES
+            .iter()
+            .copied()
+            .chain(std::iter::once("some_custom_handler"))
+            .collect();
+
+        for name in names {
+            // Compile through the real pass, so every `Template` and condition
+            // is populated exactly as it is on the live path. `LogicCompiler`
+            // does not resolve handlers, so a config-only integration and an
+            // unregistered custom name both compile here.
+            let workflow = Workflow::from_json(&format!(
+                r#"{{"id": "w", "name": "w", "priority": 0, "tasks": [
+                    {{"id": "t", "name": "t", "function": {{"name": "{name}", "input": {}}}}}
+                ]}}"#,
+                minimal_input(name)
+            ))
+            .unwrap_or_else(|e| panic!("'{name}' should parse into a workflow: {e}"));
+
+            let compiler = LogicCompiler::new();
+            let compiled = compiler
+                .compile_workflows(vec![workflow])
+                .unwrap_or_else(|e| panic!("'{name}' should compile: {e}"));
+            let engine = compiler.into_engine();
+            let function = &compiled[0].tasks[0].function;
+
+            let mut message = Message::from_value(&json!({}));
+            let dispatches = with_arena(|arena| {
+                let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
+                // Only the `Some`/`None` decision matters. The inner `Result`
+                // is whatever running against an empty message produces, and
+                // is deliberately not asserted on.
+                function
+                    .try_execute_in_arena(&mut message, &mut arena_ctx, &engine, None)
+                    .is_some()
+            });
+
+            assert_eq!(
+                dispatches,
+                function.is_sync_builtin(),
+                "'{name}': is_sync_builtin() is {} but try_execute_in_arena() \
+                 {} — the sync stretch would hit the engine-bug arm",
+                function.is_sync_builtin(),
+                if dispatches { "dispatched" } else { "declined" }
             );
         }
     }
