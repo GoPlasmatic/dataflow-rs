@@ -389,16 +389,20 @@ enum Sink {
     /// Collapses to a bool the engine acts on: workflow, group and task
     /// conditions, `validation` rules, `filter`. Nothing of the value survives.
     Bool,
-    /// Handed to a handler: `Template` fields and integration `*_logic`. What
-    /// happens next is the handler's business.
+    /// Handed to a handler: a custom handler's `Template` fields and every
+    /// `http_call` / `enrich` / `publish_kafka` parameter. What happens next is
+    /// the handler's business.
     Handler,
     /// A custom task's whole raw input, handed to the handler untyped. The
     /// same rule as [`Sink::Handler`]; it differs only in that the document
     /// is not one expression, so an issue carries the deep path to the
     /// reference rather than the field.
     Input,
-    /// Written to the message or emitted to a log by the engine itself:
-    /// `map` mappings, `log` message and fields. Recorded by construction.
+    /// Written to the message or emitted to a log by the engine itself: a
+    /// `map` mapping's value *and* its destination, a `validation` rule's
+    /// `message`, `log` message and fields, and the `source` / `target` /
+    /// `root_element` a `parse_*` or `publish_*` names. Recorded by
+    /// construction — a destination lands in `Change.path` and the audit trail.
     Message,
 }
 

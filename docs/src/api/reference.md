@@ -125,7 +125,17 @@ pub fn declared_secrets(&self) -> impl Iterator<Item = &str>
 // Every operator name this build evaluates: core, plus enabled families, plus
 // custom registrations. See the JSONLogic page on operator families.
 pub fn operator_names(&self) -> impl Iterator<Item = &str> + '_
+
+// The prefix that escapes a template key, so the key is emitted as data
+// instead of resolving as an operator. '$' on every build, fixed for the life
+// of the engine — this exists so an authoring tool renders and validates the
+// spelling without hardcoding it, not because it varies.
+pub fn template_key_escape(&self) -> char
 ```
+
+`template_key_escape` is the companion to `operator_names`: that answers *which
+names are live*, this answers *how to opt a key out of being one*. See
+[Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape).
 
 ```rust,ignore
 pub struct DispatchableFunction<'a> {
@@ -619,7 +629,20 @@ rather than reimplemented downstream.
 ```rust,ignore
 // `Some` for http_call / enrich / publish_kafka (typed field), and for a
 // `Custom` input whose `connector` key holds a string. `None` otherwise.
-pub fn FunctionConfig::connector(&self) -> Option<&str>
+pub fn FunctionConfig::connector(&self) -> Option<ConnectorName<'_>>
+
+// A connector parameter is JSONLogic, so it names something only once a
+// message is in hand.
+pub enum ConnectorName<'a> {
+    Static(&'a str),    // authored as a literal string; known without a message
+    Computed(&'a Value),// authored as an expression; carries the authored JSON
+}
+
+impl<'a> ConnectorName<'a> {
+    // The literal name, or None when the connector is computed. The narrowing
+    // accessor for callers that genuinely only handle static connectors.
+    pub fn as_static(&self) -> Option<&'a str>
+}
 
 // Every connector reference in a workflow, in task order. One item per task,
 // not deduplicated. Works on an uncompiled `Workflow::from_json` result.
@@ -629,10 +652,18 @@ pub struct ConnectorRef<'a> {
     pub workflow_id: &'a str,
     pub task_id: &'a str,
     pub function: &'a str,
-    pub connector: &'a str,
+    pub connector: ConnectorName<'a>,
     pub config: &'a FunctionConfig,   // for cross-field rules
 }
 ```
+
+> **Changed in 3.9.0.** `connector()` and `ConnectorRef::connector` were
+> `&str`. Every parameter became JSONLogic, so a computed connector names
+> nothing until a message arrives — returning the enum makes a host enumerating
+> connectors decide what to do with those rather than have them silently vanish
+> from `connector_refs`. Prefer matching the enum; `as_static()` is there for
+> the cases that genuinely only handle literals. Resolve a computed one per
+> message with the config's `resolve_connector(ctx)?`.
 
 Across a whole engine, `engine.workflows().iter().flat_map(Workflow::connector_refs)`
 covers it — there is deliberately no `Engine::connector_refs()`, since the engine

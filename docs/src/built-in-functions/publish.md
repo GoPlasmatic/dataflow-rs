@@ -24,9 +24,27 @@ Serializes data from the source field to a JSON string.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `source` | string | Yes | - | Field name in data to serialize (e.g., `output` or `nested.field`) |
-| `target` | string | Yes | - | Field name where the JSON string will be stored |
-| `pretty` | boolean | No | `false` | Whether to pretty-print the JSON output |
+| `source` | string \| JSONLogic | Yes | - | Field name in data to serialize (e.g., `output` or `nested.field`) |
+| `target` | string \| JSONLogic | Yes | - | Field name where the JSON string will be stored |
+| `pretty` | boolean | No | `false` | Whether to pretty-print the JSON output. **Static**, so the output shape is known at build time |
+
+`source` and `target` are JSONLogic, so either can be computed per message:
+
+```json
+{
+    "source": {"cat": ["outputs.", {"var": "data.format"}]},
+    "target": {"cat": ["rendered_", {"var": "data.format"}]}
+}
+```
+
+Both resolve to the *name* of a location, not to the value at one. The static
+spelling is a plain string, which is JSONLogic for itself: it folds to a
+constant at build time and keeps the precomputed path split, so nothing changes
+for the ordinary case.
+
+Both name where the engine itself writes, and the destination is recorded in
+`Change.path` and on the audit trail, so neither may read `{"secret": …}` — see
+[Secrets](../advanced/secrets.md).
 
 ### Examples
 
@@ -114,9 +132,20 @@ Serializes data from the source field to an XML string.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `source` | string | Yes | - | Field name in data to serialize |
-| `target` | string | Yes | - | Field name where the XML string will be stored |
-| `root_element` | string | No | `root` | Name of the root XML element |
+| `source` | string \| JSONLogic | Yes | - | Field name in data to serialize |
+| `target` | string \| JSONLogic | Yes | - | Field name where the XML string will be stored |
+| `root_element` | string \| JSONLogic | No | `root` | Name of the root XML element |
+
+`source` and `target` accept a computed value exactly as for
+[`publish_json`](#parameters), and so does `root_element` — so one task can name
+the document after the message it is serializing:
+
+```json
+{"source": "output", "target": "xml", "root_element": {"var": "data.doc_type"}}
+```
+
+`root_element` is written into the serialized document that lands in
+`data.{target}`, so it may not read a secret either.
 
 ### JSON to XML Conversion
 

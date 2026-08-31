@@ -39,7 +39,7 @@ The map function:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | string | Yes | Target path (e.g., "data.user.name") |
+| `path` | string \| JSONLogic | Yes | Target path (e.g., `"data.user.name"`). Since 3.9 it may be an expression that computes the destination per message — see [Computed Destinations](#computed-destinations) |
 | `logic` | JSONLogic | Yes | Expression to evaluate |
 
 ## Path Syntax
@@ -73,6 +73,27 @@ Assigning to root fields (`data`, `metadata`, `temp_data`) merges objects:
 ```
 
 Merges into existing data rather than replacing it.
+
+### Computed Destinations
+
+A destination is JSONLogic like every other parameter, so one mapping can write
+somewhere different for each message:
+
+```json
+{
+    "path": {"cat": ["data.accounts.", {"var": "data.id"}, ".balance"]},
+    "logic": {"var": "data.amount"}
+}
+```
+
+The static spelling above is a plain string, which *is* JSONLogic for itself —
+it folds to a constant at `Engine::builder().build()` and keeps the precomputed
+path split the write loop has always used. Only a destination that actually
+reads the message pays to be split per write, so nothing changes for the
+ordinary case.
+
+A computed destination is recorded in `Change.path` and on the audit trail, so
+it may not read a secret — the same rule as the value below.
 
 ## JSONLogic Expressions
 
@@ -132,13 +153,35 @@ Merges into existing data rather than replacing it.
 }
 ```
 
+### Literal Objects
+
+A mapping's `logic` is evaluated in templating mode, so a multi-key object is an
+output template and a *single*-key object whose key names an operator is that
+operator. Prefix the key with `$` to emit it as data instead:
+
+```json
+{"path": "data.filter", "logic": {"$cat": ["a", "b"]}}
+```
+
+That writes the object `{"cat": ["a", "b"]}`; without the `$` it would write the
+string `"ab"`. Exactly one prefix is stripped from **every** template key, not
+only from keys that collide with an operator, so a mapping that emits a key
+genuinely starting with `$` must double it — `{"$$oid": …}` writes
+`{"$oid": …}`. A key naming no operator needs no escape at all:
+`{"result": {"var": "data.x"}}` already writes `{"result": …}`.
+
+See [Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape)
+for the full table, and `Engine::template_key_escape()` if a tool needs the
+prefix rather than hardcoding it.
+
 ### Secrets Are Refused
 
 A mapping's result is written to the message, and the message is what the
 engine records. So a mapping may not read `{"secret": "name"}` at all — not
 verbatim, not through `cat` or a custom operator, not with a dynamic name.
 `Engine::build()` rejects it with `SECRET_IN_MESSAGE_WRITE`, and
-`check_workflow` reports it at `function.input.mappings[i].logic`. Compute a
+`check_workflow` reports it at `function.input.mappings[i].logic` — or at
+`…[i].path`, since a computed destination is recorded too. Compute a
 derived value (an HMAC, a signed URL) in a
 [custom handler](../advanced/custom-functions.md) that reads the key through a
 `Template`; see [Secrets](../advanced/secrets.md).

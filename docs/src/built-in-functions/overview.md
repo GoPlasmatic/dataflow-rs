@@ -15,6 +15,20 @@ Dataflow-rs comes with built-in action functions for common data processing task
 | `publish_json` | Serialize data to JSON string | Yes |
 | `publish_xml` | Serialize data to XML string | Yes |
 
+## Every parameter is JSONLogic
+
+Since 3.9 every parameter of every function above is a JSONLogic expression,
+including the ones that name a destination — a `map` `path`, a `parse_*` or
+`publish_*` `source` and `target`, a `validation` `message`. A JSON literal *is*
+JSONLogic for itself, so the static spelling stays exactly what it always was
+and costs nothing: it folds to a constant when the engine is built, and only a
+parameter that actually reads the message does per-message work.
+
+The one thing this changes for an author is that a single-key object whose key
+names an operator evaluates as that operator, so a literal object is written
+`{"$cat": …}` — see
+[Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape).
+
 In addition, dataflow-rs ships **typed config schemas** for three common
 service-layer integrations — `http_call`, `enrich`, and `publish_kafka`.
 These are not pre-registered: register an `AsyncFunctionHandler` under the

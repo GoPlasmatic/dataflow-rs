@@ -469,10 +469,9 @@ fn build(workflows: Vec<dataflow_rs::Workflow>) -> dataflow_rs::Result<Engine> {
 }
 ```
 
-If a handler's config field should itself be authored as JSONLogic — the same
-`*_logic` convention this crate's own `HttpCallConfig` / `EnrichConfig` /
-`PublishKafkaConfig` use internally — declare it as `Template` and compile it
-once via the `compile_input` hook instead of hand-rolling the raw/compiled pair:
+Any config field may be authored as JSONLogic — since 3.9 that is how *every*
+parameter of every built-in works. Declare it as `Template` and compile it once
+via the `compile_input` hook instead of hand-rolling the raw/compiled pair:
 
 ```rust,ignore
 #[derive(Deserialize)]
@@ -494,9 +493,15 @@ impl AsyncFunctionHandler for GreetingHandler {
 }
 ```
 
-A malformed expression fails at build time, matching this crate's own stance
-for the built-in `*_logic` fields, rather than on the first message that reaches
-the task.
+A malformed expression fails at build time rather than on the first message that
+reaches the task, matching this crate's own stance for the built-ins.
+
+A JSON literal *is* JSONLogic for itself, so the static spelling an author
+already writes — `"data.out"`, `5000` — folds to a constant at build time and is
+evaluated once, not per message. The one thing to know is that a single-key
+object whose key names an operator is that operator: write `{"$cat": …}` for the
+literal object. See
+[Literal keys and the `$` escape](docs/src/advanced/jsonlogic.md#literal-keys-and-the--escape).
 
 ## Built-in Functions
 

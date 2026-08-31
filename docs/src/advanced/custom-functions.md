@@ -185,9 +185,9 @@ projection (`Session::eval_str` keeps the JSON quoting), so pick it when the
 result is going into a URL path or similar. See [API Reference](../api/reference.md#taskcontext).
 
 Compiling once per task rather than per message matters for a hot path. If your
-config has a field the workflow author writes as JSONLogic — the `*_logic`
-convention this crate's own built-ins use — reach for `Template` instead of
-managing the raw/compiled pair by hand.
+config has a field the workflow author writes as JSONLogic — which, since 3.9,
+is every parameter of every built-in — reach for `Template` instead of managing
+the raw/compiled pair by hand.
 
 ## Config fields that are JSONLogic (`Template`)
 
@@ -233,7 +233,7 @@ impl AsyncFunctionHandler for GreetingHandler {
 
 A malformed expression fails at `compile_input` time — `Engine::builder().build()`
 or `Engine::with_new_workflows` — not on the first message that reaches the task,
-matching this crate's stance for the built-in `*_logic` fields.
+matching this crate's stance for its own built-in parameters.
 
 Two things worth knowing:
 

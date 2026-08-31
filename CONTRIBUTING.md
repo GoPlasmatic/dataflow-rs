@@ -110,10 +110,22 @@ difference between a green PR and a red one:
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
 `--all-targets` covers examples, tests, and benches. `--all-features` covers the
 `wasm-web` feature, which is otherwise silently skipped.
+
+The `cargo doc` line is not optional politeness. Clippy does not lint rustdoc,
+so nothing above catches a broken intra-doc link, a link from public docs into a
+private item, or an unbackticked generic like `Arc<Logic>` that rustdoc parses
+as an HTML tag — all of which ship silently to docs.rs as dead or mangled text.
+CI runs it under `-D warnings` like everything else.
+
+Lint *policy* lives in `[workspace.lints]` in the root `Cargo.toml` and is
+inherited by all three members, so a bare `cargo clippy` and rust-analyzer
+enforce what CI enforces. Adding a lint there means fixing every existing
+violation in the same change — CI's `-D warnings` gives no grace period.
 
 If you touched `wasm/`:
 

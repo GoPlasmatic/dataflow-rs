@@ -24,8 +24,28 @@ Extracts JSON data from the payload or data context and stores it in a target fi
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `source` | string | Yes | Path to read from: `payload`, `payload.field`, or `data.field` |
-| `target` | string | Yes | Field name in data where the result will be stored |
+| `source` | string \| JSONLogic | Yes | Path to read from: `payload`, `payload.field`, or `data.field` |
+| `target` | string \| JSONLogic | Yes | Field name in data where the result will be stored |
+
+Both are JSONLogic, so either can be computed per message:
+
+```json
+{
+    "source": {"cat": ["data.batches.", {"var": "temp_data.i"}]},
+    "target": {"cat": ["parsed_", {"var": "temp_data.i"}]}
+}
+```
+
+`source` resolves to the *name* of a location, never to the value at one —
+`payload` is not part of the JSONLogic evaluation context, so an expression
+could not read it even if it tried. The static spelling of either parameter is a
+plain string, which is JSONLogic for itself: it folds to a constant at build
+time and keeps the precomputed path split, so nothing changes for the ordinary
+case.
+
+Both name where the engine itself writes, and the destination is recorded in
+`Change.path` and on the audit trail, so neither may read `{"secret": …}` — see
+[Secrets](../advanced/secrets.md).
 
 ### Examples
 
@@ -120,8 +140,10 @@ Parses an XML string from the source path, converts it to JSON, and stores it in
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `source` | string | Yes | Path to XML string: `payload`, `payload.field`, or `data.field` |
-| `target` | string | Yes | Field name in data where the parsed JSON will be stored |
+| `source` | string \| JSONLogic | Yes | Path to XML string: `payload`, `payload.field`, or `data.field` |
+| `target` | string \| JSONLogic | Yes | Field name in data where the parsed JSON will be stored |
+
+Both accept a computed value, exactly as for [`parse_json`](#parameters).
 
 ### XML to JSON Conversion
 

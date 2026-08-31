@@ -101,15 +101,34 @@ Placement does not stop a workflow *copying* a secret into a recorded root:
 Rather than try to tell a verbatim copy from a derived value — there is no
 principled static line between the two, and `cat`, `substr` and `if` all copy
 — the rule is blunt. **An expression whose result the engine writes to the
-message or emits to a log may not read a secret at all**: a `map` mapping, a
-`log` message, a `log` field. That holds even through a custom operator, and
-for a dynamic name (`{"secret": {"var": "…"}}`) as much as a literal one.
+message or emits to a log may not read a secret at all.** That holds even
+through a custom operator, and for a dynamic name (`{"secret": {"var": "…"}}`)
+as much as a literal one.
+
+Since 3.9 every parameter is JSONLogic, so the rule covers destinations as well
+as values — a path is recorded in `Change.path` and on the audit trail, which is
+just as serialized as the value written there:
+
+| Parameter | Why it is recorded |
+|---|---|
+| `map` — `logic` | The value written to the message |
+| `map` — `path` | The destination, recorded in `Change.path` and the audit trail |
+| `validation` — `message` | Rendered into `Message::errors`. A rule may *test* a secret in its `logic`; it may not *report* one |
+| `log` — `message`, `fields.*` | Emitted to the log |
+| `parse_*` — `source`, `target` | Name where the engine itself reads and writes |
+| `publish_*` — `source`, `target` | Same |
+| `publish_xml` — `root_element` | Written into the serialized document that lands in `data.{target}` |
+
+Everything handed to a *handler* may read a secret, because what happens to it
+from there is the handler's business: every `http_call`, `enrich` and
+`publish_kafka` parameter — `headers` values above all — a custom task's whole
+`input`, and any condition, which yields a boolean rather than a recorded value.
 
 The check runs at authoring time and at construction, from one implementation:
 
 | Code | Fires when |
 |---|---|
-| `SECRET_IN_MESSAGE_WRITE` | A `map` mapping or `log` expression reads a secret |
+| `SECRET_IN_MESSAGE_WRITE` | Any recorded parameter above reads a secret |
 | `UNKNOWN_SECRET` | An expression names a secret the engine does not declare |
 
 `Engine::build()` refuses a workflow with either; `check_workflow` reports them

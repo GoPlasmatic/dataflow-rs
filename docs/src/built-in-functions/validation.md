@@ -45,11 +45,31 @@ The validation function:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `logic` | JSONLogic | Yes | Expression that must evaluate to `true` |
-| `message` | string | Yes | Error message recorded when the rule fails |
+| `message` | string \| JSONLogic | Yes | Error message recorded when the rule fails. Since 3.9 it may be an expression that names the value that failed — see [Computed Messages](#computed-messages) |
 
 Both fields are required: a rule missing either one fails to load, and the
 workflow is rejected when the engine is built rather than when the first
 message arrives.
+
+### Computed Messages
+
+A `message` is JSONLogic like every other parameter, so an error can carry the
+value that caused it instead of a fixed sentence:
+
+```json
+{
+    "logic": {"<=": [{"var": "data.age"}, 120]},
+    "message": {"cat": ["Age ", {"var": "data.age"}, " is out of range"]}
+}
+```
+
+A plain string is JSONLogic for itself, so the static spelling folds to a
+constant at build time and costs nothing per message. A message is rendered
+**only when its rule fails**, so a computed one is free on the passing path.
+
+Because the rendered text lands in `message.errors()`, which is serialized, a
+`message` may not read `{"secret": …}` — a rule may *test* a secret in its
+`logic`, but it may not *report* one. See [Secrets](../advanced/secrets.md).
 
 ## How Validation Works
 

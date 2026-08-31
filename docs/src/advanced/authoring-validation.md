@@ -128,8 +128,16 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `INPUT_PARSE` | A custom task's `input` does not match its handler's `Input` type |
 | `TEMPLATE_COMPILE` | A handler rejected the input at construction time |
 | `UNKNOWN_SECRET` | An expression names a secret the engine does not declare — see [Secrets](./secrets.md) |
-| `SECRET_IN_MESSAGE_WRITE` | A `map` mapping or `log` expression reads a secret, which the engine would record |
+| `SECRET_IN_MESSAGE_WRITE` | An expression whose result the engine records reads a secret — see [Secrets](./secrets.md#what-a-secret-may-not-do) for the full set |
 | `INVALID_SECRET_STORE` | The store given to `with_secrets` is not an object — reported in place of the `UNKNOWN_SECRET` issues every name would otherwise produce |
+| `DUPLICATE_TEMPLATE_KEY` | Two keys in one template object collapse to the same name once the `$` escape is stripped |
+| `ESCAPED_TEMPLATE_KEY` | **Informational.** A `$`-prefixed template key — the migration audit, never refused |
+
+`ESCAPED_TEMPLATE_KEY` is the one code `check_workflow` reports that
+`Engine::build()` will not refuse. Stripping the [`$` escape](./jsonlogic.md#literal-keys-and-the--escape)
+is uniform rather than conditional on a collision, so every escaped key is worth
+seeing once when upgrading to 3.9; after that they are deliberate. Everything
+else in the table is a rejection.
 
 ## Checking against the handlers
 

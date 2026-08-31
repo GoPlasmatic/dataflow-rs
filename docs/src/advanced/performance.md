@@ -57,9 +57,18 @@ fraction of the total:
 
 ```bash
 cargo run --example micro_cond_bench --release          # Condition eval, incl. trivially-true folding
-cargo run --example micro_multiworkflow_bench --release # Chained workflows, per-workflow arena rebuild
+cargo run --example micro_multiworkflow_bench --release # N chained workflows, one message
 cargo run --example micro_subtree_write_bench --release # k map writes into one subtree (write-path scaling)
 ```
+
+The last two are **regression guards**, not open investigations: the
+optimizations they were written to size up have shipped, so what they assert is
+that a property stays flat. `micro_multiworkflow_bench`'s three layouts should
+sit close together, since one `ArenaContext` is carried across a run of
+consecutive fully-sync workflows; `micro_subtree_write_bench`'s per-write cost
+should stay roughly linear in `k`, since the arena write-through splices rather
+than re-walking the subtree. A layout pulling away from the others, or a k-sweep
+bending upward, is the signal.
 
 Two more measure throughput on a multi-threaded runtime, so they carry the same
 scheduling noise as the macro benchmarks:
@@ -72,6 +81,13 @@ cargo run --example map_performance_test --release      # Sequential map mapping
 Each source file documents what it isolates and why in its header comment.
 Numbers vary ±2–3% run to run, so compare the mean of several runs rather than
 single results.
+
+**Interleave the two sides of a comparison.** Running every "before" measurement
+and then every "after" one conflates the change with thermal drift: a measured
+−8.5% on `realistic_benchmark` collapsed to +0.2% once the same two binaries
+were alternated round-robin instead. Build both binaries first, copy them out of
+`target/` so a rebuild cannot clobber one, discard the first run of each as
+cold, then alternate.
 
 ### Sample Benchmark
 

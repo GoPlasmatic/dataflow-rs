@@ -369,6 +369,20 @@ Three things to know:
 3. **Two keys may not collapse to the same name.** `{"$a": 1, "a": 2}` would
    emit `a` twice, so `Engine::build` refuses it (`DUPLICATE_TEMPLATE_KEY`).
 
+The prefix is `$` on every build and fixed for the life of an engine, but an
+authoring tool that renders or validates the spelling should read it rather than
+hardcode it:
+
+```rust
+use dataflow_rs::Engine;
+
+let engine = Engine::builder().build().unwrap();
+assert_eq!(engine.template_key_escape(), '$');
+```
+
+It is the companion to `Engine::operator_names` below: that answers *which names
+are live*, this answers *how to opt a key out of being one*.
+
 A *multi-key* object is always an output template, so its keys need no escape
 unless one of them starts with `$`:
 
