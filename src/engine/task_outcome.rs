@@ -59,10 +59,10 @@ impl TaskOutcome {
     #[inline]
     pub fn audit_status(self) -> Option<u16> {
         match self {
-            TaskOutcome::Success => Some(200),
-            TaskOutcome::Status(s) => Some(s),
-            TaskOutcome::Skip => None,
-            TaskOutcome::Halt => Some(HALT_STATUS_CODE),
+            Self::Success => Some(200),
+            Self::Status(s) => Some(s),
+            Self::Skip => None,
+            Self::Halt => Some(HALT_STATUS_CODE),
         }
     }
 
@@ -70,6 +70,6 @@ impl TaskOutcome {
     /// workflow after observing this outcome.
     #[inline]
     pub fn halts_workflow(self) -> bool {
-        matches!(self, TaskOutcome::Halt)
+        matches!(self, Self::Halt)
     }
 }

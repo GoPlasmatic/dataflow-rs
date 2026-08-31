@@ -105,7 +105,7 @@ impl MapConfig {
             });
         }
 
-        Ok(MapConfig {
+        Ok(Self {
             mappings: parsed_mappings,
         })
     }

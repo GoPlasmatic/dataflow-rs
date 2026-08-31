@@ -26,11 +26,11 @@ impl LogLevel {
     /// The `log` crate level this variant emits at.
     fn as_log_level(&self) -> log::Level {
         match self {
-            LogLevel::Trace => log::Level::Trace,
-            LogLevel::Debug => log::Level::Debug,
-            LogLevel::Info => log::Level::Info,
-            LogLevel::Warn => log::Level::Warn,
-            LogLevel::Error => log::Level::Error,
+            Self::Trace => log::Level::Trace,
+            Self::Debug => log::Level::Debug,
+            Self::Info => log::Level::Info,
+            Self::Warn => log::Level::Warn,
+            Self::Error => log::Level::Error,
         }
     }
 }
@@ -67,7 +67,7 @@ impl LogConfig {
     ///
     /// Use this entry point when calling `LogConfig` outside an existing
     /// `with_arena` scope (direct API users, tests). Inside a workflow sync
-    /// stretch the dispatch goes through [`Self::execute_in_arena`] to reuse
+    /// stretch the dispatch goes through `Self::execute_in_arena` to reuse
     /// the cached `ArenaContext` and avoid a redundant `to_arena` walk.
     pub fn execute(
         &self,

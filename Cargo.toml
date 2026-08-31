@@ -116,6 +116,17 @@ num_cpus = "1.17"
 [workspace]
 members = [".", "wasm", "docs-tests"]
 
+# Lint policy lives here rather than only in the CI command line, so a local
+# `cargo clippy` and rust-analyzer enforce exactly what CI does. CI still passes
+# `-D warnings`, which is what turns these into errors there.
+[workspace.lints.clippy]
+# Spell the type as `Self` inside its own `impl`. Was inconsistent across the
+# crate — most modules already did, `config.rs` and `error.rs` did not.
+use_self = "warn"
+
+[lints]
+workspace = true
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # `time` drives the `retry` module's backoff and deadline. Native-only: tokio's
 # time driver does not run on wasm32-unknown-unknown, which is why `retry` is

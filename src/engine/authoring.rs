@@ -1,5 +1,5 @@
 //! Authoring-time validation: checking a workflow definition *before* it
-//! reaches [`Engine::build`](crate::Engine::build).
+//! reaches [`EngineBuilder::build`](crate::EngineBuilder::build).
 //!
 //! The engine's own enforcement — parse, [`Workflow::validate`], and
 //! `LoopConfig::validate` — all fires when the *engine* is built. For a host
@@ -145,12 +145,12 @@ pub enum IssueCode {
     /// template-key escape is stripped — `{"$a": 1, "a": 2}` emits `a` twice.
     /// The context is a `Vec` of pairs, so both survive: a later read sees only
     /// the first while serialization emits both. Always a bug, so
-    /// [`crate::Engine::build`] refuses it.
+    /// [`crate::EngineBuilder::build`] refuses it.
     DuplicateTemplateKey,
     /// A template key carries the escape prefix, so it is emitted with one
     /// prefix stripped: `$type` emits `type`. **Informational** — reported by
     /// [`crate::Engine::check_workflow`] and never by
-    /// [`crate::Engine::build`].
+    /// [`crate::EngineBuilder::build`].
     ///
     /// Exists for migration. The escape strips uniformly from every template
     /// key, so a workflow written before 3.9 that emits genuinely `$`-prefixed
@@ -211,7 +211,7 @@ impl Workflow {
     /// that workflow validates.
     ///
     /// That is the *shape* question, and it is the whole of it. It is not the
-    /// same as "this engine can run it": [`Engine::build`](crate::Engine::build)
+    /// same as "this engine can run it": [`EngineBuilder::build`](crate::EngineBuilder::build)
     /// also resolves every task to a handler and parses custom inputs, so a
     /// structurally perfect definition naming an unregistered function still
     /// aborts a build. [`Engine::check_workflow`](crate::Engine::check_workflow)
@@ -269,7 +269,7 @@ impl Workflow {
 
         // Stage 2 — the schema is much wider than the rules above, and
         // enumerating it here would be the mirror this API exists to delete.
-        let workflow: Workflow = match serde_json::from_value(json.clone()) {
+        let workflow: Self = match serde_json::from_value(json.clone()) {
             Ok(w) => w,
             Err(err) => {
                 issues.push(WorkflowIssue {
@@ -444,6 +444,18 @@ pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<Workf
     issues
 }
 
+/// A map-valued config field's keys, in name order.
+///
+/// The maps `for_each_expression` walks (`log.fields`, `http_call.headers`) are
+/// `HashMap`s, so their iteration order is arbitrary — but issue order is what a
+/// host logs, diffs, or asserts on, and what `refuse_secret_issues` joins into a
+/// `build()` error message. Sorting is what makes that order reproducible.
+fn names_in_order<V>(map: &HashMap<String, V>) -> Vec<&String> {
+    let mut names: Vec<&String> = map.keys().collect();
+    names.sort_unstable();
+    names
+}
+
 /// Visit every JSONLogic expression in `workflow`, with where it lives and
 /// where its result goes.
 ///
@@ -494,12 +506,7 @@ fn for_each_expression(
             }
             FunctionConfig::Log { input, .. } => {
                 check(&input.message, "function.input.message", id, Sink::Message);
-                // `fields` is a `HashMap`, so iterate it in name order — issue
-                // order is what a host logs, diffs, or asserts on, and what
-                // `refuse_secret_issues` joins into a `build()` error message.
-                let mut names: Vec<&String> = input.fields.keys().collect();
-                names.sort_unstable();
-                for name in names {
+                for name in names_in_order(&input.fields) {
                     let field = format!("function.input.fields.{name}");
                     check(&input.fields[name], &field, id, Sink::Message);
                 }
@@ -522,12 +529,7 @@ fn for_each_expression(
                     id,
                     Sink::Handler,
                 );
-                // `headers` is a `HashMap`, so iterate in name order — issue
-                // order is what a host logs, diffs, or asserts on, matching the
-                // `log` fields treatment above.
-                let mut names: Vec<&String> = input.headers.keys().collect();
-                names.sort_unstable();
-                for name in names {
+                for name in names_in_order(&input.headers) {
                     let field = format!("function.input.headers.{name}");
                     check(input.headers[name].as_json(), &field, id, Sink::Handler);
                 }

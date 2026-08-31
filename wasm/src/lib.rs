@@ -69,6 +69,26 @@ pub struct WasmEngine {
     inner: Arc<Engine>,
 }
 
+/// Build the message every entry point processes: the payload is stored as a
+/// raw string, so a `parse_json` / `parse_xml` task in the workflow is what
+/// turns it into structured `data`. The engine never parses it.
+fn raw_string_message(payload: &str) -> Message {
+    Message::from_value(&Value::String(payload.to_string()))
+}
+
+/// Render an engine result as a JSON string `JsValue` — what every entry
+/// point resolves its Promise with.
+fn to_js_json<T: serde::Serialize>(value: &T) -> Result<JsValue, JsValue> {
+    serde_json::to_string(value)
+        .map(|s| JsValue::from_str(&s))
+        .map_err(js_err)
+}
+
+/// Reject a Promise with `e`'s `Display` form.
+fn js_err(e: impl std::fmt::Display) -> JsValue {
+    JsValue::from_str(&e.to_string())
+}
+
 #[wasm_bindgen]
 impl WasmEngine {
     /// Create a new WasmEngine from a JSON array of workflow definitions.
@@ -87,7 +107,7 @@ impl WasmEngine {
     /// const engine = new WasmEngine(workflows);
     /// ```
     #[wasm_bindgen(constructor)]
-    pub fn new(workflows_json: &str) -> Result<WasmEngine, String> {
+    pub fn new(workflows_json: &str) -> Result<Self, String> {
         Self::build(workflows_json, None)
     }
 
@@ -108,11 +128,11 @@ impl WasmEngine {
     /// const engine = WasmEngine.with_secrets(workflows, JSON.stringify({ token: "…" }));
     /// ```
     #[wasm_bindgen]
-    pub fn with_secrets(workflows_json: &str, secrets_json: &str) -> Result<WasmEngine, String> {
+    pub fn with_secrets(workflows_json: &str, secrets_json: &str) -> Result<Self, String> {
         Self::build(workflows_json, Some(secrets_json))
     }
 
-    fn build(workflows_json: &str, secrets_json: Option<&str>) -> Result<WasmEngine, String> {
+    fn build(workflows_json: &str, secrets_json: Option<&str>) -> Result<Self, String> {
         let workflows_value: Value = serde_json::from_str(workflows_json)
             .map_err(|e| format!("Invalid workflows JSON: {}", e))?;
 
@@ -137,7 +157,7 @@ impl WasmEngine {
         let engine = builder
             .build()
             .map_err(|e| format!("Engine construction failed: {}", e))?;
-        Ok(WasmEngine {
+        Ok(Self {
             inner: Arc::new(engine),
         })
     }
@@ -163,19 +183,13 @@ impl WasmEngine {
     /// ```
     #[wasm_bindgen]
     pub fn process(&self, payload: &str) -> js_sys::Promise {
-        // Store payload as a raw string - parsing is done by the parse plugin
-        let mut message = Message::from_value(&Value::String(payload.to_string()));
-
+        let mut message = raw_string_message(payload);
         // Clone the Arc for the async block
         let engine = Arc::clone(&self.inner);
 
         future_to_promise(async move {
-            match engine.process_message(&mut message).await {
-                Ok(()) => serde_json::to_string(&message)
-                    .map(|s| JsValue::from_str(&s))
-                    .map_err(|e| JsValue::from_str(&e.to_string())),
-                Err(e) => Err(JsValue::from_str(&e.to_string())),
-            }
+            engine.process_message(&mut message).await.map_err(js_err)?;
+            to_js_json(&message)
         })
     }
 
@@ -201,19 +215,16 @@ impl WasmEngine {
     /// ```
     #[wasm_bindgen]
     pub fn process_with_trace(&self, payload: &str) -> js_sys::Promise {
-        // Store payload as a raw string - parsing is done by the parse plugin
-        let mut message = Message::from_value(&Value::String(payload.to_string()));
-
+        let mut message = raw_string_message(payload);
         // Clone the Arc for the async block
         let engine = Arc::clone(&self.inner);
 
         future_to_promise(async move {
-            match engine.process_message_with_trace(&mut message).await {
-                Ok(trace) => serde_json::to_string(&trace)
-                    .map(|s| JsValue::from_str(&s))
-                    .map_err(|e| JsValue::from_str(&e.to_string())),
-                Err(e) => Err(JsValue::from_str(&e.to_string())),
-            }
+            let trace = engine
+                .process_message_with_trace(&mut message)
+                .await
+                .map_err(js_err)?;
+            to_js_json(&trace)
         })
     }
 

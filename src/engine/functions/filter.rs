@@ -42,7 +42,7 @@ impl FilterConfig {
     ///
     /// Use this entry point when calling `FilterConfig` outside an existing
     /// `with_arena` scope. Inside a workflow sync stretch the dispatch goes
-    /// through [`Self::execute_in_arena`] to reuse the cached arena form of
+    /// through `Self::execute_in_arena` to reuse the cached arena form of
     /// `message.context` and avoid a redundant `to_arena` deep walk.
     ///
     /// Returns `TaskOutcome::Success` when the condition passes,

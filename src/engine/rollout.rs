@@ -73,7 +73,7 @@ impl Rollout {
     /// assert_eq!(Rollout::partition(&[90, 9]), Err(RolloutError::Under { total: 99 }));
     /// assert_eq!(Rollout::partition(&[90, 11]), Err(RolloutError::Over { total: 101 }));
     /// ```
-    pub fn partition(percentages: &[u8]) -> Result<Vec<Rollout>, RolloutError> {
+    pub fn partition(percentages: &[u8]) -> Result<Vec<Self>, RolloutError> {
         // Accumulate wider than the input. Percentages are `u8`, so a `u8`
         // total wraps: [128, 128] and [200, 56] both wrap to exactly 0 and
         // would pass a naive `== 100` check while describing nonsense.
@@ -89,7 +89,7 @@ impl Rollout {
         let mut out = Vec::with_capacity(percentages.len());
         for pct in percentages {
             let end = offset + pct;
-            out.push(Rollout {
+            out.push(Self {
                 bucket_start: offset,
                 bucket_end: end,
             });
@@ -130,9 +130,9 @@ impl Rollout {
     /// );
     /// ```
     pub fn validate_set<'a>(
-        rollouts: impl IntoIterator<Item = &'a Rollout>,
+        rollouts: impl IntoIterator<Item = &'a Self>,
     ) -> Result<(), RolloutError> {
-        let ranges: Vec<&Rollout> = rollouts.into_iter().collect();
+        let ranges: Vec<&Self> = rollouts.into_iter().collect();
 
         // Diagnose a broken range by its cause, before it shows up as a
         // confusing symptom elsewhere in the space.

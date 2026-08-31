@@ -22,7 +22,7 @@ pub enum DataflowError {
         context: String,
         #[source]
         #[serde(skip)]
-        source: Option<Box<DataflowError>>,
+        source: Option<Box<Self>>,
     },
 
     /// Workflow-related errors
@@ -91,8 +91,8 @@ pub enum DataflowError {
 
 impl DataflowError {
     /// Creates a new function execution error with context
-    pub fn function_execution<S: Into<String>>(context: S, source: Option<DataflowError>) -> Self {
-        DataflowError::FunctionExecution {
+    pub fn function_execution<S: Into<String>>(context: S, source: Option<Self>) -> Self {
+        Self::FunctionExecution {
             context: context.into(),
             source: source.map(Box::new),
         }
@@ -100,7 +100,7 @@ impl DataflowError {
 
     /// Creates a new HTTP error
     pub fn http<S: Into<String>>(status: u16, message: S) -> Self {
-        DataflowError::Http {
+        Self::Http {
             status,
             message: message.into(),
         }
@@ -108,12 +108,12 @@ impl DataflowError {
 
     /// Convert from std::io::Error
     pub fn from_io(err: std::io::Error) -> Self {
-        DataflowError::Io(err.to_string())
+        Self::Io(err.to_string())
     }
 
     /// Convert from serde_json::Error
     pub fn from_serde(err: serde_json::Error) -> Self {
-        DataflowError::Deserialization(err.to_string())
+        Self::Deserialization(err.to_string())
     }
 
     /// Determines if this error is retryable (worth retrying)
@@ -124,29 +124,29 @@ impl DataflowError {
     pub fn retryable(&self) -> bool {
         match self {
             // Retryable errors - infrastructure/transient failures
-            DataflowError::Http { status, .. } => {
+            Self::Http { status, .. } => {
                 // Retry on server errors (5xx) and specific client errors that might be transient
                 *status >= 500 || *status == 429 || *status == 408 || *status == 0
                 // 0 means connection error
             }
-            DataflowError::Timeout(_) => true,
-            DataflowError::Io(_) => true,
-            DataflowError::FunctionExecution { source, .. } => {
+            Self::Timeout(_) => true,
+            Self::Io(_) => true,
+            Self::FunctionExecution { source, .. } => {
                 // Inherit retryability from the source error if present
                 source.as_ref().map(|e| e.retryable()).unwrap_or(false)
             }
 
             // Non-retryable errors - data/logic/configuration issues
-            DataflowError::Validation(_) => false,
-            DataflowError::LogicEvaluation(_) => false,
-            DataflowError::Deserialization(_) => false,
-            DataflowError::Workflow(_) => false,
-            DataflowError::Task(_) => false,
-            DataflowError::FunctionNotFound(_) => false,
-            DataflowError::Unknown(_) => false,
+            Self::Validation(_) => false,
+            Self::LogicEvaluation(_) => false,
+            Self::Deserialization(_) => false,
+            Self::Workflow(_) => false,
+            Self::Task(_) => false,
+            Self::FunctionNotFound(_) => false,
+            Self::Unknown(_) => false,
 
             // Declared by the service rather than inferred from the variant.
-            DataflowError::Service { retryable, .. } => *retryable,
+            Self::Service { retryable, .. } => *retryable,
         }
     }
 
@@ -157,12 +157,10 @@ impl DataflowError {
     /// classify its own failures with a stable code the engine never interprets.
     pub fn kind(&self) -> Option<&str> {
         match self {
-            DataflowError::Service { kind, .. } => Some(kind),
+            Self::Service { kind, .. } => Some(kind),
             // Same inheritance as `retryable()`: a `Service` error wrapped for
             // context via `FunctionExecution` must not lose its classification.
-            DataflowError::FunctionExecution { source, .. } => {
-                source.as_deref().and_then(DataflowError::kind)
-            }
+            Self::FunctionExecution { source, .. } => source.as_deref().and_then(Self::kind),
             _ => None,
         }
     }
@@ -174,10 +172,8 @@ impl DataflowError {
     /// [`ErrorInfo::detail`].
     pub fn detail(&self) -> Option<&str> {
         match self {
-            DataflowError::Service { detail, .. } => detail.as_deref(),
-            DataflowError::FunctionExecution { source, .. } => {
-                source.as_deref().and_then(DataflowError::detail)
-            }
+            Self::Service { detail, .. } => detail.as_deref(),
+            Self::FunctionExecution { source, .. } => source.as_deref().and_then(Self::detail),
             _ => None,
         }
     }
@@ -370,20 +366,20 @@ impl ErrorContextConfig {
 /// totality but is normally reached through [`service_error_code`], which
 /// prefers the service's own `kind`; an empty `kind` lands here and falls back
 /// to `TASK_ERROR` so no `ErrorInfo` ever carries an empty code.
-fn variant_code(error: &DataflowError) -> String {
+fn variant_code(error: &DataflowError) -> &'static str {
     match error {
-        DataflowError::Validation(_) => "VALIDATION_ERROR".to_string(),
-        DataflowError::Workflow(_) => "WORKFLOW_ERROR".to_string(),
-        DataflowError::Task(_) => "TASK_ERROR".to_string(),
-        DataflowError::FunctionNotFound(_) => "FUNCTION_NOT_FOUND".to_string(),
-        DataflowError::FunctionExecution { .. } => "FUNCTION_ERROR".to_string(),
-        DataflowError::LogicEvaluation(_) => "LOGIC_ERROR".to_string(),
-        DataflowError::Http { .. } => "HTTP_ERROR".to_string(),
-        DataflowError::Timeout(_) => "TIMEOUT_ERROR".to_string(),
-        DataflowError::Io(_) => "IO_ERROR".to_string(),
-        DataflowError::Deserialization(_) => "DESERIALIZATION_ERROR".to_string(),
-        DataflowError::Unknown(_) => "UNKNOWN_ERROR".to_string(),
-        DataflowError::Service { .. } => "TASK_ERROR".to_string(),
+        DataflowError::Validation(_) => "VALIDATION_ERROR",
+        DataflowError::Workflow(_) => "WORKFLOW_ERROR",
+        DataflowError::Task(_) => "TASK_ERROR",
+        DataflowError::FunctionNotFound(_) => "FUNCTION_NOT_FOUND",
+        DataflowError::FunctionExecution { .. } => "FUNCTION_ERROR",
+        DataflowError::LogicEvaluation(_) => "LOGIC_ERROR",
+        DataflowError::Http { .. } => "HTTP_ERROR",
+        DataflowError::Timeout(_) => "TIMEOUT_ERROR",
+        DataflowError::Io(_) => "IO_ERROR",
+        DataflowError::Deserialization(_) => "DESERIALIZATION_ERROR",
+        DataflowError::Unknown(_) => "UNKNOWN_ERROR",
+        DataflowError::Service { .. } => "TASK_ERROR",
     }
 }
 
@@ -404,7 +400,7 @@ fn variant_code(error: &DataflowError) -> String {
 pub(crate) fn service_error_code(error: &DataflowError) -> String {
     match error.kind() {
         Some(kind) if !kind.is_empty() => kind.to_string(),
-        _ => variant_code(error),
+        _ => variant_code(error).to_string(),
     }
 }
 

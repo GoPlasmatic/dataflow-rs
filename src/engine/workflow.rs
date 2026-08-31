@@ -141,7 +141,7 @@ pub enum WorkflowStatus {
 /// or [`Workflow::from_json`] and assign the public fields you need. Field
 /// reads and writes are unaffected.
 ///
-/// Same reason as [`Task`](crate::Task): several fields are engine internals
+/// Same reason as [`Task`]: several fields are engine internals
 /// marked *not part of the stable API*, and struct-literal construction forced
 /// callers to name them.
 #[derive(Clone, Debug, Deserialize)]
@@ -238,7 +238,7 @@ impl Default for Workflow {
 
 impl Workflow {
     pub fn new() -> Self {
-        Workflow {
+        Self {
             id: String::new(),
             id_arc: Arc::from(""),
             name: String::new(),
@@ -271,7 +271,7 @@ impl Workflow {
     /// * `condition` - JSONLogic condition evaluated against the full context (data, metadata, temp_data)
     /// * `tasks` - Actions to execute when the condition is met
     pub fn rule(id: &str, name: &str, condition: Value, tasks: Vec<Task>) -> Self {
-        Workflow {
+        Self {
             id: id.to_string(),
             id_arc: Arc::from(id),
             name: name.to_string(),

@@ -29,9 +29,9 @@ use std::sync::Arc;
 /// What a built-in needs to resolve its parameters from inside an arena scope.
 ///
 /// The sync built-ins (`map`, `parse_*`, `publish_*`, `validation`) run against
-/// an [`ArenaContext`](crate::engine::executor::ArenaContext) that earlier tasks
+/// an `ArenaContext` that earlier tasks
 /// in the same stretch already populated, and hold no
-/// [`TaskContext`](crate::TaskContext). Bundling the three pieces keeps their
+/// [`TaskContext`]. Bundling the three pieces keeps their
 /// signatures to one extra argument, and keeps every parameter resolving
 /// against the *same* context view the task's own logic sees — including
 /// mutations an earlier mapping in the same task made.

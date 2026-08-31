@@ -5,7 +5,7 @@
 //! the executor keeps walking a flat slice. This module owns both halves of
 //! that grammar:
 //!
-//! - [`flatten`] — the parser, which builds `Vec<Task>` and fails on the first
+//! - `flatten` — the parser, which builds `Vec<Task>` and fails on the first
 //!   malformed element.
 //! - [`walk_authored_steps`] — a public walker over the *authored* JSON, which
 //!   never fails and yields every node with the coordinate the author typed.
@@ -108,7 +108,7 @@ pub struct AuthoredStep<'a> {
 /// members, so filtering to [`StepKind::Leaf`] reproduces the engine's
 /// flattened `Workflow::tasks` exactly, in order.
 ///
-/// **This walker never fails.** Where [`flatten`] returns `Err` on the first
+/// **This walker never fails.** Where `flatten` returns `Err` on the first
 /// malformed element, an empty group or an over-deep group, the walker yields
 /// those nodes so a validator can collect every violation in one pass. A
 /// `tasks` value that is not an array yields nothing at all — whether `tasks`

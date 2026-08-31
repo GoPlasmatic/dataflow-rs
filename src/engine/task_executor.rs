@@ -2,7 +2,7 @@
 //!
 //! Dispatches a single `Task` to its function implementation. Built-in sync
 //! variants of `FunctionConfig` are dispatched in `workflow_executor`'s sync
-//! stretch via [`FunctionConfig::try_execute_in_arena`]; this module owns
+//! stretch via `FunctionConfig::try_execute_in_arena`; this module owns
 //! the async path — `HttpCall`, `Enrich`, `PublishKafka`, and `Custom` —
 //! routed to the matching registered handler.
 
@@ -28,7 +28,7 @@ use std::sync::Arc;
 /// - Owning the function registry
 ///
 /// Sync built-ins are *not* routed through `execute` — `workflow_executor`
-/// calls [`FunctionConfig::try_execute_in_arena`] inside its sync stretch
+/// calls `FunctionConfig::try_execute_in_arena` inside its sync stretch
 /// for those, sharing one arena across consecutive sync tasks.
 pub struct TaskExecutor {
     /// Registry of async function handlers
@@ -219,7 +219,7 @@ impl TaskExecutor {
 
     /// Whether this executor can actually run a task named `name`.
     ///
-    /// `true` for a [`BuiltinKind::SelfContained`] built-in, which this crate
+    /// `true` for a [`crate::BuiltinKind::SelfContained`] built-in, which this crate
     /// executes itself, and for any name with a registered handler.
     ///
     /// `false` for `http_call` / `enrich` / `publish_kafka` with no handler

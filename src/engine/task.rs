@@ -189,7 +189,7 @@ impl Task {
     /// * `name` - Human-readable name
     /// * `function` - The function configuration to execute
     pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self {
-        Task {
+        Self {
             id: id.to_string(),
             id_arc: Arc::from(id),
             name: name.to_string(),

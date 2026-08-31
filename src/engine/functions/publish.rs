@@ -83,7 +83,7 @@ impl PublishConfig {
             .map(Template::from)
             .unwrap_or_else(default_root_element);
 
-        Ok(PublishConfig {
+        Ok(Self {
             source: Template::from(source),
             target: PathTemplate::from(target),
             pretty,

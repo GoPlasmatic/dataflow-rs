@@ -1441,7 +1441,7 @@ impl WorkflowExecutor {
     /// `.await` path (`execute_inner`) for any workflow containing an async
     /// task.
     ///
-    /// A thin `&[&Workflow]` wrapper over [`Self::run_all_borrowed`], which is
+    /// A thin `&[&Workflow]` wrapper over `Self::run_all_borrowed`, which is
     /// the actual shared entry all four `Engine::process_message*` variants
     /// call directly (against `&[Workflow]` from the engine's own registry,
     /// with no per-message `Vec<&Workflow>` collect). This method exists for

@@ -35,7 +35,7 @@ pub struct ParseConfig {
     /// `{"cat": ["data.batches.", {"var": "temp_data.i"}]}`. It resolves to the
     /// *name* of a location, never to the value at one — `payload` is not in
     /// the JSONLogic evaluation context, so an expression could not read it
-    /// even if it tried. Read it through [`Self::resolve_source`].
+    /// even if it tried. Read it through `Self::resolve_source`.
     pub source: Template,
 
     /// Target field name in `data` (stored at `data.{target}`).
@@ -55,7 +55,7 @@ impl ParseConfig {
             DataflowError::Validation("Missing 'target' in parse config".to_string())
         })?;
 
-        Ok(ParseConfig {
+        Ok(Self {
             source: Template::from(source),
             target: PathTemplate::from(target),
         })
@@ -74,7 +74,7 @@ impl ParseConfig {
     ///
     /// # Errors
     ///
-    /// As [`Self::resolve_source`].
+    /// As `Self::resolve_source`.
     pub(crate) fn resolve_target_path(&self, p: ParamCtx<'_>) -> Result<Cow<'_, ResolvedPath>> {
         self.target.resolve_in_arena(p)
     }

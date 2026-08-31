@@ -1,3 +1,11 @@
+//! # Sequential map-chain throughput
+//!
+//! Ten `map` mappings in one task, each reading the value the previous one
+//! wrote, across `data` / `temp_data` / `metadata`. Measures per-message cost
+//! when every mapping resolves and writes.
+//!
+//! Run with: `cargo run --example map_performance_test --release`
+
 use dataflow_rs::engine::{Engine, Message, Workflow};
 use serde_json::json;
 use std::time::Instant;
@@ -13,13 +21,25 @@ async fn main() {
             "condition": true,
             "tasks": [
                 {
+                    // Without this the mappings below read nothing: the eval
+                    // context is `{data, metadata, temp_data}` and `payload`
+                    // is not part of it, so `{"var": "data.source"}` would
+                    // resolve to missing and every mapping would be a no-op.
+                    "id": "load",
+                    "name": "Load payload into data",
+                    "function": {
+                        "name": "parse_json",
+                        "input": { "source": "payload", "target": "input" }
+                    }
+                },
+                {
                     "id": "multi_map",
                     "name": "Multiple Sequential Mappings",
                     "function": {
                         "name": "map",
                         "input": {
                             "mappings": [
-                                {"path": "data.field1", "logic": {"var": "data.source"}},
+                                {"path": "data.field1", "logic": {"var": "data.input.source"}},
                                 {"path": "data.field2", "logic": {"var": "data.field1"}},
                                 {"path": "data.field3", "logic": {"var": "data.field2"}},
                                 {"path": "data.field4", "logic": {"var": "data.field3"}},
@@ -53,6 +73,15 @@ async fn main() {
             "source": "test_value"
         }));
         engine.process_message(&mut message).await.unwrap();
+
+        // Fail loudly rather than reporting a throughput number for ten
+        // mappings that resolved to nothing. `data.result` is the end of the
+        // chain, so it only holds the seed value if all ten fired.
+        assert_eq!(
+            message.data()["result"],
+            json!("test_value").into(),
+            "the mapping chain did not resolve — this benchmark would be measuring no-ops"
+        );
     }
 
     // Benchmark

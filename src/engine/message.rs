@@ -129,7 +129,7 @@ impl<'de> Deserialize<'de> for Message {
         }
 
         let data = MessageData::deserialize(deserializer)?;
-        Ok(Message {
+        Ok(Self {
             id: MessageId::Custom(data.id),
             payload: data.payload,
             context: data.context,

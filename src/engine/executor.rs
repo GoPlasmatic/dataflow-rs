@@ -19,6 +19,7 @@
 //! `data.MT103` while the heavy `data.input` stays cached.
 
 use crate::engine::error::Result;
+use crate::engine::utils::strip_hash_prefix;
 use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
 use datavalue::{DataValue, OwnedDataValue};
@@ -281,7 +282,7 @@ impl<'a> ArenaContext<'a> {
             return false;
         }
 
-        let top = strip_hash(&parts[0]);
+        let top = strip_hash_prefix(&parts[0]);
         let Some(top_idx) = self.top_keys.iter().position(|k| *k == top) else {
             // Write created a brand-new top slot — rare; let the fallback
             // build it from owned.
@@ -294,7 +295,7 @@ impl<'a> ArenaContext<'a> {
             return false;
         };
 
-        let d2_key = strip_hash(&parts[1]);
+        let d2_key = strip_hash_prefix(&parts[1]);
         let d2_pos = d2.keys.iter().position(|k| *k == d2_key);
 
         if parts.len() == 2 {
@@ -368,13 +369,9 @@ impl<'a> ArenaContext<'a> {
                 return;
             }
         };
-        let top = top_raw.strip_prefix('#').unwrap_or(top_raw);
-        fn strip<'p>(p: &'p Arc<str>) -> &'p str {
-            let s: &'p str = p;
-            s.strip_prefix('#').unwrap_or(s)
-        }
-        let depth2_key: Option<&str> = parts.get(1).map(strip);
-        let depth3_key: Option<&str> = parts.get(2).map(strip);
+        let top = strip_hash_prefix(top_raw);
+        let depth2_key: Option<&str> = parts.get(1).map(|p| strip_hash_prefix(p));
+        let depth3_key: Option<&str> = parts.get(2).map(|p| strip_hash_prefix(p));
         self.refresh_after_write_inner(owned_ctx, top, depth2_key, depth3_key);
     }
 
@@ -388,9 +385,9 @@ impl<'a> ArenaContext<'a> {
                 return;
             }
         };
-        let top = top_raw.strip_prefix('#').unwrap_or(top_raw);
-        let depth2_key = parts.next().map(|p| p.strip_prefix('#').unwrap_or(p));
-        let depth3_key = parts.next().map(|p| p.strip_prefix('#').unwrap_or(p));
+        let top = strip_hash_prefix(top_raw);
+        let depth2_key = parts.next().map(strip_hash_prefix);
+        let depth3_key = parts.next().map(strip_hash_prefix);
         self.refresh_after_write_inner(owned_ctx, top, depth2_key, depth3_key);
     }
 
@@ -455,7 +452,7 @@ impl<'a> ArenaContext<'a> {
                             if d2.keys.len() != new_children.len() {
                                 // Owned children diverged from our cache —
                                 // rebuild the depth-2 cache from owned.
-                                self.rebuild_top_slot(owned_top_val.unwrap(), idx);
+                                self.rebuild_top_slot(new_val, idx);
                                 return;
                             }
                         } else {
@@ -526,13 +523,6 @@ fn build_object_slice<'a>(
     arena.alloc_slice_fill_iter(keys.iter().zip(values.iter()).map(|(k, v)| (*k, *v)))
 }
 
-/// Strip exactly one leading `#` from an object-key path segment — same
-/// semantics as `utils::strip_hash_prefix` (`"#20"` → `"20"`, `"##"` → `"#"`).
-#[inline]
-fn strip_hash(part: &str) -> &str {
-    part.strip_prefix('#').unwrap_or(part)
-}
-
 /// Rebuild only the spine of `current` for a write of `value` at `parts`
 /// (all plain object keys — the caller has excluded numeric segments).
 /// Each level allocates a fresh `(key, value)` slice with the one descended
@@ -551,7 +541,7 @@ fn splice_object_write<'a>(
     let DataValue::Object(pairs) = current else {
         return None;
     };
-    let key = strip_hash(&parts[0]);
+    let key = strip_hash_prefix(&parts[0]);
     let pos = pairs.iter().position(|(k, _)| *k == key);
 
     let new_slice = if parts.len() == 1 {
@@ -585,7 +575,7 @@ fn build_object_chain<'a>(
 ) -> DataValue<'a> {
     let mut acc = value;
     for part in parts.iter().rev() {
-        let key: &'a str = arena.alloc_str(strip_hash(part));
+        let key: &'a str = arena.alloc_str(strip_hash_prefix(part));
         let slice = arena.alloc_slice_fill_iter(std::iter::once((key, acc)));
         acc = DataValue::Object(slice);
     }

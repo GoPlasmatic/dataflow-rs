@@ -131,7 +131,7 @@ impl ValidationConfig {
             });
         }
 
-        Ok(ValidationConfig {
+        Ok(Self {
             rules: parsed_rules,
         })
     }

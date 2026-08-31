@@ -127,7 +127,7 @@ use workflow_executor::WorkflowExecutor;
 /// The engine is designed for async-first operation with Tokio:
 /// - **Separation of Concerns**: Distinct executors for workflows and tasks
 /// - **Shared datalogic engine**: Single `datalogic_rs::Engine` wrapped in `Arc` for thread-safe sharing
-/// - **Arc<Logic>**: Pre-compiled logic shared across all async tasks
+/// - **`Arc<Logic>`**: Pre-compiled logic shared across all async tasks
 /// - **Async Functions**: Native async support for I/O-bound operations
 ///
 /// ## Performance Characteristics
@@ -709,9 +709,8 @@ impl Engine {
         self.workflows.iter().find(|w| w.id == id)
     }
 
-    /// Get a reference to the underlying datalogic v5 engine.
     /// Every function this engine will dispatch: self-contained built-ins,
-    /// plus [`BuiltinKind::RequiresHandler`] built-ins and custom names with a
+    /// plus [`crate::BuiltinKind::RequiresHandler`] built-ins and custom names with a
     /// registered handler.
     ///
     /// This is the authoring-side vocabulary — what a host needs to screen a
@@ -752,7 +751,7 @@ impl Engine {
 
     /// Whether this engine can actually run a task named `name`.
     ///
-    /// `true` for a [`BuiltinKind::SelfContained`] built-in, which this crate
+    /// `true` for a [`crate::BuiltinKind::SelfContained`] built-in, which this crate
     /// executes itself, and for any name with a registered handler — including
     /// an alias such as `validation`.
     ///
@@ -784,7 +783,7 @@ impl Engine {
     ///
     /// Answers the half of the question [`Workflow::validate_authored`] cannot:
     /// that method proves the definition *parses and validates*, but
-    /// [`Engine::build`] also resolves every task to a handler and parses
+    /// [`EngineBuilder::build`] also resolves every task to a handler and parses
     /// custom inputs. A definition can therefore be structurally perfect and
     /// still abort a build — which, in a host that builds one engine over many
     /// stored definitions, takes down every workflow in the process.
@@ -793,7 +792,7 @@ impl Engine {
     /// Issues are anchored on [`WorkflowIssue::task_id`] — step ids are unique
     /// across tasks and groups — with a path relative to that task
     /// (`function.input`). Join it with the coordinate
-    /// [`walk_authored_steps`](crate::walk_authored_steps) reports for that id
+    /// [`walk_authored_steps`] reports for that id
     /// to point at the authored document.
     ///
     /// `Workflow::tasks` is already flattened, so tasks inside groups are
@@ -914,6 +913,14 @@ impl Engine {
         compiler::TEMPLATE_KEY_ESCAPE
     }
 
+    /// Get a reference to the underlying datalogic v5 engine.
+    ///
+    /// The same `Arc` every compiled [`Workflow`] in this engine evaluates
+    /// against, so a caller that wants to evaluate an expression under the
+    /// engine's exact operator vocabulary — the extension families compiled
+    /// in, the `secret` operator, and anything registered through
+    /// [`EngineBuilder::with_datalogic_operator`] — should use this rather
+    /// than building a second engine.
     pub fn datalogic(&self) -> &Arc<DatalogicEngine> {
         &self.datalogic
     }

@@ -121,24 +121,18 @@ impl HttpMethod {
     /// Scoped narrowly to `http_call`: this is **not** a general list of HTTP
     /// methods, and should not be reused to validate, say, inbound route
     /// definitions, which may legitimately accept `HEAD` or `OPTIONS`.
-    pub const ALL: &'static [HttpMethod] = &[
-        HttpMethod::Get,
-        HttpMethod::Post,
-        HttpMethod::Put,
-        HttpMethod::Patch,
-        HttpMethod::Delete,
-    ];
+    pub const ALL: &'static [Self] = &[Self::Get, Self::Post, Self::Put, Self::Patch, Self::Delete];
 
     /// Canonical uppercase token, identical to the spelling `Deserialize`
     /// accepts — `from_value(json!(m.as_str()))` round-trips to `m` for every
     /// variant.
     pub const fn as_str(&self) -> &'static str {
         match self {
-            HttpMethod::Get => "GET",
-            HttpMethod::Post => "POST",
-            HttpMethod::Put => "PUT",
-            HttpMethod::Patch => "PATCH",
-            HttpMethod::Delete => "DELETE",
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
         }
     }
 
@@ -150,8 +144,8 @@ impl HttpMethod {
     /// non-idempotent.
     pub const fn is_idempotent(&self) -> bool {
         match self {
-            HttpMethod::Get | HttpMethod::Put | HttpMethod::Delete => true,
-            HttpMethod::Post | HttpMethod::Patch => false,
+            Self::Get | Self::Put | Self::Delete => true,
+            Self::Post | Self::Patch => false,
         }
     }
 }
@@ -233,13 +227,13 @@ fn resolve_opt_string(field: &Option<Template>, ctx: &TaskContext<'_>) -> Result
     field.as_ref().map(|t| t.resolve_string(ctx)).transpose()
 }
 
-/// As [`resolve_opt_string`], but evaluated into a [`Value`] rather than
+/// As `resolve_opt_string`, but evaluated into a [`Value`] rather than
 /// coerced to a string — for fields (like a request body) where the caller
 /// wants the JSON shape, not a stringified one.
 ///
 /// # Errors
 ///
-/// As [`resolve_opt_string`].
+/// As `resolve_opt_string`.
 fn resolve_opt_value(field: &Option<Template>, ctx: &TaskContext<'_>) -> Result<Option<Value>> {
     field.as_ref().map(|t| t.eval_into(ctx)).transpose()
 }
@@ -249,7 +243,7 @@ impl HttpCallConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`].
+    /// As `resolve_opt_string`.
     pub fn resolve_connector(&self, ctx: &TaskContext<'_>) -> Result<String> {
         self.connector.resolve_string(ctx)
     }
@@ -258,7 +252,7 @@ impl HttpCallConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`].
+    /// As `resolve_opt_string`.
     pub fn resolve_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
         resolve_opt_string(&self.path, ctx)
     }
@@ -272,7 +266,7 @@ impl HttpCallConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`], for the first header value that fails.
+    /// As `resolve_opt_string`, for the first header value that fails.
     pub fn resolve_headers(&self, ctx: &TaskContext<'_>) -> Result<HashMap<String, String>> {
         self.headers
             .iter()
@@ -294,7 +288,7 @@ impl HttpCallConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`].
+    /// As `resolve_opt_string`.
     pub fn resolve_body_format(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
         resolve_opt_string(&self.body_format, ctx)
     }
@@ -303,7 +297,7 @@ impl HttpCallConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`].
+    /// As `resolve_opt_string`.
     pub fn resolve_response_path(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
         resolve_opt_string(&self.response_path, ctx)
     }
@@ -312,7 +306,7 @@ impl HttpCallConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`].
+    /// As `resolve_opt_string`.
     pub fn resolve_response_format(&self, ctx: &TaskContext<'_>) -> Result<Option<String>> {
         resolve_opt_string(&self.response_format, ctx)
     }
@@ -333,7 +327,7 @@ impl EnrichConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`].
+    /// As `resolve_opt_string`.
     pub fn resolve_connector(&self, ctx: &TaskContext<'_>) -> Result<String> {
         self.connector.resolve_string(ctx)
     }
@@ -351,7 +345,7 @@ impl EnrichConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`].
+    /// As `resolve_opt_string`.
     pub fn resolve_merge_path(&self, ctx: &TaskContext<'_>) -> Result<String> {
         self.merge_path.resolve_string(ctx)
     }
@@ -371,7 +365,7 @@ impl PublishKafkaConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`].
+    /// As `resolve_opt_string`.
     pub fn resolve_connector(&self, ctx: &TaskContext<'_>) -> Result<String> {
         self.connector.resolve_string(ctx)
     }
@@ -380,7 +374,7 @@ impl PublishKafkaConfig {
     ///
     /// # Errors
     ///
-    /// As [`resolve_opt_string`].
+    /// As `resolve_opt_string`.
     pub fn resolve_topic(&self, ctx: &TaskContext<'_>) -> Result<String> {
         self.topic.resolve_string(ctx)
     }

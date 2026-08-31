@@ -67,6 +67,16 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features --locked
 
+      # Clippy does not lint rustdoc, so nothing above catches a broken
+      # intra-doc link, a link from public docs into a private item, or an
+      # unclosed HTML tag — all of which ship silently to docs.rs as dead or
+      # mangled text. This crate's documentation is user-facing surface, so it
+      # gets the same `-D warnings` treatment as the code.
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --all-features --locked
+
       # Everything above is --all-features. `-p dataflow-rs` rather than
       # `--workspace` is load-bearing: dataflow-wasm depends on dataflow-rs with
       # `all-operators`, and cargo unifies features across workspace members

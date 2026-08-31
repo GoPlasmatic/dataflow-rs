@@ -485,55 +485,55 @@ impl<'de> Deserialize<'de> for FunctionConfig {
         let Raw { name, input } = Raw::deserialize(deserializer)?;
 
         Ok(match name.as_str() {
-            "map" => FunctionConfig::Map {
+            "map" => Self::Map {
                 name: MapName::Map,
                 input: parse_function_input("map", input)?,
             },
-            "validate" => FunctionConfig::Validation {
+            "validate" => Self::Validation {
                 name: ValidationName::Validate,
                 input: parse_function_input("validate", input)?,
             },
-            "validation" => FunctionConfig::Validation {
+            "validation" => Self::Validation {
                 name: ValidationName::Validation,
                 input: parse_function_input("validation", input)?,
             },
-            "parse_json" => FunctionConfig::ParseJson {
+            "parse_json" => Self::ParseJson {
                 name: ParseJsonName::ParseJson,
                 input: parse_function_input("parse_json", input)?,
             },
-            "parse_xml" => FunctionConfig::ParseXml {
+            "parse_xml" => Self::ParseXml {
                 name: ParseXmlName::ParseXml,
                 input: parse_function_input("parse_xml", input)?,
             },
-            "publish_json" => FunctionConfig::PublishJson {
+            "publish_json" => Self::PublishJson {
                 name: PublishJsonName::PublishJson,
                 input: parse_function_input("publish_json", input)?,
             },
-            "publish_xml" => FunctionConfig::PublishXml {
+            "publish_xml" => Self::PublishXml {
                 name: PublishXmlName::PublishXml,
                 input: parse_function_input("publish_xml", input)?,
             },
-            "filter" => FunctionConfig::Filter {
+            "filter" => Self::Filter {
                 name: FilterName::Filter,
                 input: parse_function_input("filter", input)?,
             },
-            "log" => FunctionConfig::Log {
+            "log" => Self::Log {
                 name: LogName::Log,
                 input: parse_function_input("log", input)?,
             },
-            "http_call" => FunctionConfig::HttpCall {
+            "http_call" => Self::HttpCall {
                 name: HttpCallName::HttpCall,
                 input: parse_function_input("http_call", input)?,
             },
-            "enrich" => FunctionConfig::Enrich {
+            "enrich" => Self::Enrich {
                 name: EnrichName::Enrich,
                 input: parse_function_input("enrich", input)?,
             },
-            "publish_kafka" => FunctionConfig::PublishKafka {
+            "publish_kafka" => Self::PublishKafka {
                 name: PublishKafkaName::PublishKafka,
                 input: parse_function_input("publish_kafka", input)?,
             },
-            _ => FunctionConfig::Custom {
+            _ => Self::Custom {
                 name,
                 input,
                 compiled_input: None,
@@ -563,18 +563,18 @@ impl FunctionConfig {
     /// Get the function name for this configuration
     pub fn function_name(&self) -> &str {
         match self {
-            FunctionConfig::Map { .. } => "map",
-            FunctionConfig::Validation { .. } => "validate",
-            FunctionConfig::ParseJson { .. } => "parse_json",
-            FunctionConfig::ParseXml { .. } => "parse_xml",
-            FunctionConfig::PublishJson { .. } => "publish_json",
-            FunctionConfig::PublishXml { .. } => "publish_xml",
-            FunctionConfig::Filter { .. } => "filter",
-            FunctionConfig::Log { .. } => "log",
-            FunctionConfig::HttpCall { .. } => "http_call",
-            FunctionConfig::Enrich { .. } => "enrich",
-            FunctionConfig::PublishKafka { .. } => "publish_kafka",
-            FunctionConfig::Custom { name, .. } => name,
+            Self::Map { .. } => "map",
+            Self::Validation { .. } => "validate",
+            Self::ParseJson { .. } => "parse_json",
+            Self::ParseXml { .. } => "parse_xml",
+            Self::PublishJson { .. } => "publish_json",
+            Self::PublishXml { .. } => "publish_xml",
+            Self::Filter { .. } => "filter",
+            Self::Log { .. } => "log",
+            Self::HttpCall { .. } => "http_call",
+            Self::Enrich { .. } => "enrich",
+            Self::PublishKafka { .. } => "publish_kafka",
+            Self::Custom { name, .. } => name,
         }
     }
 
@@ -582,7 +582,7 @@ impl FunctionConfig {
     /// a single `ArenaContext` lifetime across consecutive tasks within a
     /// workflow without crossing any `.await` point.
     ///
-    /// Must match the variants handled in [`Self::try_execute_in_arena`]; the
+    /// Must match the variants handled in `Self::try_execute_in_arena`; the
     /// debug assertion below ties the two together so they can't drift.
     /// The connector this task references, if any.
     ///
@@ -613,35 +613,35 @@ impl FunctionConfig {
     /// cannot be silently omitted.
     pub fn connector(&self) -> Option<ConnectorName<'_>> {
         match self {
-            FunctionConfig::HttpCall { input, .. } => Some(ConnectorName::of(&input.connector)),
-            FunctionConfig::Enrich { input, .. } => Some(ConnectorName::of(&input.connector)),
-            FunctionConfig::PublishKafka { input, .. } => Some(ConnectorName::of(&input.connector)),
-            FunctionConfig::Custom { input, .. } => input
+            Self::HttpCall { input, .. } => Some(ConnectorName::of(&input.connector)),
+            Self::Enrich { input, .. } => Some(ConnectorName::of(&input.connector)),
+            Self::PublishKafka { input, .. } => Some(ConnectorName::of(&input.connector)),
+            Self::Custom { input, .. } => input
                 .get("connector")
                 .and_then(Value::as_str)
                 .map(ConnectorName::Static),
-            FunctionConfig::Map { .. }
-            | FunctionConfig::Validation { .. }
-            | FunctionConfig::ParseJson { .. }
-            | FunctionConfig::ParseXml { .. }
-            | FunctionConfig::PublishJson { .. }
-            | FunctionConfig::PublishXml { .. }
-            | FunctionConfig::Filter { .. }
-            | FunctionConfig::Log { .. } => None,
+            Self::Map { .. }
+            | Self::Validation { .. }
+            | Self::ParseJson { .. }
+            | Self::ParseXml { .. }
+            | Self::PublishJson { .. }
+            | Self::PublishXml { .. }
+            | Self::Filter { .. }
+            | Self::Log { .. } => None,
         }
     }
 
     pub fn is_sync_builtin(&self) -> bool {
         matches!(
             self,
-            FunctionConfig::Map { .. }
-                | FunctionConfig::Validation { .. }
-                | FunctionConfig::ParseJson { .. }
-                | FunctionConfig::ParseXml { .. }
-                | FunctionConfig::PublishJson { .. }
-                | FunctionConfig::PublishXml { .. }
-                | FunctionConfig::Filter { .. }
-                | FunctionConfig::Log { .. }
+            Self::Map { .. }
+                | Self::Validation { .. }
+                | Self::ParseJson { .. }
+                | Self::ParseXml { .. }
+                | Self::PublishJson { .. }
+                | Self::PublishXml { .. }
+                | Self::Filter { .. }
+                | Self::Log { .. }
         )
     }
 
@@ -666,16 +666,16 @@ impl FunctionConfig {
         mapping_snapshots: Option<&mut Vec<Value>>,
     ) -> Option<Result<(TaskOutcome, Vec<Change>)>> {
         match self {
-            FunctionConfig::Map { input, .. } => {
+            Self::Map { input, .. } => {
                 Some(input.execute_in_arena(message, arena_ctx, engine, mapping_snapshots))
             }
-            FunctionConfig::Validation { input, .. } => {
+            Self::Validation { input, .. } => {
                 Some(input.execute_in_arena(message, arena_ctx, engine))
             }
-            FunctionConfig::ParseJson { input, .. } => Some(execute_parse_json_in_arena(
+            Self::ParseJson { input, .. } => Some(execute_parse_json_in_arena(
                 message, input, engine, arena_ctx,
             )),
-            FunctionConfig::ParseXml { input, .. } => {
+            Self::ParseXml { input, .. } => {
                 // parse_xml/publish_json/publish_xml all write through
                 // `set_nested_value` on the owned context rather than the
                 // arena, so the arena's "data" slot needs a manual refresh —
@@ -685,26 +685,22 @@ impl FunctionConfig {
                 let result = parse_xml_in(message, input, p);
                 Some(refresh_data_on_success(message, arena_ctx, result))
             }
-            FunctionConfig::PublishJson { input, .. } => {
+            Self::PublishJson { input, .. } => {
                 let p = ParamCtx::from_arena(engine, arena_ctx);
                 let result = publish_json_in(message, input, p);
                 Some(refresh_data_on_success(message, arena_ctx, result))
             }
-            FunctionConfig::PublishXml { input, .. } => {
+            Self::PublishXml { input, .. } => {
                 let p = ParamCtx::from_arena(engine, arena_ctx);
                 let result = publish_xml_in(message, input, p);
                 Some(refresh_data_on_success(message, arena_ctx, result))
             }
-            FunctionConfig::Filter { input, .. } => {
-                Some(input.execute_in_arena(message, arena_ctx, engine))
-            }
-            FunctionConfig::Log { input, .. } => {
-                Some(input.execute_in_arena(message, arena_ctx, engine))
-            }
-            FunctionConfig::HttpCall { .. }
-            | FunctionConfig::Enrich { .. }
-            | FunctionConfig::PublishKafka { .. }
-            | FunctionConfig::Custom { .. } => None,
+            Self::Filter { input, .. } => Some(input.execute_in_arena(message, arena_ctx, engine)),
+            Self::Log { input, .. } => Some(input.execute_in_arena(message, arena_ctx, engine)),
+            Self::HttpCall { .. }
+            | Self::Enrich { .. }
+            | Self::PublishKafka { .. }
+            | Self::Custom { .. } => None,
         }
     }
 }
