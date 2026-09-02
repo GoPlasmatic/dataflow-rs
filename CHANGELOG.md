@@ -36,11 +36,19 @@ a way to opt out of it in one field, and any warning that you had not.
 
 ### Changed
 
-- A group carrying `halt_on` is now **refused at parse time**. A group has no
-  outcome of its own, so the executor could not honour it; before this it parsed
-  and was silently dropped. The key did nothing, so it can only exist as a typo or
-  a wrong expectation — but it is a behaviour change for definitions that parse
-  today.
+- A group carrying `halt_on` is now **refused at parse time**, whatever the
+  value. A group has no outcome of its own, so the executor could not honour it;
+  ignoring it would mean an author writing `"halt_on": "failure"` on a group ships
+  a guard that never fires, which is the failure this release exists to prevent.
+
+  This is the **one** deliberate exception to the schema's "unknown keys are
+  ignored" rule, and it is a behaviour change for definitions that parse today:
+  a host using `halt_on` as its own annotation on a group node will now fail
+  `Engine::build`, which aborts every workflow in that build. Migration is
+  mechanical — run `Workflow::validate_authored` over stored definitions before
+  upgrading and look for `INVALID_HALT_ON`, which carries the authored path
+  (`tasks[1].halt_on`). Note the same silent drop still applies to
+  `continue_on_error` on a group, which is unchanged here.
 - `Task::continue_on_error`'s documentation now says what it actually governs.
   It read "continue workflow execution if this task fails", unqualified, which is
   the field an author reaches for after a `validation` and the reason this issue

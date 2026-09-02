@@ -230,7 +230,16 @@ impl<'a> Iterator for AuthoredSteps<'a> {
 
 /// The non-`tasks` half of a group element. `tasks` is carried too so the
 /// whole element deserializes in one pass; unknown keys are ignored, as
-/// everywhere else in the workflow schema.
+/// everywhere else in the workflow schema — with exactly one exception.
+///
+/// **`halt_on` is that exception, deliberately.** It is a per-*task* outcome
+/// rule and a group has no outcome of its own, so the executor could not honour
+/// it. Ignoring it would mean an author writing `"halt_on": "failure"` on a
+/// group gets silence and ships a guard that never fires — the precise failure
+/// this flag exists to prevent, so it is refused in `walk` instead. The cost of
+/// the exception is that a host using `halt_on` as its own annotation on a group
+/// node now fails to parse; `Workflow::validate_authored` reports it as
+/// `INVALID_HALT_ON` with the authored path, so the audit is mechanical.
 #[derive(Deserialize)]
 struct GroupHeader {
     id: String,
@@ -242,11 +251,9 @@ struct GroupHeader {
     condition: Value,
     #[serde(default)]
     terminal: bool,
-    /// Captured only so it can be refused. `halt_on` is a per-*task* outcome
-    /// rule and a group has no outcome of its own, so the executor could not
-    /// honour it. Unknown keys are otherwise ignored here, which would make an
-    /// author's failure guard vanish silently — the exact class of bug
-    /// [`crate::HaltOn`] exists to prevent.
+    /// Captured only so it can be refused — see the type-level note above.
+    /// Typed as `Option<Value>` rather than `Option<HaltOn>` so that *any*
+    /// shape is caught: a group carrying `halt_on` is wrong whatever its value.
     #[serde(default)]
     halt_on: Option<Value>,
     tasks: Vec<Value>,
