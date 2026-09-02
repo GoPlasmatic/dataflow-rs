@@ -207,13 +207,26 @@ matching version.
   so the task that would carry "A closes here" is jumped straight over — yet `A`
   was entered and, if terminal, must still halt. Do not replace that with a
   counter.
-- **`Task::terminal` is applied *after* the status classification in
-  `handle_task_result`, never before.** It only upgrades a `Continue` to a
-  `HaltWorkflow`. Folding it into the `let halt = …` that starts the if-chain
-  makes halting the first branch, so a terminal task returning 500 stops without
-  recording `TASK_STATUS_ERROR` and without propagating when
-  `continue_on_error` is false. Pinned by
-  `terminal_task_returning_5xx_still_records_and_propagates`.
+- **`Task::terminal` and `Task::halt_on` are applied *after* the status
+  classification in `handle_task_result`, never before.** They only upgrade a
+  `Continue` to a `HaltWorkflow`. Folding either into the `let halt = …` that
+  starts the if-chain makes halting the first branch, so a terminal task
+  returning 500 stops without recording `TASK_STATUS_ERROR` and without
+  propagating when `continue_on_error` is false. Pinned by
+  `terminal_task_returning_5xx_still_records_and_propagates` and
+  `halt_on_failure_with_5xx_and_no_continue_on_error_still_propagates`.
+  `TaskPass::halts_at(status)` is the single definition of both — `terminal`
+  unconditionally, `halt_on` at `status >= 400`, the same threshold the
+  classification itself splits on. Do not open-code a second notion of "failed".
+- **A failing `validation` does not stop anything on its own.** It returns
+  `Status(400)`, and `continue_on_error` covers only `5xx` and `Err`, so the next
+  task runs. That is deliberate — plenty of workflows validate to record errors
+  rather than to gate — and `halt_on: "failure"` is how an author opts into
+  rejecting. Returning `TaskOutcome::Halt` instead would stamp `HALT_STATUS_CODE`
+  (299) over the `400` on both the audit trail and `metadata.progress`, losing the
+  status the host answers with; that is why the halt goes through the fold.
+  `IssueCode::UnguardedValidation` reports the ungated shape at authoring time and
+  is **informational** — never add it to `refuse_authoring_issues`.
 - **`metadata.progress` is load-bearing.** The workflow executor writes
   `metadata.progress = {workflow_id, task_id, status_code}` after every task.
   Cross-workflow chaining depends on downstream conditions reading it, so do not
@@ -325,7 +338,7 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `rollout.rs` | Traffic splits gated on `Message::routing_bucket` |
 | `templates.rs` | `Template` config fields on custom handlers |
 | `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
-| `task_groups.rs` | `Task::terminal` and task groups — the guard-clause shape |
+| `task_groups.rs` | `Task::terminal`, `Task::halt_on` and task groups — the guard-clause shape |
 | `task_identity.rs` | `TaskContext` workflow/task ids and `loop_counter` |
 | `operator_vocabulary.rs` | `operator_names` — every mirrored name checked live |
 | `retry.rs` | `RetryPolicy` backoff, deadline and retryability, under a paused clock |
@@ -353,8 +366,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 705 passing.
-`cargo test -p dataflow-rs` (default features) should report 609 — the operator
+`cargo test --workspace --all-features` should report 719 passing.
+`cargo test -p dataflow-rs` (default features) should report 623 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

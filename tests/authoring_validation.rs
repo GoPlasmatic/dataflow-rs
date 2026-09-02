@@ -112,6 +112,23 @@ fn broken_fixtures() -> Vec<(&'static str, IssueCode, Value)> {
             json!({"id": "w", "name": "w", "loop": {"max": 3, "counter": "a..b"},
                    "tasks": [task("t")]}),
         ),
+        (
+            "halt_on is not an accepted spelling",
+            IssueCode::InvalidHaltOn,
+            workflow(json!([{"id": "t", "name": "t", "halt_on": "on_failure",
+                            "function": {"name": "map", "input": {"mappings": []}}}])),
+        ),
+        (
+            "halt_on is not a string",
+            IssueCode::InvalidHaltOn,
+            workflow(json!([{"id": "t", "name": "t", "halt_on": true,
+                            "function": {"name": "map", "input": {"mappings": []}}}])),
+        ),
+        (
+            "halt_on on a group",
+            IssueCode::InvalidHaltOn,
+            workflow(json!([{"id": "g", "halt_on": "failure", "tasks": [task("inner")]}])),
+        ),
     ]
 }
 
@@ -141,6 +158,11 @@ fn empty_iff_the_workflow_loads() {
         workflow(json!([task("a"), {"id": "g", "condition": true, "tasks": [task("b")]}])),
         json!({"id": "w", "name": "w", "loop": {"max": 3, "counter": "i"},
                "tasks": [task("t")]}),
+        // Both accepted `halt_on` spellings load and report nothing.
+        workflow(json!([{"id": "t", "name": "t", "halt_on": "failure",
+                        "function": {"name": "map", "input": {"mappings": []}}}])),
+        workflow(json!([{"id": "t", "name": "t", "halt_on": "never",
+                        "function": {"name": "map", "input": {"mappings": []}}}])),
     ];
     for json in valid {
         assert!(
@@ -303,6 +325,8 @@ fn issue_codes_have_distinct_stable_strings() {
         IssueCode::MissingFunction,
         IssueCode::InvalidFunctionName,
         IssueCode::InvalidTerminal,
+        IssueCode::InvalidHaltOn,
+        IssueCode::UnguardedValidation,
         IssueCode::LoopIncrementTooSmall,
         IssueCode::LoopBoundEmpty,
         IssueCode::LoopCounterInvalid,
@@ -645,5 +669,132 @@ fn every_bad_task_is_reported_not_just_the_first() {
             .collect::<Vec<_>>(),
         vec!["t", "t2", "t3"],
         "in task order"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// `UNGUARDED_VALIDATION` — the informational lint
+//
+// A failing `validation` rule returns `400`, which `continue_on_error` does not
+// cover, so the tasks after it still run. The lint says so at authoring time. It
+// is deliberately blunt: it asks whether *any* gate follows, not whether the gate
+// is correct, because a guard's condition can read anything.
+// -----------------------------------------------------------------------------
+
+/// A `validation` task, optionally carrying extra keys.
+fn validation_task(id: &str, extra: Value) -> Value {
+    let mut task = json!({
+        "id": id, "name": id,
+        "function": {"name": "validation", "input": {
+            "rules": [{"logic": {"==": [1, 2]}, "message": "always fails"}]}}
+    });
+    if let Value::Object(extra) = extra {
+        for (k, v) in extra {
+            task[k] = v;
+        }
+    }
+    task
+}
+
+fn wf_tasks(tasks: Value) -> Workflow {
+    Workflow::from_json(&workflow(tasks).to_string()).expect("fixture parses")
+}
+
+/// The issue's own repro: a `validation` followed by an unconditional task.
+#[test]
+fn an_unguarded_validation_is_reported_for_audit_but_never_refused() {
+    let w = wf_tasks(json!([
+        validation_task("check", json!({})),
+        task("respond")
+    ]));
+
+    let issues = Engine::builder().check_workflow(&w);
+    assert_eq!(issues.len(), 1, "got {issues:?}");
+    assert_eq!(issues[0].code, IssueCode::UnguardedValidation);
+    assert_eq!(issues[0].task_id.as_deref(), Some("check"));
+    assert_eq!(issues[0].path.as_deref(), Some("halt_on"));
+    assert!(
+        issues[0].message.contains("respond"),
+        "the message names the task that still runs, got: {}",
+        issues[0].message
+    );
+
+    // Informational: the workflow is legal and still builds.
+    Engine::builder()
+        .with_workflow(w)
+        .build()
+        .expect("an unguarded validation is reported, never refused");
+}
+
+#[test]
+fn a_guarded_validation_is_silent() {
+    let cases: Vec<(&str, Value)> = vec![
+        (
+            "halt_on stops the workflow itself",
+            json!([
+                validation_task("check", json!({"halt_on": "failure"})),
+                task("respond")
+            ]),
+        ),
+        (
+            "terminal stops the workflow itself",
+            json!([
+                validation_task("check", json!({"terminal": true})),
+                task("respond")
+            ]),
+        ),
+        (
+            "nothing follows it in this workflow",
+            json!([task("first"), validation_task("check", json!({}))]),
+        ),
+        (
+            "the next task carries a condition",
+            json!([validation_task("check", json!({})),
+                   {"id": "respond", "name": "respond",
+                    "condition": {"<": [{"var": "metadata.progress.status_code"}, 400]},
+                    "function": {"name": "map", "input": {"mappings": []}}}]),
+        ),
+        (
+            "a filter follows it",
+            json!([validation_task("check", json!({})),
+                   {"id": "gate", "name": "gate",
+                    "function": {"name": "filter", "input": {"condition": true}}},
+                   task("respond")]),
+        ),
+        (
+            "the following tasks sit in a conditioned group",
+            json!([validation_task("check", json!({})),
+                   {"id": "g", "condition": {"var": "data.ok"}, "tasks": [task("respond")]}]),
+        ),
+    ];
+
+    for (label, tasks) in cases {
+        let issues = Engine::builder().check_workflow(&wf_tasks(tasks));
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.code == IssueCode::UnguardedValidation),
+            "{label}: should not fire, got {issues:?}"
+        );
+    }
+}
+
+/// The lint reads the *flattened* task list, so a validation nested in a group
+/// is still checked against what follows it.
+#[test]
+fn an_unguarded_validation_inside_a_group_is_reported() {
+    let w = wf_tasks(json!([
+        {"id": "g", "condition": true,
+         "tasks": [validation_task("check", json!({})), task("respond")]}
+    ]));
+
+    let issues = Engine::builder().check_workflow(&w);
+    assert_eq!(
+        issues
+            .iter()
+            .filter(|i| i.code == IssueCode::UnguardedValidation)
+            .count(),
+        1,
+        "got {issues:?}"
     );
 }

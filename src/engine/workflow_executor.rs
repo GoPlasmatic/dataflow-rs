@@ -15,7 +15,7 @@ use crate::engine::observer::{
     ExecutionObserver, MessageFinished, MessageStarted, TaskEvent, WorkflowFinished,
     WorkflowStarted,
 };
-use crate::engine::task::Task;
+use crate::engine::task::{HaltOn, Task};
 use crate::engine::task_context::TaskIdentity;
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::task_outcome::TaskOutcome;
@@ -198,9 +198,26 @@ struct TaskPass {
     /// The task-level `terminal` flag — halt the workflow once this task has
     /// run, whatever it returned.
     terminal: bool,
+    /// The task-level `halt_on` rule — halt once this task has run *and* failed.
+    /// Folded together with `terminal` by [`Self::halts_at`].
+    halt_on: HaltOn,
     /// `message.errors.len()` immediately before this task ran, so the errors it
     /// contributed can be identified as the tail beyond this index.
     errors_before: usize,
+}
+
+impl TaskPass {
+    /// Whether this task ends the workflow, given the status its run recorded.
+    ///
+    /// `terminal` is unconditional — it is about position. `halt_on` fires only
+    /// on a failure, which is a status of `400` or above: the same threshold the
+    /// classification in `handle_task_result` already splits on to warn (4xx) or
+    /// to record `TASK_STATUS_ERROR` (5xx). Defined once here so the two notions
+    /// of "failed" cannot drift apart.
+    #[inline]
+    fn halts_at(self, status: u16) -> bool {
+        self.terminal || (self.halt_on == HaltOn::Failure && status >= 400)
+    }
 }
 
 /// One slice of a workflow's task list, plus the group state that spans slices.
@@ -1286,6 +1303,7 @@ impl WorkflowExecutor {
                     TaskPass {
                         continue_on_error: task.continue_on_error,
                         terminal: task.terminal,
+                        halt_on: task.halt_on,
                         errors_before: clocks.errors_before,
                     },
                     message,
@@ -1435,6 +1453,7 @@ impl WorkflowExecutor {
                 TaskPass {
                     continue_on_error: task.continue_on_error,
                     terminal: task.terminal,
+                    halt_on: task.halt_on,
                     errors_before: clocks.errors_before,
                 },
                 message,
@@ -1816,13 +1835,14 @@ impl WorkflowExecutor {
                 let status = outcome
                     .audit_status()
                     .expect("Skip handled above; remaining variants emit audit status");
-                // `Task::terminal` reaches the same halt as `TaskOutcome::Halt`,
-                // but it is applied *after* the status classification below —
-                // see the `flow` fold. Deciding here would make halting the
-                // first branch of the chain, so a terminal task returning 500
-                // would stop without recording `TASK_STATUS_ERROR` and without
-                // propagating when `continue_on_error` is false.
-                let halt_requested = outcome.halts_workflow() || task.terminal;
+                // `Task::terminal` and `Task::halt_on` reach the same halt as
+                // `TaskOutcome::Halt`, but they are applied *after* the status
+                // classification below — see the `flow` fold. Deciding here would
+                // make halting the first branch of the chain, so a terminal task
+                // returning 500 would stop without recording `TASK_STATUS_ERROR`
+                // and without propagating when `continue_on_error` is false.
+                // `halts_at` is the single definition of "failed" for `halt_on`.
+                let halt_requested = outcome.halts_workflow() || task.halts_at(status);
 
                 // Record audit trail. workflow_id_arc/task_id_arc are populated
                 // by LogicCompiler at engine construction; cloning them is a
@@ -1948,12 +1968,15 @@ impl WorkflowExecutor {
 
                 if !continue_on_error {
                     Err(e)
-                } else if task.terminal {
-                    // `terminal` is about position, not outcome: the author said
-                    // "nothing after this runs". The error stays on
-                    // `message.errors()` either way.
+                } else if task.halts_at(500) {
+                    // Either flag halts here: `terminal` because the author said
+                    // "nothing after this runs" whatever happened, `halt_on`
+                    // because this is a failure. `500` is the status already
+                    // stamped on the audit entry, the progress write and the
+                    // error mirror above — a handler `Err` has none of its own.
+                    // The error stays on `message.errors()` either way.
                     info!(
-                        "Terminal task {} halted workflow {} after failing",
+                        "Task {} halted workflow {} after failing",
                         task_id, workflow_id
                     );
                     Ok(TaskControlFlow::HaltWorkflow)

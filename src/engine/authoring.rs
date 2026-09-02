@@ -23,7 +23,9 @@ use crate::engine::functions::config::{BuiltinKind, builtin_function_kind, can_d
 use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig, TemplateCompiler};
 use crate::engine::secrets::{SECRET_OPERATOR, Secrets};
 use crate::engine::steps::{StepKind, walk_authored_steps};
+use crate::engine::task::HaltOn;
 use crate::engine::workflow::Workflow;
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
@@ -104,6 +106,20 @@ pub enum IssueCode {
     InvalidFunctionName,
     /// `terminal` is present but not a boolean.
     InvalidTerminal,
+    /// A `validation` task whose failure cannot stop anything: it is not
+    /// `terminal`, has no `halt_on`, and every task after it in the workflow is
+    /// unguarded. A failing rule returns `400`, which `continue_on_error` does
+    /// not cover, so the pipeline proceeds as if it had passed.
+    ///
+    /// **Informational** — reported by
+    /// [`crate::EngineBuilder::check_workflow`] and never by
+    /// [`crate::EngineBuilder::build`]. Validating purely to record errors is a
+    /// legitimate shape; this only says the assertion is not acting as a gate.
+    UnguardedValidation,
+    /// `halt_on` is present and is not one of the accepted strings, or is
+    /// present on a *group* — a group has no outcome of its own, so the
+    /// executor could not honour it.
+    InvalidHaltOn,
     /// `loop.increment` is below 1 — the counter would never reach `max`.
     LoopIncrementTooSmall,
     /// `loop.max` is not greater than `loop.init` — no sweep could ever run.
@@ -180,6 +196,8 @@ impl IssueCode {
             Self::MissingFunction => "MISSING_FUNCTION",
             Self::InvalidFunctionName => "INVALID_FUNCTION_NAME",
             Self::InvalidTerminal => "INVALID_TERMINAL",
+            Self::InvalidHaltOn => "INVALID_HALT_ON",
+            Self::UnguardedValidation => "UNGUARDED_VALIDATION",
             Self::LoopIncrementTooSmall => "LOOP_INCREMENT_TOO_SMALL",
             Self::LoopBoundEmpty => "LOOP_BOUND_EMPTY",
             Self::LoopCounterInvalid => "LOOP_COUNTER_INVALID",
@@ -317,6 +335,7 @@ pub(crate) fn check_against_registry(
     // refuse — this surface is where a host looks before activating a
     // definition, and the migration audit is the point of reporting them.
     issues.extend(check_template_keys(workflow));
+    check_unguarded_validation(workflow, &mut issues);
 
     for task in &workflow.tasks {
         let name = task.function.function_name();
@@ -380,6 +399,69 @@ pub(crate) fn check_against_registry(
     }
 
     issues
+}
+
+/// Report a `validation` task whose failure cannot stop anything.
+///
+/// A failing rule returns `400`, and the engine treats `4xx` as "warn and carry
+/// on" — `continue_on_error` governs `5xx` and `Err` only. So a `validation`
+/// followed by unguarded tasks is a *decorative* assertion: it records an error
+/// on the message and the pipeline proceeds exactly as if it had passed. That is
+/// how a CSRF check ships that never rejects anything.
+///
+/// **Informational.** Reported here, never by
+/// [`EngineBuilder::build`](crate::EngineBuilder::build) — the workflow is
+/// legal, and plenty of them validate for reporting rather than for control
+/// flow.
+///
+/// Deliberately blunt: it asks "is there *any* gate after this assertion?", not
+/// "is the gate correct". A guard's condition can read anything — a
+/// host-configured error-context path included — so deciding whether an
+/// arbitrary expression actually tests the failure is not statically knowable.
+/// Anything that could plausibly gate silences it, which keeps false positives
+/// near zero at the cost of missing an author who wrote an unrelated condition.
+fn check_unguarded_validation(workflow: &Workflow, issues: &mut Vec<WorkflowIssue>) {
+    /// A condition that is not the literal `true` default might gate on the
+    /// failure, so it counts as a guard.
+    fn gates(condition: &Value) -> bool {
+        condition != &Value::Bool(true)
+    }
+
+    for (i, task) in workflow.tasks.iter().enumerate() {
+        if !matches!(task.function, FunctionConfig::Validation { .. }) {
+            continue;
+        }
+        // The task already stops the workflow on its own account.
+        if task.terminal || task.halt_on != HaltOn::Never {
+            continue;
+        }
+        // Nothing follows it *in this workflow*, so its `400` survives in
+        // `metadata.progress` for the next workflow to gate on.
+        let Some(following) = workflow.tasks.get(i + 1..).filter(|t| !t.is_empty()) else {
+            continue;
+        };
+        let guarded = following.iter().any(|next| {
+            gates(&next.condition)
+                || matches!(next.function, FunctionConfig::Filter { .. })
+                || next.group_starts.iter().any(|g| gates(&g.condition))
+        });
+        if guarded {
+            continue;
+        }
+
+        issues.push(WorkflowIssue {
+            code: IssueCode::UnguardedValidation,
+            message: format!(
+                "a failing rule here records status 400 and task '{}' still runs — \
+                 `continue_on_error` covers 5xx and Err only. Add `\"halt_on\": \"failure\"` \
+                 to stop the workflow, or gate what follows on \
+                 `metadata.progress.status_code`",
+                following[0].id
+            ),
+            path: Some("halt_on".to_string()),
+            task_id: Some(task.id.clone()),
+        });
+    }
 }
 
 /// Where an expression's result ends up — what decides whether it may read a
@@ -889,11 +971,44 @@ fn check_steps(tasks: &Value, issues: &mut Vec<WorkflowIssue>) {
 
         if let Some(terminal) = step.node.get("terminal") {
             if !terminal.is_boolean() {
+                // `"on_failure"` is the natural wrong guess once `halt_on`
+                // exists — answer it rather than reporting a bare type error.
+                let message = if terminal.as_str() == Some("on_failure") {
+                    "terminal must be a boolean — for \"halt if this task failed\" \
+                     use `\"halt_on\": \"failure\"`, which is the outcome axis"
+                } else {
+                    "terminal must be a boolean"
+                };
                 issues.push(
                     WorkflowIssue::at(
                         IssueCode::InvalidTerminal,
                         format!("{}.terminal", step.path),
-                        "terminal must be a boolean",
+                        message,
+                    )
+                    .with_step(id),
+                );
+            }
+        }
+
+        // Asking serde rather than keeping a list of accepted spellings, so a
+        // future `HaltOn` variant needs no edit here.
+        if let Some(halt_on) = step.node.get("halt_on") {
+            let problem = if matches!(step.kind, StepKind::Group) {
+                Some(
+                    "halt_on is a per-task outcome rule and a group has no outcome \
+                     of its own — put it on the task that can fail",
+                )
+            } else {
+                HaltOn::deserialize(halt_on)
+                    .err()
+                    .map(|_| "halt_on must be one of \"never\", \"failure\"")
+            };
+            if let Some(message) = problem {
+                issues.push(
+                    WorkflowIssue::at(
+                        IssueCode::InvalidHaltOn,
+                        format!("{}.halt_on", step.path),
+                        message,
                     )
                     .with_step(id),
                 );

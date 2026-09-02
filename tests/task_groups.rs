@@ -3,12 +3,17 @@
 //! A step in a workflow's `tasks` list is either a task (carries `function`) or
 //! a group (carries `tasks`). Both accept `condition` and `terminal`, which
 //! gives `if (…) { … }`, an early `return`, and `if (…) { …; return; }`.
+//!
+//! A task additionally accepts `halt_on`, the *outcome* axis to `terminal`'s
+//! position axis — an early `return` taken only when the task failed. It is
+//! task-only: a group has no outcome of its own, and carrying it is refused at
+//! parse time.
 
 use async_trait::async_trait;
 use dataflow_rs::engine::functions::AsyncFunctionHandler;
 use dataflow_rs::engine::message::Message;
 use dataflow_rs::engine::trace::TraceOptions;
-use dataflow_rs::{Engine, Result, TaskContext, TaskOutcome, Workflow};
+use dataflow_rs::{Engine, HaltOn, Result, TaskContext, TaskOutcome, Workflow};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -313,6 +318,281 @@ async fn terminal_task_breaks_the_whole_loop() {
         Value::from(&message.context["data"]["ticks"]),
         json!(3),
         "sweeps 0, 1 and 2 ran; the terminal task on sweep 2 broke the loop"
+    );
+}
+
+// =============================================================================
+// `halt_on` on a task — the outcome axis
+//
+// `terminal` halts whatever the task returned; `halt_on: "failure"` halts only
+// when it failed. Failure is a recorded status of 400 or above, which is what
+// lets a `validation` task reject without hand-writing the negated condition on
+// every task after it.
+// =============================================================================
+
+#[tokio::test]
+async fn halt_on_failure_halts_on_a_4xx_status() {
+    // The `validation` shape: 400 is *not* covered by `continue_on_error`, so
+    // without `halt_on` this is the bug in issue #53.
+    let engine = Engine::builder()
+        .with_workflows(vec![workflow(&format!(
+            r#"{{ "id": "check", "name": "check", "halt_on": "failure",
+                 "function": {{ "name": "reject", "input": {{}} }} }}, {}"#,
+            mark("last")
+        ))])
+        .register("reject", Outcome(TaskOutcome::Status(400)))
+        .build()
+        .expect("engine should build");
+
+    let message = run(&engine, json!({})).await;
+    assert!(
+        ran(&message, &["last"]).is_empty(),
+        "a 400 halted the workflow, so nothing after it ran"
+    );
+}
+
+#[tokio::test]
+async fn halt_on_failure_does_not_halt_on_success() {
+    // The distinction `terminal` cannot express: a passing assertion falls
+    // through to the rest of the pipeline.
+    let engine = Engine::builder()
+        .with_workflows(vec![workflow(&format!(
+            r#"{{ "id": "check", "name": "check", "halt_on": "failure",
+                 "function": {{ "name": "pass", "input": {{}} }} }}, {}"#,
+            mark("last")
+        ))])
+        .register("pass", Outcome(TaskOutcome::Success))
+        .build()
+        .expect("engine should build");
+
+    let message = run(&engine, json!({})).await;
+    assert_eq!(
+        ran(&message, &["last"]),
+        vec!["last"],
+        "the task succeeded, so `halt_on` did nothing"
+    );
+}
+
+#[tokio::test]
+async fn halt_on_failure_does_not_halt_on_skip() {
+    let engine = Engine::builder()
+        .with_workflows(vec![workflow(&format!(
+            r#"{{ "id": "skipper", "name": "skipper", "halt_on": "failure",
+                 "function": {{ "name": "skipper", "input": {{}} }} }}, {}"#,
+            mark("last")
+        ))])
+        .register("skipper", Outcome(TaskOutcome::Skip))
+        .build()
+        .expect("engine should build");
+
+    let message = run(&engine, json!({})).await;
+    assert_eq!(
+        ran(&message, &["last"]),
+        vec!["last"],
+        "a task that declined to act did not fail"
+    );
+}
+
+#[tokio::test]
+async fn halt_on_failure_with_a_false_condition_does_not_halt() {
+    let engine = Engine::builder()
+        .with_workflows(vec![workflow(&format!(
+            r#"{{ "id": "check", "name": "check", "halt_on": "failure",
+                 "condition": false,
+                 "function": {{ "name": "reject", "input": {{}} }} }}, {}"#,
+            mark("last")
+        ))])
+        .register("reject", Outcome(TaskOutcome::Status(400)))
+        .build()
+        .expect("engine should build");
+
+    let message = run(&engine, json!({})).await;
+    assert_eq!(
+        ran(&message, &["last"]),
+        vec!["last"],
+        "the task never ran, so it never failed"
+    );
+}
+
+#[tokio::test]
+async fn halt_on_failure_halts_after_a_handler_err_under_continue_on_error() {
+    let engine = Engine::builder()
+        .with_workflows(vec![workflow(&format!(
+            r#"{{ "id": "boom", "name": "boom", "halt_on": "failure",
+                 "continue_on_error": true,
+                 "function": {{ "name": "boom", "input": {{}} }} }}, {}"#,
+            mark("last")
+        ))])
+        .register("boom", Boom)
+        .build()
+        .expect("engine should build");
+
+    let message = run(&engine, json!({})).await;
+    assert!(
+        ran(&message, &["last"]).is_empty(),
+        "a handler `Err` is a failure, so the workflow halted"
+    );
+    assert_eq!(
+        message.errors().len(),
+        1,
+        "the error is still recorded: {:?}",
+        message.errors()
+    );
+}
+
+#[tokio::test]
+async fn halt_on_failure_with_5xx_and_no_continue_on_error_still_propagates() {
+    // The mirror of `terminal_task_returning_5xx_still_records_and_propagates`:
+    // `halt_on` is applied in the fold *after* the status classification, so a
+    // 5xx still records `TASK_STATUS_ERROR` and still propagates.
+    let engine = Engine::builder()
+        .with_workflows(vec![workflow(
+            r#"{ "id": "five_hundred", "name": "five_hundred", "halt_on": "failure",
+                 "function": { "name": "five_hundred", "input": {} } }"#,
+        )])
+        .register("five_hundred", Outcome(TaskOutcome::Status(500)))
+        .build()
+        .expect("engine should build");
+
+    let mut message = Message::builder().data(dv(json!({}))).build();
+    let result = engine.process_message(&mut message).await;
+
+    assert!(result.is_err(), "a 5xx propagates rather than halting");
+    assert!(
+        message
+            .errors()
+            .iter()
+            .any(|e| e.code == "TASK_STATUS_ERROR"),
+        "the status error is still recorded: {:?}",
+        message.errors()
+    );
+}
+
+#[tokio::test]
+async fn halt_on_failure_keeps_its_own_audit_status() {
+    // The point of routing through the `flow` fold rather than returning
+    // `TaskOutcome::Halt`: the 400 the host answers with survives.
+    let engine = Engine::builder()
+        .with_workflows(vec![workflow(
+            r#"{ "id": "check", "name": "check", "halt_on": "failure",
+                 "function": { "name": "reject", "input": {} } }"#,
+        )])
+        .register("reject", Outcome(TaskOutcome::Status(400)))
+        .build()
+        .expect("engine should build");
+
+    let message = run(&engine, json!({})).await;
+    let statuses: Vec<usize> = message.audit_trail().iter().map(|e| e.status).collect();
+    assert_eq!(
+        statuses,
+        vec![400],
+        "the task's own status survives; `halt_on` is not `HALT_STATUS_CODE`"
+    );
+    assert_eq!(
+        Value::from(&message.context["metadata"]["progress"]["status_code"]),
+        json!(400),
+        "and downstream workflows can route on it"
+    );
+}
+
+#[tokio::test]
+async fn terminal_is_stronger_than_halt_on() {
+    // The two compose by `or`, so there is no contradictory combination:
+    // `terminal` halts even on the success `halt_on` would let through.
+    let engine = Engine::builder()
+        .with_workflows(vec![workflow(&format!(
+            r#"{{ "id": "check", "name": "check", "terminal": true, "halt_on": "failure",
+                 "function": {{ "name": "pass", "input": {{}} }} }}, {}"#,
+            mark("last")
+        ))])
+        .register("pass", Outcome(TaskOutcome::Success))
+        .build()
+        .expect("engine should build");
+
+    let message = run(&engine, json!({})).await;
+    assert!(
+        ran(&message, &["last"]).is_empty(),
+        "`terminal` halts regardless of outcome"
+    );
+}
+
+#[tokio::test]
+async fn halt_on_failure_breaks_the_whole_loop() {
+    let engine = Engine::builder()
+        .with_workflows(vec![
+            Workflow::from_json(
+                r#"{ "id": "sweeps", "name": "sweeps", "priority": 1,
+                     "loop": { "counter": "i", "max": 5 },
+                     "tasks": [
+                       { "id": "tick", "name": "tick", "function": { "name": "map",
+                         "input": { "mappings": [ { "path": "data.ticks",
+                           "logic": {"+": [{"var": "data.ticks"}, 1]} } ] } } },
+                       { "id": "exit", "name": "exit", "halt_on": "failure",
+                         "condition": {">=": [{"var": "temp_data.i"}, 2]},
+                         "function": { "name": "reject", "input": {} } }
+                     ] }"#,
+            )
+            .unwrap(),
+        ])
+        .register("reject", Outcome(TaskOutcome::Status(400)))
+        .build()
+        .expect("engine should build");
+
+    let message = run(&engine, json!({ "ticks": 0 })).await;
+    assert_eq!(
+        Value::from(&message.context["data"]["ticks"]),
+        json!(3),
+        "sweeps 0, 1 and 2 ran; failing on sweep 2 broke the whole loop"
+    );
+}
+
+#[tokio::test]
+async fn halt_on_failure_stops_only_its_own_workflow() {
+    // Why `halt_on` is not a security control: a later workflow still runs.
+    let engine = Engine::builder()
+        .with_workflows(vec![
+            Workflow::from_json(
+                r#"{ "id": "w1", "name": "w1", "priority": 1,
+                     "tasks": [ { "id": "check", "name": "check", "halt_on": "failure",
+                       "function": { "name": "reject", "input": {} } } ] }"#,
+            )
+            .unwrap(),
+            Workflow::from_json(&format!(
+                r#"{{ "id": "w2", "name": "w2", "priority": 0, "tasks": [{}] }}"#,
+                mark("later")
+            ))
+            .unwrap(),
+        ])
+        .register("reject", Outcome(TaskOutcome::Status(400)))
+        .build()
+        .expect("engine should build");
+
+    let message = run(&engine, json!({})).await;
+    assert_eq!(
+        ran(&message, &["later"]),
+        vec!["later"],
+        "halting scopes to one workflow — stopping a message needs an `Err`"
+    );
+}
+
+#[test]
+fn halt_on_defaults_to_never_and_a_group_cannot_carry_it() {
+    let wf = workflow(&format!("{}, {}", mark("a"), mark("b")));
+    assert!(
+        wf.tasks.iter().all(|t| t.halt_on == HaltOn::Never),
+        "`halt_on` defaults to Never"
+    );
+
+    let err = Workflow::from_json(
+        r#"{ "id": "w", "name": "w", "priority": 0, "tasks": [
+             { "id": "g", "halt_on": "failure", "tasks": [
+               { "id": "t", "name": "t", "function": { "name": "map",
+                 "input": { "mappings": [] } } } ] } ] }"#,
+    )
+    .expect_err("a group carrying halt_on is refused at parse time");
+    assert!(
+        format!("{err:?}").contains("halt_on"),
+        "the parse error names the offending key, got: {err:?}"
     );
 }
 

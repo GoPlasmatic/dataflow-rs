@@ -118,6 +118,8 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `MISSING_FUNCTION` | A task carries no `function` |
 | `INVALID_FUNCTION_NAME` | `function` is not an object with a non-empty `name` |
 | `INVALID_TERMINAL` | `terminal` is present but not a boolean |
+| `INVALID_HALT_ON` | `halt_on` is not `"never"`/`"failure"`, or is on a group |
+| `UNGUARDED_VALIDATION` | Informational — a `validation` whose failure stops nothing |
 | `LOOP_INCREMENT_TOO_SMALL` | `increment < 1` — the counter would never reach `max` |
 | `LOOP_BOUND_EMPTY` | `max <= init` — no sweep could ever run |
 | `LOOP_COUNTER_INVALID` | `counter` is not a non-empty dotted path |

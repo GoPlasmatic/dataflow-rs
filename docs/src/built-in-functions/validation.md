@@ -244,14 +244,15 @@ Combine validation with data transformation:
 ```
 
 Transformation proceeds even if validation fails — but note that this is true
-with or without `continue_on_error`, for the reason below.
+with or without `continue_on_error`, for the reason below. Use `halt_on` if you
+meant to stop.
 
 ## Stopping on a validation failure
 
-**A failing `validation` task does not stop the workflow.** It returns status
-`400`, and the engine treats the `4xx` range as "logged as a warning, carry on";
-only `5xx` and a returned `Err` engage `continue_on_error` at all. So this does
-*not* do what it looks like:
+**A failing `validation` task does not stop the workflow by default.** It returns
+status `400`, and the engine treats the `4xx` range as "logged as a warning, carry
+on"; only `5xx` and a returned `Err` engage `continue_on_error` at all. So this
+does *not* do what it looks like:
 
 ```json
 {
@@ -265,33 +266,62 @@ only `5xx` and a returned `Err` engage `continue_on_error` at all. So this does
 }
 ```
 
-`process` still runs. To actually gate on validity, follow the validation with
-a [`filter`](./filter.md) that halts when the errors are present — or read
-`metadata.progress.status_code`, which the engine rewrites after every task:
+`process` still runs. `EngineBuilder::check_workflow` reports this shape as
+`UNGUARDED_VALIDATION`.
+
+### Within one rule: `halt_on`
+
+Put [`halt_on: "failure"`](../advanced/control-flow.md#halt_on) on the validation
+task. It halts only when a rule failed, so a passing message carries on, and the
+audit trail keeps the real `400`:
 
 ```json
 {
     "tasks": [
-        {"id": "validate", "name": "Validate",
+        {"id": "validate", "name": "Validate", "halt_on": "failure",
          "function": {"name": "validation", "input": {"rules": []}}},
-        {"id": "gate", "name": "Stop if invalid",
-         "function": {"name": "filter", "input": {
-             "condition": {"!=": [{"var": "metadata.progress.status_code"}, 400]},
-             "on_reject": "halt"}}},
         {"id": "process", "name": "Process",
          "function": {"name": "map", "input": {"mappings": []}}}
     ]
 }
 ```
 
-Alternatively, put the validation in its own rule and gate the *next* rule on
-that same `metadata.progress` key — the mechanism cross-rule chaining is built
-on.
+### Across rules: the error-context path
+
+Halting stops **this rule only** — later rules still process the message, so
+`halt_on` is not a rejection. To stop a whole pipeline, have the engine record
+failures where a condition can read them, with
+[`with_error_context_path`](../core-concepts/error-handling.md#branching-on-why-a-task-failed),
+and gate the following rule on it:
+
+```json
+{"id": "exchange", "name": "Exchange",
+ "condition": {"!": [{"var": "metadata.errors.0.code"}]},
+ "tasks": []}
+```
+
+This is the one that holds when the work you are guarding lives in a later rule.
+
+### Older alternatives
+
+Before `halt_on` the same gate was written as a `filter` reading
+`metadata.progress.status_code`, which the engine rewrites after every task:
+
+```json
+{"id": "gate", "name": "Stop if invalid",
+ "function": {"name": "filter", "input": {
+     "condition": {"!=": [{"var": "metadata.progress.status_code"}, 400]},
+     "on_reject": "halt"}}}
+```
+
+It still works, at a cost: a `filter` halt records status `299`, so the `400` is
+replaced on both the audit trail and `metadata.progress` and the host can no
+longer see what the task actually returned. Prefer `halt_on`.
 
 ## Best Practices
 
 1. **Validate Early** - Add validation as the first task
 2. **Clear Messages** - Write specific, actionable error messages
 3. **Check All Rules** - Validation evaluates all rules (doesn't short-circuit)
-4. **Use continue_on_error** - Decide if processing should continue on failure
+4. **Gate with `halt_on`** - `continue_on_error` does not cover a `400`; use `halt_on: "failure"` when the assertion must stop the rule
 5. **Handle Errors** - Always check `message.errors()` after processing

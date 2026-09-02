@@ -71,6 +71,38 @@ pub struct TaskGroup {
     pub end: usize,
 }
 
+/// When a task's own outcome ends the workflow — the outcome complement of
+/// [`Task::terminal`].
+///
+/// Authored as a string on a task: `"halt_on": "failure"`. Absent means
+/// [`Self::Never`], so every workflow written before this existed is unchanged.
+///
+/// `#[non_exhaustive]`: further modes (a status range, say) would otherwise
+/// break every downstream `match`. Match with a `_` arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HaltOn {
+    /// Never halt on outcome. The default, and the behaviour of every task that
+    /// does not mention `halt_on`.
+    #[default]
+    Never,
+
+    /// Halt once this task has run and failed — a recorded status of `400` or
+    /// above, which covers the `validation` built-in's `400`, any handler
+    /// returning [`TaskOutcome::Status`](crate::engine::task_outcome::TaskOutcome::Status)
+    /// in that range, and a handler returning `Err` (recorded as `500`).
+    ///
+    /// [`TaskOutcome::Skip`](crate::engine::task_outcome::TaskOutcome::Skip)
+    /// records nothing and never halts, and
+    /// [`TaskOutcome::Halt`](crate::engine::task_outcome::TaskOutcome::Halt)
+    /// carries `HALT_STATUS_CODE` (`299`), below the threshold — it halts on its
+    /// own account, not through this flag.
+    ///
+    /// There is no `"always"`: [`Task::terminal`] already spells that.
+    Failure,
+}
+
 /// A single processing unit within a workflow (also known as an Action in rules-engine terminology).
 ///
 /// Tasks execute functions with optional conditions and error handling.
@@ -90,7 +122,8 @@ pub struct TaskGroup {
 ///         "input": { "rules": [...] }
 ///     },
 ///     "continue_on_error": false,
-///     "terminal": false
+///     "terminal": false,
+///     "halt_on": "failure"
 /// }
 /// ```
 /// A single unit of work inside a workflow.
@@ -144,6 +177,13 @@ pub struct Task {
     /// Whether to continue workflow execution if this task fails.
     /// When `true`, errors are recorded but don't stop the workflow.
     /// Defaults to `false`.
+    ///
+    /// **"Fails" means a `5xx` outcome or a returned `Err` — not every
+    /// unsuccessful task.** A `4xx` is logged as a warning and the workflow
+    /// carries on regardless of this flag, so `continue_on_error: false` after a
+    /// `validation` task does *not* stop the tasks that follow it: a failing rule
+    /// returns `400`. To gate on an outcome, use [`Task::halt_on`]; to reject the
+    /// whole message, return an `Err` from a handler.
     #[serde(default)]
     pub continue_on_error: bool,
 
@@ -167,8 +207,69 @@ pub struct Task {
     /// The audit-trail entry keeps the task's *own* status (`200`, `404`, …)
     /// rather than `HALT_STATUS_CODE`: the task did its job, and a `map` that
     /// wrote a 404 response body should not report "a filter halted here".
+    ///
+    /// For the *outcome* axis — "halt only if this task failed" — see
+    /// [`Task::halt_on`].
     #[serde(default)]
     pub terminal: bool,
+
+    /// Halt the workflow based on this task's **outcome**. Defaults to
+    /// [`HaltOn::Never`].
+    ///
+    /// The complement of [`Task::terminal`]: `terminal` is about position and
+    /// halts whatever happened, `halt_on` is about what happened and halts only
+    /// then. The two combine as `terminal || (halt_on matched)` — `terminal` is
+    /// strictly stronger, so setting both is redundant rather than contradictory.
+    ///
+    /// This is what lets an assertion reject. A `validation` task returns `400`
+    /// when a rule fails, which is *not* covered by
+    /// [`continue_on_error`](Task::continue_on_error), so without `halt_on` the
+    /// tasks after it still run:
+    ///
+    /// ```json
+    /// { "id": "check_state", "halt_on": "failure",
+    ///   "function": { "name": "validation", "input": { "rules": [ … ] } } }
+    /// ```
+    ///
+    /// **Failure means a recorded status of `400` or above** — the same
+    /// threshold the executor already splits on to warn (4xx) and to record
+    /// `TASK_STATUS_ERROR` (5xx) — or a handler returning `Err`, recorded as
+    /// `500`. It is deliberately *not* "the task appended to
+    /// `message.errors()`": a handler may call
+    /// [`TaskContext::add_error`](crate::TaskContext::add_error) and still
+    /// return `Success`, and that does not halt.
+    ///
+    /// | The task … | `terminal: true` | `halt_on: "failure"` |
+    /// |---|---|---|
+    /// | never ran (its `condition`, or its group's, was false) | no | no |
+    /// | returned [`TaskOutcome::Skip`](crate::TaskOutcome::Skip) | no | no |
+    /// | returned `Success`, or a 2xx–3xx status | **halts** | no |
+    /// | returned [`TaskOutcome::Halt`](crate::TaskOutcome::Halt) | halts already | halts already |
+    /// | returned a 4xx status | **halts** | **halts** |
+    /// | returned 5xx, `continue_on_error: true` | **halts** | **halts** |
+    /// | returned 5xx, `continue_on_error: false` | error propagates | error propagates |
+    /// | handler returned `Err`, `continue_on_error: true` | **halts** | **halts** |
+    /// | handler returned `Err`, `continue_on_error: false` | error propagates | error propagates |
+    /// | called `add_error` but returned `Success` | **halts** | no |
+    ///
+    /// The two "error propagates" rows are not an omission: the executor returns
+    /// `Err` before either flag is consulted, which abandons the rest of this
+    /// workflow — everything halting would have done — and additionally reaches
+    /// the caller. They differ in exactly one shape: a workflow carrying a
+    /// [`loop`](crate::engine::workflow::LoopConfig) whose *own*
+    /// `continue_on_error` is `true`, where the error advances to the next sweep
+    /// while a halt would break the loop. Set `continue_on_error: false` on the
+    /// workflow if the loop must stop.
+    ///
+    /// Everything `terminal` documents about *scope* applies unchanged: halting
+    /// stops this workflow only, later workflows still process the message, it
+    /// breaks a whole loop rather than one sweep, and the audit entry keeps the
+    /// task's own status — `400`, not `HALT_STATUS_CODE`. **Halting is therefore
+    /// not a security control**: to stop a message outright return an `Err`, or
+    /// gate the following workflow on
+    /// [`EngineBuilder::with_error_context_path`](crate::EngineBuilder::with_error_context_path).
+    #[serde(default)]
+    pub halt_on: HaltOn,
 
     /// Engine-internal: groups opening at this task, outermost first. Populated
     /// by the workflow parser; empty for a task in no group. Not part of the
@@ -199,6 +300,7 @@ impl Task {
             function,
             continue_on_error: false,
             terminal: false,
+            halt_on: HaltOn::Never,
             group_starts: Vec::new(),
         }
     }

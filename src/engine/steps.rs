@@ -242,6 +242,13 @@ struct GroupHeader {
     condition: Value,
     #[serde(default)]
     terminal: bool,
+    /// Captured only so it can be refused. `halt_on` is a per-*task* outcome
+    /// rule and a group has no outcome of its own, so the executor could not
+    /// honour it. Unknown keys are otherwise ignored here, which would make an
+    /// author's failure guard vanish silently — the exact class of bug
+    /// [`crate::HaltOn`] exists to prevent.
+    #[serde(default)]
+    halt_on: Option<Value>,
     tasks: Vec<Value>,
 }
 
@@ -279,6 +286,14 @@ fn walk(steps: &[Value], depth: usize, out: &mut Vec<Task>) -> Result<(), String
 
         let header: GroupHeader = serde_json::from_value(step.clone())
             .map_err(|e| format!("invalid task group in workflow tasks: {e}"))?;
+
+        if header.halt_on.is_some() {
+            return Err(format!(
+                "task group '{}' cannot carry halt_on — halt_on is a per-task \
+                 outcome rule; put it on the task that can fail",
+                header.id
+            ));
+        }
 
         let start = out.len();
         walk(&header.tasks, depth + 1, out)?;

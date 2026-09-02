@@ -800,11 +800,13 @@ fn a_task_is_built_through_its_constructor_and_then_assigned() {
     task.condition = json!({"var": "data.ready"});
     task.continue_on_error = true;
     task.terminal = true;
+    task.halt_on = dataflow_rs::HaltOn::Failure;
 
     // And readable.
     assert_eq!(task.id, "charge");
     assert_eq!(task.name, "Charge card");
     assert!(task.terminal);
+    assert_eq!(task.halt_on, dataflow_rs::HaltOn::Failure);
     assert_eq!(task.function.function_name(), "billing");
 
     // The engine internals a struct literal used to force callers to name are

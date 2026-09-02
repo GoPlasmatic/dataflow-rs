@@ -43,6 +43,7 @@ Actions are the building blocks of rules. Each action:
 | `condition` | JSONLogic | No | When to execute action (evaluated against full context) |
 | `continue_on_error` | boolean | No | Run the rule's remaining actions even if this one fails (default: `false`) |
 | `terminal` | boolean | No | End the workflow once this action has run (default: `false`) — see [Control Flow](../advanced/control-flow.md) |
+| `halt_on` | string | No | `"failure"` ends the workflow when this action *failed* (default: `"never"`) — see [Control Flow](../advanced/control-flow.md#halt_on) |
 | `function` | object | Yes | Function to execute |
 
 ## Creating Actions Programmatically

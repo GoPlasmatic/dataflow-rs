@@ -248,7 +248,7 @@ pub use engine::task_context::TaskContext;
 pub use engine::task_outcome::{HALT_STATUS_CODE, TaskOutcome};
 pub use engine::trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
 pub use engine::{
-    ConnectorRef, Engine, EngineBuilder, Rollout, RolloutError, Task, TaskGroup, Workflow,
+    ConnectorRef, Engine, EngineBuilder, HaltOn, Rollout, RolloutError, Task, TaskGroup, Workflow,
     WorkflowStatus,
 };
 

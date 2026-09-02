@@ -97,7 +97,7 @@ pub use secrets::Secrets;
 pub use steps::{
     AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
 };
-pub use task::{Task, TaskGroup};
+pub use task::{HaltOn, Task, TaskGroup};
 pub use task_context::TaskContext;
 pub use task_outcome::{HALT_STATUS_CODE, TaskOutcome};
 pub use trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};

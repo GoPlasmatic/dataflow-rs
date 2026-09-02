@@ -5,14 +5,15 @@ A workflow's `tasks` array holds **steps**, not just tasks. A step is either:
 - a **task** — an object with a `function` key;
 - a **group** — an object with a `tasks` key, holding its own nested steps.
 
-Both accept `condition` and `terminal`. Between them that gives the three
-shapes every procedural language has:
+Both accept `condition` and `terminal`, and a task additionally accepts
+`halt_on`. Between them that gives the shapes every procedural language has:
 
 | Step | Reads as |
 |---|---|
 | group, no `terminal` | `if (…) { … }` |
 | task with `terminal: true` | early `return` |
 | group with `terminal: true` | `if (…) { …; return; }` |
+| task with `halt_on: "failure"` | `if (failed) return;` |
 
 Both fields default to today's behaviour, so an existing workflow is unchanged:
 `terminal` defaults to `false`, and a step with no nested `tasks` is exactly the
@@ -100,6 +101,60 @@ The audit-trail entry keeps the task's **own** status — `200`, `404`, whatever
 it returned — rather than the `299` a filter-halt records. The task did its job;
 only the position is special.
 
+For the *outcome* axis — halt only if the task failed — use `halt_on`.
+
+## `halt_on`
+
+`halt_on: "failure"` ends the workflow once the task has run **and failed**. It
+is the complement of `terminal`: `terminal` halts whatever happened, `halt_on`
+halts only then and lets a success fall through.
+
+This is what lets an assertion reject. A failing `validation` rule returns `400`,
+and the engine treats `4xx` as "warn and carry on" — `continue_on_error` governs
+`5xx` and a returned `Err` only — so without `halt_on` the tasks after it still
+run:
+
+```json
+{
+    "tasks": [
+        { "id": "check_state", "name": "Check state", "halt_on": "failure",
+          "function": { "name": "validation", "input": { "rules": [
+              { "logic": {"==": [{"var": "data.state"}, {"var": "data.cookie"}]},
+                "message": "state mismatch" } ] } } },
+
+        { "id": "exchange", "name": "Exchange the code",
+          "function": { "name": "map", "input": { "mappings": [] } } }
+    ]
+}
+```
+
+**Failure means a recorded status of `400` or above**, or a handler returning
+`Err` (recorded as `500`). It is deliberately not "the task appended to
+`message.errors()`": a handler may call `add_error` and still return success.
+
+| Situation | `terminal: true` | `halt_on: "failure"` |
+|---|---|---|
+| The task ran and succeeded | **yes** | no |
+| Its `condition` was false | no | no |
+| It returned `TaskOutcome::Skip` | no | no |
+| It returned a `4xx` status | **yes** | **yes** |
+| It failed, `continue_on_error: true` | **yes** | **yes** |
+| It failed, `continue_on_error: false` | the error propagates | the error propagates |
+
+The two may be combined; they compose by `or`, so `terminal` is strictly
+stronger and there is no contradictory pairing.
+
+Everything `terminal` says about **scope** applies unchanged: this workflow only,
+the whole loop rather than one sweep, and the task's own status preserved on the
+audit trail. **Halting is therefore not a security control.** Later workflows
+still process the message, so to reject a message outright return an `Err` from a
+handler, or gate the following workflow on the
+[error-context path](../core-concepts/error-handling.md#branching-on-why-a-task-failed).
+
+`halt_on` is **task-only**. A group carrying it is refused at parse time: a group
+has no outcome of its own, and silently ignoring it would recreate exactly the
+decorative-assertion bug it exists to prevent.
+
 ## Groups
 
 A group states a condition once for a contiguous run of tasks:
@@ -122,6 +177,7 @@ A group states a condition once for a contiguous run of tasks:
 | `tasks` | **yes** | — | The nested steps. Must not be empty. |
 | `condition` | no | `true` | Gates the whole span. |
 | `terminal` | no | `false` | Ends the workflow once the group completes. |
+| `halt_on` | — | — | **Not accepted on a group** — task-only; carrying it is a parse error. |
 | `name`, `description` | no | none | For traces and tooling. |
 
 **The condition is evaluated once, on entry.** A false result skips the whole
@@ -259,10 +315,15 @@ task instead would classify it differently from the engine that has to run it.
 
 ## Version note
 
-`terminal` and groups need engine **3.6.0** or newer.
+`terminal` and groups need engine **3.6.0** or newer; `halt_on` needs **3.10.0**
+or newer.
 
 A group sent to an older engine fails to parse — the group object has no
 `function`, so it is rejected with a clear error. A bare `terminal: true` on an
 older engine is **silently ignored**, and every later task runs. If you deploy
 workflow definitions to engines you do not control, gate on the engine version
 before authoring `terminal`.
+
+The same applies to `halt_on`, and the consequence is worse: an engine older
+than 3.10.0 ignores it and runs every later task, which turns a rejection guard
+back into a decorative assertion. Check the engine version before relying on it.

@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.10.0] — 2026-09-02
+
+An assertion can finally reject, and one that cannot is now reported before it
+ships.
+
+A failing `validation` rule returns `400`, and the engine treats `4xx` as "warn
+and carry on" — `continue_on_error` governs `5xx` and `Err` only. So a
+`validation` followed by unguarded tasks records an error and proceeds exactly as
+if it had passed. The behaviour is unchanged and deliberate; what was missing was
+a way to opt out of it in one field, and any warning that you had not.
+
+### Added
+
+- **`Task::halt_on`** — the outcome axis to `terminal`'s position axis.
+  `"halt_on": "failure"` ends the workflow when the task recorded a status of
+  `400` or above, or returned `Err`, and lets a success fall through. The two
+  compose by `or`, so `terminal` stays strictly stronger and no combination
+  contradicts. The halt runs through the executor's existing fold, so the task
+  keeps its **own** status on the audit trail and in `metadata.progress` — a
+  `400` stays a `400`, unlike a `filter` halt, which records `299`.
+- **`HaltOn`** — `Never` (default) or `Failure`, `#[non_exhaustive]`.
+- **`IssueCode::UnguardedValidation`** (`UNGUARDED_VALIDATION`) — informational,
+  reported by `check_workflow` and never by `build()`. Fires when a `validation`
+  task is not `terminal`, has no `halt_on`, and nothing following it in the
+  workflow carries a condition or is a `filter`.
+- **`IssueCode::InvalidHaltOn`** (`INVALID_HALT_ON`).
+
+### Changed
+
+- A group carrying `halt_on` is now **refused at parse time**. A group has no
+  outcome of its own, so the executor could not honour it; before this it parsed
+  and was silently dropped. The key did nothing, so it can only exist as a typo or
+  a wrong expectation — but it is a behaviour change for definitions that parse
+  today.
+- `Task::continue_on_error`'s documentation now says what it actually governs.
+  It read "continue workflow execution if this task fails", unqualified, which is
+  the field an author reaches for after a `validation` and the reason this issue
+  was filed.
+- The `validation` page leads with `halt_on` and the error-context path; the
+  `filter` gate it used to recommend is kept as an older alternative, with a note
+  that it costs the `400`.
+
+Reported in [#53](https://github.com/GoPlasmatic/dataflow-rs/issues/53).
+
 ## [3.9.0] — 2026-08-31
 
 Every built-in function parameter is JSONLogic, and a literal object is finally

@@ -327,6 +327,7 @@ pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self
     "condition": "JSONLogic (optional, evaluated against full context)",
     "continue_on_error": "boolean (optional, default: false)",
     "terminal": "boolean (optional, default: false)",
+    "halt_on": "string (optional, one of never|failure, default: never)",
     "function": {
         "name": "string (required)",
         "input": "object (required)"
@@ -347,6 +348,9 @@ one condition evaluated once on entry:
     "tasks": "array of Task or TaskGroup (required)"
 }
 ```
+
+`halt_on` is **task-only** — a group has no outcome of its own, and carrying it
+is a parse error.
 
 ## Message
 

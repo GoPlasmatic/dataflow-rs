@@ -63,6 +63,15 @@ export interface Task {
    * `continue_on_error` still does. Halting stops this workflow only.
    */
   terminal?: boolean;
+  /**
+   * End the workflow when this task *failed*. Defaults to `"never"`.
+   *
+   * The outcome axis to `terminal`'s position axis: `"failure"` halts on a
+   * recorded status of 400 or above (a failing `validation` returns 400) and
+   * lets a success fall through. Task-only — a group carrying it is a parse
+   * error.
+   */
+  halt_on?: "never" | "failure";
 }
 
 /**
