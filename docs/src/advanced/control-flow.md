@@ -155,6 +155,16 @@ handler, or gate the following workflow on the
 has no outcome of its own, and silently ignoring it would recreate exactly the
 decorative-assertion bug it exists to prevent.
 
+`continue_on_error` on a group is the same class of mistake and is resolved the
+other way — reported, not refused. The difference is age. `halt_on` was new, so
+refusing it broke nothing; `continue_on_error` is real on both a task and a
+workflow, which is what makes a group the one place it looks like it should work,
+and a host may already carry it on group nodes. Refusing it now would fail
+`Engine::build`, which aborts every workflow in that build. So it parses, does
+nothing, and `check_workflow` reports
+[`GROUP_CONTINUE_ON_ERROR`](./authoring-validation.md#issue-codes). Put the flag
+on the tasks inside the group, or on the workflow.
+
 ## Groups
 
 A group states a condition once for a contiguous run of tasks:
@@ -178,6 +188,7 @@ A group states a condition once for a contiguous run of tasks:
 | `condition` | no | `true` | Gates the whole span. |
 | `terminal` | no | `false` | Ends the workflow once the group completes. |
 | `halt_on` | — | — | **Not accepted on a group** — task-only; carrying it is a parse error. |
+| `continue_on_error` | — | — | **Not honoured on a group** — per task and per workflow. Parses, does nothing, and is reported by `check_workflow` as `GROUP_CONTINUE_ON_ERROR`. |
 | `name`, `description` | no | none | For traces and tooling. |
 
 **The condition is evaluated once, on entry.** A false result skips the whole

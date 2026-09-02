@@ -119,7 +119,8 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `INVALID_FUNCTION_NAME` | `function` is not an object with a non-empty `name` |
 | `INVALID_TERMINAL` | `terminal` is present but not a boolean |
 | `INVALID_HALT_ON` | `halt_on` is not `"never"`/`"failure"`, or is on a group |
-| `UNGUARDED_VALIDATION` | Informational — a `validation` whose failure stops nothing |
+| `GROUP_CONTINUE_ON_ERROR` | **Informational.** A group carries `continue_on_error`, which the engine does not honour |
+| `UNGUARDED_VALIDATION` | **Informational.** A `validation` whose failure stops nothing |
 | `LOOP_INCREMENT_TOO_SMALL` | `increment < 1` — the counter would never reach `max` |
 | `LOOP_BOUND_EMPTY` | `max <= init` — no sweep could ever run |
 | `LOOP_COUNTER_INVALID` | `counter` is not a non-empty dotted path |
@@ -135,11 +136,21 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `DUPLICATE_TEMPLATE_KEY` | Two keys in one template object collapse to the same name once the `$` escape is stripped |
 | `ESCAPED_TEMPLATE_KEY` | **Informational.** A `$`-prefixed template key — the migration audit, never refused |
 
-`ESCAPED_TEMPLATE_KEY` is the one code `check_workflow` reports that
-`Engine::build()` will not refuse. Stripping the [`$` escape](./jsonlogic.md#literal-keys-and-the--escape)
-is uniform rather than conditional on a collision, so every escaped key is worth
-seeing once when upgrading to 3.9; after that they are deliberate. Everything
-else in the table is a rejection.
+Three codes are **informational**: `check_workflow` reports them and
+`Engine::build()` will not refuse them. Everything else in the table is a
+rejection.
+
+- `ESCAPED_TEMPLATE_KEY` — stripping the [`$` escape](./jsonlogic.md#literal-keys-and-the--escape)
+  is uniform rather than conditional on a collision, so every escaped key is
+  worth seeing once when upgrading to 3.9; after that they are deliberate.
+- `UNGUARDED_VALIDATION` — validating to *record* errors rather than to gate is
+  a legitimate shape, so the ungated form is reported, not refused. See
+  [`halt_on`](./control-flow.md#halt_on).
+- `GROUP_CONTINUE_ON_ERROR` — the key is real on a task and on a workflow, so a
+  host may already carry it on group nodes; refusing it would abort every
+  workflow in the build over a key that was never honoured anyway.
+
+The distinction is not a field on `WorkflowIssue` — branch on `code`.
 
 ## Checking against the handlers
 

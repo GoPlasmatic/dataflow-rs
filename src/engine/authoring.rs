@@ -120,6 +120,16 @@ pub enum IssueCode {
     /// present on a *group* — a group has no outcome of its own, so the
     /// executor could not honour it.
     InvalidHaltOn,
+    /// A task group carries `continue_on_error`, which the engine drops. Error
+    /// handling is per task and per workflow; a group only gates a span.
+    ///
+    /// **Informational** — reported by
+    /// [`crate::EngineBuilder::check_workflow`] and never by
+    /// [`crate::EngineBuilder::build`]. Unlike [`Self::InvalidHaltOn`], which
+    /// the parser refuses outright, this key is real at the other two levels
+    /// and may already sit on a host's group nodes; refusing it would abort
+    /// every workflow in the build.
+    GroupContinueOnError,
     /// `loop.increment` is below 1 — the counter would never reach `max`.
     LoopIncrementTooSmall,
     /// `loop.max` is not greater than `loop.init` — no sweep could ever run.
@@ -197,6 +207,7 @@ impl IssueCode {
             Self::InvalidFunctionName => "INVALID_FUNCTION_NAME",
             Self::InvalidTerminal => "INVALID_TERMINAL",
             Self::InvalidHaltOn => "INVALID_HALT_ON",
+            Self::GroupContinueOnError => "GROUP_CONTINUE_ON_ERROR",
             Self::UnguardedValidation => "UNGUARDED_VALIDATION",
             Self::LoopIncrementTooSmall => "LOOP_INCREMENT_TOO_SMALL",
             Self::LoopBoundEmpty => "LOOP_BOUND_EMPTY",
@@ -336,6 +347,7 @@ pub(crate) fn check_against_registry(
     // definition, and the migration audit is the point of reporting them.
     issues.extend(check_template_keys(workflow));
     check_unguarded_validation(workflow, &mut issues);
+    check_group_continue_on_error(workflow, &mut issues);
 
     for task in &workflow.tasks {
         let name = task.function.function_name();
@@ -461,6 +473,47 @@ fn check_unguarded_validation(workflow: &Workflow, issues: &mut Vec<WorkflowIssu
             path: Some("halt_on".to_string()),
             task_id: Some(task.id.clone()),
         });
+    }
+}
+
+/// Report a task group carrying `continue_on_error`, which the engine drops.
+///
+/// The key is real on a [`Task`](crate::Task) and on a
+/// [`Workflow`](crate::Workflow), and that is exactly what makes a group the
+/// one place it looks like it should work and does not: `TaskGroup` has no such
+/// field, so the parser discards it like any other unknown key and the
+/// definition looks correct in review.
+///
+/// **Informational.** The sibling mistake — `halt_on` on a group — is refused
+/// at parse time instead, because it was a new key with no installed base.
+/// This one is old enough that a host may already carry it on group nodes, and
+/// refusing it would fail `Engine::build`, which aborts every workflow in that
+/// build. Honouring it is not the answer either: propagating it to the member
+/// tasks would change the error semantics of definitions that load today,
+/// silently.
+///
+/// Only a literal `true` is reported. `continue_on_error: false` on a group
+/// already describes what happens, so nothing the author wanted is defeated and
+/// reporting it would be noise.
+fn check_group_continue_on_error(workflow: &Workflow, issues: &mut Vec<WorkflowIssue>) {
+    // Each group is recorded once, on the task that opens its span, so this
+    // visits every group exactly once — outermost first where several open
+    // together.
+    for task in &workflow.tasks {
+        for group in task.group_starts.iter().filter(|g| g.continue_on_error) {
+            issues.push(WorkflowIssue {
+                code: IssueCode::GroupContinueOnError,
+                message: format!(
+                    "group '{}' carries continue_on_error, which the engine does not \
+                     honour — error handling is per task and per workflow, and a group \
+                     only gates a span. Put it on the tasks inside the group, or on the \
+                     workflow",
+                    group.id
+                ),
+                path: Some("continue_on_error".to_string()),
+                task_id: Some(group.id.clone()),
+            });
+        }
     }
 }
 

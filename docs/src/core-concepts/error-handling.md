@@ -69,6 +69,11 @@ rule-level one is not a default for its actions:
 | on an **action** | When this action fails, do the *remaining actions in this rule* still run? |
 | on a **rule** | When this rule fails, do the *subsequent rules* still run — and does `process_message` return `Ok`? |
 
+There is no third level. A [task group](../advanced/control-flow.md#groups)
+carrying `continue_on_error` parses and does nothing — a group gates a span, it
+does not handle errors — and `check_workflow` reports it as
+`GROUP_CONTINUE_ON_ERROR`.
+
 Written out as a matrix, where "action fails" means it returned an error or a
 `5xx` status:
 

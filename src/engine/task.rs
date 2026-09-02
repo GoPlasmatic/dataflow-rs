@@ -64,6 +64,20 @@ pub struct TaskGroup {
     /// Whether reaching the end of this group ends the workflow.
     pub terminal: bool,
 
+    /// Whether the author wrote `"continue_on_error": true` on this group.
+    ///
+    /// **The engine does not honour it.** Error handling is per task
+    /// ([`Task::continue_on_error`]) and per workflow; a group only gates a
+    /// span. The key is recorded here so
+    /// [`check_workflow`](crate::EngineBuilder::check_workflow) can report
+    /// [`IssueCode::GroupContinueOnError`](crate::IssueCode::GroupContinueOnError)
+    /// rather than let it vanish — being real at the other two levels is
+    /// exactly what makes a group the one place it looks like it should work.
+    ///
+    /// `false` for a group that omits the key, and for one that spells it with
+    /// anything other than a literal `true`.
+    pub continue_on_error: bool,
+
     /// Engine-internal: exclusive end of the span, as an index into
     /// `Workflow::tasks`. The start is the index of the task carrying this
     /// entry in its [`Task::group_starts`]. Not part of the stable API.

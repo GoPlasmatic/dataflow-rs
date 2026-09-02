@@ -54,6 +54,7 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
     description: task.description,
     continueOnError: task.continue_on_error,
     terminal: task.terminal,
+    haltOn: task.halt_on,
     taskId: task.id,
     workflowId: workflow.id,
   });

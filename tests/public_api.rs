@@ -884,4 +884,8 @@ fn task_groups_are_readable_from_a_parsed_workflow() {
 
     assert_eq!(group.id, "guard");
     assert!(group.terminal);
+    assert!(
+        !group.continue_on_error,
+        "recorded from the authored key, and this group carries none"
+    );
 }

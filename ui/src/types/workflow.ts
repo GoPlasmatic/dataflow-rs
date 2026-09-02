@@ -93,6 +93,13 @@ export interface TaskGroup {
   condition?: JsonLogicValue;
   /** End the workflow once the group completes */
   terminal?: boolean;
+  /**
+   * **Not honoured on a group.** Error handling is per task and per workflow;
+   * a group only gates a span. The key parses and does nothing, and
+   * `check_workflow` reports it as `GROUP_CONTINUE_ON_ERROR`. Present here so
+   * a tool can surface what the author wrote.
+   */
+  continue_on_error?: boolean;
   /** The nested steps. Must not be empty. */
   tasks: Step[];
 }

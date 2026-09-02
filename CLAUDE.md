@@ -207,6 +207,23 @@ matching version.
   so the task that would carry "A closes here" is jumped straight over — yet `A`
   was entered and, if terminal, must still halt. Do not replace that with a
   counter.
+- **The two control-flow keys a group cannot honour are resolved differently, on
+  purpose.** `halt_on` on a group is **refused at parse time**
+  (`steps.rs`, in `walk`) — the schema's one exception to "unknown keys are
+  ignored". `continue_on_error` on a group is **linted, not refused**: captured
+  by `GroupHeader` as `Option<Value>`, recorded on
+  `TaskGroup::continue_on_error`, and reported by `check_workflow` as
+  `GROUP_CONTINUE_ON_ERROR`. The difference is age, not principle — `halt_on`
+  was new in 3.10.0 with no installed base, while `continue_on_error` is real on
+  both `Task` and `Workflow` and may already sit on a host's group nodes, where
+  refusing it would fail `Engine::build` for every workflow in that build.
+  Honouring it was rejected too: propagating it to member tasks changes the
+  error semantics of definitions that load today, silently. The capture is
+  `Option<Value>` rather than `Option<bool>` precisely so a non-bool spelling
+  stays an ignored unknown key instead of becoming a new parse error, and only a
+  literal `true` is reported. Pinned by
+  `a_group_continue_on_error_is_recorded_but_never_honoured` (runtime) and
+  `a_group_without_continue_on_error_is_silent` (the trigger).
 - **`Task::terminal` and `Task::halt_on` are applied *after* the status
   classification in `handle_task_result`, never before.** They only upgrade a
   `Continue` to a `HaltWorkflow`. Folding either into the `let halt = …` that
@@ -366,8 +383,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 719 passing.
-`cargo test -p dataflow-rs` (default features) should report 623 — the operator
+`cargo test --workspace --all-features` should report 723 passing.
+`cargo test -p dataflow-rs` (default features) should report 627 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

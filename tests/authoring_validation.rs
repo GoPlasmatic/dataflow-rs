@@ -158,6 +158,12 @@ fn empty_iff_the_workflow_loads() {
         workflow(json!([task("a"), {"id": "g", "condition": true, "tasks": [task("b")]}])),
         json!({"id": "w", "name": "w", "loop": {"max": 3, "counter": "i"},
                "tasks": [task("t")]}),
+        // A group carrying `continue_on_error` loads: it is reported by
+        // `check_workflow`, never here. An informational finding on the
+        // authored side would break the biconditional this test states.
+        workflow(json!([
+            {"id": "g", "continue_on_error": true, "tasks": [task("a")]}
+        ])),
         // Both accepted `halt_on` spellings load and report nothing.
         workflow(json!([{"id": "t", "name": "t", "halt_on": "failure",
                         "function": {"name": "map", "input": {"mappings": []}}}])),
@@ -326,6 +332,7 @@ fn issue_codes_have_distinct_stable_strings() {
         IssueCode::InvalidFunctionName,
         IssueCode::InvalidTerminal,
         IssueCode::InvalidHaltOn,
+        IssueCode::GroupContinueOnError,
         IssueCode::UnguardedValidation,
         IssueCode::LoopIncrementTooSmall,
         IssueCode::LoopBoundEmpty,
@@ -796,5 +803,89 @@ fn an_unguarded_validation_inside_a_group_is_reported() {
             .count(),
         1,
         "got {issues:?}"
+    );
+}
+
+/// #54: the key parses cleanly, does nothing, and is now reported — without
+/// becoming a refusal, because unlike `halt_on` it has an installed base.
+#[test]
+fn a_group_continue_on_error_is_reported_for_audit_but_never_refused() {
+    let w = wf_tasks(json!([
+        {"id": "g", "continue_on_error": true, "tasks": [task("inner")]}
+    ]));
+
+    let issues = Engine::builder().check_workflow(&w);
+    assert_eq!(issues.len(), 1, "got {issues:?}");
+    assert_eq!(issues[0].code, IssueCode::GroupContinueOnError);
+    assert_eq!(
+        issues[0].task_id.as_deref(),
+        Some("g"),
+        "anchored on the group, not on a task inside it"
+    );
+    assert_eq!(issues[0].path.as_deref(), Some("continue_on_error"));
+
+    // Informational: the workflow is legal and still builds.
+    Engine::builder()
+        .with_workflow(w)
+        .build()
+        .expect("a group's continue_on_error is reported, never refused");
+}
+
+/// Only a literal `true` states an intent the engine defeats. Everything else
+/// either describes what already happens or is not the key at all — and none of
+/// it may stop the definition loading.
+#[test]
+fn a_group_without_continue_on_error_is_silent() {
+    let cases: Vec<(&str, Value)> = vec![
+        (
+            "the key is absent",
+            json!({"id": "g", "tasks": [task("inner")]}),
+        ),
+        (
+            "false already describes the behaviour",
+            json!({"id": "g", "continue_on_error": false, "tasks": [task("inner")]}),
+        ),
+        (
+            "a non-bool spelling is an unknown key, as everywhere else",
+            json!({"id": "g", "continue_on_error": "yes", "tasks": [task("inner")]}),
+        ),
+    ];
+
+    for (label, group) in cases {
+        assert!(
+            loads(&workflow(json!([group.clone()]))),
+            "{label}: capturing the key must not make it a parse error"
+        );
+        let issues = Engine::builder().check_workflow(&wf_tasks(json!([group])));
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.code == IssueCode::GroupContinueOnError),
+            "{label}: should not fire, got {issues:?}"
+        );
+    }
+}
+
+/// Groups are recorded on the task that opens their span, outermost first, so
+/// both levels of a nest are visited exactly once.
+#[test]
+fn a_nested_group_carrying_it_is_reported_too() {
+    let w = wf_tasks(json!([
+        {"id": "outer", "continue_on_error": true, "tasks": [
+            {"id": "inner", "continue_on_error": true, "tasks": [task("t")]}
+        ]}
+    ]));
+
+    let reported: Vec<String> = Engine::builder()
+        .check_workflow(&w)
+        .into_iter()
+        .filter(|i| i.code == IssueCode::GroupContinueOnError)
+        .filter_map(|i| i.task_id)
+        .collect();
+
+    assert_eq!(
+        reported,
+        ["outer", "inner"],
+        "each group once, outermost first"
     );
 }

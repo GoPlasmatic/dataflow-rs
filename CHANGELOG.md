@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.10.0] — 2026-09-02
 
-An assertion can finally reject, and one that cannot is now reported before it
-ships.
+An assertion can finally reject, and a control-flow key that does nothing is now
+reported before it ships.
 
 A failing `validation` rule returns `400`, and the engine treats `4xx` as "warn
 and carry on" — `continue_on_error` governs `5xx` and `Err` only. So a
@@ -33,6 +33,15 @@ a way to opt out of it in one field, and any warning that you had not.
   task is not `terminal`, has no `halt_on`, and nothing following it in the
   workflow carries a condition or is a `filter`.
 - **`IssueCode::InvalidHaltOn`** (`INVALID_HALT_ON`).
+- **`IssueCode::GroupContinueOnError`** (`GROUP_CONTINUE_ON_ERROR`) —
+  informational, reported by `check_workflow` and never by `build()`. A task
+  group carrying `continue_on_error` parses cleanly and is dropped: error
+  handling is per task and per workflow, and a group only gates a span. The key
+  being real at the other two levels is what makes a group the one place it
+  looks like it should work. Only a literal `true` is reported — `false` already
+  describes the behaviour.
+- **`TaskGroup::continue_on_error`** — what the author wrote, recorded so the
+  lint has something to read. The engine does not honour it.
 
 ### Changed
 
@@ -47,8 +56,14 @@ a way to opt out of it in one field, and any warning that you had not.
   `Engine::build`, which aborts every workflow in that build. Migration is
   mechanical — run `Workflow::validate_authored` over stored definitions before
   upgrading and look for `INVALID_HALT_ON`, which carries the authored path
-  (`tasks[1].halt_on`). Note the same silent drop still applies to
-  `continue_on_error` on a group, which is unchanged here.
+  (`tasks[1].halt_on`).
+
+  `continue_on_error` on a group is the same class of mistake and is resolved
+  the other way, by the lint above rather than a refusal. The difference is age:
+  `halt_on` was new, so refusing it broke nothing, while `continue_on_error` is
+  old enough that a host may already carry it on group nodes. Honouring it was
+  rejected too — propagating it to the member tasks would change the error
+  semantics of definitions that load today, silently.
 - `Task::continue_on_error`'s documentation now says what it actually governs.
   It read "continue workflow execution if this task fails", unqualified, which is
   the field an author reaches for after a `validation` and the reason this issue
@@ -57,7 +72,8 @@ a way to opt out of it in one field, and any warning that you had not.
   `filter` gate it used to recommend is kept as an older alternative, with a note
   that it costs the `400`.
 
-Reported in [#53](https://github.com/GoPlasmatic/dataflow-rs/issues/53).
+Reported in [#53](https://github.com/GoPlasmatic/dataflow-rs/issues/53) and
+[#54](https://github.com/GoPlasmatic/dataflow-rs/issues/54).
 
 ## [3.9.0] — 2026-08-31
 

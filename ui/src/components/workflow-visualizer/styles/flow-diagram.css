@@ -254,6 +254,15 @@
   flex-shrink: 0;
 }
 
+/* `halt_on: "failure"`: a conditional stop, taken only when the task failed —
+   so it takes the rejection signal rather than `terminal`'s unconditional one. */
+.df-flow-task-node-halt-on {
+  color: var(--sig-bool-false);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .df-flow-task-node-badge {
   margin-bottom: 4px;
 }

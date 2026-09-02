@@ -350,7 +350,9 @@ one condition evaluated once on entry:
 ```
 
 `halt_on` is **task-only** — a group has no outcome of its own, and carrying it
-is a parse error.
+is a parse error. `continue_on_error` is task- and workflow-only: on a group it
+parses and does nothing, and `check_workflow` reports it as
+`GROUP_CONTINUE_ON_ERROR`.
 
 ## Message
 

@@ -948,3 +948,45 @@ fn a_malformed_task_still_reports_its_own_missing_field() {
         "got: {err}"
     );
 }
+
+/// #54: `continue_on_error` on a group parses, is recorded so `check_workflow`
+/// can report it, and changes nothing at run time.
+///
+/// This is the half that is easy to lose. Reporting the key could drift into
+/// honouring it, which would silently change the error semantics of every
+/// definition that already carries it — so the "does nothing" half is pinned
+/// here, and a future change making it real has to delete this test on purpose.
+#[tokio::test]
+async fn a_group_continue_on_error_is_recorded_but_never_honoured() {
+    let w = workflow(&format!(
+        r#"{{ "id": "g", "continue_on_error": true, "tasks": [
+               {{ "id": "boom", "name": "boom",
+                  "function": {{ "name": "boom", "input": {{}} }} }} ] }},
+           {}"#,
+        mark("after")
+    ));
+
+    assert!(
+        w.tasks[0].group_starts[0].continue_on_error,
+        "the parser records what the author wrote, so the lint has something to read"
+    );
+
+    let engine = Engine::builder()
+        .with_workflows(vec![w])
+        .register("boom", Boom)
+        .build()
+        .expect("informational, not refused — the workflow still builds");
+
+    let mut message = Message::builder().data(dv(json!({}))).build();
+    let result = engine.process_message(&mut message).await;
+
+    assert!(
+        result.is_err(),
+        "the group's flag is not honoured: the failing task's own \
+         `continue_on_error` — defaulted false — still governs"
+    );
+    assert!(
+        ran(&message, &["after"]).is_empty(),
+        "and nothing after the group ran"
+    );
+}

@@ -240,6 +240,16 @@ impl<'a> Iterator for AuthoredSteps<'a> {
 /// the exception is that a host using `halt_on` as its own annotation on a group
 /// node now fails to parse; `Workflow::validate_authored` reports it as
 /// `INVALID_HALT_ON` with the authored path, so the audit is mechanical.
+///
+/// `continue_on_error` is captured too, but **not** refused. It is the same
+/// class of mistake — a control-flow key the executor cannot honour — and the
+/// difference is age. `halt_on` was new, with no installed base to break;
+/// `continue_on_error` is real on both a [`Task`] and a `Workflow`, which is
+/// what makes a group the one place it looks like it should work, and a host
+/// may already carry it on group nodes. Refusing it would fail `Engine::build`,
+/// which aborts every workflow in that build. So it is recorded on
+/// [`TaskGroup::continue_on_error`] and reported by `check_workflow` as
+/// `GROUP_CONTINUE_ON_ERROR` instead of being refused or silently dropped.
 #[derive(Deserialize)]
 struct GroupHeader {
     id: String,
@@ -256,6 +266,13 @@ struct GroupHeader {
     /// shape is caught: a group carrying `halt_on` is wrong whatever its value.
     #[serde(default)]
     halt_on: Option<Value>,
+    /// Captured only so `check_workflow` can report it — see the type-level
+    /// note above. `Option<Value>` rather than `Option<bool>` for `halt_on`'s
+    /// reason inverted: a typed field would make `"continue_on_error": "yes"`
+    /// on a group a *parse error*, refusing a definition that loads today.
+    /// Only a literal `true` states an intent the engine defeats.
+    #[serde(default)]
+    continue_on_error: Option<Value>,
     tasks: Vec<Value>,
 }
 
@@ -324,6 +341,7 @@ fn walk(steps: &[Value], depth: usize, out: &mut Vec<Task>) -> Result<(), String
                 condition: header.condition,
                 compiled_condition: None,
                 terminal: header.terminal,
+                continue_on_error: matches!(header.continue_on_error, Some(Value::Bool(true))),
                 end,
             },
         );

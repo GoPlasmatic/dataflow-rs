@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { AlertTriangle, CircleStop } from 'lucide-react';
+import { AlertTriangle, CircleStop, ShieldX } from 'lucide-react';
 import { FunctionTypeBadge } from '../../../cards/FunctionTypeBadge';
 
 export interface FlowTaskData {
@@ -9,11 +9,13 @@ export interface FlowTaskData {
   description?: string;
   continueOnError?: boolean;
   terminal?: boolean;
+  haltOn?: 'never' | 'failure';
   [key: string]: unknown;
 }
 
 export const FlowTaskNode = memo(function FlowTaskNode({ data }: NodeProps) {
-  const { taskName, functionName, description, continueOnError, terminal } = data as FlowTaskData;
+  const { taskName, functionName, description, continueOnError, terminal, haltOn } =
+    data as FlowTaskData;
 
   return (
     <div className="df-flow-task-node">
@@ -28,6 +30,14 @@ export const FlowTaskNode = memo(function FlowTaskNode({ data }: NodeProps) {
         {terminal && (
           <span className="df-flow-task-node-terminal" title="Terminal — ends the workflow">
             <CircleStop size={12} />
+          </span>
+        )}
+        {haltOn === 'failure' && (
+          <span
+            className="df-flow-task-node-halt-on"
+            title="halt_on: failure — ends the workflow when this task fails"
+          >
+            <ShieldX size={12} />
           </span>
         )}
       </div>
