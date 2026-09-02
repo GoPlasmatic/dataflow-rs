@@ -152,8 +152,10 @@ matching version.
 - `workflow.rs`: `Workflow` definition, lifecycle fields, `LoopConfig`, validation
 - `task.rs`: `Task` and `TaskGroup` — both `#[non_exhaustive]`; construct via
   `Task::action`
-- `authoring.rs`: `Workflow::validate_authored`, `WorkflowIssue`, `IssueCode` —
-  the authoring-time surface a host checks definitions against
+- `authoring.rs`: `Workflow::validate_authored`, `WorkflowIssue`, `IssueCode`,
+  `Severity` — the authoring-time surface a host checks definitions against.
+  `IssueCode::severity` is a wildcard-free match on purpose: a new code must be
+  classified deliberately, never default into a host's pre-build screen
 - `steps.rs`: The authored step grammar — `flatten` (the parser) and
   `walk_authored_steps` (the public walker), plus the `is_group` /
   `MAX_GROUP_DEPTH` facts both read
@@ -383,8 +385,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 723 passing.
-`cargo test -p dataflow-rs` (default features) should report 627 — the operator
+`cargo test --workspace --all-features` should report 731 passing.
+`cargo test -p dataflow-rs` (default features) should report 633 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 
 When extending the engine:

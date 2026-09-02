@@ -114,8 +114,10 @@ pub fn dispatchable_functions(&self) -> impl Iterator<Item = DispatchableFunctio
 // without building anything. Reports rather than aborts; empty means build()
 // will not reject it for these reasons. Covers UnknownFunction,
 // MissingHandler, InputParse, TemplateCompile, UnknownSecret,
-// SecretInMessageWrite, DuplicateTemplateKey — plus EscapedTemplateKey, which
-// is informational and never refused by build().
+// SecretInMessageWrite, InvalidSecretStore, DuplicateTemplateKey — plus
+// UnguardedValidation, GroupContinueOnError and EscapedTemplateKey, which are
+// Severity::Advisory and never refused by build(), and MissingHandler, which
+// is Severity::Defect: build() accepts it and every message then fails.
 pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue>
 
 // The names in the secret store — what {"secret": "name"} can resolve. Names
@@ -175,13 +177,34 @@ pub struct WorkflowIssue {
     pub message: String,
     /// Authored coordinate, e.g. `tasks[1].tasks[0].id`.
     pub path: Option<String>,
-    pub step_id: Option<String>,
+    /// The step this concerns. Ids are unique across tasks and groups.
+    pub task_id: Option<String>,
+}
+
+impl WorkflowIssue {
+    pub fn severity(&self) -> Severity
 }
 
 #[non_exhaustive]
 pub enum IssueCode { /* ... */ }
 
 impl IssueCode {
+    pub fn as_str(&self) -> &'static str
+    pub fn severity(self) -> Severity
+}
+
+// When an issue bites. Not #[non_exhaustive]: build time / first message /
+// never exhausts the axis, so a host can match it and stay correct.
+pub enum Severity {
+    /// build() refuses it, or it never parsed.
+    Rejected,
+    /// Builds cleanly, then fails every message. MissingHandler only.
+    Defect,
+    /// Loads and runs. The only class a host may safely ignore.
+    Advisory,
+}
+
+impl Severity {
     pub fn as_str(&self) -> &'static str
 }
 ```
@@ -191,17 +214,21 @@ string literal has no protection against a typo that compiles and silently
 never matches. Its variants cover the structural rules —
 `EmptyWorkflowId`, `EmptyWorkflowName`, `NoTasks`, `MissingStepId`,
 `DuplicateStepId`, `EmptyGroup`, `GroupTooDeep`, `MissingFunction`,
-`InvalidFunctionName`, `InvalidTerminal`, `LoopIncrementTooSmall`,
-`LoopBoundEmpty`, `LoopCounterInvalid` — the registry rules reported by
-`check_workflow` — `UnknownFunction`, `MissingHandler`, `InputParse`,
+`InvalidFunctionName`, `InvalidTerminal`, `InvalidHaltOn`,
+`LoopIncrementTooSmall`, `LoopBoundEmpty`, `LoopCounterInvalid` — the lints
+`check_workflow` adds — `UnguardedValidation`, `GroupContinueOnError` — the
+registry and secret rules — `UnknownFunction`, `MissingHandler`, `InputParse`,
 `TemplateCompile`, `UnknownSecret`, `SecretInMessageWrite`,
-`DuplicateTemplateKey`, `EscapedTemplateKey` — and the two backstops,
-`ParseFailed` and `ValidateFailed`.
+`InvalidSecretStore`, `DuplicateTemplateKey`, `EscapedTemplateKey` — and the two
+backstops, `ParseFailed` and `ValidateFailed`.
 
-`EscapedTemplateKey` is the one **informational** code: `check_workflow` reports
-it and `build()` never refuses it. It lists every `$`-prefixed template key, so
-a host upgrading to 3.9 can find each place the escape changed what a template
-emits. `DuplicateTemplateKey`, by contrast, is always a bug and is refused.
+Three codes are `Severity::Advisory` — `EscapedTemplateKey`,
+`UnguardedValidation` and `GroupContinueOnError`: `check_workflow` reports them
+and `build()` never refuses them. `EscapedTemplateKey` lists every `$`-prefixed
+template key, so a host upgrading to 3.9 can find each place the escape changed
+what a template emits. `DuplicateTemplateKey`, by contrast, is always a bug and
+is refused. Ask `severity()` rather than keeping a list of which codes are
+which — see [Severity](../advanced/authoring-validation.md#severity).
 
 `MissingHandler` is deliberately distinct from `UnknownFunction`: `enrich`,
 `http_call` and `publish_kafka` are real names awaiting a registration, and

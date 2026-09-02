@@ -2,7 +2,7 @@
 //! secret store, so a workflow can use a value the engine never records.
 
 use dataflow_rs::engine::message::Message;
-use dataflow_rs::{Engine, IssueCode, Workflow};
+use dataflow_rs::{Engine, IssueCode, Severity, Workflow};
 use serde_json::{Value, json};
 
 mod common;
@@ -567,6 +567,19 @@ fn issue_codes_have_stable_string_forms() {
         IssueCode::InvalidSecretStore.as_str(),
         "INVALID_SECRET_STORE"
     );
+}
+
+/// Every secret finding is a rejection — `build()` refuses all three, so a host
+/// screening definitions must never wave one through.
+#[test]
+fn every_secret_issue_is_a_rejection() {
+    for code in [
+        IssueCode::UnknownSecret,
+        IssueCode::SecretInMessageWrite,
+        IssueCode::InvalidSecretStore,
+    ] {
+        assert_eq!(code.severity(), Severity::Rejected, "{code:?}");
+    }
 }
 
 // =============================================================================

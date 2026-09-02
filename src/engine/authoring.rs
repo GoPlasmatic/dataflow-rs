@@ -53,6 +53,14 @@ pub struct WorkflowIssue {
 }
 
 impl WorkflowIssue {
+    /// When this issue bites — [`IssueCode::severity`] of [`Self::code`].
+    ///
+    /// Screening before a build is the point: everything but
+    /// [`Severity::Advisory`] means the workflow will not do what it says.
+    pub fn severity(&self) -> Severity {
+        self.code.severity()
+    }
+
     fn at(code: IssueCode, path: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -77,7 +85,12 @@ impl fmt::Display for WorkflowIssue {
     }
 }
 
-/// Why a workflow definition is not loadable.
+/// What a check found wrong with a workflow definition.
+///
+/// Not every code is a refusal: [`Self::severity`] says whether the definition
+/// is rejected, builds and then fails every message, or merely carries a shape
+/// worth an author's attention. Ask it rather than keeping a list — see
+/// [`Severity`].
 ///
 /// `#[non_exhaustive]`: a later minor may add a rule, and a host matching on
 /// the codes it cares about should keep compiling. Use [`Self::as_str`] to
@@ -111,7 +124,7 @@ pub enum IssueCode {
     /// unguarded. A failing rule returns `400`, which `continue_on_error` does
     /// not cover, so the pipeline proceeds as if it had passed.
     ///
-    /// **Informational** — reported by
+    /// [`Severity::Advisory`] — reported by
     /// [`crate::EngineBuilder::check_workflow`] and never by
     /// [`crate::EngineBuilder::build`]. Validating purely to record errors is a
     /// legitimate shape; this only says the assertion is not acting as a gate.
@@ -123,7 +136,7 @@ pub enum IssueCode {
     /// A task group carries `continue_on_error`, which the engine drops. Error
     /// handling is per task and per workflow; a group only gates a span.
     ///
-    /// **Informational** — reported by
+    /// [`Severity::Advisory`] — reported by
     /// [`crate::EngineBuilder::check_workflow`] and never by
     /// [`crate::EngineBuilder::build`]. Unlike [`Self::InvalidHaltOn`], which
     /// the parser refuses outright, this key is real at the other two levels
@@ -166,6 +179,9 @@ pub enum IssueCode {
     /// [`EngineBuilder::check_workflow`](crate::EngineBuilder::check_workflow)
     /// *instead of* the [`Self::UnknownSecret`] issues every literal name would
     /// otherwise produce — the workflow is not what is wrong.
+    ///
+    /// [`Severity::Rejected`], but the odd one out: quarantining the workflow
+    /// will not make the build succeed, because the store is what is broken.
     InvalidSecretStore,
     /// Two keys in one template object collapse to the same name once the
     /// template-key escape is stripped — `{"$a": 1, "a": 2}` emits `a` twice.
@@ -174,8 +190,8 @@ pub enum IssueCode {
     /// [`crate::EngineBuilder::build`] refuses it.
     DuplicateTemplateKey,
     /// A template key carries the escape prefix, so it is emitted with one
-    /// prefix stripped: `$type` emits `type`. **Informational** — reported by
-    /// [`crate::Engine::check_workflow`] and never by
+    /// prefix stripped: `$type` emits `type`. [`Severity::Advisory`] — reported
+    /// by [`crate::Engine::check_workflow`] and never by
     /// [`crate::EngineBuilder::build`].
     ///
     /// Exists for migration. The escape strips uniformly from every template
@@ -225,9 +241,103 @@ impl IssueCode {
             Self::ValidateFailed => "VALIDATE_FAILED",
         }
     }
+
+    /// When an issue carrying this code bites — see [`Severity`].
+    ///
+    /// The match below has **no wildcard arm**, and must never gain one. That
+    /// is the whole mechanism: a code added in a later minor stops this
+    /// compiling until it is deliberately classified, so a new advisory code
+    /// cannot arrive as a silent `Rejected` in a host's pre-build screen — the
+    /// direction that turns a screen into a quarantine.
+    pub fn severity(self) -> Severity {
+        match self {
+            // Reported for an author's attention. `build` accepts all three
+            // and the workflow runs exactly as written.
+            Self::UnguardedValidation | Self::GroupContinueOnError | Self::EscapedTemplateKey => {
+                Severity::Advisory
+            }
+
+            // Builds cleanly, then fails every message. The config parses into
+            // a typed built-in variant, so `precompile_custom_inputs` never
+            // looks at it — which is why the builder cannot catch this one.
+            Self::MissingHandler => Severity::Defect,
+
+            // Refused by `refuse_authoring_issues`, before compilation — and
+            // `InvalidSecretStore` earlier still, by `build` itself.
+            Self::UnknownSecret
+            | Self::SecretInMessageWrite
+            | Self::DuplicateTemplateKey
+            | Self::InvalidSecretStore => Severity::Rejected,
+
+            // Refused by `precompile_custom_inputs`.
+            Self::UnknownFunction | Self::InputParse | Self::TemplateCompile => Severity::Rejected,
+
+            // Never parses into a `Workflow`, or fails `Workflow::validate`
+            // when `compile_workflows` runs it.
+            Self::EmptyWorkflowId
+            | Self::EmptyWorkflowName
+            | Self::NoTasks
+            | Self::MissingStepId
+            | Self::DuplicateStepId
+            | Self::EmptyGroup
+            | Self::GroupTooDeep
+            | Self::MissingFunction
+            | Self::InvalidFunctionName
+            | Self::InvalidTerminal
+            | Self::InvalidHaltOn
+            | Self::LoopIncrementTooSmall
+            | Self::LoopBoundEmpty
+            | Self::LoopCounterInvalid
+            | Self::ParseFailed
+            | Self::ValidateFailed => Severity::Rejected,
+        }
+    }
 }
 
 impl fmt::Display for IssueCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// When an issue bites: at [`build`](crate::EngineBuilder::build), at the first
+/// message, or never.
+///
+/// This is what a host screening definitions *before* building needs in order
+/// to quarantine one workflow rather than fail the whole engine. Not every code
+/// `check_workflow` reports is a refusal, and the set that is has grown apart
+/// from the set that is reported — [`Self::Advisory`] is the only class such a
+/// host may safely ignore.
+///
+/// Unlike [`IssueCode`], this is **not** `#[non_exhaustive]`. The axis is
+/// *when* a definition goes wrong, and build time / first message / never
+/// exhausts that by construction, so a host may `match` it and stay correct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Severity {
+    /// The definition never runs: [`build`](crate::EngineBuilder::build)
+    /// refuses it, or the parser rejected it before a [`Workflow`] existed.
+    Rejected,
+    /// It builds cleanly and then fails every message it processes — a real
+    /// defect, but one the builder cannot catch. Only
+    /// [`IssueCode::MissingHandler`] today.
+    Defect,
+    /// It loads and runs. Names a shape worth an author's attention, nothing
+    /// more.
+    Advisory,
+}
+
+impl Severity {
+    /// The stable string form, for serializing into an API response.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Rejected => "REJECTED",
+            Self::Defect => "DEFECT",
+            Self::Advisory => "ADVISORY",
+        }
+    }
+}
+
+impl fmt::Display for Severity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -587,7 +697,7 @@ pub(crate) fn check_secrets(workflow: &Workflow, secrets: &Secrets) -> Vec<Workf
 ///
 /// The maps `for_each_expression` walks (`log.fields`, `http_call.headers`) are
 /// `HashMap`s, so their iteration order is arbitrary — but issue order is what a
-/// host logs, diffs, or asserts on, and what `refuse_secret_issues` joins into a
+/// host logs, diffs, or asserts on, and what `refuse_authoring_issues` joins into a
 /// `build()` error message. Sorting is what makes that order reproducible.
 fn names_in_order<V>(map: &HashMap<String, V>) -> Vec<&String> {
     let mut names: Vec<&String> = map.keys().collect();
@@ -792,10 +902,15 @@ pub(crate) fn check_template_keys(workflow: &Workflow) -> Vec<WorkflowIssue> {
     issues
 }
 
-/// The fatal subset of [`check_template_keys`] — what `Engine::build` refuses.
+/// The [`Severity::Rejected`] subset of [`check_template_keys`] — what
+/// `Engine::build` refuses.
+///
+/// Filtered on the severity rather than on the one code that has it today, so a
+/// template-key code added later is refused exactly when it is classified as a
+/// rejection. A classification nothing reads is one that drifts.
 pub(crate) fn refusing_template_key_issues(workflow: &Workflow) -> Vec<WorkflowIssue> {
     let mut issues = check_template_keys(workflow);
-    issues.retain(|i| i.code == IssueCode::DuplicateTemplateKey);
+    issues.retain(|i| i.severity() == Severity::Rejected);
     issues
 }
 
@@ -1182,4 +1297,171 @@ fn check_loop(config: &Value, issues: &mut Vec<WorkflowIssue>) {
 /// The value at `field` as a non-empty string, if it is one.
 fn non_empty_str(field: Option<&Value>) -> Option<&str> {
     field.and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Every [`IssueCode`], for the checks below that must cover the whole
+    /// vocabulary rather than a hand-picked subset. Kept complete by
+    /// [`ordinal`] — see [`all_codes_lists_every_variant`].
+    const ALL_CODES: [IssueCode; 27] = [
+        IssueCode::EmptyWorkflowId,
+        IssueCode::EmptyWorkflowName,
+        IssueCode::NoTasks,
+        IssueCode::MissingStepId,
+        IssueCode::DuplicateStepId,
+        IssueCode::EmptyGroup,
+        IssueCode::GroupTooDeep,
+        IssueCode::MissingFunction,
+        IssueCode::InvalidFunctionName,
+        IssueCode::InvalidTerminal,
+        IssueCode::UnguardedValidation,
+        IssueCode::InvalidHaltOn,
+        IssueCode::GroupContinueOnError,
+        IssueCode::LoopIncrementTooSmall,
+        IssueCode::LoopBoundEmpty,
+        IssueCode::LoopCounterInvalid,
+        IssueCode::UnknownFunction,
+        IssueCode::MissingHandler,
+        IssueCode::InputParse,
+        IssueCode::TemplateCompile,
+        IssueCode::UnknownSecret,
+        IssueCode::SecretInMessageWrite,
+        IssueCode::InvalidSecretStore,
+        IssueCode::DuplicateTemplateKey,
+        IssueCode::EscapedTemplateKey,
+        IssueCode::ParseFailed,
+        IssueCode::ValidateFailed,
+    ];
+
+    /// A distinct index per variant, with **no wildcard arm**. Adding an
+    /// [`IssueCode`] stops this compiling until it is given one.
+    fn ordinal(code: IssueCode) -> usize {
+        match code {
+            IssueCode::EmptyWorkflowId => 0,
+            IssueCode::EmptyWorkflowName => 1,
+            IssueCode::NoTasks => 2,
+            IssueCode::MissingStepId => 3,
+            IssueCode::DuplicateStepId => 4,
+            IssueCode::EmptyGroup => 5,
+            IssueCode::GroupTooDeep => 6,
+            IssueCode::MissingFunction => 7,
+            IssueCode::InvalidFunctionName => 8,
+            IssueCode::InvalidTerminal => 9,
+            IssueCode::UnguardedValidation => 10,
+            IssueCode::InvalidHaltOn => 11,
+            IssueCode::GroupContinueOnError => 12,
+            IssueCode::LoopIncrementTooSmall => 13,
+            IssueCode::LoopBoundEmpty => 14,
+            IssueCode::LoopCounterInvalid => 15,
+            IssueCode::UnknownFunction => 16,
+            IssueCode::MissingHandler => 17,
+            IssueCode::InputParse => 18,
+            IssueCode::TemplateCompile => 19,
+            IssueCode::UnknownSecret => 20,
+            IssueCode::SecretInMessageWrite => 21,
+            IssueCode::InvalidSecretStore => 22,
+            IssueCode::DuplicateTemplateKey => 23,
+            IssueCode::EscapedTemplateKey => 24,
+            IssueCode::ParseFailed => 25,
+            IssueCode::ValidateFailed => 26,
+        }
+    }
+
+    /// `ALL_CODES` is the whole vocabulary, and stays that way.
+    ///
+    /// Two halves, and both are needed. A new variant fails to compile at
+    /// [`ordinal`]; giving it an index there but forgetting `ALL_CODES` breaks
+    /// the bijection below. Without this the fix for a list that could only be
+    /// wrong in one direction would itself ship such a list.
+    #[test]
+    fn all_codes_lists_every_variant() {
+        let indices: HashSet<usize> = ALL_CODES.iter().copied().map(ordinal).collect();
+        assert_eq!(
+            indices,
+            (0..ALL_CODES.len()).collect::<HashSet<_>>(),
+            "ALL_CODES is not a bijection onto the variants `ordinal` knows"
+        );
+    }
+
+    /// The severity table, stated as sets rather than read off the match.
+    ///
+    /// This is the tripwire the issue asks for: a code added in a later minor
+    /// is classified by the compiler-forced match in [`IssueCode::severity`],
+    /// but *promoting* one to advisory has to be a deliberate edit here.
+    #[test]
+    fn the_advisory_and_defect_sets_are_exactly_these() {
+        let by = |want: Severity| -> HashSet<&'static str> {
+            ALL_CODES
+                .iter()
+                .filter(|c| c.severity() == want)
+                .map(IssueCode::as_str)
+                .collect()
+        };
+
+        assert_eq!(
+            by(Severity::Advisory),
+            HashSet::from([
+                "UNGUARDED_VALIDATION",
+                "GROUP_CONTINUE_ON_ERROR",
+                "ESCAPED_TEMPLATE_KEY",
+            ]),
+            "the advisory set is what a host screens on — changing it is a breaking change"
+        );
+        assert_eq!(
+            by(Severity::Defect),
+            HashSet::from(["MISSING_HANDLER"]),
+            "only the config-only integrations build clean and then fail every message"
+        );
+        assert_eq!(
+            by(Severity::Rejected).len(),
+            ALL_CODES.len() - 4,
+            "every remaining code is a rejection"
+        );
+    }
+
+    /// The string forms are an API surface: unique, stable, and shouted.
+    #[test]
+    fn issue_codes_have_distinct_stable_strings() {
+        let mut seen = HashSet::new();
+        for code in ALL_CODES {
+            assert!(seen.insert(code.as_str()), "duplicate string for {code:?}");
+            assert_eq!(code.to_string(), code.as_str(), "Display matches as_str");
+            assert!(
+                code.as_str()
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c == '_'),
+                "{code:?} is not SCREAMING_SNAKE"
+            );
+        }
+    }
+
+    #[test]
+    fn severities_have_distinct_stable_strings() {
+        let all = [Severity::Rejected, Severity::Defect, Severity::Advisory];
+        let mut seen = HashSet::new();
+        for severity in all {
+            assert!(seen.insert(severity.as_str()), "duplicate {severity:?}");
+            assert_eq!(severity.to_string(), severity.as_str());
+            assert!(
+                severity
+                    .as_str()
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c == '_'),
+                "{severity:?} is not SCREAMING_SNAKE"
+            );
+        }
+    }
+
+    /// The convenience method is the code's answer, not a second opinion.
+    #[test]
+    fn a_workflow_issue_reports_its_codes_severity() {
+        for code in ALL_CODES {
+            let issue = WorkflowIssue::at(code, "tasks[0]", "message");
+            assert_eq!(issue.severity(), code.severity(), "{code:?}");
+        }
+    }
 }

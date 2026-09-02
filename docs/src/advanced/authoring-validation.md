@@ -107,37 +107,80 @@ use dataflow_rs::IssueCode;
 assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 ```
 
-| Code | Means |
-|---|---|
-| `EMPTY_WORKFLOW_ID` / `EMPTY_WORKFLOW_NAME` | Required identity field missing or blank |
-| `NO_TASKS` | `tasks` missing, not an array, or empty |
-| `MISSING_STEP_ID` | A task or group carries no `id` |
-| `DUPLICATE_STEP_ID` | Two steps share an id — groups share the task namespace |
-| `EMPTY_GROUP` | A group's `tasks` is not a non-empty array |
-| `GROUP_TOO_DEEP` | Groups nested past `MAX_GROUP_DEPTH` |
-| `MISSING_FUNCTION` | A task carries no `function` |
-| `INVALID_FUNCTION_NAME` | `function` is not an object with a non-empty `name` |
-| `INVALID_TERMINAL` | `terminal` is present but not a boolean |
-| `INVALID_HALT_ON` | `halt_on` is not `"never"`/`"failure"`, or is on a group |
-| `GROUP_CONTINUE_ON_ERROR` | **Informational.** A group carries `continue_on_error`, which the engine does not honour |
-| `UNGUARDED_VALIDATION` | **Informational.** A `validation` whose failure stops nothing |
-| `LOOP_INCREMENT_TOO_SMALL` | `increment < 1` — the counter would never reach `max` |
-| `LOOP_BOUND_EMPTY` | `max <= init` — no sweep could ever run |
-| `LOOP_COUNTER_INVALID` | `counter` is not a non-empty dotted path |
-| `PARSE_FAILED` | Does not deserialize; message carries the field and type |
-| `VALIDATE_FAILED` | Backstop — parses, but `validate()` still rejects it |
-| `UNKNOWN_FUNCTION` | No handler registered, and not a built-in — usually a typo |
-| `MISSING_HANDLER` | A config-only integration with nothing registered under its name |
-| `INPUT_PARSE` | A custom task's `input` does not match its handler's `Input` type |
-| `TEMPLATE_COMPILE` | A handler rejected the input at construction time |
-| `UNKNOWN_SECRET` | An expression names a secret the engine does not declare — see [Secrets](./secrets.md) |
-| `SECRET_IN_MESSAGE_WRITE` | An expression whose result the engine records reads a secret — see [Secrets](./secrets.md#what-a-secret-may-not-do) for the full set |
-| `INVALID_SECRET_STORE` | The store given to `with_secrets` is not an object — reported in place of the `UNKNOWN_SECRET` issues every name would otherwise produce |
-| `DUPLICATE_TEMPLATE_KEY` | Two keys in one template object collapse to the same name once the `$` escape is stripped |
-| `ESCAPED_TEMPLATE_KEY` | **Informational.** A `$`-prefixed template key — the migration audit, never refused |
+| Code | Severity | Means |
+|---|---|---|
+| `EMPTY_WORKFLOW_ID` / `EMPTY_WORKFLOW_NAME` | Rejected | Required identity field missing or blank |
+| `NO_TASKS` | Rejected | `tasks` missing, not an array, or empty |
+| `MISSING_STEP_ID` | Rejected | A task or group carries no `id` |
+| `DUPLICATE_STEP_ID` | Rejected | Two steps share an id — groups share the task namespace |
+| `EMPTY_GROUP` | Rejected | A group's `tasks` is not a non-empty array |
+| `GROUP_TOO_DEEP` | Rejected | Groups nested past `MAX_GROUP_DEPTH` |
+| `MISSING_FUNCTION` | Rejected | A task carries no `function` |
+| `INVALID_FUNCTION_NAME` | Rejected | `function` is not an object with a non-empty `name` |
+| `INVALID_TERMINAL` | Rejected | `terminal` is present but not a boolean |
+| `INVALID_HALT_ON` | Rejected | `halt_on` is not `"never"`/`"failure"`, or is on a group |
+| `GROUP_CONTINUE_ON_ERROR` | Advisory | A group carries `continue_on_error`, which the engine does not honour |
+| `UNGUARDED_VALIDATION` | Advisory | A `validation` whose failure stops nothing |
+| `LOOP_INCREMENT_TOO_SMALL` | Rejected | `increment < 1` — the counter would never reach `max` |
+| `LOOP_BOUND_EMPTY` | Rejected | `max <= init` — no sweep could ever run |
+| `LOOP_COUNTER_INVALID` | Rejected | `counter` is not a non-empty dotted path |
+| `PARSE_FAILED` | Rejected | Does not deserialize; message carries the field and type |
+| `VALIDATE_FAILED` | Rejected | Backstop — parses, but `validate()` still rejects it |
+| `UNKNOWN_FUNCTION` | Rejected | No handler registered, and not a built-in — usually a typo |
+| `MISSING_HANDLER` | Defect | A config-only integration with nothing registered under its name |
+| `INPUT_PARSE` | Rejected | A custom task's `input` does not match its handler's `Input` type |
+| `TEMPLATE_COMPILE` | Rejected | A handler rejected the input at construction time |
+| `UNKNOWN_SECRET` | Rejected | An expression names a secret the engine does not declare — see [Secrets](./secrets.md) |
+| `SECRET_IN_MESSAGE_WRITE` | Rejected | An expression whose result the engine records reads a secret — see [Secrets](./secrets.md#what-a-secret-may-not-do) for the full set |
+| `INVALID_SECRET_STORE` | Rejected | The store given to `with_secrets` is not an object — reported in place of the `UNKNOWN_SECRET` issues every name would otherwise produce |
+| `DUPLICATE_TEMPLATE_KEY` | Rejected | Two keys in one template object collapse to the same name once the `$` escape is stripped |
+| `ESCAPED_TEMPLATE_KEY` | Advisory | A `$`-prefixed template key — the migration audit, never refused |
 
-Three codes are **informational**: `check_workflow` reports them and
-`Engine::build()` will not refuse them.
+## Severity
+
+Not every code is a refusal, and the two sets have grown apart: before 3.9 every
+code `check_workflow` reported was also one `build()` refused, so "has an issue"
+and "cannot run" were the same question. They are not any more. Ask `Severity`
+rather than keeping a list — a list can only ever be wrong in one direction,
+silently, on upgrade.
+
+```rust
+use dataflow_rs::{IssueCode, Severity};
+
+// Reported, and the workflow still builds and runs.
+assert_eq!(IssueCode::UnguardedValidation.severity(), Severity::Advisory);
+// Builds cleanly, then fails every message.
+assert_eq!(IssueCode::MissingHandler.severity(), Severity::Defect);
+// `build()` refuses it.
+assert_eq!(IssueCode::DuplicateTemplateKey.severity(), Severity::Rejected);
+```
+
+`Severity::Advisory` is the only class a host may safely ignore, so screening a
+definition before activating it is one pass:
+
+```rust
+# use dataflow_rs::{Engine, Severity, Workflow};
+# let workflow = Workflow::from_json(r#"{
+#     "id": "w", "name": "w", "priority": 0,
+#     "tasks": [{"id": "t", "name": "t",
+#                "function": {"name": "map", "input": {"mappings": []}}}]
+# }"#).unwrap();
+let issues = Engine::builder().check_workflow(&workflow);
+
+let usable = issues.iter().all(|i| i.severity() == Severity::Advisory);
+assert!(usable);
+```
+
+Unlike `IssueCode`, `Severity` is **not** `#[non_exhaustive]`: the axis is *when*
+a definition goes wrong — build time, first message, never — which is closed by
+construction, so you can `match` it exhaustively and stay correct.
+
+`Severity` needs engine **3.11.0** or newer. Before it, the distinction existed
+only in prose, and a host had to carry its own list of the codes `build()` does
+not refuse — a list that could only ever be wrong in one direction, silently, on
+upgrade.
+
+### Why each advisory code is advisory
 
 - `ESCAPED_TEMPLATE_KEY` — stripping the [`$` escape](./jsonlogic.md#literal-keys-and-the--escape)
   is uniform rather than conditional on a collision, so every escaped key is
@@ -149,13 +192,19 @@ Three codes are **informational**: `check_workflow` reports them and
   host may already carry it on group nodes; refusing it would abort every
   workflow in the build over a key that was never honoured anyway.
 
-`MISSING_HANDLER` is a fourth code `Engine::build()` accepts, but it is not
-informational: it names a real defect the builder simply cannot catch, because
-the config parses into a typed variant and only fails once a message arrives.
-See [Why `MISSING_HANDLER` is its own code](#why-missing_handler-is-its-own-code).
-Every remaining code in the table is a rejection.
+### The one `Defect`
 
-The distinction is not a field on `WorkflowIssue` — branch on `code`.
+`MISSING_HANDLER` is the other code `Engine::build()` accepts, and it is the
+reason severity has three classes rather than two. It names a real defect the
+builder cannot catch: the config parses into a typed variant, so nothing fails
+until a message arrives. A host screening on "would this build" alone waves it
+through and then serves a channel that fails every message. See
+[Why `MISSING_HANDLER` is its own code](#why-missing_handler-is-its-own-code).
+
+Every remaining code in the table is a `Rejected`. One is worth singling out:
+`INVALID_SECRET_STORE` is a rejection, but the definition is not what is wrong —
+quarantining the workflow will not make the build succeed, because the store is
+what is broken.
 
 ## Checking against the handlers
 

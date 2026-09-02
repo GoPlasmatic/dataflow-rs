@@ -78,7 +78,7 @@ pub mod workflow;
 pub mod workflow_executor;
 
 // Re-export key types for easier access
-pub use authoring::{IssueCode, WorkflowIssue};
+pub use authoring::{IssueCode, Severity, WorkflowIssue};
 use error::{DEFAULT_ERROR_CONTEXT_LIMIT, ErrorContextConfig};
 pub use error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use functions::{
@@ -1296,9 +1296,10 @@ impl EngineBuilder {
 /// checks clean are one set. Runs on the authored workflows before
 /// compilation; nothing here needs compiled logic.
 ///
-/// `check_workflow` additionally reports the two informational template-key
-/// findings; those are deliberately *not* refused, because after a migration a
-/// `$`-escaped key is exactly what the author meant.
+/// `check_workflow` additionally reports `ESCAPED_TEMPLATE_KEY`, the one
+/// template-key finding that is [`Severity::Advisory`]; it is deliberately
+/// *not* refused, because after a migration a `$`-escaped key is exactly what
+/// the author meant.
 fn refuse_authoring_issues(workflows: &[Workflow], secrets: &Secrets) -> Result<()> {
     for workflow in workflows {
         let mut issues = authoring::check_secrets(workflow, secrets);

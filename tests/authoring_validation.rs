@@ -12,7 +12,7 @@
 //! fixture also asserts its **specific** semantic code, which fails if the walk
 //! stops doing its job and the catch-all takes over.
 
-use dataflow_rs::{IssueCode, Workflow};
+use dataflow_rs::{IssueCode, Severity, Workflow};
 use serde_json::{Value, json};
 
 fn codes(json: &Value) -> Vec<IssueCode> {
@@ -318,39 +318,26 @@ fn a_non_object_input_does_not_panic() {
     }
 }
 
+/// Every advisory code, checked against a live engine rather than a doc
+/// comment: each of these is reported and the workflow still builds.
+///
+/// The set itself is pinned in `authoring.rs`; what is pinned here is that the
+/// classification describes the engine. The behavioural fixtures live beside
+/// the lints that produce them — `an_unguarded_validation_...`,
+/// `a_group_continue_on_error_...`, and `escaped_keys_...` in
+/// `tests/template_keys.rs`.
 #[test]
-fn issue_codes_have_distinct_stable_strings() {
-    let all = [
-        IssueCode::EmptyWorkflowId,
-        IssueCode::EmptyWorkflowName,
-        IssueCode::NoTasks,
-        IssueCode::MissingStepId,
-        IssueCode::DuplicateStepId,
-        IssueCode::EmptyGroup,
-        IssueCode::GroupTooDeep,
-        IssueCode::MissingFunction,
-        IssueCode::InvalidFunctionName,
-        IssueCode::InvalidTerminal,
-        IssueCode::InvalidHaltOn,
-        IssueCode::GroupContinueOnError,
+fn the_advisory_codes_are_the_ones_build_accepts() {
+    for code in [
         IssueCode::UnguardedValidation,
-        IssueCode::LoopIncrementTooSmall,
-        IssueCode::LoopBoundEmpty,
-        IssueCode::LoopCounterInvalid,
-        IssueCode::ParseFailed,
-        IssueCode::ValidateFailed,
-    ];
-    let mut seen = std::collections::HashSet::new();
-    for code in all {
-        assert!(seen.insert(code.as_str()), "duplicate string for {code:?}");
-        assert_eq!(code.to_string(), code.as_str(), "Display matches as_str");
-        assert!(
-            code.as_str()
-                .chars()
-                .all(|c| c.is_ascii_uppercase() || c == '_'),
-            "{code:?} is not SCREAMING_SNAKE"
-        );
+        IssueCode::GroupContinueOnError,
+        IssueCode::EscapedTemplateKey,
+    ] {
+        assert_eq!(code.severity(), Severity::Advisory, "{code:?}");
     }
+
+    // Not advisory, though `build()` accepts it too: it fails every message.
+    assert_eq!(IssueCode::MissingHandler.severity(), Severity::Defect);
 }
 
 #[test]
@@ -467,6 +454,9 @@ fn a_config_only_integration_with_no_handler_is_a_missing_handler() {
     let issues = Engine::builder().check_workflow(&workflow);
 
     assert_eq!(issues[0].code, IssueCode::MissingHandler);
+    // Not advisory: `build()` accepts it, but every message then fails. A host
+    // screening on "would this build" alone would let this one through.
+    assert_eq!(issues[0].severity(), Severity::Defect);
     assert!(
         issues[0].message.contains("config schema only"),
         "the message must say what to do, got: {}",
@@ -486,6 +476,7 @@ fn a_custom_input_that_does_not_deserialize_is_an_input_parse_issue() {
         .check_workflow(&workflow);
 
     assert_eq!(issues[0].code, IssueCode::InputParse);
+    assert_eq!(issues[0].severity(), Severity::Rejected);
     assert_eq!(issues[0].task_id.as_deref(), Some("t"));
     assert_eq!(issues[0].path.as_deref(), Some("function.input"));
     assert!(
@@ -506,6 +497,7 @@ fn a_rejected_compile_input_is_a_template_compile_issue() {
         .check_workflow(&workflow);
 
     assert_eq!(issues[0].code, IssueCode::TemplateCompile);
+    assert_eq!(issues[0].severity(), Severity::Rejected);
     assert_eq!(issues[0].path.as_deref(), Some("function.input"));
     assert_eq!(issues[0].task_id.as_deref(), Some("t"));
 
@@ -532,13 +524,20 @@ fn a_rejected_compile_input_is_a_template_compile_issue() {
     );
 }
 
-/// The property the issue asks for, in both directions: `check_workflow` is
-/// empty exactly when `build()` **and first dispatch** would run clean.
+/// `check_workflow` and the engine agree, stated through `Severity`.
 ///
-/// The distinction is the whole point. `build()` alone is deliberately
-/// permissive about the config-only integrations — a workflow naming `enrich`
-/// with no handler builds without complaint and then fails every message — so
-/// testing against `build()` alone would have declared that case healthy.
+/// Two properties, not one, because the two questions genuinely differ:
+///
+/// - `build()` succeeds **iff** nothing reported is `Severity::Rejected`
+/// - `build()` **and first dispatch** succeed **iff** everything reported is
+///   `Severity::Advisory`
+///
+/// That gap is `Severity::Defect`, and it is the whole point. `build()` is
+/// deliberately permissive about the config-only integrations — a workflow
+/// naming `enrich` with no handler builds without complaint and then fails
+/// every message — so a host that screened on "does this build" alone would
+/// have called that case healthy. This is what makes the severity table a
+/// checked claim about the engine rather than prose maintained by hand.
 #[tokio::test]
 async fn check_workflow_agrees_with_build_plus_first_dispatch() {
     let cases: Vec<(&str, Value, bool)> = vec![
@@ -562,6 +561,16 @@ async fn check_workflow_agrees_with_build_plus_first_dispatch() {
             call("strict", json!({"required_field": "here"})),
             true,
         ),
+        // Advisory: reported, but it builds *and* runs. Without a case on this
+        // side the two properties below would be indistinguishable.
+        (
+            "escaped template key",
+            call(
+                "map",
+                json!({"mappings": [{"path": "data.out", "logic": {"$oid": "x"}}]}),
+            ),
+            true,
+        ),
     ];
 
     for (label, task_json, should_run) in cases {
@@ -569,12 +578,14 @@ async fn check_workflow_agrees_with_build_plus_first_dispatch() {
             .register("strict", Strict)
             .check_workflow(&wf(task_json.clone()));
 
-        // Build, then actually push a message through.
-        let runs = match Engine::builder()
+        // Build, then actually push a message through. The two outcomes are
+        // kept apart: `Defect` is exactly the case where they differ.
+        let built = Engine::builder()
             .register("strict", Strict)
             .with_workflow(wf(task_json))
-            .build()
-        {
+            .build();
+        let builds = built.is_ok();
+        let runs = match built {
             Err(_) => false,
             Ok(engine) => {
                 let mut message = dataflow_rs::engine::message::Message::from_value(&json!({}));
@@ -582,15 +593,20 @@ async fn check_workflow_agrees_with_build_plus_first_dispatch() {
             }
         };
 
+        let reported: Vec<_> = issues.iter().map(|i| i.code).collect();
         assert_eq!(
             runs, should_run,
             "{label}: build+dispatch disagreed with the fixture's expectation"
         );
         assert_eq!(
-            issues.is_empty(),
+            builds,
+            !issues.iter().any(|i| i.severity() == Severity::Rejected),
+            "{label}: build said {builds}, but check_workflow reported {reported:?}"
+        );
+        assert_eq!(
             runs,
-            "{label}: check_workflow said {:?}, build+dispatch said {runs}",
-            issues.iter().map(|i| i.code).collect::<Vec<_>>()
+            issues.iter().all(|i| i.severity() == Severity::Advisory),
+            "{label}: build+dispatch said {runs}, but check_workflow reported {reported:?}"
         );
     }
 }
@@ -718,6 +734,7 @@ fn an_unguarded_validation_is_reported_for_audit_but_never_refused() {
     let issues = Engine::builder().check_workflow(&w);
     assert_eq!(issues.len(), 1, "got {issues:?}");
     assert_eq!(issues[0].code, IssueCode::UnguardedValidation);
+    assert_eq!(issues[0].severity(), Severity::Advisory);
     assert_eq!(issues[0].task_id.as_deref(), Some("check"));
     assert_eq!(issues[0].path.as_deref(), Some("halt_on"));
     assert!(
@@ -817,6 +834,7 @@ fn a_group_continue_on_error_is_reported_for_audit_but_never_refused() {
     let issues = Engine::builder().check_workflow(&w);
     assert_eq!(issues.len(), 1, "got {issues:?}");
     assert_eq!(issues[0].code, IssueCode::GroupContinueOnError);
+    assert_eq!(issues[0].severity(), Severity::Advisory);
     assert_eq!(
         issues[0].task_id.as_deref(),
         Some("g"),

@@ -14,7 +14,7 @@ mod common;
 
 use common::workflow;
 use dataflow_rs::engine::message::Message;
-use dataflow_rs::{Engine, IssueCode, Workflow};
+use dataflow_rs::{Engine, IssueCode, Severity, Workflow};
 use serde_json::{Value, json};
 
 /// Run one `map` mapping and return what landed at `data.out`.
@@ -107,12 +107,11 @@ fn keys_that_collide_after_stripping_are_refused_at_build() {
     let w = wf_with(json!({"$a": 1, "a": 2}));
 
     let issues = Engine::builder().check_workflow(&w);
-    assert!(
-        issues
-            .iter()
-            .any(|i| i.code == IssueCode::DuplicateTemplateKey),
-        "check_workflow must report the collision: {issues:?}"
-    );
+    let collision = issues
+        .iter()
+        .find(|i| i.code == IssueCode::DuplicateTemplateKey)
+        .unwrap_or_else(|| panic!("check_workflow must report the collision: {issues:?}"));
+    assert_eq!(collision.severity(), Severity::Rejected);
 
     let err = match Engine::builder().with_workflow(w).build() {
         Err(e) => e,
@@ -139,6 +138,10 @@ fn escaped_keys_are_reported_for_audit_but_never_refused() {
         Some("function.input.mappings[0].logic.$oid")
     );
     assert_eq!(escaped[0].task_id.as_deref(), Some("t"));
+    assert!(
+        escaped[0].severity() == Severity::Advisory,
+        "the escape is the sanctioned spelling, not a defect"
+    );
     assert!(
         escaped[0].message.contains("emitted as 'oid'"),
         "the message must say what it becomes: {}",

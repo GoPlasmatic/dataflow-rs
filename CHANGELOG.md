@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.0] — 2026-09-02
+
+Whether an issue is a refusal is now something you can ask, rather than a
+list a host has to keep.
+
+### Added
+
+- **`Severity`** and **`IssueCode::severity()`** / **`WorkflowIssue::severity()`** —
+  whether an issue is a refusal, and if not, whether it still matters. Three
+  classes: `Rejected` (`build()` refuses it, or it never parsed), `Defect`
+  (builds cleanly, then fails every message) and `Advisory` (loads and runs).
+
+  Before 3.9 every code `check_workflow` reported was also one `build()`
+  refused, so a host screening definitions before building could treat "has an
+  issue" and "cannot run" as one question. 3.9 broke that for
+  `ESCAPED_TEMPLATE_KEY`, 3.10 for `UNGUARDED_VALIDATION` and
+  `GROUP_CONTINUE_ON_ERROR`. A host carrying its own list of the non-fatal codes
+  could only ever be wrong in one direction — silently, and on upgrade —
+  quarantining workflows that were fine. The property now lives next to the code
+  that decides it: `severity()` is a match with no wildcard arm, so a code added
+  in a later minor cannot arrive unclassified.
+
+  Note that **`MISSING_HANDLER` is `Defect`, not `Advisory`**. `build()` accepts
+  it — the config parses into a typed variant — and then every message fails, so
+  a host migrating off a hard-coded "informational" list must keep quarantining
+  it. `Severity::Advisory` is the only class that is safe to ignore.
+
+  Unlike `IssueCode`, `Severity` is not `#[non_exhaustive]`: build time / first
+  message / never exhausts the axis by construction, so a host may `match` it.
+
+  Reported in [#55](https://github.com/GoPlasmatic/dataflow-rs/issues/55).
+
 ## [3.10.0] — 2026-09-02
 
 An assertion can finally reject, and a control-flow key that does nothing is now
