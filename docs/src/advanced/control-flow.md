@@ -42,16 +42,16 @@ Without them, every task after a branch has to restate that the branch did
 
         { "id": "respond_404", "name": "404",
           "condition": {"==": [{"length": [{"var": "temp_data.users"}]}, 0]},
-          "function": { "name": "map", "input": {} } },
+          "function": { "name": "map", "input": { "mappings": [] } } },
 
         { "id": "check_pw", "name": "Check password",
           "condition": {">": [{"length": [{"var": "temp_data.users"}]}, 0]},
-          "function": { "name": "map", "input": {} } },
+          "function": { "name": "map", "input": { "mappings": [] } } },
 
         { "id": "issue_tokens", "name": "Issue tokens",
           "condition": {"and": [{">": [{"length": [{"var": "temp_data.users"}]}, 0]},
                                 {"var": "temp_data.pw.ok"}]},
-          "function": { "name": "map", "input": {} } }
+          "function": { "name": "map", "input": { "mappings": [] } } }
     ]
 }
 ```
@@ -66,13 +66,13 @@ With `terminal`, each guard states only its own reason:
 
         { "id": "respond_404", "name": "404", "terminal": true,
           "condition": {"==": [{"length": [{"var": "temp_data.users"}]}, 0]},
-          "function": { "name": "map", "input": {} } },
+          "function": { "name": "map", "input": { "mappings": [] } } },
 
         { "id": "check_pw", "name": "Check password",
-          "function": { "name": "map", "input": {} } },
+          "function": { "name": "map", "input": { "mappings": [] } } },
 
         { "id": "issue_tokens", "name": "Issue tokens",
-          "function": { "name": "map", "input": {} } }
+          "function": { "name": "map", "input": { "mappings": [] } } }
     ]
 }
 ```
@@ -175,8 +175,8 @@ A group states a condition once for a contiguous run of tasks:
     "name": "Rank and trim",
     "condition": {">": [{"length": [{"var": "temp_data.videos"}]}, 0]},
     "tasks": [
-        { "id": "rank", "name": "Rank", "function": { "name": "map", "input": {} } },
-        { "id": "trim", "name": "Trim", "function": { "name": "map", "input": {} } }
+        { "id": "rank", "name": "Rank", "function": { "name": "map", "input": { "mappings": [] } } },
+        { "id": "trim", "name": "Trim", "function": { "name": "map", "input": { "mappings": [] } } }
     ]
 }
 ```
@@ -205,7 +205,7 @@ inside the group writes to what the condition reads:
               { "path": "temp_data.taken", "logic": {"var": "temp_data.queue"} },
               { "path": "temp_data.queue", "logic": [] } ] } } },
         { "id": "process", "name": "Process what we took",
-          "function": { "name": "map", "input": {} } }
+          "function": { "name": "map", "input": { "mappings": [] } } }
     ]
 }
 ```
@@ -235,7 +235,7 @@ They compose — a terminal group is a guard clause with a multi-task body:
         { "id": "audit", "name": "Audit the rejection",
           "function": { "name": "log", "input": { "message": "unverified" } } },
         { "id": "respond_403", "name": "403",
-          "function": { "name": "map", "input": {} } }
+          "function": { "name": "map", "input": { "mappings": [] } } }
     ]
 }
 ```
@@ -254,7 +254,7 @@ negations of each other:
 ```json
 { "id": "respond_404", "name": "404",
   "condition": {"==": [{"length": [{"var": "temp_data.users"}]}, 0]},
-  "function": { "name": "map", "input": {} } },
+  "function": { "name": "map", "input": { "mappings": [] } } },
 { "id": "gate", "name": "Stop if we answered",
   "function": { "name": "filter", "input": {
       "condition": {"!": [{"==": [{"length": [{"var": "temp_data.users"}]}, 0]}]},

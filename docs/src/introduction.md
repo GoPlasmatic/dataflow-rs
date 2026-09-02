@@ -18,11 +18,11 @@ Whether you're routing events, validating data, building REST APIs, or creating 
 
 ### ⚡ Blazing Fast Performance
 
-Dataflow-rs is built for high-throughput hot paths. By pre-compiling all JSONLogic expressions at startup, execution runs with zero runtime allocations or JSON parsing overhead. On a 10-core machine, the multi-threaded release benchmark yields:
-*   **Throughput:** **~640,000 messages/sec**
+Dataflow-rs is built for high-throughput hot paths. By pre-compiling all JSONLogic expressions at startup, execution runs with zero runtime allocations or JSON parsing overhead. On a 10-core Apple M2 Pro, the multi-threaded release benchmark yields:
+*   **Throughput:** **~630,000 messages/sec**
 *   **Median (P50) Latency:** **6 μs**
-*   **Tail (P99) Latency:** **51 μs**
-*   **Tail (P99.9) Latency:** **93 μs**
+*   **Tail (P99) Latency:** **52 μs**
+*   **Tail (P99.9) Latency:** **94 μs**
 
 ### 🧩 Why Choose dataflow-rs?
 
@@ -30,10 +30,10 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 
 | Feature | Hardcoded Rust | dataflow-rs | Orchestrators (Temporal/Zeebe) |
 |---|---|---|---|
-| **Hot Reload Rules** | ❌ Recompile & redeploy |  Instant JSON update | ❌ Deploy new worker code |
+| **Hot Reload Rules** | ❌ Recompile & redeploy | ✅ Instant JSON update | ❌ Deploy new worker code |
 | **Execution Overhead** | None | **Zero (pre-compiled)** | ❌ DB reads/writes (tens of ms) |
-| **Browser Execution** | ❌ WASM compile size |  Run rules via WASM | ❌ Server round-trip required |
-| **Visual Debugger** | ❌ Build your own UI |  Included React UI components |  Included Dashboard |
+| **Browser Execution** | ❌ WASM compile size | ✅ Run rules via WASM | ❌ Server round-trip required |
+| **Visual Debugger** | ❌ Build your own UI | ✅ Included React UI components | ✅ Included Dashboard |
 | **Infrastructure** | None | **None (embeddable library)** | ❌ Server clusters & DBs |
 
 ## Key Features
@@ -46,6 +46,7 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 - **Execution Tracing** - Step-by-step debugging with message snapshots after each action
 - **Built-in Functions** - Parse, Map, Validate, Filter, Log, and Publish for complete data pipelines
 - **Task Groups** - Nest actions under one shared condition, with a terminal action that ends a rule early
+- **Rejecting Assertions** - `halt_on: "failure"` ends a rule once an action has run and failed, so a `validation` can gate the tasks after it
 - **Bounded Loops** - Re-run a rule's action list a fixed number of times, with the sweep counter in `temp_data`
 - **Traffic Splits** - Roll a rule out to a percentage of messages with `rollout`
 - **Retry Policies** - Retry a failing action with exponential backoff and a wall-clock deadline (native targets)

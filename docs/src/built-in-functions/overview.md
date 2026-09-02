@@ -44,6 +44,7 @@ pre-compilation for you. See [Integrations](./integrations.md).
     "tasks": [
         {
             "id": "parse_input",
+            "name": "Parse input",
             "function": {
                 "name": "parse_json",
                 "input": {
@@ -54,6 +55,7 @@ pre-compilation for you. See [Integrations](./integrations.md).
         },
         {
             "id": "transform",
+            "name": "Transform",
             "function": {
                 "name": "map",
                 "input": {
@@ -65,6 +67,8 @@ pre-compilation for you. See [Integrations](./integrations.md).
         },
         {
             "id": "validate",
+            "name": "Validate",
+            "halt_on": "failure",
             "function": {
                 "name": "validation",
                 "input": {
@@ -76,6 +80,7 @@ pre-compilation for you. See [Integrations](./integrations.md).
         },
         {
             "id": "publish",
+            "name": "Publish",
             "function": {
                 "name": "publish_json",
                 "input": {
@@ -89,6 +94,10 @@ pre-compilation for you. See [Integrations](./integrations.md).
 }
 ```
 
+`halt_on: "failure"` on the validation is what stops `publish` from running on a
+message that failed it — a failing rule records `400`, which `continue_on_error`
+does not cover. See [Control Flow](../advanced/control-flow.md#halt_on).
+
 ### Conditional Transformation
 
 ```json
@@ -96,6 +105,7 @@ pre-compilation for you. See [Integrations](./integrations.md).
     "tasks": [
         {
             "id": "conditional_map",
+            "name": "Conditional map",
             "condition": {"==": [{"var": "data.tier"}, "premium"]},
             "function": {
                 "name": "map",
@@ -117,6 +127,7 @@ pre-compilation for you. See [Integrations](./integrations.md).
     "tasks": [
         {
             "id": "parse_xml_input",
+            "name": "Parse XML input",
             "function": {
                 "name": "parse_xml",
                 "input": {
@@ -127,6 +138,7 @@ pre-compilation for you. See [Integrations](./integrations.md).
         },
         {
             "id": "transform",
+            "name": "Transform",
             "function": {
                 "name": "map",
                 "input": {
@@ -138,6 +150,7 @@ pre-compilation for you. See [Integrations](./integrations.md).
         },
         {
             "id": "publish_xml_output",
+            "name": "Publish XML output",
             "function": {
                 "name": "publish_xml",
                 "input": {

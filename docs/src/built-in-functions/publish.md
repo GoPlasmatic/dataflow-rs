@@ -53,6 +53,7 @@ Both name where the engine itself writes, and the destination is recorded in
 ```json
 {
     "id": "publish_response",
+    "name": "Publish response",
     "function": {
         "name": "publish_json",
         "input": {
@@ -87,6 +88,7 @@ Both name where the engine itself writes, and the destination is recorded in
 ```json
 {
     "id": "publish_pretty",
+    "name": "Publish pretty",
     "function": {
         "name": "publish_json",
         "input": {
@@ -169,6 +171,7 @@ publishing; see
 ```json
 {
     "id": "publish_xml_response",
+    "name": "Publish XML response",
     "function": {
         "name": "publish_xml",
         "input": {
@@ -204,6 +207,7 @@ publishing; see
 ```json
 {
     "id": "publish_nested",
+    "name": "Publish nested",
     "function": {
         "name": "publish_xml",
         "input": {
@@ -226,6 +230,7 @@ publishing; see
     "tasks": [
         {
             "id": "parse_request",
+            "name": "Parse request",
             "function": {
                 "name": "parse_json",
                 "input": {"source": "payload", "target": "request"}
@@ -233,6 +238,7 @@ publishing; see
         },
         {
             "id": "process",
+            "name": "Process",
             "function": {
                 "name": "map",
                 "input": {
@@ -244,6 +250,7 @@ publishing; see
         },
         {
             "id": "publish_response",
+            "name": "Publish response",
             "function": {
                 "name": "publish_json",
                 "input": {"source": "response", "target": "body"}
@@ -260,6 +267,7 @@ publishing; see
     "tasks": [
         {
             "id": "parse_xml",
+            "name": "Parse XML",
             "function": {
                 "name": "parse_xml",
                 "input": {"source": "payload", "target": "input"}
@@ -267,6 +275,7 @@ publishing; see
         },
         {
             "id": "transform",
+            "name": "Transform",
             "function": {
                 "name": "map",
                 "input": {
@@ -278,6 +287,7 @@ publishing; see
         },
         {
             "id": "publish_xml",
+            "name": "Publish XML",
             "function": {
                 "name": "publish_xml",
                 "input": {"source": "output", "target": "xmlResponse", "root_element": "Result"}
@@ -294,6 +304,7 @@ publishing; see
     "tasks": [
         {
             "id": "publish_json",
+            "name": "Publish JSON",
             "function": {
                 "name": "publish_json",
                 "input": {"source": "response", "target": "jsonOutput"}
@@ -301,6 +312,7 @@ publishing; see
         },
         {
             "id": "publish_xml",
+            "name": "Publish XML",
             "function": {
                 "name": "publish_xml",
                 "input": {"source": "response", "target": "xmlOutput", "root_element": "Response"}

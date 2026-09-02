@@ -8,6 +8,7 @@ number of times, or until a condition on the message goes false.
 ```json
 {
     "id": "per_item",
+    "name": "Per item",
     "condition": {"<": [{"var": "temp_data.i"}, {"var": "temp_data.n"}]},
     "loop": { "counter": "i", "init": 0, "increment": 1, "max": 10000 },
     "tasks": [ ]

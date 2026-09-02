@@ -27,11 +27,11 @@ Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF 
 ### ⚡ Blazing Fast Performance
 Dataflow-rs is built for high-throughput hot paths. By compiling all JSONLogic expressions once at engine startup, runtime evaluation runs with zero allocations, zero parsing overhead, and predictable latency. 
 
-A multi-threaded benchmark (1,000,000 concurrent events) on a 10-core machine yields:
-*   **Throughput:** **~640,000 messages/sec**
+A multi-threaded benchmark (1,000,000 concurrent events) on a 10-core Apple M2 Pro yields:
+*   **Throughput:** **~630,000 messages/sec**
 *   **Median (P50) Latency:** **6 μs**
-*   **Tail (P99) Latency:** **51 μs**
-*   **Tail (P99.9) Latency:** **93 μs**
+*   **Tail (P99) Latency:** **52 μs**
+*   **Tail (P99.9) Latency:** **94 μs**
 
 ### 🧩 Full-Stack Ecosystem
 Go beyond backend microservices. Use the same rule definitions across your entire stack:
@@ -81,7 +81,7 @@ If you need dynamic business rules or user-customizable workflows, writing manua
 
 ```toml
 [dependencies]
-dataflow-rs = "3.9"
+dataflow-rs = "3.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1.0"
 ```
@@ -91,7 +91,7 @@ JSONLogic only. Add the families your rules use:
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "3.9", features = ["ext-string", "ext-control"] }
+dataflow-rs = { version = "3.10", features = ["ext-string", "ext-control"] }
 ```
 
 Read [JSONLogic → Operator Families](docs/src/advanced/jsonlogic.md#operator-families-cargo-features)
@@ -343,6 +343,7 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 - **Always-On Observability:** Attach an `ExecutionObserver` for per-task timing, including the sync built-ins a trace or a wrapped handler can't reach on their own.
 - **Built-in Functions:** Parse, Map, Validate, Filter, Log, and Publish for complete data pipelines.
 - **Pipeline Control Flow:** Filter/gate function to halt workflows or skip tasks based on conditions.
+- **Rejecting Assertions:** `halt_on: "failure"` ends a rule once an action has run and failed — the gate a `validation` needs, since `continue_on_error` covers only `5xx` and `Err`. The task keeps its own status (a `400` stays a `400`).
 - **Channel Routing:** Route messages to specific workflow channels with O(1) lookup.
 - **Traffic Splits:** Roll a new workflow version out to a percentage of a channel's traffic with bucket-range routing.
 - **Workflow Lifecycle:** Manage workflow status (active/paused/archived), versioning, and tagging.
@@ -371,15 +372,17 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 
 ## Performance
 
-On a 10-core machine processing **1,000,000 messages** concurrently (Tokio multi-threaded runtime, `--release`; per message: 1 parse + 6 mappings + 3 validations):
+On a 10-core Apple M2 Pro processing **1,000,000 messages** concurrently (Tokio multi-threaded runtime, `--release`; per message: 1 parse + 6 mappings + 3 validations). Medians of 12 interleaved runs:
 
 | Metric | Value |
 |---|---|
-| **Throughput** | ~640,000 msg/sec |
+| **Throughput** | ~630,000 msg/sec |
 | **Avg Latency** | 10 μs |
 | **P50 Latency** | 6 μs |
-| **P99 Latency** | 51 μs |
-| **P99.9 Latency** | 93 μs |
+| **P90 Latency** | 19 μs |
+| **P95 Latency** | 29 μs |
+| **P99 Latency** | 52 μs |
+| **P99.9 Latency** | 94 μs |
 
 **Why it's fast:**
 - **Pre-Compilation:** All JSONLogic compiled at startup, zero runtime parsing

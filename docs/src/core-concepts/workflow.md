@@ -211,9 +211,11 @@ Actions within a rule execute sequentially, allowing later actions to depend on 
 ```json
 {
     "id": "pipeline",
+    "name": "Pipeline",
     "tasks": [
         {
             "id": "fetch_data",
+            "name": "Fetch data",
             "function": {
                 "name": "map",
                 "input": {
@@ -225,6 +227,7 @@ Actions within a rule execute sequentially, allowing later actions to depend on 
         },
         {
             "id": "process_data",
+            "name": "Process data",
             "function": {
                 "name": "map",
                 "input": {

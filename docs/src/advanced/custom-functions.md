@@ -101,9 +101,11 @@ user code.
 ```json
 {
     "id": "custom_rule",
+    "name": "Custom Rule",
     "tasks": [
         {
             "id": "custom_action",
+            "name": "Custom action",
             "function": {
                 "name": "my_custom_function",
                 "input": {

@@ -356,6 +356,7 @@ Use conditions to provide fallback values:
     "tasks": [
         {
             "id": "try_primary",
+            "name": "Try primary",
             "continue_on_error": true,
             "function": {
                 "name": "map",
@@ -368,6 +369,7 @@ Use conditions to provide fallback values:
         },
         {
             "id": "use_fallback",
+            "name": "Use fallback",
             "condition": {"!": {"var": "temp_data.result"}},
             "function": {
                 "name": "map",

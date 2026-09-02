@@ -137,8 +137,7 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `ESCAPED_TEMPLATE_KEY` | **Informational.** A `$`-prefixed template key — the migration audit, never refused |
 
 Three codes are **informational**: `check_workflow` reports them and
-`Engine::build()` will not refuse them. Everything else in the table is a
-rejection.
+`Engine::build()` will not refuse them.
 
 - `ESCAPED_TEMPLATE_KEY` — stripping the [`$` escape](./jsonlogic.md#literal-keys-and-the--escape)
   is uniform rather than conditional on a collision, so every escaped key is
@@ -149,6 +148,12 @@ rejection.
 - `GROUP_CONTINUE_ON_ERROR` — the key is real on a task and on a workflow, so a
   host may already carry it on group nodes; refusing it would abort every
   workflow in the build over a key that was never honoured anyway.
+
+`MISSING_HANDLER` is a fourth code `Engine::build()` accepts, but it is not
+informational: it names a real defect the builder simply cannot catch, because
+the config parses into a typed variant and only fails once a message arrives.
+See [Why `MISSING_HANDLER` is its own code](#why-missing_handler-is-its-own-code).
+Every remaining code in the table is a rejection.
 
 The distinction is not a field on `WorkflowIssue` — branch on `code`.
 

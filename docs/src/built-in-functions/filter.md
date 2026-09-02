@@ -82,13 +82,16 @@ Stop processing if required data is missing:
 ```json
 {
     "id": "validation_pipeline",
+    "name": "Validation Pipeline",
     "tasks": [
         {
             "id": "parse",
+            "name": "Parse",
             "function": { "name": "parse_json", "input": {"source": "payload", "target": "input"} }
         },
         {
             "id": "require_email",
+            "name": "Require email",
             "function": {
                 "name": "filter",
                 "input": {
@@ -99,6 +102,7 @@ Stop processing if required data is missing:
         },
         {
             "id": "process",
+            "name": "Process",
             "function": {
                 "name": "map",
                 "input": {
@@ -119,6 +123,7 @@ Combine conditions with JSONLogic `and`/`or`:
 ```json
 {
     "id": "complex_gate",
+    "name": "Complex gate",
     "function": {
         "name": "filter",
         "input": {
@@ -144,6 +149,7 @@ Use `skip` for non-critical conditional logic:
     "tasks": [
         {
             "id": "apply_coupon",
+            "name": "Apply coupon",
             "function": {
                 "name": "filter",
                 "input": {
@@ -154,6 +160,7 @@ Use `skip` for non-critical conditional logic:
         },
         {
             "id": "process_coupon",
+            "name": "Process coupon",
             "function": {
                 "name": "map",
                 "input": {

@@ -52,8 +52,8 @@ You can also use the `RulesEngine` type alias:
 ```rust
 # use dataflow_rs::Workflow;
 # fn _demo() -> dataflow_rs::Result<()> {
-# let rule1 = Workflow::from_json(r#"{"id":"a","tasks":[]}"#)?;
-# let rule2 = Workflow::from_json(r#"{"id":"b","tasks":[]}"#)?;
+# let rule1 = Workflow::from_json(r#"{"id":"a","name":"Rule A","tasks":[]}"#)?;
+# let rule2 = Workflow::from_json(r#"{"id":"b","name":"Rule B","tasks":[]}"#)?;
 use dataflow_rs::RulesEngine;
 
 let engine = RulesEngine::builder()

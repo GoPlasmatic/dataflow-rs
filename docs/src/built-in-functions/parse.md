@@ -54,6 +54,7 @@ Both name where the engine itself writes, and the destination is recorded in
 ```json
 {
     "id": "load_payload",
+    "name": "Load payload",
     "function": {
         "name": "parse_json",
         "input": {
@@ -85,6 +86,7 @@ Both name where the engine itself writes, and the destination is recorded in
 ```json
 {
     "id": "extract_body",
+    "name": "Extract body",
     "function": {
         "name": "parse_json",
         "input": {
@@ -187,6 +189,7 @@ read the result:
 ```json
 {
     "id": "parse_xml_request",
+    "name": "Parse XML request",
     "function": {
         "name": "parse_xml",
         "input": {
@@ -221,6 +224,7 @@ To lift those leaves into plain scalars, follow the parse with a `map`:
 ```json
 {
     "id": "flatten_request",
+    "name": "Flatten request",
     "function": {
         "name": "map",
         "input": {
@@ -238,6 +242,7 @@ To lift those leaves into plain scalars, follow the parse with a `map`:
 ```json
 {
     "id": "parse_xml_body",
+    "name": "Parse XML body",
     "function": {
         "name": "parse_xml",
         "input": {
@@ -259,6 +264,7 @@ To lift those leaves into plain scalars, follow the parse with a `map`:
     "tasks": [
         {
             "id": "load",
+            "name": "Load",
             "function": {
                 "name": "parse_json",
                 "input": {"source": "payload", "target": "input"}
@@ -266,6 +272,7 @@ To lift those leaves into plain scalars, follow the parse with a `map`:
         },
         {
             "id": "transform",
+            "name": "Transform",
             "function": {
                 "name": "map",
                 "input": {
@@ -286,6 +293,7 @@ To lift those leaves into plain scalars, follow the parse with a `map`:
     "tasks": [
         {
             "id": "parse_response",
+            "name": "Parse response",
             "function": {
                 "name": "parse_xml",
                 "input": {"source": "payload.response", "target": "apiResponse"}
@@ -293,6 +301,7 @@ To lift those leaves into plain scalars, follow the parse with a `map`:
         },
         {
             "id": "extract_data",
+            "name": "Extract data",
             "function": {
                 "name": "map",
                 "input": {

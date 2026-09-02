@@ -53,6 +53,7 @@ The log function allows you to:
 ```json
 {
     "id": "log_start",
+    "name": "Log start",
     "function": {
         "name": "log",
         "input": {
@@ -68,6 +69,7 @@ The log function allows you to:
 ```json
 {
     "id": "log_order",
+    "name": "Log order",
     "function": {
         "name": "log",
         "input": {
@@ -88,6 +90,7 @@ The log function allows you to:
 ```json
 {
     "id": "debug_state",
+    "name": "Debug state",
     "function": {
         "name": "log",
         "input": {
@@ -107,6 +110,7 @@ The log function allows you to:
 ```json
 {
     "id": "warn_missing",
+    "name": "Warn missing",
     "condition": {"!": {"var": "data.shipping_address"}},
     "function": {
         "name": "log",

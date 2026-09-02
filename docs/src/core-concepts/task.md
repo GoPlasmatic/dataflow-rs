@@ -150,6 +150,7 @@ Actions can have conditions that determine if they should run. Conditions evalua
 ```json
 {
     "id": "premium_greeting",
+    "name": "Premium greeting",
     "condition": { "==": [{"var": "data.tier"}, "premium"] },
     "function": {
         "name": "map",
@@ -213,6 +214,7 @@ Actions execute in order within a rule. Later actions can use results from earli
     "tasks": [
         {
             "id": "step1",
+            "name": "Step1",
             "function": {
                 "name": "map",
                 "input": {
@@ -224,6 +226,7 @@ Actions execute in order within a rule. Later actions can use results from earli
         },
         {
             "id": "step2",
+            "name": "Step2",
             "function": {
                 "name": "map",
                 "input": {

@@ -108,6 +108,7 @@ Extend your rule with data validation:
         {
             "id": "validate_input",
             "name": "Validate Input",
+            "halt_on": "failure",
             "function": {
                 "name": "validation",
                 "input": {
@@ -138,6 +139,11 @@ Extend your rule with data validation:
     ]
 }
 ```
+
+`halt_on: "failure"` is what makes the validation a gate. A failing rule records
+status `400`, and the engine treats `4xx` as "warn and carry on" — so without it
+`create_greeting` would still run and greet a message with no name. See
+[Control Flow](../advanced/control-flow.md#halt_on).
 
 The `load` action is not optional decoration. The payload is not part of the
 JSONLogic evaluation context, so `{"var": "data.name"}` would resolve to
