@@ -263,6 +263,79 @@ Two things worth knowing:
 There is no derive macro for this — a hand-written `compile_input` is a few
 lines, and this crate has no proc-macro dependency to add one.
 
+## One handler type, several registrations
+
+`parse_input` and `compile_input` are associated functions — no `&self` —
+because for most handlers the config schema is a property of the *type*. A
+plugin host is the exception: it registers one handler type once per function
+its manifest lists, and the manifest, not the type, says which config keys are
+JSONLogic. Each hook therefore has a receiver-taking twin,
+`parse_input_with(&self, …)` and `compile_input_with(&self, …)`, whose default
+delegates to the associated form. The engine calls only the `_with` pair, so
+override whichever form fits; overriding both leaves the associated one
+unreached.
+
+```rust
+# use async_trait::async_trait;
+# use dataflow_rs::engine::functions::AsyncFunctionHandler;
+# use dataflow_rs::{DataflowError, Engine, Result, TaskContext, TaskOutcome, Template, TemplateCompiler};
+# use serde_json::Value;
+# use std::collections::BTreeMap;
+/// One instance per manifest entry: `template_field` names the config key
+/// that entry declared as JSONLogic.
+struct PluginFunction {
+    template_field: String,
+}
+
+#[async_trait]
+impl AsyncFunctionHandler for PluginFunction {
+    type Input = BTreeMap<String, Template>;
+
+    // `&self` is the whole difference from the associated forms: the key this
+    // registration requires, and then compiles, comes from its manifest entry.
+    fn parse_input_with(&self, input: &Value) -> Result<Self::Input> {
+        let parsed = Self::parse_input(input)?;
+        if !parsed.contains_key(&self.template_field) {
+            return Err(DataflowError::Validation(format!(
+                "config has no `{}` field",
+                self.template_field
+            )));
+        }
+        Ok(parsed)
+    }
+
+    fn compile_input_with(&self, input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> {
+        if let Some(field) = input.get_mut(&self.template_field) {
+            field.compile(c, &self.template_field)?;
+        }
+        Ok(())
+    }
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Self::Input) -> Result<TaskOutcome> {
+        let value = input[&self.template_field].eval(ctx)?;
+        ctx.set("data.out", value);
+        Ok(TaskOutcome::Success)
+    }
+}
+
+// The manifest drives registration: same type, one instance per function.
+fn build(manifest: &[(&str, &str)]) -> Result<Engine> {
+    let mut builder = Engine::builder();
+    for (name, template_field) in manifest {
+        builder = builder.register(
+            *name,
+            PluginFunction { template_field: template_field.to_string() },
+        );
+    }
+    builder.build()
+}
+```
+
+A config without the key this registration declares fails at `build()`, and
+`check_workflow` reports it as `INPUT_PARSE`, exactly as a per-type
+`parse_input` rejection would be: nothing about the build path changes, only
+who gets asked.
+
 ## Knowing which task you are
 
 A handler often needs to label what it produces — a log line, a metric, a

@@ -499,6 +499,11 @@ impl AsyncFunctionHandler for GreetingHandler {
 A malformed expression fails at build time rather than on the first message that
 reaches the task, matching this crate's own stance for the built-ins.
 
+One handler *type* registered under several names — a plugin host, say —
+overrides the receiver-taking twins `parse_input_with` / `compile_input_with`
+instead, so which field is a template can come from per-registration data. See
+[One handler type, several registrations](docs/src/advanced/custom-functions.md#one-handler-type-several-registrations).
+
 A JSON literal *is* JSONLogic for itself, so the static spelling an author
 already writes — `"data.out"`, `5000` — folds to a constant at build time and is
 evaluated once, not per message. The one thing to know is that a single-key

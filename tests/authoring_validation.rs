@@ -15,6 +15,10 @@
 use dataflow_rs::{IssueCode, Severity, Workflow};
 use serde_json::{Value, json};
 
+mod common;
+
+use common::manifest_pair;
+
 fn codes(json: &Value) -> Vec<IssueCode> {
     Workflow::validate_authored(json)
         .iter()
@@ -522,6 +526,42 @@ fn a_rejected_compile_input_is_a_template_compile_issue() {
             .check_workflow(&ok)
             .is_empty()
     );
+}
+
+#[test]
+fn a_receiver_form_rejection_is_reported_by_check_workflow_with_the_code_build_enforces() {
+    // The #56 shape: one type, two registrations, each requiring its own key.
+    // The config carries `a` only, so which registration refuses it is decided
+    // by instance state — the receiver form's whole reason to exist.
+    let config = || json!({"a": {"var": "data.x"}});
+
+    let missing = wf(call("manifest_b", config()));
+    let issues = manifest_pair().check_workflow(&missing);
+    assert_eq!(issues[0].code, IssueCode::InputParse);
+    assert_eq!(issues[0].severity(), Severity::Rejected);
+    assert_eq!(issues[0].path.as_deref(), Some("function.input"));
+    assert_eq!(issues[0].task_id.as_deref(), Some("t"));
+    assert!(
+        issues[0].message.contains("`b`"),
+        "carries the reason, got: {}",
+        issues[0].message
+    );
+
+    // And it is the same rejection that aborts a build.
+    let err = manifest_pair()
+        .with_workflow(missing)
+        .build()
+        .err()
+        .expect("build refuses what check_workflow reported");
+    assert!(
+        err.to_string().contains("`b`"),
+        "names the missing key, got: {err}"
+    );
+
+    // The registration decided, not the config: `a` takes it unchanged.
+    let ok = wf(call("manifest_a", config()));
+    assert!(manifest_pair().check_workflow(&ok).is_empty());
+    assert!(manifest_pair().with_workflow(ok).build().is_ok());
 }
 
 /// `check_workflow` and the engine agree, stated through `Severity`.

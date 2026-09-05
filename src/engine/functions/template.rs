@@ -118,7 +118,8 @@ impl From<Value> for Template {
 
 impl Template {
     /// Compile the expression. Called once at engine construction via
-    /// [`crate::AsyncFunctionHandler::compile_input`]. `label` is used only in
+    /// [`crate::AsyncFunctionHandler::compile_input`] or its receiver-taking
+    /// twin [`crate::AsyncFunctionHandler::compile_input_with`]. `label` is used only in
     /// the error message, matching `LogicCompiler`'s
     /// `"<what> for task <id> in workflow <id>"` convention.
     ///
@@ -425,8 +426,9 @@ impl Template {
     }
 }
 
-/// Handed to [`crate::AsyncFunctionHandler::compile_input`] to compile a
-/// handler's `Template` fields at engine construction.
+/// Handed to [`crate::AsyncFunctionHandler::compile_input`] /
+/// [`crate::AsyncFunctionHandler::compile_input_with`] to compile a handler's
+/// `Template` fields at engine construction.
 ///
 /// Wraps the same `Arc<datalogic_rs::Engine>` `LogicCompiler` uses internally,
 /// so a compiled `Template` is evaluable by the engine that will run the

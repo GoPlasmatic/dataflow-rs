@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.12.0] — 2026-09-05
+
+A handler type registered under several names can now tell which registration
+it is parsing and compiling for.
+
+### Added
+
+- **`AsyncFunctionHandler::parse_input_with`** and
+  **`AsyncFunctionHandler::compile_input_with`** — receiver-taking twins of
+  `parse_input` / `compile_input`, and now the only two the engine calls.
+  Their defaults delegate to the associated functions, so an existing handler
+  is unaffected, and a handler overriding both sees only the receiver form.
+  Override them when the parse, or the set of `Template` fields, depends on
+  the instance rather than the type: a plugin host registering one handler
+  type once per manifest function, where the manifest names which config
+  keys are JSONLogic, could not express that without `&self`. The associated
+  forms remain the spelling for a per-type schema and are not deprecated.
+  `check_workflow` reports a receiver-form rejection under the same codes
+  `build()` enforces. Reported in
+  [#56](https://github.com/GoPlasmatic/dataflow-rs/issues/56).
+
 ## [3.11.0] — 2026-09-02
 
 Whether an issue is a refusal is now something you can ask, rather than a

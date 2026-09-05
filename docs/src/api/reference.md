@@ -497,6 +497,15 @@ pub trait AsyncFunctionHandler: Send + Sync + 'static {
     /// no-op, so a handler with no `Template` fields needs no override.
     fn compile_input(input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> { ... }
 
+    /// Receiver-taking twin of `parse_input`. This is what the engine calls;
+    /// the default delegates to `parse_input`. Override when the parse depends
+    /// on the instance — one type registered under several names.
+    fn parse_input_with(&self, input: &serde_json::Value) -> Result<Self::Input> { ... }
+
+    /// Receiver-taking twin of `compile_input`, same rule: the engine calls
+    /// this and the default delegates. If both are overridden, this one wins.
+    fn compile_input_with(&self, input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> { ... }
+
     /// Execute the handler.
     async fn execute(
         &self,
@@ -508,7 +517,10 @@ pub trait AsyncFunctionHandler: Send + Sync + 'static {
 
 The engine pre-parses each `FunctionConfig::Custom { input }` JSON into
 the registered handler's typed `Self::Input` at `Engine::builder().build()`
-(or `Engine::new`) — config-shape errors fail there, not on first message.
+(or `Engine::new`) — through `parse_input_with` then `compile_input_with`,
+whose defaults delegate to the associated forms — so config-shape errors fail
+there, not on first message. See
+[One handler type, several registrations](../advanced/custom-functions.md#one-handler-type-several-registrations).
 
 ### Template
 
@@ -521,7 +533,7 @@ folds to a constant at `build()` and is cached.
 pub struct Template { /* opaque */ }
 
 impl Template {
-    // Called from `AsyncFunctionHandler::compile_input`.
+    // Called from `AsyncFunctionHandler::compile_input` (or `compile_input_with`).
     pub fn compile(&mut self, c: &TemplateCompiler, label: &str) -> Result<()>
 
     // The sanctioned reads: the cached constant when the expression folded,
@@ -547,7 +559,7 @@ impl Template {
 // at build(), which is what keeps the map hot loop allocation-free.
 pub struct PathTemplate<R: PathRoot = ContextRoot> { /* opaque */ }
 
-// Handed to `compile_input`; wraps the same shared datalogic engine
+// Handed to `compile_input` / `compile_input_with`; wraps the same shared datalogic engine
 // `LogicCompiler` uses internally, so a compiled `Template` evaluates against
 // the same engine that will run the message.
 pub struct TemplateCompiler { /* opaque */ }

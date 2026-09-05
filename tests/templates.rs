@@ -1,5 +1,6 @@
 //! `Template` — JSONLogic-typed config fields on custom handlers, compiled at
-//! `Engine::build()` and evaluated per message.
+//! `Engine::build()` and evaluated per message. Also the receiver-taking `_with`
+//! twins of the two build-time hooks (#56).
 
 use async_trait::async_trait;
 use dataflow_rs::engine::functions::AsyncFunctionHandler;
@@ -9,7 +10,7 @@ use serde_json::{Value, json};
 
 mod common;
 
-use common::{LoggingTask, dv};
+use common::{LoggingTask, dv, manifest_pair};
 
 // =============================================================================
 // Template — JSONLogic-typed config fields for custom handlers
@@ -242,4 +243,49 @@ async fn a_handler_with_no_template_fields_is_unaffected() {
 
     let mut message = Message::from_value(&json!({}));
     engine.process_message(&mut message).await.unwrap();
+}
+
+// =============================================================================
+// parse_input_with / compile_input_with — one type, several registrations (#56)
+// =============================================================================
+//
+// Default delegation needs no test of its own: every handler above overrides
+// only the associated `compile_input`, so each test above already reaches it
+// through the defaults of `parse_input_with` and `compile_input_with`. The
+// precedence rule — the engine calls only the receiver forms — is pinned at
+// the blanket impl in `src/engine/functions/mod.rs`, the one place it lives.
+// `check_workflow` parity is in `authoring_validation.rs`.
+
+#[tokio::test]
+async fn one_handler_type_registered_twice_compiles_the_field_each_registration_declares() {
+    // Same type, same config on both tasks: which field is a template is
+    // decided by the registration, which only a receiver-taking hook can see.
+    let wf = Workflow::from_json(
+        r#"{
+        "id": "w", "name": "w", "priority": 0, "condition": true,
+        "tasks": [
+            { "id": "seed", "name": "seed", "function": {
+                "name": "map",
+                "input": { "mappings": [ { "path": "data.name", "logic": "world" } ] } } },
+            { "id": "first", "name": "first", "function": {
+                "name": "manifest_a",
+                "input": { "a": { "var": "data.name" }, "b": { "var": "data.name" } } } },
+            { "id": "second", "name": "second", "function": {
+                "name": "manifest_b",
+                "input": { "a": { "var": "data.name" }, "b": { "var": "data.name" } } } }
+        ]
+    }"#,
+    )
+    .unwrap();
+
+    let engine = manifest_pair().with_workflow(wf).build().unwrap();
+
+    let mut message = Message::from_value(&json!({}));
+    engine.process_message(&mut message).await.unwrap();
+
+    let literal = dv(json!({ "var": "data.name" }));
+    assert_eq!(message.context["data"]["first"]["a"], dv(json!("world")));
+    assert_eq!(message.context["data"]["first"]["b"], literal);
+    assert_eq!(message.context["data"]["second"]["a"], literal);
+    assert_eq!(message.context["data"]["second"]["b"], dv(json!("world")));
 }

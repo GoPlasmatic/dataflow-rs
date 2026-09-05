@@ -9,9 +9,13 @@
 use async_trait::async_trait;
 use dataflow_rs::datalogic_rs::bumpalo::Bump;
 use dataflow_rs::engine::functions::AsyncFunctionHandler;
-use dataflow_rs::{Engine, Result, TaskContext, TaskOutcome, Template, TemplateCompiler, Workflow};
+use dataflow_rs::{
+    DataflowError, Engine, EngineBuilder, Result, TaskContext, TaskOutcome, Template,
+    TemplateCompiler, Workflow,
+};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 /// Bridge helper for tests: build an `OwnedDataValue` from a `json!` literal.
 pub fn dv(v: serde_json::Value) -> OwnedDataValue {
@@ -111,6 +115,80 @@ impl AsyncFunctionHandler for Sign {
         );
         Ok(TaskOutcome::Success)
     }
+}
+
+// -----------------------------------------------------------------------------
+// One handler type, several registrations — shared by `templates.rs` and
+// `authoring_validation.rs` (#56)
+// -----------------------------------------------------------------------------
+
+/// One handler *type* registered under several names, each instance carrying
+/// which config key its manifest declared as a template — the plugin-host
+/// shape from #56. Both build-time hooks decide on instance state, which is
+/// what the receiver-taking `_with` forms exist for: `parse_input_with`
+/// requires the declared key, so a config without it is a shape mismatch for
+/// this registration; `compile_input_with` compiles only that key.
+///
+/// `execute` writes every key under `data.<task id>`: the declared one
+/// evaluated, the others echoed verbatim — which is what lets a test see that
+/// the *other* registration's key was left alone.
+pub struct ManifestHandler {
+    pub template_field: &'static str,
+}
+
+#[async_trait]
+impl AsyncFunctionHandler for ManifestHandler {
+    type Input = BTreeMap<String, Template>;
+
+    fn parse_input_with(&self, input: &Value) -> Result<Self::Input> {
+        let parsed = Self::parse_input(input)?;
+        if !parsed.contains_key(self.template_field) {
+            return Err(DataflowError::Validation(format!(
+                "manifest declares `{}` as a template but the config has no such key",
+                self.template_field
+            )));
+        }
+        Ok(parsed)
+    }
+
+    fn compile_input_with(&self, input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> {
+        if let Some(field) = input.get_mut(self.template_field) {
+            field.compile(c, self.template_field)?;
+        }
+        Ok(())
+    }
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Self::Input) -> Result<TaskOutcome> {
+        let task = ctx.task_id().expect("set by the engine").to_string();
+        for (key, field) in input {
+            let path = format!("data.{task}.{key}");
+            if field.is_compiled() {
+                let value = field.eval(ctx)?;
+                ctx.set(&path, value);
+            } else {
+                ctx.set_json(&path, field.as_json());
+            }
+        }
+        Ok(TaskOutcome::Success)
+    }
+}
+
+/// Both registrations of the #56 shape on one builder: `manifest_a` declares
+/// `a` as its template, `manifest_b` declares `b`.
+pub fn manifest_pair() -> EngineBuilder {
+    Engine::builder()
+        .register(
+            "manifest_a",
+            ManifestHandler {
+                template_field: "a",
+            },
+        )
+        .register(
+            "manifest_b",
+            ManifestHandler {
+                template_field: "b",
+            },
+        )
 }
 
 // A simple async task implementation
