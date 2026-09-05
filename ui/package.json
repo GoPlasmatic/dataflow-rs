@@ -1,6 +1,6 @@
 {
   "name": "@goplasmatic/dataflow-ui",
-  "version": "3.11.0",
+  "version": "3.12.0",
   "type": "module",
   "description": "React visualization library for dataflow-rs workflow engine",
   "author": "Plasmatic Engineering <shankar@goplasmatic.io>",
