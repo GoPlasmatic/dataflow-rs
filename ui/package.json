@@ -59,7 +59,7 @@
     "@goplasmatic/dataflow-wasm": "^3.8.0",
     "@goplasmatic/datalogic-ui": "^5.4.0",
     "@monaco-editor/react": "^4.7.0",
-    "@xyflow/react": "12.11.5",
+    "@xyflow/react": "12.11.6",
     "lucide-react": "^1.38.0"
   },
   "devDependencies": {
