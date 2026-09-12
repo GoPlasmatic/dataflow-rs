@@ -102,7 +102,7 @@ impl LogicCompiler {
     /// engine before it is built — registration there is builder-only, so this
     /// is the single point where custom operators can enter.
     pub fn with_operators(operators: &HashMap<String, Arc<dyn CustomOperator>>) -> Self {
-        Self::with_operators_and_secrets(operators, &Arc::new(Secrets::empty()))
+        Self::with_operators_and_secrets(operators, &Arc::new(Secrets::empty()), None)
     }
 
     /// As [`LogicCompiler::with_operators`], with the `secret` operator backed
@@ -112,8 +112,27 @@ impl LogicCompiler {
     pub(crate) fn with_operators_and_secrets(
         operators: &HashMap<String, Arc<dyn CustomOperator>>,
         secrets: &Arc<Secrets>,
+        _ops_budget: Option<u64>,
     ) -> Self {
         let mut builder = datalogic_engine_builder();
+        // Deliberately *not* inside `datalogic_engine_builder`: that helper is
+        // the chokepoint for settings which change what an expression *means*,
+        // and a resource ceiling does not. This is the only site that builds an
+        // engine a host's messages run against, so it is where the ceiling
+        // goes — the test constructions have no opinion about it.
+        //
+        // `with_config` replaces the whole `EvaluationConfig`, and `default()`
+        // is exactly what the datalogic builder already holds (its own
+        // `ops_budget` default is `None`), so this is a no-op when unset and
+        // needs no branch of its own. A second knob of this class — upstream's
+        // `max_recursion_depth`, say — should turn this into one carried
+        // `EvaluationConfig` rather than another parallel field.
+        #[cfg(feature = "budget")]
+        {
+            builder = builder.with_config(
+                datalogic_rs::EvaluationConfig::default().with_ops_budget(_ops_budget),
+            );
+        }
         for (name, op) in operators {
             builder = builder.add_operator(name.clone(), SharedOperator(Arc::clone(op)));
         }

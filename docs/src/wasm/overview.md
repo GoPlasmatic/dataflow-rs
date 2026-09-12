@@ -186,7 +186,7 @@ same task are distinguishable.
 ## Building from Source
 
 Requirements:
-- Rust 1.85+ (the workspace MSRV)
+- Rust 1.98+ (the workspace MSRV)
 - wasm-pack
 
 ```bash

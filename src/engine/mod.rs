@@ -163,6 +163,12 @@ pub struct Engine {
     /// `Message`; carried across [`Engine::with_new_workflows`] like the
     /// custom operators, and for the same reason.
     secrets: Arc<Secrets>,
+    /// Per-evaluation operation ceiling, or `None` for unbounded. Retained for
+    /// the same reason as `secrets` and the operators: a hot reload builds a
+    /// fresh datalogic engine, and a budget that silently lifted itself on
+    /// reload would be worse than no budget at all. Always `None` without the
+    /// `budget` feature.
+    ops_budget: Option<u64>,
 }
 
 /// The custom-operator registrations an engine carries across rebuilds.
@@ -226,17 +232,19 @@ impl Engine {
             task_functions,
             datalogic_operators,
             Arc::new(Secrets::empty()),
+            None,
         )
     }
 
     /// The one constructor every public entry point funnels into. `secrets`
-    /// is builder-only — `Engine::new*` are escape hatches whose signatures
-    /// stay put.
+    /// and `ops_budget` are builder-only — `Engine::new*` are escape hatches
+    /// whose signatures stay put.
     fn new_inner(
         workflows: Vec<Workflow>,
         task_functions: HashMap<String, BoxedFunctionHandler>,
         datalogic_operators: DatalogicOperators,
         secrets: Arc<Secrets>,
+        ops_budget: Option<u64>,
     ) -> Result<Self> {
         // Checked here rather than in the builder so the `Engine::new*` escape
         // hatches refuse too: a host operator under this name would be
@@ -255,7 +263,8 @@ impl Engine {
         // The compiler is built first only to read the operator vocabulary —
         // the key checks need it. Refusal still runs before compilation, so an
         // authoring issue is reported ahead of any compile error.
-        let compiler = LogicCompiler::with_operators_and_secrets(&datalogic_operators, &secrets);
+        let compiler =
+            LogicCompiler::with_operators_and_secrets(&datalogic_operators, &secrets, ops_budget);
         refuse_authoring_issues(&workflows, &secrets)?;
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
@@ -290,6 +299,7 @@ impl Engine {
                 env!("CARGO_PKG_VERSION").to_string(),
             )),
             secrets,
+            ops_budget,
         })
     }
 
@@ -341,8 +351,11 @@ impl Engine {
         // Compile new workflows with a fresh datalogic engine instance —
         // re-registering the retained custom operators, so a hot reload keeps
         // the same operator vocabulary as the engine it replaces.
-        let compiler =
-            LogicCompiler::with_operators_and_secrets(&self.datalogic_operators, &self.secrets);
+        let compiler = LogicCompiler::with_operators_and_secrets(
+            &self.datalogic_operators,
+            &self.secrets,
+            self.ops_budget,
+        );
         refuse_authoring_issues(&workflows, &self.secrets)?;
         let mut sorted_workflows = compiler.compile_workflows(workflows)?;
         let datalogic = compiler.into_engine();
@@ -383,6 +396,7 @@ impl Engine {
             datalogic_operators: Arc::clone(&self.datalogic_operators),
             engine_version: Arc::clone(&self.engine_version),
             secrets: Arc::clone(&self.secrets),
+            ops_budget: self.ops_budget,
         })
     }
 
@@ -441,6 +455,7 @@ impl Engine {
             datalogic_operators: self.datalogic_operators,
             engine_version: self.engine_version,
             secrets: self.secrets,
+            ops_budget: self.ops_budget,
         }
     }
 
@@ -956,6 +971,9 @@ pub struct EngineBuilder {
     /// Validated on the way in, so `build()` and `check_workflow` read one
     /// store; the `Err` is what `build()` returns for a non-object value.
     secrets: Option<Result<Secrets>>,
+    /// Per-evaluation operation ceiling. Only settable under the `budget`
+    /// feature; the field itself is unconditional so `build()` needs no `cfg`.
+    ops_budget: Option<u64>,
 }
 
 impl EngineBuilder {
@@ -1225,6 +1243,59 @@ impl EngineBuilder {
         self.with_secrets(OwnedDataValue::from(secrets))
     }
 
+    /// Bound every JSONLogic evaluation this engine performs to `budget`
+    /// operations. Not calling this leaves evaluation unbounded, as before.
+    ///
+    /// One operation is one dispatched node, one item an iterator examines, or
+    /// whatever an operator charges for the data it moves; literals and
+    /// constant-folded subtrees cost nothing. Crossing the ceiling aborts that
+    /// evaluation *before* the work is done — which is the point: a
+    /// deterministic bound on untrusted rules, identical on every machine,
+    /// rather than a wall-clock timeout that reports the cost only after
+    /// paying it.
+    ///
+    /// The ceiling is per *evaluation*, not per task, message or workflow: a
+    /// task that evaluates ten expressions gets `budget` operations for each.
+    /// Sizing it is empirical — start well above the cost of your legitimate
+    /// rules.
+    ///
+    /// # How a refusal reaches you depends on what was being evaluated
+    ///
+    /// The ceiling is installed on the engine, so it bounds *every* evaluation.
+    /// How the refusal is reported is not uniform:
+    ///
+    /// - A handler's evaluation ([`TaskContext::eval`] and friends, and any
+    ///   [`Template`] parameter) surfaces [`DataflowError::BudgetExceeded`],
+    ///   recorded in `message.errors()` with code `BUDGET_EXCEEDED`.
+    /// - A **condition** — on a workflow, task or group, or in `filter` —
+    ///   fails closed to `false` and is reported only in the log, because
+    ///   condition evaluation has no error channel: every datalogic failure
+    ///   there has always collapsed to "did not match". So a refused condition
+    ///   skips its workflow or task rather than rejecting the message.
+    /// - `map`, `log` and `validation` log the refusal and continue, the same
+    ///   way they treat any other evaluation failure.
+    ///
+    /// Only the first is distinguishable from an ordinary failure by code.
+    ///
+    /// Carried across [`Engine::with_new_workflows`], so a hot reload cannot
+    /// silently lift the bound.
+    ///
+    /// Requires the `budget` feature.
+    ///
+    /// ```no_run
+    /// # use dataflow_rs::Engine;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let engine = Engine::builder().with_ops_budget(100_000).build()?;
+    /// # let _ = engine;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "budget")]
+    pub fn with_ops_budget(mut self, budget: u64) -> Self {
+        self.ops_budget = Some(budget);
+        self
+    }
+
     /// Register a custom JSONLogic operator on the engine's internal datalogic
     /// instance, under `name`. Later calls with the same name replace the
     /// earlier registration.
@@ -1278,6 +1349,7 @@ impl EngineBuilder {
             self.handlers,
             Arc::new(self.datalogic_operators),
             secrets,
+            self.ops_budget,
         )?;
         let engine = match error_context {
             Some(cfg) => engine.with_error_context(cfg),

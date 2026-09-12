@@ -17,9 +17,12 @@ number:
 
 ## Prerequisites
 
-- **Rust 1.85 or later** (Edition 2024). This is the crate's declared MSRV and
-  CI enforces it, so avoid language features stabilized after 1.85 — notably
-  let-chains (`if let ... && let ...`), which need 1.88.
+- **Rust 1.98 or later** (Edition 2024). This is the crate's declared MSRV and
+  CI enforces it. The floor is inherited rather than chosen: `datalogic-rs`
+  5.5 and `datavalue-rs` 0.3 both declare `rust-version = "1.98"`, so the
+  crate cannot build on less. Let-chains (`if let ... && let ...`, stable
+  since 1.88) are therefore allowed, and clippy's `collapsible_if` now asks
+  for them.
 - **Node.js 20+** — only if you are touching `ui/`.
 - **wasm-pack** — if you are touching `wasm/`, or running the `ui/` debugger
   against unreleased engine changes (see *Running the debugger against your
@@ -153,8 +156,8 @@ cargo deny --all-features check
 If you touched anything under `src/`, confirm you have not raised the MSRV:
 
 ```bash
-rustup toolchain install 1.85
-cargo +1.85 check --workspace --all-targets --all-features --locked
+rustup toolchain install 1.98
+cargo +1.98 check --workspace --all-targets --all-features --locked
 ```
 
 ## Documentation

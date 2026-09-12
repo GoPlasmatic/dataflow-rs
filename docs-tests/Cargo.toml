@@ -4,7 +4,7 @@ name = "dataflow-docs-tests"
 # consumed only by path, so it is not part of the three-artifact release bump.
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.98"
 publish = false
 license = "Apache-2.0"
 description = "Compiles the Rust examples in docs/src as doctests. Not published."

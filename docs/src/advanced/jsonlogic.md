@@ -296,11 +296,28 @@ default**:
 | `error-handling` | `try`, `throw` |
 | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
 | `all-operators` | every family above |
+| `tensor` | `tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype` — **not** in `all-operators`, see below |
 
 ```toml
 [dependencies]
 dataflow-rs = { version = "3.12", features = ["ext-string", "ext-control"] }
 ```
+
+### `tensor` is opt-in separately
+
+`tensor` is the one family `all-operators` leaves out. A third of its names are
+ordinary JSON keys — `shape`, `full`, `cast`, `pad`, `crop`, `concat`, `stack` —
+and under templating mode a single-key object whose key is a live operator is
+*evaluated*, not passed through. Folding it into `all-operators` would quietly
+change what `{"shape": ...}` means in workflows that already run, so it is a
+choice you make deliberately:
+
+```toml
+[dependencies]
+dataflow-rs = { version = "3.12", features = ["tensor"] }
+```
+
+With it on, write `{"$shape": ...}` wherever you need the literal object.
 
 `error-handling` names the JSONLogic `try`/`throw` operators. It has nothing to
 do with dataflow-rs's own [error handling](../core-concepts/error-handling.md),

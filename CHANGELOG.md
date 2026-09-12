@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tensor` feature** — forwards `datalogic-rs/tensor` (and
+  `datavalue-rs/tensor`, whose `Tensor` variant this crate matches on),
+  enabling the `Tensor` value plus 20 marshalling operators over it: `tensor`,
+  `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`,
+  `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`,
+  `argmax`, `gather`, `to_list`, `shape`, `dtype`. Pulls no new dependency.
+
+  **Deliberately *not* part of `all-operators`**, unlike every other family.
+  A third of those names are ordinary JSON keys — `shape`, `full`, `cast`,
+  `pad`, `crop`, `concat`, `stack` — and in templating mode a single-key
+  object whose key is a live operator *evaluates* rather than passing through
+  as data. Since `all-operators` is what `@goplasmatic/dataflow-wasm` ships,
+  folding it in would silently change what `{"shape": ...}` means in workflows
+  that already run, with no lint able to catch it. Opt in with
+  `features = ["tensor"]` and use `{"$shape": ...}` to pin a literal reading.
+
+- **`budget` feature** and **`EngineBuilder::with_ops_budget`** — a
+  per-evaluation operation ceiling with a hard abort, for bounding untrusted
+  rules deterministically rather than with a wall-clock timeout. One operation
+  is one dispatched node, one item an iterator examines, or whatever an
+  operator charges for the data it moves; literals and constant-folded
+  subtrees cost nothing. The ceiling is per *evaluation*, not per task or
+  message, and is carried across `Engine::with_new_workflows` so a hot reload
+  cannot silently lift it.
+
+  Enabling the feature alone installs no ceiling — without a `with_ops_budget`
+  call evaluation stays semantically unbounded. It is not free, though: the
+  counter lives behind the same feature upstream, so enabling it costs an
+  add-and-compare per dispatched node even with no ceiling set. That is why it
+  is off by default and out of the wasm bundle.
+
+  How a refusal reaches you is not uniform, and the rustdoc says so: a
+  handler's evaluation (`TaskContext::eval`, any `Template` parameter) surfaces
+  `BudgetExceeded`, while a **condition** — workflow, task, group, or `filter` —
+  fails closed to `false` and is reported only in the log, because condition
+  evaluation has no error channel and never has had one.
+
+- **`DataflowError::BudgetExceeded`** — error code `BUDGET_EXCEEDED`,
+  non-retryable (the same rule over the same data spends the same operations,
+  so a retry crosses the same ceiling). Classified in one place,
+  `error::from_datalogic_eval`, alongside `LOGIC_ERROR`; compile-time
+  failures stay `LogicEvaluation`, since compiling and constant-folding charge
+  nothing. The variant is not feature-gated even though only a `budget` build
+  constructs one — errors are serialized into `message.errors()` and read back
+  by hosts that need not share the producer's feature set.
+
+### Changed
+
+- **MSRV raised to 1.98**, from 1.85. Inherited rather than chosen:
+  `datalogic-rs` 5.5 and `datavalue-rs` 0.3 both declare
+  `rust-version = "1.98"`. Consequently let-chains are now permitted — and
+  clippy's `collapsible_if` asks for them — so the nested `if let`s the 1.85
+  floor forced have been collapsed.
+
+- **Dependencies:** `datalogic-rs` 5.4 → 5.5, `datavalue-rs` 0.2.3 → 0.3
+  (required: 5.5 moved to it, and two versions of that crate in one graph do
+  not typecheck against each other), `quick-xml` 0.41 → 0.42 (previously held
+  back by the 1.85 floor).
+
+- **npm (`@goplasmatic/dataflow-ui`):** `@goplasmatic/dataflow-wasm` ^3.8.0 →
+  ^3.12.0, `@xyflow/react` 12.11.5 → 12.11.6, `lucide-react` ^1.38 → ^1.45,
+  `react` / `react-dom` / their `@types` → ^19.3, `vite` ^8.2 → ^8.3,
+  `vite-plugin-dts` ^5.0 → ^5.1, `eslint` ^10.9 → ^10.10, `typescript-eslint`
+  ^8.68 → ^8.70, `globals` ^17.11 → ^17.12, `eslint-plugin-react-refresh`
+  ^0.5.5 → ^0.5.6. `typescript` stays on ^6: typescript-eslint 8.70 supports
+  `>=4.8.4 <6.1.0`, so 7.x is still out of range.
+  `@goplasmatic/datalogic-ui` stays on ^5.4 — no 5.5 is published.
+
 ## [3.12.0] — 2026-09-05
 
 A handler type registered under several names can now tell which registration

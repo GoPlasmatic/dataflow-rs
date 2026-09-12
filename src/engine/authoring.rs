@@ -1036,17 +1036,17 @@ fn check_expression(
 fn collect_secret_refs<'v>(value: &'v Value, path: &str, out: &mut Vec<(String, Option<&'v str>)>) {
     match value {
         Value::Object(map) => {
-            if map.len() == 1 {
-                if let Some(arg) = map.get(SECRET_OPERATOR) {
-                    let literal = match arg {
-                        Value::String(s) => Some(s.as_str()),
-                        Value::Array(items) if items.len() == 1 => items[0].as_str(),
-                        _ => None,
-                    };
-                    out.push((path.to_string(), literal));
-                    collect_secret_refs(arg, &format!("{path}.{SECRET_OPERATOR}"), out);
-                    return;
-                }
+            if map.len() == 1
+                && let Some(arg) = map.get(SECRET_OPERATOR)
+            {
+                let literal = match arg {
+                    Value::String(s) => Some(s.as_str()),
+                    Value::Array(items) if items.len() == 1 => items[0].as_str(),
+                    _ => None,
+                };
+                out.push((path.to_string(), literal));
+                collect_secret_refs(arg, &format!("{path}.{SECRET_OPERATOR}"), out);
+                return;
             }
             for (key, child) in map {
                 collect_secret_refs(child, &format!("{path}.{key}"), out);
@@ -1137,25 +1137,25 @@ fn check_steps(tasks: &Value, issues: &mut Vec<WorkflowIssue>) {
             }
         }
 
-        if let Some(terminal) = step.node.get("terminal") {
-            if !terminal.is_boolean() {
-                // `"on_failure"` is the natural wrong guess once `halt_on`
-                // exists — answer it rather than reporting a bare type error.
-                let message = if terminal.as_str() == Some("on_failure") {
-                    "terminal must be a boolean — for \"halt if this task failed\" \
+        if let Some(terminal) = step.node.get("terminal")
+            && !terminal.is_boolean()
+        {
+            // `"on_failure"` is the natural wrong guess once `halt_on`
+            // exists — answer it rather than reporting a bare type error.
+            let message = if terminal.as_str() == Some("on_failure") {
+                "terminal must be a boolean — for \"halt if this task failed\" \
                      use `\"halt_on\": \"failure\"`, which is the outcome axis"
-                } else {
-                    "terminal must be a boolean"
-                };
-                issues.push(
-                    WorkflowIssue::at(
-                        IssueCode::InvalidTerminal,
-                        format!("{}.terminal", step.path),
-                        message,
-                    )
-                    .with_step(id),
-                );
-            }
+            } else {
+                "terminal must be a boolean"
+            };
+            issues.push(
+                WorkflowIssue::at(
+                    IssueCode::InvalidTerminal,
+                    format!("{}.terminal", step.path),
+                    message,
+                )
+                .with_step(id),
+            );
         }
 
         // Asking serde rather than keeping a list of accepted spellings, so a
@@ -1252,45 +1252,42 @@ fn check_loop(config: &Value, issues: &mut Vec<WorkflowIssue>) {
     // Absent fields take their serde defaults, which are valid; only a present
     // field can be wrong here. A non-integer is a *type* error and belongs to
     // stage 2, so it is deliberately not reported twice.
-    if let Some(increment) = config.get("increment").and_then(Value::as_i64) {
-        if increment < 1 {
-            issues.push(WorkflowIssue::at(
-                IssueCode::LoopIncrementTooSmall,
-                "loop.increment",
-                format!(
-                    "loop increment must be >= 1, got {increment} \
+    if let Some(increment) = config.get("increment").and_then(Value::as_i64)
+        && increment < 1
+    {
+        issues.push(WorkflowIssue::at(
+            IssueCode::LoopIncrementTooSmall,
+            "loop.increment",
+            format!(
+                "loop increment must be >= 1, got {increment} \
                      (a non-advancing counter would never reach max)"
-                ),
-            ));
-        }
+            ),
+        ));
     }
 
     let init = config.get("init").and_then(Value::as_i64).unwrap_or(0);
-    if let Some(max) = config.get("max").and_then(Value::as_i64) {
-        if max <= init {
-            issues.push(WorkflowIssue::at(
-                IssueCode::LoopBoundEmpty,
-                "loop.max",
-                format!(
-                    "loop max ({max}) must be greater than init ({init}) — \
+    if let Some(max) = config.get("max").and_then(Value::as_i64)
+        && max <= init
+    {
+        issues.push(WorkflowIssue::at(
+            IssueCode::LoopBoundEmpty,
+            "loop.max",
+            format!(
+                "loop max ({max}) must be greater than init ({init}) — \
                      the bound is half-open, so this could never run a sweep"
-                ),
-            ));
-        }
+            ),
+        ));
     }
 
-    if let Some(counter) = config.get("counter") {
-        if let Some(counter) = counter.as_str() {
-            if counter.is_empty() || counter.split('.').any(str::is_empty) {
-                issues.push(WorkflowIssue::at(
-                    IssueCode::LoopCounterInvalid,
-                    "loop.counter",
-                    format!(
-                        "loop counter must be a non-empty temp_data field path, got {counter:?}"
-                    ),
-                ));
-            }
-        }
+    if let Some(counter) = config.get("counter")
+        && let Some(counter) = counter.as_str()
+        && (counter.is_empty() || counter.split('.').any(str::is_empty))
+    {
+        issues.push(WorkflowIssue::at(
+            IssueCode::LoopCounterInvalid,
+            "loop.counter",
+            format!("loop counter must be a non-empty temp_data field path, got {counter:?}"),
+        ));
     }
 }
 

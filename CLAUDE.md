@@ -78,12 +78,15 @@ depends on `dataflow-rs` with `all-operators`, and cargo unifies features across
 workspace members, so a `--workspace` invocation always has every operator
 family on. Same reasoning applies to `cargo test -p dataflow-rs`.
 
-**MSRV is 1.85 and CI enforces it.** Do not use language features stabilized
-after 1.85 — most easily tripped is let-chains (`if let ... && let ...`), which
-need 1.88. Write nested `if let`s instead. Verify with:
+**MSRV is 1.98 and CI enforces it.** The floor is *inherited, not chosen*:
+`datalogic-rs` 5.5 and `datavalue-rs` 0.3 both declare `rust-version = "1.98"`,
+so it moves when they move and is not a knob this crate turns. Let-chains
+(`if let ... && let ...`, stable since 1.88) are consequently fine — clippy's
+`collapsible_if` now *asks* for them, so the nested `if let`s the old 1.85
+floor forced have been collapsed. Verify with:
 
 ```bash
-cargo +1.85 check --workspace --all-targets --all-features --locked
+cargo +1.98 check --workspace --all-targets --all-features --locked
 ```
 
 ### Examples
@@ -270,14 +273,44 @@ matching version.
 - **Operator families are opt-in, and enabling one is not a no-op.** The
   `datalogic-rs` extension operators ship behind cargo features (`ext-string`,
   `ext-array`, `ext-math`, `ext-control`, `ext-object`, `error-handling`,
-  `datetime`, `all-operators`), all off by default. Because the engine always runs in
-  templating mode, an operator whose family is off is *not* an error — the
-  object echoes back as literal data. So turning a family on converts
-  previously-inert values like `{"length": …}` into live operator calls, and
-  `datetime` additionally changes `==` and the ordering operators on plain
-  date-shaped strings. Both directions are pinned by `#[cfg]`-gated tests in
-  `src/engine/compiler.rs`; keep them that way, and never test only
+  `datetime`, `tensor`, `all-operators`), all off by default. Because the
+  engine always runs in templating mode, an operator whose family is off is
+  *not* an error — the object echoes back as literal data. So turning a family
+  on converts previously-inert values like `{"length": …}` into live operator
+  calls, and `datetime` additionally changes `==` and the ordering operators on
+  plain date-shaped strings. Both directions are pinned by `#[cfg]`-gated tests
+  in `src/engine/compiler.rs`; keep them that way, and never test only
   `--all-features`.
+- **`tensor` is a family but is deliberately *not* in `all-operators`.** It is
+  the only exception, and the reason is collision, not size or dependencies
+  (it pulls none). Its 20 names include `shape`, `full`, `cast`, `pad`, `crop`,
+  `concat` and `stack` — ordinary JSON keys — and `all-operators` is what
+  `wasm/` ships to npm, so folding it in would silently change what
+  `{"shape": …}` means in workflows that already ship. There is no lint to
+  catch that: `check_template_keys` cannot distinguish an unknown single key
+  from the ordinary output-template shape. `{"$shape": …}` pins the literal
+  reading. `tests/tensor.rs::shape_is_a_live_operator_once_the_feature_is_on`
+  is the pinned trigger — if the family is ever folded in, that test is the
+  reminder of what it costs.
+- **`budget` is a config knob, not a family.** It forwards
+  `datalogic-rs/budget` and unlocks `EngineBuilder::with_ops_budget`, which is
+  the only thing that installs a ceiling — merely enabling the feature changes
+  no behaviour, which is what keeps it non-breaking. The budget is carried on
+  `Engine` alongside `secrets` and the custom operators *because* a hot reload
+  builds a fresh datalogic engine, and a bound that lifted itself on reload
+  would be worse than none. Exceeding it surfaces as
+  `DataflowError::BudgetExceeded` (code `BUDGET_EXCEEDED`, non-retryable),
+  classified in the one place `error::from_datalogic_eval` — compile-time
+  sites stay plain `LogicEvaluation`, since folding a constant charges nothing.
+  The ceiling binds every evaluation (it is on the datalogic engine), but only
+  the handler/`Template` path *reports* it as `BUDGET_EXCEEDED`: a condition
+  fails closed to `false` and `map`/`log`/`validation` log and continue, which
+  is how they have always treated an eval failure. Giving conditions an error
+  channel is a separate change — it would alter `VariableNotFound` handling in
+  every existing deployment.
+  The variant is **not** `#[cfg]`-gated even though only a `budget` build can
+  construct one: errors are serialized into `message.errors()` and travel to
+  hosts that need not share the producer's feature set.
 - **Every function parameter is JSONLogic, and the static spelling is free.**
   A JSON literal *is* JSONLogic for itself, so `"path": "data.out"` and
   `"timeout_ms": 5000` mean what they always did. `Template::compile` asks
@@ -366,6 +399,8 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `secrets_isolation.rs` | The never-recorded guarantee, exit by exit — every `TraceOptions` shape, errors, observer, logs, and the access vectors that must not reach the store |
 | `template_keys.rs` | The `$` escape end-to-end, and the two template-key issue codes |
 | `jsonlogic_params.rs` | Computed parameters — map destinations, parse/publish targets, validation messages |
+| `ops_budget.rs` | `with_ops_budget` — the ceiling, its error code, and that it survives a hot reload (needs `budget`) |
+| `tensor.rs` | The `tensor` forward reaching the engine, the `OwnedDataValue` boundary, and the `shape` collision (needs `tensor`) |
 
 Each file under `tests/` compiles as its own crate, so fixtures used by more
 than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
@@ -385,9 +420,12 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 735 passing.
+`cargo test --workspace --all-features` should report 745 passing.
 `cargo test -p dataflow-rs` (default features) should report 636 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
+The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
+`tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and
+`with_ops_budget`'s doctest is gated too.
 
 When extending the engine:
 

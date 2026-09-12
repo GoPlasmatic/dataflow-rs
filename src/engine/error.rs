@@ -49,6 +49,28 @@ pub enum DataflowError {
     #[error("Logic evaluation error: {0}")]
     LogicEvaluation(String),
 
+    /// An evaluation was aborted for crossing the per-evaluation operation
+    /// ceiling set by [`crate::EngineBuilder::with_ops_budget`].
+    ///
+    /// Split out from [`Self::LogicEvaluation`] so it carries its own error
+    /// code: a rule refused for costing too much is an operational signal a
+    /// host answers differently from a rule that is simply wrong.
+    ///
+    /// **Not** `#[cfg(feature = "budget")]`, even though only a `budget` build
+    /// can construct one. Features gate *capability*, never *vocabulary*: this
+    /// enum is `Serialize + Deserialize`, so gating a variant would make its
+    /// wire shape feature-dependent, and "same crate version" would stop
+    /// implying "same wire format" for every consumer that round-trips a
+    /// `DataflowError`. (`message.errors()` itself is unaffected either way —
+    /// that channel is `ErrorInfo`, which carries the code as a `String`.)
+    ///
+    /// No prefix of its own, unlike every sibling here. The string is
+    /// datalogic's message, which already opens with "Operation budget
+    /// exceeded:" and names the spend and the ceiling — a second prefix would
+    /// render as "Operation budget exceeded: Operation budget exceeded: ...".
+    #[error("{0}")]
+    BudgetExceeded(String),
+
     /// HTTP request errors
     #[error("HTTP error: {status} - {message}")]
     Http { status: u16, message: String },
@@ -139,6 +161,9 @@ impl DataflowError {
             // Non-retryable errors - data/logic/configuration issues
             Self::Validation(_) => false,
             Self::LogicEvaluation(_) => false,
+            // A deterministic ceiling: the same rule over the same data
+            // spends the same ops, so a retry buys nothing.
+            Self::BudgetExceeded(_) => false,
             Self::Deserialization(_) => false,
             Self::Workflow(_) => false,
             Self::Task(_) => false,
@@ -374,6 +399,7 @@ fn variant_code(error: &DataflowError) -> &'static str {
         DataflowError::FunctionNotFound(_) => "FUNCTION_NOT_FOUND",
         DataflowError::FunctionExecution { .. } => "FUNCTION_ERROR",
         DataflowError::LogicEvaluation(_) => "LOGIC_ERROR",
+        DataflowError::BudgetExceeded(_) => "BUDGET_EXCEEDED",
         DataflowError::Http { .. } => "HTTP_ERROR",
         DataflowError::Timeout(_) => "TIMEOUT_ERROR",
         DataflowError::Io(_) => "IO_ERROR",
@@ -402,6 +428,26 @@ pub(crate) fn service_error_code(error: &DataflowError) -> String {
         Some(kind) if !kind.is_empty() => kind.to_string(),
         _ => variant_code(error).to_string(),
     }
+}
+
+/// The single conversion from a `datalogic-rs` evaluation error into this
+/// crate's error channel.
+///
+/// Every *evaluation* failure that surfaces as a [`DataflowError`] goes through
+/// here, so the budget/ordinary split is decided in one place rather than at
+/// each `map_err`. Classification reads [`datalogic_rs::Error::tag`] rather
+/// than matching `ErrorKind`, because the `BudgetExceeded` variant is itself
+/// feature-gated in datalogic — the tag is the same string either way and
+/// needs no `cfg` here.
+///
+/// *Compile*-time failures deliberately do not use this: nothing is charged
+/// for compiling or for folding a constant subtree, so a budget error cannot
+/// arise there and those sites stay plain [`DataflowError::LogicEvaluation`].
+pub(crate) fn from_datalogic_eval(error: &datalogic_rs::Error) -> DataflowError {
+    if error.tag() == "BudgetExceeded" {
+        return DataflowError::BudgetExceeded(error.to_string());
+    }
+    DataflowError::LogicEvaluation(error.to_string())
 }
 
 impl ErrorInfo {

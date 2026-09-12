@@ -2,7 +2,7 @@
 name = "dataflow-rs"
 version = "3.12.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.98"
 # Allowlist of what ships in the published .crate: the library, its examples
 # and tests, and the user-facing root docs. An allowlist fails safe — future
 # repo-root additions (CI config, tooling, the npm-published ui/, the GitHub
@@ -26,11 +26,12 @@ repository = "https://github.com/GoPlasmatic/dataflow-rs"
 keywords = ["rules-engine", "ifttt", "automation", "jsonlogic", "workflow"]
 categories = ["data-structures", "development-tools", "config"]
 
-# docs.rs renders the operator families so their operator docs resolve.
+# docs.rs renders the operator families so their operator docs resolve, plus
+# `budget` so `EngineBuilder::with_ops_budget` appears at all.
 # `wasm-web` is deliberately excluded — it is a platform switch, not API
 # surface — which is why this is an explicit list rather than `all-features`.
 [package.metadata.docs.rs]
-features = ["all-operators"]
+features = ["all-operators", "budget"]
 
 [features]
 default = []
@@ -80,6 +81,29 @@ all-operators = [
     "error-handling",
 ]
 
+# The `Tensor` value plus 20 marshalling operators over it. Pulls no extra
+# dependency. Forwards `datavalue/tensor` as well as datalogic's, since the
+# `Tensor` variant it adds to `DataValue`/`OwnedDataValue` is datavalue's and
+# this crate matches on those enums directly.
+#
+# The one family deliberately **not** in `all-operators`: names like `shape`,
+# `full`, `cast` and `concat` are ordinary JSON keys, and in templating mode a
+# live operator key evaluates rather than passing through. Full rationale and
+# the `{"$shape": ...}` escape: docs/src/advanced/jsonlogic.md.
+tensor = ["datalogic-rs/tensor", "datavalue/tensor"]
+
+# Per-evaluation operation ceiling. Not in `all-operators`: a runtime config
+# knob, not an operator family — it adds no operator name and changes no
+# expression's meaning. Unlocks `EngineBuilder::with_ops_budget`; without that
+# call evaluation stays semantically unbounded.
+#
+# Not free, though: the counter lives in datalogic's `EvalContext::charge`
+# behind this same feature, so enabling it costs an add-and-compare per
+# dispatched node and per iterated item whether or not a ceiling is set. That
+# is why it is off by default and out of the wasm bundle — benchmarks run on
+# default features and stay comparable.
+budget = ["datalogic-rs/budget"]
+
 # `uuid/js` is what supplies randomness on wasm32-unknown-unknown: uuid's own
 # `getrandom` dependency is target-gated *off* for that triple, and its `js`
 # feature routes through wasm-bindgen/js-sys instead.
@@ -95,8 +119,8 @@ wasm-web = ["chrono/wasmbind", "uuid/js", "datalogic-rs/wasm-clock"]
 [dependencies]
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-datalogic-rs = { version = "5.4", features = ["serde_json", "templating"] }
-datavalue = { package = "datavalue-rs", version = "0.2.3", features = ["serde", "serde_json"] }
+datalogic-rs = { version = "5.5", features = ["serde_json", "templating"] }
+datavalue = { package = "datavalue-rs", version = "0.3", features = ["serde", "serde_json"] }
 bumpalo = "3.20"
 uuid = { version = "1.26", default-features = false, features = ["v7", "std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
@@ -104,7 +128,7 @@ thiserror = "2.0"
 log = "0.4"
 tokio = { version = "1", features = ["rt", "macros"] }
 async-trait = "0.1"
-quick-xml = { version = "0.41", features = ["serialize"] }
+quick-xml = { version = "0.42", features = ["serialize"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

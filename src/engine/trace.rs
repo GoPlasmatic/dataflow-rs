@@ -437,20 +437,20 @@ impl ExecutionTrace {
             }
         }
 
-        if self.options.mapping_contexts {
-            if let Some(mut contexts) = mapping_contexts {
-                // These arrive already cloned by the map function, so redact
-                // first and then decide whether to retain them.
-                for ctx in &mut contexts {
-                    redact_json_in_place(ctx, &self.redact_segments);
-                }
-                let size: usize = contexts.iter().map(approx_json_size).sum();
-                if self.would_exceed(size) {
-                    self.truncated = true;
-                } else {
-                    self.snapshot_bytes += size;
-                    step.mapping_contexts = Some(contexts);
-                }
+        if self.options.mapping_contexts
+            && let Some(mut contexts) = mapping_contexts
+        {
+            // These arrive already cloned by the map function, so redact
+            // first and then decide whether to retain them.
+            for ctx in &mut contexts {
+                redact_json_in_place(ctx, &self.redact_segments);
+            }
+            let size: usize = contexts.iter().map(approx_json_size).sum();
+            if self.would_exceed(size) {
+                self.truncated = true;
+            } else {
+                self.snapshot_bytes += size;
+                step.mapping_contexts = Some(contexts);
             }
         }
 

@@ -98,13 +98,13 @@ impl LoopConfig {
                 self.max, self.init
             )));
         }
-        if let Some(counter) = &self.counter {
-            if counter.is_empty() || counter.split('.').any(str::is_empty) {
-                return Err(DataflowError::Workflow(format!(
-                    "Workflow {workflow_id}: loop counter must be a non-empty \
+        if let Some(counter) = &self.counter
+            && (counter.is_empty() || counter.split('.').any(str::is_empty))
+        {
+            return Err(DataflowError::Workflow(format!(
+                "Workflow {workflow_id}: loop counter must be a non-empty \
                      temp_data field path, got {counter:?}"
-                )));
-            }
+            )));
         }
         Ok(())
     }

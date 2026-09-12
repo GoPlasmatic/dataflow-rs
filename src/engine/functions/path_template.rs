@@ -225,10 +225,10 @@ impl<R: PathRoot> PathTemplate<R> {
         // compiled. Fall back to reading it straight off the authored JSON:
         // same semantics, one extra allocation per call, which is the contract
         // `MapConfig`, `ParseConfig` and `PublishConfig` each had before 3.9.
-        if !self.template.is_compiled() {
-            if let Value::String(s) = self.template.as_json() {
-                return Ok(R::compute(s));
-            }
+        if !self.template.is_compiled()
+            && let Value::String(s) = self.template.as_json()
+        {
+            return Ok(R::compute(s));
         }
         Ok(R::compute(&self.template.resolve_string(ctx)?))
     }
@@ -250,10 +250,10 @@ impl<R: PathRoot> PathTemplate<R> {
         if let Some(pair) = &self.precomputed {
             return Ok(Cow::Borrowed(pair));
         }
-        if !self.template.is_compiled() {
-            if let Value::String(s) = self.template.as_json() {
-                return Ok(Cow::Owned(R::compute(s)));
-            }
+        if !self.template.is_compiled()
+            && let Value::String(s) = self.template.as_json()
+        {
+            return Ok(Cow::Owned(R::compute(s)));
         }
         Ok(Cow::Owned(R::compute(
             &self.template.resolve_str_in_arena(p)?,

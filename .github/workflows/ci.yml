@@ -192,15 +192,18 @@ jobs:
   # `rust-version` in Cargo.toml is a promise to downstream consumers, and
   # nothing else in CI verifies it — the other jobs run stable. This caught the
   # crate having silently required 1.88 (let-chains) while advertising 1.85.
+  #
+  # The floor is 1.98: `datalogic-rs` 5.5 and `datavalue-rs` 0.3 both declare
+  # `rust-version = "1.98"`, so it is inherited, not chosen.
   msrv:
-    name: MSRV (1.85)
+    name: MSRV (1.98)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Rust 1.85
-        uses: dtolnay/rust-toolchain@1.85
+      - name: Setup Rust 1.98
+        uses: dtolnay/rust-toolchain@1.98
 
       - name: Cache cargo
         uses: actions/cache@v6

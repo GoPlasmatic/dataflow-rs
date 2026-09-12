@@ -11,7 +11,7 @@
 //! when `message.capture_changes` is true, keeping the audit trail in sync
 //! with the data without per-handler boilerplate.
 
-use crate::engine::error::{DataflowError, ErrorInfo, Result};
+use crate::engine::error::{ErrorInfo, Result};
 use crate::engine::message::{Change, Message};
 use crate::engine::secrets::{self, Secrets};
 use crate::engine::utils::{get_nested_value, set_nested_value};
@@ -233,10 +233,13 @@ impl<'a> TaskContext<'a> {
     ///
     /// # Errors
     ///
-    /// [`DataflowError::LogicEvaluation`] if the expression fails to evaluate.
+    /// [`crate::DataflowError::LogicEvaluation`] if the expression fails to
+    /// evaluate, or [`crate::DataflowError::BudgetExceeded`] if it was aborted
+    /// for crossing the ceiling set by
+    /// [`crate::EngineBuilder::with_ops_budget`].
     pub fn eval(&self, logic: &Logic) -> Result<OwnedDataValue> {
         crate::engine::executor::eval_to_owned(self.datalogic, logic, &self.message.context)
-            .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))
+            .map_err(|e| crate::engine::error::from_datalogic_eval(&e))
     }
 
     /// As [`Self::eval`], projected straight from the arena to
@@ -244,7 +247,7 @@ impl<'a> TaskContext<'a> {
     /// `serde_json::from_value` rebuild.
     pub fn eval_json(&self, logic: &Logic) -> Result<JsonValue> {
         crate::engine::executor::eval_to_json(self.datalogic, logic, &self.message.context)
-            .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))
+            .map_err(|e| crate::engine::error::from_datalogic_eval(&e))
     }
 
     /// As [`Self::eval`], coerced to a *plain* string: a JSON string result
@@ -262,7 +265,7 @@ impl<'a> TaskContext<'a> {
     /// keys. A test pins both sides, so it fails if either changes.
     pub fn eval_to_plain_string(&self, logic: &Logic) -> Result<String> {
         crate::engine::executor::eval_to_plain_string(self.datalogic, logic, &self.message.context)
-            .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))
+            .map_err(|e| crate::engine::error::from_datalogic_eval(&e))
     }
 
     /// Look up a value by dot-path against the full context tree (rooted at
@@ -326,6 +329,7 @@ impl<'a> TaskContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::error::DataflowError;
     use crate::engine::executor::with_arena;
     use crate::engine::utils::set_nested_value;
     use serde_json::json;

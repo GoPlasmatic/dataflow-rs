@@ -376,16 +376,10 @@ fn note_task_skip(
 /// missing-bucket case admits deliberately: every message any existing caller
 /// builds has no bucket, and the wasm entry points have no way to set one, so
 /// rejecting would silently stop those workflows running.
-///
-/// Nested `match` rather than a let-chain: MSRV is 1.85. See
-/// `write_progress_metadata` below for the same reason.
 fn rollout_admits(workflow: &Workflow, message: &Message) -> bool {
-    match workflow.rollout {
-        None => true,
-        Some(r) => match message.routing_bucket() {
-            None => true,
-            Some(b) => r.accepts(b),
-        },
+    match (workflow.rollout, message.routing_bucket()) {
+        (Some(r), Some(b)) => r.accepts(b),
+        _ => true,
     }
 }
 
@@ -504,30 +498,27 @@ fn write_progress_metadata(
     task_id: &str,
     status: u16,
 ) {
-    // Nested `if let` rather than a let-chain: let-chains are stable only from
-    // Rust 1.88 and this crate's MSRV is 1.85. Keep it that way.
-    if let OwnedDataValue::Object(top) = context {
-        if let Some((_, OwnedDataValue::Object(meta))) =
+    if let OwnedDataValue::Object(top) = context
+        && let Some((_, OwnedDataValue::Object(meta))) =
             top.iter_mut().find(|(k, _)| k == "metadata")
-        {
-            match meta.iter_mut().find(|(k, _)| k == "progress") {
-                Some((_, slot)) => {
-                    if let OwnedDataValue::Object(fields) = slot {
-                        if overwrite_progress_in_place(fields, workflow_id, task_id, status) {
-                            return;
-                        }
-                    }
-                    *slot = new_progress_object(workflow_id, task_id, status);
+    {
+        match meta.iter_mut().find(|(k, _)| k == "progress") {
+            Some((_, slot)) => {
+                if let OwnedDataValue::Object(fields) = slot
+                    && overwrite_progress_in_place(fields, workflow_id, task_id, status)
+                {
+                    return;
                 }
-                None => {
-                    meta.push((
-                        "progress".to_string(),
-                        new_progress_object(workflow_id, task_id, status),
-                    ));
-                }
+                *slot = new_progress_object(workflow_id, task_id, status);
             }
-            return;
+            None => {
+                meta.push((
+                    "progress".to_string(),
+                    new_progress_object(workflow_id, task_id, status),
+                ));
+            }
         }
+        return;
     }
     set_nested_value(
         context,
@@ -1956,7 +1947,6 @@ impl WorkflowExecutor {
                 )
                 .workflow_id(workflow_id)
                 .task_id(task_id);
-                // Nested `if let`, not a let-chain: MSRV is 1.85.
                 if let Some(detail) = e.detail() {
                     info = info.detail(detail);
                 }

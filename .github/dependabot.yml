@@ -49,7 +49,7 @@ updates:
       day: monday
     ignore:
       # The tag on dtolnay/rust-toolchain selects the *Rust toolchain* to
-      # install (stable, 1.85, ...), not an action version. The @1.85 pin is
+      # install (stable, 1.98, ...), not an action version. The @1.98 pin is
       # this crate's MSRV and must only change together with `rust-version`
       # in Cargo.toml — never via a dependency bump (see closed PR #19).
       - dependency-name: "dtolnay/rust-toolchain"

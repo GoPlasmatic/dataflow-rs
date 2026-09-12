@@ -308,7 +308,7 @@ impl Template {
         let evaluated = p
             .engine()
             .evaluate(logic, *p.context(), p.arena())
-            .map_err(|e| DataflowError::LogicEvaluation(e.to_string()))?;
+            .map_err(|e| crate::engine::error::from_datalogic_eval(&e))?;
         Ok(Cow::Owned(match evaluated {
             datavalue::DataValue::String(s) => s.to_string(),
             other => other.to_string(),

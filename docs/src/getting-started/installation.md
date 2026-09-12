@@ -4,7 +4,7 @@ Add dataflow-rs to your Rust project using Cargo.
 
 ## Requirements
 
-- Rust 1.85 or later (Edition 2024)
+- Rust 1.98 or later (Edition 2024)
 - Cargo (comes with Rust)
 
 ## Add to Cargo.toml
@@ -30,6 +30,8 @@ All features are off by default; the default build has core JSONLogic only.
 | `error-handling` | `try`, `throw` (the JSONLogic operators — unrelated to dataflow-rs error handling, which is always on) |
 | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
 | `all-operators` | every family above |
+| `tensor` | `tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype` — deliberately **not** in `all-operators`: several names collide with ordinary JSON keys |
+| `budget` | `EngineBuilder::with_ops_budget` — a per-evaluation operation ceiling with a hard abort |
 | `wasm-web` | required when targeting `wasm32-unknown-unknown` |
 
 ```toml
