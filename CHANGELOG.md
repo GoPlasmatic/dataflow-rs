@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.0] — 2026-09-13
+
+Two opt-in capabilities arrive with `datalogic-rs` 5.5: a hard ceiling on how
+much work a single evaluation may do, and tensors as a first-class value.
+
+Both stay off by default, for different reasons. The budget counter is charged
+on every dispatched node, so the cost is real even when no ceiling is set. The
+tensor family collides with ordinary JSON — `shape`, `full`, `cast`, `pad`,
+`crop`, `concat`, `stack` — and in templating mode a single-key object whose
+key is a live operator evaluates rather than passing through as data, so it is
+the one family `all-operators` does not include.
+
 ### Added
 
 - **`tensor` feature** — forwards `datalogic-rs/tensor` (and
@@ -75,7 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ^8.68 → ^8.70, `globals` ^17.11 → ^17.12, `eslint-plugin-react-refresh`
   ^0.5.5 → ^0.5.6. `typescript` stays on ^6: typescript-eslint 8.70 supports
   `>=4.8.4 <6.1.0`, so 7.x is still out of range.
-  `@goplasmatic/datalogic-ui` stays on ^5.4 — no 5.5 is published.
+  `@goplasmatic/datalogic-ui` ^5.4 → ^5.5, matching the `datalogic-rs` 5.5
+  the engine now builds on.
 
 - **Crate metadata:** `readme` and `homepage` dropped from the root
   `Cargo.toml`. Cargo infers the readme from `README.md` (it stays in the
