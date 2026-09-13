@@ -77,6 +77,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `>=4.8.4 <6.1.0`, so 7.x is still out of range.
   `@goplasmatic/datalogic-ui` stays on ^5.4 — no 5.5 is published.
 
+- **Crate metadata:** `readme` and `homepage` dropped from the root
+  `Cargo.toml`. Cargo infers the readme from `README.md` (it stays in the
+  `include` allowlist and still ships), and `homepage` was a copy of
+  `repository`, so the only visible change is that crates.io no longer shows
+  a Homepage link duplicating the Repository one. Nightly cargo now warns on
+  both (`cargo::manual_readme`, `cargo::redundant_homepage`), and
+  `actions-rust-lang/setup-rust-toolchain` v2 — which the docs deploy adopts
+  in [#58](https://github.com/GoPlasmatic/dataflow-rs/pull/58) — replaces its
+  `RUSTFLAGS="-D warnings"` default with cargo's `build.warnings = "deny"`,
+  which counts manifest warnings too. Without this the wasm build in that
+  job fails on the first nightly after the bump.
+
 ## [3.12.0] — 2026-09-05
 
 A handler type registered under several names can now tell which registration
