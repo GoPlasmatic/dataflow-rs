@@ -1082,7 +1082,11 @@ mod tests {
         .loop_config
         .expect("loop config present");
         let setup_ids: Vec<&str> = cfg.setup.iter().map(|t| t.id.as_str()).collect();
-        assert_eq!(setup_ids, ["claim", "batch"], "setup is flattened like tasks");
+        assert_eq!(
+            setup_ids,
+            ["claim", "batch"],
+            "setup is flattened like tasks"
+        );
         assert_eq!(
             cfg.setup[1].group_starts.len(),
             1,
@@ -1160,11 +1164,11 @@ mod tests {
             ("i", "item", "it", true),
             ("i", "it.item", "scratch", true),
             ("a.b", "a.c", "a.d", true),
-            ("i", "i", "it", false),          // as == counter
-            ("i", "item", "item", false),     // scratch == as
-            ("it", "it.item", "x", false),    // as inside the counter
-            ("i", "item", "item.x", false),   // scratch inside as
-            ("it.x", "item", "it", false),    // counter inside scratch
+            ("i", "i", "it", false),        // as == counter
+            ("i", "item", "item", false),   // scratch == as
+            ("it", "it.item", "x", false),  // as inside the counter
+            ("i", "item", "item.x", false), // scratch inside as
+            ("it.x", "item", "it", false),  // counter inside scratch
         ] {
             let json = format!(
                 r#"{{"max": 5, "over": [], "counter": "{counter}", "as": "{item}", "scratch": "{scratch}"}}"#
@@ -1187,7 +1191,10 @@ mod tests {
         assert!(slots_overlap("it", "it"));
         assert!(slots_overlap("it", "it.item"));
         assert!(slots_overlap("it.item", "it"));
-        assert!(!slots_overlap("it", "item"), "a shared prefix is not nesting");
+        assert!(
+            !slots_overlap("it", "item"),
+            "a shared prefix is not nesting"
+        );
         assert!(!slots_overlap("a.b", "a.c"));
     }
 
@@ -1228,18 +1235,21 @@ mod tests {
         let ids: Vec<&str> = workflow.all_tasks().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["call", "m", "pub"]);
         let refs: Vec<&str> = workflow.connector_refs().map(|r| r.task_id).collect();
-        assert_eq!(refs, ["call", "pub"], "the setup connector is reported first");
+        assert_eq!(
+            refs,
+            ["call", "pub"],
+            "the setup connector is reported first"
+        );
         assert_eq!(wf(MAP).all_tasks().count(), 1, "no loop: just the body");
     }
 
     #[test]
     fn precompute_paths_fills_all_three_slots() {
-        let mut cfg = loop_wf(
-            r#"{"max": 5, "counter": "i", "over": [], "as": "it.item", "scratch": "scr"}"#,
-        )
-        .unwrap()
-        .loop_config
-        .unwrap();
+        let mut cfg =
+            loop_wf(r#"{"max": 5, "counter": "i", "over": [], "as": "it.item", "scratch": "scr"}"#)
+                .unwrap()
+                .loop_config
+                .unwrap();
         assert!(cfg.item_parts.is_empty() && cfg.scratch_parts.is_empty());
         cfg.precompute_paths();
         let parts = |p: &Arc<[Arc<str>]>| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();

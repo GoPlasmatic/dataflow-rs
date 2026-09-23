@@ -1104,9 +1104,7 @@ impl WorkflowExecutor {
             // The second bound of an `over` loop: the element list. Running
             // out of elements is normal completion, like reaching `max`.
             if let Some(items) = items.as_mut() {
-                let Some(slot) = usize::try_from(counter)
-                    .ok()
-                    .and_then(|i| items.get_mut(i))
+                let Some(slot) = usize::try_from(counter).ok().and_then(|i| items.get_mut(i))
                 else {
                     break;
                 };
@@ -2342,7 +2340,9 @@ mod tests {
 
     fn items_message() -> Message {
         Message::builder()
-            .data(dv(json!({"items": [{"id": "a"}, {"id": "b"}, {"id": "c"}]})))
+            .data(dv(
+                json!({"items": [{"id": "a"}, {"id": "b"}, {"id": "c"}]}),
+            ))
             .build()
     }
 
@@ -2424,7 +2424,10 @@ mod tests {
             .execute(&workflow, &mut message, Utc::now())
             .await
             .unwrap();
-        assert!(executed, "admitted by its condition, zero elements to visit");
+        assert!(
+            executed,
+            "admitted by its condition, zero elements to visit"
+        );
         assert!(message.audit_trail.is_empty());
         assert_eq!(
             message.context["temp_data"].get("item"),
@@ -2453,7 +2456,10 @@ mod tests {
                 .execute(&workflow, &mut message, Utc::now())
                 .await
                 .expect_err("not an array");
-            assert!(err.to_string().contains("loop.over"), "names the loop: {err}");
+            assert!(
+                err.to_string().contains("loop.over"),
+                "names the loop: {err}"
+            );
             assert!(err.to_string().contains(kind), "says what it got: {err}");
             assert_eq!(message.errors.len(), 1);
             assert_eq!(message.errors[0].code, "WORKFLOW_ERROR");
@@ -2608,7 +2614,11 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert_eq!(counters(&message), vec![None], "setup recorded, no iteration");
+        assert_eq!(
+            counters(&message),
+            vec![None],
+            "setup recorded, no iteration"
+        );
 
         let (workflow, engine) = make(true);
         let mut message = Message::builder().data(data()).build();

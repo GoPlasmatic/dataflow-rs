@@ -668,7 +668,11 @@ mod tests {
         );
         let parts: Vec<&str> = cfg.item_parts.iter().map(Arc::as_ref).collect();
         assert_eq!(parts, ["temp_data", "item"]);
-        assert_eq!(cfg.setup[0].id_arc.as_ref(), "read", "setup ids are interned");
+        assert_eq!(
+            cfg.setup[0].id_arc.as_ref(),
+            "read",
+            "setup ids are interned"
+        );
         assert!(
             cfg.setup[0].compiled_condition.is_some(),
             "a non-trivial setup condition compiles"
