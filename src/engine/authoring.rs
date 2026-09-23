@@ -24,9 +24,9 @@ use crate::engine::functions::config::{BuiltinKind, builtin_function_kind, can_d
 use crate::engine::functions::map::AuthoredMapping;
 use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig, TemplateCompiler};
 use crate::engine::secrets::{SECRET_OPERATOR, Secrets};
-use crate::engine::steps::{StepKind, walk_authored_steps};
+use crate::engine::steps::{StepKind, walk_authored_steps_at};
 use crate::engine::task::HaltOn;
-use crate::engine::workflow::Workflow;
+use crate::engine::workflow::{Workflow, is_slot_path, over_literal_problem, slots_overlap};
 use datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::Value;
@@ -169,6 +169,19 @@ pub enum IssueCode {
     LoopBoundEmpty,
     /// `loop.counter` is not a non-empty dotted path.
     LoopCounterInvalid,
+    /// `loop.as` or `loop.scratch` is not a non-empty dotted path.
+    LoopSlotInvalid,
+    /// `loop.as` names a slot for the current element, but there is no
+    /// `loop.over` to take elements from.
+    LoopItemWithoutOver,
+    /// Two of `loop.counter`, `loop.as` and `loop.scratch` name the same
+    /// `temp_data` path, or one lies inside the other — a per-iteration reset
+    /// of one would wipe the other. Reported at the later of the two fields.
+    LoopSlotCollision,
+    /// `loop.over` can never yield an array: it is a scalar literal (a string,
+    /// number, boolean or `null`), or `loop.init` is negative, which no array
+    /// index can be. Reported at `loop.over` or `loop.init` respectively.
+    LoopOverInvalid,
     /// No handler will dispatch this function name, and it is not a built-in.
     /// Usually a typo or a handler the host forgot to register.
     UnknownFunction,
@@ -250,6 +263,10 @@ impl IssueCode {
             Self::LoopIncrementTooSmall => "LOOP_INCREMENT_TOO_SMALL",
             Self::LoopBoundEmpty => "LOOP_BOUND_EMPTY",
             Self::LoopCounterInvalid => "LOOP_COUNTER_INVALID",
+            Self::LoopSlotInvalid => "LOOP_SLOT_INVALID",
+            Self::LoopItemWithoutOver => "LOOP_ITEM_WITHOUT_OVER",
+            Self::LoopSlotCollision => "LOOP_SLOT_COLLISION",
+            Self::LoopOverInvalid => "LOOP_OVER_INVALID",
             Self::UnknownFunction => "UNKNOWN_FUNCTION",
             Self::MissingHandler => "MISSING_HANDLER",
             Self::InputParse => "INPUT_PARSE",
@@ -312,6 +329,10 @@ impl IssueCode {
             | Self::LoopIncrementTooSmall
             | Self::LoopBoundEmpty
             | Self::LoopCounterInvalid
+            | Self::LoopSlotInvalid
+            | Self::LoopItemWithoutOver
+            | Self::LoopSlotCollision
+            | Self::LoopOverInvalid
             | Self::ParseFailed
             | Self::ValidateFailed => Severity::Rejected,
         }
@@ -484,7 +505,9 @@ pub(crate) fn check_against_registry(
     check_group_continue_on_error(workflow, &mut issues);
     check_null_mappings(workflow, template_compiler.engine(), &mut issues);
 
-    for task in &workflow.tasks {
+    // A loop's setup steps are resolved exactly like body steps — `build`
+    // refuses an unknown function in either.
+    for task in workflow.all_tasks() {
         let name = task.function.function_name();
 
         if !can_dispatch_in(registry, name) {
@@ -574,7 +597,10 @@ fn check_unguarded_validation(workflow: &Workflow, issues: &mut Vec<WorkflowIssu
         condition != &Value::Bool(true)
     }
 
-    for (i, task) in workflow.tasks.iter().enumerate() {
+    // Setup then body, in execution order: a failing `validation` in setup
+    // is followed by the rest of setup *and* the body.
+    let chain: Vec<&crate::engine::task::Task> = workflow.all_tasks().collect();
+    for (i, task) in chain.iter().enumerate() {
         if !matches!(task.function, FunctionConfig::Validation { .. }) {
             continue;
         }
@@ -584,7 +610,7 @@ fn check_unguarded_validation(workflow: &Workflow, issues: &mut Vec<WorkflowIssu
         }
         // Nothing follows it *in this workflow*, so its `400` survives in
         // `metadata.progress` for the next workflow to gate on.
-        let Some(following) = workflow.tasks.get(i + 1..).filter(|t| !t.is_empty()) else {
+        let Some(following) = chain.get(i + 1..).filter(|t| !t.is_empty()) else {
             continue;
         };
         let guarded = following.iter().any(|next| {
@@ -633,8 +659,8 @@ fn check_unguarded_validation(workflow: &Workflow, issues: &mut Vec<WorkflowIssu
 fn check_group_continue_on_error(workflow: &Workflow, issues: &mut Vec<WorkflowIssue>) {
     // Each group is recorded once, on the task that opens its span, so this
     // visits every group exactly once — outermost first where several open
-    // together.
-    for task in &workflow.tasks {
+    // together. Setup groups included.
+    for task in workflow.all_tasks() {
         for group in task.group_starts.iter().filter(|g| g.continue_on_error) {
             issues.push(WorkflowIssue {
                 code: IssueCode::GroupContinueOnError,
@@ -676,7 +702,7 @@ fn check_null_mappings(
     engine: &datalogic_rs::Engine,
     issues: &mut Vec<WorkflowIssue>,
 ) {
-    for task in &workflow.tasks {
+    for task in workflow.all_tasks() {
         let FunctionConfig::Map { input, .. } = &task.function else {
             continue;
         };
@@ -806,7 +832,15 @@ fn for_each_expression(
 ) {
     check(&workflow.condition, "condition", None, Sink::Bool);
 
-    for task in &workflow.tasks {
+    // `over`'s result is written into `temp_data` element by element, so it is
+    // a message write: it may not read a secret, and its template keys are
+    // checked like a mapping's.
+    if let Some(over) = workflow.loop_config.as_ref().and_then(|l| l.over.as_ref()) {
+        check(over, "loop.over", None, Sink::Message);
+    }
+
+    // Setup steps first, as they run first.
+    for task in workflow.all_tasks() {
         // Groups opening at this task, outermost first — compiled alongside
         // the task condition, so checked alongside it.
         for group in &task.group_starts {
@@ -1178,10 +1212,24 @@ fn check_shape(json: &Value) -> Vec<WorkflowIssue> {
         )),
     }
 
-    check_steps(json.get("tasks").unwrap_or(&Value::Null), &mut issues);
+    // Step id -> the path that first claimed it. One namespace for the body
+    // and a loop's setup, which is what `Workflow::validate` enforces.
+    let mut seen: HashMap<&str, String> = HashMap::new();
+    check_steps(
+        json.get("tasks").unwrap_or(&Value::Null),
+        "tasks",
+        &mut seen,
+        &mut issues,
+    );
 
     if let Some(loop_config) = json.get("loop") {
         check_loop(loop_config, &mut issues);
+        // Setup shares the step grammar and the step id namespace with
+        // `tasks`. Walked second so the issue order of every definition
+        // without a setup is unchanged.
+        if let Some(setup) = loop_config.get("setup") {
+            check_steps(setup, "loop.setup", &mut seen, &mut issues);
+        }
     }
 
     issues
@@ -1189,13 +1237,17 @@ fn check_shape(json: &Value) -> Vec<WorkflowIssue> {
 
 /// Walk the authored step tree, checking each node and the id namespace.
 ///
-/// Built on [`walk_authored_steps`], so the group test, the traversal order and
-/// the depth cap have exactly one definition shared with the parser.
-fn check_steps(tasks: &Value, issues: &mut Vec<WorkflowIssue>) {
-    // Step id -> the path that first claimed it.
-    let mut seen: HashMap<&str, String> = HashMap::new();
-
-    for step in walk_authored_steps(tasks) {
+/// Built on [`walk_authored_steps_at`], so the group test, the traversal order
+/// and the depth cap have exactly one definition shared with the parser.
+/// `prefix` roots the reported paths — `tasks` for the body, `loop.setup` for a
+/// loop's setup list — and `seen` carries the id namespace across both.
+fn check_steps<'a>(
+    tasks: &'a Value,
+    prefix: &str,
+    seen: &mut HashMap<&'a str, String>,
+    issues: &mut Vec<WorkflowIssue>,
+) {
+    for step in walk_authored_steps_at(tasks, prefix) {
         let id = non_empty_str(step.node.get("id"));
 
         match id {
@@ -1372,7 +1424,11 @@ fn check_mappings(path: &str, function: &Value, id: Option<&str>, issues: &mut V
     }
 }
 
-/// The three `LoopConfig::validate` rules, against the authored JSON.
+/// The `LoopConfig::validate` rules, against the authored JSON.
+///
+/// The slot and `over` rules share their predicates with `LoopConfig` itself
+/// (`is_slot_path`, `slots_overlap`, `over_literal_problem`), so the two sides
+/// cannot disagree about what loads.
 fn check_loop(config: &Value, issues: &mut Vec<WorkflowIssue>) {
     // Absent fields take their serde defaults, which are valid; only a present
     // field can be wrong here. A non-integer is a *type* error and belongs to
@@ -1406,13 +1462,79 @@ fn check_loop(config: &Value, issues: &mut Vec<WorkflowIssue>) {
 
     if let Some(counter) = config.get("counter")
         && let Some(counter) = counter.as_str()
-        && (counter.is_empty() || counter.split('.').any(str::is_empty))
+        && !is_slot_path(counter)
     {
         issues.push(WorkflowIssue::at(
             IssueCode::LoopCounterInvalid,
             "loop.counter",
             format!("loop counter must be a non-empty temp_data field path, got {counter:?}"),
         ));
+    }
+
+    for field in ["as", "scratch"] {
+        if let Some(path) = config.get(field).and_then(Value::as_str)
+            && !is_slot_path(path)
+        {
+            issues.push(WorkflowIssue::at(
+                IssueCode::LoopSlotInvalid,
+                format!("loop.{field}"),
+                format!("loop {field} must be a non-empty temp_data field path, got {path:?}"),
+            ));
+        }
+    }
+
+    // `get` rather than a typed read: an explicit `"over": null` is present,
+    // and refused, exactly as the parser keeps it.
+    let over = config.get("over");
+    // A non-string `as` is a type error for stage 2, like a non-integer max.
+    if config.get("as").and_then(Value::as_str).is_some() && over.is_none() {
+        issues.push(WorkflowIssue::at(
+            IssueCode::LoopItemWithoutOver,
+            "loop.as",
+            "loop `as` names a slot for the current element, but there is no `over` \
+             to take elements from",
+        ));
+    }
+    if let Some(over) = over {
+        if let Some(problem) = over_literal_problem(over) {
+            issues.push(WorkflowIssue::at(
+                IssueCode::LoopOverInvalid,
+                "loop.over",
+                problem,
+            ));
+        }
+        if init < 0 {
+            issues.push(WorkflowIssue::at(
+                IssueCode::LoopOverInvalid,
+                "loop.init",
+                format!(
+                    "loop init must be >= 0 when over is set — the counter indexes the \
+                     array, got {init}"
+                ),
+            ));
+        }
+    }
+
+    let slots = [
+        ("counter", config.get("counter").and_then(Value::as_str)),
+        ("as", config.get("as").and_then(Value::as_str)),
+        ("scratch", config.get("scratch").and_then(Value::as_str)),
+    ];
+    for (i, (name_a, a)) in slots.iter().enumerate() {
+        for (name_b, b) in &slots[i + 1..] {
+            if let (Some(a), Some(b)) = (a, b)
+                && slots_overlap(a, b)
+            {
+                issues.push(WorkflowIssue::at(
+                    IssueCode::LoopSlotCollision,
+                    format!("loop.{name_b}"),
+                    format!(
+                        "loop {name_a} ({a:?}) and {name_b} ({b:?}) overlap — each \
+                         engine-owned slot must be its own temp_data path"
+                    ),
+                ));
+            }
+        }
     }
 }
 
@@ -1429,7 +1551,7 @@ mod tests {
     /// Every [`IssueCode`], for the checks below that must cover the whole
     /// vocabulary rather than a hand-picked subset. Kept complete by
     /// [`ordinal`] — see [`all_codes_lists_every_variant`].
-    const ALL_CODES: [IssueCode; 29] = [
+    const ALL_CODES: [IssueCode; 33] = [
         IssueCode::EmptyWorkflowId,
         IssueCode::EmptyWorkflowName,
         IssueCode::NoTasks,
@@ -1459,6 +1581,10 @@ mod tests {
         IssueCode::ValidateFailed,
         IssueCode::InvalidMapping,
         IssueCode::NullMapping,
+        IssueCode::LoopSlotInvalid,
+        IssueCode::LoopItemWithoutOver,
+        IssueCode::LoopSlotCollision,
+        IssueCode::LoopOverInvalid,
     ];
 
     /// A distinct index per variant, with **no wildcard arm**. Adding an
@@ -1494,6 +1620,10 @@ mod tests {
             IssueCode::ValidateFailed => 26,
             IssueCode::InvalidMapping => 27,
             IssueCode::NullMapping => 28,
+            IssueCode::LoopSlotInvalid => 29,
+            IssueCode::LoopItemWithoutOver => 30,
+            IssueCode::LoopSlotCollision => 31,
+            IssueCode::LoopOverInvalid => 32,
         }
     }
 

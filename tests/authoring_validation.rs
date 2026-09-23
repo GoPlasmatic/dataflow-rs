@@ -165,7 +165,126 @@ fn broken_fixtures() -> Vec<(&'static str, IssueCode, Value)> {
             mapping_workflow(json!([{"path": "data", "logic": {"var": "data.x"},
                                      "on_null": "unset"}])),
         ),
+        (
+            "loop as without over",
+            IssueCode::LoopItemWithoutOver,
+            json!({"id": "w", "name": "w", "loop": {"max": 3, "as": "item"},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop as with an empty segment",
+            IssueCode::LoopSlotInvalid,
+            json!({"id": "w", "name": "w", "loop": {"max": 3, "over": [], "as": "a..b"},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop scratch with a trailing dot",
+            IssueCode::LoopSlotInvalid,
+            json!({"id": "w", "name": "w", "loop": {"max": 3, "scratch": "it."},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop scratch nested inside as",
+            IssueCode::LoopSlotCollision,
+            json!({"id": "w", "name": "w",
+                   "loop": {"max": 3, "over": [], "as": "it", "scratch": "it.x"},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop counter equal to scratch",
+            IssueCode::LoopSlotCollision,
+            json!({"id": "w", "name": "w", "loop": {"max": 3, "counter": "i", "scratch": "i"},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop over is a string literal",
+            IssueCode::LoopOverInvalid,
+            json!({"id": "w", "name": "w", "loop": {"max": 3, "over": "data.items"},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop over is an explicit null",
+            IssueCode::LoopOverInvalid,
+            json!({"id": "w", "name": "w", "loop": {"max": 3, "over": null},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop init negative with over",
+            IssueCode::LoopOverInvalid,
+            json!({"id": "w", "name": "w", "loop": {"init": -1, "max": 3, "over": []},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop setup step with no function",
+            IssueCode::MissingFunction,
+            json!({"id": "w", "name": "w",
+                   "loop": {"max": 3, "setup": [{"id": "s", "name": "s"}]},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop setup step sharing a body task's id",
+            IssueCode::DuplicateStepId,
+            json!({"id": "w", "name": "w", "loop": {"max": 3, "setup": [task("t")]},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop setup group carrying halt_on",
+            IssueCode::InvalidHaltOn,
+            json!({"id": "w", "name": "w",
+                   "loop": {"max": 3, "setup": [
+                       {"id": "g", "halt_on": "failure", "tasks": [task("s")]}]},
+                   "tasks": [task("t")]}),
+        ),
+        (
+            "loop setup with an empty group",
+            IssueCode::EmptyGroup,
+            json!({"id": "w", "name": "w",
+                   "loop": {"max": 3, "setup": [{"id": "g", "tasks": []}]},
+                   "tasks": [task("t")]}),
+        ),
     ]
+}
+
+#[test]
+fn setup_issues_carry_loop_setup_coordinates() {
+    let issues = Workflow::validate_authored(&json!({
+        "id": "w", "name": "w",
+        "loop": {"max": 3, "setup": [
+            {"id": "g", "tasks": [ {"id": "inner", "name": "inner"} ]},
+        ]},
+        "tasks": [task("t")]
+    }));
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].code, IssueCode::MissingFunction);
+    assert_eq!(
+        issues[0].path.as_deref(),
+        Some("loop.setup[0].tasks[0].function")
+    );
+    assert_eq!(issues[0].task_id.as_deref(), Some("inner"));
+
+    let issues = Workflow::validate_authored(&json!({
+        "id": "w", "name": "w",
+        "loop": {"max": 3, "setup": [task("t")]},
+        "tasks": [task("t")]
+    }));
+    assert_eq!(issues[0].code, IssueCode::DuplicateStepId);
+    assert_eq!(
+        issues[0].path.as_deref(),
+        Some("loop.setup[0].id"),
+        "the setup list is walked second, so the setup step is the duplicate"
+    );
+
+    let issues = Workflow::validate_authored(&json!({
+        "id": "w", "name": "w",
+        "loop": {"max": 3, "over": [], "as": "i", "counter": "i"},
+        "tasks": [task("t")]
+    }));
+    assert_eq!(issues[0].code, IssueCode::LoopSlotCollision);
+    assert_eq!(
+        issues[0].path.as_deref(),
+        Some("loop.as"),
+        "reported at the later field"
+    );
 }
 
 /// The load-bearing test. Each fixture must report *its own* code — not merely
@@ -193,6 +312,20 @@ fn empty_iff_the_workflow_loads() {
         workflow(json!([task("a")])),
         workflow(json!([task("a"), {"id": "g", "condition": true, "tasks": [task("b")]}])),
         json!({"id": "w", "name": "w", "loop": {"max": 3, "counter": "i"},
+               "tasks": [task("t")]}),
+        // The full #60 shape, and each new key on its own.
+        json!({"id": "w", "name": "w",
+               "loop": {"max": 64, "counter": "i", "as": "item", "scratch": "it",
+                        "over": {"var": "temp_data.batch.items"},
+                        "setup": [task("claim"), {"id": "g", "tasks": [task("read")]}]},
+               "tasks": [task("t")]}),
+        json!({"id": "w", "name": "w", "loop": {"max": 3, "over": [1, 2]},
+               "tasks": [task("t")]}),
+        json!({"id": "w", "name": "w", "loop": {"max": 3, "scratch": "it"},
+               "tasks": [task("t")]}),
+        json!({"id": "w", "name": "w", "loop": {"max": 3, "setup": [task("s")]},
+               "tasks": [task("t")]}),
+        json!({"id": "w", "name": "w", "loop": {"max": 3, "init": 2, "over": []},
                "tasks": [task("t")]}),
         // A group carrying `continue_on_error` loads: it is reported by
         // `check_workflow`, never here. An informational finding on the
