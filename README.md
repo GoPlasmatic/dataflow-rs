@@ -394,7 +394,8 @@ On a 10-core Apple M2 Pro processing **1,000,000 messages** concurrently (Tokio 
 **Tuning tip:** if you never read audit trails, build messages with
 `Message::builder().capture_changes(false)` — skipping the per-mapping
 old/new value snapshots is the largest single lever in mapping-heavy
-workloads. See the [performance guide](https://goplasmatic.github.io/dataflow-rs/advanced/performance.html) for more.
+workloads, and in a looping workflow it also stops every sweep's copies from
+being held in memory until the run ends. See the [performance guide](https://goplasmatic.github.io/dataflow-rs/advanced/performance.html) for more.
 
 Run the benchmarks and examples yourself:
 

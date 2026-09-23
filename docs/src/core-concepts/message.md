@@ -186,8 +186,10 @@ pub struct Change {
 }
 ```
 
-To skip per-write `Change` capture (bulk-pipeline fast path), build the
-message with `capture_changes(false)`:
+To skip per-write `Change` capture (bulk-pipeline fast path), and to avoid
+holding every write's old and new value in memory for the whole run — which
+matters most in a [looping workflow](../advanced/loops.md#memory-in-long-loops)
+— build the message with `capture_changes(false)`:
 
 ```rust
 # use dataflow_rs::Message;

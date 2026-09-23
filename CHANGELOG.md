@@ -152,6 +152,20 @@ already loops.
   `INVALID_MAPPING` at `…mappings[i].logic` rather than as `PARSE_FAILED`, and
   its parse error names `unset` as the alternative.
 
+### Documentation
+
+- **`capture_changes` memory in long loops (#63).** Captured old and new
+  values stay on the message until `process_message` returns, so a looping
+  workflow's memory grows with sweeps × writes × value size — about 65 bytes
+  per number written, or several GB for a 10,000-sweep loop writing a
+  10,000-number array each sweep. Documented on `LoopConfig` and
+  `MessageBuilder::capture_changes`, in a new "Memory in long loops" section of
+  the Loops guide, and on the Audit Trails, Performance, Fan-Out, Message and
+  API Reference pages. The default stays `true` — the browser debugger,
+  `TraceOptions { changes: true }` and hosts reading `changes` rely on it — so
+  a long loop that never reads `changes` should build its message with
+  `.capture_changes(false)`.
+
 ## [3.13.0] — 2026-09-13
 
 Two opt-in capabilities arrive with `datalogic-rs` 5.5: a hard ceiling on how

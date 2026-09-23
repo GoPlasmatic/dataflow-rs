@@ -292,9 +292,38 @@ without a `loop` omit the field entirely.
 Execution traces carry the same field on each step, so a trace can be grouped
 by iteration.
 
-Note that audit volume scales with iteration count: a 1,000-sweep loop over 3
-tasks records 3,000 entries, each with its changes when `capture_changes` is
-on. The `max` bound is what keeps that finite.
+### Memory in long loops
+
+Every sweep adds one audit entry per task — a 1,000-sweep loop over 3 tasks
+records 3,000 entries, and the `max` bound is what keeps that finite. With
+`capture_changes` on, which is the default, each entry also holds a deep copy of
+the old and new value of every write, and none of it is released until
+`process_message` returns. So a loop's memory grows with
+sweeps × writes × value size, at about 65 bytes per number written.
+
+Three `map` tasks each writing a 2,000-number array per sweep, release build:
+
+| sweeps | `capture_changes(true)` | `capture_changes(false)` |
+|---:|---:|---:|
+| 250 | ~100 MB | 8 MB |
+| 500 | ~196 MB | 8 MB |
+
+At `max: 10000`, one 10,000-number array per sweep comes to several GB. If you
+do not read `AuditTrail::changes`, turn capture off for the message. The loop
+still records one entry per task per sweep, just without values:
+
+```rust
+# use dataflow_rs::Message;
+# use serde_json::json;
+let message = Message::builder()
+    .data_json(&json!({"state": [0.0, 1.0, 2.0]}))
+    .capture_changes(false)
+    .build();
+# assert!(!message.capture_changes());
+```
+
+Tracing with `TraceOptions { changes: true }` reports the captured diff and
+does not turn capture on, so it shows empty diffs for such a message.
 
 ## Performance
 

@@ -235,6 +235,9 @@ impl Message {
     /// Whether per-write `Change` capture is on. When `false`, audit-trail
     /// entries are still emitted but their `changes` lists are empty —
     /// the bulk-pipeline fast path.
+    ///
+    /// Set it with [`MessageBuilder::capture_changes`], which documents the
+    /// cost — including the memory a looping workflow accumulates.
     #[inline]
     pub fn capture_changes(&self) -> bool {
         self.capture_changes
@@ -424,9 +427,25 @@ impl MessageBuilder {
         self
     }
 
-    /// When `false`, built-in functions skip per-write `Change` capture —
-    /// audit-trail entries are still recorded but their `changes` list is
-    /// empty. Defaults to `true`.
+    /// When `false`, built-in functions and `TaskContext::set` skip per-write
+    /// `Change` capture: audit-trail entries are still recorded, with an empty
+    /// `changes` list. Defaults to `true`.
+    ///
+    /// Capture has two costs. Each write deep-copies its old and new value
+    /// (throughput), and the copies stay on the message until
+    /// `process_message` returns (memory). In a looping workflow the second
+    /// one grows with every sweep — see
+    /// [`LoopConfig`](crate::engine::workflow::LoopConfig). Turn it off unless
+    /// you read [`AuditTrail::changes`](crate::AuditTrail::changes), or trace
+    /// with `TraceOptions { changes: true }`: that option reports the captured
+    /// diff and does not turn capture on.
+    ///
+    /// ```
+    /// use dataflow_rs::Message;
+    ///
+    /// let m = Message::builder().capture_changes(false).build();
+    /// assert!(!m.capture_changes());
+    /// ```
     pub fn capture_changes(mut self, on: bool) -> Self {
         self.capture_changes = Some(on);
         self
@@ -541,6 +560,23 @@ pub struct Change {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_changes_defaults_to_true_on_every_constructor() {
+        // Kept `true` deliberately (#63): the browser debugger, `TraceOptions
+        // { changes: true }` and hosts reading `AuditTrail::changes` all rely
+        // on it. Changing it is a behaviour change for all of them — read the
+        // CLAUDE.md note before touching this.
+        assert!(Message::builder().build().capture_changes());
+        assert!(Message::new(Arc::new(OwnedDataValue::Null)).capture_changes());
+        assert!(Message::from_value(&serde_json::json!({})).capture_changes());
+        let json = serde_json::to_value(Message::builder().build()).expect("serializes");
+        let back: Message = serde_json::from_value(json).expect("deserializes");
+        assert!(
+            back.capture_changes(),
+            "not serialized, so deserializing restores the default"
+        );
+    }
 
     #[test]
     fn audit_trail_loop_counter_is_absent_from_json_when_none() {

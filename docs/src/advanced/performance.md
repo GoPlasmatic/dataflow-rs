@@ -225,6 +225,10 @@ let mut message = Message::builder()
 This is the single largest tuning lever in the hot path. See
 [Audit Trails](audit-trails.md) for what you give up.
 
+Memory is the other half of the cost: the copies are kept until
+`process_message` returns, so a looping workflow accumulates them sweep after
+sweep. See [Memory in long loops](loops.md#memory-in-long-loops).
+
 ### 7. Filtered Log Tasks Are Free
 
 `log` tasks check whether their level is enabled for the `dataflow::log`

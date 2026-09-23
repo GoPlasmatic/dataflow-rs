@@ -36,6 +36,21 @@ pub use crate::engine::rollout::{Rollout, RolloutError};
 /// `temp_data.<scratch>`. A loop carrying none of them behaves exactly as a
 /// plain counter loop always has.
 ///
+/// # Memory
+///
+/// Every sweep adds one audit entry per task, and while the message has
+/// `capture_changes` on — the default — each entry holds a deep copy of the
+/// old and new value of every write. Nothing is released until
+/// `process_message` returns, so a loop's memory grows with
+/// sweeps × writes × value size: about 65 bytes per number written, so a body
+/// writing one 10,000-number array per sweep holds roughly 6.5 GB by sweep
+/// 10,000. A host that does not read
+/// [`AuditTrail::changes`](crate::AuditTrail::changes) should build the
+/// message with
+/// [`MessageBuilder::capture_changes(false)`](crate::MessageBuilder::capture_changes);
+/// the entries are still recorded, without values. See the Loops guide,
+/// "Memory in long loops".
+///
 /// # Example
 ///
 /// ```json

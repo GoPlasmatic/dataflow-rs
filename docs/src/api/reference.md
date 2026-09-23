@@ -422,6 +422,10 @@ pub fn from_value(payload: &serde_json::Value) -> Message
 `.temp_data(..)` / `.temp_data_json(..)`, `.routing_bucket(u8)`,
 then `.build() -> Message`.
 
+`capture_changes` defaults to `true`. Its copies are held until
+`process_message` returns, so turn it off in long loops unless you read
+`changes` — see [Memory in long loops](../advanced/loops.md#memory-in-long-loops).
+
 The three context setters seed `context.data` / `metadata` / `temp_data`
 directly, so a workflow condition reading `data.*` fires without needing a
 `parse_json` task first. Keys are taken **literally** — unlike

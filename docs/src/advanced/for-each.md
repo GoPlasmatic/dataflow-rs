@@ -141,6 +141,10 @@ The same field appears on execution-trace steps and on the errors an element
 produced. An ordinary task omits it entirely, so its JSON is unchanged. Inside
 a looping workflow an entry carries both `loop_counter` and `element_index`.
 
+While `capture_changes` is on, each element's entry carries that element's
+writes, so a large fan-out inside a long loop multiplies the cost described in
+[Memory in long loops](./loops.md#memory-in-long-loops).
+
 `metadata.progress` is written after every element's entry. An empty or
 failing `over` still records one entry, without an `element_index`, so the
 task always leaves its progress behind.

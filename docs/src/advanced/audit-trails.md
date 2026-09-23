@@ -241,4 +241,7 @@ fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a Owned
 6. **Bulk Pipelines** - Build the message with
    `Message::builder().capture_changes(false).build()` to skip per-write
    change capture in throughput-critical pipelines (audit entries are
-   still recorded with empty `changes`).
+   still recorded with empty `changes`). The captured values also stay on
+   the message until `process_message` returns, so in a looping workflow
+   they grow with every sweep — see
+   [Memory in long loops](./loops.md#memory-in-long-loops).

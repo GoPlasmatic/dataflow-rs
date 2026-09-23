@@ -301,6 +301,16 @@ matching version.
   with `removed: true` and `new_value: null`; the flag is skipped when false so
   write JSON stays byte-identical. The arena cache follows a removal through
   `ArenaContext::apply_removal_parts` (a narrow refresh, not a splice).
+- **`capture_changes` defaults to `true`, and that was decided, not
+  inherited (#63).** The captured copies are retained until `process_message`
+  returns, so long loops grow memory with every sweep; the fix chosen was
+  documentation (`LoopConfig`, `MessageBuilder::capture_changes`, the Loops
+  guide's "Memory in long loops"), not a flip. The wasm debugger (via
+  `Message::from_value`), `TraceOptions { changes: true }` — which reports the
+  diff and never turns capture on — and every host reading
+  `AuditTrail::changes` depend on the default, and a flip would empty their
+  diffs silently. Pinned by
+  `capture_changes_defaults_to_true_on_every_constructor`.
 - **`metadata.progress` is load-bearing.** The workflow executor writes
   `metadata.progress = {workflow_id, task_id, status_code}` after every task.
   Cross-workflow chaining depends on downstream conditions reading it, so do not
@@ -475,8 +485,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 840 passing.
-`cargo test -p dataflow-rs` (default features) should report 729 — the operator
+`cargo test --workspace --all-features` should report 843 passing.
+`cargo test -p dataflow-rs` (default features) should report 731 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and
