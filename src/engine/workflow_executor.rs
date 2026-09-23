@@ -22,8 +22,10 @@ use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::trace::{
     ExecutionStep, ExecutionTrace, StepStamp, StepTiming, duration_us_between,
 };
+use crate::engine::for_each::ForEach;
 use crate::engine::utils::{
-    compute_path_parts, set_nested_value, set_nested_value_parts, strip_hash_prefix,
+    compute_path_parts, get_nested_value_parts, remove_nested_value, set_nested_value,
+    set_nested_value_parts, strip_hash_prefix,
 };
 use crate::engine::workflow::{LoopConfig, Workflow};
 use chrono::{DateTime, Utc};
@@ -116,6 +118,38 @@ impl PassCtx {
                 element_index: self.element_index,
             },
         );
+    }
+}
+
+impl PassCtx {
+    /// As [`Self::note_executed`], with the step's timing measured by the
+    /// caller.
+    ///
+    /// A fan-out element is recorded when the calls are folded back, which
+    /// may be long after the call ended — and for concurrent calls, after
+    /// several others. Timing it at record time would report the fold, so
+    /// `run_element` times the call itself and hands the result here.
+    fn note_executed_timed(
+        self,
+        trace: Option<&mut ExecutionTrace>,
+        workflow_id: &str,
+        task_id: &str,
+        message: &Message,
+        timing: StepTiming,
+    ) {
+        if let Some(t) = trace {
+            t.add_executed_step(
+                workflow_id,
+                task_id,
+                message,
+                timing,
+                None,
+                StepStamp {
+                    loop_counter: self.loop_counter,
+                    element_index: self.element_index,
+                },
+            );
+        }
     }
 }
 
@@ -243,6 +277,88 @@ impl TaskPass {
     #[inline]
     fn halts_at(self, status: u16) -> bool {
         self.terminal || (self.halt_on == HaltOn::Failure && status >= 400)
+    }
+}
+
+/// The per-task values every call of one fan-out shares.
+///
+/// Bundled so `run_element` stays under clippy's argument-count limit, and
+/// `Copy` so each call's future takes its own.
+#[derive(Clone, Copy)]
+struct ElementCall<'a> {
+    workflow: &'a Workflow,
+    task: &'a Task,
+    for_each: &'a ForEach,
+    /// The enclosing loop sweep, stamped on each call alongside its element.
+    loop_counter: Option<i64>,
+    /// Whether to read the clock around each call — only when a trace or an
+    /// observer will use it, keeping the one-`Utc::now()`-per-message
+    /// invariant on the plain path.
+    timed: bool,
+}
+
+/// What one fan-out call left behind once its copy of the message is gone.
+///
+/// A call's copy is reduced to this the moment the call ends, so at most
+/// `max_concurrency` copies are alive at once however long the array is.
+struct ElementOutcome {
+    index: usize,
+    /// The call's outcome. Its writes are in `changes`, not here, so an `Err`
+    /// simply has none: a call that failed hard contributes no writes.
+    result: Result<TaskOutcome>,
+    /// Every write the call made through `TaskContext::set`, in order.
+    changes: Vec<Change>,
+    /// Errors the call recorded itself, through `TaskContext::add_error`.
+    new_errors: Vec<ErrorInfo>,
+    /// The value at `collect` in the call's copy, or `Null`.
+    collected: OwnedDataValue,
+    /// Measured around the call when [`ElementCall::timed`] is set.
+    timing: Option<StepTiming>,
+}
+
+impl ElementOutcome {
+    /// Whether this element failed: a hard `Err`, or a recorded status of 400
+    /// or more — the threshold `halt_on` and the `null` result both use.
+    fn failed(&self) -> bool {
+        match &self.result {
+            Err(_) => true,
+            Ok(outcome) => outcome.audit_status().is_some_and(|s| s >= 400),
+        }
+    }
+
+    /// Whether no further call may start after this one.
+    ///
+    /// True when the call halts the workflow, or fails the task outright — an
+    /// `Err` or a `5xx` without `continue_on_error`. Calls already running
+    /// still finish; this only stops new ones.
+    fn stops_fan_out(&self, continue_on_error: bool) -> bool {
+        match &self.result {
+            Err(_) => !continue_on_error,
+            Ok(TaskOutcome::Halt) => true,
+            Ok(outcome) => !continue_on_error && outcome.audit_status().is_some_and(|s| s >= 500),
+        }
+    }
+}
+
+/// The per-element `TaskPass`. `terminal` and `halt_on` are neutralised here
+/// and applied once, to the whole fan-out, by `run_for_each` — a terminal
+/// task must halt after its last element, not after its first.
+fn fan_out_pass(task: &Task, errors_before: usize) -> TaskPass {
+    TaskPass {
+        continue_on_error: task.continue_on_error,
+        terminal: false,
+        halt_on: HaltOn::Never,
+        errors_before,
+    }
+}
+
+/// The control flow a whole fan-out ends in: a halt any element or the
+/// failure rule requested, or `terminal`.
+fn fan_out_flow(task: &Task, halt: bool) -> TaskControlFlow {
+    if halt || task.terminal {
+        TaskControlFlow::HaltWorkflow
+    } else {
+        TaskControlFlow::Continue
     }
 }
 
@@ -769,14 +885,29 @@ impl WorkflowExecutor {
         result: &Result<(TaskOutcome, Vec<Change>)>,
         started_at: Option<DateTime<Utc>>,
     ) {
+        if self.observer.is_some() {
+            let duration = started_at
+                .map(|s| Duration::from_micros(duration_us_between(s, Utc::now())))
+                .unwrap_or_default();
+            self.emit_task_finished(workflow, task, result, duration);
+        }
+    }
+
+    /// Emit a task event with a duration the caller measured. The fan-out
+    /// path uses this directly, since a folded element's call ended before it
+    /// is recorded.
+    fn emit_task_finished(
+        &self,
+        workflow: &Workflow,
+        task: &Task,
+        result: &Result<(TaskOutcome, Vec<Change>)>,
+        duration: Duration,
+    ) {
         if let Some(observer) = self.observer.as_ref() {
             let status = match result {
                 Ok((outcome, _)) => outcome.audit_status(),
                 Err(_) => Some(500),
             };
-            let duration = started_at
-                .map(|s| Duration::from_micros(duration_us_between(s, Utc::now())))
-                .unwrap_or_default();
             observer.task_finished(&TaskEvent {
                 workflow_id: &workflow.id,
                 task_id: &task.id,
@@ -1198,6 +1329,323 @@ impl WorkflowExecutor {
         Ok(sweeps_run > 0 || admitted)
     }
 
+    /// Run one task's fan-out: evaluate `over`, run a call per element, then
+    /// fold the calls back into `message` in element order.
+    ///
+    /// See [`ForEach`] for the contract. The shape here is what makes it hold:
+    /// every call clones the message from the same untouched state (the calls
+    /// phase only ever holds `&Message`), and the fold — the only mutation —
+    /// happens after every call has finished, in element order. So the result
+    /// cannot depend on `max_concurrency` or on the order calls complete in.
+    async fn run_for_each(
+        &self,
+        workflow: &Workflow,
+        task: &Task,
+        for_each: &ForEach,
+        message: &mut Message,
+        mut trace: Option<&mut ExecutionTrace>,
+        pass: PassCtx,
+    ) -> Result<TaskControlFlow> {
+        use futures_util::stream::{FuturesUnordered, StreamExt};
+
+        let tracing = trace.is_some();
+
+        // ---- `over`, once ----
+        // An `over` that is not an array, and an empty one, each record one
+        // entry with no element index — so `metadata.progress` is written
+        // exactly as it is for any task, and `continue_on_error` applies.
+        let items = match self.evaluate_for_each_over(task, for_each, message) {
+            Ok(items) if !items.is_empty() => items,
+            other => {
+                let failed = other.is_err();
+                if other.is_ok() && !for_each.into_parts.is_empty() {
+                    self.write_empty_results(for_each, message);
+                }
+                let clocks = self.open_task_clocks(tracing, message);
+                let result = other.map(|_| {
+                    let changes = self.empty_results_change(for_each, message);
+                    (TaskOutcome::Success, changes)
+                });
+                self.emit_task_event(workflow, task, &result, clocks.obs_start);
+                let flow = self.handle_task_result(
+                    result,
+                    &workflow.id_arc,
+                    &task.id_arc,
+                    fan_out_pass(task, clocks.errors_before),
+                    message,
+                    pass,
+                )?;
+                pass.note_executed(trace, &workflow.id, &task.id, message, clocks, None);
+                let halt = matches!(flow, TaskControlFlow::HaltWorkflow)
+                    || (failed && task.halt_on == HaltOn::Failure);
+                return Ok(fan_out_flow(task, halt));
+            }
+        };
+        let n = items.len();
+
+        // ---- the calls ----
+        let call = ElementCall {
+            workflow,
+            task,
+            for_each,
+            loop_counter: pass.loop_counter,
+            timed: tracing || self.observer.is_some(),
+        };
+        let mut outcomes: Vec<Option<ElementOutcome>> = (0..n).map(|_| None).collect();
+        {
+            // Shared, on purpose: every call clones from this same state, and
+            // nothing may change it until all of them are done.
+            let base: &Message = message;
+            let mut pending = items.into_iter().enumerate();
+            let mut in_flight = FuturesUnordered::new();
+            let mut stop = false;
+            loop {
+                while !stop && in_flight.len() < for_each.max_concurrency {
+                    let Some((index, item)) = pending.next() else {
+                        break;
+                    };
+                    in_flight.push(self.run_element(call, base, index, item));
+                }
+                let Some(outcome) = in_flight.next().await else {
+                    break;
+                };
+                stop |= outcome.stops_fan_out(task.continue_on_error);
+                let index = outcome.index;
+                outcomes[index] = Some(outcome);
+            }
+        }
+
+        // ---- fold back, in element order ----
+        if !for_each.into_parts.is_empty() {
+            // One slot per element, so an element that never ran — or failed —
+            // is a `null` at its own index rather than a gap.
+            set_nested_value_parts(
+                &mut message.context,
+                &for_each.into_parts,
+                OwnedDataValue::Array(vec![OwnedDataValue::Null; n]),
+            );
+        }
+        let mut halt = false;
+        let mut any_failed = false;
+        for outcome in outcomes.into_iter().flatten() {
+            let failed = outcome.failed();
+            let ElementOutcome {
+                index,
+                result,
+                changes,
+                new_errors,
+                collected,
+                timing,
+            } = outcome;
+
+            // Sampled before this element's own errors land, so the
+            // error-context mirror in `handle_task_result` sees them as this
+            // element's.
+            let errors_before = message.errors.len();
+            message
+                .errors
+                .extend(new_errors.into_iter().map(|mut error| {
+                    error.element_index.get_or_insert(index);
+                    error
+                }));
+
+            for change in &changes {
+                if change.removed {
+                    remove_nested_value(&mut message.context, &change.path);
+                } else {
+                    set_nested_value(&mut message.context, &change.path, change.new_value.clone());
+                }
+            }
+
+            let mut changes = if message.capture_changes {
+                changes
+            } else {
+                Vec::new()
+            };
+            if let Some(into) = for_each.into.as_deref() {
+                let value = if failed {
+                    OwnedDataValue::Null
+                } else {
+                    collected
+                };
+                if message.capture_changes {
+                    changes.push(Change {
+                        path: Arc::from(format!("{into}.{index}")),
+                        old_value: OwnedDataValue::Null,
+                        new_value: value.clone(),
+                        removed: false,
+                    });
+                }
+                let mut parts = for_each.into_parts.to_vec();
+                parts.push(Arc::from(index.to_string()));
+                set_nested_value_parts(&mut message.context, &parts, value);
+            }
+
+            any_failed |= failed;
+            let result = result.map(|outcome| (outcome, changes));
+            let element = PassCtx {
+                element_index: Some(index),
+                ..pass
+            };
+            let duration = timing
+                .map(|t| Duration::from_micros(t.duration_us))
+                .unwrap_or_default();
+            self.emit_task_finished(workflow, task, &result, duration);
+            let flow = self.handle_task_result(
+                result,
+                &workflow.id_arc,
+                &task.id_arc,
+                fan_out_pass(task, errors_before),
+                message,
+                element,
+            )?;
+            if let Some(timing) = timing {
+                element.note_executed_timed(
+                    trace.as_deref_mut(),
+                    &workflow.id,
+                    &task.id,
+                    message,
+                    timing,
+                );
+            }
+            halt |= matches!(flow, TaskControlFlow::HaltWorkflow);
+        }
+
+        if halt {
+            info!("Task {} halted workflow {} during its fan-out", task.id, workflow.id);
+        }
+        Ok(fan_out_flow(
+            task,
+            halt || (task.halt_on == HaltOn::Failure && any_failed),
+        ))
+    }
+
+    /// One fan-out call, against its own copy of `base`.
+    ///
+    /// Takes `&Message`, not `&mut`: that is the isolation guarantee. The copy
+    /// carries the element at `temp_data.<as>` and its index at
+    /// `temp_data.<as>_index`, records every write regardless of the real
+    /// message's `capture_changes` (the fold replays them), and is reduced to
+    /// an [`ElementOutcome`] as soon as the call ends.
+    async fn run_element(
+        &self,
+        call: ElementCall<'_>,
+        base: &Message,
+        index: usize,
+        item: OwnedDataValue,
+    ) -> ElementOutcome {
+        let fe = call.for_each;
+        let mut copy = base.clone();
+        copy.capture_changes = true;
+        set_nested_value_parts(&mut copy.context, &fe.item_parts, item);
+        set_nested_value_parts(
+            &mut copy.context,
+            &fe.index_parts,
+            OwnedDataValue::from(index as u64),
+        );
+        let errors_before = copy.errors.len();
+
+        let started_at = call.timed.then(Utc::now);
+        let result = self
+            .task_executor
+            .execute_in_workflow(
+                call.task,
+                &mut copy,
+                Some(TaskIdentity {
+                    workflow_id: &call.workflow.id_arc,
+                    task_id: &call.task.id_arc,
+                }),
+                CallStamp {
+                    loop_counter: call.loop_counter,
+                    element_index: Some(index),
+                },
+            )
+            .await;
+        let timing = started_at.map(|started_at| StepTiming {
+            started_at,
+            duration_us: duration_us_between(started_at, Utc::now()),
+        });
+
+        let (result, changes) = match result {
+            Ok((outcome, changes)) => (Ok(outcome), changes),
+            Err(e) => (Err(e), Vec::new()),
+        };
+        let collected = if fe.collect_parts.is_empty() {
+            OwnedDataValue::Null
+        } else {
+            get_nested_value_parts(&copy.context, &fe.collect_parts)
+                .cloned()
+                .unwrap_or(OwnedDataValue::Null)
+        };
+        ElementOutcome {
+            index,
+            result,
+            changes,
+            new_errors: copy.errors.split_off(errors_before),
+            collected,
+            timing,
+        }
+    }
+
+    /// Evaluate `for_each.over` once, to the element list.
+    ///
+    /// Anything but an array — `null` included — fails the task. The error is
+    /// task-classified so the task's `continue_on_error` applies to it; a
+    /// budget ceiling keeps its own `BUDGET_EXCEEDED` code.
+    fn evaluate_for_each_over(
+        &self,
+        task: &Task,
+        for_each: &ForEach,
+        message: &Message,
+    ) -> Result<Vec<OwnedDataValue>> {
+        let Some(compiled) = for_each.compiled_over.as_ref() else {
+            return Err(DataflowError::Task(format!(
+                "Task {}: for_each.over is not compiled — build the engine through \
+                 Engine::builder or Engine::new rather than running the workflow directly",
+                task.id
+            )));
+        };
+        match eval_to_owned(&self.engine, compiled, &message.context) {
+            Ok(OwnedDataValue::Array(items)) => Ok(items),
+            Ok(other) => Err(DataflowError::Task(format!(
+                "Task {}: for_each.over must evaluate to an array, got {}",
+                task.id,
+                describe_kind(&other)
+            ))),
+            Err(e) => match from_datalogic_eval(&e) {
+                budget @ DataflowError::BudgetExceeded(_) => Err(budget),
+                other => Err(DataflowError::Task(format!(
+                    "Task {}: for_each.over failed to evaluate: {other}",
+                    task.id
+                ))),
+            },
+        }
+    }
+
+    /// `into = []`, for a fan-out over an empty array.
+    fn write_empty_results(&self, for_each: &ForEach, message: &mut Message) {
+        set_nested_value_parts(
+            &mut message.context,
+            &for_each.into_parts,
+            OwnedDataValue::Array(Vec::new()),
+        );
+    }
+
+    /// The audit `Change` for [`Self::write_empty_results`], when changes are
+    /// captured and `into` is set. Called after the write, so `new_value` is
+    /// what landed.
+    fn empty_results_change(&self, for_each: &ForEach, message: &Message) -> Vec<Change> {
+        match for_each.into.as_deref() {
+            Some(into) if message.capture_changes => vec![Change {
+                path: Arc::from(into),
+                old_value: OwnedDataValue::Null,
+                new_value: OwnedDataValue::Array(Vec::new()),
+                removed: false,
+            }],
+            _ => Vec::new(),
+        }
+    }
+
     /// Evaluate `loop.over` once, after setup, to the element list.
     ///
     /// Anything but an array is a workflow error naming the loop — `null`
@@ -1455,6 +1903,28 @@ impl WorkflowExecutor {
                         continue;
                     }
                     Admission::Run => {}
+                }
+
+                // A fan-out runs its own calls and records one entry per
+                // element. `for_each` is only ever on a handler-backed
+                // function, so it is always reached here, never in a sync
+                // stretch.
+                if let Some(for_each) = task.for_each.as_ref() {
+                    let flow = self
+                        .run_for_each(
+                            workflow,
+                            task,
+                            for_each,
+                            message,
+                            trace.as_deref_mut(),
+                            pass,
+                        )
+                        .await?;
+                    if matches!(flow, TaskControlFlow::HaltWorkflow) {
+                        return Ok(true);
+                    }
+                    idx += 1;
+                    continue;
                 }
 
                 let clocks = self.open_task_clocks(trace.is_some(), message);
