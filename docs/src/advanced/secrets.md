@@ -1,20 +1,20 @@
 # Secrets
 
-A workflow sometimes needs a value the engine must never record — a signing
-key, a partner token, a webhook secret. This page is about the one place such
-a value can live.
+A workflow sometimes needs a value the engine must never record: a signing
+key, a partner token, a webhook secret. This page covers the one place such a
+value can live.
 
 ## The problem
 
 `Message.context` is one object, `{data, metadata, temp_data}`, and it plays
 two roles at once. Every expression evaluates against it, and it is also
-exactly what the engine records: `Serialize for Message` writes it, every
+what the engine records: `Serialize for Message` writes it, every
 [trace](../core-concepts/engine.md#execution-tracing) step snapshots it, and a
 `map` task clones it once per mapping when mapping contexts are on.
 
 So "what a workflow may read" and "what the engine records" are the same
 decision. For almost every value that is right. For a signing key it is
-exactly wrong — and there is no way to say so from inside the context.
+wrong, and nothing inside the context can say so.
 `TraceOptions::redact_paths` prunes named subtrees *after* the fact, which is
 the tool you reach for when a value should not have been there in the first
 place.
@@ -56,7 +56,7 @@ assert_eq!(message.data()["accepted"], json!(true).into());
 # Ok(()) }
 ```
 
-`with_secrets` takes the *resolved values* — the host owns resolution, whether
+`with_secrets` takes the *resolved values*; the host owns resolution, whether
 that is an environment variable, a vault call, or a file. The store must be an
 object; nested objects are allowed so a host can namespace, and a dotted name
 walks into them.
@@ -64,8 +64,8 @@ walks into them.
 `{"secret": "name"}` works anywhere JSONLogic runs on this engine: workflow,
 group and task conditions, `validation` rules, `filter`, a custom handler's
 [`Template`](./custom-functions.md) fields, every parameter of the integration
-configs — including `http_call`'s `headers` values, which is usually where a
-credential belongs — and a handler's own `ctx.eval(..)`. A handler configured
+configs (including `http_call`'s `headers` values, which is usually where a
+credential belongs), and a handler's own `ctx.eval(..)`. A handler configured
 with a key *name* rather than an expression reads it directly:
 
 ```rust,ignore
@@ -76,9 +76,9 @@ let key = ctx.secret(&input.key_name);   // Option<&OwnedDataValue>
 
 A secret cannot appear in `Serialize for Message`, in an `ExecutionTrace`
 snapshot, in a `mapping_contexts` clone, or in anything a host derives from a
-message — because the store is never part of a `Message`. There is nothing to
-exclude. That is a property of the types, not of a code path, and the crate
-pins it with a test: a workflow reads a secret from a condition, a validation
+message, because the store is never part of a `Message`. There is nothing to
+exclude. The types enforce this, so no code path has to, and the crate pins it
+with a test: a workflow reads a secret from a condition, a validation
 rule, a filter and a `Template`, runs under `TraceOptions::default()`, and the
 serialized trace and message are checked for the value.
 
@@ -98,30 +98,29 @@ Placement does not stop a workflow *copying* a secret into a recorded root:
 { "path": "data.sig", "logic": { "secret": "partner_key" } }
 ```
 
-Rather than try to tell a verbatim copy from a derived value — there is no
-principled static line between the two, and `cat`, `substr` and `if` all copy
-— the rule is blunt. **An expression whose result the engine writes to the
+No principled static line separates a verbatim copy from a derived value
+(`cat`, `substr` and `if` all copy), so the rule is blunt. **An expression whose result the engine writes to the
 message or emits to a log may not read a secret at all.** That holds even
 through a custom operator, and for a dynamic name (`{"secret": {"var": "…"}}`)
 as much as a literal one.
 
 Since 3.9 every parameter is JSONLogic, so the rule covers destinations as well
-as values — a path is recorded in `Change.path` and on the audit trail, which is
-just as serialized as the value written there:
+as values. A path is recorded in `Change.path` and on the audit trail, and both
+are serialized along with the value written there:
 
 | Parameter | Why it is recorded |
 |---|---|
-| `map` — `logic` | The value written to the message |
-| `map` — `path` | The destination, recorded in `Change.path` and the audit trail |
-| `validation` — `message` | Rendered into `Message::errors`. A rule may *test* a secret in its `logic`; it may not *report* one |
-| `log` — `message`, `fields.*` | Emitted to the log |
-| `parse_*` — `source`, `target` | Name where the engine itself reads and writes |
-| `publish_*` — `source`, `target` | Same |
-| `publish_xml` — `root_element` | Written into the serialized document that lands in `data.{target}` |
+| `map`: `logic` | The value written to the message |
+| `map`: `path` | The destination, recorded in `Change.path` and the audit trail |
+| `validation`: `message` | Rendered into `Message::errors`. A rule may *test* a secret in its `logic`; it may not *report* one |
+| `log`: `message`, `fields.*` | Emitted to the log |
+| `parse_*`: `source`, `target` | Name where the engine itself reads and writes |
+| `publish_*`: `source`, `target` | Same |
+| `publish_xml`: `root_element` | Written into the serialized document that lands in `data.{target}` |
 
 Everything handed to a *handler* may read a secret, because what happens to it
 from there is the handler's business: every `http_call`, `enrich` and
-`publish_kafka` parameter — `headers` values above all — a custom task's whole
+`publish_kafka` parameter (`headers` values above all), a custom task's whole
 `input`, and any condition, which yields a boolean rather than a recorded value.
 
 The check runs at authoring time and at construction, from one implementation:
@@ -152,7 +151,7 @@ assert_eq!(issues[0].path.as_deref(), Some("function.input.mappings[0].logic"));
 assert!(builder.with_workflow(leaky).build().is_err());
 ```
 
-Derived values — an HMAC over the body, a signed URL — belong in a custom
+Derived values (an HMAC over the body, a signed URL) belong in a custom
 handler, which reads the key through a `Template` and writes only the result:
 
 ```rust
@@ -194,12 +193,12 @@ business.
 
 ## Unknown names
 
-A literal name the engine does not declare fails `build()` — a typo is caught
-before the first message, and nothing that was working can break, since the
-name never resolved. A dynamic name that resolves to nothing fails at
+A literal name the engine does not declare fails `build()`, so a typo surfaces
+before the first message. Nothing that was working can break, since the name
+never resolved. A dynamic name that resolves to nothing fails at
 evaluation: a condition evaluates `false`, a `validation` rule records
-`EVALUATION_ERROR`, a `Template::eval` returns `Err`. It is never `null` —
-signing with an empty key silently is the one outcome worse than an error.
+`EVALUATION_ERROR`, a `Template::eval` returns `Err`. It is never `null`:
+silently signing with an empty key is worse than an error.
 
 Error text names the key, never a value.
 
@@ -217,5 +216,5 @@ Error text names the key, never a value.
   across [`with_new_workflows`](../core-concepts/engine.md#enginewith_new_workflowsworkflows),
   so rotation is a rebuild.
 - **`secret` is a reserved operator name.** Registering a host operator under
-  it fails `build()` — otherwise adding a store later would silently shadow it.
+  it fails `build()`; otherwise adding a store later would silently shadow it.
   `Engine::operator_names()` lists it on every engine.

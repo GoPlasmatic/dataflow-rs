@@ -42,8 +42,8 @@ Actions are the building blocks of rules. Each action:
 | `description` | string | No | Free-text description |
 | `condition` | JSONLogic | No | When to execute action (evaluated against full context) |
 | `continue_on_error` | boolean | No | Run the rule's remaining actions even if this one fails (default: `false`) |
-| `terminal` | boolean | No | End the workflow once this action has run (default: `false`) — see [Control Flow](../advanced/control-flow.md) |
-| `halt_on` | string | No | `"failure"` ends the workflow when this action *failed* (default: `"never"`) — see [Control Flow](../advanced/control-flow.md#halt_on) |
+| `terminal` | boolean | No | End the workflow once this action has run (default: `false`); see [Control Flow](../advanced/control-flow.md) |
+| `halt_on` | string | No | `"failure"` ends the workflow when this action *failed* (default: `"never"`); see [Control Flow](../advanced/control-flow.md#halt_on) |
 | `function` | object | Yes | Function to execute |
 
 ## Creating Actions Programmatically
@@ -62,8 +62,8 @@ let action = Action::action(
 ```
 
 `Task` is `#[non_exhaustive]` as of 3.7.0, so a struct literal no longer
-compiles from outside the crate: three of its fields — `id_arc`,
-`compiled_condition`, `group_starts` — are engine internals that a literal
+compiles from outside the crate: three of its fields (`id_arc`,
+`compiled_condition`, `group_starts`) are engine internals that a literal
 forced every caller to name. Field reads, writes and `..` patterns are
 unaffected, so the migration is a constructor plus assignment:
 
@@ -80,7 +80,7 @@ action.terminal = true;
 
 `Workflow::new()`, `Workflow::rule()` and `Workflow::from_json()` are the
 equivalents for a rule, which is `#[non_exhaustive]` for the same reason.
-`TaskGroup` gets no constructor: groups are produced by the parser, and their
+`TaskGroup` gets no constructor: the parser produces groups, and their
 `end` field indexes the *flattened* task list, so building one by hand was never
 meaningful.
 
@@ -103,7 +103,7 @@ The `function` object specifies what the action does:
 |----------|---------|
 | `map` | Data transformation and field mapping |
 | `validation` | Data validation with custom error messages |
-| `filter` | Pipeline control flow — halt workflow or skip task |
+| `filter` | Pipeline control flow: halt workflow or skip task |
 | `log` | Structured logging with JSONLogic expressions |
 | `parse_json` | Parse JSON from payload into data context |
 | `parse_xml` | Parse XML string into JSON data structure |
@@ -145,7 +145,7 @@ Then reference them by name in actions:
 
 ## Conditional Execution
 
-Actions can have conditions that determine if they should run. Conditions evaluate against the **full context** (`data`, `metadata`, `temp_data`), and may read `{"secret": "name"}` from the engine's [secret store](../advanced/secrets.md) — a condition collapses to a bool, so nothing of the value is recorded:
+Actions can have conditions that determine if they should run. Conditions evaluate against the **full context** (`data`, `metadata`, `temp_data`), and may read `{"secret": "name"}` from the engine's [secret store](../advanced/secrets.md). A condition collapses to a bool, so nothing of the value is recorded:
 
 ```json
 {
@@ -247,7 +247,7 @@ Actions execute in order within a rule. Later actions can use results from earli
 <div class="playground-widget" data-workflows='[{"id":"conditional_tasks","name":"Conditional Actions","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"check_premium","name":"Check Premium","condition":{"==":[{"var":"data.input.tier"},"premium"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":20}]}}},{"id":"check_standard","name":"Check Standard","condition":{"==":[{"var":"data.input.tier"},"standard"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":5}]}}},{"id":"apply_discount","name":"Apply Discount","function":{"name":"map","input":{"mappings":[{"path":"data.final_price","logic":{"-":[{"var":"data.input.price"},{"/":[{"*":[{"var":"data.input.price"},{"var":"data.discount"}]},100]}]}}]}}}]}]' data-payload='{"tier":"premium","price":100}'>
 </div>
 
-Try changing `tier` to "standard" to see different discount applied.
+Try changing `tier` to "standard" to see a different discount applied.
 
 ## Best Practices
 

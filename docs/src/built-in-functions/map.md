@@ -40,9 +40,9 @@ The map function:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | string \| JSONLogic | Yes | Target path (e.g., `"data.user.name"`). Since 3.9 it may be an expression that computes the destination per message — see [Computed Destinations](#computed-destinations) |
+| `path` | string \| JSONLogic | Yes | Target path (e.g., `"data.user.name"`). Since 3.9 it may be an expression that computes the destination per message; see [Computed Destinations](#computed-destinations) |
 | `logic` | JSONLogic | Unless `unset` | Expression to evaluate |
-| `unset` | boolean | No | `true` removes the key at `path` instead of writing it. Takes no `logic` — see [Removing a Path](#removing-a-path) |
+| `unset` | boolean | No | `true` removes the key at `path` instead of writing it. Takes no `logic`; see [Removing a Path](#removing-a-path) |
 | `on_null` | `"skip"` \| `"unset"` | No | What a `null` result does. `"skip"` (the default) leaves the path as it was; `"unset"` removes it |
 
 ## Path Syntax
@@ -89,14 +89,13 @@ somewhere different for each message:
 }
 ```
 
-The static spelling above is a plain string, which *is* JSONLogic for itself —
+The static spelling above is a plain string, which *is* JSONLogic for itself:
 it folds to a constant at `Engine::builder().build()` and keeps the precomputed
-path split the write loop has always used. Only a destination that actually
-reads the message pays to be split per write, so nothing changes for the
-ordinary case.
+path split the write loop has always used. Only a destination that reads the
+message pays to be split per write, so nothing changes for the ordinary case.
 
 A computed destination is recorded in `Change.path` and on the audit trail, so
-it may not read a secret — the same rule as the value below.
+it may not read a secret. The same rule covers the value (see below).
 
 ## JSONLogic Expressions
 
@@ -169,8 +168,7 @@ operator. Prefix the key with `$` to emit it as data instead:
 That writes the object `{"cat": ["a", "b"]}`; without the `$` it would write the
 string `"ab"`. Exactly one prefix is stripped from **every** template key, not
 only from keys that collide with an operator, so a mapping that emits a key
-genuinely starting with `$` must double it — `{"$$oid": …}` writes
-`{"$oid": …}`. A key naming no operator needs no escape at all:
+starting with `$` must double it: `{"$$oid": …}` writes `{"$oid": …}`. A key naming no operator needs no escape at all:
 `{"result": {"var": "data.x"}}` already writes `{"result": …}`.
 
 See [Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape)
@@ -180,10 +178,10 @@ prefix rather than hardcoding it.
 ### Secrets Are Refused
 
 A mapping's result is written to the message, and the message is what the
-engine records. So a mapping may not read `{"secret": "name"}` at all — not
+engine records. So a mapping may not read `{"secret": "name"}` at all: not
 verbatim, not through `cat` or a custom operator, not with a dynamic name.
 `Engine::build()` rejects it with `SECRET_IN_MESSAGE_WRITE`, and
-`check_workflow` reports it at `function.input.mappings[i].logic` — or at
+`check_workflow` reports it at `function.input.mappings[i].logic`, or at
 `…[i].path`, since a computed destination is recorded too. Compute a
 derived value (an HMAC, a signed URL) in a
 [custom handler](../advanced/custom-functions.md) that reads the key through a
@@ -198,11 +196,11 @@ If a JSONLogic expression evaluates to `null`, the mapping is skipped:
 {"path": "data.copy", "logic": {"var": "data.optional"}}
 ```
 
-That is what makes `{"if": [cond, value, null]}` mean "set or keep": when
-`cond` is false the path keeps whatever it held. It also means `null` cannot
-clear anything — `"logic": null` does nothing at all, and `check_workflow`
-reports it (and any logic that folds to `null`) as the advisory
-`NULL_MAPPING`. To remove a path, say so.
+The skip makes `{"if": [cond, value, null]}` mean "set or keep": when `cond`
+is false the path keeps whatever it held. It also means `null` cannot clear
+anything. `"logic": null` does nothing, and `check_workflow` reports it (and
+any logic that folds to `null`) as the advisory `NULL_MAPPING`. Removal is
+explicit; see [Removing a Path](#removing-a-path).
 
 ## Removing a Path
 
@@ -232,14 +230,14 @@ down, so `data.items.0` twice removes the first two.
 Clearing with `false` is not the same thing. The key stays present, so
 `missing` and `exists` report it, `{"var": ["temp_data.x", "fallback"]}` and
 `??` return `false` rather than the fallback, and the value travels with the
-message. This matters most in a [loop](../advanced/loops.md), where
+message. The difference shows most in a [loop](../advanced/loops.md), where
 `temp_data` carries over between sweeps: a per-item slot set with "set or
 keep" still holds the previous item's value in every sweep that does not set
 it. Clear it at the end of the sweep with `unset`, or set it with
 `on_null: "unset"`.
 
 Three rules hold between the keys, and a mapping that breaks one fails to
-parse — `validate_authored` reports it as `INVALID_MAPPING` at the key to
+parse; `validate_authored` reports it as `INVALID_MAPPING` at the key to
 change:
 
 - a mapping has `logic` or `"unset": true`, never both;

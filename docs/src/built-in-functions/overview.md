@@ -1,6 +1,6 @@
 # Built-in Functions Overview
 
-Dataflow-rs comes with built-in action functions for common data processing tasks, covering the complete lifecycle from parsing input to publishing output.
+Dataflow-rs ships built-in action functions for common data processing tasks, from parsing input to publishing output.
 
 ## Available Functions
 
@@ -10,7 +10,7 @@ Dataflow-rs comes with built-in action functions for common data processing task
 | `parse_xml` | Parse XML string into JSON data structure | Yes |
 | `map` | Data transformation and field mapping | Yes |
 | `validation` / `validate` | Rule-based data validation | No (read-only) |
-| `filter` | Pipeline control flow — halt workflow or skip task | No |
+| `filter` | Pipeline control flow: halt workflow or skip task | No |
 | `log` | Structured logging with JSONLogic expressions | No |
 | `publish_json` | Serialize data to JSON string | Yes |
 | `publish_xml` | Serialize data to XML string | Yes |
@@ -18,19 +18,19 @@ Dataflow-rs comes with built-in action functions for common data processing task
 ## Every parameter is JSONLogic
 
 Since 3.9 every parameter of every function above is a JSONLogic expression,
-including the ones that name a destination — a `map` `path`, a `parse_*` or
+including the ones that name a destination: a `map` `path`, a `parse_*` or
 `publish_*` `source` and `target`, a `validation` `message`. A JSON literal *is*
-JSONLogic for itself, so the static spelling stays exactly what it always was
-and costs nothing: it folds to a constant when the engine is built, and only a
-parameter that actually reads the message does per-message work.
+JSONLogic for itself, so the static spelling means what it always did and costs
+nothing: it folds to a constant when the engine is built, and only a parameter
+that reads the message does per-message work.
 
-The one thing this changes for an author is that a single-key object whose key
-names an operator evaluates as that operator, so a literal object is written
-`{"$cat": …}` — see
+For an author this changes one thing: a single-key object whose key names an
+operator evaluates as that operator, so you write a literal object as
+`{"$cat": …}`. See
 [Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape).
 
-In addition, dataflow-rs ships **typed config schemas** for three common
-service-layer integrations — `http_call`, `enrich`, and `publish_kafka`.
+Dataflow-rs also ships **typed config schemas** for three common
+service-layer integrations: `http_call`, `enrich`, and `publish_kafka`.
 These are not pre-registered: register an `AsyncFunctionHandler` under the
 matching name and the engine handles config validation and JSONLogic
 pre-compilation for you. See [Integrations](./integrations.md).
@@ -94,8 +94,8 @@ pre-compilation for you. See [Integrations](./integrations.md).
 }
 ```
 
-`halt_on: "failure"` on the validation is what stops `publish` from running on a
-message that failed it — a failing rule records `400`, which `continue_on_error`
+`halt_on: "failure"` on the validation stops `publish` from running on a
+message that failed it. A failing rule records `400`, which `continue_on_error`
 does not cover. See [Control Flow](../advanced/control-flow.md#halt_on).
 
 ### Conditional Transformation

@@ -1,8 +1,8 @@
 # Playground
 
-Try dataflow-rs directly in your browser. Define rules, create messages, and see the processing results in real-time.
+Try dataflow-rs in your browser. Define rules, create messages, and see the processing results in real-time.
 
-> **Looking for advanced debugging?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution, breakpoints, rule visualization, and more!
+> **Looking for advanced debugging?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution, breakpoints, and rule visualization.
 
 <div id="full-playground"></div>
 
@@ -16,7 +16,7 @@ Try dataflow-rs directly in your browser. Define rules, create messages, and see
 
 ## Tips
 
-- **Parse First** - The payload is *not* part of the evaluation context. Start every rule with a `parse_json` action (`{"source": "payload", "target": "input"}`) and read the parsed value at `data.input.…` — that is what every built-in example does
+- **Parse First** - The payload is *not* part of the evaluation context. Start every rule with a `parse_json` action (`{"source": "payload", "target": "input"}`) and read the parsed value at `data.input.…`, as every built-in example does
 - **JSONLogic** - Use [JSONLogic](https://jsonlogic.com/) expressions in your rules for dynamic data access and transformation
 - **Multiple Actions** - Add multiple actions (tasks) to a rule for sequential processing
 - **Multiple Rules** - Define multiple rules that execute in priority order

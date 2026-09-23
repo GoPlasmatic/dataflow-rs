@@ -12,7 +12,7 @@ number:
 |---|---|---|
 | `.` | `dataflow-rs` | crates.io |
 | `wasm/` | `@goplasmatic/dataflow-wasm` | npm |
-| `ui/` | `@goplasmatic/dataflow-ui` — React debugger | npm |
+| `ui/` | `@goplasmatic/dataflow-ui` (React debugger) | npm |
 | `docs/` | mdBook user guide, deployed to GitHub Pages | — |
 
 ## Prerequisites
@@ -23,8 +23,8 @@ number:
   crate cannot build on less. Let-chains (`if let ... && let ...`, stable
   since 1.88) are therefore allowed, and clippy's `collapsible_if` now asks
   for them.
-- **Node.js 20+** — only if you are touching `ui/`.
-- **wasm-pack** — if you are touching `wasm/`, or running the `ui/` debugger
+- **Node.js 20+**, only if you are touching `ui/`.
+- **wasm-pack**, if you are touching `wasm/` or running the `ui/` debugger
   against unreleased engine changes (see *Running the debugger against your
   engine changes*).
 
@@ -36,18 +36,18 @@ cd dataflow-rs
 cargo test --workspace --all-features
 ```
 
-You should see 444 passing tests (260 unit, 96 integration, 21 doc, 66 docs-page
+You should see 845 passing tests (368 unit, 338 integration, 44 doc, 94 docs-page
 doctests, 1 docs coverage).
 
 The count is feature-dependent. The optional operator families are `#[cfg]`-gated
-on both sides — some tests only exist when a family is on, others only when it is
-off — so the default build reports a different number:
+on both sides: some tests only exist when a family is on, others only when it is
+off. The default build therefore reports a different number:
 
 ```bash
 cargo test -p dataflow-rs
 ```
 
-should report 371 passing (254 unit, 96 integration, 21 doc). Use `-p dataflow-rs`,
+should report 733 passing (361 unit, 329 integration, 43 doc). Use `-p dataflow-rs`,
 not `--workspace`: `dataflow-wasm` depends on `dataflow-rs` with `all-operators`,
 and cargo unifies features across workspace members, so `--workspace` would turn
 every family back on.
@@ -55,15 +55,15 @@ every family back on.
 ### Running the debugger against your engine changes
 
 `ui/package.json` pins `@goplasmatic/dataflow-wasm` to the last **published**
-version, because `npm ci` has to be able to resolve it before a matching
-engine exists — both here and in `release.yml`, which installs that release's
-own just-published engine instead of overlaying a local build, so the release
-validates what consumers actually receive. So a plain `npm run dev` runs the
+version, because `npm ci` has to resolve it before a matching engine exists,
+both here and in `release.yml`. `release.yml` installs that release's own
+just-published engine instead of overlaying a local build, so the release
+validates what consumers receive. A plain `npm run dev` therefore runs the
 debugger against the last release, not your checkout.
 
-That matters more than it sounds. `Workflow` does not set
-`deny_unknown_fields`, so a field the published wasm has never heard of is
-silently ignored rather than rejected.
+The mismatch can hide bugs. `Workflow` does not set `deny_unknown_fields`, so
+the published wasm silently ignores a field it has never heard of rather than
+rejecting it.
 
 Two mechanisms keep that from biting you:
 
@@ -74,40 +74,39 @@ npm run dev            # predev builds your engine and overlays it
 
 `npm run dev` runs `wasm:local` first, which rebuilds `wasm/pkg`, verifies it,
 and copies it over `node_modules`. It always rebuilds rather than reusing
-whatever is already there — a stale build usually carries the *same* version as
+whatever is already there. A stale build usually carries the *same* version as
 your checkout, so no version check can see it. wasm-pack no-ops in about two
 seconds when nothing changed.
 
 If wasm-pack is not installed the step warns and continues, so a contributor
-touching only `ui/` is not blocked. That is safe because of the second
-mechanism: the engine exports `engine_version()`, and `WasmEngineAdapter`
+touching only `ui/` is not blocked. The second mechanism makes that safe: the
+engine exports `engine_version()`, and `WasmEngineAdapter`
 throws when the loaded engine is **older** than the `dataflow-ui` build using
-it. A newer engine passes silently — the dependency is a caret range, so npm
-may legitimately resolve one. Run `npm run wasm:local` by hand after any engine
+it. A newer engine passes silently, since the dependency is a caret range and
+npm may legitimately resolve one. Run `npm run wasm:local` by hand after any engine
 change if you keep a dev server running.
 
 Overlaying also clears `node_modules/.vite`, which is required: Vite keys its
 dependency cache off the lockfile, which does not change when files are
 overwritten in place, so without it the dev server keeps serving the old JS
-glue against the new binary. That pairing fails confusingly — init succeeds and
+glue against the new binary. That pairing fails confusingly: init succeeds, and
 only a later mangled-name lookup throws.
 
 This overlay is deliberately one-directional: `predev` and `wasm:local` are
-the only scripts that call `use-local-wasm.mjs`. `build:lib` — which
-`prepublishOnly` runs, and therefore `npm publish` — never does. Keep it that
-way. `release.yml` installs the engine it has just published immediately
+the only scripts that call `use-local-wasm.mjs`. `build:lib` never does, and
+`prepublishOnly` (and therefore `npm publish`) runs it. Keep it that way. `release.yml` installs the engine it has just published immediately
 before running `build:lib`; a future `prebuild:lib` hook that overlaid a local
 build would silently overwrite that published engine partway through
 `publish-ui`, undoing the point of installing it.
 
 `npm run wasm:local` refuses to overlay a build that fails
-`wasm/scripts/verify-wasm.mjs` — the same guard the release pipeline runs
+`wasm/scripts/verify-wasm.mjs`, the same guard the release pipeline runs
 before publishing.
 
 ## Before You Open a Pull Request
 
-CI runs these and treats warnings as errors. Running them locally first is the
-difference between a green PR and a red one:
+CI runs these and treats warnings as errors, so run them locally before you
+push:
 
 ```bash
 cargo fmt --all
@@ -119,16 +118,16 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 `--all-targets` covers examples, tests, and benches. `--all-features` covers the
 `wasm-web` feature, which is otherwise silently skipped.
 
-The `cargo doc` line is not optional politeness. Clippy does not lint rustdoc,
-so nothing above catches a broken intra-doc link, a link from public docs into a
-private item, or an unbackticked generic like `Arc<Logic>` that rustdoc parses
-as an HTML tag — all of which ship silently to docs.rs as dead or mangled text.
+Do not skip the `cargo doc` line. Clippy does not lint rustdoc, so nothing above
+catches a broken intra-doc link, a link from public docs into a private item, or
+an unbackticked generic like `Arc<Logic>` that rustdoc parses as an HTML tag.
+All of these ship silently to docs.rs as dead or mangled text.
 CI runs it under `-D warnings` like everything else.
 
 Lint *policy* lives in `[workspace.lints]` in the root `Cargo.toml` and is
 inherited by all three members, so a bare `cargo clippy` and rust-analyzer
 enforce what CI enforces. Adding a lint there means fixing every existing
-violation in the same change — CI's `-D warnings` gives no grace period.
+violation in the same change; CI's `-D warnings` gives no grace period.
 
 If you touched `wasm/`:
 
@@ -172,13 +171,13 @@ mdbook serve docs
 Rust snippets in **both** `README.md` and `docs/src/` are compiled as doctests
 by `cargo test`:
 
-- `README.md` — via the `ReadmeDoctests` hook at the bottom of `src/lib.rs`.
-- `docs/src/**.md` — via the `dataflow-docs-tests` workspace member, which
+- `README.md`: via the `ReadmeDoctests` hook at the bottom of `src/lib.rs`.
+- `docs/src/**.md`: via the `dataflow-docs-tests` workspace member, which
   includes each book page with `#[doc = include_str!(…)]`.
 
 (`mdbook test` cannot do this. It only passes `-L` to rustdoc, and an
 edition-2018+ `use dataflow_rs::…` needs `--extern`, which mdBook has no flag
-for. Routing through Cargo is what makes the crate resolvable.)
+for. Routing through Cargo makes the crate resolvable.)
 
 So an edit to either can break the build. Two conventions when writing snippets:
 
@@ -194,12 +193,12 @@ So an edit to either can break the build. Two conventions when writing snippets:
   ```
 
   A hidden wrapper that is never called type-checks the snippet without
-  executing it, which is what you want for examples containing placeholder JSON
+  executing it, which suits examples containing placeholder JSON
   like `"tasks": [...]`.
 
-- **Tag genuinely non-compilable blocks `ignore`.** API signature listings
+- **Tag non-compilable blocks `ignore`.** API signature listings
   (`pub fn f() -> T` with no body) are the main legitimate case. Prefer a hidden
-  preamble over `ignore` wherever possible — an `ignore` is an unverified claim
+  preamble over `ignore` wherever possible; an `ignore` is an unverified claim
   in user-facing docs.
 
 Unlabelled fences (```` ``` ```` with no language) are treated as **Rust** by
@@ -217,7 +216,7 @@ cargo run --example realistic_benchmark --release
 Results carry roughly ±2–3% run-to-run noise plus occasional transient P99
 spikes. **Compare the mean of at least 3 runs** before claiming a regression or
 an improvement, and include your machine's core count with any numbers you
-quote — the headline figures in the README are from a 10-core machine.
+quote. The headline figures in the README are from a 10-core machine.
 
 Performance changes do not need to beat the baseline to be merged, but a PR that
 knowingly regresses the hot path should say so and explain the tradeoff.
@@ -245,15 +244,20 @@ in front of users.
 
 Add tests next to the code they cover in a `mod tests` block for unit-level
 changes. Behaviour that spans the engine goes in `tests/`, which is split by
-topic — one binary per file (`engine_execution.rs`, `mapping_semantics.rs`,
-`error_handling.rs`, `tracing.rs`, `trace_options.rs`, `observer.rs`,
-`public_api.rs`, `rollout.rs`, `templates.rs`, `workflow_loop.rs`). Pick the
-file whose topic already matches; add a new one only for a genuinely new area.
+topic, one binary per file (`engine_execution.rs`, `mapping_semantics.rs`,
+`map_unset.rs`, `error_handling.rs`, `tracing.rs`, `trace_options.rs`,
+`observer.rs`, `public_api.rs`, `rollout.rs`, `templates.rs`, `workflow_loop.rs`,
+`loop_over.rs`, `for_each.rs`, `task_groups.rs`, `task_identity.rs`,
+`operator_vocabulary.rs`, `retry.rs`, `authoring_validation.rs`, `secrets.rs`,
+`secrets_isolation.rs`, `template_keys.rs`, `jsonlogic_params.rs`, and the
+feature-gated `ops_budget.rs` and `tensor.rs`). The table in `CLAUDE.md` gives
+each file's topic. Pick the file whose topic already matches; add a new one only
+for a new area.
 
 Because each file is its own crate, a fixture needed by more than one of them
 belongs in `tests/common/mod.rs` (declared `pub`, pulled in with `mod common;`).
 
-Note that CI skips docs-only and Markdown-only changes by design, so a PR
+CI skips docs-only and Markdown-only changes by design, so a PR
 touching only those paths will not show Rust checks.
 
 ## Adding a Built-in Function

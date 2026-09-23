@@ -123,8 +123,8 @@ for step in &trace.steps {
 ### Tracing a run that fails
 
 `process_message_with_trace` returns the trace by value, so the `?` above
-discards it when the engine stops early — on a hard failure you get `Err` and no
-steps at all, which is the opposite of what a debugging API should do.
+discards it when the engine stops early. On a hard failure you get `Err` and no
+steps at all, the opposite of what a debugging API should do.
 
 When the run you need to inspect is the run that failed, pass a trace you own:
 
@@ -146,8 +146,8 @@ if let Err(e) = result {
 ```
 
 Steps are **appended**, so one trace can accumulate across a chain of calls.
-Note that the failing task's own step is not recorded — the engine propagates the
-failure before appending it — so the trace ends at the last known-good step. The
+The failing task's own step is not recorded: the engine propagates the failure
+before appending it, so the trace ends at the last known-good step. The
 error itself comes from the returned `Err` and from `message.errors()`.
 
 `process_message_for_channel_tracing` is the channel-scoped equivalent.
@@ -155,10 +155,10 @@ error itself comes from the returned `Err` and from `message.errors()`.
 ### Bounding what a trace captures
 
 The default policy takes a full `Message` snapshot on every executed step. That
-is unbounded in message size and **quadratic in task count** — each snapshot
+cost is unbounded in message size and **quadratic in task count**: each snapshot
 clones the accumulated audit trail, so an N-task workflow retains `N*(N+1)/2`
-audit entries. Fine for a step debugger, ruinous for a service that persists a
-trace per request.
+audit entries. A step debugger can afford it; a service that persists a trace
+per request cannot.
 
 `TraceOptions` bounds it at capture time, which is the only place it can be
 bounded: trimming the result afterwards has already paid the peak memory.
@@ -192,8 +192,8 @@ if trace.truncated() {
 ```
 
 For metrics rather than debugging, `TraceOptions::timings_only()` drops snapshots
-and mapping contexts entirely, leaving ids, result, timing and the diff — a step
-costs a few hundred bytes regardless of message size:
+and mapping contexts entirely, leaving ids, result, timing and the diff. A step
+then costs a few hundred bytes regardless of message size:
 
 ```rust
 # use dataflow_rs::{Engine, Message, TraceOptions};
@@ -215,17 +215,17 @@ Two things to know about `snapshots: false`: `final_message()` returns `None` an
 passed in instead), and the `dataflow-ui` step debugger cannot render a step view
 without snapshots.
 
-Timing covers the **sync built-ins too** — `map`, `validation`, `filter`, the
-`parse_*` and `publish_*` pair and `log` are dispatched inside the executor and
-cannot be wrapped from outside the crate, so this is the only place their
+Timing covers the **sync built-ins too**. The executor dispatches `map`,
+`validation`, `filter`, the `parse_*` and `publish_*` pair and `log` internally,
+and nothing outside the crate can wrap them, so this is the only place their
 duration is observable. Trace mode reads the clock twice per executed task; the
 non-trace `process_message` path is unchanged and still takes one `Utc::now()`
 per message.
 
 ## Always-on per-task metrics
 
-A trace is a per-request allocation you persist. For aggregation — counters,
-histograms, spans — attach an `ExecutionObserver` instead. It fires once per
+A trace is a per-request allocation you persist. For aggregation (counters,
+histograms, spans), attach an `ExecutionObserver` instead. It fires once per
 dispatched task on every `process_message` call, with no trace involved:
 
 ```rust
@@ -262,18 +262,18 @@ let engine = Engine::builder()
 
 - **`status`** is `None` when the handler returned `TaskOutcome::Skip` (the body
   ran, but no audit entry was recorded), and `Some(500)` when the task returned
-  `Err`. The event is emitted *before* the error propagates, so failing tasks are
-  reported rather than dropped.
-- **A task whose condition evaluated false is not reported** — it was never
+  `Err`. The engine emits the event *before* the error propagates, so failing
+  tasks are reported rather than dropped.
+- **A task whose condition evaluated false is not reported**: it was never
   dispatched, so there is nothing to time.
 - **`function`** reports `"validate"` for both `validation` and `validate`
   configs; they share one variant.
-- **`duration`** is the task body only — not the condition evaluation, the
-  audit-trail push, or the `metadata.progress` write.
+- **`duration`** is the task body only. It excludes the condition evaluation,
+  the audit-trail push, and the `metadata.progress` write.
 
 The callback runs **synchronously on the executor's thread**, and on the sync
 built-in path inside the arena scope. So it must not block, must not re-enter the
-engine, and must not panic — a panic unwinds out of `process_message`. Push to a
+engine, and must not panic (a panic unwinds out of `process_message`). Push to a
 channel or bump an atomic.
 
 With no observer attached the instrumentation stays out of the dispatch path
@@ -331,16 +331,16 @@ impl ExecutionObserver for Overhead {
 
 The edges mirror `task_finished`:
 
-- A rule that its **rollout gate or its condition rejected never starts** — no
-  `workflow_started`, no `workflow_finished`, exactly as a skipped task is not
-  reported.
+- A rule that its **rollout gate or its condition rejected never starts**: no
+  `workflow_started`, no `workflow_finished`, the same way a skipped task goes
+  unreported.
 - `message_finished` fires whether the run completed or stopped early;
   `stopped_early` distinguishes them, and `errors` is
   `message.errors().len()` at the end of the run.
 - A **looping** rule reports **one** `workflow_finished` for the whole loop,
-  carrying `sweeps` — per-sweep events would explode cardinality.
+  carrying `sweeps`; per-sweep events would explode cardinality.
 - `MessageStarted::workflows_considered` is how many rules are about to be
-  *considered*, not how many will run. How many actually ran is the number of
+  *considered*, not how many will run. How many ran is the number of
   `workflow_started` callbacks in between.
 
 All four event types are `#[non_exhaustive]`, so matching on them uses field
@@ -371,7 +371,7 @@ let low_priority = Workflow::from_json(r#"{
 
 ## Rule Conditions
 
-Rules have conditions that determine if they should execute. Conditions are evaluated against the **full message context** — `data`, `metadata`, and `temp_data`:
+Rules have conditions that determine if they should execute. The engine evaluates conditions against the **full message context** (`data`, `metadata`, and `temp_data`):
 
 ```json
 {
@@ -382,7 +382,7 @@ Rules have conditions that determine if they should execute. Conditions are eval
 }
 ```
 
-The rule only executes if the condition evaluates to true.
+The rule executes only if the condition evaluates to true.
 
 ## Custom Functions
 
@@ -412,7 +412,7 @@ let engine = Engine::builder()
 
 ## Thread Safety
 
-The Engine is designed for concurrent use:
+The Engine supports concurrent use:
 
 - Rules are immutable after creation
 - Compiled logic is shared via `Arc`
@@ -456,10 +456,10 @@ Returns an [`EngineBuilder`](../api/reference.md). Chain
 
 ### `EngineBuilder::with_secrets(secrets)`
 
-Values expressions may read through `{"secret": "name"}` but the engine never
-records — not in a serialized message, a trace snapshot or a mapping context,
-because the store is never part of a `Message`. Must be a JSON object; nested
-objects are reached with a dotted name. `build()` refuses a workflow that
+Values that expressions may read through `{"secret": "name"}` but the engine
+never records: not in a serialized message, a trace snapshot or a mapping
+context, because the store is never part of a `Message`. It must be a JSON
+object; a dotted name reaches nested objects. `build()` refuses a workflow that
 reads an undeclared name, or reads any secret from a `map` or `log`
 expression. `engine.declared_secrets()` lists the names. See
 [Secrets](../advanced/secrets.md).
@@ -474,12 +474,12 @@ how many records are retained (default 32, newest kept).
 
 ### `Engine::new(workflows, custom_functions)`
 
-Lower-level escape hatch — accepts rules and a plain handler `HashMap`
-(use `HashMap::new()` for no custom handlers, or — preferred — go
+Lower-level escape hatch. It accepts rules and a plain handler `HashMap`
+(use `HashMap::new()` for no custom handlers, or, preferably, go
 through the builder).
 
-- `workflows: Vec<Workflow>` — Rules to register
-- `custom_functions: HashMap<String, BoxedFunctionHandler>` — Custom
+- `workflows: Vec<Workflow>`: rules to register
+- `custom_functions: HashMap<String, BoxedFunctionHandler>`: custom
   action implementations
 
 ### `engine.process_message(&mut message)`
@@ -495,7 +495,7 @@ Processes a message and returns an execution trace for debugging.
 
 - Returns `Result<ExecutionTrace>` - Contains all execution steps with message snapshots
 - Useful for step-by-step debugging and visualization
-- On `Err` the trace is discarded — use `process_message_tracing` to keep it
+- On `Err` the trace is discarded; use `process_message_tracing` to keep it
 
 ### `engine.process_message_tracing(&mut message, &mut trace)`
 

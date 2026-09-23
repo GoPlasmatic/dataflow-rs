@@ -1,10 +1,10 @@
 # Log (Structured Logging)
 
-The `log` function provides structured logging within workflows using the Rust `log` crate. Log messages and fields support JSONLogic expressions for dynamic content.
+The `log` function emits structured log records from inside a workflow through the Rust `log` crate. Log messages and fields accept JSONLogic expressions for dynamic content.
 
 ## Overview
 
-The log function allows you to:
+With `log` you can:
 
 - Emit structured log messages at any point in a workflow
 - Use JSONLogic expressions for dynamic message content
@@ -124,7 +124,7 @@ The log function allows you to:
 
 ## Log Target
 
-All log messages are emitted with the target `dataflow::log`, making it easy to filter in your logging configuration:
+Every log message uses the target `dataflow::log`, so you can filter on it in your logging configuration.
 
 Filter via `RUST_LOG` when running:
 
@@ -142,10 +142,10 @@ env_logger::Builder::new()
 
 ## Notes
 
-- The log function **never modifies the message** — it is read-only
-- The log function **never fails** — it always returns status 200 with no changes
-- All JSONLogic expressions in `message` and `fields` are **pre-compiled** at engine startup
-- If the configured level is **filtered out** for the `dataflow::log` target (e.g. via `RUST_LOG`), the task short-circuits before evaluating any expression — disabled log tasks cost effectively nothing
-- If a JSONLogic expression fails to evaluate, the raw expression value is logged instead
+- The log function **never modifies the message**; it is read-only
+- The log function **never fails**; it always returns status 200 with no changes
+- The engine **pre-compiles** all JSONLogic expressions in `message` and `fields` at startup
+- If the configured level is **filtered out** for the `dataflow::log` target (e.g. via `RUST_LOG`), the task short-circuits before evaluating any expression, so a disabled log task costs effectively nothing
+- If a JSONLogic expression fails to evaluate, the task logs the raw expression value instead
 - The `fields` are formatted as `key=value` pairs appended to the log message
-- Neither `message` nor any field may read `{"secret": "name"}` — a log line is an exit the engine does not control, so `Engine::build()` rejects it with `SECRET_IN_MESSAGE_WRITE`. See [Secrets](../advanced/secrets.md)
+- Neither `message` nor any field may read `{"secret": "name"}`. A log line is an exit the engine does not control, so `Engine::build()` rejects it with `SECRET_IN_MESSAGE_WRITE`. See [Secrets](../advanced/secrets.md)

@@ -11,13 +11,13 @@
 
 ---
 
-WebAssembly bindings for [dataflow-rs](https://github.com/GoPlasmatic/dataflow-rs), enabling high-performance workflow execution in the browser. Run the same workflow engine that powers your Rust backend directly in JavaScript/TypeScript applications.
+WebAssembly bindings for [dataflow-rs](https://github.com/GoPlasmatic/dataflow-rs), enabling workflow execution in the browser. Run the same workflow engine that powers your Rust backend directly in JavaScript/TypeScript applications.
 
 ## Features
 
 - **Browser Execution** - Run dataflow-rs workflows directly in the browser
-- **Full Feature Parity** - Same workflow engine as the native Rust version including all built-in functions
-- **Built-in Functions** - parse, map, validation, publish
+- **Same Engine** - The native Rust engine compiled to WebAssembly, built with `all-operators` (every optional operator family except `tensor`)
+- **Built-in Functions** - `parse_json`, `parse_xml`, `map`, `validation`, `filter`, `log`, `publish_json`, `publish_xml`
 - **TypeScript Support** - Full type definitions included
 - **Execution Tracing** - Debug workflows with step-by-step execution traces and message snapshots
 
@@ -42,12 +42,12 @@ const workflows = [
     name: 'My Workflow',
     tasks: [
       {
-        // Parse the raw payload string into data
+        // Parse the raw payload string into data.input
         id: 'parse-payload',
         name: 'Parse Payload',
         function: {
-          name: 'parse',
-          input: {}
+          name: 'parse_json',
+          input: { source: 'payload', target: 'input' }
         }
       },
       {
@@ -57,7 +57,7 @@ const workflows = [
           name: 'map',
           input: {
             mappings: [
-              { path: 'data.output', logic: { var: 'data.input' } }
+              { path: 'data.output', logic: { var: 'data.input.greeting' } }
             ]
           }
         }
@@ -69,11 +69,11 @@ const workflows = [
 // Create engine
 const engine = new WasmEngine(JSON.stringify(workflows));
 
-// Process a payload (raw string - parsed by the parse plugin)
-const payload = '{"input": "hello"}';
+// Process a payload (a raw string, parsed by the parse_json task)
+const payload = '{"greeting": "hello"}';
 const result = await engine.process(payload);
 const parsed = JSON.parse(result);
-console.log(parsed.context.data); // { input: 'hello', output: 'hello' }
+console.log(parsed.context.data); // { input: { greeting: 'hello' }, output: 'hello' }
 ```
 
 ## API
@@ -90,7 +90,7 @@ class WasmEngine {
   static with_secrets(workflows_json: string, secrets_json: string): WasmEngine;
 
   // Process a raw payload string through all workflows
-  // The payload is stored as-is and should be parsed by the parse plugin
+  // The payload is stored as-is; parse it with a parse_json or parse_xml task
   process(payload: string): Promise<string>;
 
   // Process with execution trace for debugging
@@ -114,18 +114,17 @@ function process_message(workflows_json: string, payload: string): Promise<strin
 
 ### Payload Handling
 
-The payload is stored as a **raw string** and is not automatically parsed. Use the `parse` plugin as the first task in your workflow to parse JSON/XML payloads into `context.data`:
+The payload is stored as a **raw string** and is not automatically parsed, and it is not part of the JSONLogic evaluation context, so `{"var": "payload.x"}` resolves to nothing. Make `parse_json` (or `parse_xml`) the first task in your workflow to parse the payload into `context.data`:
 
 ```typescript
 {
   id: 'parse-payload',
   name: 'Parse Payload',
   function: {
-    name: 'parse',
+    name: 'parse_json',       // or 'parse_xml'
     input: {
-      source: 'payload',      // default
-      target: 'data',         // default
-      format: 'json'          // default, or 'xml'
+      source: 'payload',      // required: where to read from
+      target: 'input'         // required: stored at data.input
     }
   }
 }
@@ -140,7 +139,7 @@ interface Message {
   id: string;
   payload: string;              // Raw payload string
   context: {
-    data: object;               // Parsed data (populated by parse plugin)
+    data: object;               // Parsed data (populated by parse_json / parse_xml)
     metadata: object;           // Workflow metadata
     temp_data: object;          // Temporary data during processing
   };
@@ -152,7 +151,7 @@ interface Message {
 ## Building from Source
 
 Requirements:
-- Rust 1.70+
+- Rust 1.98+
 - wasm-pack
 
 ```bash

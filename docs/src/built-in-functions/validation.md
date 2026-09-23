@@ -1,7 +1,7 @@
 # Validation Function
 
-The `validation` function — also spelled `validate`, which deserializes to the
-same config — evaluates rules against message data and collects validation errors.
+The `validation` function (also spelled `validate`, which deserializes to the
+same config) evaluates rules against message data and collects validation errors.
 
 ## Overview
 
@@ -45,7 +45,7 @@ The validation function:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `logic` | JSONLogic | Yes | Expression that must evaluate to `true` |
-| `message` | string \| JSONLogic | Yes | Error message recorded when the rule fails. Since 3.9 it may be an expression that names the value that failed — see [Computed Messages](#computed-messages) |
+| `message` | string \| JSONLogic | Yes | Error message recorded when the rule fails. Since 3.9 it may be an expression that names the value that failed. See [Computed Messages](#computed-messages) |
 
 Both fields are required: a rule missing either one fails to load, and the
 workflow is rejected when the engine is built rather than when the first
@@ -68,7 +68,7 @@ constant at build time and costs nothing per message. A message is rendered
 **only when its rule fails**, so a computed one is free on the passing path.
 
 Because the rendered text lands in `message.errors()`, which is serialized, a
-`message` may not read `{"secret": …}` — a rule may *test* a secret in its
+`message` may not read `{"secret": …}`. A rule may *test* a secret in its
 `logic`, but it may not *report* one. See [Secrets](../advanced/secrets.md).
 
 ## How Validation Works
@@ -104,7 +104,7 @@ Because the rendered text lands in `message.errors()`, which is serialized, a
 ### String Length
 
 Requires the `ext-string` [operator family](../advanced/jsonlogic.md#operator-families-cargo-features).
-Note `length` lives in `ext-string` even though it also counts array elements.
+`length` lives in `ext-string` even though it also counts array elements.
 
 ```json
 {
@@ -118,7 +118,7 @@ Note `length` lives in `ext-string` even though it also counts array elements.
 
 ### Pattern Matching
 
-JSONLogic has **no regex operator** — there is no `regex_match`. Substring and
+JSONLogic has **no regex operator**; there is no `regex_match`. Substring and
 prefix checks cover many cases; `in` is a core operator, while `starts_with` and
 `ends_with` need `ext-string`.
 
@@ -129,7 +129,7 @@ prefix checks cover many cases; `in` is a core operator, while `starts_with` and
 }
 ```
 
-For real pattern matching, register a [custom function](../advanced/custom-functions.md)
+For regex matching, register a [custom function](../advanced/custom-functions.md)
 and run the regex in Rust.
 
 ### Conditional Required
@@ -158,7 +158,7 @@ and run the regex in Rust.
 
 ## Multiple Rules
 
-All rules are evaluated, collecting all errors:
+Validation evaluates every rule and collects every error:
 
 ```json
 {
@@ -193,13 +193,13 @@ for error in message.errors() {
 
 Error structure:
 - `code`: one of three, depending on how the rule failed
-  - `VALIDATION_ERROR` — the rule evaluated and did not return `true`
-  - `EVALUATION_ERROR` — the rule's own expression failed to evaluate
-  - `COMPILATION_ERROR` — the rule's logic was never compiled (an engine-side fault)
+  - `VALIDATION_ERROR`: the rule evaluated and did not return `true`
+  - `EVALUATION_ERROR`: the rule's own expression failed to evaluate
+  - `COMPILATION_ERROR`: the rule's logic was never compiled (an engine-side fault)
 - `message`: the rule's `message` for `VALIDATION_ERROR`; a description of the
   failure for the other two
 
-Note that all three carry no `workflow_id` or `task_id` — validation builds its
+All three carry no `workflow_id` or `task_id`: validation builds its
 entries without executor identity, so attribute them by position in
 `message.errors()` rather than by id.
 
@@ -243,8 +243,8 @@ Combine validation with data transformation:
 }
 ```
 
-Transformation proceeds even if validation fails — but note that this is true
-with or without `continue_on_error`, for the reason below. Use `halt_on` if you
+Transformation proceeds even if validation fails, with or without
+`continue_on_error`, for the reason below. Use `halt_on` if you
 meant to stop.
 
 ## Stopping on a validation failure
@@ -288,7 +288,7 @@ audit trail keeps the real `400`:
 
 ### Across rules: the error-context path
 
-Halting stops **this rule only** — later rules still process the message, so
+Halting stops **this rule only**. Later rules still process the message, so
 `halt_on` is not a rejection. To stop a whole pipeline, have the engine record
 failures where a condition can read them, with
 [`with_error_context_path`](../core-concepts/error-handling.md#branching-on-why-a-task-failed),
@@ -300,7 +300,8 @@ and gate the following rule on it:
  "tasks": []}
 ```
 
-This is the one that holds when the work you are guarding lives in a later rule.
+The error-context path is the option that holds when the work you are guarding
+lives in a later rule.
 
 ### Older alternatives
 
@@ -316,7 +317,7 @@ Before `halt_on` the same gate was written as a `filter` reading
 
 It still works, at a cost: a `filter` halt records status `299`, so the `400` is
 replaced on both the audit trail and `metadata.progress` and the host can no
-longer see what the task actually returned. Prefer `halt_on`.
+longer see what the task returned. Prefer `halt_on`.
 
 ## Best Practices
 

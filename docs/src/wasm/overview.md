@@ -1,6 +1,6 @@
 # WebAssembly Package
 
-The `@goplasmatic/dataflow-wasm` package provides WebAssembly bindings for dataflow-rs, enabling you to run the same rules engine in the browser that powers your Rust backend.
+The `@goplasmatic/dataflow-wasm` package provides WebAssembly bindings for dataflow-rs, so you can run the same rules engine as your Rust backend in the browser.
 
 ## Installation
 
@@ -49,14 +49,14 @@ const result = JSON.parse(await engine.process('{"greeting": "hello world"}'));
 console.log(result.context.data.output); // 'hello world'
 ```
 
-Two things trip people up here, and both are structural rather than cosmetic:
+Two things trip people up here:
 
 - **The payload is not parsed for you.** `process(payload)` stores the string
   verbatim as the message payload. Without a `parse_json` (or `parse_xml`) task,
   `data` stays empty.
 - **`payload` is not in the JSONLogic evaluation context.** Conditions and
   mappings see `{data, metadata, temp_data}` only, so `{"var": "payload.x"}`
-  never resolves — parse into `data` and read from there.
+  never resolves. Parse into `data` and read from there.
 
 ## API Reference
 
@@ -92,8 +92,8 @@ class WasmEngine {
 }
 ```
 
-`process_with_trace` is snake_case — it is the Rust name passed straight
-through `wasm_bindgen`, not a camelCase JavaScript alias.
+`process_with_trace` is snake_case: `wasm_bindgen` passes the Rust name
+straight through rather than adding a camelCase JavaScript alias.
 
 ### Module functions
 
@@ -111,7 +111,7 @@ export function process_message(workflowsJson: string, payload: string): Promise
 Pair `engine_version()` with the version your frontend was built against and
 fail loudly on a mismatch. Workflow definitions do **not** set
 `deny_unknown_fields`, so an older engine silently *ignores* a field it predates
-rather than rejecting it — the workflow runs and quietly does something other
+rather than rejecting it. The workflow runs and quietly does something other
 than what it says.
 
 ### What `process` resolves to
@@ -132,23 +132,23 @@ interface Message {
 }
 ```
 
-Note `data` lives under `context`, not at the top level.
+`data` lives under `context`, not at the top level.
 
 ### Error behaviour
 
 There are two distinct failure channels, and a resolved Promise does not mean
 "no errors":
 
-- The Promise **rejects** with a string when the engine stopped early — a task
-  failed with `continue_on_error: false`.
+- The Promise **rejects** with a string when the engine stopped early because a
+  task failed with `continue_on_error: false`.
 - The Promise **resolves** with a message whose `errors` array is non-empty when
   failures were tolerated. Always check `result.errors.length`.
 
 ## Operator availability
 
-This package is built with `all-operators`, so every optional operator family —
-`ext-string`, `ext-array`, `ext-object`, `ext-math`, `ext-control`,
-`error-handling` and `datetime` — is live in the browser.
+This package is built with `all-operators`, so every optional operator family
+(`ext-string`, `ext-array`, `ext-object`, `ext-math`, `ext-control`,
+`error-handling` and `datetime`) is live in the browser.
 
 A default `cargo add dataflow-rs` build enables **none** of them. Because the
 engine evaluates in templating mode, an operator whose family is off is not an
@@ -177,7 +177,7 @@ Optional step fields are **omitted**, not set to `null`: `message`,
 are absent unless that data was captured. Guard with `if (step.message)` rather
 than comparing against `null`.
 
-`trace.truncated` is `true` when the snapshot budget was exceeded — later steps
+`trace.truncated` is `true` when the snapshot budget was exceeded. Later steps
 are still recorded, but without their `message`. It is omitted when `false`.
 
 Steps carry `loop_counter` for workflows that loop, so repeated sweeps of the
@@ -195,7 +195,7 @@ wasm-pack build --target web --out-dir pkg
 node scripts/verify-wasm.mjs
 ```
 
-The output will be in `wasm/pkg/`. The verification step is not optional in CI:
+The output lands in `wasm/pkg/`. The verification step is not optional in CI:
 it checks the emitted binary still carries the features the glue depends on, so
 a `wasm-opt` regression fails the build instead of shipping a package that
 throws on `init()`.
@@ -211,9 +211,8 @@ externref table during init. Reference types is the binding constraint:
 - Firefox 79+
 - Safari 15+
 
-These are hard requirements, not a degradation floor: an engine without
-reference types throws `RangeError` on the very first `init()` call rather than
-falling back. `wasm/scripts/verify-wasm.mjs` exists to catch a build that
+These are hard requirements: an engine without reference types throws
+`RangeError` on the first `init()` call instead of falling back. `wasm/scripts/verify-wasm.mjs` exists to catch a build that
 regresses this.
 
 ## Next Steps

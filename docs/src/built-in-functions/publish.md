@@ -1,6 +1,6 @@
 # Publish Functions
 
-The publish functions serialize structured data into string formats (JSON or XML). They are typically used at the end of a workflow to prepare output data for transmission or storage.
+The publish functions serialize structured data into string formats (JSON or XML). A workflow typically calls them last, to prepare output data for transmission or storage.
 
 ## publish_json
 
@@ -43,7 +43,7 @@ constant at build time and keeps the precomputed path split, so nothing changes
 for the ordinary case.
 
 Both name where the engine itself writes, and the destination is recorded in
-`Change.path` and on the audit trail, so neither may read `{"secret": …}` — see
+`Change.path` and on the audit trail, so neither may read `{"secret": …}`. See
 [Secrets](../advanced/secrets.md).
 
 ### Examples
@@ -139,7 +139,7 @@ Serializes data from the source field to an XML string.
 | `root_element` | string \| JSONLogic | No | `root` | Name of the root XML element |
 
 `source` and `target` accept a computed value exactly as for
-[`publish_json`](#parameters), and so does `root_element` — so one task can name
+[`publish_json`](#parameters), and so does `root_element`, so one task can name
 the document after the message it is serializing:
 
 ```json
@@ -154,11 +154,11 @@ the document after the message it is serializing:
 The serializer follows these rules:
 - Object keys become XML element names
 - Array items are wrapped in `<item>` elements
-- Special characters are properly escaped (`<`, `>`, `&`, `"`, `'`)
+- Special characters are escaped (`<`, `>`, `&`, `"`, `'`)
 - Invalid XML element names are sanitized (e.g., names starting with numbers get an underscore prefix)
 
 `publish_xml` is **not** the inverse of `parse_xml`. It has no notion of the
-`$text` and `@name` keys `parse_xml` produces — they are ordinary object keys,
+`$text` and `@name` keys `parse_xml` produces. They are ordinary object keys,
 and sanitization turns them into `<_text>` and `<_name>` *elements* rather than
 a text node or an attribute. Lift the `$text` leaves with a `map` before
 publishing; see

@@ -12,13 +12,13 @@
   [![Crates.io](https://img.shields.io/crates/v/dataflow-rs.svg)](https://crates.io/crates/dataflow-rs)
 </div>
 
-**Dataflow-rs** is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. Rules are evaluated using pre-compiled JSONLogic for zero runtime overhead, and actions execute asynchronously for high throughput.
+**Dataflow-rs** is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. The engine evaluates rules with pre-compiled JSONLogic for zero runtime overhead, and actions execute asynchronously for high throughput.
 
-Whether you're routing events, validating data, building REST APIs, or creating automation pipelines, Dataflow-rs provides enterprise-grade performance with minimal complexity.
+Use it to route events, validate data, power REST APIs, or build automation pipelines.
 
 ### ⚡ Blazing Fast Performance
 
-Dataflow-rs is built for high-throughput hot paths. By pre-compiling all JSONLogic expressions at startup, execution runs with zero runtime allocations or JSON parsing overhead. On a 10-core Apple M2 Pro, the multi-threaded release benchmark yields:
+Dataflow-rs targets high-throughput hot paths. It pre-compiles every JSONLogic expression at startup, so execution runs with zero runtime allocations or JSON parsing overhead. On a 10-core Apple M2 Pro, the multi-threaded release benchmark yields:
 *   **Throughput:** **~630,000 messages/sec**
 *   **Median (P50) Latency:** **6 μs**
 *   **Tail (P99) Latency:** **52 μs**
@@ -26,7 +26,7 @@ Dataflow-rs is built for high-throughput hot paths. By pre-compiling all JSONLog
 
 ### 🧩 Why Choose dataflow-rs?
 
-If you need dynamic business rules or user-customizable workflows, writing hardcoded `if/else` checks makes your codebase rigid, while running heavy workflow orchestrators (like Temporal or Zeebe) adds complex infrastructure dependencies and milliseconds of database/network latency. Dataflow-rs gives you the best of both worlds:
+If you need dynamic business rules or user-customizable workflows, writing hardcoded `if/else` checks makes your codebase rigid, while running heavy workflow orchestrators (like Temporal or Zeebe) adds infrastructure dependencies and milliseconds of database/network latency. Dataflow-rs sits between the two:
 
 | Feature | Hardcoded Rust | dataflow-rs | Orchestrators (Temporal/Zeebe) |
 |---|---|---|---|
@@ -40,7 +40,7 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 
 - **IF → THEN → THAT Model** - Define rules with JSONLogic conditions, execute actions, chain with priority ordering
 - **Async-First Architecture** - Native async/await support with Tokio for high-throughput processing
-- **Zero Runtime Compilation** - All JSONLogic expressions pre-compiled at startup for optimal performance
+- **Zero Runtime Compilation** - All JSONLogic expressions pre-compiled at startup
 - **Full Context Access** - Conditions can access any field: `data`, `metadata`, `temp_data`
 - **Secrets Outside the Record** - `{"secret": "name"}` reads an engine-scoped store that no trace, snapshot or serialized message ever contains
 - **Execution Tracing** - Step-by-step debugging with message snapshots after each action
@@ -50,12 +50,12 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 - **Bounded Loops** - Re-run a rule's action list a fixed number of times, with the sweep counter in `temp_data`
 - **Traffic Splits** - Roll a rule out to a percentage of messages with `rollout`
 - **Retry Policies** - Retry a failing action with exponential backoff and a wall-clock deadline (native targets)
-- **Authoring-Time Validation** - Check a definition before it reaches an engine; every problem is reported at the coordinate the author typed
+- **Authoring-Time Validation** - Check a definition before it reaches an engine; reports every problem at the coordinate the author typed
 - **Pipeline Control Flow** - Filter/gate function to halt workflows or skip tasks based on conditions
 - **Channel Routing** - Route messages to specific workflow channels with O(1) lookup
 - **Workflow Lifecycle** - Manage workflow status (active/paused/archived), versioning, and tagging
 - **Hot Reload** - Swap workflows at runtime without re-registering custom functions
-- **Extensible** - Easily add custom async actions to the engine
+- **Extensible** - Add custom async actions to the engine
 - **Typed Integration Configs** - Pre-validated configs for HTTP, Enrich, and Kafka integrations
 - **WebAssembly Support** - Run rules in the browser with `@goplasmatic/dataflow-wasm`
 - **React UI Components** - Visualize and debug rules with `@goplasmatic/dataflow-ui`
@@ -63,7 +63,7 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 
 ## Try It Now
 
-Experience the power of dataflow-rs directly in your browser. Define a rule and message, then see the processing result instantly.
+Run dataflow-rs in your browser. Define a rule and message, then see the processing result.
 
 > **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution, breakpoints, and rule visualization.
 

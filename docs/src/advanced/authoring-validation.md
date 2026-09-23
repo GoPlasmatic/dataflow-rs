@@ -1,12 +1,12 @@
 # Authoring-Time Validation
 
 The engine checks a workflow when `Engine::build()` runs. For a service that
-*stores* definitions — accepting them from an API, holding them in a database,
-building one engine over many rows — that is the wrong moment. One bad row
-aborts the whole build, at reload, for every workflow in the process. And the
+*stores* definitions (accepting them from an API, holding them in a database,
+building one engine over many rows), that is the wrong moment. One bad row
+aborts the whole build, at reload, for every workflow in the process, and the
 author who submitted it got no feedback at all.
 
-This page covers the two APIs that move those checks to submission time.
+Two APIs move those checks to submission time.
 
 ## Checking a definition
 
@@ -59,7 +59,7 @@ assert_eq!(issues[0].path.as_deref(), Some("tasks[1].tasks[0].id"));
 assert_eq!(issues[0].task_id.as_deref(), Some("first"));
 ```
 
-Note the path is `tasks[1].tasks[0]` — where the author wrote it — not the flat
+The path is `tasks[1].tasks[0]`, where the author wrote it, not the flat
 index that task ends up at once the engine flattens the group.
 
 ### The guarantee
@@ -67,16 +67,16 @@ index that task ends up at once the engine flattens the group.
 > `validate_authored` returns empty **if and only if** the JSON parses into a
 > `Workflow` and that workflow validates.
 
-That is the *shape* question, and it is the whole of it — but it is not the
-same as "this engine can run it". `Engine::build()` also resolves every task to
+That answers the *shape* question completely, but shape is not the same as
+"this engine can run it". `Engine::build()` also resolves every task to
 a handler, so a structurally perfect definition naming an unregistered function
 still aborts a build. The next section covers that half.
 
 The guarantee still matters, because the schema is much larger than the semantic
 rules: `"priority": "high"`, a `map` task missing its `mappings`, a misspelled
-`status` — none of these break a *rule*, and none of them can load.
+`status`: none of these break a *rule*, and none of them can load.
 
-Rather than mirror the whole schema, `validate_authored` finishes by actually
+Rather than mirror the whole schema, `validate_authored` finishes by
 parsing the document and reports any failure as `IssueCode::ParseFailed`,
 carrying the parser's own message:
 
@@ -92,12 +92,12 @@ assert_eq!(issues[0].code, IssueCode::ParseFailed);
 assert!(issues[0].message.contains("mappings"));
 ```
 
-So a host does **not** need its own round-trip check as a safety net. This is
-that safety net, inside the crate where it cannot drift.
+A host therefore does **not** need its own round-trip check as a safety net:
+this is that safety net, inside the crate where it cannot drift.
 
 ## Issue codes
 
-`IssueCode` is `#[non_exhaustive]` — a later minor may add a rule — so match the
+`IssueCode` is `#[non_exhaustive]` (a later minor may add a rule), so match the
 codes you care about and let the rest fall through. `as_str()` gives the stable
 string form for an API response:
 
@@ -112,43 +112,43 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `EMPTY_WORKFLOW_ID` / `EMPTY_WORKFLOW_NAME` | Rejected | Required identity field missing or blank |
 | `NO_TASKS` | Rejected | `tasks` missing, not an array, or empty |
 | `MISSING_STEP_ID` | Rejected | A task or group carries no `id` |
-| `DUPLICATE_STEP_ID` | Rejected | Two steps share an id — groups share the task namespace |
+| `DUPLICATE_STEP_ID` | Rejected | Two steps share an id; groups share the task namespace |
 | `EMPTY_GROUP` | Rejected | A group's `tasks` is not a non-empty array |
 | `GROUP_TOO_DEEP` | Rejected | Groups nested past `MAX_GROUP_DEPTH` |
 | `MISSING_FUNCTION` | Rejected | A task carries no `function` |
 | `INVALID_FUNCTION_NAME` | Rejected | `function` is not an object with a non-empty `name` |
 | `INVALID_TERMINAL` | Rejected | `terminal` is present but not a boolean |
 | `INVALID_HALT_ON` | Rejected | `halt_on` is not `"never"`/`"failure"`, or is on a group |
-| `INVALID_MAPPING` | Rejected | A `map` mapping has neither or both of `logic` and `unset`, carries `on_null` without `logic`, or removes a context root — see [Removing a Path](../built-in-functions/map.md#removing-a-path) |
+| `INVALID_MAPPING` | Rejected | A `map` mapping has neither or both of `logic` and `unset`, carries `on_null` without `logic`, or removes a context root; see [Removing a Path](../built-in-functions/map.md#removing-a-path) |
 | `GROUP_CONTINUE_ON_ERROR` | Advisory | A group carries `continue_on_error`, which the engine does not honour |
 | `UNGUARDED_VALIDATION` | Advisory | A `validation` whose failure stops nothing |
-| `NULL_MAPPING` | Advisory | A `map` mapping whose `logic` is always `null`, so it never writes — use `"unset": true` to remove a path |
-| `LOOP_INCREMENT_TOO_SMALL` | Rejected | `increment < 1` — the counter would never reach `max` |
-| `LOOP_BOUND_EMPTY` | Rejected | `max <= init` — no sweep could ever run |
+| `NULL_MAPPING` | Advisory | A `map` mapping whose `logic` is always `null`, so it never writes; use `"unset": true` to remove a path |
+| `LOOP_INCREMENT_TOO_SMALL` | Rejected | `increment < 1`: the counter would never reach `max` |
+| `LOOP_BOUND_EMPTY` | Rejected | `max <= init`: no sweep could ever run |
 | `LOOP_COUNTER_INVALID` | Rejected | `counter` is not a non-empty dotted path |
 | `LOOP_SLOT_INVALID` | Rejected | `as` or `scratch` is not a non-empty dotted path |
 | `LOOP_ITEM_WITHOUT_OVER` | Rejected | `as` is set but there is no `over` to take elements from |
 | `LOOP_SLOT_COLLISION` | Rejected | Two of `counter` / `as` / `scratch` name the same path, or one lies inside the other |
-| `LOOP_OVER_INVALID` | Rejected | `over` is a scalar literal that can never be an array, or `init < 0` alongside `over` — see [Iterating an array](./loops.md#iterating-an-array) |
-| `INVALID_FOR_EACH` | Rejected | A task's `for_each` breaks one of its rules, or sits on a built-in or a group — reported at the offending key; see [Fan-Out](./for-each.md#validation) |
+| `LOOP_OVER_INVALID` | Rejected | `over` is a scalar literal that can never be an array, or `init < 0` alongside `over`; see [Iterating an array](./loops.md#iterating-an-array) |
+| `INVALID_FOR_EACH` | Rejected | A task's `for_each` breaks one of its rules, or sits on a built-in or a group (reported at the offending key); see [Fan-Out](./for-each.md#validation) |
 | `PARSE_FAILED` | Rejected | Does not deserialize; message carries the field and type |
-| `VALIDATE_FAILED` | Rejected | Backstop — parses, but `validate()` still rejects it |
-| `UNKNOWN_FUNCTION` | Rejected | No handler registered, and not a built-in — usually a typo |
+| `VALIDATE_FAILED` | Rejected | Backstop: parses, but `validate()` still rejects it |
+| `UNKNOWN_FUNCTION` | Rejected | No handler registered, and not a built-in; usually a typo |
 | `MISSING_HANDLER` | Defect | A config-only integration with nothing registered under its name |
 | `INPUT_PARSE` | Rejected | A custom task's `input` does not match its handler's `Input` type |
 | `TEMPLATE_COMPILE` | Rejected | A handler rejected the input at construction time |
-| `UNKNOWN_SECRET` | Rejected | An expression names a secret the engine does not declare — see [Secrets](./secrets.md) |
-| `SECRET_IN_MESSAGE_WRITE` | Rejected | An expression whose result the engine records reads a secret — see [Secrets](./secrets.md#what-a-secret-may-not-do) for the full set |
-| `INVALID_SECRET_STORE` | Rejected | The store given to `with_secrets` is not an object — reported in place of the `UNKNOWN_SECRET` issues every name would otherwise produce |
+| `UNKNOWN_SECRET` | Rejected | An expression names a secret the engine does not declare; see [Secrets](./secrets.md) |
+| `SECRET_IN_MESSAGE_WRITE` | Rejected | An expression whose result the engine records reads a secret; see [Secrets](./secrets.md#what-a-secret-may-not-do) for the full set |
+| `INVALID_SECRET_STORE` | Rejected | The store given to `with_secrets` is not an object (reported in place of the `UNKNOWN_SECRET` issues every name would otherwise produce) |
 | `DUPLICATE_TEMPLATE_KEY` | Rejected | Two keys in one template object collapse to the same name once the `$` escape is stripped |
-| `ESCAPED_TEMPLATE_KEY` | Advisory | A `$`-prefixed template key — the migration audit, never refused |
+| `ESCAPED_TEMPLATE_KEY` | Advisory | A `$`-prefixed template key, reported as a migration audit and never refused |
 
 ## Severity
 
 Not every code is a refusal, and the two sets have grown apart: before 3.9 every
 code `check_workflow` reported was also one `build()` refused, so "has an issue"
-and "cannot run" were the same question. They are not any more. Ask `Severity`
-rather than keeping a list — a list can only ever be wrong in one direction,
+and "cannot run" were the same question, and they no longer are. Ask `Severity`
+rather than keeping a list: a list can only ever be wrong in one direction,
 silently, on upgrade.
 
 ```rust
@@ -179,30 +179,30 @@ assert!(usable);
 ```
 
 Unlike `IssueCode`, `Severity` is **not** `#[non_exhaustive]`: the axis is *when*
-a definition goes wrong — build time, first message, never — which is closed by
+a definition goes wrong (build time, first message, never), which is closed by
 construction, so you can `match` it exhaustively and stay correct.
 
 `Severity` needs engine **3.11.0** or newer. Before it, the distinction existed
 only in prose, and a host had to carry its own list of the codes `build()` does
-not refuse — a list that could only ever be wrong in one direction, silently, on
+not refuse, a list that could only ever be wrong in one direction, silently, on
 upgrade.
 
 ### Why each advisory code is advisory
 
-- `ESCAPED_TEMPLATE_KEY` — stripping the [`$` escape](./jsonlogic.md#literal-keys-and-the--escape)
+- `ESCAPED_TEMPLATE_KEY`: stripping the [`$` escape](./jsonlogic.md#literal-keys-and-the--escape)
   is uniform rather than conditional on a collision, so every escaped key is
   worth seeing once when upgrading to 3.9; after that they are deliberate.
-- `UNGUARDED_VALIDATION` — validating to *record* errors rather than to gate is
+- `UNGUARDED_VALIDATION`: validating to *record* errors rather than to gate is
   a legitimate shape, so the ungated form is reported, not refused. See
   [`halt_on`](./control-flow.md#halt_on).
-- `GROUP_CONTINUE_ON_ERROR` — the key is real on a task and on a workflow, so a
+- `GROUP_CONTINUE_ON_ERROR`: the key is real on a task and on a workflow, so a
   host may already carry it on group nodes; refusing it would abort every
   workflow in the build over a key that was never honoured anyway.
-- `NULL_MAPPING` — `"logic": null` loaded long before
+- `NULL_MAPPING`: `"logic": null` loaded long before
   [`unset`](../built-in-functions/map.md#removing-a-path) existed, and the
   mapping is a no-op rather than an error, so refusing it would fail builds that
-  run today. It is almost always an attempted clear, which is why the message
-  points at `unset`. Only logic that *folds* to `null` is reported —
+  run today. It is almost always an attempted clear, so the message points at
+  `unset`. Only logic that *folds* to `null` is reported:
   `{"var": "data.x"}` is null only when the path misses, and stays silent.
 
 ### The one `Defect`
@@ -214,17 +214,17 @@ until a message arrives. A host screening on "would this build" alone waves it
 through and then serves a channel that fails every message. See
 [Why `MISSING_HANDLER` is its own code](#why-missing_handler-is-its-own-code).
 
-Every remaining code in the table is a `Rejected`. One is worth singling out:
-`INVALID_SECRET_STORE` is a rejection, but the definition is not what is wrong —
-quarantining the workflow will not make the build succeed, because the store is
-what is broken.
+Every remaining code in the table is a `Rejected`. One stands out:
+`INVALID_SECRET_STORE` is a rejection, but the definition is not what is wrong.
+Quarantining the workflow will not make the build succeed, because the store is
+the broken part.
 
 ## Checking against the handlers
 
 Shape is only half the question. The other half needs the *registry*: will every
-task name a function this engine can actually run, with an input its handler can
-parse? That is what `Engine::build()` decides — and a host that lets it decide
-finds out at reload, when one bad row takes down every workflow in the process.
+task name a function this engine can run, with an input its handler can parse?
+`Engine::build()` decides that, and a host that lets it decide finds out at
+reload, when one bad row takes down every workflow in the process.
 
 `check_workflow` asks the same questions and reports instead of aborting:
 
@@ -244,7 +244,7 @@ assert_eq!(issues[0].code, IssueCode::MissingHandler);
 assert_eq!(issues[0].task_id.as_deref(), Some("lookup"));
 ```
 
-Both `EngineBuilder` and `Engine` carry it, with identical semantics — screen
+Both `EngineBuilder` and `Engine` carry it, with identical semantics: screen
 before you build, or against the engine you are already running. The second is
 usually what a live host wants: the submission endpoint holds a built engine
 behind its reload mechanism, not the builder that made it.
@@ -253,15 +253,15 @@ behind its reload mechanism, not the builder that made it.
 
 `enrich`, `http_call` and `publish_kafka` ship as config schemas with no
 implementation. A workflow using one deserializes into a *typed* variant, so
-`Engine::build()` accepts it without complaint — and then every message fails
+`Engine::build()` accepts it without complaint, and then every message fails
 with `FunctionNotFound`. Reporting that as `UNKNOWN_FUNCTION` would send the
 author hunting for a typo that isn't there; the fix is a registration, and the
 code says so.
 
 ### Anchoring and paths
 
-Issues from `check_workflow` are anchored on `task_id` — step ids are unique
-across tasks and groups — with a path *relative to that task*:
+`check_workflow` anchors each issue on `task_id` (step ids are unique across
+tasks and groups), with a path *relative to that task*:
 
 ```text
 task_id: "lookup"
@@ -275,18 +275,18 @@ To point at the authored document, join it with the coordinate
 tasks[1].tasks[0]  +  function.input
 ```
 
-The reason it works this way is that `check_workflow` receives an already-parsed
-`Workflow`, whose `tasks` is flattened — the authored nesting is gone. Emitting a
+`check_workflow` works this way because it receives an already-parsed
+`Workflow`, whose `tasks` is flattened; the authored nesting is gone. Emitting a
 flat `tasks[3]` would point at the wrong element in the author's document, which
 is worse than not pointing at all.
 
-That flattening does mean tasks inside groups are checked automatically, with no
-extra traversal.
+The flattening also means `check_workflow` checks tasks inside groups
+automatically, with no extra traversal.
 
 ## Walking the authored tree yourself
 
-For anything the checks above do not cover — your own lint rules, dependency
-extraction, a renderer — `walk_authored_steps` gives you the authored tree with
+For anything the checks above do not cover (your own lint rules, dependency
+extraction, a renderer), `walk_authored_steps` gives you the authored tree with
 the engine's own grammar:
 
 ```rust
@@ -337,13 +337,13 @@ walker contract.
 A submission endpoint checks in this order, stopping at the first stage that
 reports anything:
 
-1. **`Workflow::validate_authored(&json)`** — shape, with field paths. Reject
+1. **`Workflow::validate_authored(&json)`**: shape, with field paths. Reject
    with a `400` listing every issue.
-2. **`Workflow::from_json(&text)`** — now guaranteed to succeed if step 1 was
+2. **`Workflow::from_json(&text)`**: now guaranteed to succeed if step 1 was
    empty, so `unwrap` is honest here if you prefer.
-3. **`engine.check_workflow(&workflow)`** — will this engine run it? Reject
+3. **`engine.check_workflow(&workflow)`**: will this engine run it? Reject
    with a `400` naming the tasks and what each needs.
 
 Only then store and activate the definition. `Engine::build()` stays
-deliberately permissive — it is not a validation gate, and a host that treats it
+deliberately permissive. It is not a validation gate, and a host that treats it
 as one discovers its problems at reload rather than at submission.

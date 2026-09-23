@@ -27,11 +27,11 @@ All features are off by default; the default build has core JSONLogic only.
 | `ext-math` | `abs`, `ceil`, `floor` |
 | `ext-control` | `exists`, `??`, `switch` (alias `match`), `type` |
 | `ext-object` | `keys`, `values`, `entries` |
-| `error-handling` | `try`, `throw` (the JSONLogic operators — unrelated to dataflow-rs error handling, which is always on) |
+| `error-handling` | `try`, `throw` (the JSONLogic operators; unrelated to dataflow-rs error handling, which is always on) |
 | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
 | `all-operators` | every family above |
-| `tensor` | `tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype` — deliberately **not** in `all-operators`: several names collide with ordinary JSON keys |
-| `budget` | `EngineBuilder::with_ops_budget` — a per-evaluation operation ceiling with a hard abort |
+| `tensor` | `tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype`. Deliberately **not** in `all-operators`: several names collide with ordinary JSON keys |
+| `budget` | `EngineBuilder::with_ops_budget`: a per-evaluation operation ceiling with a hard abort |
 | `wasm-web` | required when targeting `wasm32-unknown-unknown` |
 
 ```toml
@@ -45,7 +45,7 @@ behaves.
 
 ## Verify Installation
 
-Create a simple test to verify the installation:
+Create a small program to verify the installation:
 
 ```rust
 use dataflow_rs::Engine;

@@ -12,7 +12,7 @@ Dataflow-rs provides rules-engine aliases alongside the original workflow termin
 | `Rule` | `Workflow` | `use dataflow_rs::Rule;` |
 | `Action` | `Task` | `use dataflow_rs::Action;` |
 
-Both names refer to the same types — use whichever fits your mental model.
+Both names refer to the same types; use whichever fits your mental model.
 
 ## Engine (RulesEngine)
 
@@ -41,9 +41,9 @@ pub fn new(
 `.with_observer(obs)`, `.with_datalogic_operator(name, op)`,
 `.with_error_context_path(path)`, `.with_error_context_limit(n)`,
 `.with_secrets(value)` / `.with_secrets_json(&json)`, then
-`.build() -> Result<Engine>`. All JSONLogic is compiled and Custom
-inputs are pre-parsed into their typed `Self::Input` at `.build()` —
-config-shape errors fail there, not on first message. An error-context
+`.build() -> Result<Engine>`. `.build()` compiles all JSONLogic and
+pre-parses Custom inputs into their typed `Self::Input`, so config-shape
+errors fail there, not on first message. An error-context
 path that the JSONLogic evaluation context cannot see fails there too, as
 does a workflow that reads an undeclared secret or reads any secret from a
 `map` or `log` expression (see [Secrets](../advanced/secrets.md)).
@@ -151,8 +151,8 @@ pub struct DispatchableFunction<'a> {
 `can_dispatch` answers the half of the question `builtin_function_kind` cannot:
 that function reports `enrich` *needs* a handler, but not whether one is
 registered. A workflow using a config-only integration with nothing behind it
-still builds cleanly — deliberately — so this is the check that catches it
-before activation rather than on the first request.
+still builds cleanly (deliberately), so `can_dispatch` catches it before
+activation rather than on the first request.
 
 ## Authoring-time validation
 
@@ -211,27 +211,26 @@ impl Severity {
 
 `IssueCode` is an enum rather than string codes because a host branching on a
 string literal has no protection against a typo that compiles and silently
-never matches. Its variants cover the structural rules —
-`EmptyWorkflowId`, `EmptyWorkflowName`, `NoTasks`, `MissingStepId`,
-`DuplicateStepId`, `EmptyGroup`, `GroupTooDeep`, `MissingFunction`,
-`InvalidFunctionName`, `InvalidTerminal`, `InvalidHaltOn`, `InvalidMapping`,
-`LoopIncrementTooSmall`, `LoopBoundEmpty`, `LoopCounterInvalid`,
-`LoopSlotInvalid`, `LoopItemWithoutOver`, `LoopSlotCollision`,
-`LoopOverInvalid`, `InvalidForEach` — the lints
-`check_workflow` adds — `UnguardedValidation`, `GroupContinueOnError`,
-`NullMapping` — the
-registry and secret rules — `UnknownFunction`, `MissingHandler`, `InputParse`,
-`TemplateCompile`, `UnknownSecret`, `SecretInMessageWrite`,
-`InvalidSecretStore`, `DuplicateTemplateKey`, `EscapedTemplateKey` — and the two
-backstops, `ParseFailed` and `ValidateFailed`.
+never matches. Its variants cover the structural rules (`EmptyWorkflowId`,
+`EmptyWorkflowName`, `NoTasks`, `MissingStepId`, `DuplicateStepId`,
+`EmptyGroup`, `GroupTooDeep`, `MissingFunction`, `InvalidFunctionName`,
+`InvalidTerminal`, `InvalidHaltOn`, `InvalidMapping`, `LoopIncrementTooSmall`,
+`LoopBoundEmpty`, `LoopCounterInvalid`, `LoopSlotInvalid`,
+`LoopItemWithoutOver`, `LoopSlotCollision`, `LoopOverInvalid`,
+`InvalidForEach`); the lints `check_workflow` adds (`UnguardedValidation`,
+`GroupContinueOnError`, `NullMapping`); the registry and secret rules
+(`UnknownFunction`, `MissingHandler`, `InputParse`, `TemplateCompile`,
+`UnknownSecret`, `SecretInMessageWrite`, `InvalidSecretStore`,
+`DuplicateTemplateKey`, `EscapedTemplateKey`); and the two backstops,
+`ParseFailed` and `ValidateFailed`.
 
-Four codes are `Severity::Advisory` — `EscapedTemplateKey`,
-`UnguardedValidation`, `GroupContinueOnError` and `NullMapping`:
+Four codes are `Severity::Advisory`: `EscapedTemplateKey`,
+`UnguardedValidation`, `GroupContinueOnError` and `NullMapping`.
 `check_workflow` reports them and `build()` never refuses them. `EscapedTemplateKey` lists every `$`-prefixed
 template key, so a host upgrading to 3.9 can find each place the escape changed
 what a template emits. `DuplicateTemplateKey`, by contrast, is always a bug and
 is refused. Ask `severity()` rather than keeping a list of which codes are
-which — see [Severity](../advanced/authoring-validation.md#severity).
+which. See [Severity](../advanced/authoring-validation.md#severity).
 
 `MissingHandler` is deliberately distinct from `UnknownFunction`: `enrich`,
 `http_call` and `publish_kafka` are real names awaiting a registration, and
@@ -253,7 +252,7 @@ pub fn walk_authored_steps_at<'a>(steps: &'a serde_json::Value, prefix: &str) ->
 
 ## Retry
 
-Native only — the loop uses tokio time, so it is not compiled for
+Native only: the loop uses tokio time, so it is not compiled for
 `wasm32-unknown-unknown`. Nothing in the engine retries a task for you; this is
 the loop to wrap your own fallible calls in, typically inside a custom handler.
 
@@ -384,7 +383,7 @@ one condition evaluated once on entry:
 }
 ```
 
-`halt_on` is **task-only** — a group has no outcome of its own, and carrying it
+`halt_on` is **task-only**: a group has no outcome of its own, and carrying it
 is a parse error. `continue_on_error` is task- and workflow-only: on a group it
 parses and does nothing, and `check_workflow` reports it as
 `GROUP_CONTINUE_ON_ERROR`.
@@ -424,13 +423,13 @@ then `.build() -> Message`.
 
 `capture_changes` defaults to `true`. Its copies are held until
 `process_message` returns, so turn it off in long loops unless you read
-`changes` — see [Memory in long loops](../advanced/loops.md#memory-in-long-loops).
+`changes`. See [Memory in long loops](../advanced/loops.md#memory-in-long-loops).
 
 The three context setters seed `context.data` / `metadata` / `temp_data`
 directly, so a workflow condition reading `data.*` fires without needing a
-`parse_json` task first. Keys are taken **literally** — unlike
+`parse_json` task first. Keys are taken **literally**: unlike
 `set_nested_value`, a key containing `.` stays one key and a leading `#` is not
-stripped — and a non-`Object` value is ignored, preserving the invariant that the
+stripped. A non-`Object` value is ignored, preserving the invariant that the
 three root fields are always objects. Seeding records no audit entry and no
 `Change`; it is initial state, not a mutation.
 
@@ -443,10 +442,10 @@ pub struct Message {
 }
 ```
 
-`context` is the only `pub` field — it's the legitimate read surface
-(tests do `message.context["data"]["x"]` lookups). Every other field
-is read via accessors and mutated via `add_error` (errors) or
-`TaskContext::set` (context) so audit-trail changes are recorded.
+`context` is the only `pub` field, and it is the legitimate read surface
+(tests do `message.context["data"]["x"]` lookups). You read every other
+field through accessors and mutate it through `add_error` (errors) or
+`TaskContext::set` (context), so audit-trail changes are recorded.
 
 ### Methods
 
@@ -475,7 +474,7 @@ pub fn has_errors(&self) -> bool
 ```
 
 Inside a custom `AsyncFunctionHandler`, mutate the context via
-[`TaskContext::set`](#taskcontext) — it records audit-trail changes
+[`TaskContext::set`](#taskcontext); it records audit-trail changes
 automatically.
 
 ## AsyncFunctionHandler
@@ -529,8 +528,8 @@ pub trait AsyncFunctionHandler: Send + Sync + 'static {
 
 The engine pre-parses each `FunctionConfig::Custom { input }` JSON into
 the registered handler's typed `Self::Input` at `Engine::builder().build()`
-(or `Engine::new`) — through `parse_input_with` then `compile_input_with`,
-whose defaults delegate to the associated forms — so config-shape errors fail
+(or `Engine::new`), through `parse_input_with` then `compile_input_with`
+(whose defaults delegate to the associated forms), so config-shape errors fail
 there, not on first message. See
 [One handler type, several registrations](../advanced/custom-functions.md#one-handler-type-several-registrations).
 
@@ -582,7 +581,7 @@ impl TemplateCompiler {
 
 Any config field may be a `Template`. The engine compiles with templating
 enabled, so a single-key object whose key matches an operator name evaluates as
-that operator — write `{"$cat": …}` for the literal object. A `Template` that
+that operator; write `{"$cat": …}` for the literal object. A `Template` that
 folds to a constant is evaluated once at `build()` and cached. See
 [Config fields that are JSONLogic](../advanced/custom-functions.md#config-fields-that-are-jsonlogic-template)
 and [Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape).
@@ -593,9 +592,9 @@ and [Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-
 pub type BoxedFunctionHandler = Box<dyn DynAsyncFunctionHandler + Send + Sync>;
 ```
 
-Stored in the engine's registry. Users construct these via `Box::new(handler)`
-(or via `Engine::builder().register("name", handler)`) — the dyn-trait
-plumbing stays out of user code.
+The engine stores these in its registry. You construct one via
+`Box::new(handler)` (or via `Engine::builder().register("name", handler)`),
+and the dyn-trait plumbing stays out of your code.
 
 ## TaskContext
 
@@ -653,7 +652,7 @@ intermediate objects/arrays, handles `#`-prefix escapes).
 projection: `Session::eval_str` keeps the JSON quoting, so a string result comes
 back from it as `"\"abc\""`, whereas this returns `abc`. The name says
 `plain_string` rather than `to_string` so the difference is visible at the call
-site — these values end up in URL paths and message keys. A test pins both sides.
+site, because these values end up in URL paths and message keys. A test pins both sides.
 
 `eval_json` projects straight from the arena to `serde_json::Value` in one walk,
 skipping the `OwnedDataValue` intermediate and the `from_value` rebuild.
@@ -675,7 +674,7 @@ pub fn set_nested_value(data: &mut OwnedDataValue, path: &str, value: OwnedDataV
 pub fn remove_nested_value(data: &mut OwnedDataValue, path: &str) -> Option<OwnedDataValue>
 ```
 
-`remove_nested_value` is genuine removal:
+`remove_nested_value` deletes the entry, whereas
 `set_nested_value(path, OwnedDataValue::Null)` leaves an explicit `null` behind,
 which survives serialization because `Message` emits `context` whole. Object
 removal preserves the order of the surviving keys; array removal shifts the tail
@@ -683,8 +682,8 @@ rather than leaving a hole.
 
 ## Connector introspection
 
-Which function configs carry a connector is this crate's fact, so it is exposed
-rather than reimplemented downstream.
+Which function configs carry a connector is this crate's fact, so the crate
+exposes it and hosts need not reimplement it.
 
 ```rust,ignore
 // `Some` for http_call / enrich / publish_kafka (typed field), and for a
@@ -719,14 +718,14 @@ pub struct ConnectorRef<'a> {
 
 > **Changed in 3.9.0.** `connector()` and `ConnectorRef::connector` were
 > `&str`. Every parameter became JSONLogic, so a computed connector names
-> nothing until a message arrives — returning the enum makes a host enumerating
-> connectors decide what to do with those rather than have them silently vanish
+> nothing until a message arrives. Returning the enum makes a host enumerating
+> connectors decide what to do with those, rather than have them silently vanish
 > from `connector_refs`. Prefer matching the enum; `as_static()` is there for
-> the cases that genuinely only handle literals. Resolve a computed one per
+> the cases that only handle literals. Resolve a computed one per
 > message with the config's `resolve_connector(ctx)?`.
 
 Across a whole engine, `engine.workflows().iter().flat_map(Workflow::connector_refs)`
-covers it — there is deliberately no `Engine::connector_refs()`, since the engine
+covers it. There is deliberately no `Engine::connector_refs()`, since the engine
 has no stake in connectors.
 
 ## TaskOutcome
@@ -773,8 +772,8 @@ pub enum FunctionConfig {
 
 ### Classifying a function name
 
-Which names get a typed variant is a fact about this crate, so it is exposed
-rather than left to be copied or scraped out of an error message:
+Which names get a typed variant is a fact about this crate, so the crate exposes
+it and you need not copy it or scrape it out of an error message:
 
 ```rust,ignore
 // Every name that resolves to a typed variant instead of `Custom`.
@@ -796,7 +795,7 @@ pub fn is_builtin_function(name: &str) -> bool
 `RequiresHandler` covers `http_call`, `enrich` and `publish_kafka`. These parse
 without complaint and fail on the first message if no handler is registered, so a
 validator that treats them like `SelfContained` will accept a workflow that fails
-every request — see
+every request. See
 [Integration Functions](../built-in-functions/integrations.md#detecting-a-missing-handler-before-it-fails).
 
 Matching is exact: `"HTTP_CALL"` and `"htttp_call"` are both `None`.
@@ -838,14 +837,14 @@ pub struct Change {
 }
 ```
 
-`old_value` and `new_value` are owned (not `Arc<OwnedDataValue>`) — one
-less heap allocation per recorded mutation. Wrap them yourself if you need
+`old_value` and `new_value` are owned (not `Arc<OwnedDataValue>`), which saves
+one heap allocation per recorded mutation. Wrap them yourself if you need
 to share a `Change` across threads.
 
 ## AuditTrail
 
 Records changes made by an action. `workflow_id` / `task_id` are
-`Arc<str>` mirrors of the workflow/task ids — the engine clones them by
+`Arc<str>` mirrors of the workflow/task ids; the engine clones them by
 refcount bump rather than allocating per audit entry.
 
 ```rust,ignore
@@ -968,9 +967,9 @@ pub enum RolloutError {
 ```
 
 `partition` and `validate_set` are the two halves of keeping a *set* correct:
-build the ranges from percentages, or check ranges you already hold. Neither is
-run by the engine — a single workflow's `rollout` is never validated at build
-time, so an inverted range simply serves nobody.
+build the ranges from percentages, or check ranges you already hold. The engine runs
+neither: it never validates a single workflow's `rollout` at build time, so an
+inverted range serves nobody.
 
 `Workflow::rollout` is `Option<Rollout>`, defaulting to `None` (not part of a
 split). A message with **no** bucket is admitted by every workflow. See
@@ -982,7 +981,7 @@ split). A message with **no** bucket is admitted by every workflow. See
 `publish_xml`, `filter` and `log` are executed by the crate itself
 (`BuiltinKind::SelfContained`). `http_call`, `enrich` and `publish_kafka` ship as
 typed config only and require a registered handler
-(`BuiltinKind::RequiresHandler`) — see
+(`BuiltinKind::RequiresHandler`). See
 [Classifying a function name](#classifying-a-function-name).
 
 ### map
@@ -1023,7 +1022,7 @@ Rule-based data validation.
 
 ### filter
 
-Pipeline control flow — halt workflow or skip task.
+Pipeline control flow: halt workflow or skip task.
 
 ```json
 {
@@ -1056,12 +1055,12 @@ Structured logging with JSONLogic expressions.
 }
 ```
 
-Always returns `TaskOutcome::Success` — never modifies the message.
+Always returns `TaskOutcome::Success` and never modifies the message.
 
 ## WASM API (@goplasmatic/dataflow-wasm)
 
-For browser/JavaScript usage. Everything crossing the boundary is a string —
-see the [WASM Package](../wasm/overview.md) page for the full contract.
+For browser/JavaScript usage. Everything crossing the boundary is a string.
+See the [WASM Package](../wasm/overview.md) page for the full contract.
 
 ```javascript
 import init, { WasmEngine, process_message, engine_version } from '@goplasmatic/dataflow-wasm';

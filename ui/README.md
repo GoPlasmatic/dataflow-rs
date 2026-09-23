@@ -103,7 +103,7 @@ Enable step-by-step execution visualization with integrated debug controls:
 
 The WASM engine is a `--target web` wasm-bindgen build, so its module has to be
 initialised **once** before `defaultEngineFactory` constructs anything. Withhold
-`engineFactory` until it resolves — until then the run button is simply disabled:
+`engineFactory` until it resolves; until then the run button is disabled:
 
 ```tsx
 import { useEffect, useState } from 'react';
@@ -135,7 +135,7 @@ opaque string and it is not part of the JSONLogic evaluation context, so the
 workflow needs a `parse_json` action (`{"source": "payload", "target": "input"}`)
 before any expression can read it as `data.input.…`.
 
-The debug controls (play, pause, step forward/backward) are automatically displayed in the visualizer header when `debugConfig.enabled` is true.
+The visualizer header shows the debug controls (play, pause, step forward/backward) automatically when `debugConfig.enabled` is true.
 
 ### Custom WASM Engine
 

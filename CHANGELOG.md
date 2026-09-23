@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 A way to remove a path from `map` (#59). A null result is skipped, which is what
 lets `{"if": [cond, value, null]}` mean "set or keep", so `null` could never
-also mean "clear" — and nothing else could. Authors cleared with `false`, which
+also mean "clear", and nothing else could. Authors cleared with `false`, which
 `missing`, `exists` and `??` still see as present, or wrote `"logic": null`,
 which silently does nothing. In a loop, whose `temp_data` carries over between
 sweeps, that left a per-item slot holding the previous item's value.
@@ -23,18 +23,18 @@ previous item's value.
 
 And one task can now run its function once per element of an array (#61). A
 step like "one model inference per participant" had to be unrolled into N
-condition-guarded copies with a fixed maximum, or moved into a workflow `loop`
-— which replays the whole task list and is unavailable to a workflow that
+condition-guarded copies with a fixed maximum, or moved into a workflow `loop`,
+which replays the whole task list and is unavailable to a workflow that
 already loops.
 
 ### Added
 
-- **`Task::for_each`** (`ForEach`) — `{over, as, max_concurrency, collect,
+- **`Task::for_each`** (`ForEach`): `{over, as, max_concurrency, collect,
   into}` runs a handler-backed function once per element of `over`, with the
   element at `temp_data.<as>` and its index at `temp_data.<as>_index`. Every
   call runs against its own copy of the message, and the calls are folded
-  back in element order — errors, replayed writes, the result at `into[i]`,
-  one audit entry each — so `max_concurrency` changes timing, never results.
+  back in element order (errors, replayed writes, the result at `into[i]`,
+  one audit entry each), so `max_concurrency` changes timing, never results.
   A failed element leaves `null` at its index; without `continue_on_error` it
   fails the task and stops new calls. A halting element stops new calls too,
   and the fold stops at it, so later elements contribute nothing at any
@@ -42,7 +42,7 @@ already loops.
   empty `over` writes `into = []`; a non-array `over`, `null` included, fails
   the task.
 - **`element_index`** on `AuditTrail`, `ExecutionStep` and `ErrorInfo`, and
-  **`TaskContext::element_index()`** — the fan-out counterpart of
+  **`TaskContext::element_index()`**: the fan-out counterpart of
   `loop_counter`, omitted from JSON when `None`.
 - **authoring: `IssueCode::InvalidForEach`** (`INVALID_FOR_EACH`, Rejected),
   at the offending key: a scalar `over`, a malformed `as`, `max_concurrency`
@@ -55,27 +55,27 @@ already loops.
   concurrent calls without spawning, so they may borrow the handler and run on
   wasm. It was already in the lockfile.
 
-- **`loop.setup`** — steps run once, before the first sweep, in the normal
+- **`loop.setup`**: steps run once, before the first sweep, in the normal
   step grammar (groups allowed, `terminal` ends the workflow before any
   sweep). Gated by the workflow condition like the loop itself. Not a sweep:
   audit entries and trace steps carry no `loop_counter`, and
   `WorkflowFinished::sweeps` counts sweeps only. Shares the step id namespace
   with `tasks`. A setup error ends the workflow with no sweeps; under the
   workflow's `continue_on_error` the message goes on to the next workflow.
-- **`loop.over`** — JSONLogic evaluated once, after setup, yielding the array
+- **`loop.over`**: JSONLogic evaluated once, after setup, yielding the array
   to iterate. The counter is the element index, so the loop stops at `max` or
   at the array's end, whichever comes first; `init` is an offset and
-  `increment` a stride. Anything but an array — `null` included — is a
+  `increment` a stride. Anything but an array, `null` included, is a
   `WORKFLOW_ERROR` naming `loop.over`. An empty array runs zero sweeps.
-- **`loop.as`** — the `temp_data` field holding the current element.
-- **`loop.scratch`** — a `temp_data` field reset to `{}` at the start of every
+- **`loop.as`**: the `temp_data` field holding the current element.
+- **`loop.scratch`**: a `temp_data` field reset to `{}` at the start of every
   sweep, before the condition, so per-item state cannot leak between elements.
   Independent of `over`.
-- **`Workflow::all_tasks`** — every task the workflow can run, setup first.
+- **`Workflow::all_tasks`**: every task the workflow can run, setup first.
   The compiler, handler resolution, `check_workflow` and `connector_refs` all
   read it, so a setup step is compiled, resolved and linted exactly like a
   body step.
-- **`steps::walk_authored_steps_at(steps, prefix)`** — the authored walk
+- **`steps::walk_authored_steps_at(steps, prefix)`**: the authored walk
   rooted at any path; `validate_authored` reports setup issues at
   `loop.setup[i]…`.
 - **authoring:** `LOOP_SLOT_INVALID`, `LOOP_ITEM_WITHOUT_OVER`,
@@ -86,15 +86,15 @@ already loops.
 - **`map`: `unset: true`** removes the key at `path`, and takes no `logic`.
   Removing an absent key is a no-op. An array index removes the element and
   shifts later ones down, as `utils::remove_nested_value` always has.
-- **`map`: `on_null`** — `"skip"` (the default, unchanged behaviour) or
+- **`map`: `on_null`**: `"skip"` (the default, unchanged behaviour) or
   `"unset"`, which makes a null result remove the path, so
   `{"if": [cond, value, null]}` can mean "set or clear". `OnNull` is the typed
   form, `#[non_exhaustive]`.
-- **`Change::removed`** — set on the audit entry a removal records, whose
+- **`Change::removed`**: set on the audit entry a removal records, whose
   `new_value` is `null`. Omitted from JSON when `false`, so every write's audit
   JSON is byte-identical to before, and a reader that predates the field loads
   a removal as a write of `null`.
-- **authoring: `IssueCode::InvalidMapping`** (`INVALID_MAPPING`, Rejected) — a
+- **authoring: `IssueCode::InvalidMapping`** (`INVALID_MAPPING`, Rejected): a
   mapping with neither or both of `logic` and `unset`, `on_null` without
   `logic`, or a literal path removing a context root (`data`, `metadata`,
   `temp_data`). Reported by `validate_authored` at the offending key
@@ -102,26 +102,26 @@ already loops.
   mappings from the same rule set, so `Engine::build` does too. A *computed*
   path resolving to a root fails that mapping at run time instead (status
   `500`), leaving the root in place.
-- **authoring: `IssueCode::NullMapping`** (`NULL_MAPPING`, Advisory) — a
+- **authoring: `IssueCode::NullMapping`** (`NULL_MAPPING`, Advisory): a
   mapping whose `logic` always evaluates to `null` (`"logic": null`, or anything
   that folds to it, such as `{"if": [false, 1, null]}`) under the default
   `on_null: "skip"`, so it can never write. Reported by `check_workflow` at
   `function.input.mappings[i].logic`, pointing at `unset`; never refused by
   `build`. "Always null" is decided the way `Template::compile` decides a
-  constant — `is_constant()`, then one evaluation — so `{"var": "data.x"}`,
+  constant (`is_constant()`, then one evaluation), so `{"var": "data.x"}`,
   null only when the path misses, is not reported. Silent under
   `on_null: "unset"`, where such a mapping removes the path rather than doing
   nothing. A host that screens on severity is unaffected; one that requires
   `check_workflow` to return nothing at all will now see this for every
-  `"logic": null` it carries, which is the point.
+  `"logic": null` it carries, as intended.
 
 ### Changed
 
 - **BREAKING (construction only): `AuditTrail` gained `element_index`**, so a
   struct literal built outside the crate must name `element_index: None`. The
   same trade `Change::removed` made: serialized audit JSON for every ordinary
-  task is unchanged, and the alternative — a separate record type for fan-out
-  entries — would split every audit consumer in two.
+  task is unchanged, and the alternative, a separate record type for fan-out
+  entries, would split every audit consumer in two.
 - **A task group carrying `for_each` is refused at parse time**, like
   `halt_on`: a group has no function of its own to fan out, and the key is new.
 - **BREAKING: `LoopConfig` is `#[non_exhaustive]` and no longer
@@ -140,16 +140,16 @@ already loops.
   struct literal built outside the crate no longer compiles until it names
   `removed: false`. Field reads, and serialized audit JSON for every write, are
   unaffected. Taken over the alternative of recording a removal as a plain
-  `new_value: null`, which cannot be told apart from writing `null` —
-  something `TaskContext::set` can already do — and would have made the
+  `new_value: null`, which cannot be told apart from writing `null`
+  (something `TaskContext::set` can already do), and would have made the
   ambiguity permanent to save a one-line edit. `Change` is deliberately not
   made `#[non_exhaustive]`: unlike `Task` in 3.7.0 it has no hidden fields
   forcing the issue, and that would stop hosts constructing one at all.
 - **`MapMapping` gained `unset` and `on_null`**, and its `Deserialize` is now
   hand-written so the rules above hold at parse time. Construction with
-  `..Default::default()` — already required by the hidden `compiled_logic`
-  field — is unaffected. `"logic": null` still loads and is still a no-op —
-  refusing it would fail every build that carries one — and is now reported as
+  `..Default::default()` (already required by the hidden `compiled_logic`
+  field) is unaffected. `"logic": null` still loads and is still a no-op
+  (refusing it would fail every build that carries one), and is now reported as
   `NULL_MAPPING` instead of passing silently.
 - **A mapping missing `logic`** is now reported by `validate_authored` as
   `INVALID_MAPPING` at `…mappings[i].logic` rather than as `PARSE_FAILED`, and
@@ -159,13 +159,13 @@ already loops.
 
 - **`capture_changes` memory in long loops (#63).** Captured old and new
   values stay on the message until `process_message` returns, so a looping
-  workflow's memory grows with sweeps × writes × value size — about 65 bytes
+  workflow's memory grows with sweeps × writes × value size: about 65 bytes
   per number written, or several GB for a 10,000-sweep loop writing a
   10,000-number array each sweep. Documented on `LoopConfig` and
   `MessageBuilder::capture_changes`, in a new "Memory in long loops" section of
   the Loops guide, and on the Audit Trails, Performance, Fan-Out, Message and
-  API Reference pages. The default stays `true` — the browser debugger,
-  `TraceOptions { changes: true }` and hosts reading `changes` rely on it — so
+  API Reference pages. The default stays `true` (the browser debugger,
+  `TraceOptions { changes: true }` and hosts reading `changes` rely on it), so
   a long loop that never reads `changes` should build its message with
   `.capture_changes(false)`.
 
@@ -176,14 +176,14 @@ much work a single evaluation may do, and tensors as a first-class value.
 
 Both stay off by default, for different reasons. The budget counter is charged
 on every dispatched node, so the cost is real even when no ceiling is set. The
-tensor family collides with ordinary JSON — `shape`, `full`, `cast`, `pad`,
-`crop`, `concat`, `stack` — and in templating mode a single-key object whose
+tensor family collides with ordinary JSON (`shape`, `full`, `cast`, `pad`,
+`crop`, `concat`, `stack`), and in templating mode a single-key object whose
 key is a live operator evaluates rather than passing through as data, so it is
 the one family `all-operators` does not include.
 
 ### Added
 
-- **`tensor` feature** — forwards `datalogic-rs/tensor` (and
+- **`tensor` feature**: forwards `datalogic-rs/tensor` (and
   `datavalue-rs/tensor`, whose `Tensor` variant this crate matches on),
   enabling the `Tensor` value plus 20 marshalling operators over it: `tensor`,
   `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`,
@@ -191,15 +191,15 @@ the one family `all-operators` does not include.
   `argmax`, `gather`, `to_list`, `shape`, `dtype`. Pulls no new dependency.
 
   **Deliberately *not* part of `all-operators`**, unlike every other family.
-  A third of those names are ordinary JSON keys — `shape`, `full`, `cast`,
-  `pad`, `crop`, `concat`, `stack` — and in templating mode a single-key
+  A third of those names are ordinary JSON keys (`shape`, `full`, `cast`,
+  `pad`, `crop`, `concat`, `stack`), and in templating mode a single-key
   object whose key is a live operator *evaluates* rather than passing through
   as data. Since `all-operators` is what `@goplasmatic/dataflow-wasm` ships,
   folding it in would silently change what `{"shape": ...}` means in workflows
   that already run, with no lint able to catch it. Opt in with
   `features = ["tensor"]` and use `{"$shape": ...}` to pin a literal reading.
 
-- **`budget` feature** and **`EngineBuilder::with_ops_budget`** — a
+- **`budget` feature** and **`EngineBuilder::with_ops_budget`**: a
   per-evaluation operation ceiling with a hard abort, for bounding untrusted
   rules deterministically rather than with a wall-clock timeout. One operation
   is one dispatched node, one item an iterator examines, or whatever an
@@ -208,33 +208,33 @@ the one family `all-operators` does not include.
   message, and is carried across `Engine::with_new_workflows` so a hot reload
   cannot silently lift it.
 
-  Enabling the feature alone installs no ceiling — without a `with_ops_budget`
-  call evaluation stays semantically unbounded. It is not free, though: the
+  Enabling the feature alone installs no ceiling: without a `with_ops_budget`
+  call, evaluation stays semantically unbounded. It is not free, though: the
   counter lives behind the same feature upstream, so enabling it costs an
-  add-and-compare per dispatched node even with no ceiling set. That is why it
+  add-and-compare per dispatched node even with no ceiling set. For that reason it
   is off by default and out of the wasm bundle.
 
-  How a refusal reaches you is not uniform, and the rustdoc says so: a
+  A refusal does not reach you uniformly, and the rustdoc says so: a
   handler's evaluation (`TaskContext::eval`, any `Template` parameter) surfaces
-  `BudgetExceeded`, while a **condition** — workflow, task, group, or `filter` —
+  `BudgetExceeded`, while a **condition** (workflow, task, group, or `filter`)
   fails closed to `false` and is reported only in the log, because condition
   evaluation has no error channel and never has had one.
 
-- **`DataflowError::BudgetExceeded`** — error code `BUDGET_EXCEEDED`,
+- **`DataflowError::BudgetExceeded`**: error code `BUDGET_EXCEEDED`,
   non-retryable (the same rule over the same data spends the same operations,
   so a retry crosses the same ceiling). Classified in one place,
   `error::from_datalogic_eval`, alongside `LOGIC_ERROR`; compile-time
   failures stay `LogicEvaluation`, since compiling and constant-folding charge
   nothing. The variant is not feature-gated even though only a `budget` build
-  constructs one — errors are serialized into `message.errors()` and read back
+  constructs one: errors are serialized into `message.errors()` and read back
   by hosts that need not share the producer's feature set.
 
 ### Changed
 
 - **MSRV raised to 1.98**, from 1.85. Inherited rather than chosen:
   `datalogic-rs` 5.5 and `datavalue-rs` 0.3 both declare
-  `rust-version = "1.98"`. Consequently let-chains are now permitted — and
-  clippy's `collapsible_if` asks for them — so the nested `if let`s the 1.85
+  `rust-version = "1.98"`. Consequently let-chains are now permitted (and
+  clippy's `collapsible_if` asks for them), so the nested `if let`s the 1.85
   floor forced have been collapsed.
 
 - **Dependencies:** `datalogic-rs` 5.4 → 5.5, `datavalue-rs` 0.2.3 → 0.3
@@ -258,8 +258,8 @@ the one family `all-operators` does not include.
   `repository`, so the only visible change is that crates.io no longer shows
   a Homepage link duplicating the Repository one. Nightly cargo now warns on
   both (`cargo::manual_readme`, `cargo::redundant_homepage`), and
-  `actions-rust-lang/setup-rust-toolchain` v2 — which the docs deploy adopts
-  in [#58](https://github.com/GoPlasmatic/dataflow-rs/pull/58) — replaces its
+  `actions-rust-lang/setup-rust-toolchain` v2, which the docs deploy adopts
+  in [#58](https://github.com/GoPlasmatic/dataflow-rs/pull/58), replaces its
   `RUSTFLAGS="-D warnings"` default with cargo's `build.warnings = "deny"`,
   which counts manifest warnings too. Without this the wasm build in that
   job fails on the first nightly after the bump.
@@ -272,7 +272,7 @@ it is parsing and compiling for.
 ### Added
 
 - **`AsyncFunctionHandler::parse_input_with`** and
-  **`AsyncFunctionHandler::compile_input_with`** — receiver-taking twins of
+  **`AsyncFunctionHandler::compile_input_with`**: receiver-taking twins of
   `parse_input` / `compile_input`, and now the only two the engine calls.
   Their defaults delegate to the associated functions, so an existing handler
   is unaffected, and a handler overriding both sees only the receiver form.
@@ -287,12 +287,12 @@ it is parsing and compiling for.
 
 ## [3.11.0] — 2026-09-02
 
-Whether an issue is a refusal is now something you can ask, rather than a
-list a host has to keep.
+You can now ask whether an issue is a refusal, instead of keeping a list of
+them in the host.
 
 ### Added
 
-- **`Severity`** and **`IssueCode::severity()`** / **`WorkflowIssue::severity()`** —
+- **`Severity`** and **`IssueCode::severity()`** / **`WorkflowIssue::severity()`**:
   whether an issue is a refusal, and if not, whether it still matters. Three
   classes: `Rejected` (`build()` refuses it, or it never parsed), `Defect`
   (builds cleanly, then fails every message) and `Advisory` (loads and runs).
@@ -302,13 +302,13 @@ list a host has to keep.
   issue" and "cannot run" as one question. 3.9 broke that for
   `ESCAPED_TEMPLATE_KEY`, 3.10 for `UNGUARDED_VALIDATION` and
   `GROUP_CONTINUE_ON_ERROR`. A host carrying its own list of the non-fatal codes
-  could only ever be wrong in one direction — silently, and on upgrade —
+  could only ever be wrong in one direction (silently, and on upgrade),
   quarantining workflows that were fine. The property now lives next to the code
   that decides it: `severity()` is a match with no wildcard arm, so a code added
   in a later minor cannot arrive unclassified.
 
-  Note that **`MISSING_HANDLER` is `Defect`, not `Advisory`**. `build()` accepts
-  it — the config parses into a typed variant — and then every message fails, so
+  **`MISSING_HANDLER` is `Defect`, not `Advisory`**. `build()` accepts
+  it (the config parses into a typed variant), and then every message fails, so
   a host migrating off a hard-coded "informational" list must keep quarantining
   it. `Severity::Advisory` is the only class that is safe to ignore.
 
@@ -323,34 +323,34 @@ An assertion can finally reject, and a control-flow key that does nothing is now
 reported before it ships.
 
 A failing `validation` rule returns `400`, and the engine treats `4xx` as "warn
-and carry on" — `continue_on_error` governs `5xx` and `Err` only. So a
+and carry on"; `continue_on_error` governs `5xx` and `Err` only. So a
 `validation` followed by unguarded tasks records an error and proceeds exactly as
-if it had passed. The behaviour is unchanged and deliberate; what was missing was
-a way to opt out of it in one field, and any warning that you had not.
+if it had passed. The behaviour is unchanged and deliberate; there was no way
+to opt out of it in one field, and no warning that you had not.
 
 ### Added
 
-- **`Task::halt_on`** — the outcome axis to `terminal`'s position axis.
+- **`Task::halt_on`**: the outcome axis to `terminal`'s position axis.
   `"halt_on": "failure"` ends the workflow when the task recorded a status of
   `400` or above, or returned `Err`, and lets a success fall through. The two
   compose by `or`, so `terminal` stays strictly stronger and no combination
   contradicts. The halt runs through the executor's existing fold, so the task
-  keeps its **own** status on the audit trail and in `metadata.progress` — a
+  keeps its **own** status on the audit trail and in `metadata.progress`: a
   `400` stays a `400`, unlike a `filter` halt, which records `299`.
-- **`HaltOn`** — `Never` (default) or `Failure`, `#[non_exhaustive]`.
-- **`IssueCode::UnguardedValidation`** (`UNGUARDED_VALIDATION`) — informational,
+- **`HaltOn`**: `Never` (default) or `Failure`, `#[non_exhaustive]`.
+- **`IssueCode::UnguardedValidation`** (`UNGUARDED_VALIDATION`): informational,
   reported by `check_workflow` and never by `build()`. Fires when a `validation`
   task is not `terminal`, has no `halt_on`, and nothing following it in the
   workflow carries a condition or is a `filter`.
 - **`IssueCode::InvalidHaltOn`** (`INVALID_HALT_ON`).
-- **`IssueCode::GroupContinueOnError`** (`GROUP_CONTINUE_ON_ERROR`) —
+- **`IssueCode::GroupContinueOnError`** (`GROUP_CONTINUE_ON_ERROR`):
   informational, reported by `check_workflow` and never by `build()`. A task
   group carrying `continue_on_error` parses cleanly and is dropped: error
-  handling is per task and per workflow, and a group only gates a span. The key
-  being real at the other two levels is what makes a group the one place it
-  looks like it should work. Only a literal `true` is reported — `false` already
+  handling is per task and per workflow, and a group only gates a span. Because the
+  key is real at the other two levels, a group is the one place it
+  looks like it should work. Only a literal `true` is reported; `false` already
   describes the behaviour.
-- **`TaskGroup::continue_on_error`** — what the author wrote, recorded so the
+- **`TaskGroup::continue_on_error`**: what the author wrote, recorded so the
   lint has something to read. The engine does not honour it.
 
 ### Changed
@@ -364,7 +364,7 @@ a way to opt out of it in one field, and any warning that you had not.
   ignored" rule, and it is a behaviour change for definitions that parse today:
   a host using `halt_on` as its own annotation on a group node will now fail
   `Engine::build`, which aborts every workflow in that build. Migration is
-  mechanical — run `Workflow::validate_authored` over stored definitions before
+  mechanical: run `Workflow::validate_authored` over stored definitions before
   upgrading and look for `INVALID_HALT_ON`, which carries the authored path
   (`tasks[1].halt_on`).
 
@@ -372,9 +372,9 @@ a way to opt out of it in one field, and any warning that you had not.
   the other way, by the lint above rather than a refusal. The difference is age:
   `halt_on` was new, so refusing it broke nothing, while `continue_on_error` is
   old enough that a host may already carry it on group nodes. Honouring it was
-  rejected too — propagating it to the member tasks would change the error
+  rejected too: propagating it to the member tasks would change the error
   semantics of definitions that load today, silently.
-- `Task::continue_on_error`'s documentation now says what it actually governs.
+- `Task::continue_on_error`'s documentation now says what it governs.
   It read "continue workflow execution if this task fails", unqualified, which is
   the field an author reaches for after a `validation` and the reason this issue
   was filed.
@@ -391,8 +391,8 @@ Every built-in function parameter is JSONLogic, and a literal object is finally
 expressible.
 
 Because the engine always evaluates in templating mode, a single-key object
-whose key matched an operator name *was* that operator — so a literal
-`{"cat": …}` could not be written at all. That one fact is what forced the
+whose key matched an operator name *was* that operator, so a literal
+`{"cat": …}` could not be written at all. That one fact forced the
 `path`/`path_logic` field pairs, kept `Template` opt-in per field, and made
 enabling an operator family a silent breaking change for existing data.
 `datalogic-rs` 5.4's template-key escape removes it, and with literals
@@ -401,10 +401,10 @@ expressible there is no longer a reason for any parameter to be a static string.
 ### Migration
 
 - **`$` is now stripped from every template key.** `{"$cat": …}` emits the
-  literal `{"cat": …}`; `{"$$oid": …}` emits `{"$oid": …}`. This is uniform, not
-  conditional on the key colliding with an operator — so a template that emits
-  genuinely `$`-prefixed keys (MongoDB's `$set`/`$oid`, JSON Schema's
-  `$schema`/`$ref`) must double them. `Engine::check_workflow` reports
+  literal `{"cat": …}`; `{"$$oid": …}` emits `{"$oid": …}`. The stripping is
+  uniform, not conditional on the key colliding with an operator, so a template
+  that emits genuinely `$`-prefixed keys (MongoDB's `$set`/`$oid`, JSON
+  Schema's `$schema`/`$ref`) must double them. `Engine::check_workflow` reports
   `ESCAPED_TEMPLATE_KEY` for every `$`-prefixed key so the audit is mechanical.
 - **Hosts implementing `http_call` / `enrich` / `publish_kafka` break at compile
   time, deliberately.** These ship as config schemas only, so a host reads
@@ -430,28 +430,28 @@ expressible there is no longer a reason for any parameter to be a static string.
 - **Every built-in parameter accepts JSONLogic.** `http_call` gains computed
   `connector`, `headers` values, `body_format`, `response_path`,
   `response_format` and `timeout_ms`; `enrich` gains `connector`, `merge_path`
-  and `timeout_ms`; `publish_kafka` gains `connector` and — the one that
-  matters most in practice — `topic`, so one task can route by message content.
+  and `timeout_ms`; `publish_kafka` gains `connector` and (the one that
+  matters most in practice) `topic`, so one task can route by message content.
   `map` gains a computed destination `path`, `validation` a computed `message`
   that can name the value that failed, `parse_*`/`publish_*` computed `source`
   and `target`, and `publish_xml` a computed `root_element`.
 
-  Notably, `http_call.headers` could not carry a computed value *at all*
+  `http_call.headers` could not carry a computed value *at all*
   before: values were `String`, so a bearer token or a correlation id had to be
   injected by the service layer.
 - **`Template` is no longer opt-in per field.** Any config field may be one.
   It gained `resolve`, `resolve_string`, `resolve_u64`, `is_constant` and
   `constant_string`; the existing `eval*` methods are unchanged.
-- **`PathTemplate<R>`** — a config field naming a *write destination*, with
+- **`PathTemplate<R>`**: a config field naming a *write destination*, with
   `ContextRoot` / `DataRoot` fixing the rooting in the type. Splitting it from
-  `Template` is what keeps the pre-split write path the hot loop needs.
-- **`Engine::template_key_escape()`** — the escape prefix, so authoring tools
+  `Template` keeps the pre-split write path the hot loop needs.
+- **`Engine::template_key_escape()`**: the escape prefix, so authoring tools
   render and validate the spelling without hardcoding it.
-- **`IssueCode::DuplicateTemplateKey`** — two keys that collapse to the same
+- **`IssueCode::DuplicateTemplateKey`**: two keys that collapse to the same
   name once the escape is stripped. `Engine::build` refuses it: the context is a
   `Vec` of pairs, so both survive and a later read sees only the first while
   serialization emits both.
-- **`IssueCode::EscapedTemplateKey`** — informational, reported by
+- **`IssueCode::EscapedTemplateKey`**: informational, reported by
   `check_workflow` and never by `build`. The migration audit above.
 
 ### Changed
@@ -460,13 +460,13 @@ expressible there is no longer a reason for any parameter to be a static string.
   crate inherits: `try` now hands engine errors to the catch arm, `and`/`or`
   constant folding no longer drops dynamic arguments, and `to_json` round-trips
   a misused `and`/`or`/`if` instead of turning an erroring rule into a
-  successful one returning `{"<invalid args>": null}` — which the trace surface
+  successful one returning `{"<invalid args>": null}`, which the trace surface
   read.
 - **A statically-authored parameter costs nothing.** `Template::compile` asks
   `Logic::is_constant()` and, when the expression folded, evaluates it once at
   engine construction and caches the result. `PathTemplate` goes further and
   precomputes the `(dotted, parts)` write pair, exactly as the hand-rolled
-  precompute did before. Only a parameter that actually reads the message pays
+  precompute did before. Only a parameter that reads the message pays
   per message.
 - **Throughput improved.** `realistic_benchmark` is ~6.7% faster and
   `benchmark` ~4.4% (means of 4 and 3 runs against 3.8.0), with realistic P99
@@ -481,42 +481,42 @@ expressible there is no longer a reason for any parameter to be a static string.
 
 ## [3.8.0] — 2026-08-27
 
-Secrets. Values a workflow may *read* but the engine must never *record* — a
-signing key, a partner credential — reached through one reserved operator and
-held nowhere a message can carry them.
+Secrets: values a workflow may *read* but the engine must never *record*, such
+as a signing key or a partner credential. A workflow reaches them through one
+reserved operator, and the engine holds them nowhere a message can carry them.
 
 ### Added
 
 - **engine:** `EngineBuilder::with_secrets` / `with_secrets_json` and the
-  reserved JSONLogic operator `{"secret": "name"}` — values a workflow may read
+  reserved JSONLogic operator `{"secret": "name"}`: values a workflow may read
   but the engine never records. The store is held by the engine, not the
   message, so a secret cannot appear in `Serialize for Message`, an
   `ExecutionTrace` snapshot, a `mapping_contexts` clone, or anything a host
   derives from a message: there is nothing to exclude. Resolves anywhere
-  JSONLogic runs on the engine — conditions, `validation`, `filter`, `Template`
-  fields, the integration `*_logic` fields, `TaskContext::eval` — with no
+  JSONLogic runs on the engine (conditions, `validation`, `filter`, `Template`
+  fields, the integration `*_logic` fields, `TaskContext::eval`) with no
   change to the evaluation hot path for expressions that do not use it. Nested
   objects are reached with a dotted name. `Engine::declared_secrets` lists the
   names, never the values; the store's `Debug` masks them, and it implements
   neither `Serialize` nor `Clone`. Carried across `with_new_workflows`.
   (#50)
-- **engine:** `TaskContext::secret(name)` — a handler configured with a key
+- **engine:** `TaskContext::secret(name)`: a handler configured with a key
   *name* reads the value directly. `None` for a context built with
   `TaskContext::new`, like the identity accessors.
-- **authoring:** `IssueCode::SecretInMessageWrite` — a `map` mapping or a `log`
+- **authoring:** `IssueCode::SecretInMessageWrite`: a `map` mapping or a `log`
   message or field reads a secret, literal or dynamic, and the engine would
   record the result. The rule is deliberately blunt: there is no static line
   between a verbatim copy and a derived value, so derived values belong in a
-  custom handler. `IssueCode::UnknownSecret` — an expression names a secret the
+  custom handler. `IssueCode::UnknownSecret`: an expression names a secret the
   engine does not declare. Both are reported by `check_workflow` with the task
   id and a path such as `function.input.mappings[1].logic`, and both fail
   `Engine::build`, from one implementation so the two cannot disagree.
-- **authoring:** `IssueCode::InvalidSecretStore` — the store handed to
+- **authoring:** `IssueCode::InvalidSecretStore`: the store handed to
   `with_secrets` is not a JSON object, so nothing resolves and `build()` will
   fail. `EngineBuilder::check_workflow` reports it *instead of* the
   `UnknownSecret` issue every literal name would otherwise produce: the store
   is what is wrong, not the workflow.
-- **wasm:** `WasmEngine.with_secrets(workflowsJson, secretsJson)` — a second
+- **wasm:** `WasmEngine.with_secrets(workflowsJson, secretsJson)`: a second
   constructor, so a workflow that reads a secret can run in the playground with
   stand-in values. `new WasmEngine(workflowsJson)` is unchanged.
 
@@ -524,47 +524,47 @@ held nowhere a message can carry them.
 
 - **engine:** `secret` is now a reserved operator name. `with_datalogic_operator("secret", …)`
   fails `build()` (and `Engine::new_with_operators` refuses it), whether or not
-  a store is configured — otherwise adding one later would silently shadow a
+  a store is configured; otherwise adding one later would silently shadow a
   host's operator. The operator is registered on every engine, so
   `{"secret": "k"}` is never inert data: on an engine with no store a literal
   name fails `build()` and a dynamic one fails at evaluation, never `null`.
   `Engine::operator_names` lists it.
 - **engine:** `log` fields are now compiled, emitted and reported in name
-  order. `LogConfig::fields` is a `HashMap`, so a log line's field order — and
-  which field a compile error or an authoring issue named first — previously
+  order. `LogConfig::fields` is a `HashMap`, so a log line's field order (and
+  which field a compile error or an authoring issue named first) previously
   varied from process to process.
 
 ## [3.7.0] — 2026-08-26
 
-The host surface. Everything a service that stores, validates and operates
-workflow definitions needed from this crate but had to re-implement: the
-dispatch vocabulary, the authored step grammar, definition and registry
+The host surface: everything a service that stores, validates and operates
+workflow definitions needed from this crate but had to re-implement. That covers
+the dispatch vocabulary, the authored step grammar, definition and registry
 validation, execution identity, rollout invariants, a retry loop, lifecycle
 observability, and the operator vocabulary.
 
 ### Added
 
-- **engine:** `Engine::can_dispatch` / `EngineBuilder::can_dispatch` — whether a
-  task named `name` will actually run. `true` for a self-contained built-in and
+- **engine:** `Engine::can_dispatch` / `EngineBuilder::can_dispatch`: whether a
+  task named `name` will run. `true` for a self-contained built-in and
   for any name with a registered handler, including an alias such as
   `validation`; `false` guarantees the opposite, that a task naming it fails
   with `FunctionNotFound` on the first message that reaches it. This closes the
   half of the question `builtin_function_kind` could not answer: it reports that
   `enrich` *needs* a handler, but not whether one is registered. A workflow
-  using a config-only integration with nothing behind it still builds cleanly —
-  that permissiveness is deliberate — so this is the check that catches it
-  before activation rather than on the first request.
+  using a config-only integration with nothing behind it still builds cleanly
+  (that permissiveness is deliberate), so this check catches it before
+  activation rather than on the first request.
 - **engine:** `Engine::dispatchable_functions` /
-  `EngineBuilder::dispatchable_functions` — the full vocabulary an engine will
+  `EngineBuilder::dispatchable_functions`: the full vocabulary an engine will
   dispatch, for completion tooling, admin catalogues and did-you-mean
   suggestions. Yields `DispatchableFunction { name, kind, aliases }`. Aliases
   are grouped, so `validate` appears once carrying `["validation"]` rather than
   twice; `kind` is `Option<BuiltinKind>`, where `None` means a registered custom
-  handler — the same convention `builtin_function_kind` already uses, chosen so
+  handler, the same convention `builtin_function_kind` already uses, chosen so
   `BuiltinKind` need not gain a third variant and break every downstream
   `match`. Ordering is not meaningful, matching `BUILTIN_FUNCTION_NAMES`.
 
-- **authoring:** `Workflow::validate_authored` — check a definition's JSON
+- **authoring:** `Workflow::validate_authored`: check a definition's JSON
   without building an engine. Collects *every* problem rather than failing at
   the first, each carrying the coordinate the author typed
   (`tasks[1].tasks[0].id`, not the flat index the task ends up at), a stable
@@ -573,15 +573,15 @@ observability, and the operator vocabulary.
   It returns empty **if and only if** the JSON parses into a `Workflow` and that
   workflow validates. The guarantee holds by construction, not by keeping a rule
   list in sync: after the structural checks it parses the document for real and
-  reports any failure as `ParseFailed`. This matters because the schema is far
-  wider than the semantic rules — `"priority": "high"`, a `map` task missing
-  `mappings`, a misspelled `status` break no rule and still cannot load — so a
-  host no longer needs its own round-trip check as a drift net.
+  reports any failure as `ParseFailed`. The schema is far wider than the
+  semantic rules: `"priority": "high"`, a `map` task missing `mappings`, a
+  misspelled `status` break no rule and still cannot load. A host therefore no
+  longer needs its own round-trip check as a drift net.
 
-  Note the promise is about *shape*: it does not assert the engine can run the
+  The promise is about *shape*: it does not assert the engine can run the
   definition, since `build()` also resolves handlers and parses custom inputs.
   `check_workflow` answers that half.
-- **authoring:** `Engine::check_workflow` / `EngineBuilder::check_workflow` —
+- **authoring:** `Engine::check_workflow` / `EngineBuilder::check_workflow`:
   check a workflow against the registered handlers without building anything,
   reporting rather than aborting. Covers the three ways `Engine::build` can
   reject a structurally valid definition: `UnknownFunction`, `MissingHandler`,
@@ -597,7 +597,7 @@ observability, and the operator vocabulary.
 
   Issues anchor on `task_id` with a task-relative path (`function.input`).
   `check_workflow` receives an already-flattened `Workflow`, so an authored
-  coordinate cannot be derived from it — and a flat `tasks[3]` would point at
+  coordinate cannot be derived from it, and a flat `tasks[3]` would point at
   the wrong element in the author's document. Join the anchor with
   `walk_authored_steps` to get one.
 
@@ -606,7 +606,7 @@ observability, and the operator vocabulary.
   codes: a host branching on a string literal has no protection against a typo
   that compiles and silently never matches.
 - **docs:** `advanced/authoring-validation.md`, covering the submission-time
-  sequence — shape, then parse, then the handler registry.
+  sequence: shape, then parse, then the handler registry.
 
 ### Changed
 
@@ -615,15 +615,15 @@ observability, and the operator vocabulary.
   longer compiles; **field reads and writes are unaffected**, as are `..`
   patterns.
 
-  This was already effectively broken. Three of `Task`'s fields — `id_arc`,
-  `compiled_condition`, `group_starts` — are `#[doc(hidden)]` and documented as
+  This was already effectively broken. Three of `Task`'s fields (`id_arc`,
+  `compiled_condition`, `group_starts`) are `#[doc(hidden)]` and documented as
   *not part of the stable API*, yet a struct literal forced every caller to name
   them; `Workflow` and `TaskGroup` have the same shape. Field additions have
   broken literal callers twice already (3.3.0 `Workflow::loop`, 3.6.0
-  `Task::terminal`), and doing this once now is what stops a third time.
+  `Task::terminal`), and doing this once now stops a third time.
 
-  Migration is a constructor plus assignment — the engine internals are set for
-  you and disappear from the call site:
+  Migration is a constructor plus assignment. The constructor sets the engine
+  internals for you, and they disappear from the call site:
 
   ```rust
   // before
@@ -653,11 +653,11 @@ observability, and the operator vocabulary.
   Matches the pattern `ErrorInfo` and `ExecutionStep` already follow in this
   crate.
 
-- **engine:** `Engine::operator_names` — every operator this build evaluates:
+- **engine:** `Engine::operator_names`: every operator this build evaluates:
   datalogic's core vocabulary, the extension families compiled in, and
   operators registered via `with_datalogic_operator`. Because the engine runs
-  datalogic in templating mode an unknown operator is not an error — the object
-  echoes back as literal data — so this is the only way to answer the question a
+  datalogic in templating mode, an unknown operator is not an error (the object
+  echoes back as literal data), so this is the only way to answer the question a
   lint needs: is this single-key object a live call, or inert data?
 
   Enabling a family is not a no-op, and the enumeration says so: with
@@ -666,15 +666,15 @@ observability, and the operator vocabulary.
 
   The core names are mirrored here because datalogic keeps its own table
   private with no accessor. That replaces N host-side copies with one, beside
-  the `#[cfg]` gates that decide which families are live — and every name in it
+  the `#[cfg]` gates that decide which families are live. Every name in it
   is checked against the running engine by evaluating it, so a name that stops
   being an operator fails a test rather than silently weakening a downstream
   lint. The proper fix is a `builtin_operator_names()` upstream; this signature
   does not change when that lands.
 
-- **observer:** `ExecutionObserver` gains four defaulted callbacks —
-  `message_started` / `message_finished` / `workflow_started` /
-  `workflow_finished` — so engine overhead is measurable directly rather than
+- **observer:** `ExecutionObserver` gains four defaulted callbacks
+  (`message_started` / `message_finished` / `workflow_started` /
+  `workflow_finished`), so engine overhead is measurable directly rather than
   as a host-side residual. `workflow_finished.duration - Σ task durations` is
   the condition evaluation, group gating, loop bookkeeping, audit writes and
   arena management for that workflow.
@@ -683,15 +683,15 @@ observability, and the operator vocabulary.
   looping workflow reports **one** pair for the whole loop with the sweep count
   on the finished event, rather than one pair per sweep.
 
-  Departs from the issue's sketch in two ways. The started and finished events
+  This departs from the issue's sketch in two ways. The started and finished events
   are separate types, so no field is meaningless on one of them. And
   `workflows_run` is deliberately absent: it is exactly the number of
   `workflow_started` callbacks, so carrying it would duplicate the event stream
-  and cost a counter threaded through the execution path — the same reasoning
-  that keeps per-workflow task counts off the event, since `task_finished`
+  and cost a counter threaded through the execution path. The same reasoning
+  keeps per-workflow task counts off the event, since `task_finished`
   already reports them.
 
-- **retry:** `RetryPolicy` and `retry_with_policy` — the mechanism half of a
+- **retry:** `RetryPolicy` and `retry_with_policy`: the mechanism half of a
   retryability model the crate has carried since 3.0 with nothing acting on it.
   Retries only while `DataflowError::retryable()` says so, backs off
   exponentially with a 60s ceiling, and takes a **whole-loop** deadline: a
@@ -700,24 +700,24 @@ observability, and the operator vocabulary.
   backoff that would cross the deadline is skipped rather than slept, because
   sleeping and then failing spends latency the caller is already waiting on.
 
-  Deliberately not engine-level automatic retry: the engine cannot know which
-  handlers are idempotent — an SMTP send that times out after `DATA` is
-  indistinguishable from one that succeeded — so this stays a per-call-site
+  This is deliberately not engine-level automatic retry. The engine cannot know
+  which handlers are idempotent (an SMTP send that times out after `DATA` is
+  indistinguishable from one that succeeded), so this stays a per-call-site
   decision.
 - **retry:** `retry_with_attempts` returns the attempt count alongside the
-  result, which is what fills `ErrorInfo::retry_attempted` / `retry_count` —
+  result, which fills `ErrorInfo::retry_attempted` / `retry_count`,
   fields that existed with nothing to populate them.
 - **deps:** the `time` feature is enabled on tokio for non-wasm targets. The
   `retry` module is `cfg`-gated off `wasm32`, where tokio's time driver does not
   run.
 
-- **rollout:** `Rollout::partition` — turn an ordered percentage split into
+- **rollout:** `Rollout::partition`: turn an ordered percentage split into
   contiguous half-open ranges covering exactly `0..100`, input order being
   traffic order. Percentages must sum to 100, and the error names the
   direction: `Under` leaves buckets matching nothing, `Over` pushes later
   entries past the end of the bucket space. A `0` entry is allowed and yields an
   empty range, the natural way to express a version staged at no traffic.
-- **rollout:** `Rollout::validate_set` — check that a set of ranges partitions
+- **rollout:** `Rollout::validate_set`: check that a set of ranges partitions
   `0..100`. Both failures are otherwise silent in production: a `Gap`
   blackholes a slice of traffic, an `Overlap` makes which version answers depend
   on workflow ordering rather than on the rollout. Individual ranges are checked
@@ -725,22 +725,22 @@ observability, and the operator vocabulary.
   itself rather than as whatever downstream gap it produces. Order-independent;
   coverage failures are reported at the lowest affected bucket.
 - **rollout:** `RolloutError`, its own type rather than a `DataflowError`
-  variant — these are pure arithmetic checks, and routing them through the
+  variant. These are pure arithmetic checks, and routing them through the
   engine error would attach retryability classification that means nothing here.
 
-- **task context:** `TaskContext::workflow_id` / `task_id` — the identity of the
+- **task context:** `TaskContext::workflow_id` / `task_id`: the identity of the
   task a handler is currently running, so it can label a log line, a metric or a
   recorded call without re-deriving it afterwards. `task_id` is always a leaf
   task: handlers dispatch only on leaves, so a group id can never appear.
   Both are `None` for a context built with `TaskContext::new`, the documented
-  way to drive a handler from a test or benchmark — there is no workflow run to
+  way to drive a handler from a test or benchmark. There is no workflow run to
   describe, and the `Option` says so rather than inventing an id.
-- **task context:** `TaskContext::loop_counter` — the sweep index inside a
-  workflow carrying a `loop`, `None` otherwise. This is the only way to read it
+- **task context:** `TaskContext::loop_counter`: the sweep index inside a
+  workflow carrying a `loop`, `None` otherwise. It is the only way to read it
   when the `loop` has no `counter` name: a named counter is written to
   `temp_data.<name>`, but an unnamed one is written nowhere, so the engine's own
   count was previously unreachable.
-- **engine:** `walk_authored_steps` — a total walker over a workflow's authored
+- **engine:** `walk_authored_steps`: a total walker over a workflow's authored
   `tasks` JSON, yielding every node with the coordinate the author typed
   (`tasks[1].tasks[0]`), its `StepKind` (`Leaf` / `Group` / `TooDeep`) and its
   nesting depth. Where parsing stops at the first bad element, this reports
@@ -748,7 +748,7 @@ observability, and the operator vocabulary.
   validator collects every problem in one pass. Filtering to `Leaf` reproduces
   the engine's flattened `Workflow::tasks` exactly, pinned by an equivalence
   test.
-- **engine:** `is_group` and `MAX_GROUP_DEPTH` are now public — the two facts a
+- **engine:** `is_group` and `MAX_GROUP_DEPTH` are now public: the two facts a
   host validating authored JSON would otherwise mirror. A host that reads them
   follows a future change to either automatically.
 
@@ -763,7 +763,7 @@ observability, and the operator vocabulary.
   `Array.isArray(tasks)`, matching the engine's parser. The two had diverged: on
   `{"id": "x", "tasks": "oops"}` the engine reported a malformed *group* while
   the UI read a *task*. A new `groupMembers()` accessor supplies a group's
-  members — empty when `tasks` is malformed — so renderers descend only into a
+  members (empty when `tasks` is malformed), so renderers descend only into a
   real array, mirroring the walker.
 - **ui:** `TaskGroup`, `Step`, `isTaskGroup`, `flattenSteps` and `groupMembers`
   are now exported from the package root. The 3.6.0 changelog described
@@ -772,7 +772,7 @@ observability, and the operator vocabulary.
   `can_dispatch` exposes. Internal, but it is the point of the change: the
   question the engine answers when dispatching and the question a host asks when
   screening are one definition rather than two that happen to agree.
-- **docs:** `built-in-functions/integrations.md` — the "detecting a missing
+- **docs:** `built-in-functions/integrations.md`: the "detecting a missing
   handler" section previously stopped at classifying the name and advised
   requiring a registration for *every* `RequiresHandler` name, because the
   registry was unreachable. It now shows the real check.
@@ -790,16 +790,16 @@ observability, and the operator vocabulary.
   computed the same way. The mirror enumerated the families `dataflow-rs` has
   cargo features for; the upstream accessor is derived from the table
   datalogic's compiler resolves operator keys against, so it reports what that
-  build actually dispatches. Those diverge under feature unification: if any
+  build dispatches. Those diverge under feature unification: if any
   other crate in the graph enables a datalogic family this crate deliberately
-  exposes no feature for — `flagd`, whose `fractional` and `sem_ver` are the
-  one family `all-operators` omits — those names become live operators here,
+  exposes no feature for (`flagd`, whose `fractional` and `sem_ver` are the
+  one family `all-operators` omits), those names become live operators here,
   and only the upstream-derived list says so. A lint reading the mirror would
   have called them typos.
 
   The three unit tests that guarded the mirror's shape are gone with it; the
-  properties they covered that still belong to this crate — no name reported
-  twice, and each family tracking its feature in *both* directions — moved to
+  properties they covered that still belong to this crate (no name reported
+  twice, and each family tracking its feature in *both* directions) moved to
   `tests/operator_vocabulary.rs`, where they are checked against a running
   engine instead of against a list. Suite counts move to 626 (`--all-features`)
   and 534 (default).
@@ -808,7 +808,7 @@ observability, and the operator vocabulary.
   `quick-xml` is the one deliberate hold: 0.42 requires Rust 1.86 and this
   crate's MSRV is 1.85. `cargo audit` reports zero advisories.
 
-- **deps:** `ui` — `@goplasmatic/datalogic-ui` 5.1.1 → 5.3.0 (tracking the same
+- **deps:** `ui`: `@goplasmatic/datalogic-ui` 5.1.1 → 5.3.0 (tracking the same
   datalogic release), plus in-range updates to `@xyflow/react`, `lucide-react`,
   `vite`, `eslint`, `typescript-eslint`, `@vitejs/plugin-react`, `globals` and
   the React type packages. `npm audit` reports zero vulnerabilities.
@@ -821,7 +821,7 @@ observability, and the operator vocabulary.
   `^3.6.0` floor, which `release.yml` rewrites at publish time.
 - **ui:** the debugger adopts the datalogic "Signal Board" design system, so the
   workflow visualizer and the `@goplasmatic/datalogic-ui` logic editor embedded
-  inside it stop rendering in two different visual languages — VSCode Light+ /
+  inside it stop rendering in two different visual languages: VSCode Light+ /
   Dark+ chrome wrapping a Signal Board editor.
 
   Tokens are declared at two scopes, mirroring datalogic:
@@ -835,7 +835,7 @@ observability, and the operator vocabulary.
   `--df-*` remains the public token API but no longer holds literals. Every one
   is an alias onto a board token, so overriding `--board` or a `--sig-*`
   re-tints the component without touching `--df-*` at all. Colour follows the
-  signal rule — a thing is coloured by the kind of value it produces — which
+  signal rule (a thing is coloured by the kind of value it produces), which
   reaches the function badges, the tree icons, the flow diagram and the Monaco
   JSON theme alike. One accessibility consequence: `--df-text-tertiary` was
   `#848484`, which fails WCAG AA on the light background; it now resolves to
@@ -843,7 +843,7 @@ observability, and the operator vocabulary.
   system was measured against AA in both themes.
 
   Fonts are Space Grotesk + JetBrains Mono, named in `--font-ui` / `--font-mono`
-  but deliberately *not* loaded by the stylesheet — the demo self-hosts them via
+  but deliberately *not* loaded by the stylesheet. The demo self-hosts them via
   `@fontsource`, so a consumer of this package is not forced into a font
   download and the fallback stack carries the UI unchanged.
 
@@ -851,24 +851,24 @@ observability, and the operator vocabulary.
   into a new toolbar above the Workflows and Payload editors, where their effect
   is visible. Collapsing the editor panel now leaves a narrow rail rather than
   zero width: the toggle lives inside the panel it collapses, and at zero width
-  the panel would hide the only control that reopens it. Demo shell only — not
+  the panel would hide the only control that reopens it. Demo shell only, not
   part of the published component.
 
 ### Fixed
 
-- **deps:** `ui` — pin `@xyflow/react` to exactly `12.11.3`. `12.11.4`, published
+- **deps:** `ui`: pin `@xyflow/react` to exactly `12.11.3`. `12.11.4`, published
   2026-08-25, is broken as shipped: its bundle imports `handleAttributionWarning`
   from `@xyflow/system`, but its manifest pins `@xyflow/system` at exactly
-  `0.0.80`, and no published `@xyflow/system` exports that symbol — not `0.0.80`,
-  not the `1.0.0-next` prereleases. Any bundler that resolves into the package
+  `0.0.80`, and no published `@xyflow/system` exports that symbol, neither `0.0.80`
+  nor the `1.0.0-next` prereleases. Any bundler that resolves into the package
   fails with `[MISSING_EXPORT]`.
 
   The previous entry moved the declared range to `^12.11.4`, which is how the
   broken release got in. It passed verification because `lint` and `build:lib`
   do not catch it: `vite.lib.config.ts` externalizes every `dependency` and
   `peerDependency`, so `@xyflow/react` is never resolved into during the library
-  build. Only `npm run build` — the app bundle, which `docs.yml` runs to publish
-  the debugger — actually links the import, and that is the job that failed.
+  build. Only `npm run build` (the app bundle, which `docs.yml` runs to publish
+  the debugger) links the import, and that is the job that failed.
 
   The pin is exact rather than a range because `docs.yml` installs with
   `npm install --no-package-lock`; a caret would resolve straight back to
@@ -881,10 +881,10 @@ observability, and the operator vocabulary.
   condition. The two branch handles had their sides pinned in CSS, but which
   side each branch *target* lands on is decided by dagre from graph structure,
   and the four sites that emit a branch do not push their true/false targets in
-  a consistent order — two happened to agree with the CSS and two did not.
+  a consistent order: two happened to agree with the CSS and two did not.
   Reordering the odd two would have lined them up only by depending on an
   undocumented dagre ordering heuristic, and silently: nothing would fail, the
-  edges would simply cross again. The side is now read back off the post-layout
+  edges would cross again. The side is now read back off the post-layout
   geometry, so it follows whatever dagre decides.
 
 - **ui:** Monaco's dark-theme step highlight had never applied. `:root
@@ -892,7 +892,7 @@ observability, and the operator vocabulary.
   to complement, so the light rule won in both themes. Both now resolve through
   tokens and the overriding rule is gone.
 
-- **ui:** the tree icons could not follow the theme — they were hardcoded hexes,
+- **ui:** the tree icons could not follow the theme. They were hardcoded hexes,
   and the condition icon (`#dcdcaa`) sat on the light background at roughly
   1.6:1. They are CSS variable references now, which also means a consumer
   overriding `--sig-*` re-tints the tree along with everything else.
@@ -906,36 +906,37 @@ observability, and the operator vocabulary.
 
 ## [3.6.0] — 2026-08-24
 
-Guard clauses. A workflow's `tasks` array now holds *steps* — a task or a group
-of them — and any step can end the workflow, so a condition no longer has to
+Guard clauses. A workflow's `tasks` array now holds *steps* (a task or a group
+of them), and any step can end the workflow, so a condition no longer has to
 re-encode the negation of every branch above it.
 
 ### Added
 
-- **task:** `terminal` — a task that, having run, ends the workflow. It is a
-  statement about *position*, not outcome: a false `condition` or a
+- **task:** `terminal`: a task that, having run, ends the workflow. It states
+  *position* rather than outcome: a false `condition` or a
   `TaskOutcome::Skip` does not halt, but a task that *failed* under
-  `continue_on_error: true` does — the author said "nothing after this runs".
+  `continue_on_error: true` does, because the author said "nothing after this
+  runs".
   Halting scopes to the workflow, exactly like `TaskOutcome::Halt`; inside a
   workflow carrying a `loop` it breaks the whole loop, not one sweep. The audit
   entry keeps the task's **own** status (`200`, `404`, …) rather than
   `HALT_STATUS_CODE`, so a `map` that wrote a 404 response body does not report
   "a filter halted here".
 - **workflow:** task groups. An element of `tasks` carrying a `tasks` key is a
-  `TaskGroup` — `{id, condition, terminal, tasks}` — stating one condition for a
+  `TaskGroup` (`{id, condition, terminal, tasks}`) stating one condition for a
   contiguous run of tasks instead of repeating it on each. The condition is
   evaluated **once, on entry**: a false result skips the whole span without
   evaluating the members' own conditions, so a task inside the block that
   mutates what the condition reads cannot switch off its own siblings. Groups
   nest, up to 8 levels, and a group with `terminal: true` is the full guard
-  clause — `if (…) { …; return; }`.
+  clause: `if (…) { …; return; }`.
 - **docs:** `advanced/control-flow.md`, covering both constructs and when each
   beats a `filter` + `on_reject: "halt"` pair.
 
 ### Changed
 
 - **workflow:** `Workflow::validate` now rejects a group id that duplicates
-  another group's or a task's. Groups share the task id namespace — both name a
+  another group's or a task's. Groups share the task id namespace: both name a
   step, and both surface in traces.
 - **ui:** `Workflow.tasks` is typed `Step[]` (`Task | TaskGroup`). A new
   `flattenSteps()` helper returns the leaf tasks for consumers that count or
@@ -947,11 +948,11 @@ re-encode the negation of every branch above it.
 - **Wire format is additive.** Every existing workflow JSON parses unchanged and
   behaves identically: `terminal` defaults to `false`, and a workflow with no
   group objects records no spans.
-- **`Task` gains three public fields** — `terminal`, plus the `#[doc(hidden)]`
+- **`Task` gains two public fields**: `terminal`, plus the `#[doc(hidden)]`
   engine-internal `group_starts`. Struct-literal construction of `Task` breaks;
   field access does not. Same shape as 3.3.0 adding `Workflow::loop`.
-- **Older engines.** A group sent to a pre-3.6.0 engine **fails loudly** — the
-  group object has no `function`, so it is rejected at parse. A bare
+- **Older engines.** A group sent to a pre-3.6.0 engine **fails loudly**: the
+  group object has no `function`, so the parser rejects it. A bare
   `terminal: true` is silently ignored there and every later task runs; gate on
   the engine version if you deploy definitions to engines you do not control.
 
@@ -962,7 +963,7 @@ themselves are worth branching on.
 
 ### Added
 
-- **engine:** `EngineBuilder::with_error_context_path` — mirror per-task failure
+- **engine:** `EngineBuilder::with_error_context_path`: mirror per-task failure
   codes into a host-chosen path inside the message context, so a downstream
   `condition` or `map` can branch on *why* a task failed. `message.errors()` is
   `pub(crate)` and the JSONLogic evaluation context is exactly
@@ -970,18 +971,18 @@ themselves are worth branching on.
   workflow; `metadata.progress` carries no reason and is overwritten by every
   task. One `{workflow_id, task_id, code, status}` record is appended per error a
   task contributes, covering handler `Err`s, 5xx outcomes, each failing
-  `validation` rule, and `TaskContext::add_error` alike — the sync built-ins
+  `validation` rule, and `TaskContext::add_error` alike. The sync built-ins
   never reach the handler registry, so a host wrapper cannot see them. The error
   `message` and the operator-only `detail` are excluded, since `context` is
   serialized back to callers. Off unless called.
-- **engine:** `EngineBuilder::with_error_context_limit` — cap the records
+- **engine:** `EngineBuilder::with_error_context_limit`: cap the records
   retained (default 32, newest kept), so the cost stays independent of a looping
   workflow's iteration count.
 
 ### Changed
 
 - **errors:** every `DataflowError` variant now contributes its own
-  `ErrorInfo.code` on the live path — `TIMEOUT_ERROR`, `IO_ERROR`, `HTTP_ERROR`,
+  `ErrorInfo.code` on the live path: `TIMEOUT_ERROR`, `IO_ERROR`, `HTTP_ERROR`,
   `VALIDATION_ERROR`, and the rest. Previously only `Service` was lifted and
   every other variant collapsed to `TASK_ERROR`, so a timeout, a dropped
   connection and a rejected request were indistinguishable; the variant→code
@@ -1014,8 +1015,8 @@ rather than a blanket `TASK_ERROR`. Concretely, a handler returning
 `DataflowError::Timeout` used to land `TASK_ERROR` in `message.errors()` and now
 lands `TIMEOUT_ERROR`; the same applies to `Validation`, `Http`, `Io`,
 `Deserialization`, `Unknown`, `FunctionNotFound`, `FunctionExecution` and
-`LogicEvaluation`. Nothing fails to compile — code that switches on `code` keeps
-switching, it just sees a more specific string.
+`LogicEvaluation`. Nothing fails to compile: code that switches on `code` keeps
+switching and sees a more specific string.
 
 Unaffected, deliberately:
 
@@ -1028,11 +1029,11 @@ Unaffected, deliberately:
 - Nothing in `wasm/` or `ui/` reads `code`.
 
 **What to check:** code that treats `TASK_ERROR` as meaning "the handler returned
-`Err`". That reading was never guaranteed — the docs already described the code
-list as not closed and told callers to switch with a default arm — but it did
+`Err`". That reading was never guaranteed (the docs already described the code
+list as not closed and told callers to switch with a default arm), but it did
 happen to hold for engine-owned variants before this release. Match the specific
 codes instead, or return `DataflowError::Task` where the generic code is what you
-want. Note that a default `^3` Cargo requirement upgrades into this release
+want. A default `^3` Cargo requirement upgrades into this release
 automatically, so the version bump alone will not gate it.
 
 ## [3.4.0] — 2026-08-19
@@ -1042,28 +1043,28 @@ Custom JSONLogic operators can now be registered on the engine, and the
 
 ### Added
 
-- **engine:** `EngineBuilder::with_datalogic_operator` — register a custom
+- **engine:** `EngineBuilder::with_datalogic_operator`: register a custom
   JSONLogic operator (`datalogic_rs::CustomOperator`) under a host-chosen
   name (a built-in operator name always wins over a custom registration, so
   pick names no built-in uses). Registrations are retained on the engine, so an
   `Engine::with_new_workflows` hot reload re-registers them instead of
   silently dropping them. Under templating an *unregistered* name still
   echoes back as literal data, so registering a name converts previously-inert
-  values into live operator calls — the same caveat the operator-family cargo
+  values into live operator calls, the same caveat the operator-family cargo
   features carry.
-- **integrations:** `HttpCallConfig` gains `body_format` and `response_format`
-  — uninterpreted passthrough fields whose value table belongs to the service
+- **integrations:** `HttpCallConfig` gains `body_format` and `response_format`:
+  uninterpreted passthrough fields whose value table belongs to the service
   layer, so new encodings need no release of this crate. Absent fields
   deserialize as `None`; misspelled field *names* still fail at parse time via
   `deny_unknown_fields`.
 - **jsonlogic:** `ext-object` cargo feature, forwarding `datalogic-rs`'s new
   object take-apart family: `keys`, `values`, and `entries` (`entries` yields
   `[{key, value}]` rows the array vocabulary can iterate). Off by default like
-  every family, and included in `all-operators` — which makes it live in the
+  every family, and included in `all-operators`, which makes it live in the
   npm `@goplasmatic/dataflow-wasm` build.
 - **jsonlogic:** `ext-array` now also unlocks `group_by` and `distinct`
   (datalogic-rs 5.2). Existing rules carrying `{"group_by": …}` or
-  `{"distinct": …}` objects as literal data start evaluating them — the same
+  `{"distinct": …}` objects as literal data start evaluating them, the same
   non-additivity caveat that applies to enabling a family.
 - **jsonlogic:** with `datetime` enabled, `format_date` and `parse_date` accept
   an optional trailing IANA timezone argument (backed by `chrono-tz`), and the
@@ -1079,7 +1080,7 @@ A workflow's task list can now run as a bounded loop, so a set of tasks can
 process one array element per sweep instead of needing one workflow per item.
 
 This release also fixes the npm `@goplasmatic/dataflow-wasm` artifact, which
-**has never worked in a browser** — see *Fixed*.
+**has never worked in a browser** (see *Fixed*).
 
 ### Added
 
@@ -1102,7 +1103,7 @@ This release also fixes the npm `@goplasmatic/dataflow-wasm` artifact, which
   `LoopConfig` type and the `loopBadgeLabel` / `loopGuardLabel` / `loopStepLabel`
   / `loopDescription` helpers to the public exports, plus a Per-Item Loop sample.
 - **ui:** `npm run wasm:local`, which builds this checkout's engine and overlays
-  it onto the installed package — the dependency stays pinned to a published
+  it onto the installed package. The dependency stays pinned to a published
   version so `npm ci` can resolve it. Without this the debugger silently runs
   against the last release.
 - **ci:** `wasm/scripts/verify-wasm.mjs`, run before publishing and on every PR.
@@ -1110,7 +1111,7 @@ This release also fixes the npm `@goplasmatic/dataflow-wasm` artifact, which
   module.
 - **ui:** an engine version handshake. `WasmEngineAdapter` throws when the
   loaded wasm is **older** than the `dataflow-ui` build using it, because
-  `Workflow` does not set `deny_unknown_fields` — an older engine ignores
+  `Workflow` does not set `deny_unknown_fields`: an older engine ignores
   fields it predates instead of rejecting them, so the debugger would otherwise
   run and quietly disagree with the workflows on screen. A newer engine passes
   silently; the dependency is a caret range, so npm may legitimately resolve
@@ -1174,14 +1175,14 @@ This release also fixes the npm `@goplasmatic/dataflow-wasm` artifact, which
   is a bump allocator that never frees mid-scope, so one scope per sweep keeps
   memory flat instead of growing with the iteration count.
 - **Audit volume scales with sweeps.** A 1,000-sweep loop over 3 tasks records
-  3,000 entries. `max` is what keeps that finite.
+  3,000 entries. `max` keeps that finite.
 - Wire shapes are otherwise unchanged: `loop_counter` is omitted when absent,
   and a workflow JSON without `loop` deserializes exactly as before.
 
 ## [3.2.0] — 2026-07-31
 
 `datalogic-rs` ships `default = []`, and this crate enabled only `serde_json`
-and `templating` — so every extension operator (`upper`, `split`, `sort`, `abs`,
+and `templating`, so every extension operator (`upper`, `split`, `sort`, `abs`,
 `try`, `parse_date`, …) was compiled out with no way for a consuming application
 to turn one on except by declaring its own `datalogic-rs` dependency and relying
 on cargo's feature unification. Each family is now a feature of this crate.
@@ -1189,7 +1190,7 @@ on cargo's feature unification. Each family is now a feature of this crate.
 ### Added
 
 - **features:** opt-in passthrough features for the `datalogic-rs` operator
-  families — `ext-string`, `ext-array`, `ext-math`, `ext-control`,
+  families: `ext-string`, `ext-array`, `ext-math`, `ext-control`,
   `error-handling`, `datetime`, and the `all-operators` umbrella. Names mirror
   `datalogic-rs`'s own. All are **off by default**; `default = []` is unchanged,
   so nothing changes for existing dependents until they opt in.
@@ -1208,7 +1209,7 @@ Enabling an operator family is **not** a backwards-compatible no-op. Read this
 before turning one on.
 
 - **Data keys become operator calls.** The engine always runs `datalogic-rs` in
-  templating mode, where an unrecognised operator name is not an error — the
+  templating mode, where an unrecognised operator name is not an error: the
   object passes through as literal data. Enabling a family makes its names live,
   so a `map` mapping that carried `{"length": {...}}` as a *value* starts
   storing a number instead. Plausible-as-data names include `type`, `match`,
@@ -1231,7 +1232,7 @@ already a direct dependency, and the other five have no dependencies.
 
 - **deps:** `uuid` requirement `1.23` → `1.24`; lockfile refresh picks up
   `http` 1.5.0, `jiff` 0.2.35 and `tokio-macros` 2.7.2. All semver-compatible.
-- **deps(ui):** lockfile refresh within the existing ranges — `dataflow-wasm`
+- **deps(ui):** lockfile refresh within the existing ranges: `dataflow-wasm`
   3.1.0, `vite` 8.2.0, `lucide-react` 1.28.0, `globals` 17.8.0, `@types/react`
   19.2.18, `@types/react-dom` 19.2.4, `@vitejs/plugin-react` 6.0.5. No declared
   range in `ui/package.json` changed. `typescript` is deliberately held at 6.x;
@@ -1266,29 +1267,29 @@ because new public items ship and several existing behaviours change.
   `dataflow_rs::engine::task_outcome::HALT_STATUS_CODE`.
 - **tests:** operator-semantics coverage in `src/engine/compiler.rs`, pinning
   the `datalogic-rs` behaviour this crate's own code depends on against a live
-  engine built the way `LogicCompiler` builds one — empty-operand results
+  engine built the way `LogicCompiler` builds one: empty-operand results
   (`{"and":[]}` → `null`, `{"+":[]}` → `0`, …), a missing `var` path resolving
   to `null` rather than erroring (the mechanism behind the `payload.*` pitfall
   CLAUDE.md documents), the documented truthy/falsy table (previously an
-  unverified `json` fence in the guide), and — the one that matters most —
-  that an unrecognised or feature-gated operator name (`starts_with`, not
+  unverified `json` fence in the guide), and, most important of all, that an
+  unrecognised or feature-gated operator name (`starts_with`, not
   enabled by this crate's `Cargo.toml`) is **not** an error under templating:
-  it echoes back as a literal object. That silent-pass-through is exactly why
+  it echoes back as a literal object. That silent pass-through is why
   a static "known operators" table was refused earlier in this audit; now it's
   a regression test instead of a comment.
 - **functions:** `Template` and `TemplateCompiler`, plus a defaulted
   `AsyncFunctionHandler::compile_input` hook. Lets a custom handler declare a
-  config field whose authored JSON is JSONLogic — the same `*_logic` pattern
+  config field whose authored JSON is JSONLogic (the same `*_logic` pattern
   this crate's own `HttpCallConfig` / `EnrichConfig` / `PublishKafkaConfig` use
-  internally — without hand-rolling the raw/compiled pair and the eager
+  internally) without hand-rolling the raw/compiled pair and the eager
   "fail loud at construction" plumbing each time. `compile_input` is called once
   per task at `Engine::new` / `Engine::builder().build()` /
   `Engine::with_new_workflows`, immediately after `parse_input`; a malformed
   expression fails there rather than on the first message that reaches the
   task, matching the existing stance for the built-in `*_logic` fields. The
-  default is a no-op, so a handler with no `Template` field needs no override —
-  verified by building every existing test handler, `mod tests` fixture, and
-  example unchanged. `Template` fields nested inside a `Vec<T>` or a nested
+  default is a no-op, so a handler with no `Template` field needs no override
+  (verified by building every existing test handler, `mod tests` fixture, and
+  example unchanged). `Template` fields nested inside a `Vec<T>` or a nested
   struct work by walking the collection inside `compile_input`. See *Changed*
   for the built-in integration configs' own migration onto this type. (#29)
 - **integration:** `HttpMethod` is re-exported from the crate root (previously
@@ -1299,11 +1300,11 @@ because new public items ship and several existing behaviours change.
   consumer converts this enum into their own client's method type and wrote the
   same five-arm match to do it; `as_str()` is the intended bridge, and the crate
   still takes no HTTP-client dependency. `ALL` is scoped to what an `http_call`
-  task may name — not a general HTTP method list. (#24)
+  task may name, not a general HTTP method list. (#24)
 - **trace:** `TraceOptions` (re-exported from the crate root, with
   `AuditTrailScope`) plus `Engine::process_message_with_trace_options` and
   `Engine::process_message_for_channel_with_trace_options`. Bounds what a trace
-  captures *at capture time*, which is the only place it can be bounded —
+  captures *at capture time*, which is the only place it can be bounded:
   trimming the result afterwards has already paid the peak memory. Knobs:
   `snapshots`, `mapping_contexts`, `changes`, `max_snapshot_bytes` (approximate
   in-memory size, not serialized length), `redact_paths`, and
@@ -1311,7 +1312,7 @@ because new public items ship and several existing behaviours change.
   The default reproduces the historical capture behaviour exactly. (#27)
 - **trace:** `ExecutionStep` gains `started_at`, `duration_us` and `changes`;
   `ExecutionTrace` gains `truncated()`, `options()` and `with_options()`.
-  Per-task timing now covers the **sync built-ins** — `map`, `validation`,
+  Per-task timing now covers the **sync built-ins**. `map`, `validation`,
   `filter`, `parse_*`, `publish_*`, `log` are dispatched inside the executor and
   cannot be wrapped from outside the crate, so this is the only place their
   duration is observable. (#27)
@@ -1321,7 +1322,7 @@ because new public items ship and several existing behaviours change.
   matching builder setter. A handler-owned classification channel: `kind` becomes
   `ErrorInfo::code` **verbatim** (not upper-cased, so the string a service writes
   is the string it switches on), `detail` is an operator-only field that `Display`
-  never renders — `to_string()` stays safe for an untrusted caller — and
+  never renders (so `to_string()` stays safe for an untrusted caller), and
   `retryable` is declared rather than inferred from the variant. The engine never
   interprets any of it; `continue_on_error`, the audit entry and the `Result::Err`
   short-circuit are unchanged, and no built-in returns the variant. Lifted at the
@@ -1335,20 +1336,20 @@ because new public items ship and several existing behaviours change.
   invariant that the three root fields are always objects. Seeding records no
   audit entry and no `Change`. (#30)
 - **workflow:** `Workflow::rollout: Option<Rollout>` plus `Rollout` and
-  `Message::routing_bucket()` / `MessageBuilder::routing_bucket()` — half-open
+  `Message::routing_bucket()` / `MessageBuilder::routing_bucket()`: half-open
   bucket ranges over `0..100` giving a workflow a slice of its channel's traffic.
   The engine does not derive the bucket; how a caller maps to one stays its
   policy. A message with no bucket is admitted by every workflow, so every
   existing caller and the WASM entry points are unaffected. An excluded workflow
-  is skipped exactly like a false condition — no audit entry, `metadata.progress`
-  untouched, one workflow-level `Skipped` step in a trace — and the gate runs
+  is skipped exactly like a false condition (no audit entry, `metadata.progress`
+  untouched, one workflow-level `Skipped` step in a trace), and the gate runs
   before any arena work. (#33)
 - **task-context:** `TaskContext::context()` plus a value-returning evaluation
-  surface — `eval` (→ `OwnedDataValue`), `eval_json` (projected straight from the
+  surface: `eval` (→ `OwnedDataValue`), `eval_json` (projected straight from the
   arena to `serde_json::Value`, skipping the `from_value` rebuild) and
   `eval_to_plain_string`. Unlike `executor::evaluate_condition`, these return the
   value rather than collapsing it to a bool, and surface an evaluation failure as
-  `Err` rather than `false` — a condition that fails should not run its task, but
+  `Err` rather than `false`: a condition that fails should not run its task, but
   a handler reading a config value needs to know the read failed. All three
   evaluate on the worker thread's pooled arena rather than allocating a session
   per call. (#23)
@@ -1361,10 +1362,10 @@ because new public items ship and several existing behaviours change.
   `Option<String>` on purpose, so a producer that serializes unconditionally is
   not forced through the key's coercion. (#23)
 - **lib:** `datalogic_rs` and `datavalue` are re-exported from the crate root.
-  Both are unavoidable for handler authors — `TaskContext::datalogic()` returns
+  Both are unavoidable for handler authors: `TaskContext::datalogic()` returns
   `&Arc<datalogic_rs::Engine>`, `HttpCallConfig::compiled_path_logic` is an
   `Option<Arc<datalogic_rs::Logic>>`, and the whole context/path surface is in
-  terms of `datavalue::OwnedDataValue` — yet neither was reachable without a
+  terms of `datavalue::OwnedDataValue`. Yet neither was reachable without a
   duplicate direct dependency, and `datavalue` is published under a different
   name (`datavalue-rs`) than it is used under, so the manifest line was hard to
   guess. Reaching them through here also locks their major version to whatever
@@ -1373,7 +1374,7 @@ because new public items ship and several existing behaviours change.
   so the only `datavalue` pin in the workspace is the root manifest. (#26)
 - **utils:** `remove_nested_value` completes the dot-path helper API. Previously
   the closest available operation was `set_nested_value(path, Null)`, which is not
-  removal — it leaves an explicit `null` that survives every serialization
+  removal: it leaves an explicit `null` that survives every serialization
   boundary, because `Message` emits `context` whole. Object removal preserves the
   order of surviving keys; array removal shifts the tail rather than leaving a
   hole. (#21)
@@ -1387,7 +1388,7 @@ because new public items ship and several existing behaviours change.
   `EngineBuilder::with_observer` or `Engine::with_observer`. An always-on
   per-task callback for aggregation, as distinct from a trace you persist. This
   is the only way to time the eight sync built-ins, which are dispatched inside a
-  private executor method and never reach the function registry — a host can wrap
+  private executor method and never reach the function registry. A host can wrap
   its own handlers but could not touch `map`, `validation`, `filter`, `parse_*`,
   `publish_*` or `log` at any price, and so could not tell engine time from
   handler time. Emitted before the error propagates, so failing tasks are
@@ -1398,7 +1399,7 @@ because new public items ship and several existing behaviours change.
 - **engine:** `EngineBuilder::with_handlers` takes a whole
   `HashMap<String, BoxedFunctionHandler>`, keeping any already registered. Without
   it, an embedder that builds the map in one place was pushed onto `Engine::new`
-  and off the builder — and therefore out of reach of `with_observer`. (#28)
+  and off the builder, and therefore out of reach of `with_observer`. (#28)
 - **integration:** `HttpCallConfig::response_path` accepts `output` as an alias,
   so a service layer can present one destination-field name across its whole
   function catalogue. Supplying both keys is a `duplicate field` error, not a
@@ -1414,13 +1415,13 @@ because new public items ship and several existing behaviours change.
   `builtin_function_kind` and `is_builtin_function`, re-exported from the crate
   root, so a service layer that gates workflow authoring on a closed function
   set can classify a name programmatically. `RequiresHandler` covers
-  `http_call`, `enrich` and `publish_kafka` — the three that ship as typed
+  `http_call`, `enrich` and `publish_kafka`, the three that ship as typed
   config only and need a registered handler. Deliberately not
   `#[non_exhaustive]`: callers match on this to accept or reject workflow
   definitions, so a future third kind should break those matches at compile time
   rather than fall silently into a `_` arm. (#22)
 - **functions:** `BUILTIN_FUNCTION_NAMES` is now `pub` (was `pub(crate)`), with
-  a documented stability contract — names are added in a minor release and
+  a documented stability contract: names are added in a minor release and
   removed only in a major one, and ordering is not meaningful. Previously the
   only public surface for this set was the free-form text of
   `DataflowError::FunctionNotFound`, leaving consumers to scrape an untested
@@ -1431,12 +1432,12 @@ because new public items ship and several existing behaviours change.
 - **engine:** `process_message_with_trace` and
   `process_message_for_channel_with_trace` built the trace as a function-local
   and moved it into the `Ok` arm, so a hard failure discarded every step that
-  had already run — a debugging API dropped its output on the one input class it
+  had already run. A debugging API dropped its output on the one input class it
   exists to explain. The steps were already in memory: every layer beneath the
   two entry points threaded the trace by reference and appended incrementally,
   making this an API-shape inversion at exactly two functions. Both keep their
   exact signatures and behaviour and are now thin wrappers over the new
-  caller-owned methods. Note the failing task's own step is still not recorded
+  caller-owned methods. The failing task's own step is still not recorded
   (the engine propagates before appending it), so a retained trace ends at the
   last known-good step. (#25)
 - **functions:** `TaskExecutor::has_function` returned `true` for `http_call`,
@@ -1444,8 +1445,8 @@ because new public items ship and several existing behaviours change.
   API shaped like "can this engine run this task?" answered it wrongly and
   nothing answered it at all. It now routes through `builtin_function_kind` and
   returns `false` for those three unless a handler is registered. `Engine::new`
-  stays permissive on purpose — a host screening stored definitions one row at a
-  time must not be stopped from booting by a single unusable row — so the fix is
+  stays permissive on purpose (a host screening stored definitions one row at a
+  time must not be stopped from booting by a single unusable row), so the fix is
   the introspection needed to detect and quarantine the gap instead. (#22)
 - **functions:** routing `has_function` through the classifier removes the third
   in-crate copy of the built-in name list; the const, the deserializer dispatch
@@ -1454,15 +1455,15 @@ because new public items ship and several existing behaviours change.
 
 - **trace:** a step's per-task diff was only recoverable as
   `step.message.audit_trail.last()`, which is wrong whenever a task returns
-  `TaskOutcome::Skip` — no audit entry is recorded for a skip, so the last entry
+  `TaskOutcome::Skip`: no audit entry is recorded for a skip, so the last entry
   belongs to a *different* task. Reachable with built-ins alone via `filter` with
   `on_reject: "skip"`. `TraceOptions::changes` reports each task's own writes,
   and the `dataflow-ui` helper now prefers it. (#27)
 - **integration:** `HttpCallConfig`, `EnrichConfig` and `PublishKafkaConfig` now
   reject unknown keys (`deny_unknown_fields`). A misspelled field previously
   parsed cleanly and was discarded, so an `http_call` task would make its request
-  and silently throw the response away — no error at
-  `Engine::builder().build()`, none at dispatch. The failure now arrives when the
+  and silently throw the response away, with no error at
+  `Engine::builder().build()` and none at dispatch. The failure now arrives when the
   workflow definition is parsed, naming the offending field. (#24)
 
 ### Changed
@@ -1470,13 +1471,13 @@ because new public items ship and several existing behaviours change.
 - **integration:** the built-in integration configs migrate onto `Template`.
   `HttpCallConfig::path_logic` / `body_logic`, `EnrichConfig::path_logic`, and
   `PublishKafkaConfig::key_logic` / `value_logic` are now `Option<Template>`
-  (were `Option<Value>`), and the five matching `compiled_*` slots — marked
-  `#[doc(hidden)]` earlier in this release specifically so this could follow —
+  (were `Option<Value>`), and the five matching `compiled_*` slots (marked
+  `#[doc(hidden)]` earlier in this release specifically so this could follow)
   are removed, since each raw/compiled pair collapses into the one field that
   used to be raw-only. `LogicCompiler`'s three near-identical `compile_*_logic`
   methods (~64 lines) shrink to one `Template::compile` call per field.
-  `resolve_path` / `resolve_body` / `resolve_key` / `resolve_value` — the
-  sanctioned read — keep their exact signatures, so any caller already using
+  `resolve_path` / `resolve_body` / `resolve_key` / `resolve_value`, the
+  sanctioned read, keep their exact signatures, so any caller already using
   them is unaffected. The wire JSON is unaffected too: `Template::deserialize`
   accepts the same shape `Value` did, so `{"path_logic": {...}}` parses
   identically. `Template` gains `eval_to_plain_string`, mirroring
@@ -1485,23 +1486,23 @@ because new public items ship and several existing behaviours change.
   what this breaks. (#29)
 - **engine:** `DataflowError::FunctionNotFound`'s message is now documented as
   free-form and explicitly unpinned, with the new classifier as the supported
-  programmatic route. No test asserts on its wording, and none should — pinning
+  programmatic route. No test asserts on its wording, and none should: pinning
   it would cement the scraping workaround #22 exists to remove.
 
 ### Compatibility
 
 No existing **function or method signature** changes shape. Two structs gain
-fields (`ExecutionStep`, `ExecutionTrace` — see *Notes for trace consumers*).
+fields (`ExecutionStep`, `ExecutionTrace`; see *Notes for trace consumers*).
 
 One field-level break, from the `Template` migration above: `HttpCallConfig` /
 `EnrichConfig` / `PublishKafkaConfig` retype their four `*_logic` fields from
 `Option<Value>` to `Option<Template>`, and drop the five `compiled_*` fields
 entirely. This breaks source code that reads `cfg.path_logic` (or the sibling
 fields) directly and expects `Option<Value>`, or that reads any `compiled_*`
-field at all — those were already `#[doc(hidden)]` and documented as not part
+field at all. Those were already `#[doc(hidden)]` and documented as not part
 of the stable API earlier in this same release. Code going through
-`resolve_path` / `resolve_body` / `resolve_key` / `resolve_value` — the
-documented, sanctioned read — is unaffected: those methods keep their exact
+`resolve_path` / `resolve_body` / `resolve_key` / `resolve_value` (the
+documented, sanctioned read) is unaffected: those methods keep their exact
 signatures and behaviour. Nothing in `wasm/` or `ui/` touches these fields.
 The wire JSON format is unaffected in both directions.
 
@@ -1517,7 +1518,7 @@ visible as a compile error downstream:
 
 | `http_call` input | Before | Now |
 |---|---|---|
-| `{"response_path": "a"}` | `Some("a")` | `Some("a")` — unchanged |
+| `{"response_path": "a"}` | `Some("a")` | `Some("a")` (unchanged) |
 | `{"output": "b"}` | `None`, silently | `Some("b")` |
 | `{"response_path": "a", "output": "b"}` | `Some("a")`, `output` ignored | `Err`: duplicate field, either key order |
 | `{"outputs": "b"}` (typo) | `None`, silently | `Err`: unknown field `outputs` |
@@ -1526,8 +1527,8 @@ The last row is the defect being closed and also the upgrade risk: a stored
 workflow document carrying a stray or misspelled key inside an `http_call`,
 `enrich` or `publish_kafka` input loaded before and now fails. The failure is at
 `Workflow::from_json`, per definition, so a host screening stored rows one at a
-time sees that row fail its own parse rather than losing the whole set — but any
-such document must be corrected before upgrading.
+time sees that row fail its own parse rather than losing the whole set, but you
+must correct any such document before upgrading.
 
 ### Notes for trace consumers
 
@@ -1537,7 +1538,7 @@ through `builder()` / `new()` / `simple()`. Both gained a variant or field in th
 release, which already broke exhaustive matching and struct literals; marking them
 makes future additions non-breaking. Nothing outside `src/` in this repository
 matched the enum exhaustively or constructed `ErrorInfo` literally. `Workflow`
-deliberately did **not** get the marking — it would forbid `..Default::default()`
+deliberately did **not** get the marking: it would forbid `..Default::default()`
 cross-crate, which is the shape this repo's own integration tests use.
 
 `ExecutionStep` and `ExecutionTrace` are now `#[non_exhaustive]`. Both gained
@@ -1546,7 +1547,7 @@ construction and exhaustive destructuring; marking them makes future field
 additions non-breaking. Field reads, `..` patterns, the three step constructors
 and the `with_*` chain are unaffected, and nothing in this repository or the wasm
 bindings constructed either type by literal. `StepResult` is deliberately left
-exhaustive — a new variant there should break downstream `matches!` sites at
+exhaustive: a new variant there should break downstream `matches!` sites at
 compile time rather than silently reclassify them.
 
 Under default options the serialized trace gains `started_at` and `duration_us`
@@ -1573,7 +1574,7 @@ behaviour-preserving `src/` change (see *Fixed*); no public API changes.
   engine's trust model (workflow definitions are trusted configuration; message
   payloads are untrusted data).
 - **ci:** MSRV job pinned to 1.85. `rust-version` was previously a promise
-  nothing verified — see *Fixed*.
+  nothing verified; see *Fixed*.
 - **ci:** UI job running `npm ci` and `build:lib`, with an assertion that the
   emitted `dist/lib.d.ts` is non-empty and contains exports. `ui/` is published
   to npm on every release but had no CI coverage at all; dataflow-ui v2.1.3
@@ -1587,15 +1588,15 @@ behaviour-preserving `src/` change (see *Fixed*); no public API changes.
   `ReadmeDoctests` hook in `src/lib.rs`.
 - **docs:** the mdBook guide's Rust examples are compiled too, via a new
   `dataflow-docs-tests` workspace member (`publish = false`). `mdbook test`
-  cannot do this — it only passes `-L` to rustdoc, while an edition-2018+
+  cannot do this: it only passes `-L` to rustdoc, while an edition-2018+
   `use dataflow_rs::…` needs `--extern`, which mdBook has no flag for; routing
   the pages through `#[doc = include_str!(…)]` lets Cargo wire it up. 57 of the
   book's 84 Rust blocks now compile; the remaining 27 are API signature
   listings and are tagged `ignore` explicitly rather than silently unverified.
   Fragments that assume an `engine` or `message` binding got hidden `#`
-  preambles — compiled by rustdoc, hidden from readers by mdBook — so nothing
+  preambles (compiled by rustdoc, hidden from readers by mdBook), so nothing
   readers see changed. Workspace test count 123 → 183.
-- **ui:** working eslint setup — `eslint.config.js` (flat config, eslint 10 +
+- **ui:** working eslint setup: `eslint.config.js` (flat config, eslint 10 +
   typescript-eslint + react-hooks) and the toolchain as devDependencies. The
   `lint` script had been calling a binary that was never installed and had no
   config file, so it failed for anyone who ran it; it is now green and enforced
@@ -1607,7 +1608,7 @@ behaviour-preserving `src/` change (see *Fixed*); no public API changes.
 
 - **README:** the Getting Started example did not work. It built a message with
   `Message::from_value`, which populates `payload`, but its rule condition and
-  mappings read `data.order.total` — and `payload` is not part of the JSONLogic
+  mappings read `data.order.total`, and `payload` is not part of the JSONLogic
   evaluation context, which is `{data, metadata, temp_data}`. The example
   printed `null` rather than the documented `150` / `1350`. It now shows the
   two-rule chain it always described: an intake rule that `parse_json`s the
@@ -1615,7 +1616,7 @@ behaviour-preserving `src/` change (see *Fixed*); no public API changes.
   version runs as a doctest and asserts both values, so it cannot silently break
   again. Also documents that a rule's condition is evaluated *before* its own
   tasks run, which is why the parse cannot live inside the conditioned rule.
-- **MSRV:** `rust-version = "1.85"` was not true — `write_progress_metadata` in
+- **MSRV:** `rust-version = "1.85"` was not true: `write_progress_metadata` in
   `src/engine/workflow_executor.rs` used let-chains, stable only since Rust
   1.88, so the crate had never built on its advertised minimum. Rewritten as
   nested `if let` (behaviour identical, no API change) and 1.85 restored as a
@@ -1643,7 +1644,7 @@ behaviour-preserving `src/` change (see *Fixed*); no public API changes.
 
 ### Changed
 
-- **deps:** refreshed the lockfile to latest compatible versions — serde
+- **deps:** refreshed the lockfile to latest compatible versions: serde
   `1.0.228 → 1.0.229`, serde_json `1.0.150 → 1.0.151`, tokio
   `1.52.3 → 1.53.1`, uuid `1.23.3 → 1.24.0`, thiserror `2.0.18 → 2.0.19`,
   log `0.4.32 → 0.4.33`, async-trait `0.1.89 → 0.1.91`, datalogic-rs
@@ -1669,11 +1670,11 @@ behaviour-preserving `src/` change (see *Fixed*); no public API changes.
   from the `wasm-web` feature. It was inert: uuid's own `getrandom` is
   target-gated *off* for `wasm32-unknown-unknown` (it routes through
   wasm-bindgen/js-sys via `uuid/js`), and the pin was `0.3` while uuid uses
-  `0.4` — so `getrandom/wasm_js` could never affect uuid, and it put two
+  `0.4`, so `getrandom/wasm_js` could never affect uuid, and it put two
   `getrandom` majors in the tree.
 - The published crate no longer ships `/ui`, `/docs`, or `CLAUDE.md`. These
   are the npm-published React debugger, the GitHub Pages book, and
-  repo-local contributor guidance — none are needed to build the crate.
+  repo-local contributor guidance; none are needed to build the crate.
   Package contents drop 175 → 50 files (270 KiB → 130 KiB compressed).
 
 ### Fixed
@@ -1703,19 +1704,19 @@ tighter tails (P99.9 ~215–270 μs → ~135–155 μs).
 
 ### Added
 
-- `examples/micro_aggregate_bench.rs` — end-to-end benchmark for
+- `examples/micro_aggregate_bench.rs`: end-to-end benchmark for
   aggregate-heavy (`reduce`/`map`) mappings; quantifies the datalogic 5.1
   CSE + fusion wins (1.68× on a checkout-style workload).
-- `examples/micro_subtree_write_bench.rs` — scaling benchmark for many map
+- `examples/micro_subtree_write_bench.rs`: scaling benchmark for many map
   mappings targeting the same subtree (k = 5/25/100 writes).
 
 ### Changed
 
 - **deps:** datalogic-rs `5.0 → 5.1` (common-subexpression elimination for
   repeated pure aggregates, `reduce(map(...))` fusion) and datavalue-rs
-  `0.2.2 → 0.2.3`. API-compatible — no dataflow code changes required;
+  `0.2.2 → 0.2.3`. API-compatible: no dataflow code changes required;
   aggregate-heavy mappings improve substantially, scalar pipelines are flat.
-- **deps:** `uuid` enables `fast-rng` on non-wasm targets — default v7
+- **deps:** `uuid` enables `fast-rng` on non-wasm targets. Default v7
   message ids draw from a thread-local PRNG seeded once from the OS instead
   of paying one `getrandom` syscall per message (+3% throughput, tighter
   P99.9). Appropriate for v7 ids, which need uniqueness, not secrecy. The
@@ -1723,7 +1724,7 @@ tighter tails (P99.9 ~215–270 μs → ~135–155 μs).
 - **Source compatibility (semver-minor):** `ParseConfig` and `PublishConfig`
   gained engine-internal precomputed fields (`#[doc(hidden)]`,
   `#[serde(skip)]`, not part of the stable API). Struct-literal construction
-  must now spread a default — e.g.
+  must now spread a default, e.g.
   `ParseConfig { source, target, ..Default::default() }`. `ParseConfig`
   derives `Default`; `PublishConfig` has a manual `Default` with
   `root_element = "root"` (matching the serde default). JSON wire shape and
@@ -1731,22 +1732,22 @@ tighter tails (P99.9 ~215–270 μs → ~135–155 μs).
 
 ### Performance
 
-- Map hot loop: arena-side write-through — consecutive mappings writing into
+- Map hot loop: arena-side write-through. Consecutive mappings writing into
   the same subtree no longer re-clone it per mapping; k same-subtree writes
   now do O(k) total work instead of O(k²) (k=100 microbench: −27% ns/msg,
   and the win grows with written-subtree size).
 - Workflow-condition evaluation folded into the first sync task stretch for
-  mixed sync+async workflows — one context walk instead of two
+  mixed sync+async workflows: one context walk instead of two
   (`async_handler_benchmark`: +5.7% throughput; marginal cost of one custom
   handler dispatch 0.56 → 0.09 μs/msg).
 - `publish_json` / `publish_xml` serialize from a borrowed source instead of
-  deep-cloning the source subtree first — hundreds of avoided allocations
+  deep-cloning the source subtree first, avoiding hundreds of allocations
   per publish on ISO 20022-shaped payloads.
 - Per-task `metadata.progress` write updates the existing slot in place and
   refreshes only that arena child instead of re-arenaing the whole
   `metadata` tree.
 - `log` tasks short-circuit before evaluating any JSONLogic when their level
-  is filtered out for the `dataflow::log` target — filtered log tasks are
+  is filtered out for the `dataflow::log` target, so filtered log tasks are
   effectively free in production.
 - `parse_*` / `publish_*` target paths precomputed at engine build time (no
   per-execution `format!` / path split / `Arc<str>` alloc); default v7
@@ -1756,10 +1757,10 @@ tighter tails (P99.9 ~215–270 μs → ~135–155 μs).
 
 - `benchmark` and `micro_cond_bench` referenced `{"var": "payload.input.*"}`,
   which is outside the evaluation context (`data` / `metadata` /
-  `temp_data`) — every mapping silently evaluated to null and the published
+  `temp_data`), so every mapping silently evaluated to null and the published
   numbers measured no-op work. Both now use the canonical `parse_json` →
   `data.input.*` idiom, and every bench asserts at startup that its workload
-  actually computes. README performance numbers restated from the fixed
+  computes. README performance numbers restated from the fixed
   workload.
 
 ## [3.0.1] — 2026-06-13
@@ -1778,9 +1779,9 @@ tighter tails (P99.9 ~215–270 μs → ~135–155 μs).
 
 ### Added
 
-- `examples/micro_cond_bench.rs` — single-threaded `process_message`
+- `examples/micro_cond_bench.rs`: single-threaded `process_message`
   microbenchmark.
-- `examples/micro_multiworkflow_bench.rs` — quantifies per-workflow arena
+- `examples/micro_multiworkflow_bench.rs`: quantifies per-workflow arena
   rebuild cost.
 
 ## [3.0.0] — 2026-05-15
@@ -1789,23 +1790,23 @@ Major redesign of the custom-function API surface on the datalogic v5 core.
 
 Performance is neutral on the realistic ISO 20022 → SwiftMT-103 workload
 (230K msg/s, P50 23 μs). The new dyn-Any dispatch path for custom handlers
-adds ~1.2 μs/call of framework overhead — well below typical handler I/O
+adds ~1.2 μs/call of framework overhead, well below typical handler I/O
 latency.
 
 ### Added
 
-- **`AsyncFunctionHandler::Input`** — typed associated input. Handlers declare
+- **`AsyncFunctionHandler::Input`**: typed associated input. Handlers declare
   `type Input: DeserializeOwned` instead of matching on `FunctionConfig::Custom
   { input, .. }`. The engine pre-parses each task's input JSON into the typed
-  shape at `Engine::new()` — config-shape errors now fail at startup, not on
+  shape at `Engine::new()`, so config-shape errors now fail at startup, not on
   first message.
-- **`TaskContext<'a>`** — per-call context handed to every handler. Typed
+- **`TaskContext<'a>`**: per-call context handed to every handler. Typed
   accessors (`data()`, `metadata()`, `temp_data()`, `get(path)`),
   audit-trail-aware setters (`set(path, value)` records a `Change`
   automatically when `capture_changes` is on), and `add_error(...)`.
   Replaces the raw `&mut Message + &FunctionConfig + Arc<DatalogicEngine>`
   argument trio.
-- **`TaskOutcome` enum** — `Success` / `Status(u16)` / `Skip` / `Halt`.
+- **`TaskOutcome` enum**: `Success` / `Status(u16)` / `Skip` / `Halt`.
   Replaces the `(usize, Vec<Change>)` tuple, removes the magic-number contract
   for filter skip / halt signals.
 - **`BoxedFunctionHandler`** type alias (= `Box<dyn DynAsyncFunctionHandler +
@@ -1818,13 +1819,13 @@ latency.
   constructor split into one fluent shape.
 - Read accessors on `Message`: `id()`, `payload()`, `payload_arc()`,
   `audit_trail()`, `errors()`, `capture_changes()`.
-- **`dataflow_rs::prelude`** — re-exports the 14 types you need for the 90%
+- **`dataflow_rs::prelude`**: re-exports the 14 types you need for the 90%
   case (Engine, EngineBuilder, Workflow, Task, Message, MessageBuilder,
   AuditTrail, Change, AsyncFunctionHandler, TaskContext, TaskOutcome, Result,
   DataflowError, ErrorInfo, WorkflowStatus).
 - **`#[must_use]`** on `EngineBuilder`, `MessageBuilder`, `ErrorInfoBuilder`
   so drop-on-floor mistakes during the migration are loud.
-- **`examples/async_handler_benchmark.rs`** — measures the marginal cost of
+- **`examples/async_handler_benchmark.rs`**: measures the marginal cost of
   one custom-handler dispatch (`+1.2 μs/msg`, `−9% throughput` on a tight
   6-op pipeline; `+6%` total ops/sec because the extra task does useful work).
 
@@ -1843,7 +1844,7 @@ latency.
     AsyncFunctionHandler + Send + Sync>>>) -> Result<Self>`
   - **Now**: `pub fn new(Vec<Workflow>, HashMap<String,
     BoxedFunctionHandler>) -> Result<Self>`
-  - Use `HashMap::new()` for the no-handler case, or — preferred —
+  - Use `HashMap::new()` for the no-handler case, or, preferably,
     `Engine::builder()`.
 - **`Engine::process_message` error contract**: `message.errors()` is now the
   always-on view; `Result::Err` only signals "the engine stopped before
@@ -1854,7 +1855,7 @@ latency.
   semantics are unchanged.
 - **`Message` field encapsulation**: `id`, `payload`, `audit_trail`, `errors`,
   `capture_changes` are now `pub(crate)` with read accessors. `context`
-  remains `pub` — it's the legitimate read surface (tests do
+  remains `pub`: it's the legitimate read surface (tests do
   `message.context["data"]["x"]` lookups). Mutate `errors` via
   `message.add_error(e)`; mutate `context` via `TaskContext::set(...)`.
 - **`FunctionConfig::Custom`** gained a `compiled_input:
@@ -1863,11 +1864,11 @@ latency.
 
 ### Removed
 
-- **`Message::with_id`** — use `Message::builder().id(...).build()`.
-- **`Message::without_change_capture`** — use
+- **`Message::with_id`**: use `Message::builder().id(...).build()`.
+- **`Message::without_change_capture`**: use
   `Message::builder().capture_changes(false).build()`.
 - **`FILTER_STATUS_PASS`, `FILTER_STATUS_SKIP`, `FILTER_STATUS_HALT`**
-  constants — `FilterConfig` returns `TaskOutcome::Success` /
+  constants. `FilterConfig` returns `TaskOutcome::Success` /
   `TaskOutcome::Skip` / `TaskOutcome::Halt` directly. The on-the-wire halt
   status code (299) is preserved as `dataflow_rs::engine::task_outcome::HALT_STATUS_CODE`.
 

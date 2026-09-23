@@ -19,13 +19,13 @@
   <a href="https://goplasmatic.github.io/dataflow-rs/debugger/">
     <img src="assets/visual-debugger.png" alt="Dataflow visual debugger showing two chained rules: Order Intake always runs, then a JSONLogic condition gates the Premium Perks rule">
   </a>
-  <p><em>Two chained rules in the visual debugger — <strong>IF</strong> the condition matches, <strong>THEN</strong> the next rule runs. <a href="https://goplasmatic.github.io/dataflow-rs/debugger/">Try it live in your browser →</a></em></p>
+  <p><em>Two chained rules in the visual debugger: <strong>IF</strong> the condition matches, <strong>THEN</strong> the next rule runs. <a href="https://goplasmatic.github.io/dataflow-rs/debugger/">Try it live in your browser →</a></em></p>
 </div>
 
-Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. Rules are evaluated using pre-compiled JSONLogic for zero runtime overhead, and actions execute asynchronously for high throughput. Whether you're routing events, validating data, or building complex automation pipelines, Dataflow-rs gives you enterprise-grade performance with minimal complexity.
+Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. The engine compiles every rule's JSONLogic once at startup, so evaluation does no parsing at runtime, and actions execute asynchronously. Use it to route events, validate data, or build multi-step automation pipelines.
 
 ### ⚡ Blazing Fast Performance
-Dataflow-rs is built for high-throughput hot paths. By compiling all JSONLogic expressions once at engine startup, runtime evaluation runs with zero allocations, zero parsing overhead, and predictable latency. 
+Dataflow-rs targets high-throughput hot paths. The engine compiles all JSONLogic expressions once at startup, so runtime evaluation runs with zero allocations, zero parsing overhead, and predictable latency.
 
 A multi-threaded benchmark (1,000,000 concurrent events) on a 10-core Apple M2 Pro yields:
 *   **Throughput:** **~630,000 messages/sec**
@@ -34,10 +34,10 @@ A multi-threaded benchmark (1,000,000 concurrent events) on a 10-core Apple M2 P
 *   **Tail (P99.9) Latency:** **94 μs**
 
 ### 🧩 Full-Stack Ecosystem
-Go beyond backend microservices. Use the same rule definitions across your entire stack:
+The same rule definitions run across your stack, not only in backend services:
 1.  **Rust Backend:** Run natively with maximum speed and concurrency using `dataflow-rs`.
 2.  **Browser & Edge:** Run client-side validations or edge routing using WebAssembly bindings via [@goplasmatic/dataflow-wasm](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm).
-3.  **React UI Admin Portal:** Let users and developers visualize, edit, and step-by-step debug rules using [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui).
+3.  **React UI Admin Portal:** Let your team and your users visualize, edit, and step-by-step debug rules using [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui).
 
 ## How It Works: IF → THEN → THAT
 
@@ -57,15 +57,15 @@ Go beyond backend microservices. Use the same rule definitions across your entir
 
 | Rules Engine | Workflow Engine | Description |
 |---|---|---|
-| **Rule** | **Workflow** | A condition + actions bundle — IF condition THEN execute actions |
+| **Rule** | **Workflow** | A condition + actions bundle: IF condition THEN execute actions |
 | **Action** | **Task** | An individual processing step (map, validate, or custom function) |
 | **RulesEngine** | **Engine** | Evaluates rules against messages and executes matching actions |
 
-Both naming conventions are fully supported — use whichever fits your mental model.
+Both naming conventions work; use whichever fits your mental model.
 
 ## Why dataflow-rs?
 
-If you need dynamic business rules or user-customizable workflows, writing manual `if/else` checks makes your code rigid, while running full orchestrators (like Temporal or Zeebe) adds heavy infrastructure overhead and milliseconds of network latency. Dataflow-rs gives you the best of both worlds:
+If you need dynamic business rules or user-customizable workflows, writing manual `if/else` checks makes your code rigid, while running full orchestrators (like Temporal or Zeebe) adds heavy infrastructure overhead and milliseconds of network latency. Dataflow-rs sits between the two:
 
 | Capability | Hardcoded Rust | dataflow-rs | Heavy Orchestrators (Temporal/Zeebe) |
 |---|---|---|---|
@@ -86,7 +86,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1.0"
 ```
 
-JSONLogic's extended operator families are opt-in — the default build ships core
+JSONLogic's extended operator families are opt-in; the default build ships core
 JSONLogic only. Add the families your rules use:
 
 ```toml
@@ -99,10 +99,10 @@ first: enabling a family can change how an existing rule behaves.
 
 ### 2. Define Rules in JSON
 
-A message arrives with its body in `payload`. Conditions and mappings are
-evaluated against `data`, so the first rule loads the payload into `data`, and
-the second rule acts on it. This is the **chaining** in IF → THEN → THAT: rules
-run in order, and each one sees what the previous rules wrote.
+A message arrives with its body in `payload`. The engine evaluates conditions
+and mappings against `data`, so the first rule loads the payload into `data`,
+and the second rule acts on it. **Chaining**, the THAT in IF → THEN → THAT,
+means rules run in order and each one sees what the previous rules wrote.
 
 ```json
 {
@@ -150,10 +150,10 @@ run in order, and each one sees what the previous rules wrote.
 }
 ```
 
-> **A rule's condition is evaluated before any of its own tasks run.** A
-> condition can only read what earlier rules produced — never what its own tasks
-> are about to write. That is why the parse lives in its own rule here rather
-> than as a first task on `premium_order`.
+> **The engine evaluates a rule's condition before any of its own tasks run.** A
+> condition can only read what earlier rules produced, never what its own tasks
+> are about to write. The parse therefore lives in its own rule here rather than
+> as a first task on `premium_order`.
 
 ### 3. Run the Engine
 
@@ -229,7 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Handling Errors — Two Channels
 
-`process_message` reports errors through **two complementary channels**:
+`process_message` reports errors through **two channels**:
 
 - `Result::Err` signals that the engine **stopped early** (a task failed without
   `continue_on_error`, or an engine-level error occurred).
@@ -237,7 +237,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   errors from tasks that ran with `continue_on_error = true` and so didn't
   short-circuit the workflow.
 
-A short-circuit `?` will surface only the first kind. For full coverage:
+A short-circuit `?` surfaces only the first kind. To cover both, check each:
 
 ```rust,no_run
 use dataflow_rs::{Engine, Workflow};
@@ -273,7 +273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Branching on Why a Task Failed
 
-Both channels above are host-side. A rule's condition can't reach them — the
+Both channels above are host-side. A rule's condition can't reach them: the
 JSONLogic context is `data`, `metadata` and `temp_data`, and the error list isn't
 in it. Point the engine at a context path and it mirrors each failure's code
 there as it happens:
@@ -292,16 +292,17 @@ a transient failure differently from a permanent one:
 {"in": [{"var": "metadata.errors.0.code"}, ["TIMEOUT_ERROR", "IO_ERROR"]]}
 ```
 
-Off unless called, and coverage matches `message.errors()` — handler `Err`s, 5xx
-outcomes, every failing `validation` rule, and anything a handler records itself.
-The error text and the operator-only `detail` are deliberately left out, since
-the context is serialized back to callers. See the
+The engine writes nothing there unless you call `with_error_context_path`.
+Coverage matches `message.errors()`: handler `Err`s, 5xx outcomes, every failing
+`validation` rule, and anything a handler records itself. The records
+deliberately leave out the error text and the operator-only `detail`, since the
+context is serialized back to callers. See the
 [error handling guide](https://goplasmatic.github.io/dataflow-rs/core-concepts/error-handling.html)
 for the full rules.
 
 ### Classifying Your Own Errors
 
-The built-in error variants describe engine concerns — a missing function, a
+The built-in error variants describe engine concerns: a missing function, a
 failed condition, a bad path. When a handler fails for a reason only your
 service understands (a circuit breaker opened, a tenant hit a rate limit),
 classify it yourself instead of inventing a parallel error channel:
@@ -316,9 +317,9 @@ DataflowError::service("circuit_open", "upstream unavailable")
 ```
 
 `kind` becomes `ErrorInfo::code` verbatim (not upper-cased, so the string your
-service writes is the string it switches on), `detail` is an operator-only field
-that `Display` never renders — `to_string()` stays safe for an untrusted caller —
-and `retryable` is declared rather than inferred from the variant. The engine
+service writes is the string it switches on). `detail` is an operator-only field
+that `Display` never renders, so `to_string()` stays safe for an untrusted caller.
+`retryable` is declared rather than inferred from the variant. The engine
 never interprets any of it: `continue_on_error`, the audit entry, and the
 `Result::Err` short-circuit behave exactly as for any other error.
 
@@ -335,15 +336,15 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 ## Key Features
 
 - **IF → THEN → THAT Model:** Define rules with JSONLogic conditions, execute actions, chain with priority ordering.
-- **Zero Runtime Compilation:** All JSONLogic expressions pre-compiled at startup for optimal performance.
-- **Full Context Access:** Conditions can access any field — `data`, `metadata`, `temp_data`.
-- **Secrets Outside the Record:** `{"secret": "name"}` reads an engine-scoped store that no trace, snapshot or serialized message ever contains — and `build()` refuses a workflow that would copy one into the message.
-- **Async-First Architecture:** Native async/await support with Tokio for high-throughput processing.
+- **Zero Runtime Compilation:** All JSONLogic expressions compiled once at startup, never per message.
+- **Full Context Access:** Conditions can read any field in `data`, `metadata`, and `temp_data`.
+- **Secrets Outside the Record:** `{"secret": "name"}` reads an engine-scoped store that no trace, snapshot or serialized message ever contains, and `build()` refuses a workflow that would copy one into the message.
+- **Async-First Architecture:** Native async/await on the Tokio runtime.
 - **Execution Tracing:** Step-by-step debugging with message snapshots after each action, bounded by `TraceOptions` (snapshot budget, redaction, timings-only mode) when you need it in production.
 - **Always-On Observability:** Attach an `ExecutionObserver` for per-task timing, including the sync built-ins a trace or a wrapped handler can't reach on their own.
-- **Built-in Functions:** Parse, Map, Validate, Filter, Log, and Publish for complete data pipelines.
+- **Built-in Functions:** Parse, Map, Validate, Filter, Log, and Publish.
 - **Pipeline Control Flow:** Filter/gate function to halt workflows or skip tasks based on conditions.
-- **Rejecting Assertions:** `halt_on: "failure"` ends a rule once an action has run and failed — the gate a `validation` needs, since `continue_on_error` covers only `5xx` and `Err`. The task keeps its own status (a `400` stays a `400`).
+- **Rejecting Assertions:** `halt_on: "failure"` ends a rule once an action has run and failed. It is the gate a `validation` needs, since `continue_on_error` covers only `5xx` and `Err`. The task keeps its own status (a `400` stays a `400`).
 - **Channel Routing:** Route messages to specific workflow channels with O(1) lookup.
 - **Traffic Splits:** Roll a new workflow version out to a percentage of a channel's traffic with bucket-range routing.
 - **Workflow Lifecycle:** Manage workflow status (active/paused/archived), versioning, and tagging.
@@ -354,7 +355,7 @@ let engine = RulesEngine::builder().with_workflow(rule).build()?;
 - **Branch on Why a Task Failed:** Opt in with `with_error_context_path` and the engine mirrors each failure's code into the message context, so a downstream rule can route a timeout differently from a rejected request.
 - **WebAssembly Support:** Run rules in the browser with `@goplasmatic/dataflow-wasm`.
 - **React UI Components:** Visualize and debug rules with `@goplasmatic/dataflow-ui`.
-- **Auditing:** Full audit trail of all changes as data flows through the pipeline.
+- **Auditing:** An audit trail of every change as data flows through the pipeline.
 
 ## Architecture
 
@@ -388,13 +389,13 @@ On a 10-core Apple M2 Pro processing **1,000,000 messages** concurrently (Tokio 
 - **Pre-Compilation:** All JSONLogic compiled at startup, zero runtime parsing
 - **Arc-Wrapped Logic:** Zero-copy sharing of compiled expressions across threads
 - **Arena Evaluation:** Consecutive sync tasks evaluate against one bump-arena view of the context; map writes are spliced into it in place instead of re-cloning the written subtree
-- **Precomputed Paths:** Mapping, parse, and publish target paths are split and interned at compile time — the hot path never re-parses a path string
+- **Precomputed Paths:** Mapping, parse, and publish target paths are split and interned at compile time, so the hot path never re-parses a path string
 - **Async I/O:** Non-blocking operations for external services via Tokio
 
 **Tuning tip:** if you never read audit trails, build messages with
-`Message::builder().capture_changes(false)` — skipping the per-mapping
-old/new value snapshots is the largest single lever in mapping-heavy
-workloads, and in a looping workflow it also stops every sweep's copies from
+`Message::builder().capture_changes(false)`. Skipping the per-mapping
+old/new value snapshots is the largest single saving in mapping-heavy
+workloads; in a looping workflow it also stops every sweep's copies from
 being held in memory until the run ends. See the [performance guide](https://goplasmatic.github.io/dataflow-rs/advanced/performance.html) for more.
 
 Run the benchmarks and examples yourself:
@@ -473,8 +474,8 @@ fn build(workflows: Vec<dataflow_rs::Workflow>) -> dataflow_rs::Result<Engine> {
 }
 ```
 
-Any config field may be authored as JSONLogic — since 3.9 that is how *every*
-parameter of every built-in works. Declare it as `Template` and compile it once
+Any config field may be authored as JSONLogic; since 3.9, *every* parameter of
+every built-in works that way. Declare it as `Template` and compile it once
 via the `compile_input` hook instead of hand-rolling the raw/compiled pair:
 
 ```rust,ignore
@@ -500,16 +501,15 @@ impl AsyncFunctionHandler for GreetingHandler {
 A malformed expression fails at build time rather than on the first message that
 reaches the task, matching this crate's own stance for the built-ins.
 
-One handler *type* registered under several names — a plugin host, say —
+One handler *type* registered under several names (a plugin host, say)
 overrides the receiver-taking twins `parse_input_with` / `compile_input_with`
 instead, so which field is a template can come from per-registration data. See
 [One handler type, several registrations](docs/src/advanced/custom-functions.md#one-handler-type-several-registrations).
 
 A JSON literal *is* JSONLogic for itself, so the static spelling an author
-already writes — `"data.out"`, `5000` — folds to a constant at build time and is
-evaluated once, not per message. The one thing to know is that a single-key
-object whose key names an operator is that operator: write `{"$cat": …}` for the
-literal object. See
+already writes (`"data.out"`, `5000`) folds to a constant at build time and is
+evaluated once, not per message. One catch: a single-key object whose key names
+an operator is that operator, so write `{"$cat": …}` for the literal object. See
 [Literal keys and the `$` escape](docs/src/advanced/jsonlogic.md#literal-keys-and-the--escape).
 
 ## Built-in Functions
@@ -520,7 +520,7 @@ literal object. See
 | `parse_xml` | Parse XML string into JSON data structure | Yes |
 | `map` | Data transformation using JSONLogic | Yes |
 | `validation` | Rule-based data validation | No (read-only) |
-| `filter` | Pipeline control flow — halt workflow or skip task | No |
+| `filter` | Pipeline control flow: halt workflow or skip task | No |
 | `log` | Structured logging with JSONLogic expressions | No |
 | `publish_json` | Serialize data to JSON string | Yes |
 | `publish_xml` | Serialize data to XML string | Yes |
@@ -541,8 +541,8 @@ The `filter` function evaluates a JSONLogic condition and controls pipeline exec
 }
 ```
 
-- `on_reject: "halt"` — stops the entire workflow when the condition is false
-- `on_reject: "skip"` — skips just the current task and continues
+- `on_reject: "halt"` stops the entire workflow when the condition is false
+- `on_reject: "skip"` skips only the current task and continues
 
 ### Log (Structured Logging)
 
@@ -568,7 +568,7 @@ Log levels: `trace`, `debug`, `info`, `warn`, `error`. Messages and fields suppo
 
 ## Channel Routing
 
-Route messages to specific workflow channels for efficient O(1) dispatch:
+Route messages to specific workflow channels for O(1) dispatch:
 
 ```rust,ignore
 // Workflows define their channel
@@ -603,7 +603,7 @@ Workflows support lifecycle management fields:
 | `version` | number | `1` | Workflow version |
 | `status` | string | `"active"` | `active`, `paused`, or `archived` |
 | `tags` | array | `[]` | Arbitrary tags for organization |
-| `rollout` | object | `null` | Traffic split — `{bucket_start, bucket_end}` over `0..100` |
+| `rollout` | object | `null` | Traffic split: `{bucket_start, bucket_end}` over `0..100` |
 | `created_at` | datetime | `null` | Creation timestamp (ISO 8601) |
 | `updated_at` | datetime | `null` | Last update timestamp (ISO 8601) |
 
@@ -623,29 +623,29 @@ over `0..100`, so a new version can roll out gradually alongside the old one:
 }
 ```
 
-That workflow serves buckets `0..=9` — 10% of traffic. `bucket_start` is
+That workflow serves buckets `0..=9`, 10% of traffic. `bucket_start` is
 inclusive and `bucket_end` exclusive, so a `{"bucket_start": 10, "bucket_end": 100}`
 sibling covers the remaining 90% with no overlap and no gap.
 
-The engine does not derive the bucket — set it per message with whatever policy
-is yours (a sticky hash of a user id, a random draw, round-robin):
+The engine does not derive the bucket. Set it per message with your own policy
+(a sticky hash of a user id, a random draw, round-robin):
 
 ```rust,ignore
 let message = Message::builder().routing_bucket(7).build();
 ```
 
-A message with no bucket is admitted by every workflow, split or not, so every
-caller that predates rollouts — including the WASM entry points, which have no
-way to set one — keeps working unchanged. An excluded workflow is skipped
+Every workflow, split or not, admits a message with no bucket, so every caller
+that predates rollouts keeps working unchanged. That includes the WASM entry
+points, which have no way to set one. The engine skips an excluded workflow
 exactly like a false condition: no audit entry, and the gate runs before any
 other per-message work.
 
 ## Secrets
 
 A signing key or partner token has to be readable by a condition and must never
-appear in a trace. `Message.context` cannot express that — everything in it is
-recorded — so secrets live in a store on the engine and are read through one
-reserved operator:
+appear in a trace. `Message.context` cannot express that, because everything in
+it is recorded. Secrets therefore live in a store on the engine, and expressions
+read them through one reserved operator:
 
 ```rust,ignore
 let engine = Engine::builder()
@@ -659,9 +659,9 @@ let engine = Engine::builder()
 ```
 
 The value never enters a `Message`, so it cannot appear in anything derived
-from one. A `map` mapping or `log` expression that reads a secret is refused at
-`build()` (`SECRET_IN_MESSAGE_WRITE`), as is a name the engine does not declare
-(`UNKNOWN_SECRET`); derived values such as an HMAC belong in a custom handler
+from one. `build()` refuses a `map` mapping or `log` expression that reads a
+secret (`SECRET_IN_MESSAGE_WRITE`), and a name the engine does not declare
+(`UNKNOWN_SECRET`). Derived values such as an HMAC belong in a custom handler
 reading the key through a `Template`. See the
 [Secrets](https://goplasmatic.github.io/dataflow-rs/advanced/secrets.html) page.
 
@@ -678,10 +678,10 @@ let new_engine = engine.with_new_workflows(new_workflows);
 ## Execution Tracing & Observability
 
 The default `process_message_with_trace()` snapshots the full message after
-every step — great for a step debugger, but unbounded in size and quadratic in
-task count. `process_message_with_trace_options` bounds capture at the only
-point it can be bounded: snapshot size, path redaction, and audit-trail scope
-are all set up front, not trimmed afterward.
+every step. That suits a step debugger, but the trace is unbounded in size and
+quadratic in task count. `process_message_with_trace_options` bounds capture at
+the only point it can be bounded: you set snapshot size, path redaction, and
+audit-trail scope up front, rather than trimming the trace afterward.
 
 ```rust,ignore
 let trace = engine
@@ -696,9 +696,9 @@ for step in &trace.steps {
 ```
 
 For always-on aggregation instead of a per-request trace, attach an
-`ExecutionObserver`. It fires once per dispatched task — including the sync
-built-ins (`map`, `validation`, `filter`, `parse_*`, `publish_*`, `log`), which
-are dispatched inside the executor and unreachable by a wrapped handler:
+`ExecutionObserver`. It fires once per dispatched task, including the sync
+built-ins (`map`, `validation`, `filter`, `parse_*`, `publish_*`, `log`). The
+executor dispatches those internally, where a wrapped handler cannot reach them:
 
 ```rust,ignore
 impl ExecutionObserver for Metrics {
@@ -713,8 +713,8 @@ let engine = Engine::builder()
     .build()?;
 ```
 
-With neither attached, tracing and observation overhead — including their clock
-reads — stay out of the dispatch path entirely.
+With neither attached, tracing and observation overhead, clock reads included,
+stays out of the dispatch path.
 
 ## Visualize & Debug Rules
 
@@ -731,7 +731,7 @@ Because every rule is plain JSON, the [React UI](https://www.npmjs.com/package/@
 | Package | Description | Install |
 |---------|-------------|-------|
 | [dataflow-rs](https://crates.io/crates/dataflow-rs) | Async rules engine in Rust (this crate) | `cargo add dataflow-rs` |
-| [@goplasmatic/dataflow-wasm](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm) | WebAssembly bindings — run rules in browser or Node.js | `npm i @goplasmatic/dataflow-wasm` |
+| [@goplasmatic/dataflow-wasm](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm) | WebAssembly bindings: run rules in the browser or Node.js | `npm i @goplasmatic/dataflow-wasm` |
 | [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) | React components for rule visualization, editing, and step-by-step debugging | `npm i @goplasmatic/dataflow-ui` |
 | [datalogic-rs](https://crates.io/crates/datalogic-rs) | JSONLogic compiler/evaluator used internally | `cargo add datalogic-rs` |
 
@@ -739,10 +739,10 @@ Because every rule is plain JSON, the [React UI](https://www.npmjs.com/package/@
 
 ## Contributing
 
-We welcome contributions! Here's how to get started:
+Contributions are welcome. To get started:
 
 1. **Fork** the repository and clone your fork
-2. **Run tests:** `cargo test` to ensure everything passes
+2. **Run tests:** `cargo test --workspace --all-features` (what CI runs) and `cargo test -p dataflow-rs` (the default feature set)
 3. **Make changes** and add tests for any new features
 4. **Run the benchmark** before and after: `cargo run --example benchmark --release`
 5. **Submit a pull request** with a clear description of your changes
@@ -751,7 +751,7 @@ See the [CHANGELOG](CHANGELOG.md) for recent changes and release history.
 
 ## About Plasmatic
 
-Dataflow-rs is developed by the team at [Plasmatic](https://github.com/GoPlasmatic). We're passionate about building open-source tools for data processing and automation.
+Dataflow-rs is developed by the team at [Plasmatic](https://github.com/GoPlasmatic). We build open-source tools for data processing and automation.
 
 ## License
 

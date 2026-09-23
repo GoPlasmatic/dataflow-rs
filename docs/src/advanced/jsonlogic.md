@@ -4,7 +4,7 @@ Dataflow-rs uses [JSONLogic](https://jsonlogic.com/) for conditions and data tra
 
 ## Overview
 
-JSONLogic is a way to write rules as JSON. It's used in dataflow-rs for:
+JSONLogic is a way to write rules as JSON. Dataflow-rs uses it for:
 
 - **Rule Conditions** - Control when rules (workflows) execute, evaluated against the full context (`data`, `metadata`, `temp_data`)
 - **Action Conditions** - Control when actions (tasks) execute
@@ -56,7 +56,7 @@ Access fields with:
 {"var": "temp_data.intermediate"}
 ```
 
-Values the engine must never record — signing keys, partner tokens — are
+Values the engine must never record (signing keys, partner tokens) are
 deliberately *not* in this tree. They live in an engine-scoped store and are
 read with the reserved operator `{"secret": "name"}`; see
 [Secrets](./secrets.md) for where that is allowed and what it guarantees.
@@ -296,7 +296,7 @@ default**:
 | `error-handling` | `try`, `throw` |
 | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
 | `all-operators` | every family above |
-| `tensor` | `tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype` — **not** in `all-operators`, see below |
+| `tensor` | `tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype` (**not** in `all-operators`, see below) |
 
 ```toml
 [dependencies]
@@ -306,11 +306,11 @@ dataflow-rs = { version = "3.13", features = ["ext-string", "ext-control"] }
 ### `tensor` is opt-in separately
 
 `tensor` is the one family `all-operators` leaves out. A third of its names are
-ordinary JSON keys — `shape`, `full`, `cast`, `pad`, `crop`, `concat`, `stack` —
+ordinary JSON keys (`shape`, `full`, `cast`, `pad`, `crop`, `concat`, `stack`),
 and under templating mode a single-key object whose key is a live operator is
 *evaluated*, not passed through. Folding it into `all-operators` would quietly
-change what `{"shape": ...}` means in workflows that already run, so it is a
-choice you make deliberately:
+change what `{"shape": ...}` means in workflows that already run, so you opt
+in to it deliberately:
 
 ```toml
 [dependencies]
@@ -326,7 +326,7 @@ which is always on.
 Three placements are easy to get wrong: `length` is in `ext-string`, not
 `ext-array`, even though it counts array elements as well as string characters;
 `type` is in `ext-control`, not a family of its own; and the split between the
-last two array-flavoured families follows the *input*, not the output —
+last two array-flavoured families follows the *input*, not the output:
 `entries` is in `ext-object` even though it produces an array (of
 `{key, value}` rows), while `group_by` and `distinct` are in `ext-array` even
 though they are natural companions to it. Iterating an object's entries with
@@ -335,8 +335,8 @@ though they are natural companions to it. Iterating an object's entries with
 ### Enabling a family can change existing rules
 
 dataflow-rs runs JSONLogic in **templating mode**, where an unrecognised
-operator name is not an error — the object passes through as literal data. That
-is what makes these features non-additive.
+operator name is not an error: the object passes through as literal data. So
+these features are not additive.
 
 Before `ext-string`, a mapping that produces `{"length": {"var": "data.x"}}`
 stores that object verbatim. After `ext-string`, the same mapping stores a
@@ -344,7 +344,7 @@ number. Audit your rules for object keys matching any operator in the table
 above before enabling its family.
 
 The fix is to say which you meant. `{"$length": …}` is a *literal* object with a
-`length` field, whatever families are enabled — see
+`length` field, whatever families are enabled. See
 [Literal keys and the `$` escape](#literal-keys-and-the--escape) below.
 
 `datetime` goes further and changes **core** operators. With it on, `==`, `<`,
@@ -355,21 +355,21 @@ durations:
 {"==": ["2024-01-15T00:00:00Z", "2024-01-15T01:00:00+01:00"]}
 ```
 
-This is `false` without `datetime` and `true` with it — the two strings are
+This is `false` without `datetime` and `true` with it: the two strings are
 different bytes naming the same instant.
 
 ### Literal keys and the `$` escape
 
 Templating mode makes every single-key object an operator invocation. So
-`{"cat": ["a", "b"]}` is the `cat` operator and evaluates to `"ab"` — there was,
-until 3.9, no way to write an object with a field genuinely called `cat`.
+`{"cat": ["a", "b"]}` is the `cat` operator and evaluates to `"ab"`. Until 3.9
+there was no way to write an object with a field called `cat`.
 
 Prefixing a key with `$` says "this is data, not a call":
 
 | You write | You get |
 |---|---|
-| `{"cat": ["a", "b"]}` | `"ab"` — the operator |
-| `{"$cat": ["a", "b"]}` | `{"cat": ["a", "b"]}` — the object |
+| `{"cat": ["a", "b"]}` | `"ab"` (the operator) |
+| `{"$cat": ["a", "b"]}` | `{"cat": ["a", "b"]}` (the object) |
 | `{"$$oid": "abc"}` | `{"$oid": "abc"}` |
 | `{"$total": 1}` | `{"total": 1}` |
 
@@ -377,12 +377,12 @@ Three things to know:
 
 1. **Exactly one prefix is stripped from every key**, not only from keys that
    collide with an operator. `$total` is not an operator name and is still
-   stripped. So a template that emits genuinely `$`-prefixed keys — MongoDB's
-   `$set` and `$oid`, JSON Schema's `$schema` and `$ref` — must double them.
+   stripped. So a template that emits `$`-prefixed keys (MongoDB's
+   `$set` and `$oid`, JSON Schema's `$schema` and `$ref`) must double them.
    `Engine::check_workflow` reports `ESCAPED_TEMPLATE_KEY` for every escaped
    key, which is how you find them all when upgrading.
-2. **It applies at every depth**, including inside a `map` body or an `if`
-   branch — anywhere a template key appears.
+2. **It applies at every depth**, anywhere a template key appears, including
+   inside a `map` body or an `if` branch.
 3. **Two keys may not collapse to the same name.** `{"$a": 1, "a": 2}` would
    emit `a` twice, so `Engine::build` refuses it (`DUPLICATE_TEMPLATE_KEY`).
 
@@ -409,14 +409,14 @@ unless one of them starts with `$`:
 
 The same is true of a single-key object whose key names no operator:
 `{"result": {"var": "data.x"}}` evaluates its argument and emits
-`{"result": …}`. Escaping is only needed when the key *is* an operator name, or
-when the key really starts with `$`.
+`{"result": …}`. You need the escape only when the key *is* an operator name, or
+when the key starts with `$`.
 
 ### Checking what a build evaluates
 
-Because a disabled operator is inert rather than an error, "does this expression
-do anything?" is not a question you can answer by reading the rule alone.
-`Engine::operator_names` reports the exact vocabulary of the running engine —
+Because a disabled operator is inert rather than an error, you cannot answer
+"does this expression do anything?" by reading the rule alone.
+`Engine::operator_names` reports the exact vocabulary of the running engine:
 core, plus whichever families were compiled in, plus anything registered through
 `EngineBuilder::with_datalogic_operator`:
 
@@ -431,7 +431,7 @@ assert!(names.contains(&"var"));      // core: always present
 # Ok(()) }
 ```
 
-That is the check an authoring tool should run before telling someone their
+An authoring tool should run this check before telling someone their
 expression is fine.
 
 > **Note for JavaScript users:** the WASM package is built with

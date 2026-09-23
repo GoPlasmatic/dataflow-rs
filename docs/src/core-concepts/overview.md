@@ -1,6 +1,6 @@
 # Core Concepts Overview
 
-Dataflow-rs is built around a small set of core concepts that work together to evaluate rules and execute actions efficiently.
+Dataflow-rs has a small set of core concepts that together evaluate rules and execute actions.
 
 ## The Big Picture
 
@@ -40,7 +40,7 @@ Dataflow-rs is built around a small set of core concepts that work together to e
 | **Action** | **Task** | Individual processing unit | Built-in or custom functions |
 
 The [Message](./message.md) carries the data through them: a `payload`, the
-`{data, metadata, temp_data}` context every condition is evaluated against, an
+`{data, metadata, temp_data}` context every condition evaluates against, an
 audit trail and a list of errors.
 
 
@@ -69,19 +69,19 @@ audit trail and a list of errors.
 ## Key Design Principles
 
 ### Pre-compilation
-All JSONLogic expressions are compiled once at engine creation. This eliminates runtime parsing overhead and ensures consistent, predictable performance.
+The engine compiles every JSONLogic expression once, at creation. This removes runtime parsing overhead and keeps performance consistent and predictable.
 
 ### Immutability
 Rules are immutable after engine creation. This enables safe concurrent processing and eliminates race conditions.
 
 ### Separation of Concerns
 - **LogicCompiler** handles all compilation
-- **WorkflowExecutor** orchestrates a rule's task list — conditions, groups, loops, audit trail
+- **WorkflowExecutor** orchestrates a rule's task list: conditions, groups, loops, audit trail
 - **TaskExecutor** dispatches one action; sync built-ins run inside the executor's arena scope
 - **Engine** orchestrates the flow
 
 ### Audit Trail
-Every data modification is recorded, providing complete visibility into processing steps for debugging and compliance.
+The engine records every data modification, so you can see each processing step for debugging and compliance.
 
 ## Detailed Documentation
 

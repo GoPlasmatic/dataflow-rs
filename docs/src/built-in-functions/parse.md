@@ -36,7 +36,7 @@ Both are JSONLogic, so either can be computed per message:
 }
 ```
 
-`source` resolves to the *name* of a location, never to the value at one —
+`source` resolves to the *name* of a location, never to the value at one.
 `payload` is not part of the JSONLogic evaluation context, so an expression
 could not read it even if it tried. The static spelling of either parameter is a
 plain string, which is JSONLogic for itself: it folds to a constant at build
@@ -44,7 +44,7 @@ time and keeps the precomputed path split, so nothing changes for the ordinary
 case.
 
 Both name where the engine itself writes, and the destination is recorded in
-`Change.path` and on the audit trail, so neither may read `{"secret": …}` — see
+`Change.path` and on the audit trail, so neither may read `{"secret": …}`. See
 [Secrets](../advanced/secrets.md).
 
 ### Examples
@@ -149,7 +149,7 @@ Both accept a computed value, exactly as for [`parse_json`](#parameters).
 
 ### XML to JSON Conversion
 
-XML is converted with [`quick-xml`](https://docs.rs/quick-xml)'s serde
+`parse_xml` converts XML with [`quick-xml`](https://docs.rs/quick-xml)'s serde
 deserializer, which reserves two key prefixes:
 
 Rows show whole documents, since that is what `source` hands the parser:
@@ -171,12 +171,12 @@ read the result:
   above needs a wrapper to show the element key at all.
 - **Text content lives under `$text`, not directly under the element key.** A
   leaf element deserializes to an *object*, so the path to Alice's name is
-  `data.request.name.$text` — reading `data.request.name` hands you
+  `data.request.name.$text`; reading `data.request.name` hands you
   `{"$text": "Alice"}`, and a condition comparing it to `"Alice"` is silently
   false.
 - **Every value is a string.** `<age>30</age>` yields `{"$text": "30"}`: XML
   carries no type information, so compare against `"30"` or convert explicitly.
-- **Repeated sibling elements do not become an array — only the last one
+- **Repeated sibling elements do not become an array; only the last one
   survives.** `<root><item>a</item><item>b</item></root>` parses to
   `{"item": {"$text": "b"}}`, dropping `a`. For documents with repeated
   elements, parse them in a [custom handler](../advanced/custom-functions.md)
@@ -321,10 +321,10 @@ To lift those leaves into plain scalars, follow the parse with a `map`:
   parse, the string is stored as-is. A non-string source is stored unchanged.
 - **parse_xml**: Returns an error if the source is not a string or if XML parsing fails
 
-Note that a *successful* `parse_xml` can still lose data — repeated sibling
-elements collapse to the last one, as described under
-[XML to JSON Conversion](#xml-to-json-conversion). That is not reported as an
-error.
+A *successful* `parse_xml` can still lose data: repeated sibling elements
+collapse to the last one, as described under
+[XML to JSON Conversion](#xml-to-json-conversion). `parse_xml` does not report
+that as an error.
 
 ## Next Steps
 

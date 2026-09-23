@@ -1,12 +1,12 @@
 # Performance
 
-Dataflow-rs is designed for high-performance rule evaluation and data processing with minimal overhead.
+Dataflow-rs keeps per-message overhead low by moving compilation and validation to engine build time.
 
 ## Architecture for Performance
 
 ### Pre-compilation
 
-All JSONLogic expressions are compiled once at engine startup:
+The engine compiles every JSONLogic expression once, at startup:
 
 ```rust
 # use dataflow_rs::{Engine, Message, Workflow};
@@ -62,8 +62,8 @@ cargo run --example micro_subtree_write_bench --release # k map writes into one 
 ```
 
 The last two are **regression guards**, not open investigations: the
-optimizations they were written to size up have shipped, so what they assert is
-that a property stays flat. `micro_multiworkflow_bench`'s three layouts should
+optimizations they were written to size up have shipped, so they assert that a
+property stays flat. `micro_multiworkflow_bench`'s three layouts should
 sit close together, since one `ArenaContext` is carried across a run of
 consecutive fully-sync workflows; `micro_subtree_write_bench`'s per-write cost
 should stay roughly linear in `k`, since the arena write-through splices rather
@@ -208,7 +208,7 @@ Validate only what's necessary:
 ### 6. Disable Change Capture When Unused
 
 When change capture is on (the default), every mapping snapshots the old and
-new value into the audit trail — deep copies that dominate the profile in
+new value into the audit trail: deep copies that dominate the profile in
 mapping-heavy workloads. If you never read `message.audit_trail()`, turn it
 off per message:
 
@@ -222,7 +222,7 @@ let mut message = Message::builder()
 # }
 ```
 
-This is the single largest tuning lever in the hot path. See
+Disabling change capture is the single largest tuning lever in the hot path. See
 [Audit Trails](audit-trails.md) for what you give up.
 
 Memory is the other half of the cost: the copies are kept until
@@ -234,7 +234,7 @@ sweep. See [Memory in long loops](loops.md#memory-in-long-loops).
 `log` tasks check whether their level is enabled for the `dataflow::log`
 target *before* evaluating any JSONLogic or formatting fields. With
 production filtering like `RUST_LOG=dataflow::log=warn`, `debug`/`info` log
-tasks short-circuit at near-zero cost — you can leave diagnostic logging in
+tasks short-circuit at near-zero cost, so you can leave diagnostic logging in
 production workflows without paying for it.
 
 ## Concurrent Processing

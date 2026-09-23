@@ -5,7 +5,7 @@ the `AsyncFunctionHandler` trait.
 
 ## Overview
 
-Custom functions allow you to:
+Custom functions let you:
 
 - Add domain-specific processing logic
 - Integrate with external systems
@@ -14,16 +14,16 @@ Custom functions allow you to:
 
 The trait has three moving parts:
 
-- **`type Input`** — your typed config shape. The engine deserializes each
+- **`type Input`**: your typed config shape. The engine deserializes each
   task's `FunctionConfig::Custom { input }` JSON into this type once at
   `Engine::builder().build()`, not per message. Misshapen config fails at
   startup.
-- **`TaskContext`** — handed to every call. Read the message context
+- **`TaskContext`**: handed to every call. Read the message context
   (`ctx.data()`, `ctx.metadata()`, `ctx.temp_data()`, `ctx.get(path)`),
   read a secret by name (`ctx.secret(name)`), mutate the context through
   `ctx.set(path, value)` which records audit-trail changes automatically,
   and append errors via `ctx.add_error(...)`.
-- **`TaskOutcome`** — the return value: `Success`, `Status(u16)`,
+- **`TaskOutcome`**: the return value, one of `Success`, `Status(u16)`,
   `Skip`, or `Halt`. Replaces the magic-number `usize` of earlier
   versions.
 
@@ -67,9 +67,9 @@ impl AsyncFunctionHandler for MyCustomFunction {
 Three concrete things the new shape removes:
 
 1. No `match config { Custom { input, .. } => ..., _ => Err(...) }`
-   block — `input` is the typed parameter directly.
-2. No hand-built `Change` entries — `ctx.set` does that.
-3. No magic `Ok((200, vec![]))` return — `TaskOutcome::Success` is
+   block: `input` is the typed parameter directly.
+2. No hand-built `Change` entries: `ctx.set` records them.
+3. No magic `Ok((200, vec![]))` return: `TaskOutcome::Success` is
    self-documenting.
 
 ## Registering Custom Functions
@@ -118,12 +118,12 @@ user code.
 ```
 
 The `input` shape on the wire must match your handler's `Input` struct.
-serde does the parse at engine init time.
+serde parses it at engine init time.
 
 ## Accessing Configuration
 
-Because the engine pre-parses the JSON, configuration is just the
-`input` parameter — no extraction step. For freeform JSON, set
+Because the engine pre-parses the JSON, configuration is the `input`
+parameter, with no extraction step. For freeform JSON, set
 `type Input = serde_json::Value;`:
 
 ```rust,ignore
@@ -148,8 +148,8 @@ impl AsyncFunctionHandler for FreeformHandler {
 
 ## Evaluating JSONLogic from a handler
 
-`TaskContext` has a value-returning evaluation surface — `eval`, `eval_json` and
-`eval_to_plain_string` — that runs on the worker thread's pooled bump arena, so a
+`TaskContext` has a value-returning evaluation surface (`eval`, `eval_json` and
+`eval_to_plain_string`) that runs on the worker thread's pooled bump arena, so a
 handler never has to manage a `Bump` or walk `ctx.message().context` itself:
 
 ```rust,ignore
@@ -181,20 +181,20 @@ impl AsyncFunctionHandler for EvalDemo {
 ```
 
 `eval` returns `OwnedDataValue`, `eval_json` projects straight to
-`serde_json::Value`, and `eval_to_plain_string` unquotes a string result —
+`serde_json::Value`, and `eval_to_plain_string` unquotes a string result.
 `eval_to_plain_string` **deliberately disagrees** with datalogic-rs's own string
 projection (`Session::eval_str` keeps the JSON quoting), so pick it when the
 result is going into a URL path or similar. See [API Reference](../api/reference.md#taskcontext).
 
 Compiling once per task rather than per message matters for a hot path. If your
-config has a field the workflow author writes as JSONLogic — which, since 3.9,
-is every parameter of every built-in — reach for `Template` instead of managing
+config has a field the workflow author writes as JSONLogic (since 3.9, every
+parameter of every built-in is one), reach for `Template` instead of managing
 the raw/compiled pair by hand.
 
 ## Config fields that are JSONLogic (`Template`)
 
-A `Template` field deserializes from any JSON value, gets compiled once at
-engine construction, and evaluates through `TaskContext` like any other
+A `Template` field deserializes from any JSON value, compiles once at engine
+construction, and evaluates through `TaskContext` like any other
 pre-compiled expression:
 
 ```rust,ignore
@@ -233,39 +233,38 @@ impl AsyncFunctionHandler for GreetingHandler {
 }
 ```
 
-A malformed expression fails at `compile_input` time — `Engine::builder().build()`
-or `Engine::with_new_workflows` — not on the first message that reaches the task,
+A malformed expression fails at `compile_input` time (`Engine::builder().build()`
+or `Engine::with_new_workflows`), not on the first message that reaches the task,
 matching this crate's stance for its own built-in parameters.
 
-Two things worth knowing:
+Things to know about `Template` fields:
 
 - **Any config field may be a `Template`.** It used to be opt-in per field,
-  because a single-key object whose key matched an operator name —
-  `{"cat": ["a", "b"]}` — evaluated as that operator and a literal object was
+  because a single-key object whose key matched an operator name
+  (`{"cat": ["a", "b"]}`) evaluated as that operator and a literal object was
   inexpressible. Since 3.9 the author writes `{"$cat": ["a", "b"]}` for the
   literal, so the restriction is gone. See
   [Literal keys and the `$` escape](./jsonlogic.md#literal-keys-and-the--escape).
 - **A literal costs nothing.** A `Template` whose expression folds to a
-  constant — which is what any statically-authored value does — is evaluated
-  once at `build()` and cached, so per-message work happens only for a field
-  that actually reads the message. `Template::is_constant` reports which.
-- **`Template` fields nested inside a `Vec<T>` or a nested struct work fine** —
-  walk the collection in `compile_input` and call `.compile(..)` on each one, as
+  constant (as any statically-authored value does) is evaluated once at
+  `build()` and cached, so per-message work happens only for a field that
+  reads the message. `Template::is_constant` reports which.
+- **`Template` fields nested inside a `Vec<T>` or a nested struct work fine.**
+  Walk the collection in `compile_input` and call `.compile(..)` on each one, as
   the example above's single field does trivially and a list of rules would do
   in a loop.
-- **A `Template` may read `{"secret": "name"}`.** That is the intended way for
+- **A `Template` may read `{"secret": "name"}`.** It is the intended way for
   a handler to receive a signing key or token: the value comes from the
-  engine's store, is never part of the message, and appears in no trace. What
-  the handler then does with it is the handler's business — the one rule is
-  that it must not write a secret-derived value back into the message. See
-  [Secrets](./secrets.md).
+  engine's store, is never part of the message, and appears in no trace. The
+  handler may use the value as it likes, with one rule: it must not write a
+  secret-derived value back into the message. See [Secrets](./secrets.md).
 
-There is no derive macro for this — a hand-written `compile_input` is a few
+There is no derive macro for this. A hand-written `compile_input` is a few
 lines, and this crate has no proc-macro dependency to add one.
 
 ## One handler type, several registrations
 
-`parse_input` and `compile_input` are associated functions — no `&self` —
+`parse_input` and `compile_input` are associated functions (no `&self`)
 because for most handlers the config schema is a property of the *type*. A
 plugin host is the exception: it registers one handler type once per function
 its manifest lists, and the manifest, not the type, says which config keys are
@@ -332,14 +331,14 @@ fn build(manifest: &[(&str, &str)]) -> Result<Engine> {
 ```
 
 A config without the key this registration declares fails at `build()`, and
-`check_workflow` reports it as `INPUT_PARSE`, exactly as a per-type
-`parse_input` rejection would be: nothing about the build path changes, only
-who gets asked.
+`check_workflow` reports it as `INPUT_PARSE`, exactly as it would a per-type
+`parse_input` rejection. The build path is unchanged; only the instance the
+engine asks differs.
 
 ## Knowing which task you are
 
-A handler often needs to label what it produces — a log line, a metric, a
-recorded call in a test harness — with the task that produced it.
+A handler often needs to label what it produces (a log line, a metric, a
+recorded call in a test harness) with the task that produced it.
 `TaskContext` reports the executing identity directly:
 
 ```rust
@@ -369,26 +368,26 @@ impl AsyncFunctionHandler for Timed {
 }
 ```
 
-Three things are worth knowing:
+Three things to know:
 
-- **`task_id` is always a leaf task.** Handlers dispatch only on leaf tasks; a
-  task group is evaluated on entry and recorded as a span, never dispatched. A
-  group's id can never appear here.
+- **`task_id` is always a leaf task.** The engine dispatches handlers only on
+  leaf tasks; it evaluates a task group on entry and records it as a span, never
+  dispatching it. A group's id can never appear here.
 - **All three are `None` for a context you built yourself** with
   `TaskContext::new`, which is the supported way to drive a handler from a test
   or benchmark. There is no workflow run to describe, and the `Option` says so
   rather than inventing an id.
 - **`loop_counter` is the only way to see the sweep index** when the workflow's
-  `loop` has no `counter` name. A named counter is written to
-  `temp_data.<name>`, but an unnamed one is written nowhere — the engine still
-  tracks it, and this is where it surfaces.
+  `loop` has no `counter` name. The engine writes a named counter to
+  `temp_data.<name>` and an unnamed one nowhere. It still tracks the unnamed
+  counter, and `loop_counter` is where it surfaces.
 
 ### Inside a fan-out
 
 A task carrying [`for_each`](./for-each.md) calls your handler once per
 element. Each call sees its element at `temp_data.<as>` and its index at
 `temp_data.<as>_index`, and `ctx.element_index()` returns that index without
-the handler having to know the `as` name — `None` outside a fan-out.
+the handler having to know the `as` name, and `None` outside a fan-out.
 
 Each call runs against its own copy of the message, and the engine replays the
 call's writes into the real message afterwards. So write through `ctx.set`: a
@@ -396,7 +395,7 @@ write made through `ctx.message_mut()` directly is not carried back.
 
 ## Async Operations
 
-The trait is async/await all the way through. Real I/O works naturally:
+The trait is async end to end, so a handler can await real I/O:
 
 ```rust,ignore
 use async_trait::async_trait;
@@ -438,7 +437,7 @@ impl AsyncFunctionHandler for HttpFetchFunction {
 
 ## Error Handling
 
-Return appropriate errors for different failure modes:
+Return the error that matches each failure mode:
 
 ```rust,ignore
 async fn execute(
@@ -467,8 +466,8 @@ async fn execute(
 }
 ```
 
-The engine routes errors and 5xx statuses through `message.errors()` —
-see [Error Handling](../core-concepts/error-handling.md) for the
+The engine routes errors and 5xx statuses through `message.errors()`.
+See [Error Handling](../core-concepts/error-handling.md) for the
 unified-channel contract.
 
 ## Complete Example
@@ -535,17 +534,17 @@ impl AsyncFunctionHandler for StatisticsFunction {
 
 ## Best Practices
 
-1. **Use a typed Input** — let serde validate at startup. Reach for
-   `serde_json::Value` only when the input genuinely is freeform.
-2. **Mutate via `ctx.set`** — it auto-records the audit trail. Reaching
+1. **Use a typed Input**: let serde validate at startup. Reach for
+   `serde_json::Value` only when the input is freeform.
+2. **Mutate via `ctx.set`**: it auto-records the audit trail. Reaching
    into `message.context` directly bypasses change capture.
-3. **Return TaskOutcome cleanly** — `Success` for the happy path,
+3. **Return TaskOutcome cleanly**: `Success` for the happy path,
    `Status(u16)` for HTTP-like codes (5xx pushes a `TASK_STATUS_ERROR`
    to `message.errors()`), `Skip` for "did nothing, continue",
    `Halt` for "stop this workflow".
-4. **Use the right error type** — `DataflowError::retryable` looks at
+4. **Use the right error type**: `DataflowError::retryable` looks at
    the variant to decide whether transient errors are worth retrying.
-5. **Document** — your handler's `Input` struct is its contract;
+5. **Document**: your handler's `Input` struct is its contract;
    docstring it.
-6. **Test** — drive the handler with `TaskContext::new(&mut message,
+6. **Test**: drive the handler with `TaskContext::new(&mut message,
    &datalogic)` and assert on the outcome and `ctx.into_changes()`.

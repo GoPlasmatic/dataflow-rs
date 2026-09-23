@@ -75,8 +75,8 @@ let mut message = Message::new(payload);
 
 ### Builder
 
-For the richer cases — caller-supplied id (correlation), capture-off
-fast path — use `Message::builder()`:
+For the richer cases (a caller-supplied correlation id, the capture-off
+fast path), use `Message::builder()`:
 
 ```rust
 # use dataflow_rs::Message;
@@ -92,10 +92,10 @@ let mut message = Message::builder()
 
 ### Populating the Context
 
-In practice you don't mutate `message.context` directly from Rust — the
-`parse_json` / `map` / `validation` built-ins are how your workflows
-populate it. Inside a custom `AsyncFunctionHandler`, use
-[`TaskContext::set`](../advanced/custom-functions.md) which records
+In practice you don't mutate `message.context` directly from Rust. Your
+workflows populate it through the `parse_json` / `map` / `validation`
+built-ins. Inside a custom `AsyncFunctionHandler`, use
+[`TaskContext::set`](../advanced/custom-functions.md), which records
 audit-trail changes automatically:
 
 ```rust,ignore
@@ -107,7 +107,7 @@ ctx.set("metadata.type",   OwnedDataValue::from(&json!("user")));
 
 ### data
 
-The main data payload. This is where your primary data lives and is transformed.
+The main data payload, where your primary data lives and gets transformed.
 Workflows populate it via `parse_json` / `map` tasks; handlers read it
 through `ctx.data()`. The example below shows the read accessors:
 
@@ -134,19 +134,19 @@ From a handler, `ctx.set("metadata.X", v)` is the canonical write
 path. The engine also stamps `metadata.processed_at` and
 `metadata.engine_version` automatically on every `process_message` call.
 
-Two further keys under `metadata` belong to the engine — treat them as reserved:
+Two further keys under `metadata` belong to the engine; treat them as reserved:
 
-- **`metadata.progress`** — rewritten after **every** task that runs, as
-  `{"workflow_id": …, "task_id": …, "status_code": …}`. This is what makes
-  cross-rule chaining work: a later rule gates on
+- **`metadata.progress`**: rewritten after **every** task that runs, as
+  `{"workflow_id": …, "task_id": …, "status_code": …}`. Cross-rule chaining
+  depends on it: a later rule gates on
   `{"var": "metadata.progress.task_id"}` or on `status_code` to decide whether
-  to run. Writing this path yourself is pointless — the next task overwrites it.
-- **`metadata.channel`** — the channel name, stamped only by
+  to run. Don't write this path yourself; the next task overwrites it.
+- **`metadata.channel`**: the channel name, stamped only by
   `process_message_for_channel` and its tracing variants.
 
 ### temp_data
 
-Temporary storage for intermediate processing results — useful for values
+Temporary storage for intermediate processing results, useful for values
 threaded between tasks within the same workflow. From a handler:
 
 ```rust,ignore
@@ -158,7 +158,7 @@ ctx.set("temp_data.calculated_value", OwnedDataValue::from(&json!(42)));
 
 ## Audit Trail
 
-Every modification to message data is recorded:
+The engine records every modification to message data:
 
 ```rust,ignore
 pub struct AuditTrail {
@@ -186,10 +186,10 @@ pub struct Change {
 }
 ```
 
-To skip per-write `Change` capture (bulk-pipeline fast path), and to avoid
-holding every write's old and new value in memory for the whole run — which
-matters most in a [looping workflow](../advanced/loops.md#memory-in-long-loops)
-— build the message with `capture_changes(false)`:
+Holding every write's old and new value in memory for the whole run costs
+most in a [looping workflow](../advanced/loops.md#memory-in-long-loops). To
+skip per-write `Change` capture (the bulk-pipeline fast path) and avoid that
+memory, build the message with `capture_changes(false)`:
 
 ```rust
 # use dataflow_rs::Message;
@@ -202,8 +202,8 @@ let m = Message::builder()
 # }
 ```
 
-Audit-trail entries are still recorded — just with empty `changes` lists.
-The wire shape is unchanged either way.
+The engine still records audit-trail entries, with empty `changes` lists.
+The wire shape is the same either way.
 
 ### Accessing Audit Trail
 
@@ -257,14 +257,14 @@ In rule conditions and mappings, access message fields using JSONLogic:
 ```
 
 `payload` is **not** part of that tree. It is a separate field on `Message`, so
-`{"var": "payload.foo"}` resolves to nothing — and because expressions run in
+`{"var": "payload.foo"}` resolves to nothing. Because expressions run in
 templating mode, it fails *silently* rather than erroring: the condition is
-simply never true. Run a `parse_json` (or `parse_xml`) task first to land the
+never true. Run a `parse_json` (or `parse_xml`) task first to land the
 payload under `data`, then read it as `{"var": "data.…"}`.
 
 Secrets are not in the tree either, on purpose: everything in it is recorded.
-A signing key is read with `{"secret": "name"}` from a store the engine holds
-outside the message — see [Secrets](../advanced/secrets.md).
+You read a signing key with `{"secret": "name"}` from a store the engine holds
+outside the message; see [Secrets](../advanced/secrets.md).
 
 ## Try It
 
@@ -273,7 +273,8 @@ outside the message — see [Secrets](../advanced/secrets.md).
 <div class="playground-widget" data-workflows='[{"id":"message_demo","name":"Message Demo","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"set_temp","name":"Set Temp Data","function":{"name":"map","input":{"mappings":[{"path":"temp_data.full_name","logic":{"cat":[{"var":"data.input.first_name"}," ",{"var":"data.input.last_name"}]}}]}}},{"id":"use_temp","name":"Use Temp Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"temp_data.full_name"},"!"]}}]}}}]}]' data-payload='{"first_name":"John","last_name":"Doe"}'>
 </div>
 
-Notice how `temp_data` is used to store an intermediate result.
+The `set_temp` task stores an intermediate result in `temp_data`, and
+`use_temp` reads it back.
 
 ## Best Practices
 

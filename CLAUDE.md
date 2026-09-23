@@ -26,8 +26,8 @@ release workflow. Bumping a version means bumping all three.
 - **Workflow (Rule)**: Collection of tasks with a JSONLogic condition
 - **Task (Action)**: Individual processing unit backed by an `AsyncFunctionHandler`
 - **Message**: Carries `payload`, a `context` (`data` / `metadata` / `temp_data`), audit trail, and errors
-- **TaskContext**: Per-call handle given to handlers — typed accessors plus audit-recording setters
-- **TaskOutcome**: What a handler returns — `Success`, `Status(u16)`, `Skip`, or `Halt`
+- **TaskContext**: Per-call handle given to handlers: typed accessors plus audit-recording setters
+- **TaskOutcome**: What a handler returns: `Success`, `Status(u16)`, `Skip`, or `Halt`
 
 ### Key Design Patterns
 
@@ -48,7 +48,7 @@ cargo test -- --nocapture                # with output
 
 ### Code Quality
 
-Run all of these before handing back any Rust change — CI enforces them and
+Run all of these before handing back any Rust change. CI enforces them and
 treats warnings as errors:
 
 ```bash
@@ -61,19 +61,19 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 The doc check is not optional politeness. Clippy does not lint rustdoc, so
 nothing else catches a broken intra-doc link, a link from public docs into a
 private item, or an unbackticked generic like `Arc<Logic>` that rustdoc parses
-as an HTML tag — all of which ship silently to docs.rs as dead or mangled text.
+as an HTML tag. All of these ship silently to docs.rs as dead or mangled text.
 
 Lint *policy* lives in `[workspace.lints]` in the root `Cargo.toml`, inherited
 by all three members, so a bare `cargo clippy` and rust-analyzer enforce what CI
 enforces. Adding a lint there means fixing every existing violation in the same
-change — CI's `-D warnings` gives no grace period.
+change: CI's `-D warnings` gives no grace period.
 
 `--all-targets` covers examples, tests and benches; `--all-features` covers the
 `wasm-web` feature, which is otherwise silently skipped. Never leave clippy
 warnings behind.
 
 The second line is not redundant: it lints the **default** build, which is what
-`cargo add dataflow-rs` delivers. `--workspace` cannot do it — `dataflow-wasm`
+`cargo add dataflow-rs` delivers. `--workspace` cannot do it: `dataflow-wasm`
 depends on `dataflow-rs` with `all-operators`, and cargo unifies features across
 workspace members, so a `--workspace` invocation always has every operator
 family on. Same reasoning applies to `cargo test -p dataflow-rs`.
@@ -81,7 +81,7 @@ family on. Same reasoning applies to `cargo test -p dataflow-rs`.
 **MSRV is 1.98 and CI enforces it.** The floor is *inherited, not chosen*:
 `datalogic-rs` 5.5 and `datavalue-rs` 0.3 both declare `rust-version = "1.98"`,
 so it moves when they move and is not a knob this crate turns. Let-chains
-(`if let ... && let ...`, stable since 1.88) are consequently fine — clippy's
+(`if let ... && let ...`, stable since 1.88) are consequently fine; clippy's
 `collapsible_if` now *asks* for them, so the nested `if let`s the old 1.85
 floor forced have been collapsed. Verify with:
 
@@ -115,7 +115,7 @@ cargo run --example map_performance_test --release        # 10 chained mappings 
 
 The last four are regression guards for optimizations that have already landed
 (the arena write-through splice and the shared-arena workflow run), not open
-investigations — read them as "this must stay flat", not "this is the plan".
+investigations. Read them as "this must stay flat", not "this is the plan".
 
 Benchmark numbers carry roughly ±2-3% run-to-run noise and occasional transient
 P99 spikes. Compare the mean of 3+ runs before claiming a regression or a win.
@@ -144,30 +144,30 @@ matching version.
 - `executor.rs`: Arena-backed context view; sync built-in dispatch and narrow refresh
 - `workflow_executor.rs`: Workflow orchestration, audit trail, progress metadata
 - `task_executor.rs`: Per-task execution and outcome handling
-- `for_each.rs`: `ForEach` — a task's fan-out config, its rules
+- `for_each.rs`: `ForEach`, which holds a task's fan-out config, its rules
   (`ForEach::problem`) and path pre-split. The driver is
   `WorkflowExecutor::run_for_each`
-- `task_context.rs`: `TaskContext` — accessors and audit-recording setters for handlers
+- `task_context.rs`: `TaskContext`, the accessors and audit-recording setters for handlers
 - `task_outcome.rs`: `TaskOutcome` and `HALT_STATUS_CODE`
 - `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
-- `retry.rs`: `RetryPolicy` / `retry_with_policy` — native-only (tokio time)
+- `retry.rs`: `RetryPolicy` / `retry_with_policy`; native-only (tokio time)
 - `rollout.rs`: `Rollout` traffic-split range, `partition` / `validate_set`,
   `RolloutError`
-- `secrets.rs`: `Secrets` store and the reserved `secret` operator — values
+- `secrets.rs`: `Secrets` store and the reserved `secret` operator, for values
   expressions read but the engine never records
 - `workflow.rs`: `Workflow` definition, lifecycle fields, `LoopConfig`, validation
-- `task.rs`: `Task` and `TaskGroup` — both `#[non_exhaustive]`; construct via
+- `task.rs`: `Task` and `TaskGroup`, both `#[non_exhaustive]`; construct via
   `Task::action`
 - `authoring.rs`: `Workflow::validate_authored`, `WorkflowIssue`, `IssueCode`,
-  `Severity` — the authoring-time surface a host checks definitions against.
+  `Severity`, the authoring-time surface a host checks definitions against.
   `IssueCode::severity` is a wildcard-free match on purpose: a new code must be
   classified deliberately, never default into a host's pre-build screen
-- `steps.rs`: The authored step grammar — `flatten` (the parser) and
+- `steps.rs`: The authored step grammar, with `flatten` (the parser) and
   `walk_authored_steps` / `walk_authored_steps_at` (the public walker, the
   latter rooted at any prefix such as `loop.setup`), plus the `is_group` /
   `MAX_GROUP_DEPTH` facts both read
-- `observer.rs`: `ExecutionObserver` and its event types — task, workflow and
-  message lifecycle callbacks
+- `observer.rs`: `ExecutionObserver` and its event types (task, workflow and
+  message lifecycle callbacks)
 - `trace.rs`: `ExecutionTrace` / `ExecutionStep` for step-through debugging
 - `error.rs`: `DataflowError`, `ErrorInfo`, retryability classification
 - `utils.rs`: Path splitting and nested get/set helpers
@@ -176,19 +176,19 @@ matching version.
 
 - `mod.rs`: `AsyncFunctionHandler` trait, object-safe `Dyn` sibling, registration
 - `parse.rs`: `parse_json`, `parse_xml`
-- `map.rs`: `map` — JSONLogic-driven assignment to dot-paths, and removal
+- `map.rs`: `map`, JSONLogic-driven assignment to dot-paths, and removal
   (`unset`, `on_null`)
-- `validation.rs`: `validation` — rules with custom error messages
-- `filter.rs`: `filter` — pipeline control flow (`halt` / `skip`)
-- `log.rs`: `log` — structured logging at a configurable level
+- `validation.rs`: `validation`, rules with custom error messages
+- `filter.rs`: `filter`, pipeline control flow (`halt` / `skip`)
+- `log.rs`: `log`, structured logging at a configurable level
 - `publish.rs`: `publish_json`, `publish_xml`
-- `template.rs`: `Template` — the JSONLogic type behind *every* config
-  parameter, its compile-time constant cache, and `TemplateCompiler`
-- `path_template.rs`: `PathTemplate<R>` — a parameter naming a *write
+- `template.rs`: `Template` (the JSONLogic type behind *every* config
+  parameter), its compile-time constant cache, and `TemplateCompiler`
+- `path_template.rs`: `PathTemplate<R>`, a parameter naming a *write
   destination*, with `ContextRoot`/`DataRoot` fixing the rooting in the type;
   plus `ParamCtx`, the evaluation handle the sync built-ins resolve against
 - `integration.rs`: The three integration configs (`http_call`, `enrich`,
-  `publish_kafka`) — config only, no handler ships
+  `publish_kafka`). Config only; no handler ships
 - `config.rs`: The `FunctionConfig` dispatch enum, `BUILTIN_FUNCTION_NAMES`,
   `BuiltinKind` and `DispatchableFunction`
 
@@ -196,13 +196,13 @@ matching version.
 
 - **Eval context is `{data, metadata, temp_data}` only.** `payload` is a
   separate field on `Message` and is *not* part of the JSONLogic evaluation
-  context. A `{"var": "payload.foo"}` expression silently resolves to nothing —
+  context. A `{"var": "payload.foo"}` expression silently resolves to nothing;
   parse the payload into `data` first. This is an easy and invisible mistake to
   make when writing examples or benchmarks.
 - **A workflow's `loop` makes its task list a bounded `for` loop.** Per sweep
   the engine writes the counter to `temp_data`, checks `counter < max`
   (half-open), re-evaluates the workflow condition, runs the task list
-  unchanged, then advances by `increment`. `max` is required — it is what makes
+  unchanged, then advances by `increment`. `max` is required because it makes
   termination structural. Reaching it is *normal completion*, not an error.
   `TaskOutcome::Halt` breaks the whole loop, not one sweep. The engine owns the
   counter, so a body task writing that path is overwritten at the next
@@ -216,11 +216,11 @@ matching version.
   checks: `over[counter]` into `temp_data.<as>` and `{}` into
   `temp_data.<scratch>`, both before the condition. The counter *is* the
   element index. Gating the pre-phase on `setup`/`over` is what keeps a
-  counter-only loop free of an extra condition evaluation — the existing loop
+  counter-only loop free of an extra condition evaluation; the existing loop
   tests pin that. Setup is not a sweep: `PassCtx::once`, no `loop_counter`,
   and `span.sweeps` reset after it.
 - **Every pass over a workflow's tasks goes through `Workflow::all_tasks()`**,
-  not `workflow.tasks` — the compiler, `precompile_custom_inputs`,
+  not `workflow.tasks`: the compiler, `precompile_custom_inputs`,
   `Workflow::validate`, `connector_refs` and every `authoring::check_*` do.
   Reading `tasks` alone silently skips a loop's setup steps, which would then
   run uncompiled or unlinted. `loop.over` is a `Sink::Message` expression in
@@ -230,37 +230,37 @@ matching version.
 - **A task's `for_each` runs every call isolated, then folds in element
   order.** `run_element` takes `&Message`, not `&mut`, on purpose: each call
   clones the same untouched message (with `capture_changes` forced on), and
-  the fold — errors, replayed `Change`s, `into[i]`, then one
-  `handle_task_result` per element — runs only after every call has finished.
-  The fold stops at the first element that fails the task or halts — later
+  the fold (errors, replayed `Change`s, `into[i]`, then one
+  `handle_task_result` per element) runs only after every call has finished.
+  The fold stops at the first element that fails the task or halts; later
   elements, finished or not, contribute nothing, which is what keeps a halt
   identical at every `max_concurrency`. That is the whole reason
   `max_concurrency` cannot change results; do not "optimise" sequential mode
   into running in place. Per element,
   `fan_out_pass` neutralises `terminal`/`halt_on`; `fan_out_flow` applies them
   once to the whole fan-out. `for_each` is refused on sync built-ins
-  (`ForEach::problem`), which is what keeps it off the sync stretch — every
+  (`ForEach::problem`), which is what keeps it off the sync stretch: every
   fan-out task is already an async boundary. The rules live once in
   `ForEach::problem`, called by `Workflow::validate` and
   `authoring::check_for_each`. Calls run under `futures_util`'s
   `FuturesUnordered` without spawning; `process_message` must stay `Send`
   (pinned by `process_message_stays_send_with_a_fan_out`).
-- **A group's condition is evaluated once, on entry — not per member.** An
+- **A group's condition is evaluated once, on entry, not per member.** An
   element of `tasks` carrying a `tasks` key parses as a `TaskGroup`; the tree is
   flattened into `Workflow::tasks` at parse time and each span is recorded on
   the task that opens it (`Task::group_starts`, outermost first). `GroupGate`
   closes spans by comparing `end` against the cursor, **not** by a per-task
   close count: with `A { B { t } }` and `B` false, nothing inside `A` ever runs,
-  so the task that would carry "A closes here" is jumped straight over — yet `A`
+  so the task that would carry "A closes here" is jumped straight over, yet `A`
   was entered and, if terminal, must still halt. Do not replace that with a
   counter.
 - **The two control-flow keys a group cannot honour are resolved differently, on
   purpose.** `halt_on` on a group is **refused at parse time**
-  (`steps.rs`, in `walk`) — the schema's one exception to "unknown keys are
+  (`steps.rs`, in `walk`), the schema's one exception to "unknown keys are
   ignored". `continue_on_error` on a group is **linted, not refused**: captured
   by `GroupHeader` as `Option<Value>`, recorded on
   `TaskGroup::continue_on_error`, and reported by `check_workflow` as
-  `GROUP_CONTINUE_ON_ERROR`. The difference is age, not principle — `halt_on`
+  `GROUP_CONTINUE_ON_ERROR`. The difference is age, not principle: `halt_on`
   was new in 3.10.0 with no installed base, while `continue_on_error` is real on
   both `Task` and `Workflow` and may already sit on a host's group nodes, where
   refusing it would fail `Engine::build` for every workflow in that build.
@@ -279,28 +279,28 @@ matching version.
   propagating when `continue_on_error` is false. Pinned by
   `terminal_task_returning_5xx_still_records_and_propagates` and
   `halt_on_failure_with_5xx_and_no_continue_on_error_still_propagates`.
-  `TaskPass::halts_at(status)` is the single definition of both — `terminal`
+  `TaskPass::halts_at(status)` is the single definition of both: `terminal`
   unconditionally, `halt_on` at `status >= 400`, the same threshold the
   classification itself splits on. Do not open-code a second notion of "failed".
 - **A failing `validation` does not stop anything on its own.** It returns
   `Status(400)`, and `continue_on_error` covers only `5xx` and `Err`, so the next
-  task runs. That is deliberate — plenty of workflows validate to record errors
-  rather than to gate — and `halt_on: "failure"` is how an author opts into
+  task runs. That is deliberate (plenty of workflows validate to record errors
+  rather than to gate), and `halt_on: "failure"` is how an author opts into
   rejecting. Returning `TaskOutcome::Halt` instead would stamp `HALT_STATUS_CODE`
   (299) over the `400` on both the audit trail and `metadata.progress`, losing the
   status the host answers with; that is why the halt goes through the fold.
   `IssueCode::UnguardedValidation` reports the ungated shape at authoring time and
-  is **informational** — never add it to `refuse_authoring_issues`.
+  is **informational**; never add it to `refuse_authoring_issues`.
 - **A null `map` result is skipped, and that is load-bearing.** It is what
   makes `{"if": [cond, value, null]}` mean "set or keep", so `null` can never
-  mean "clear" — `"logic": null` is a no-op, kept loadable for the installed
+  mean "clear". `"logic": null` is a no-op, kept loadable for the installed
   base and reported by `check_workflow` as the advisory `NULL_MAPPING` (logic
   that folds to a constant `null`, under `on_null: "skip"` only). Removal is
   explicit: `unset: true`, or `on_null: "unset"`.
   The rules between `logic` / `unset` / `on_null` (and "never remove a
   context root") live once, in `AuthoredMapping::problem`, which both
   `MapMapping`'s hand-written `Deserialize` and `authoring::check_mappings`
-  call — do not re-derive them in either place. A removal records a `Change`
+  call. Do not re-derive them in either place. A removal records a `Change`
   with `removed: true` and `new_value: null`; the flag is skipped when false so
   write JSON stays byte-identical. The arena cache follows a removal through
   `ArenaContext::apply_removal_parts` (a narrow refresh, not a splice).
@@ -309,8 +309,8 @@ matching version.
   returns, so long loops grow memory with every sweep; the fix chosen was
   documentation (`LoopConfig`, `MessageBuilder::capture_changes`, the Loops
   guide's "Memory in long loops"), not a flip. The wasm debugger (via
-  `Message::from_value`), `TraceOptions { changes: true }` — which reports the
-  diff and never turns capture on — and every host reading
+  `Message::from_value`), `TraceOptions { changes: true }` (which reports the
+  diff and never turns capture on) and every host reading
   `AuditTrail::changes` depend on the default, and a flip would empty their
   diffs silently. Pinned by
   `capture_changes_defaults_to_true_on_every_constructor`.
@@ -319,8 +319,8 @@ matching version.
   Cross-workflow chaining depends on downstream conditions reading it, so do not
   gate, skip, or make this write conditional.
 - **Context writes from `handle_task_result` need an arena refresh.** It writes
-  `metadata.progress` always, and — when a host called
-  `EngineBuilder::with_error_context_path` — appends failure records at the
+  `metadata.progress` always, and, when a host called
+  `EngineBuilder::with_error_context_path`, appends failure records at the
   configured path. The sync stretch runs JSONLogic against a snapshot arena
   cache, so each write needs a matching `refresh_for_path` in
   `run_tasks_slice_in_arena`, placed **before** the `?`: an `Err` there does not
@@ -330,8 +330,8 @@ matching version.
   Appending to an *existing* array does not change the metadata child count, so
   the divergence rebuild in `executor.rs` will not save you.
 - **Error codes come from one classifier.** `service_error_code`
-  (`src/engine/error.rs`) is the single mapping — a `Service` error's `kind`
-  verbatim, otherwise the variant's own code — and `ErrorInfo::new` routes
+  (`src/engine/error.rs`) is the single mapping (a `Service` error's `kind`
+  verbatim, otherwise the variant's own code), and `ErrorInfo::new` routes
   through it so the two cannot drift. Do not reintroduce a flat `TASK_ERROR`
   fallback; that is what made every engine variant indistinguishable before
   3.5.0.
@@ -340,7 +340,7 @@ matching version.
   `ext-array`, `ext-math`, `ext-control`, `ext-object`, `error-handling`,
   `datetime`, `tensor`, `all-operators`), all off by default. Because the
   engine always runs in templating mode, an operator whose family is off is
-  *not* an error — the object echoes back as literal data. So turning a family
+  *not* an error; the object echoes back as literal data. So turning a family
   on converts previously-inert values like `{"length": …}` into live operator
   calls, and `datetime` additionally changes `==` and the ordering operators on
   plain date-shaped strings. Both directions are pinned by `#[cfg]`-gated tests
@@ -349,29 +349,29 @@ matching version.
 - **`tensor` is a family but is deliberately *not* in `all-operators`.** It is
   the only exception, and the reason is collision, not size or dependencies
   (it pulls none). Its 20 names include `shape`, `full`, `cast`, `pad`, `crop`,
-  `concat` and `stack` — ordinary JSON keys — and `all-operators` is what
+  `concat` and `stack` (ordinary JSON keys), and `all-operators` is what
   `wasm/` ships to npm, so folding it in would silently change what
   `{"shape": …}` means in workflows that already ship. There is no lint to
   catch that: `check_template_keys` cannot distinguish an unknown single key
   from the ordinary output-template shape. `{"$shape": …}` pins the literal
   reading. `tests/tensor.rs::shape_is_a_live_operator_once_the_feature_is_on`
-  is the pinned trigger — if the family is ever folded in, that test is the
+  is the pinned trigger. If the family is ever folded in, that test is the
   reminder of what it costs.
 - **`budget` is a config knob, not a family.** It forwards
   `datalogic-rs/budget` and unlocks `EngineBuilder::with_ops_budget`, which is
-  the only thing that installs a ceiling — merely enabling the feature changes
+  the only thing that installs a ceiling; merely enabling the feature changes
   no behaviour, which is what keeps it non-breaking. The budget is carried on
   `Engine` alongside `secrets` and the custom operators *because* a hot reload
   builds a fresh datalogic engine, and a bound that lifted itself on reload
   would be worse than none. Exceeding it surfaces as
   `DataflowError::BudgetExceeded` (code `BUDGET_EXCEEDED`, non-retryable),
-  classified in the one place `error::from_datalogic_eval` — compile-time
+  classified in the one place `error::from_datalogic_eval`; compile-time
   sites stay plain `LogicEvaluation`, since folding a constant charges nothing.
   The ceiling binds every evaluation (it is on the datalogic engine), but only
   the handler/`Template` path *reports* it as `BUDGET_EXCEEDED`: a condition
   fails closed to `false` and `map`/`log`/`validation` log and continue, which
   is how they have always treated an eval failure. Giving conditions an error
-  channel is a separate change — it would alter `VariableNotFound` handling in
+  channel is a separate change: it would alter `VariableNotFound` handling in
   every existing deployment.
   The variant is **not** `#[cfg]`-gated even though only a `budget` build can
   construct one: errors are serialized into `message.errors()` and travel to
@@ -389,20 +389,20 @@ matching version.
   returns `Cow<'_, str>` and `PathTemplate::resolve_in_arena` returns
   `Cow<'_, ResolvedPath>`. Returning owned values instead costs a `String`
   allocation per parse/publish task per message and two atomic `Arc` bumps per
-  `map` write — measured at ~9.6% of `realistic_benchmark` throughput. Borrowing
+  `map` write, measured at ~9.6% of `realistic_benchmark` throughput. Borrowing
   is why 3.9 is *faster* than 3.8 rather than slower.
-- **The template-key escape (`$`) is always on** —
+- **The template-key escape (`$`) is always on**:
   `compiler::TEMPLATE_KEY_ESCAPE`, applied at the one
   `datalogic_engine_builder()` every engine in this crate goes through, tests
   included. `{"$cat": …}` is the literal object; `{"cat": …}` is still the
   operator. Exactly one prefix is stripped from **every** template key, not only
-  colliding ones, so a template emitting genuinely `$`-prefixed keys must double
+  colliding ones, so a template emitting `$`-prefixed keys must double
   them. An escaped key does *not* constant-fold (pinned by
   `an_escaped_key_does_not_fold_to_a_constant`).
 - **A single-key object with an unknown key is not inert.** It evaluates its
   argument and emits a structured object: `{"result": {"var": "x"}}` yields
   `{"result": 5}`. That is the ordinary single-key output template, which is why
-  there is no "unknown operator key" lint — it could not be distinguished from a
+  there is no "unknown operator key" lint: it could not be distinguished from a
   typo without firing on most correct workflows. Only *multi*-key objects and
   escaped keys go through the template-key checks.
 - **Secrets are an operator, not a context root.** `{"secret": "name"}` reads
@@ -410,11 +410,11 @@ matching version.
   datalogic operator registered at every `LogicCompiler::with_operators` site.
   Nothing is composed into `message.context`, so `ArenaContext`,
   `evaluate_condition`, validation's raw `to_arena` and the trace code stay
-  untouched — that is the whole guarantee. Do not "simplify" it into a
+  untouched; that is the whole guarantee. Do not "simplify" it into a
   `secrets` key on the context. `authoring::check_secrets` is the single
   implementation behind both `build()` refusal and `check_workflow`; `map`
   mappings and `log` expressions may not read a secret at all (blunt on
-  purpose — there is no static line between a copy and a derived value).
+  purpose: there is no static line between a copy and a derived value).
 - **Handler contract**: implement `AsyncFunctionHandler` with a
   `type Input: DeserializeOwned`, and
 
@@ -428,10 +428,10 @@ matching version.
 
   Handlers do **not** return changes. Write through `ctx.set(path, value)`, which
   records the audit-trail `Change` for you.
-- **Registration**: `Engine::builder().register("name", handler)` — accepts any
+- **Registration**: `Engine::builder().register("name", handler)` accepts any
   `AsyncFunctionHandler` and boxes it internally. `Engine::new(workflows, map)`
   is the lower-level escape hatch.
-- **Error Handling — two channels**: `process_message` returns `Err` only when
+- **Error Handling (two channels)**: `process_message` returns `Err` only when
   the engine stopped early. Errors from tasks with `continue_on_error = true` are
   recorded in `message.errors()` without producing an `Err`. Always check both.
 - **Hot Reload**: `engine.with_new_workflows(..)` swaps workflows while keeping
@@ -446,28 +446,28 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | File | Covers |
 |---|---|
 | `engine_execution.rs` | Async handler path, sync stretch, shared-arena runs |
-| `mapping_semantics.rs` | `map` write semantics — replace vs. merge, `#` paths |
-| `map_unset.rs` | `map` removal — `unset`, `on_null`, `Change::removed`, the #59 loop slot |
+| `mapping_semantics.rs` | `map` write semantics: replace vs. merge, `#` paths |
+| `map_unset.rs` | `map` removal: `unset`, `on_null`, `Change::removed`, the #59 loop slot |
 | `error_handling.rs` | Single error channel, `DataflowError::Service` |
 | `tracing.rs` | Caller-owned `process_message_tracing` |
-| `trace_options.rs` | `TraceOptions` — timing, diffs, budget, redaction |
+| `trace_options.rs` | `TraceOptions`: timing, diffs, budget, redaction |
 | `observer.rs` | `ExecutionObserver` callbacks |
 | `public_api.rs` | Built-in classification, typed configs, re-exports, connectors |
 | `rollout.rs` | Traffic splits gated on `Message::routing_bucket` |
 | `templates.rs` | `Template` config fields on custom handlers |
-| `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
-| `loop_over.rs` | `loop.setup` / `over` / `as` / `scratch` — the array-iteration shape end to end |
-| `for_each.rs` | Task fan-out — isolation, element order, `null` on failure, halting, concurrency, loops, records |
-| `task_groups.rs` | `Task::terminal`, `Task::halt_on` and task groups — the guard-clause shape |
+| `workflow_loop.rs` | `LoopConfig`: bounded per-sweep re-execution |
+| `loop_over.rs` | `loop.setup` / `over` / `as` / `scratch`: the array-iteration shape end to end |
+| `for_each.rs` | Task fan-out: isolation, element order, `null` on failure, halting, concurrency, loops, records |
+| `task_groups.rs` | `Task::terminal`, `Task::halt_on` and task groups: the guard-clause shape |
 | `task_identity.rs` | `TaskContext` workflow/task ids and `loop_counter` |
-| `operator_vocabulary.rs` | `operator_names` — every mirrored name checked live |
+| `operator_vocabulary.rs` | `operator_names`: every mirrored name checked live |
 | `retry.rs` | `RetryPolicy` backoff, deadline and retryability, under a paused clock |
-| `authoring_validation.rs` | `validate_authored` and `check_workflow` — codes, paths, the parse backstop |
+| `authoring_validation.rs` | `validate_authored` and `check_workflow`: codes, paths, the parse backstop |
 | `secrets.rs` | `{"secret": …}` resolution, the engine surface, and the static rules |
-| `secrets_isolation.rs` | The never-recorded guarantee, exit by exit — every `TraceOptions` shape, errors, observer, logs, and the access vectors that must not reach the store |
+| `secrets_isolation.rs` | The never-recorded guarantee, exit by exit: every `TraceOptions` shape, errors, observer, logs, and the access vectors that must not reach the store |
 | `template_keys.rs` | The `$` escape end-to-end, and the two template-key issue codes |
-| `jsonlogic_params.rs` | Computed parameters — map destinations, parse/publish targets, validation messages |
-| `ops_budget.rs` | `with_ops_budget` — the ceiling, its error code, and that it survives a hot reload (needs `budget`) |
+| `jsonlogic_params.rs` | Computed parameters: map destinations, parse/publish targets, validation messages |
+| `ops_budget.rs` | `with_ops_budget`: the ceiling, its error code, and that it survives a hot reload (needs `budget`) |
 | `tensor.rs` | The `tensor` forward reaching the engine, the `OwnedDataValue` boundary, and the `shape` collision (needs `tensor`) |
 
 Each file under `tests/` compiles as its own crate, so fixtures used by more
@@ -476,8 +476,8 @@ That module is `#![allow(dead_code)]` because no single binary uses all of it.
 
 Documentation examples are compiled, so they cannot drift from the API:
 
-- `README.md` — via the `ReadmeDoctests` hook at the bottom of `src/lib.rs`.
-- `docs/src/**.md` — via the `dataflow-docs-tests` workspace member. It is a
+- `README.md`: via the `ReadmeDoctests` hook at the bottom of `src/lib.rs`.
+- `docs/src/**.md`: via the `dataflow-docs-tests` workspace member. It is a
   separate crate because `docs/` is not shipped in the published crate (see
   the root `include` list), so an `include_str!` from `src/lib.rs` would break
   the published package. Its `tests/coverage.rs` fails if a docs page is
@@ -489,7 +489,7 @@ are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
 `cargo test --workspace --all-features` should report 845 passing.
-`cargo test -p dataflow-rs` (default features) should report 733 — the operator
+`cargo test -p dataflow-rs` (default features) should report 733. The operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and
@@ -500,5 +500,5 @@ When extending the engine:
 1. Implement `AsyncFunctionHandler` with a typed `Input` for custom tasks
 2. Register via `Engine::builder().register(..)`
 3. Mutate through `TaskContext::set` so the audit trail stays correct
-4. Return the `TaskOutcome` variant that matches intent — don't encode control
+4. Return the `TaskOutcome` variant that matches intent; don't encode control
    flow in a status code

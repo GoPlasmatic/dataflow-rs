@@ -100,7 +100,7 @@ import { TreeView } from '@goplasmatic/dataflow-ui';
 
 ## Debug Mode
 
-Step-by-step execution visualization. The simplest form is `debugConfig` — the
+Step-by-step execution visualization. The simplest form is `debugConfig`. The
 visualizer then wraps itself in a `DebuggerProvider` and renders the controls
 in its own header, so you do not assemble the pieces yourself:
 
@@ -124,20 +124,19 @@ function DebugView() {
 }
 ```
 
-`engineFactory` is what makes execution possible: without it the run button is
-disabled. `defaultEngineFactory` uses the WASM engine from
+`engineFactory` enables execution: without it the run button is disabled. `defaultEngineFactory` uses the WASM engine from
 `@goplasmatic/dataflow-wasm`.
 
 ### Initialising the engine
 
 `defaultEngineFactory` builds a `WasmEngineAdapter`, which calls into
 `@goplasmatic/dataflow-wasm` as soon as it is constructed. That package is a
-`--target web` wasm-bindgen build, so its default export must be awaited **once**
-before any other export is touched — otherwise the constructor throws a bare
+`--target web` wasm-bindgen build, so you must await its default export **once**
+before touching any other export. Otherwise the constructor throws a bare
 `TypeError` from the uninitialised glue, before the version handshake below can
 say anything useful.
 
-Withhold `engineFactory` until it resolves; until then the run button is simply
+Withhold `engineFactory` until it resolves; until then the run button is
 disabled:
 
 ```tsx
@@ -172,8 +171,8 @@ interface DebugConfig {
 
 Wrapping `WorkflowVisualizer` in a `DebuggerProvider` does **not** enable debug
 mode. The visualizer derives it from `debugConfig.enabled` alone, and when that
-is true it creates its *own* `DebuggerProvider` internally — which shadows any
-ambient one for everything it renders.
+is true it creates its *own* `DebuggerProvider` internally, and that provider
+shadows any ambient one for everything it renders.
 
 The practical consequences:
 
@@ -184,16 +183,16 @@ The practical consequences:
   the external panels will not follow the visualizer's playback.
 
 To drive your own layout, use the components standalone under one provider and
-leave the visualizer out of the debug path — or keep everything inside
+leave the visualizer out of the debug path, or keep everything inside
 `debugConfig` and let the built-in toolbar drive it.
 
 ### Engine version handshake
 
 `WasmEngineAdapter` calls `assertEngineVersion()` on construction and **throws**
-when the loaded WASM engine is older than the UI build expects. This is worth
-understanding rather than catching blindly: workflow definitions do not reject
-unknown fields, so an older engine silently ignores a field it predates — the
-workflow appears to run while doing something else. A newer engine passes
+when the loaded WASM engine is older than the UI build expects. Do not catch it
+blindly: workflow definitions do not reject unknown fields, so an older engine
+silently ignores a field it predates, and the workflow appears to run while
+doing something else. A newer engine passes
 silently, since the package declares a caret range on the wasm dependency.
 
 ## Custom WASM Engine
@@ -235,7 +234,7 @@ function CustomDebugView() {
 }
 ```
 
-The `engineFactory` is called whenever workflows change, ensuring the engine always has the latest workflow definitions.
+`DebuggerProvider` calls `engineFactory` whenever workflows change, so the engine always has the latest workflow definitions.
 
 ### Debugger Controls
 
@@ -288,8 +287,8 @@ function MyComponent() {
 ```
 
 `useDebugger` throws outside a `DebuggerProvider`. For a component that should
-work in both contexts, use `useDebuggerOptional`, which returns `null` instead —
-that is how `TreeView` renders with and without the debugger attached.
+work in both contexts, use `useDebuggerOptional`, which returns `null` instead.
+`TreeView` uses it to render with and without the debugger attached.
 
 ## Theming
 
@@ -359,12 +358,12 @@ function MyComponent() {
 
 Exported alongside the types, for code that walks definitions or traces:
 
-- **Steps:** `isTaskGroup`, `groupMembers`, `flattenSteps`, `countLeafSteps` —
-  a workflow's `tasks` array holds *steps*, so an element may be a task or a
+- **Steps:** `isTaskGroup`, `groupMembers`, `flattenSteps`, `countLeafSteps`.
+  A workflow's `tasks` array holds *steps*, so an element may be a task or a
   nested group. `countLeafSteps` is `flattenSteps(..).length` without the list.
 - **Functions:** `isBuiltinFunction`, `getFunctionDisplayInfo`,
-  `INTEGRATION_FUNCTION_NAMES` — the three config-only built-ins that need a
-  handler registered by the host.
+  `INTEGRATION_FUNCTION_NAMES` (the three config-only built-ins that need a
+  handler registered by the host).
 - **Loops:** `loopBadgeLabel`, `loopGuardLabel`, `loopStepLabel`, `loopDescription`
 - **Fan-out:** `forEachBadgeLabel`, `forEachDescription`
 - **Debug:** `createEmptyMessage`, `cloneMessage`, `getMessageAtStep`,

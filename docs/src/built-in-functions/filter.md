@@ -1,14 +1,14 @@
 # Filter (Pipeline Control Flow)
 
-The `filter` function provides pipeline control flow by evaluating a JSONLogic condition and either halting the workflow or skipping the task when the condition is false.
+The `filter` function evaluates a JSONLogic condition and, when it is false, either halts the workflow or skips the task.
 
 ## Overview
 
-Filter is a gate function — it doesn't modify data but controls whether subsequent tasks execute. This enables patterns like:
+Filter is a gate function: it controls whether subsequent tasks execute and leaves data untouched. Typical patterns:
 
-- **Guard clauses** — halt a workflow early if prerequisites aren't met
-- **Conditional branches** — skip optional processing steps
-- **Data quality gates** — stop processing if data doesn't meet criteria
+- **Guard clauses**: halt a workflow early if prerequisites aren't met
+- **Conditional branches**: skip optional processing steps
+- **Data quality gates**: stop processing if data doesn't meet criteria
 
 ## Configuration
 
@@ -35,7 +35,7 @@ Filter is a gate function — it doesn't modify data but controls whether subseq
 
 ### `halt` (default)
 
-When the condition is false, the **entire workflow stops** — no further tasks in the workflow execute.
+When the condition is false, the **entire workflow stops**; no further tasks in the workflow execute.
 
 ```json
 {
@@ -51,11 +51,11 @@ When the condition is false, the **entire workflow stops** — no further tasks 
 }
 ```
 
-If `data.status` is not `"active"`, the workflow halts immediately. The halt is recorded in the audit trail.
+If `data.status` is not `"active"`, the workflow halts immediately. The audit trail records the halt.
 
 ### `skip`
 
-When the condition is false, only the **current task is skipped** — the workflow continues with the next task.
+When the condition is false, only the **current task is skipped**; the workflow continues with the next task.
 
 ```json
 {
@@ -71,7 +71,7 @@ When the condition is false, only the **current task is skipped** — the workfl
 }
 ```
 
-If the user is not premium, this task is skipped silently and the next task runs.
+If `data.tier` is not `"premium"`, the engine skips this task silently and runs the next one.
 
 ## Examples
 
@@ -179,23 +179,23 @@ Use `skip` for non-critical conditional logic:
 | Code | Meaning | Behavior |
 |------|---------|----------|
 | `200` | Pass | Condition was true, continue normally |
-| *(none)* | Skip | Condition false + `on_reject: skip` — skip task, continue workflow |
-| `299` | Halt | Condition false + `on_reject: halt` — stop the remaining tasks in this workflow |
+| *(none)* | Skip | Condition false + `on_reject: skip`: skip task, continue workflow |
+| `299` | Halt | Condition false + `on_reject: halt`: stop the remaining tasks in this workflow |
 
-A skip records **no** audit-trail entry and therefore no status code at all —
+A skip records **no** audit-trail entry and therefore no status code;
 `TaskOutcome::Skip` is the one outcome without one. Halt uses
-`HALT_STATUS_CODE` (`299`), which is a public constant you can compare against
-rather than a magic number.
+`HALT_STATUS_CODE` (`299`), a public constant you can compare against instead
+of a magic number.
 
 ## Notes
 
-- The filter condition is **pre-compiled** at engine startup for zero runtime overhead
-- Filter never modifies the message — it only controls execution flow
-- When a workflow halts, the halt is recorded in the audit trail for debugging
+- The engine **pre-compiles** the filter condition at startup for zero runtime overhead
+- Filter never modifies the message; it only controls execution flow
+- When a workflow halts, the audit trail records the halt for debugging
 - When a task is skipped, no audit trail entry is created
 - An expression that **fails to evaluate** is treated exactly like a false
   condition, so `on_reject` fires. With the default `halt` that stops the
-  workflow with a `299` and nothing on `message.errors()` — a malformed filter
+  workflow with a `299` and nothing on `message.errors()`; a malformed filter
   is indistinguishable from a legitimate gate closing
 - A skipped task writes no `metadata.progress` either, so a downstream rule
   reading `metadata.progress.task_id` still sees the *previous* task

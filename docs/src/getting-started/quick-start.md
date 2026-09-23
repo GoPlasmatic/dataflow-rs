@@ -4,12 +4,12 @@ Build your first rule in minutes.
 
 > **Prerequisite reading:** rules and mappings are written in
 > [JSONLogic](../advanced/jsonlogic.md). If you've never used it, skim the
-> *Data Access*, *Comparison Operators*, and *Conditionals* sections first —
+> *Data Access*, *Comparison Operators*, and *Conditionals* sections first;
 > they cover everything in the examples below.
 
 ## Create a Simple Rule
 
-Rules are defined in JSON and consist of actions (tasks) that process data sequentially.
+You define rules in JSON. A rule consists of actions (tasks) that process data sequentially.
 
 ```rust
 use dataflow_rs::prelude::*;
@@ -140,16 +140,16 @@ Extend your rule with data validation:
 }
 ```
 
-`halt_on: "failure"` is what makes the validation a gate. A failing rule records
-status `400`, and the engine treats `4xx` as "warn and carry on" — so without it
+`halt_on: "failure"` makes the validation a gate. A failing rule records
+status `400`, and the engine treats `4xx` as "warn and carry on", so without it
 `create_greeting` would still run and greet a message with no name. See
 [Control Flow](../advanced/control-flow.md#halt_on).
 
-The `load` action is not optional decoration. The payload is not part of the
-JSONLogic evaluation context, so `{"var": "data.name"}` would resolve to
-nothing and the validation rule would fail on every message — silently, because
-an unresolved path is simply falsy. `parse_json` copies the payload to
-`data.input`, which is why every path here reads `data.input.…`.
+The `load` action is required. The payload is not part of the JSONLogic
+evaluation context, so `{"var": "data.name"}` would resolve to nothing and the
+validation rule would fail on every message. It fails silently, because an
+unresolved path is falsy. `parse_json` copies the payload to `data.input`, so
+every path here reads `data.input.…`.
 
 ## Next Steps
 

@@ -49,13 +49,13 @@ Rules provide:
 | `priority` | number | No | Execution order (default: 0, lower = first) |
 | `condition` | JSONLogic | No | When to execute rule (evaluated against full context) |
 | `continue_on_error` | boolean | No | Continue on action failure (default: false) |
-| `tasks` | array | Yes | Steps to execute — an action, or a group of actions sharing one condition (see [Control Flow](../advanced/control-flow.md)) |
+| `tasks` | array | Yes | Steps to execute: an action, or a group of actions sharing one condition (see [Control Flow](../advanced/control-flow.md)) |
 | `channel` | string | No | Channel for message routing (default: `"default"`) |
 | `version` | number | No | Workflow version number (default: `1`) |
 | `status` | string | No | Lifecycle status: `active`, `paused`, or `archived` (default: `active`) |
 | `tags` | array | No | Arbitrary tags for organization (default: `[]`) |
-| `rollout` | object | No | Traffic split — `{bucket_start, bucket_end}` over `0..100` (default: none) |
-| `loop` | object | No | Run the task list as a bounded loop — see [Loops](../advanced/loops.md) (default: none) |
+| `rollout` | object | No | Traffic split: `{bucket_start, bucket_end}` over `0..100` (default: none) |
+| `loop` | object | No | Run the task list as a bounded loop; see [Loops](../advanced/loops.md) (default: none) |
 | `created_at` | datetime | No | Creation timestamp (ISO 8601) |
 | `updated_at` | datetime | No | Last update timestamp (ISO 8601) |
 
@@ -133,7 +133,7 @@ Rules execute in priority order (lowest first). This enables the **THAT** (chain
 
 ## Conditional Execution
 
-Use JSONLogic conditions to control when rules run. Conditions evaluate against the **full message context** — `data`, `metadata`, and `temp_data` — and may also read `{"secret": "name"}` from the engine's [secret store](../advanced/secrets.md), which is never part of the message:
+Use JSONLogic conditions to control when rules run. Conditions evaluate against the **full message context** (`data`, `metadata`, and `temp_data`) and may also read `{"secret": "name"}` from the engine's [secret store](../advanced/secrets.md), which is never part of the message:
 
 ```json
 {
@@ -182,7 +182,7 @@ Use JSONLogic conditions to control when rules run. Conditions evaluate against 
 }
 ```
 
-If any action fails, the rule stops and the error is recorded.
+If any action fails, the rule stops and the engine records the error.
 
 ### Continue on Error
 
@@ -194,7 +194,7 @@ If any action fails, the rule stops and the error is recorded.
 }
 ```
 
-A rule's `continue_on_error` governs what happens **after this rule fails** —
+A rule's `continue_on_error` governs what happens **after this rule fails**:
 subsequent rules still run, and `process_message` returns `Ok` rather than
 `Err`. It is *not* a default inherited by the rule's actions: whether the rule
 keeps going past a failing action is decided by that action's own
@@ -255,9 +255,9 @@ Control whether a workflow is active using the `status` field:
 {"id": "legacy_rule", "status": "archived", "tasks": [...]}
 ```
 
-- **`active`** (default) — the workflow executes normally and is included in channel routing
-- **`paused`** — the workflow is excluded from channel routing but still runs via `process_message()`
-- **`archived`** — same as paused; used to indicate permanently retired workflows
+- **`active`** (default): the workflow executes normally and is included in channel routing
+- **`paused`**: the workflow is excluded from channel routing but still runs via `process_message()`
+- **`archived`**: same as paused; marks a permanently retired workflow
 
 ### Channel Routing
 
@@ -309,13 +309,13 @@ over `0..100`:
 }
 ```
 
-That workflow serves buckets `0..=9` — 10% of traffic. Pair it with a
+That workflow serves buckets `0..=9`, 10% of traffic. Pair it with a
 `{"bucket_start": 10, "bucket_end": 100}` sibling to run the old version for the
 rest. `bucket_start` is inclusive and `bucket_end` exclusive, so the two ranges
 partition `0..=99` exactly with no overlap and no gap. An empty or inverted range
 (`bucket_end <= bucket_start`) serves nothing.
 
-The engine does **not** derive the bucket — set it on the message:
+The engine does **not** derive the bucket. Set it on the message:
 
 ```rust
 # use dataflow_rs::Message;
@@ -325,15 +325,15 @@ assert_eq!(message.routing_bucket(), Some(7));
 # }
 ```
 
-How you map a request to a bucket is entirely your policy: a sticky hash of some
-request identity (so a given user always sees the same version), a per-message
-random draw, round-robin. That deliberately stays outside this crate.
+How you map a request to a bucket is your policy: a sticky hash of some request
+identity (so a given user always sees the same version), a per-message random
+draw, round-robin. That deliberately stays outside this crate.
 
-Two rules worth knowing:
+Two rules apply:
 
 - **A message with no bucket is admitted by every workflow**, split or not. Every
   message built without `routing_bucket` behaves exactly as it did before rollouts
-  existed, and the WASM entry points — which have no way to set one — keep working
+  existed, and the WASM entry points, which have no way to set one, keep working
   on any workflow JSON. The trade-off is that setting `rollout` and forgetting the
   bucket runs *every* version on the same message, so set both together.
 - **An excluded workflow is skipped exactly like a false condition**: no audit
@@ -345,9 +345,9 @@ builder infallible.
 
 ### Building and checking a split
 
-A single `rollout` is only half the picture. What makes a deployment correct is
-a property of the whole *set* — the versions of one logical workflow must
-partition `0..100` exactly. Both ways of getting that wrong are silent in
+A single `rollout` is only half the picture. Correctness is a property of the
+whole *set*: the versions of one logical workflow must partition `0..100`
+exactly. Both ways of getting that wrong are silent in
 production: a **gap** blackholes a slice of traffic, and an **overlap** makes
 which version answers depend on workflow ordering rather than on the rollout.
 
@@ -365,7 +365,7 @@ assert_eq!(Rollout::partition(&[90, 9]), Err(RolloutError::Under { total: 99 }))
 assert_eq!(Rollout::partition(&[90, 11]), Err(RolloutError::Over { total: 101 }));
 ```
 
-A `0` entry is allowed and yields an empty range, which serves nothing — the
+A `0` entry is allowed and yields an empty range, which serves nothing: the
 natural way to express a version that is staged but takes no traffic yet.
 
 `Rollout::validate_set` checks a set you already have, wherever it came from:
@@ -393,7 +393,7 @@ bucket 100 is reported as itself rather than as whatever downstream gap it
 happens to produce.
 
 `Engine::build()` does **not** run this check. A `Workflow` does not know which
-version-set it belongs to — that grouping lives in your storage schema — so
+version-set it belongs to (that grouping lives in your storage schema), so
 calling `validate_set` before you activate a set of versions is the host's job,
 and these helpers are what it calls.
 

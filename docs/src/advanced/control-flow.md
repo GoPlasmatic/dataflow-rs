@@ -1,9 +1,9 @@
 # Control Flow
 
-A workflow's `tasks` array holds **steps**, not just tasks. A step is either:
+A workflow's `tasks` array holds **steps**. A step is either:
 
-- a **task** — an object with a `function` key;
-- a **group** — an object with a `tasks` key, holding its own nested steps.
+- a **task**: an object with a `function` key;
+- a **group**: an object with a `tasks` key, holding its own nested steps.
 
 Both accept `condition` and `terminal`, and a task additionally accepts
 `halt_on`. Between them that gives the shapes every procedural language has:
@@ -24,7 +24,7 @@ task it always was.
 > The examples on this page use `length`, which belongs to the optional
 > `ext-string` operator family. Operator families are **off by default**, and
 > because the engine always evaluates in templating mode an operator whose
-> family is disabled is not an error — the object passes through as literal
+> family is disabled is not an error: the object passes through as literal
 > data, and a condition built on it is silently never true. Build with
 > `--features ext-string` (or `all-operators`) to run these examples, or
 > rewrite them with core operators. (Going the other way, `{"$length": …}`
@@ -81,15 +81,15 @@ With `terminal`, each guard states only its own reason:
 
 `terminal: true` ends the workflow once the task has run.
 
-It is a statement about **position** — "nothing after this runs" — not about
+It is a statement about **position** ("nothing after this runs"), not about
 outcome:
 
 | Situation | Halts? |
 |---|---|
 | The task ran and succeeded | yes |
-| Its `condition` was false | no — it never ran |
+| Its `condition` was false | no; it never ran |
 | It returned `TaskOutcome::Skip` | no |
-| It failed, `continue_on_error: true` | **yes** — the error is still recorded |
+| It failed, `continue_on_error: true` | **yes**; the error is still recorded |
 | It failed, `continue_on_error: false` | the error propagates, as always |
 
 Halting stops **this workflow only**. Later workflows registered on the same
@@ -97,11 +97,11 @@ engine still process the message, exactly as with a `filter` task's
 `on_reject: "halt"`. Inside a workflow carrying a [`loop`](./loops.md) it breaks
 the whole loop, not one sweep.
 
-The audit-trail entry keeps the task's **own** status — `200`, `404`, whatever
-it returned — rather than the `299` a filter-halt records. The task did its job;
+The audit-trail entry keeps the task's **own** status (`200`, `404`, whatever
+it returned) rather than the `299` a filter-halt records. The task did its job;
 only the position is special.
 
-For the *outcome* axis — halt only if the task failed — use `halt_on`.
+For the *outcome* axis (halt only if the task failed), use `halt_on`.
 
 ## `halt_on`
 
@@ -109,9 +109,9 @@ For the *outcome* axis — halt only if the task failed — use `halt_on`.
 is the complement of `terminal`: `terminal` halts whatever happened, `halt_on`
 halts only then and lets a success fall through.
 
-This is what lets an assertion reject. A failing `validation` rule returns `400`,
-and the engine treats `4xx` as "warn and carry on" — `continue_on_error` governs
-`5xx` and a returned `Err` only — so without `halt_on` the tasks after it still
+`halt_on` lets an assertion reject. A failing `validation` rule returns `400`,
+and the engine treats `4xx` as "warn and carry on" (`continue_on_error` governs
+`5xx` and a returned `Err` only), so without `halt_on` the tasks after it still
 run:
 
 ```json
@@ -156,7 +156,7 @@ has no outcome of its own, and silently ignoring it would recreate exactly the
 decorative-assertion bug it exists to prevent.
 
 `continue_on_error` on a group is the same class of mistake and is resolved the
-other way — reported, not refused. The difference is age. `halt_on` was new, so
+other way: reported, not refused. The difference is age. `halt_on` was new, so
 refusing it broke nothing; `continue_on_error` is real on both a task and a
 workflow, which is what makes a group the one place it looks like it should work,
 and a host may already carry it on group nodes. Refusing it now would fail
@@ -183,12 +183,12 @@ A group states a condition once for a contiguous run of tasks:
 
 | Field | Required | Default | Meaning |
 |---|---|---|---|
-| `id` | **yes** | — | Shares the task id namespace — a group cannot reuse a task's id. |
+| `id` | **yes** | — | Shares the task id namespace: a group cannot reuse a task's id. |
 | `tasks` | **yes** | — | The nested steps. Must not be empty. |
 | `condition` | no | `true` | Gates the whole span. |
 | `terminal` | no | `false` | Ends the workflow once the group completes. |
-| `halt_on` | — | — | **Not accepted on a group** — task-only; carrying it is a parse error. |
-| `continue_on_error` | — | — | **Not honoured on a group** — per task and per workflow. Parses, does nothing, and is reported by `check_workflow` as `GROUP_CONTINUE_ON_ERROR`. |
+| `halt_on` | — | — | **Not accepted on a group.** Task-only; carrying it is a parse error. |
+| `continue_on_error` | — | — | **Not honoured on a group.** It is per task and per workflow. Parses, does nothing, and is reported by `check_workflow` as `GROUP_CONTINUE_ON_ERROR`. |
 | `name`, `description` | no | none | For traces and tooling. |
 
 **The condition is evaluated once, on entry.** A false result skips the whole
@@ -210,7 +210,7 @@ inside the group writes to what the condition reads:
 }
 ```
 
-`take` empties `temp_data.queue`, but `process` still runs — the block was
+`take` empties `temp_data.queue`, but `process` still runs: the block was
 entered, and a block runs to its end. Repeating the condition on both tasks
 instead would silently skip `process`.
 
@@ -224,7 +224,7 @@ task, not a group-level step.
 
 `terminal` removes the **negations** of earlier branches. Groups remove the
 repetition of a **positive** condition across the tasks that make up one branch.
-They compose — a terminal group is a guard clause with a multi-task body:
+They compose: a terminal group is a guard clause with a multi-task body:
 
 ```json
 {
@@ -243,7 +243,7 @@ They compose — a terminal group is a guard clause with a multi-task body:
 ## Compared with `filter`
 
 A [`filter`](../built-in-functions/filter.md) task with `on_reject: "halt"`
-also stops a workflow, and still has its place — it is a gate that decides
+also stops a workflow, and still has its place: it is a gate that decides
 whether the *rest* of the pipeline should run at all, and it can `skip` instead
 of halting.
 
@@ -297,7 +297,7 @@ for step in walk_authored_steps(&tasks) {
 // task at tasks[1].tasks[0]
 ```
 
-Traversal is document order, groups before their members — so filtering to
+Traversal is document order, groups before their members, so filtering to
 `StepKind::Leaf` gives you exactly the tasks the engine will run, in the order
 it will run them.
 
@@ -307,7 +307,7 @@ Two properties matter for a validator:
   reports malformed elements, empty groups and over-deep nesting as *nodes*, so
   you can collect every problem in one pass instead of one per round trip.
 - **The rules are the engine's own.** `is_group` is the same test the parser
-  makes — presence of a `tasks` key, nothing else — and `MAX_GROUP_DEPTH` is the
+  makes (presence of a `tasks` key, nothing else), and `MAX_GROUP_DEPTH` is the
   limit it enforces. Read them rather than copying them, and a future change to
   either follows automatically:
 
@@ -320,8 +320,8 @@ assert!(!is_group(&json!({"id": "t", "function": {"name": "map"}})));
 assert_eq!(MAX_GROUP_DEPTH, 8);
 ```
 
-Note that a `tasks` key holding something that is not an array is still a
-*group* — a malformed one, which the parser rejects as such. Reading it as a
+A `tasks` key holding something that is not an array is still a *group*: a
+malformed one, which the parser rejects as such. Reading it as a
 task instead would classify it differently from the engine that has to run it.
 
 ## Version note
@@ -329,8 +329,8 @@ task instead would classify it differently from the engine that has to run it.
 `terminal` and groups need engine **3.6.0** or newer; `halt_on` needs **3.10.0**
 or newer.
 
-A group sent to an older engine fails to parse — the group object has no
-`function`, so it is rejected with a clear error. A bare `terminal: true` on an
+A group sent to an older engine fails to parse: the group object has no
+`function`, so the engine rejects it with a clear error. A bare `terminal: true` on an
 older engine is **silently ignored**, and every later task runs. If you deploy
 workflow definitions to engines you do not control, gate on the engine version
 before authoring `terminal`.

@@ -3,7 +3,7 @@
 The `http_call`, `enrich`, and `publish_kafka` functions provide **typed
 configuration schemas** for the three most common service-layer integration
 patterns. Unlike `map` or `validation`, they do **not** ship with a built-in
-handler — the actual I/O is provided by your application via
+handler: your application provides the I/O through
 [`AsyncFunctionHandler`](../advanced/custom-functions.md).
 
 ## Why a config schema without an implementation?
@@ -12,11 +12,11 @@ The engine itself is I/O-agnostic: it doesn't bundle an HTTP client, a Kafka
 producer, or any other transport. But the *shape* of these integrations is
 predictable enough that dataflow-rs provides typed config structs so that:
 
-- JSONLogic expressions inside the config — since 3.9, that is every parameter
-  are **pre-compiled at engine startup** — same fail-loud behaviour as `map` rules
+- JSONLogic expressions inside the config (since 3.9, every parameter) are
+  **pre-compiled at engine startup**, with the same fail-loud behaviour as `map` rules
 - Misshapen config fails at `Engine::new()`, not at first message
 - Your handler receives an already-validated `HttpCallConfig` / `EnrichConfig` /
-  `PublishKafkaConfig` — no per-call JSON parse
+  `PublishKafkaConfig`, with no per-call JSON parse
 
 ## How to use them
 
@@ -79,15 +79,15 @@ engine compiles it at `build()`. Read them through the `resolve_*` methods:
 **The static spelling is unchanged and costs nothing.** A JSON literal *is*
 JSONLogic for itself, so `"connector": "user_service"` and `"timeout_ms": 5000`
 mean exactly what they did. Those fold to a constant at `build()` and are cached,
-so only a parameter that actually reads the message does per-message work.
+so only a parameter that reads the message does per-message work.
 
 What the methods guarantee that a hand-rolled read does not:
 
 - **An evaluation failure propagates** as `DataflowError::LogicEvaluation` rather
-  than substituting something else — a different URL because an expression
+  than substituting something else. A different URL because an expression
   errored would hide a real problem.
-- **Path, key, header and connector results are coerced to a plain string** — a
-  number becomes its digits, a container its compact JSON — because those values
+- **Path, key, header and connector results are coerced to a plain string** (a
+  number becomes its digits, a container its compact JSON) because those values
   go into a URL, a header or a partition key. `resolve_value` deliberately
   returns `Option<Value>` instead, so a producer that serializes unconditionally
   is not forced through the key's coercion and end up with different bytes on
@@ -115,17 +115,17 @@ load unchanged. Supplying both spellings is a `duplicate field` error rather
 than a precedence rule.
 
 One case needs the escape: a literal object body with a field named after an
-operator. Write `{"$cat": …}` for a body field actually called `cat`.
+operator. Write `{"$cat": …}` for a body field called `cat`.
 
-Each `*_logic` field is a [`Template`](../advanced/custom-functions.md#config-fields-that-are-jsonlogic-template)
-— the same type available for your own handler's config. There is no separate
+Each `*_logic` field is a [`Template`](../advanced/custom-functions.md#config-fields-that-are-jsonlogic-template),
+the same type available for your own handler's config. There is no separate
 compiled slot to read directly; `resolve_*` is the only supported way to get a
 value out of one.
 
 ## Detecting a missing handler before it fails
 
 Because these three names deserialize into typed built-in variants, a workflow
-that uses one without a registered handler **builds cleanly** — `Engine::new()`
+that uses one without a registered handler **builds cleanly**: `Engine::new()`
 raises nothing, and the failure arrives on the first message. That is deliberate:
 a host screening stored workflow definitions one row at a time should not be
 stopped from booting by a single unusable row.
@@ -149,7 +149,7 @@ assert_eq!(builtin_function_kind("my_handler"), None);
 ```
 
 That tells you a name *needs* a handler. It cannot tell you whether one is
-registered — for that, ask the engine or the builder directly.
+registered; for that, ask the engine or the builder directly.
 
 ### Asking whether a name will actually run
 
@@ -171,7 +171,7 @@ assert!(!engine.can_dispatch("enrich"));
 
 The guarantee runs both ways: a name `can_dispatch` accepts will execute, and a
 name it rejects fails with `FunctionNotFound` on the first message that reaches
-it. So screening a definition is a filter over its tasks — and because
+it. So screening a definition is a filter over its tasks. Because
 `Workflow::tasks` is already flattened, this covers tasks inside groups too:
 
 ```rust
@@ -198,7 +198,7 @@ let unrunnable: Vec<&str> = workflow
 assert_eq!(unrunnable, vec!["enrich"]);
 ```
 
-Both `Engine` and `EngineBuilder` carry the method, with identical semantics —
+Both `Engine` and `EngineBuilder` carry the method, with identical semantics:
 check before you build, or against the engine you are already running.
 
 ### Enumerating the whole vocabulary
@@ -230,8 +230,8 @@ Three things to know about the result:
 - **Ordering is not meaningful.** Treat it as a set; collect and sort if you
   need stable output.
 
-Registering a handler under a `SelfContained` name is inert — `map` deserializes
-to the crate's own implementation, which never consults the registry — so such a
+Registering a handler under a `SelfContained` name is inert: `map` deserializes
+to the crate's own implementation, which never consults the registry, so such a
 name still appears exactly once, as a built-in.
 
 Prefer all of these over parsing the text of `FunctionNotFound`, which is a
@@ -268,28 +268,28 @@ Issue an HTTP request and optionally merge the response into the message context
 ### Parameters
 
 Every parameter except `method` is JSONLogic. A plain string or number is a
-literal, so the static spelling below is unchanged and costs nothing — see
+literal, so the static spelling below is unchanged and costs nothing; see
 [Every parameter is JSONLogic](#every-parameter-is-jsonlogic).
 
 | Parameter | Resolves to | Required | Description |
 |-----------|------|----------|-------------|
 | `connector` | string | Yes | Named reference resolved by your service layer |
-| `method` | — | No | `GET` (default), `POST`, `PUT`, `PATCH`, `DELETE` — uppercase only. **Static**, so the request shape is known at build time |
+| `method` | — | No | `GET` (default), `POST`, `PUT`, `PATCH`, `DELETE`; uppercase only. **Static**, so the request shape is known at build time |
 | `path` | string | No | Request path. Accepts `path_logic` as a back-compat alias |
 | `headers` | — | No | Object of header name → expression. Names are static; each **value** is JSONLogic |
 | `body` | any | No | Request body. Accepts `body_logic` as a back-compat alias |
-| `body_format` | string | No | How the resolved body becomes request bytes (e.g. `"json"`, `"form"`, `"text"`). Uninterpreted by this crate — see below |
+| `body_format` | string | No | How the resolved body becomes request bytes (e.g. `"json"`, `"form"`, `"text"`). Uninterpreted by this crate; see below |
 | `response_path` | string | No | Dot-path to merge response into the message context. Also accepted as `output` |
-| `response_format` | string | No | How response bytes become the captured value (e.g. `"json"`, `"text"`). Uninterpreted by this crate — see below |
+| `response_format` | string | No | How response bytes become the captured value (e.g. `"json"`, `"text"`). Uninterpreted by this crate; see below |
 | `timeout_ms` | number | No | Request timeout in milliseconds (default: `30000`) |
 
 A header value is where a credential belongs: `{"secret": "name"}` reads the
 engine's [secret store](../advanced/secrets.md), which no message ever carries.
-Before 3.9 header values were plain strings, so a token had to be injected by
-the service layer.
+Before 3.9 header values were plain strings, so the service layer had to inject
+a token.
 
 `body_format` and `response_format` are **data, not API surface**: dataflow-rs
-carries them but neither validates nor interprets their values — the service
+carries them but neither validates nor interprets their values. The service
 layer that implements `http_call` owns the value table, the default for an
 absent field, and the encoding behaviour. The split is deliberate: field *names*
 are fixed here by `deny_unknown_fields`, but a service layer can grow new
@@ -306,8 +306,8 @@ and `publish_json` / `publish_xml` name theirs `target`; neither takes `output`.
 
 All three integration configs reject keys they do not recognise. A misspelled
 field used to parse cleanly and be discarded, so an `http_call` task would make
-its request and silently throw the response away — no error at
-`Engine::builder().build()`, none at dispatch. Now it fails at parse time:
+its request and silently throw the response away, with no error at
+`Engine::builder().build()` and none at dispatch. Now it fails at parse time:
 
 ```text
 config for function 'http_call': unknown field `outputs`, expected one of
@@ -318,15 +318,15 @@ config for function 'http_call': unknown field `outputs`, expected one of
 back-compat aliases for `path` and `body`.)
 ```
 
-Note this fails when the workflow definition is parsed, so a host loading stored
+This fails when the workflow definition is parsed, so a host loading stored
 definitions row by row sees one bad row fail its own parse rather than losing the
 whole set.
 
 ### Converting `method` for your HTTP client
 
 This crate takes no HTTP-client dependency, so your handler converts `HttpMethod`
-into whatever type its client uses. `as_str()` gives the canonical token — the
-same spelling the config accepts — so the bridge is one line and needs no match:
+into whatever type its client uses. `as_str()` gives the canonical token (the
+same spelling the config accepts), so the bridge is one line and needs no match:
 
 ```rust
 use dataflow_rs::HttpMethod;
@@ -345,10 +345,10 @@ assert_eq!(HttpMethod::ALL.len(), 5);
 ```
 
 `HttpMethod::ALL` is scoped to what `http_call` accepts. It is deliberately not a
-general list of HTTP methods — don't reuse it to validate inbound routes, which
+general list of HTTP methods. Don't reuse it to validate inbound routes, which
 may legitimately accept `HEAD` or `OPTIONS`.
 
-`path_logic` is an alias for `path`, not a second field — supplying both is a
+`path_logic` is an alias for `path`, not a second field; supplying both is a
 `duplicate field` error. Same for `body_logic` / `body`.
 
 ---
@@ -421,7 +421,7 @@ Emit the message (or a derived value) to a Kafka topic.
 | `key` | string | No | Message key. Accepts `key_logic` as a back-compat alias |
 | `value` | any | No | Message value (default: serialize the message). Accepts `value_logic` as a back-compat alias |
 
-The handler decides exactly how to render the produced value — for example,
+The handler decides exactly how to render the produced value, for example
 sending the entire message JSON when `value` is omitted.
 
 ---
@@ -441,8 +441,8 @@ struct HttpCallHandler {
 This separation keeps secrets out of workflow JSON and lets you swap
 endpoints (staging / prod) without touching rule definitions.
 
-When a request does need a per-workflow credential — a bearer token, a partner
-key in the body, a signed path — read it with `{"secret": "name"}` inside the
+When a request does need a per-workflow credential (a bearer token, a partner
+key in the body, a signed path), read it with `{"secret": "name"}` inside the
 relevant parameter rather than seeding it into `metadata`, which every trace
 snapshot would then carry. Since 3.9 that includes `headers`, which is usually
 where it belongs:
@@ -458,10 +458,10 @@ The value comes from the engine's secret store and is never recorded; see
 
 Compared to free-form `Custom` configs:
 
-- **Startup-time validation** — bad config fails at `Engine::new()`
-- **Pre-compiled JSONLogic** — `path_logic`, `body_logic`, `key_logic`, `value_logic`
-  are all compiled once; the handler reads `Arc<Logic>` from the config and evaluates
-  at zero allocation cost in the hot path
-- **Stable shape** — the same config struct is shared by every handler in the
+- **Startup-time validation**: bad config fails at `Engine::new()`
+- **Pre-compiled JSONLogic**: the engine compiles every parameter once at `build()`;
+  the handler reads each through its `resolve_*` method, and a parameter that
+  folds to a constant costs no per-message evaluation
+- **Stable shape**: the same config struct is shared by every handler in the
   ecosystem, so handlers from different crates can be swapped without rewriting
   workflows

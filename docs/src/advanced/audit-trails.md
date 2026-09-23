@@ -4,7 +4,7 @@ Dataflow-rs automatically tracks all data modifications for debugging, monitorin
 
 ## Overview
 
-Every change to message data is recorded in the audit trail:
+The audit trail records every change to message data:
 
 - **What changed** - Path and values (old and new)
 - **When it changed** - Timestamp
@@ -29,21 +29,20 @@ pub struct Change {
 }
 ```
 
-`removed` marks a removal — a `map` mapping with `unset`, or
+`removed` marks a removal: a `map` mapping with `unset`, or
 `on_null: "unset"` meeting a null result (see
 [Removing a Path](../built-in-functions/map.md#removing-a-path)). `new_value`
 is then `null`, which on its own could not tell "now absent" from "now holds
 null", so read the flag. It is omitted from JSON when `false`, which keeps
 every write's audit JSON exactly as it was before removals existed.
 
-`old_value` / `new_value` are owned (not `Arc<OwnedDataValue>`) — one less
-heap allocation per recorded mutation. `workflow_id` / `task_id` are
-`Arc<str>` mirrors of the workflow/task ids
-— the engine clones them by refcount bump rather than allocating per
-audit entry. `status` mirrors the `TaskOutcome` variant returned by the
-task: 200 for `Success`, the supplied code for `Status(u16)`, and 299
-(`HALT_STATUS_CODE`) for `Halt`. `TaskOutcome::Skip` is recorded as no
-audit entry at all — and writes no `metadata.progress` either.
+`old_value` / `new_value` are owned (not `Arc<OwnedDataValue>`), which saves
+one heap allocation per recorded mutation. `workflow_id` / `task_id` are
+`Arc<str>` mirrors of the workflow/task ids; the engine clones them by
+refcount bump rather than allocating per audit entry. `status` mirrors the
+`TaskOutcome` variant returned by the task: 200 for `Success`, the supplied
+code for `Status(u16)`, and 299 (`HALT_STATUS_CODE`) for `Halt`.
+`TaskOutcome::Skip` records no audit entry and writes no `metadata.progress`.
 
 A handler that returns `Err` still records an entry, with `status` 500 and an
 empty `changes` list. The error itself goes to `message.errors()`, and the entry
@@ -51,7 +50,7 @@ is written whether or not `continue_on_error` lets the rule carry on.
 
 ## Accessing the Audit Trail
 
-After processing, the audit trail is available on the message:
+After processing, read the audit trail from the message:
 
 ```rust
 # use dataflow_rs::{Engine, Message};
@@ -125,9 +124,9 @@ Creates:
 
 ### Custom Functions
 
-Custom functions don't build `Change` entries by hand — `TaskContext::set`
-records them automatically when `capture_changes` is on. The handler
-just writes the value and returns `TaskOutcome::Success`:
+Custom functions don't build `Change` entries by hand. `TaskContext::set`
+records them automatically when `capture_changes` is on, so the handler
+writes the value and returns `TaskOutcome::Success`:
 
 ```rust,ignore
 ctx.set("data.processed", OwnedDataValue::Bool(true));
@@ -136,8 +135,8 @@ Ok(TaskOutcome::Success)
 
 ### Validation Function
 
-Validation writes nothing, so its entry carries an empty `changes` list — but it
-still records one. The entry's `status` is the outcome: `200` when every rule
+Validation writes nothing, so its entry carries an empty `changes` list, but it
+still records the entry. The entry's `status` is the outcome: `200` when every rule
 passed, `400` when one or more failed. The rules that failed land on
 `message.errors()`, not on the audit trail.
 
@@ -150,7 +149,7 @@ Only `TaskOutcome::Skip` suppresses an audit entry entirely.
 <div class="playground-widget" data-workflows='[{"id":"audit_demo","name":"Audit Demo","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"step1","name":"Step 1","function":{"name":"map","input":{"mappings":[{"path":"data.full_name","logic":{"cat":[{"var":"data.input.first_name"}," ",{"var":"data.input.last_name"}]}}]}}},{"id":"step2","name":"Step 2","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.full_name"},"!"]}}]}}},{"id":"step3","name":"Step 3","function":{"name":"map","input":{"mappings":[{"path":"data.processed","logic":true},{"path":"temp_data.step_count","logic":3}]}}}]}]' data-payload='{"first_name":"John","last_name":"Doe"}'>
 </div>
 
-Notice the audit trail shows each step's changes.
+The audit trail shows each step's changes.
 
 ## Use Cases
 
@@ -215,7 +214,7 @@ if was_field_modified(&message, "data.price") {
 
 ### Rollback (Conceptual)
 
-The audit trail can be used to implement rollback:
+You can build rollback on the audit trail:
 
 ```rust
 # use dataflow_rs::Message;
@@ -240,8 +239,8 @@ fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a Owned
 5. **Log for Production** - Persist audit trails for production debugging
 6. **Bulk Pipelines** - Build the message with
    `Message::builder().capture_changes(false).build()` to skip per-write
-   change capture in throughput-critical pipelines (audit entries are
-   still recorded with empty `changes`). The captured values also stay on
-   the message until `process_message` returns, so in a looping workflow
-   they grow with every sweep — see
+   change capture in throughput-critical pipelines (the engine still
+   records audit entries, with empty `changes`). The captured values also
+   stay on the message until `process_message` returns, so in a looping
+   workflow they grow with every sweep; see
    [Memory in long loops](./loops.md#memory-in-long-loops).

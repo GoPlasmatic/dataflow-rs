@@ -2,13 +2,14 @@
 
 ## Supported Versions
 
-Security fixes are issued for the latest `3.0.x` release only. Older lines do
-not receive backports — upgrade to the current patch release.
+Security fixes are issued for the latest `3.x` minor release only. Older minor
+releases do not receive backports; upgrade to the current release.
 
-| Version | Supported |
-|---------|-----------|
-| 3.0.x   | Yes       |
-| < 3.0   | No        |
+| Version              | Supported |
+|----------------------|-----------|
+| Latest 3.x minor     | Yes       |
+| Older 3.x minors     | No        |
+| < 3.0                | No        |
 
 This policy covers all three published artifacts, which share a version number:
 
@@ -37,7 +38,7 @@ Please include:
 ### What to expect
 
 - **Acknowledgement** within 3 business days
-- **Initial assessment** — whether we can reproduce it, and a severity call —
+- **Initial assessment** (whether we can reproduce it, and a severity call)
   within 10 business days
 - **Fix and release**: we aim to ship a patch release within 30 days of a
   confirmed report, sooner for high-severity issues
@@ -53,15 +54,18 @@ In scope:
 - Memory-safety or panic-based denial of service in the engine, reachable from
   workflow JSON, message payloads, or the wasm bindings
 - JSONLogic evaluation that escapes its intended sandbox (reading or writing
-  outside the `data` / `metadata` / `temp_data` context)
+  outside the `data` / `metadata` / `temp_data` context and the engine-held
+  secret store that `{"secret": "name"}` reads)
+- A secret value reaching a serialized message, a trace, an error, an observer
+  event or a log line
 - Unbounded resource consumption triggered by attacker-controlled input, such as
   parser input in `parse_json` / `parse_xml`
 - Vulnerabilities in the published npm packages, including the bundled wasm
 
 Out of scope:
 
-- Vulnerabilities in dependencies with an existing RUSTSEC advisory — these are
-  tracked by the `cargo-deny` job (see [`deny.toml`](deny.toml)). Open a normal
+- Vulnerabilities in dependencies with an existing RUSTSEC advisory. The
+  `cargo-deny` job tracks these (see [`deny.toml`](deny.toml)). Open a normal
   issue if you spot one we have missed.
 - Behaviour of custom `AsyncFunctionHandler` implementations you supply. The
   engine executes registered handlers by design; treat workflow definitions as
@@ -75,6 +79,8 @@ Out of scope:
 Dataflow-rs treats **workflow definitions as trusted configuration** and
 **message payloads as untrusted data**. Conditions and mappings are JSONLogic
 expressions with no filesystem, network, or process access, evaluated only
-against a message's own context. Reports that depend on an attacker being able
+against a message's own context plus the secrets the host hands the engine
+through `with_secrets`, which expressions read with `{"secret": "name"}` and the
+engine never records. Reports that depend on an attacker being able
 to supply arbitrary workflow JSON fall outside this model, but we are still
-interested in hearing about them — say so in your report and we will assess it.
+interested in hearing about them. Say so in your report and we will assess it.

@@ -1,21 +1,21 @@
 # Basic Concepts
 
-Understanding the core components of dataflow-rs.
+The core components of dataflow-rs.
 
 ## The IF → THEN → THAT Model
 
 Dataflow-rs follows an IFTTT-style rules engine pattern:
 
-- **IF** — Define conditions using JSONLogic (evaluated against `data`, `metadata`, `temp_data`)
-- **THEN** — Execute actions: data transformation, validation, or custom async logic
-- **THAT** — Chain multiple actions and rules with priority ordering
+- **IF**: Define conditions using JSONLogic (evaluated against `data`, `metadata`, `temp_data`)
+- **THEN**: Execute actions: data transformation, validation, or custom async logic
+- **THAT**: Chain multiple actions and rules with priority ordering
 
 ## Architecture Overview
 
 Dataflow-rs follows a two-phase architecture:
 
-1. **Compilation Phase** (Startup) - All JSONLogic expressions are compiled once
-2. **Execution Phase** (Runtime) - Messages are processed using compiled logic
+1. **Compilation Phase** (Startup) - The engine compiles every JSONLogic expression once
+2. **Execution Phase** (Runtime) - The engine processes messages with the compiled logic
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -40,10 +40,10 @@ Dataflow-rs follows a two-phase architecture:
 | Rules Engine | Workflow Engine | Description |
 |---|---|---|
 | **RulesEngine** | **Engine** | Central async component that evaluates rules and executes actions |
-| **Rule** | **Workflow** | A condition + actions bundle — IF condition THEN execute actions |
+| **Rule** | **Workflow** | A condition + actions bundle: IF condition THEN execute actions |
 | **Action** | **Task** | An individual processing step (map, validate, or custom function) |
 
-Both naming conventions work — use whichever fits your mental model.
+Both naming conventions work; use whichever fits your mental model.
 
 ### Engine (RulesEngine)
 
@@ -110,8 +110,8 @@ An individual processing unit within a rule. Actions can:
 The data structure that flows through rules. Contains:
 
 - **payload** - The body as the engine received it. Read-only, and **not** part
-  of the JSONLogic evaluation context — a `parse_json` action is what copies it
-  into `data`
+  of the JSONLogic evaluation context; a `parse_json` action copies it into
+  `data`
 - **context.data** - Main data payload
 - **context.metadata** - Message metadata
 - **context.temp_data** - Temporary processing data
@@ -186,6 +186,6 @@ Common operations:
 
 ## Next Steps
 
-- [Rules Engine](../core-concepts/engine.md) - Deep dive into the engine
+- [Rules Engine](../core-concepts/engine.md) - The engine in detail
 - [JSONLogic](../advanced/jsonlogic.md) - Advanced JSONLogic usage
 - [Custom Functions](../advanced/custom-functions.md) - Extend with custom logic

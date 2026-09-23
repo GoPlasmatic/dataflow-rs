@@ -1,7 +1,7 @@
 # Fan-Out: One Call per Element
 
-A task's `for_each` runs its function once per element of an array — one model
-inference per participant, one HTTP call per recipient — as a single step.
+A task's `for_each` runs its function once per element of an array (one model
+inference per participant, one HTTP call per recipient) as a single step.
 
 ```json
 {
@@ -29,7 +29,7 @@ gathers the answers into `temp_data.moves` in participant order.
 
 A workflow [`loop`](./loops.md) replays the **whole task list** once per
 element, and a workflow has only one. `for_each` repeats **one task**. Use it
-when a single step needs to fan out — including inside a workflow that already
+when a single step needs to fan out, including inside a workflow that already
 loops for another reason.
 
 ## Fields
@@ -43,7 +43,7 @@ loops for another reason.
 | `into` | with `collect` | none | Context path that receives the results as an array, in element order. |
 
 Only handler-backed functions fan out: `http_call`, `enrich`, `publish_kafka`
-and your own handlers. The built-ins — `map`, `validation` and the rest — run
+and your own handlers. The built-ins (`map`, `validation` and the rest) run
 inline, and JSONLogic's `map`, `filter` and `reduce` already cover per-element
 transforms of an array.
 
@@ -66,10 +66,10 @@ transforms of an array.
 ## Calls are isolated
 
 Every call runs against **its own copy** of the message, taken before the
-first call. No call sees another's writes — not even when they run one at a
-time. When the calls finish, each is folded back in element order.
+first call. No call sees another's writes, even when they run one at a time.
+When the calls finish, the engine folds each back in element order.
 
-That is what makes `max_concurrency` a timing knob only. At `1` and at `8` the
+Isolation makes `max_concurrency` a timing knob only. At `1` and at `8` the
 message comes out the same: the same results, the same writes, the same audit
 entries in the same order.
 
@@ -81,8 +81,8 @@ Two consequences for a handler author:
   it was before the fan-out, not after element 2.
 
 The bindings live only in each call's copy, so `temp_data.<as>` and
-`temp_data.<as>_index` are not left behind after the task — unless a handler
-writes under one of them itself, which is replayed like any other write.
+`temp_data.<as>_index` are not left behind after the task, unless a handler
+writes under one of them itself; the engine replays that write like any other.
 `collect` may not name a path under either.
 
 A handler can also ask for its element's index directly:
@@ -95,7 +95,7 @@ everywhere else.
 land in. Element `i`'s result is always at `into[i]`, and it is `null` when the
 element:
 
-- failed — returned an `Err`, or a status of `400` or more,
+- failed: returned an `Err`, or a status of `400` or more,
 - never ran, or was never folded, because an earlier element failed the task
   or halted, or
 - wrote nothing at `collect`.
@@ -103,8 +103,8 @@ element:
 `collect`'s own writes are replayed like any other, so after the task it holds
 the last element's value.
 
-Without `collect` and `into`, the calls' writes are simply replayed — right for
-a fan-out whose calls have side effects but no result, such as one
+Without `collect` and `into`, the engine only replays the calls' writes. That
+suits a fan-out whose calls have side effects but no result, such as one
 `publish_kafka` per recipient.
 
 An empty `over` runs no call and sets `into` to `[]`.
@@ -118,12 +118,12 @@ an ordinary task:
   and the fan-out carries on.
 - **Without it**, a failed element fails the task. No further call starts;
   calls already running finish. The fold stops at the failing element, so the
-  elements after it contribute nothing — although their external side effects,
+  elements after it contribute nothing, although their external side effects,
   such as an HTTP call already sent, may already have happened.
 
 A call that returns `TaskOutcome::Halt` also stops new calls, and the fold
 stops at the halting element: its own errors, writes, result and audit entry
-land, and the elements after it contribute nothing — however many had already
+land, and the elements after it contribute nothing, however many had already
 finished under `max_concurrency`, side effects included. The workflow halts
 once the fan-out is folded.
 
@@ -131,7 +131,7 @@ once the fan-out is folded.
 after its last element, and `"halt_on": "failure"` halts after the fan-out if
 any element failed.
 
-An `over` that does not evaluate to an array — `null` included — fails the task
+An `over` that does not evaluate to an array (`null` included) fails the task
 the way a handler error would, before any call.
 
 ## Records
@@ -219,16 +219,16 @@ handlers. It still shows the task and its `for_each`.
 
 ## Validation
 
-Refused at `Engine::build()`, and reported by `Workflow::validate_authored` as
-`INVALID_FOR_EACH` at the offending key:
+`Engine::build()` refuses each of these, and `Workflow::validate_authored`
+reports it as `INVALID_FOR_EACH` at the offending key:
 
-- an `over` that is a scalar literal — it could never be an array;
+- an `over` that is a scalar literal, which could never be an array;
 - a missing or malformed `as`;
 - `max_concurrency` of `0`;
 - `collect` without `into`, or `into` without `collect`;
 - a `collect` or `into` that is not a path below `data`, `metadata` or
   `temp_data`, or that names a root;
-- a `collect` overlapping `temp_data.<as>` or `temp_data.<as>_index` — the
+- a `collect` overlapping `temp_data.<as>` or `temp_data.<as>_index`, since the
   result would be replayed into the message and leave the binding behind;
 - an `into` overlapping `collect`, `temp_data.<as>` or `temp_data.<as>_index`;
 - `for_each` on a built-in function, or on a task group.
