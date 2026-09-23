@@ -171,6 +171,9 @@ pub struct AuditTrail {
     /// workflow with no `loop`. Omitted when serializing, so a non-looping
     /// workflow's audit JSON is unchanged.
     pub loop_counter: Option<i64>,
+    /// Element index, for one call of a task's `for_each`; `None` otherwise,
+    /// and omitted when serializing. See [Fan-Out](../advanced/for-each.md).
+    pub element_index: Option<usize>,
 }
 
 pub struct Change {

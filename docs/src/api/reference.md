@@ -217,7 +217,7 @@ never matches. Its variants cover the structural rules —
 `InvalidFunctionName`, `InvalidTerminal`, `InvalidHaltOn`, `InvalidMapping`,
 `LoopIncrementTooSmall`, `LoopBoundEmpty`, `LoopCounterInvalid`,
 `LoopSlotInvalid`, `LoopItemWithoutOver`, `LoopSlotCollision`,
-`LoopOverInvalid` — the lints
+`LoopOverInvalid`, `InvalidForEach` — the lints
 `check_workflow` adds — `UnguardedValidation`, `GroupContinueOnError`,
 `NullMapping` — the
 registry and secret rules — `UnknownFunction`, `MissingHandler`, `InputParse`,
@@ -362,6 +362,7 @@ pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self
     "continue_on_error": "boolean (optional, default: false)",
     "terminal": "boolean (optional, default: false)",
     "halt_on": "string (optional, one of never|failure, default: never)",
+    "for_each": "{over, as, max_concurrency, collect, into} (optional, default: none) — handler-backed functions only",
     "function": {
         "name": "string (required)",
         "input": "object (required)"
@@ -607,6 +608,9 @@ impl<'a> TaskContext<'a> {
     /// Counter value of the sweep this call belongs to, for a looping
     /// workflow; `None` otherwise.
     pub fn loop_counter(&self) -> Option<i64>
+    /// Index of the element this call runs for, inside a task's `for_each`;
+    /// `None` otherwise.
+    pub fn element_index(&self) -> Option<usize>
 
     // A secret by dotted name, from the store the host configured with
     // `with_secrets`. `None` when undeclared, and always `None` for a context
@@ -851,6 +855,9 @@ pub struct AuditTrail {
     /// carrying a `loop`; `None` otherwise. Omitted when serializing, so a
     /// non-looping workflow's audit JSON is unchanged.
     pub loop_counter: Option<i64>,
+    /// Index of the element this entry records, for a task carrying a
+    /// `for_each`; `None` otherwise, and omitted when serializing.
+    pub element_index: Option<usize>,
 }
 ```
 

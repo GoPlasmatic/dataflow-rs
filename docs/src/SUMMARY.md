@@ -43,6 +43,7 @@
 - [Secrets](./advanced/secrets.md)
 - [Audit Trails](./advanced/audit-trails.md)
 - [Loops](./advanced/loops.md)
+- [Fan-Out](./advanced/for-each.md)
 - [Performance](./advanced/performance.md)
 
 # Reference

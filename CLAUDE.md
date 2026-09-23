@@ -144,6 +144,9 @@ matching version.
 - `executor.rs`: Arena-backed context view; sync built-in dispatch and narrow refresh
 - `workflow_executor.rs`: Workflow orchestration, audit trail, progress metadata
 - `task_executor.rs`: Per-task execution and outcome handling
+- `for_each.rs`: `ForEach` — a task's fan-out config, its rules
+  (`ForEach::problem`) and path pre-split. The driver is
+  `WorkflowExecutor::run_for_each`
 - `task_context.rs`: `TaskContext` — accessors and audit-recording setters for handlers
 - `task_outcome.rs`: `TaskOutcome` and `HALT_STATUS_CODE`
 - `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
@@ -224,6 +227,21 @@ matching version.
   `for_each_expression`, since its elements land in `temp_data`. An explicit
   `"over": null` is kept as `Some(Null)` (`present_value`) so the parser and
   `check_loop` agree it is refused.
+- **A task's `for_each` runs every call isolated, then folds in element
+  order.** `run_element` takes `&Message`, not `&mut`, on purpose: each call
+  clones the same untouched message (with `capture_changes` forced on), and
+  the fold — errors, replayed `Change`s, `into[i]`, then one
+  `handle_task_result` per element — runs only after every call has finished.
+  That is the whole reason `max_concurrency` cannot change results; do not
+  "optimise" sequential mode into running in place. Per element,
+  `fan_out_pass` neutralises `terminal`/`halt_on`; `fan_out_flow` applies them
+  once to the whole fan-out. `for_each` is refused on sync built-ins
+  (`ForEach::problem`), which is what keeps it off the sync stretch — every
+  fan-out task is already an async boundary. The rules live once in
+  `ForEach::problem`, called by `Workflow::validate` and
+  `authoring::check_for_each`. Calls run under `futures_util`'s
+  `FuturesUnordered` without spawning; `process_message` must stay `Send`
+  (pinned by `process_message_stays_send_with_a_fan_out`).
 - **A group's condition is evaluated once, on entry — not per member.** An
   element of `tasks` carrying a `tasks` key parses as a `TaskGroup`; the tree is
   flattened into `Workflow::tasks` at parse time and each span is recorded on
@@ -426,6 +444,7 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `templates.rs` | `Template` config fields on custom handlers |
 | `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
 | `loop_over.rs` | `loop.setup` / `over` / `as` / `scratch` — the array-iteration shape end to end |
+| `for_each.rs` | Task fan-out — isolation, element order, `null` on failure, halting, concurrency, loops, records |
 | `task_groups.rs` | `Task::terminal`, `Task::halt_on` and task groups — the guard-clause shape |
 | `task_identity.rs` | `TaskContext` workflow/task ids and `loop_counter` |
 | `operator_vocabulary.rs` | `operator_names` — every mirrored name checked live |

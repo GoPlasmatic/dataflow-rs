@@ -77,6 +77,7 @@ doc_pages! {
     AdvancedSecrets => "../../docs/src/advanced/secrets.md",
     AdvancedAuditTrails => "../../docs/src/advanced/audit-trails.md",
     AdvancedLoops => "../../docs/src/advanced/loops.md",
+    AdvancedForEach => "../../docs/src/advanced/for-each.md",
     AdvancedPerformance => "../../docs/src/advanced/performance.md",
 
     ApiReference => "../../docs/src/api/reference.md",

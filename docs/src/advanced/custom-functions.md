@@ -383,6 +383,17 @@ Three things are worth knowing:
   `temp_data.<name>`, but an unnamed one is written nowhere — the engine still
   tracks it, and this is where it surfaces.
 
+### Inside a fan-out
+
+A task carrying [`for_each`](./for-each.md) calls your handler once per
+element. Each call sees its element at `temp_data.<as>` and its index at
+`temp_data.<as>_index`, and `ctx.element_index()` returns that index without
+the handler having to know the `as` name — `None` outside a fan-out.
+
+Each call runs against its own copy of the message, and the engine replays the
+call's writes into the real message afterwards. So write through `ctx.set`: a
+write made through `ctx.message_mut()` directly is not carried back.
+
 ## Async Operations
 
 The trait is async/await all the way through. Real I/O works naturally:

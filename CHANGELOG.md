@@ -21,7 +21,36 @@ into a slot, and a clear of every per-item slot at the top of each sweep. The
 last one failed silently when forgotten, which in a loop means reading the
 previous item's value.
 
+And one task can now run its function once per element of an array (#61). A
+step like "one model inference per participant" had to be unrolled into N
+condition-guarded copies with a fixed maximum, or moved into a workflow `loop`
+— which replays the whole task list and is unavailable to a workflow that
+already loops.
+
 ### Added
+
+- **`Task::for_each`** (`ForEach`) — `{over, as, max_concurrency, collect,
+  into}` runs a handler-backed function once per element of `over`, with the
+  element at `temp_data.<as>` and its index at `temp_data.<as>_index`. Every
+  call runs against its own copy of the message, and the calls are folded
+  back in element order — errors, replayed writes, the result at `into[i]`,
+  one audit entry each — so `max_concurrency` changes timing, never results.
+  A failed element leaves `null` at its index; without `continue_on_error` it
+  fails the task and stops new calls. `terminal` and `halt_on` apply to the
+  fan-out as a whole. An empty `over` writes `into = []`; a non-array `over`,
+  `null` included, fails the task.
+- **`element_index`** on `AuditTrail`, `ExecutionStep` and `ErrorInfo`, and
+  **`TaskContext::element_index()`** — the fan-out counterpart of
+  `loop_counter`, omitted from JSON when `None`.
+- **authoring: `IssueCode::InvalidForEach`** (`INVALID_FOR_EACH`, Rejected),
+  at the offending key: a scalar `over`, a malformed `as`, `max_concurrency`
+  of `0`, `collect` without `into` or the reverse, a result path outside the
+  context or overlapping a binding, and `for_each` on a built-in or a group.
+  `for_each.over` is a message-write expression for the secret and
+  template-key checks.
+- **Dependency: `futures-util`** (0.3, `alloc` only) drives the bounded
+  concurrent calls without spawning, so they may borrow the handler and run on
+  wasm. It was already in the lockfile.
 
 - **`loop.setup`** — steps run once, before the first sweep, in the normal
   step grammar (groups allowed, `terminal` ends the workflow before any
@@ -85,6 +114,13 @@ previous item's value.
 
 ### Changed
 
+- **BREAKING (construction only): `AuditTrail` gained `element_index`**, so a
+  struct literal built outside the crate must name `element_index: None`. The
+  same trade `Change::removed` made: serialized audit JSON for every ordinary
+  task is unchanged, and the alternative — a separate record type for fan-out
+  entries — would split every audit consumer in two.
+- **A task group carrying `for_each` is refused at parse time**, like
+  `halt_on`: a group has no function of its own to fan out, and the key is new.
 - **BREAKING: `LoopConfig` is `#[non_exhaustive]` and no longer
   `PartialEq`/`Eq`.** Construct one through `LoopConfig::bounded(max)` and
   assign fields. `setup` holds `Task`s, which are not comparable, and the

@@ -130,6 +130,7 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `LOOP_ITEM_WITHOUT_OVER` | Rejected | `as` is set but there is no `over` to take elements from |
 | `LOOP_SLOT_COLLISION` | Rejected | Two of `counter` / `as` / `scratch` name the same path, or one lies inside the other |
 | `LOOP_OVER_INVALID` | Rejected | `over` is a scalar literal that can never be an array, or `init < 0` alongside `over` — see [Iterating an array](./loops.md#iterating-an-array) |
+| `INVALID_FOR_EACH` | Rejected | A task's `for_each` breaks one of its rules, or sits on a built-in or a group — reported at the offending key; see [Fan-Out](./for-each.md#validation) |
 | `PARSE_FAILED` | Rejected | Does not deserialize; message carries the field and type |
 | `VALIDATE_FAILED` | Rejected | Backstop — parses, but `validate()` still rejects it |
 | `UNKNOWN_FUNCTION` | Rejected | No handler registered, and not a built-in — usually a typo |
