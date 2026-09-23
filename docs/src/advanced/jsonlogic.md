@@ -300,7 +300,7 @@ default**:
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "3.13", features = ["ext-string", "ext-control"] }
+dataflow-rs = { version = "3.14", features = ["ext-string", "ext-control"] }
 ```
 
 ### `tensor` is opt-in separately
@@ -314,7 +314,7 @@ in to it deliberately:
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "3.13", features = ["tensor"] }
+dataflow-rs = { version = "3.14", features = ["tensor"] }
 ```
 
 With it on, write `{"$shape": ...}` wherever you need the literal object.

@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "3.13.0"
+version = "3.14.0"
 edition = "2024"
 rust-version = "1.98"
 # Allowlist of what ships in the published .crate: the library, its examples
