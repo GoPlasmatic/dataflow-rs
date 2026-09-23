@@ -249,8 +249,8 @@ pub use engine::task_context::TaskContext;
 pub use engine::task_outcome::{HALT_STATUS_CODE, TaskOutcome};
 pub use engine::trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
 pub use engine::{
-    ConnectorRef, Engine, EngineBuilder, HaltOn, Rollout, RolloutError, Task, TaskGroup, Workflow,
-    WorkflowStatus,
+    ConnectorRef, Engine, EngineBuilder, ForEach, HaltOn, Rollout, RolloutError, Task, TaskGroup,
+    Workflow, WorkflowStatus,
 };
 
 /// The [`datalogic_rs`] JSONLogic engine, re-exported.

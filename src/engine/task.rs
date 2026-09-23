@@ -285,6 +285,16 @@ pub struct Task {
     #[serde(default)]
     pub halt_on: HaltOn,
 
+    /// Run this task's function once per element of an array, rather than
+    /// once. `None`, the default, runs it once — on the same code path as
+    /// before `for_each` existed.
+    ///
+    /// Only handler-backed functions may fan out. See
+    /// [`ForEach`](crate::engine::for_each::ForEach) for the contract:
+    /// isolated calls, results in element order, per-element failures.
+    #[serde(default)]
+    pub for_each: Option<crate::engine::for_each::ForEach>,
+
     /// Engine-internal: groups opening at this task, outermost first. Populated
     /// by the workflow parser; empty for a task in no group. Not part of the
     /// stable API.
@@ -315,6 +325,7 @@ impl Task {
             continue_on_error: false,
             terminal: false,
             halt_on: HaltOn::Never,
+            for_each: None,
             group_starts: Vec::new(),
         }
     }

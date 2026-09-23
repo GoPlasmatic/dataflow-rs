@@ -282,6 +282,7 @@ dependencies = [
  "datavalue-rs",
  "env_logger",
  "futures",
+ "futures-util",
  "log",
  "num_cpus",
  "quick-xml",

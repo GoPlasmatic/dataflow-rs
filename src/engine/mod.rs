@@ -58,6 +58,7 @@ pub mod authoring;
 pub mod compiler;
 pub mod error;
 pub mod executor;
+pub mod for_each;
 pub mod functions;
 pub mod message;
 pub mod observer;
@@ -97,6 +98,7 @@ pub use secrets::Secrets;
 pub use steps::{
     AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
 };
+pub use for_each::ForEach;
 pub use task::{HaltOn, Task, TaskGroup};
 pub use task_context::TaskContext;
 pub use task_outcome::{HALT_STATUS_CODE, TaskOutcome};

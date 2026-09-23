@@ -299,6 +299,11 @@ struct GroupHeader {
     /// Only a literal `true` states an intent the engine defeats.
     #[serde(default)]
     continue_on_error: Option<Value>,
+    /// Captured only so it can be refused, like `halt_on`: a group has no
+    /// function of its own to fan out, and the key is new, so no installed
+    /// base carries it. Any shape is refused.
+    #[serde(default)]
+    for_each: Option<Value>,
     tasks: Vec<Value>,
 }
 
@@ -341,6 +346,14 @@ fn walk(steps: &[Value], depth: usize, out: &mut Vec<Task>) -> Result<(), String
             return Err(format!(
                 "task group '{}' cannot carry halt_on — halt_on is a per-task \
                  outcome rule; put it on the task that can fail",
+                header.id
+            ));
+        }
+
+        if header.for_each.is_some() {
+            return Err(format!(
+                "task group '{}' cannot carry for_each — for_each runs one task's function \
+                 once per element; put it on the task",
                 header.id
             ));
         }

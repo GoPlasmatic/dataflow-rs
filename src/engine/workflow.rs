@@ -551,6 +551,19 @@ impl Workflow {
             }
         }
 
+        // Setup steps included: a `for_each` that breaks its rules is refused
+        // wherever it sits. The rules live once, in `ForEach::problem`.
+        for task in self.all_tasks() {
+            if let Some(for_each) = &task.for_each
+                && let Some(problem) = for_each.problem(&task.function)
+            {
+                return Err(DataflowError::Workflow(format!(
+                    "Task '{}': {}",
+                    task.id, problem.message
+                )));
+            }
+        }
+
         // A loop whose bounds could never advance is rejected at build time
         // rather than spinning — or silently doing nothing — on the first
         // message.

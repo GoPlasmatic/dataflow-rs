@@ -126,6 +126,10 @@ thiserror = "2.0"
 log = "0.4"
 tokio = { version = "1", features = ["rt", "macros"] }
 async-trait = "0.1"
+# `FuturesUnordered` drives a `for_each` task's bounded concurrent calls
+# without spawning, so the calls may borrow the handler and run on wasm.
+# Already in the lockfile through `js-sys` and the dev-dependencies.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 quick-xml = { version = "0.42", features = ["serialize"] }
 
 [dev-dependencies]
