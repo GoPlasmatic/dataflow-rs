@@ -192,6 +192,22 @@ export interface LoopConfig {
    * `init: 0, max: n` yields `0..n-1`, exactly array indices.
    */
   max: number;
+  /**
+   * Steps run once, before the first sweep, in the normal step grammar
+   * (groups allowed). Not a sweep: their trace steps and audit entries carry
+   * no `loop_counter`. Shares the step id namespace with `tasks`.
+   */
+  setup?: Step[];
+  /**
+   * JSONLogic evaluated once, after `setup`. Must yield an array — anything
+   * else, `null` included, is a workflow error. The counter indexes it, so the
+   * loop also stops at the array's end.
+   */
+  over?: JsonLogicValue;
+  /** `temp_data` field holding the current element of `over`. Requires `over`. */
+  as?: string;
+  /** `temp_data` field reset to `{}` at the start of every sweep. */
+  scratch?: string;
 }
 
 /**
@@ -429,6 +445,9 @@ const LOOP_INCREMENT_DEFAULT = 1;
  * range `0..10000` runs 5,000 sweeps, so a `×10000` form would be wrong.
  */
 export function loopBadgeLabel(loop: LoopConfig): string {
+  if (loop.over !== undefined) {
+    return `${loop.as ?? 'each'} in over, max ${loop.max}`;
+  }
   const init = loop.init ?? LOOP_INIT_DEFAULT;
   const increment = loop.increment ?? LOOP_INCREMENT_DEFAULT;
   const step = increment === LOOP_INCREMENT_DEFAULT ? '' : ` step ${increment}`;
@@ -441,7 +460,11 @@ export function loopBadgeLabel(loop: LoopConfig): string {
  * counter is unnamed. The engine still tracks the count either way.
  */
 export function loopGuardLabel(loop: LoopConfig): string {
-  return `${loop.counter ?? 'sweep'} < ${loop.max}`;
+  const subject = loop.counter ?? 'sweep';
+  // An `over` loop has two bounds: the array's length and `max`.
+  return loop.over !== undefined
+    ? `${subject} < len, < ${loop.max}`
+    : `${subject} < ${loop.max}`;
 }
 
 /**
@@ -458,8 +481,21 @@ export function loopDescription(loop: LoopConfig): string {
   const init = loop.init ?? LOOP_INIT_DEFAULT;
   const increment = loop.increment ?? LOOP_INCREMENT_DEFAULT;
   const subject = loop.counter ? `temp_data.${loop.counter}` : 'the sweep count';
+  const setupCount = loop.setup ? countLeafSteps(loop.setup) : 0;
+  const setup = setupCount > 0 ? `Runs ${setupCount} setup step(s) once first. ` : '';
+  const scratch = loop.scratch
+    ? ` temp_data.${loop.scratch} is reset to {} every sweep.`
+    : '';
+  if (loop.over !== undefined) {
+    const slot = loop.as ? `temp_data.${loop.as}` : 'no slot';
+    return (
+      `${setup}Iterates the array \`over\` yields, one sweep per element (${slot}), ` +
+      `while ${subject} < min(length, ${loop.max}), starting at ${init}, step ${increment}. ` +
+      `Exits at the array's end, at the bound, or when the condition goes false.${scratch}`
+    );
+  }
   return (
-    `Loops while ${subject} < ${loop.max}, starting at ${init}, step ${increment}. ` +
-    `Exits when the bound is reached or the condition goes false.`
+    `${setup}Loops while ${subject} < ${loop.max}, starting at ${init}, step ${increment}. ` +
+    `Exits when the bound is reached or the condition goes false.${scratch}`
   );
 }

@@ -83,48 +83,6 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
   let guardId: string | undefined;
   let tailId: string | undefined;
 
-  // ---- Loop guard ----
-  // The engine checks `counter < max` before re-evaluating the condition, so
-  // the guard sits above it. Its false branch is a loop exit, wired to End
-  // once End exists.
-  if (loop) {
-    guardId = addNode('loopGuard', {
-      label: loopGuardLabel(loop),
-      variant: 'guard',
-    });
-    connect(guardId);
-    prevNodeId = guardId;
-    prevSourceHandle = 'true';
-  }
-
-  // ---- Workflow condition ----
-  if (hasCondition(workflow.condition)) {
-    const condId = addNode('condition', {
-      label: 'Workflow\nCondition',
-      conditionType: 'workflow',
-    });
-    // Without a loop this leaves Start and carries no label; with one it
-    // leaves the guard's true branch and is labelled like any other.
-    connect(condId);
-
-    const skipId = addNode('skip', {});
-    edges.push({
-      id: `e-${condId}-${skipId}`,
-      source: condId,
-      target: skipId,
-      sourceHandle: 'false',
-      // A false condition *breaks* the loop rather than skipping one sweep,
-      // so under a loop this branch is an exit, not a per-sweep skip.
-      label: loop ? 'Exit loop' : 'No',
-      style: { strokeDasharray: '6 3' },
-      className: 'df-flow-edge-false',
-    });
-    danglingToEnd.push(skipId);
-
-    prevNodeId = condId;
-    prevSourceHandle = 'true';
-  }
-
   // ---- Tasks ----
   const emitTask = (task: Task) => {
     if (!hasCondition(task.condition)) {
@@ -222,6 +180,57 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
     }
   };
 
+  // ---- Loop setup ----
+  // Runs once, before the first sweep: the engine evaluates the condition,
+  // runs setup, evaluates `over`, and only then enters the guarded sweep. The
+  // pre-setup condition check is not drawn separately; the condition node
+  // below is the per-sweep one.
+  for (const step of loop?.setup ?? []) {
+    emitStep(step);
+  }
+
+  // ---- Loop guard ----
+  // The engine checks `counter < max` before re-evaluating the condition, so
+  // the guard sits above it. Its false branch is a loop exit, wired to End
+  // once End exists.
+  if (loop) {
+    guardId = addNode('loopGuard', {
+      label: loopGuardLabel(loop),
+      variant: 'guard',
+    });
+    connect(guardId);
+    prevNodeId = guardId;
+    prevSourceHandle = 'true';
+  }
+
+  // ---- Workflow condition ----
+  if (hasCondition(workflow.condition)) {
+    const condId = addNode('condition', {
+      label: 'Workflow\nCondition',
+      conditionType: 'workflow',
+    });
+    // Without a loop this leaves Start and carries no label; with one it
+    // leaves the guard's true branch and is labelled like any other.
+    connect(condId);
+
+    const skipId = addNode('skip', {});
+    edges.push({
+      id: `e-${condId}-${skipId}`,
+      source: condId,
+      target: skipId,
+      sourceHandle: 'false',
+      // A false condition *breaks* the loop rather than skipping one sweep,
+      // so under a loop this branch is an exit, not a per-sweep skip.
+      label: loop ? 'Exit loop' : 'No',
+      style: { strokeDasharray: '6 3' },
+      className: 'df-flow-edge-false',
+    });
+    danglingToEnd.push(skipId);
+
+    prevNodeId = condId;
+    prevSourceHandle = 'true';
+  }
+
   for (const step of workflow.tasks) {
     emitStep(step);
   }
@@ -250,7 +259,8 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
       source: guardId,
       target: endId,
       sourceHandle: 'false',
-      label: 'Reached max',
+      // An `over` loop also leaves here when the array runs out.
+      label: loop?.over !== undefined ? 'Done' : 'Reached max',
       className: 'df-flow-edge-loop-exit',
     });
   } else {

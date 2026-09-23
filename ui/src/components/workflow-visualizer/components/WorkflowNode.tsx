@@ -31,8 +31,10 @@ export function WorkflowNode({
   const workflowId = NODE_IDS.workflow(workflow.id);
   const isExpanded = expandedNodes.has(workflowId);
   const hasCondition = workflow.condition !== undefined && workflow.condition !== null && workflow.condition !== true;
-  // Groups are an authoring convenience; the tree shows the tasks that run.
-  const tasks = flattenSteps(workflow.tasks);
+  // Groups are an authoring convenience; the tree shows the tasks that run —
+  // a loop's setup steps first, as they run first. Ids are unique across
+  // both lists, so they stay valid React keys.
+  const tasks = [...flattenSteps(workflow.loop?.setup ?? []), ...flattenSteps(workflow.tasks)];
   const hasTasks = tasks.length > 0;
   const hasChildren = hasCondition || hasTasks;
 
