@@ -168,14 +168,19 @@ impl LogicCompiler {
             // Populate the cached Arc<str> ids so audit emission can refcount-bump
             // rather than reallocate per AuditTrail entry.
             workflow.id_arc = Arc::from(workflow.id.as_str());
-            for task in &mut workflow.tasks {
+            for task in workflow.all_tasks_mut() {
                 task.id_arc = Arc::from(task.id.as_str());
             }
 
-            // Pre-split `temp_data.{counter}` so a loop sweep never re-splits
-            // the write path.
+            // Pre-split the loop's `temp_data` slots so an iteration never
+            // re-splits a path, and compile `over` once — it is evaluated once
+            // per message, after setup.
             if let Some(loop_config) = workflow.loop_config.as_mut() {
                 loop_config.precompute_paths();
+                if let Some(over) = &loop_config.over {
+                    let label = format!("workflow {} loop.over", workflow.id);
+                    loop_config.compiled_over = Some(self.compile(over, &label)?);
+                }
             }
 
             // Compile the workflow condition (defaults to `true`, which folds
@@ -193,7 +198,11 @@ impl LogicCompiler {
             // the arena once per *run* of consecutive fully-sync workflows
             // instead of once per workflow. Any async/custom task forces the
             // per-workflow `.await` path.
-            workflow.fully_sync = workflow.tasks.iter().all(|t| t.function.is_sync_builtin());
+            // Setup steps count: "every task" means every task the workflow
+            // can run. A looping workflow never joins the shared run anyway
+            // (`joins_sync_run`), but the flag must not lie about it.
+            let fully_sync = workflow.all_tasks().all(|t| t.function.is_sync_builtin());
+            workflow.fully_sync = fully_sync;
 
             compiled_workflows.push(workflow);
         }
@@ -205,20 +214,25 @@ impl LogicCompiler {
 
     /// Compile task conditions and function logic for a workflow
     fn compile_workflow_tasks(&self, workflow: &mut Workflow) -> Result<()> {
-        for task in &mut workflow.tasks {
+        // Cloned once: `all_tasks_mut` borrows the whole workflow, and the id
+        // is only needed for labels.
+        let workflow_id = workflow.id.clone();
+        // A loop's setup steps first, then the body — compiled identically, so
+        // a setup step folds, fails and precompiles exactly as a body step.
+        for task in workflow.all_tasks_mut() {
             // Groups opening at this task, outermost first. Compiled here so a
             // group condition folds the literal `true` to `None` exactly like a
             // task condition, and so a malformed one fails at build time.
             for group in &mut task.group_starts {
-                let label = format!("group {} condition (workflow {})", group.id, workflow.id);
+                let label = format!("group {} condition (workflow {workflow_id})", group.id);
                 group.compiled_condition = self.compile_condition(&group.condition, &label)?;
             }
 
-            let label = format!("task {} condition (workflow {})", task.id, workflow.id);
+            let label = format!("task {} condition (workflow {workflow_id})", task.id);
             task.compiled_condition = self.compile_condition(&task.condition, &label)?;
 
             // Compile function-specific logic (map transformations, validation rules, …)
-            self.compile_function_logic(&mut task.function, &task.id, &workflow.id)?;
+            self.compile_function_logic(&mut task.function, &task.id, &workflow_id)?;
         }
         Ok(())
     }
@@ -625,6 +639,45 @@ mod tests {
         let cfg = compiled[0].loop_config.as_ref().expect("loop config");
         let parts: Vec<&str> = cfg.counter_parts.iter().map(Arc::as_ref).collect();
         assert_eq!(parts, ["temp_data", "i"]);
+    }
+
+    #[test]
+    fn compile_workflows_compiles_setup_steps_and_over() {
+        let workflow = Workflow::from_json(
+            r#"{ "id": "w", "name": "w",
+                 "loop": {"counter": "i", "max": 8, "as": "item", "scratch": "it",
+                          "over": {"var": "temp_data.batch"},
+                          "setup": [
+                            {"id": "g", "condition": {"var": "data.go"}, "tasks": [
+                              {"id": "read", "name": "read",
+                               "condition": {"var": "data.ready"},
+                               "function": {"name": "map", "input": {"mappings": [
+                                 {"path": "temp_data.batch", "logic": {"var": "data.items"}}]}}}]}]},
+                 "tasks": [{"id": "t", "name": "t",
+                   "function": {"name": "map", "input": {"mappings": []}}}] }"#,
+        )
+        .unwrap();
+        let compiled = LogicCompiler::new()
+            .compile_workflows(vec![workflow])
+            .expect("compiles");
+        let cfg = compiled[0].loop_config.as_ref().unwrap();
+
+        assert!(
+            cfg.compiled_over.is_some(),
+            "over is compiled once at build"
+        );
+        let parts: Vec<&str> = cfg.item_parts.iter().map(Arc::as_ref).collect();
+        assert_eq!(parts, ["temp_data", "item"]);
+        assert_eq!(cfg.setup[0].id_arc.as_ref(), "read", "setup ids are interned");
+        assert!(
+            cfg.setup[0].compiled_condition.is_some(),
+            "a non-trivial setup condition compiles"
+        );
+        assert!(
+            cfg.setup[0].group_starts[0].compiled_condition.is_some(),
+            "and so does its group's"
+        );
+        assert!(compiled[0].fully_sync, "map-only setup and body");
     }
 
     #[test]

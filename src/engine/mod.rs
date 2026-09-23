@@ -1407,7 +1407,9 @@ fn precompile_custom_inputs(
 ) -> Result<()> {
     let template_compiler = TemplateCompiler::new(Arc::clone(datalogic));
     for workflow in workflows {
-        for task in &mut workflow.tasks {
+        // Setup steps of a `loop` included: a custom handler there is
+        // resolved, parsed and compiled exactly like one in the body.
+        for task in workflow.all_tasks_mut() {
             if let FunctionConfig::Custom {
                 name,
                 input,
