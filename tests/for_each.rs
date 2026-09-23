@@ -35,7 +35,10 @@ impl AsyncFunctionHandler for Echo {
 
     async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
         let p = Value::from(ctx.get("temp_data.p").unwrap_or(&OwnedDataValue::Null));
-        let i = Value::from(ctx.get("temp_data.p_index").unwrap_or(&OwnedDataValue::Null));
+        let i = Value::from(
+            ctx.get("temp_data.p_index")
+                .unwrap_or(&OwnedDataValue::Null),
+        );
         assert_eq!(
             ctx.element_index().map(|x| json!(x)),
             Some(i.clone()),
@@ -199,7 +202,8 @@ async fn results_land_in_element_order_and_bindings_do_not_leak() {
     );
     assert_eq!(element_indices(&m, "t"), vec![Some(0), Some(1), Some(2)]);
     assert!(
-        m.context["temp_data"].get("p").is_none() && m.context["temp_data"].get("p_index").is_none(),
+        m.context["temp_data"].get("p").is_none()
+            && m.context["temp_data"].get("p_index").is_none(),
         "the bindings live only in each call's copy"
     );
     assert_eq!(
@@ -311,7 +315,11 @@ async fn an_empty_over_writes_an_empty_array_and_one_record() {
     let mut m = message(json!([]));
     e.process_message(&mut m).await.unwrap();
     assert_eq!(data(&m, "outs"), json!([]));
-    assert_eq!(element_indices(&m, "t"), vec![None], "one record, no element");
+    assert_eq!(
+        element_indices(&m, "t"),
+        vec![None],
+        "one record, no element"
+    );
     assert_eq!(m.audit_trail()[0].status, 200);
 }
 
@@ -324,7 +332,9 @@ async fn a_non_array_over_is_one_task_error() {
         assert_eq!(element_indices(&m, "t"), vec![None]);
         assert_eq!(m.audit_trail()[0].status, 500);
         assert!(
-            m.errors().iter().any(|x| x.message.contains("for_each.over")),
+            m.errors()
+                .iter()
+                .any(|x| x.message.contains("for_each.over")),
             "{:?}",
             m.errors()
         );
@@ -399,7 +409,11 @@ async fn a_hard_error_contributes_no_writes() {
         "a call that returned Err leaves nothing behind"
     );
     assert_eq!(
-        m.errors().iter().find(|x| x.task_id.as_deref() == Some("t")).unwrap().element_index,
+        m.errors()
+            .iter()
+            .find(|x| x.task_id.as_deref() == Some("t"))
+            .unwrap()
+            .element_index,
         Some(0)
     );
 }
@@ -438,7 +452,11 @@ async fn an_element_halt_stops_new_calls_and_halts_the_workflow() {
     let mut m = message(json!([{"id": "a"}, {"id": "b", "halt": true}, {"id": "c"}]));
     e.process_message(&mut m).await.unwrap();
     assert_eq!(element_indices(&m, "t"), vec![Some(0), Some(1)]);
-    assert_eq!(m.context["data"].get("after_ran"), None, "the workflow halted");
+    assert_eq!(
+        m.context["data"].get("after_ran"),
+        None,
+        "the workflow halted"
+    );
 }
 
 #[tokio::test]
@@ -502,7 +520,11 @@ async fn max_concurrency_bounds_calls_in_flight() {
         let ps: Vec<Value> = (0..8).map(|i| json!({"id": i})).collect();
         let mut m = message(json!(ps));
         e.process_message(&mut m).await.unwrap();
-        assert_eq!(peak.load(Ordering::SeqCst), expected_peak, "max_concurrency {max}");
+        assert_eq!(
+            peak.load(Ordering::SeqCst),
+            expected_peak,
+            "max_concurrency {max}"
+        );
         assert_eq!(data(&m, "outs"), json!([0, 1, 2, 3, 4, 5, 6, 7]));
     }
 }
@@ -602,7 +624,11 @@ async fn trace_steps_carry_element_index() {
         .collect();
     assert_eq!(
         steps,
-        vec![(Some("t"), Some(0)), (Some("t"), Some(1)), (Some("after"), None)]
+        vec![
+            (Some("t"), Some(0)),
+            (Some("t"), Some(1)),
+            (Some("after"), None)
+        ]
     );
     assert!(trace.steps.iter().all(|s| s.duration_us.is_some()));
 }

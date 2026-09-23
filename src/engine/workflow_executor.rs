@@ -9,6 +9,7 @@ use crate::engine::error::{
 use crate::engine::executor::{
     ArenaContext, eval_to_owned, evaluate_condition, evaluate_condition_in_arena, with_arena,
 };
+use crate::engine::for_each::ForEach;
 use crate::engine::functions::BoxedFunctionHandler;
 use crate::engine::message::{AuditTrail, Change, Message};
 use crate::engine::observer::{
@@ -22,7 +23,6 @@ use crate::engine::task_outcome::TaskOutcome;
 use crate::engine::trace::{
     ExecutionStep, ExecutionTrace, StepStamp, StepTiming, duration_us_between,
 };
-use crate::engine::for_each::ForEach;
 use crate::engine::utils::{
     compute_path_parts, get_nested_value_parts, remove_nested_value, set_nested_value,
     set_nested_value_parts, strip_hash_prefix,
@@ -1512,7 +1512,10 @@ impl WorkflowExecutor {
         }
 
         if halt {
-            info!("Task {} halted workflow {} during its fan-out", task.id, workflow.id);
+            info!(
+                "Task {} halted workflow {} during its fan-out",
+                task.id, workflow.id
+            );
         }
         Ok(fan_out_flow(
             task,

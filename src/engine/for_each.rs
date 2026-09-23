@@ -288,7 +288,10 @@ mod tests {
                 r#"{"over": "data.ps", "as": "p"}"#,
                 "can never evaluate to an array",
             ),
-            (r#"{"over": 3, "as": "p"}"#, "can never evaluate to an array"),
+            (
+                r#"{"over": 3, "as": "p"}"#,
+                "can never evaluate to an array",
+            ),
             (r#"{"over": [], "as": "a..b"}"#, "for_each as"),
             (r#"{"over": [], "as": ""}"#, "for_each as"),
             (
@@ -335,7 +338,10 @@ mod tests {
             task_with(r#"{"as": "p"}"#, CUSTOM).is_err(),
             "over is required"
         );
-        assert!(task_with(r#"{"over": []}"#, CUSTOM).is_err(), "as is required");
+        assert!(
+            task_with(r#"{"over": []}"#, CUSTOM).is_err(),
+            "as is required"
+        );
     }
 
     #[test]
@@ -422,7 +428,9 @@ mod tests {
         assert_eq!(s(&fe.collect_parts), ["temp_data", "m"]);
         assert_eq!(s(&fe.into_parts), ["data", "ms"]);
 
-        let mut bare = task_with(r#"{"over": [], "as": "p"}"#, CUSTOM).unwrap().tasks[0]
+        let mut bare = task_with(r#"{"over": [], "as": "p"}"#, CUSTOM)
+            .unwrap()
+            .tasks[0]
             .for_each
             .clone()
             .unwrap();

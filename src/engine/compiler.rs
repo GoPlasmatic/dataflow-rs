@@ -708,7 +708,10 @@ mod tests {
         let parts: Vec<&str> = fe.index_parts.iter().map(Arc::as_ref).collect();
         assert_eq!(parts, ["temp_data", "p_index"]);
         assert_eq!(fe.into_parts.len(), 2);
-        assert!(!compiled[0].fully_sync, "a fan-out is always handler-backed");
+        assert!(
+            !compiled[0].fully_sync,
+            "a fan-out is always handler-backed"
+        );
     }
 
     #[test]

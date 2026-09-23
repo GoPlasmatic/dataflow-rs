@@ -82,6 +82,7 @@ pub mod workflow_executor;
 pub use authoring::{IssueCode, Severity, WorkflowIssue};
 use error::{DEFAULT_ERROR_CONTEXT_LIMIT, ErrorContextConfig};
 pub use error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
+pub use for_each::ForEach;
 pub use functions::{
     AsyncFunctionHandler, BoxedFunctionHandler, CompiledCustomInput, DynAsyncFunctionHandler,
     FunctionConfig, Template, TemplateCompiler,
@@ -98,7 +99,6 @@ pub use secrets::Secrets;
 pub use steps::{
     AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
 };
-pub use for_each::ForEach;
 pub use task::{HaltOn, Task, TaskGroup};
 pub use task_context::TaskContext;
 pub use task_outcome::{HALT_STATUS_CODE, TaskOutcome};

@@ -276,8 +276,10 @@ fn broken_fixtures() -> Vec<(&'static str, IssueCode, Value)> {
         (
             "for_each on a built-in",
             IssueCode::InvalidForEach,
-            workflow(json!([{"id": "t", "name": "t", "for_each": {"over": [], "as": "p"},
-                             "function": {"name": "map", "input": {"mappings": []}}}])),
+            workflow(
+                json!([{"id": "t", "name": "t", "for_each": {"over": [], "as": "p"},
+                             "function": {"name": "map", "input": {"mappings": []}}}]),
+            ),
         ),
         (
             "for_each on a group",
@@ -320,8 +322,10 @@ fn for_each_issues_point_at_the_offending_key() {
             "tasks[0].for_each.into",
         ),
         (
-            workflow(json!([{"id": "t", "name": "t", "for_each": {"over": [], "as": "p"},
-                             "function": {"name": "log", "input": {"message": "m"}}}])),
+            workflow(
+                json!([{"id": "t", "name": "t", "for_each": {"over": [], "as": "p"},
+                             "function": {"name": "log", "input": {"message": "m"}}}]),
+            ),
             "tasks[0].for_each",
         ),
         (
@@ -435,8 +439,10 @@ fn empty_iff_the_workflow_loads() {
         json!({"id": "w", "name": "w", "loop": {"max": 3, "init": 2, "over": []},
                "tasks": [task("t")]}),
         // The full #61 shape, and the minimal one.
-        for_each_workflow(json!({"over": {"var": "data.ps"}, "as": "p", "max_concurrency": 8,
-                                 "collect": "temp_data.move", "into": "temp_data.moves"})),
+        for_each_workflow(
+            json!({"over": {"var": "data.ps"}, "as": "p", "max_concurrency": 8,
+                                 "collect": "temp_data.move", "into": "temp_data.moves"}),
+        ),
         for_each_workflow(json!({"over": [1, 2], "as": "p"})),
         // A group carrying `continue_on_error` loads: it is reported by
         // `check_workflow`, never here. An informational finding on the

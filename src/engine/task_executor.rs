@@ -206,13 +206,8 @@ impl TaskExecutor {
             error!("Function handler not found: {}", name);
             DataflowError::FunctionNotFound(name.to_string())
         })?;
-        let mut ctx = TaskContext::with_identity(
-            message,
-            &self.engine,
-            identity,
-            stamp,
-            &self.secrets,
-        );
+        let mut ctx =
+            TaskContext::with_identity(message, &self.engine, identity, stamp, &self.secrets);
         let outcome = handler.dyn_execute(&mut ctx, any_input).await?;
         let changes = ctx.into_changes();
         Ok((outcome, changes))

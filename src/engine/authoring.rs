@@ -1419,7 +1419,8 @@ fn check_for_each(
         } else {
             format!("{path}.for_each.{}", problem.field)
         };
-        issues.push(WorkflowIssue::at(IssueCode::InvalidForEach, at, problem.message).with_step(id));
+        issues
+            .push(WorkflowIssue::at(IssueCode::InvalidForEach, at, problem.message).with_step(id));
     }
 }
 
