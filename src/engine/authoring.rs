@@ -726,7 +726,8 @@ fn check_null_mappings(
             issues.push(WorkflowIssue {
                 code: IssueCode::NullMapping,
                 message: format!(
-                    "this mapping's logic is always null, and a null result is skipped,                      so it never writes '{}' — to remove the path use `\"unset\": true`",
+                    "this mapping's logic is always null, and a null result is skipped, \
+                     so it never writes '{}' — to remove the path use `\"unset\": true`",
                     mapping.describe_path()
                 ),
                 path: Some(format!("function.input.mappings[{i}].logic")),
