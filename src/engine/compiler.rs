@@ -231,6 +231,14 @@ impl LogicCompiler {
             let label = format!("task {} condition (workflow {workflow_id})", task.id);
             task.compiled_condition = self.compile_condition(&task.condition, &label)?;
 
+            // A fan-out's `over` is compiled once, like a condition, and its
+            // slots are pre-split so no call re-splits a path.
+            if let Some(for_each) = task.for_each.as_mut() {
+                for_each.precompute_paths();
+                let label = format!("task {} for_each.over (workflow {workflow_id})", task.id);
+                for_each.compiled_over = Some(self.compile(&for_each.over, &label)?);
+            }
+
             // Compile function-specific logic (map transformations, validation rules, …)
             self.compile_function_logic(&mut task.function, &task.id, &workflow_id)?;
         }
@@ -682,6 +690,25 @@ mod tests {
             "and so does its group's"
         );
         assert!(compiled[0].fully_sync, "map-only setup and body");
+    }
+
+    #[test]
+    fn compile_workflows_compiles_a_for_each() {
+        let wf = Workflow::from_json(
+            r#"{ "id": "w", "name": "w", "tasks": [
+                 {"id": "t", "name": "t",
+                  "for_each": {"over": {"var": "data.ps"}, "as": "p",
+                               "collect": "temp_data.m", "into": "temp_data.ms"},
+                  "function": {"name": "infer", "input": {}}}] }"#,
+        )
+        .unwrap();
+        let compiled = LogicCompiler::new().compile_workflows(vec![wf]).unwrap();
+        let fe = compiled[0].tasks[0].for_each.as_ref().unwrap();
+        assert!(fe.compiled_over.is_some(), "over is compiled once at build");
+        let parts: Vec<&str> = fe.index_parts.iter().map(Arc::as_ref).collect();
+        assert_eq!(parts, ["temp_data", "p_index"]);
+        assert_eq!(fe.into_parts.len(), 2);
+        assert!(!compiled[0].fully_sync, "a fan-out is always handler-backed");
     }
 
     #[test]
