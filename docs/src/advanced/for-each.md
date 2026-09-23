@@ -54,7 +54,8 @@ transforms of an array.
 2. evaluates `over`, once                  -> not an array: the task fails
 3. runs one call per element, up to max_concurrency at a time,
    each against its own copy of the message
-4. folds the calls back, in element order:
+4. folds the calls back, in element order, stopping at the first that
+   fails the task or halts:
      the errors the call recorded,
      then its writes,
      then its result at into[i],
@@ -80,7 +81,9 @@ Two consequences for a handler author:
   it was before the fan-out, not after element 2.
 
 The bindings live only in each call's copy, so `temp_data.<as>` and
-`temp_data.<as>_index` are not left behind after the task.
+`temp_data.<as>_index` are not left behind after the task — unless a handler
+writes under one of them itself, which is replayed like any other write.
+`collect` may not name a path under either.
 
 A handler can also ask for its element's index directly:
 `TaskContext::element_index()` returns `Some(i)` inside a fan-out and `None`
@@ -93,7 +96,8 @@ land in. Element `i`'s result is always at `into[i]`, and it is `null` when the
 element:
 
 - failed — returned an `Err`, or a status of `400` or more,
-- never ran, because an earlier failure stopped the fan-out, or
+- never ran, or was never folded, because an earlier element failed the task
+  or halted, or
 - wrote nothing at `collect`.
 
 `collect`'s own writes are replayed like any other, so after the task it holds
@@ -117,8 +121,11 @@ an ordinary task:
   elements after it contribute nothing — although their external side effects,
   such as an HTTP call already sent, may already have happened.
 
-A call that returns `TaskOutcome::Halt` also stops new calls, and halts the
-workflow once the fan-out is folded.
+A call that returns `TaskOutcome::Halt` also stops new calls, and the fold
+stops at the halting element: its own errors, writes, result and audit entry
+land, and the elements after it contribute nothing — however many had already
+finished under `max_concurrency`, side effects included. The workflow halts
+once the fan-out is folded.
 
 `terminal` and `halt_on` apply to the **whole** fan-out: a terminal task halts
 after its last element, and `"halt_on": "failure"` halts after the fan-out if
@@ -221,5 +228,7 @@ Refused at `Engine::build()`, and reported by `Workflow::validate_authored` as
 - `collect` without `into`, or `into` without `collect`;
 - a `collect` or `into` that is not a path below `data`, `metadata` or
   `temp_data`, or that names a root;
+- a `collect` overlapping `temp_data.<as>` or `temp_data.<as>_index` — the
+  result would be replayed into the message and leave the binding behind;
 - an `into` overlapping `collect`, `temp_data.<as>` or `temp_data.<as>_index`;
 - `for_each` on a built-in function, or on a task group.

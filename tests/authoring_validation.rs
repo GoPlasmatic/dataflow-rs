@@ -274,6 +274,12 @@ fn broken_fixtures() -> Vec<(&'static str, IssueCode, Value)> {
                                      "collect": "temp_data.m", "into": "temp_data.p_index"})),
         ),
         (
+            "for_each collect under the element binding",
+            IssueCode::InvalidForEach,
+            for_each_workflow(json!({"over": [], "as": "p",
+                                     "collect": "temp_data.p.out", "into": "temp_data.outs"})),
+        ),
+        (
             "for_each on a built-in",
             IssueCode::InvalidForEach,
             workflow(
@@ -320,6 +326,11 @@ fn for_each_issues_point_at_the_offending_key() {
         (
             for_each_workflow(json!({"over": [], "as": "p", "into": "temp_data.ms"})),
             "tasks[0].for_each.into",
+        ),
+        (
+            for_each_workflow(json!({"over": [], "as": "p",
+                                     "collect": "temp_data.p.out", "into": "temp_data.outs"})),
+            "tasks[0].for_each.collect",
         ),
         (
             workflow(

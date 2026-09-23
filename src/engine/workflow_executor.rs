@@ -1416,6 +1416,8 @@ impl WorkflowExecutor {
         }
 
         // ---- fold back, in element order ----
+        // Stops at the first element that fails the task (the `?` below) or
+        // halts (the `break`); the outcomes after it are dropped unfolded.
         if !for_each.into_parts.is_empty() {
             // One slot per element, so an element that never ran — or failed —
             // is a `null` at its own index rather than a gap.
@@ -1508,7 +1510,14 @@ impl WorkflowExecutor {
                     timing,
                 );
             }
-            halt |= matches!(flow, TaskControlFlow::HaltWorkflow);
+            // A halting element ends the fold here, after its own record has
+            // landed — later elements contribute nothing, finished or not,
+            // exactly as they never started at `max_concurrency: 1`. Under
+            // `fan_out_pass` only `TaskOutcome::Halt` reaches this branch.
+            if matches!(flow, TaskControlFlow::HaltWorkflow) {
+                halt = true;
+                break;
+            }
         }
 
         if halt {

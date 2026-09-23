@@ -36,16 +36,19 @@ already loops.
   back in element order — errors, replayed writes, the result at `into[i]`,
   one audit entry each — so `max_concurrency` changes timing, never results.
   A failed element leaves `null` at its index; without `continue_on_error` it
-  fails the task and stops new calls. `terminal` and `halt_on` apply to the
-  fan-out as a whole. An empty `over` writes `into = []`; a non-array `over`,
-  `null` included, fails the task.
+  fails the task and stops new calls. A halting element stops new calls too,
+  and the fold stops at it, so later elements contribute nothing at any
+  concurrency. `terminal` and `halt_on` apply to the fan-out as a whole. An
+  empty `over` writes `into = []`; a non-array `over`, `null` included, fails
+  the task.
 - **`element_index`** on `AuditTrail`, `ExecutionStep` and `ErrorInfo`, and
   **`TaskContext::element_index()`** — the fan-out counterpart of
   `loop_counter`, omitted from JSON when `None`.
 - **authoring: `IssueCode::InvalidForEach`** (`INVALID_FOR_EACH`, Rejected),
   at the offending key: a scalar `over`, a malformed `as`, `max_concurrency`
   of `0`, `collect` without `into` or the reverse, a result path outside the
-  context or overlapping a binding, and `for_each` on a built-in or a group.
+  context, a `collect` or `into` overlapping a binding, and `for_each` on a
+  built-in or a group.
   `for_each.over` is a message-write expression for the secret and
   template-key checks.
 - **Dependency: `futures-util`** (0.3, `alloc` only) drives the bounded

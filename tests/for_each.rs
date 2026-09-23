@@ -81,7 +81,8 @@ impl AsyncFunctionHandler for Increment {
 }
 
 /// Tracks calls in flight and their peak; sleeps for `p.sleep_ms` (default
-/// 10) so calls overlap, then writes `temp_data.out = p.id`.
+/// 10) so calls overlap, then writes `temp_data.out = p.id` — or returns
+/// `Halt` when `p.halt` is true.
 #[derive(Default)]
 struct Slow {
     in_flight: Arc<AtomicUsize>,
@@ -99,6 +100,9 @@ impl AsyncFunctionHandler for Slow {
         let ms = p["sleep_ms"].as_u64().unwrap_or(10);
         tokio::time::sleep(Duration::from_millis(ms)).await;
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        if p["halt"] == json!(true) {
+            return Ok(TaskOutcome::Halt);
+        }
         ctx.set("temp_data.out", dv(p["id"].clone()));
         Ok(TaskOutcome::Success)
     }
@@ -245,6 +249,34 @@ async fn audit_changes_carry_each_elements_writes_and_its_result_slot() {
             vec!["temp_data.out".to_string(), "data.outs.0".to_string()],
             vec!["temp_data.out".to_string(), "data.outs.1".to_string()],
         ]
+    );
+}
+
+#[tokio::test]
+async fn capture_changes_off_keeps_the_entries_and_the_results() {
+    // `capture_changes(false)` drops the per-element diff, not the entries or
+    // the fold: writes are still replayed and `into` is still filled.
+    let e = engine(vec![workflow(collect_into(), "echo", json!({}))]);
+    let mut m = Message::builder()
+        .data(dv(json!({"ps": [{"id": "a"}, {"id": "b"}]})))
+        .capture_changes(false)
+        .build();
+    e.process_message(&mut m).await.unwrap();
+    assert_eq!(
+        data(&m, "outs"),
+        json!([{"id": "a", "i": 0}, {"id": "b", "i": 1}])
+    );
+    assert_eq!(element_indices(&m, "t"), vec![Some(0), Some(1)]);
+    assert!(
+        m.audit_trail()
+            .iter()
+            .filter(|e| e.task_id.as_ref() == "t")
+            .all(|e| e.changes.is_empty()),
+        "no diffs captured, but the entries are still there"
+    );
+    assert_eq!(
+        Value::from(&m.context["temp_data"]["out"]),
+        json!({"id": "b", "i": 1})
     );
 }
 
@@ -545,6 +577,42 @@ async fn results_are_identical_at_every_concurrency() {
     assert_eq!(outs[0], outs[1]);
     assert_eq!(outs[0], outs[2]);
     assert_eq!(outs[0].0, json!([0, 1, 2, 3, 4, 5]));
+}
+
+#[tokio::test]
+async fn a_halt_yields_the_same_message_at_every_concurrency() {
+    // `1` halts. `2` sleeps least, so at `max_concurrency: 3` it has finished
+    // and been stored before the fold runs — the fold must still stop at `1`.
+    let ps = json!([
+        {"id": 0, "sleep_ms": 5},
+        {"id": 1, "sleep_ms": 5, "halt": true},
+        {"id": 2, "sleep_ms": 1},
+    ]);
+    for max in [1, 3] {
+        let e = slow_engine(max, Slow::default());
+        let mut m = message(ps.clone());
+        e.process_message(&mut m).await.unwrap();
+        assert_eq!(
+            data(&m, "outs"),
+            json!([0, null, null]),
+            "max_concurrency {max}"
+        );
+        assert_eq!(
+            element_indices(&m, "t"),
+            vec![Some(0), Some(1)],
+            "max_concurrency {max}"
+        );
+        assert_eq!(
+            Value::from(&m.context["temp_data"]["out"]),
+            json!(0),
+            "max_concurrency {max}: element 2's write was never replayed"
+        );
+        assert_eq!(
+            m.context["data"].get("after_ran"),
+            None,
+            "max_concurrency {max}"
+        );
+    }
 }
 
 // =============================================================================

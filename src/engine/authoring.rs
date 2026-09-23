@@ -185,9 +185,9 @@ pub enum IssueCode {
     LoopOverInvalid,
     /// A task's `for_each` breaks one of its rules — `over` a scalar literal,
     /// `as` not a slot path, `max_concurrency` of `0`, `collect` without
-    /// `into` or the reverse, a result path outside the context or
-    /// overlapping a binding — or sits on a built-in function, or on a task
-    /// group. Reported at the offending key, e.g.
+    /// `into` or the reverse, a result path outside the context, a `collect`
+    /// or `into` overlapping a binding — or sits on a built-in function, or on
+    /// a task group. Reported at the offending key, e.g.
     /// `tasks[0].for_each.max_concurrency`, or at `…for_each` itself.
     InvalidForEach,
     /// No handler will dispatch this function name, and it is not a built-in.

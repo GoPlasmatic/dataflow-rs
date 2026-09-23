@@ -232,8 +232,11 @@ matching version.
   clones the same untouched message (with `capture_changes` forced on), and
   the fold — errors, replayed `Change`s, `into[i]`, then one
   `handle_task_result` per element — runs only after every call has finished.
-  That is the whole reason `max_concurrency` cannot change results; do not
-  "optimise" sequential mode into running in place. Per element,
+  The fold stops at the first element that fails the task or halts — later
+  elements, finished or not, contribute nothing, which is what keeps a halt
+  identical at every `max_concurrency`. That is the whole reason
+  `max_concurrency` cannot change results; do not "optimise" sequential mode
+  into running in place. Per element,
   `fan_out_pass` neutralises `terminal`/`halt_on`; `fan_out_flow` applies them
   once to the whole fan-out. `for_each` is refused on sync built-ins
   (`ForEach::problem`), which is what keeps it off the sync stretch — every
@@ -485,8 +488,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 843 passing.
-`cargo test -p dataflow-rs` (default features) should report 731 — the operator
+`cargo test --workspace --all-features` should report 845 passing.
+`cargo test -p dataflow-rs` (default features) should report 733 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and

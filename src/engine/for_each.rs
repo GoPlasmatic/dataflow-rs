@@ -39,7 +39,9 @@ use std::sync::Arc;
 /// The fold replays the writes a handler made through `TaskContext::set`.
 /// A write made by reaching into `ctx.message_mut()` directly is not carried
 /// back. The bindings themselves live only in each call's copy, so neither
-/// `temp_data.<as>` nor `temp_data.<as>_index` is left behind.
+/// `temp_data.<as>` nor `temp_data.<as>_index` is left behind — unless a
+/// handler writes under one of them itself, which is replayed like any other
+/// write. [`collect`](Self::collect) may not name a path under either.
 ///
 /// # Results
 ///
@@ -53,8 +55,10 @@ use std::sync::Arc;
 /// The task's `continue_on_error` applies per element. A call that fails the
 /// task — an `Err` or a `5xx` without `continue_on_error` — or returns
 /// `TaskOutcome::Halt` stops new calls from starting; calls already running
-/// finish. Folding stops at the first element whose record fails the task.
-/// `terminal` and `halt_on` apply once, after the whole fan-out.
+/// finish. Folding stops at the first element whose record fails the task or
+/// halts, so the elements after it contribute nothing — however many had
+/// already finished. `terminal` and `halt_on` apply once, after the whole
+/// fan-out.
 ///
 /// Only handler-backed functions may fan out (`http_call`, `enrich`,
 /// `publish_kafka`, custom handlers): built-ins run inline, and JSONLogic's
@@ -80,7 +84,8 @@ pub struct ForEach {
     pub max_concurrency: usize,
 
     /// Context path each call writes its result to, such as
-    /// `temp_data.move`. Requires [`into`](Self::into).
+    /// `temp_data.move`. Requires [`into`](Self::into). Must not overlap
+    /// `temp_data.<as>` or `temp_data.<as>_index`.
     #[serde(default)]
     pub collect: Option<String>,
 
@@ -212,6 +217,18 @@ impl ForEach {
         }
         let item = format!("temp_data.{}", self.item);
         let index = format!("temp_data.{}", self.index_slot());
+        for binding in [&item, &index] {
+            if slots_overlap(collect, binding) {
+                return at(
+                    "collect",
+                    format!(
+                        "for_each collect ({collect:?}) and {binding:?} overlap — the bindings \
+                         live only in each call's copy, and a result written under one would be \
+                         replayed into the message and left behind"
+                    ),
+                );
+            }
+        }
         for other in [collect.as_str(), &item, &index] {
             if slots_overlap(into, other) {
                 return at(
@@ -330,6 +347,21 @@ mod tests {
                 r#"{"over": [], "as": "p", "collect": "temp_data.m", "into": "temp_data.p"}"#,
                 "overlap",
             ),
+            // A result under the binding would be replayed into the message
+            // and leave the binding behind. The needle is unique to the
+            // `collect` message; the `into` one starts `for_each into (`.
+            (
+                r#"{"over": [], "as": "p", "collect": "temp_data.p.out", "into": "temp_data.outs"}"#,
+                "for_each collect (",
+            ),
+            (
+                r#"{"over": [], "as": "p", "collect": "temp_data.p", "into": "temp_data.outs"}"#,
+                "for_each collect (",
+            ),
+            (
+                r#"{"over": [], "as": "p", "collect": "temp_data.p_index", "into": "temp_data.outs"}"#,
+                "for_each collect (",
+            ),
         ] {
             let err = task_with(for_each, CUSTOM).expect_err(for_each);
             assert!(err.contains(needle), "{for_each}: {err}");
@@ -358,7 +390,9 @@ mod tests {
             r#"{"over": [1, 2], "as": "p"}"#,
             r#"{"over": {"var": "data.ps"}, "as": "cur.p", "max_concurrency": 8}"#,
             r#"{"over": [], "as": "p", "collect": "temp_data.m", "into": "data.ms"}"#,
-            r#"{"over": [], "as": "p", "collect": "temp_data.p.out", "into": "temp_data.outs"}"#,
+            // `_out` is not a segment boundary, so this is beside the binding,
+            // not under it.
+            r#"{"over": [], "as": "p", "collect": "temp_data.p_out", "into": "temp_data.outs"}"#,
         ] {
             assert!(task_with(for_each, CUSTOM).is_ok(), "{for_each}");
         }
