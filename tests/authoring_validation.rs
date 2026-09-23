@@ -44,6 +44,12 @@ fn mapping_workflow(mappings: Value) -> Value {
                      "function": {"name": "map", "input": {"mappings": mappings}}}]))
 }
 
+/// A workflow whose one task calls the custom `infer` with `for_each`.
+fn for_each_workflow(for_each: Value) -> Value {
+    workflow(json!([{"id": "t", "name": "t", "for_each": for_each,
+                     "function": {"name": "infer", "input": {}}}]))
+}
+
 /// Every fixture: what it is, and the code it must produce.
 fn broken_fixtures() -> Vec<(&'static str, IssueCode, Value)> {
     vec![
@@ -236,6 +242,59 @@ fn broken_fixtures() -> Vec<(&'static str, IssueCode, Value)> {
                    "tasks": [task("t")]}),
         ),
         (
+            "for_each over a string literal",
+            IssueCode::InvalidForEach,
+            for_each_workflow(json!({"over": "data.ps", "as": "p"})),
+        ),
+        (
+            "for_each as with an empty segment",
+            IssueCode::InvalidForEach,
+            for_each_workflow(json!({"over": [], "as": "a..b"})),
+        ),
+        (
+            "for_each max_concurrency of zero",
+            IssueCode::InvalidForEach,
+            for_each_workflow(json!({"over": [], "as": "p", "max_concurrency": 0})),
+        ),
+        (
+            "for_each collect without into",
+            IssueCode::InvalidForEach,
+            for_each_workflow(json!({"over": [], "as": "p", "collect": "temp_data.m"})),
+        ),
+        (
+            "for_each into outside the context",
+            IssueCode::InvalidForEach,
+            for_each_workflow(json!({"over": [], "as": "p",
+                                     "collect": "temp_data.m", "into": "ms"})),
+        ),
+        (
+            "for_each into overlapping the index binding",
+            IssueCode::InvalidForEach,
+            for_each_workflow(json!({"over": [], "as": "p",
+                                     "collect": "temp_data.m", "into": "temp_data.p_index"})),
+        ),
+        (
+            "for_each on a built-in",
+            IssueCode::InvalidForEach,
+            workflow(json!([{"id": "t", "name": "t", "for_each": {"over": [], "as": "p"},
+                             "function": {"name": "map", "input": {"mappings": []}}}])),
+        ),
+        (
+            "for_each on a group",
+            IssueCode::InvalidForEach,
+            workflow(json!([{"id": "g", "for_each": {"over": [], "as": "p"},
+                             "tasks": [task("inner")]}])),
+        ),
+        (
+            "for_each in loop setup",
+            IssueCode::InvalidForEach,
+            json!({"id": "w", "name": "w",
+                   "loop": {"max": 3, "setup": [
+                       {"id": "s", "name": "s", "for_each": {"over": 5, "as": "p"},
+                        "function": {"name": "infer", "input": {}}}]},
+                   "tasks": [task("t")]}),
+        ),
+        (
             "loop setup with an empty group",
             IssueCode::EmptyGroup,
             json!({"id": "w", "name": "w",
@@ -243,6 +302,54 @@ fn broken_fixtures() -> Vec<(&'static str, IssueCode, Value)> {
                    "tasks": [task("t")]}),
         ),
     ]
+}
+
+#[test]
+fn for_each_issues_point_at_the_offending_key() {
+    for (for_each_json, expected_path) in [
+        (
+            for_each_workflow(json!({"over": [], "as": "p", "max_concurrency": 0})),
+            "tasks[0].for_each.max_concurrency",
+        ),
+        (
+            for_each_workflow(json!({"over": "x", "as": "p"})),
+            "tasks[0].for_each.over",
+        ),
+        (
+            for_each_workflow(json!({"over": [], "as": "p", "into": "temp_data.ms"})),
+            "tasks[0].for_each.into",
+        ),
+        (
+            workflow(json!([{"id": "t", "name": "t", "for_each": {"over": [], "as": "p"},
+                             "function": {"name": "log", "input": {"message": "m"}}}])),
+            "tasks[0].for_each",
+        ),
+        (
+            workflow(json!([{"id": "g", "for_each": {"over": [], "as": "p"},
+                             "tasks": [task("inner")]}])),
+            "tasks[0].for_each",
+        ),
+        (
+            json!({"id": "w", "name": "w",
+                   "loop": {"max": 3, "setup": [
+                       {"id": "s", "name": "s", "for_each": {"over": [], "as": ""},
+                        "function": {"name": "infer", "input": {}}}]},
+                   "tasks": [task("t")]}),
+            "loop.setup[0].for_each.as",
+        ),
+    ] {
+        let issues = Workflow::validate_authored(&for_each_json);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert_eq!(issues[0].code, IssueCode::InvalidForEach);
+        assert_eq!(issues[0].path.as_deref(), Some(expected_path), "{issues:?}");
+    }
+}
+
+#[test]
+fn a_for_each_that_is_not_an_object_falls_through_to_parse_failed() {
+    // A type error, like a non-integer `max`: the parse stage reports it.
+    let codes = codes(&for_each_workflow(json!("each")));
+    assert_eq!(codes, vec![IssueCode::ParseFailed]);
 }
 
 #[test]
@@ -327,6 +434,10 @@ fn empty_iff_the_workflow_loads() {
                "tasks": [task("t")]}),
         json!({"id": "w", "name": "w", "loop": {"max": 3, "init": 2, "over": []},
                "tasks": [task("t")]}),
+        // The full #61 shape, and the minimal one.
+        for_each_workflow(json!({"over": {"var": "data.ps"}, "as": "p", "max_concurrency": 8,
+                                 "collect": "temp_data.move", "into": "temp_data.moves"})),
+        for_each_workflow(json!({"over": [1, 2], "as": "p"})),
         // A group carrying `continue_on_error` loads: it is reported by
         // `check_workflow`, never here. An informational finding on the
         // authored side would break the biconditional this test states.

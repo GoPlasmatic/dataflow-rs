@@ -19,6 +19,7 @@
 //! sync — see the stages below.
 
 use crate::engine::compiler::TEMPLATE_KEY_ESCAPE;
+use crate::engine::for_each::ForEach;
 use crate::engine::functions::OnNull;
 use crate::engine::functions::config::{BuiltinKind, builtin_function_kind, can_dispatch_in};
 use crate::engine::functions::map::AuthoredMapping;
@@ -182,6 +183,13 @@ pub enum IssueCode {
     /// number, boolean or `null`), or `loop.init` is negative, which no array
     /// index can be. Reported at `loop.over` or `loop.init` respectively.
     LoopOverInvalid,
+    /// A task's `for_each` breaks one of its rules — `over` a scalar literal,
+    /// `as` not a slot path, `max_concurrency` of `0`, `collect` without
+    /// `into` or the reverse, a result path outside the context or
+    /// overlapping a binding — or sits on a built-in function, or on a task
+    /// group. Reported at the offending key, e.g.
+    /// `tasks[0].for_each.max_concurrency`, or at `…for_each` itself.
+    InvalidForEach,
     /// No handler will dispatch this function name, and it is not a built-in.
     /// Usually a typo or a handler the host forgot to register.
     UnknownFunction,
@@ -267,6 +275,7 @@ impl IssueCode {
             Self::LoopItemWithoutOver => "LOOP_ITEM_WITHOUT_OVER",
             Self::LoopSlotCollision => "LOOP_SLOT_COLLISION",
             Self::LoopOverInvalid => "LOOP_OVER_INVALID",
+            Self::InvalidForEach => "INVALID_FOR_EACH",
             Self::UnknownFunction => "UNKNOWN_FUNCTION",
             Self::MissingHandler => "MISSING_HANDLER",
             Self::InputParse => "INPUT_PARSE",
@@ -333,6 +342,7 @@ impl IssueCode {
             | Self::LoopItemWithoutOver
             | Self::LoopSlotCollision
             | Self::LoopOverInvalid
+            | Self::InvalidForEach
             | Self::ParseFailed
             | Self::ValidateFailed => Severity::Rejected,
         }
@@ -851,6 +861,12 @@ fn for_each_expression(
         let id = Some(task.id.as_str());
         check(&task.condition, "condition", id, Sink::Bool);
 
+        // Each element of `over` lands in `temp_data.<as>`, so it is a message
+        // write: it may not read a secret.
+        if let Some(for_each) = &task.for_each {
+            check(&for_each.over, "for_each.over", id, Sink::Message);
+        }
+
         match &task.function {
             FunctionConfig::Map { input, .. } => {
                 for (i, mapping) in input.mappings.iter().enumerate() {
@@ -1324,6 +1340,10 @@ fn check_steps<'a>(
             }
         }
 
+        if let Some(for_each) = step.node.get("for_each") {
+            check_for_each(&step.path, step.kind, step.node, for_each, id, issues);
+        }
+
         match step.kind {
             StepKind::Leaf => check_function(&step.path, step.node, id, issues),
             StepKind::Group => {
@@ -1358,6 +1378,48 @@ fn check_steps<'a>(
                 .with_step(id),
             ),
         }
+    }
+}
+
+/// The rules of a step's `for_each`, asked of the same [`ForEach::problem`]
+/// the parser's `Workflow::validate` applies — so this cannot report a
+/// `for_each` that loads, or miss one that is refused.
+///
+/// A `for_each` or `function` that does not even deserialize is a *type*
+/// error and is left to stage 2, like the other type errors here.
+fn check_for_each(
+    path: &str,
+    kind: StepKind,
+    node: &Value,
+    for_each: &Value,
+    id: Option<&str>,
+    issues: &mut Vec<WorkflowIssue>,
+) {
+    if !matches!(kind, StepKind::Leaf) {
+        issues.push(
+            WorkflowIssue::at(
+                IssueCode::InvalidForEach,
+                format!("{path}.for_each"),
+                "a task group cannot carry for_each — for_each runs one task's function \
+                 once per element; put it on the task",
+            )
+            .with_step(id),
+        );
+        return;
+    }
+    let (Ok(parsed), Some(Ok(function))) = (
+        ForEach::deserialize(for_each),
+        node.get("function").map(FunctionConfig::deserialize),
+    ) else {
+        return;
+    };
+    if let Some(problem) = parsed.problem(&function) {
+        let at = if problem.field.is_empty() {
+            format!("{path}.for_each")
+        } else {
+            format!("{path}.for_each.{}", problem.field)
+        };
+        issues.push(WorkflowIssue::at(IssueCode::InvalidForEach, at, problem.message).with_step(id));
     }
 }
 
@@ -1551,7 +1613,7 @@ mod tests {
     /// Every [`IssueCode`], for the checks below that must cover the whole
     /// vocabulary rather than a hand-picked subset. Kept complete by
     /// [`ordinal`] — see [`all_codes_lists_every_variant`].
-    const ALL_CODES: [IssueCode; 33] = [
+    const ALL_CODES: [IssueCode; 34] = [
         IssueCode::EmptyWorkflowId,
         IssueCode::EmptyWorkflowName,
         IssueCode::NoTasks,
@@ -1585,6 +1647,7 @@ mod tests {
         IssueCode::LoopItemWithoutOver,
         IssueCode::LoopSlotCollision,
         IssueCode::LoopOverInvalid,
+        IssueCode::InvalidForEach,
     ];
 
     /// A distinct index per variant, with **no wildcard arm**. Adding an
@@ -1624,6 +1687,7 @@ mod tests {
             IssueCode::LoopItemWithoutOver => 30,
             IssueCode::LoopSlotCollision => 31,
             IssueCode::LoopOverInvalid => 32,
+            IssueCode::InvalidForEach => 33,
         }
     }
 
