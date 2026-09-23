@@ -175,7 +175,7 @@ impl LogicCompiler {
             // Pre-split `temp_data.{counter}` so a loop sweep never re-splits
             // the write path.
             if let Some(loop_config) = workflow.loop_config.as_mut() {
-                loop_config.precompute_counter_path();
+                loop_config.precompute_paths();
             }
 
             // Compile the workflow condition (defaults to `true`, which folds

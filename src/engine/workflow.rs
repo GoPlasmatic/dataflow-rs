@@ -27,6 +27,15 @@ pub use crate::engine::rollout::{Rollout, RolloutError};
 /// To stop mid-body, use a `filter` task with `on_reject: halt` — that breaks
 /// the whole loop, not just the current sweep.
 ///
+/// # Iterating an array
+///
+/// [`setup`](Self::setup), [`over`](Self::over), [`item`](Self::item) (`as`)
+/// and [`scratch`](Self::scratch) turn the counter into a batch loop: setup
+/// runs once, `over` is evaluated once after it, and each iteration sees
+/// `over[counter]` in `temp_data.<as>` and a fresh `{}` in
+/// `temp_data.<scratch>`. A loop carrying none of them behaves exactly as a
+/// plain counter loop always has.
+///
 /// # Example
 ///
 /// ```json
@@ -37,7 +46,13 @@ pub use crate::engine::rollout::{Rollout, RolloutError};
 ///     "tasks": [ ... ]
 /// }
 /// ```
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+///
+/// `#[non_exhaustive]`: construct through [`LoopConfig::bounded`] and assign
+/// the public fields you need. The compiled fields are engine internals a
+/// struct literal would otherwise have to name. Not `PartialEq`: `setup` holds
+/// [`Task`]s, which are not comparable, and neither is the compiled `over`.
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
 pub struct LoopConfig {
     /// `temp_data` field the engine maintains as the induction variable —
     /// `"i"` means `temp_data.i`, and dot-paths nest (`"cursor.index"` →
@@ -67,19 +82,154 @@ pub struct LoopConfig {
     /// the condition being written correctly.
     pub max: i64,
 
+    /// Steps run **once**, before the first iteration, in the normal step
+    /// grammar: groups are allowed, and `terminal` ends the workflow before
+    /// any iteration. Their audit entries carry no `loop_counter`, because
+    /// setup is not a sweep. Shares the step id namespace with the workflow's
+    /// `tasks`.
+    ///
+    /// The workflow `condition` gates setup: a false result skips setup and
+    /// the loop alike.
+    #[serde(default, deserialize_with = "crate::engine::steps::flatten")]
+    pub setup: Vec<Task>,
+
+    /// JSONLogic evaluated **once, after setup**. It must yield an array;
+    /// anything else, `null` included, is a workflow error naming
+    /// `loop.over`. An empty array runs zero iterations.
+    ///
+    /// The counter indexes the array: iteration `k` holds `over[k]` in
+    /// `temp_data.<as>`, and the loop stops at `max` or at the array's end,
+    /// whichever comes first. `init` is therefore a starting offset and
+    /// `increment` a stride, and `init` must be `>= 0`.
+    ///
+    /// An explicit `"over": null` is kept as `Some(Value::Null)` rather than
+    /// read as absence, so it is refused like any other literal that can never
+    /// be an array instead of silently turning the loop into a counter loop.
+    #[serde(default, deserialize_with = "present_value")]
+    pub over: Option<Value>,
+
+    /// `temp_data` field holding the current element of [`Self::over`]. The
+    /// JSON key is `as`. Optional: without it the element is not exposed, but
+    /// the loop is still bounded by the array's length. Requires `over`.
+    #[serde(default, rename = "as")]
+    pub item: Option<String>,
+
+    /// `temp_data` field reset to `{}` at the start of **every** iteration,
+    /// before the condition, so per-item state cannot leak from one element
+    /// to the next. Left holding the last iteration's state after the loop,
+    /// like the counter. Independent of `over`.
+    #[serde(default)]
+    pub scratch: Option<String>,
+
     /// Engine-internal: `["temp_data", ..counter segments]`, populated by
     /// `LogicCompiler`. Empty when `counter` is `None`. Not part of the stable
     /// API.
     #[doc(hidden)]
     #[serde(skip)]
     pub counter_parts: Arc<[Arc<str>]>,
+
+    /// Engine-internal: pre-split `temp_data.{as}`. Not part of the stable API.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub item_parts: Arc<[Arc<str>]>,
+
+    /// Engine-internal: pre-split `temp_data.{scratch}`. Not part of the
+    /// stable API.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub scratch_parts: Arc<[Arc<str>]>,
+
+    /// Engine-internal: compiled `over`, populated by `LogicCompiler`. Not
+    /// part of the stable API.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub compiled_over: Option<Arc<Logic>>,
 }
 
 fn default_increment() -> i64 {
     1
 }
 
+/// `deserialize_with` target that keeps an explicit JSON `null` as
+/// `Some(Value::Null)`. Absence still gives `None`, through `#[serde(default)]`.
+fn present_value<'de, D>(deserializer: D) -> std::result::Result<Option<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
+}
+
+/// The pre-split form of an unnamed slot: `set_nested_value_parts` treats an
+/// empty slice as a no-op write.
+fn no_parts() -> Arc<[Arc<str>]> {
+    Arc::from([] as [Arc<str>; 0])
+}
+
+/// Whether `path` is a well-formed `temp_data` field path: non-empty, with no
+/// empty segment. The one rule `counter`, `as` and `scratch` share.
+pub(crate) fn is_slot_path(path: &str) -> bool {
+    !path.is_empty() && !path.split('.').any(str::is_empty)
+}
+
+/// Whether two slot paths name the same key or one lies inside the other:
+/// `it` and `it.item` overlap, `it` and `item` do not. A reset of the outer
+/// slot would wipe the inner one, so the engine refuses to own both.
+pub(crate) fn slots_overlap(a: &str, b: &str) -> bool {
+    fn within(outer: &str, inner: &str) -> bool {
+        inner
+            .strip_prefix(outer)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+    }
+    within(a, b) || within(b, a)
+}
+
+/// Why a literal `over` could never yield an array, if it is one.
+///
+/// An object is an expression and an array is itself; any other JSON literal
+/// is a constant that is not an array, so the loop would fail on every
+/// message. Shared by [`LoopConfig`]'s validation and the authoring check.
+pub(crate) fn over_literal_problem(over: &Value) -> Option<String> {
+    let kind = match over {
+        Value::Object(_) | Value::Array(_) => return None,
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+    };
+    Some(format!(
+        "loop over must be a JSONLogic expression or an array literal — \
+         {kind} can never evaluate to an array"
+    ))
+}
+
 impl LoopConfig {
+    /// A loop bounded at `max`, every other field at its default: counter
+    /// unnamed, `init: 0`, `increment: 1`, no setup, no `over`.
+    ///
+    /// ```
+    /// use dataflow_rs::engine::workflow::LoopConfig;
+    ///
+    /// let mut config = LoopConfig::bounded(10);
+    /// config.counter = Some("i".to_string());
+    /// assert_eq!((config.init, config.increment, config.max), (0, 1, 10));
+    /// ```
+    pub fn bounded(max: i64) -> Self {
+        Self {
+            counter: None,
+            init: 0,
+            increment: default_increment(),
+            max,
+            setup: Vec::new(),
+            over: None,
+            item: None,
+            scratch: None,
+            counter_parts: no_parts(),
+            item_parts: no_parts(),
+            scratch_parts: no_parts(),
+            compiled_over: None,
+        }
+    }
+
     /// Structural validation, run from [`Workflow::validate`] at
     /// `Engine::build()` time. Every rule here rejects a config that could
     /// only fail — or spin — at runtime.
@@ -98,27 +248,80 @@ impl LoopConfig {
                 self.max, self.init
             )));
         }
-        if let Some(counter) = &self.counter
-            && (counter.is_empty() || counter.split('.').any(str::is_empty))
-        {
+        for (field, slot) in [
+            ("counter", &self.counter),
+            ("as", &self.item),
+            ("scratch", &self.scratch),
+        ] {
+            if let Some(path) = slot
+                && !is_slot_path(path)
+            {
+                return Err(DataflowError::Workflow(format!(
+                    "Workflow {workflow_id}: loop {field} must be a non-empty \
+                     temp_data field path, got {path:?}"
+                )));
+            }
+        }
+        if self.item.is_some() && self.over.is_none() {
             return Err(DataflowError::Workflow(format!(
-                "Workflow {workflow_id}: loop counter must be a non-empty \
-                     temp_data field path, got {counter:?}"
+                "Workflow {workflow_id}: loop `as` names a slot for the current element, \
+                 but there is no `over` to take elements from"
             )));
+        }
+        if let Some(over) = &self.over {
+            if let Some(problem) = over_literal_problem(over) {
+                return Err(DataflowError::Workflow(format!(
+                    "Workflow {workflow_id}: {problem}"
+                )));
+            }
+            if self.init < 0 {
+                return Err(DataflowError::Workflow(format!(
+                    "Workflow {workflow_id}: loop init must be >= 0 when over is set — \
+                     the counter indexes the array, got {}",
+                    self.init
+                )));
+            }
+        }
+        // Each engine-owned slot is its own path: a per-iteration reset of
+        // `scratch` that also wiped `as`, or a counter written over the
+        // element, would be exactly the silent leak this exists to end.
+        let slots = [
+            ("counter", self.counter.as_deref()),
+            ("as", self.item.as_deref()),
+            ("scratch", self.scratch.as_deref()),
+        ];
+        for (i, (name_a, a)) in slots.iter().enumerate() {
+            for (name_b, b) in &slots[i + 1..] {
+                if let (Some(a), Some(b)) = (a, b)
+                    && slots_overlap(a, b)
+                {
+                    return Err(DataflowError::Workflow(format!(
+                        "Workflow {workflow_id}: loop {name_a} ({a:?}) and {name_b} ({b:?}) \
+                         overlap — each engine-owned slot must be its own temp_data path"
+                    )));
+                }
+            }
         }
         Ok(())
     }
 
-    /// Pre-split `temp_data.{counter}` into the path parts the executor writes
-    /// through, so a sweep never re-splits the path. Populated by
-    /// `LogicCompiler`; the executor falls back to splitting on the fly for
-    /// workflows constructed directly rather than through `Engine::builder`.
+    /// Pre-split the three `temp_data.{…}` slots into the path parts the
+    /// executor writes through, so an iteration never re-splits a path.
+    /// Populated by `LogicCompiler`; the executor falls back to splitting on
+    /// the fly for workflows constructed directly rather than through
+    /// `Engine::builder`. An unnamed slot yields an empty slice, which
+    /// `set_nested_value_parts` treats as a no-op.
     #[doc(hidden)]
-    pub fn precompute_counter_path(&mut self) {
-        self.counter_parts = match &self.counter {
-            Some(counter) => crate::engine::utils::compute_path_parts("temp_data", counter),
-            None => Arc::from([] as [Arc<str>; 0]),
-        };
+    pub fn precompute_paths(&mut self) {
+        fn parts(name: Option<&str>) -> Arc<[Arc<str>]> {
+            match name {
+                Some(name) => crate::engine::utils::compute_path_parts("temp_data", name),
+                None => no_parts(),
+            }
+        }
+        self.counter_parts = parts(self.counter.as_deref());
+        self.item_parts = parts(self.item.as_deref());
+        self.scratch_parts = parts(self.scratch.as_deref());
     }
 }
 
@@ -331,7 +534,7 @@ impl Workflow {
         // id namespace: both name a step, both surface in traces and error
         // messages, and a collision would make either ambiguous.
         let mut step_ids = std::collections::HashSet::new();
-        for task in &self.tasks {
+        for task in self.all_tasks() {
             for group in &task.group_starts {
                 if !step_ids.insert(group.id.as_str()) {
                     return Err(DataflowError::Workflow(format!(
@@ -383,7 +586,31 @@ pub struct ConnectorRef<'a> {
 }
 
 impl Workflow {
+    /// Every task this workflow can run, in execution order: the loop's
+    /// `setup` list first, then the body.
+    ///
+    /// The one iteration a pass over "all the tasks" should use. `tasks`
+    /// alone misses setup, and a check that reads only `tasks` (a handler
+    /// lookup, a secret scan, a lint) would silently pass a setup step it
+    /// should have refused.
+    pub fn all_tasks(&self) -> impl Iterator<Item = &Task> {
+        self.loop_config
+            .iter()
+            .flat_map(|l| l.setup.iter())
+            .chain(self.tasks.iter())
+    }
+
+    /// Mutable [`Self::all_tasks`], for the compiler's per-task passes.
+    pub(crate) fn all_tasks_mut(&mut self) -> impl Iterator<Item = &mut Task> {
+        self.loop_config
+            .iter_mut()
+            .flat_map(|l| l.setup.iter_mut())
+            .chain(self.tasks.iter_mut())
+    }
+
     /// Every connector reference in this workflow, in task order.
+    ///
+    /// Setup steps of a `loop` come first, as they run first.
     ///
     /// Tasks whose function names no connector are skipped. One item is yielded
     /// per *task*, not per distinct connector: two tasks on the same connector
@@ -398,7 +625,7 @@ impl Workflow {
     pub fn connector_refs(&self) -> impl Iterator<Item = ConnectorRef<'_>> {
         // `move` is load-bearing: it copies the `&Workflow` into the closure so
         // the returned iterator does not borrow a local.
-        self.tasks.iter().filter_map(move |task| {
+        self.all_tasks().filter_map(move |task| {
             task.function.connector().map(|connector| ConnectorRef {
                 workflow_id: &self.id,
                 task_id: &task.id,
@@ -710,7 +937,7 @@ mod tests {
                 .expect("valid loop")
                 .loop_config
                 .expect("loop config present");
-            cfg.precompute_counter_path();
+            cfg.precompute_paths();
             let parts: Vec<&str> = cfg.counter_parts.iter().map(Arc::as_ref).collect();
             assert_eq!(parts, expected, "for counter {counter:?}");
         }
@@ -724,9 +951,9 @@ mod tests {
             .expect("valid loop")
             .loop_config
             .expect("loop config present");
-        cfg.precompute_counter_path();
+        cfg.precompute_paths();
         let first: Vec<Arc<str>> = cfg.counter_parts.to_vec();
-        cfg.precompute_counter_path();
+        cfg.precompute_paths();
         assert_eq!(cfg.counter_parts.to_vec(), first);
     }
 
@@ -823,7 +1050,7 @@ mod tests {
             "uncompiled workflows start with no pre-split path"
         );
 
-        cfg.precompute_counter_path();
+        cfg.precompute_paths();
 
         let parts: Vec<&str> = cfg.counter_parts.iter().map(Arc::as_ref).collect();
         assert_eq!(parts, ["temp_data", "cursor", "index"]);
@@ -835,8 +1062,190 @@ mod tests {
             .expect("valid loop")
             .loop_config
             .expect("loop config present");
-        cfg.precompute_counter_path();
+        cfg.precompute_paths();
         assert!(cfg.counter_parts.is_empty());
+    }
+
+    #[test]
+    fn loop_config_parses_setup_over_as_and_scratch() {
+        let cfg = loop_wf(
+            r#"{"counter": "i", "max": 64, "as": "item", "scratch": "it",
+                "over": {"var": "temp_data.batch.items"},
+                "setup": [
+                  {"id": "claim", "name": "claim", "function": {"name": "map", "input": {"mappings": []}}},
+                  {"id": "read", "condition": true, "tasks": [
+                    {"id": "batch", "name": "batch", "function": {"name": "map", "input": {"mappings": []}}}
+                  ]}
+                ]}"#,
+        )
+        .expect("valid loop")
+        .loop_config
+        .expect("loop config present");
+        let setup_ids: Vec<&str> = cfg.setup.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(setup_ids, ["claim", "batch"], "setup is flattened like tasks");
+        assert_eq!(
+            cfg.setup[1].group_starts.len(),
+            1,
+            "the group span is recorded"
+        );
+        assert_eq!(cfg.item.as_deref(), Some("item"));
+        assert_eq!(cfg.scratch.as_deref(), Some("it"));
+        assert!(cfg.over.is_some());
+        assert!(
+            cfg.compiled_over.is_none(),
+            "uncompiled until the engine builds"
+        );
+    }
+
+    #[test]
+    fn a_counter_only_loop_has_no_setup_over_as_or_scratch() {
+        let cfg = loop_wf(r#"{"max": 5}"#).unwrap().loop_config.unwrap();
+        assert!(cfg.setup.is_empty());
+        assert!(cfg.over.is_none());
+        assert!(cfg.item.is_none());
+        assert!(cfg.scratch.is_none());
+
+        let bounded = LoopConfig::bounded(5);
+        assert_eq!(
+            (bounded.init, bounded.increment, bounded.max),
+            (0, 1, 5),
+            "bounded() lands on the serde defaults"
+        );
+        assert!(bounded.setup.is_empty() && bounded.over.is_none());
+        assert!(bounded.counter.is_none() && bounded.item.is_none() && bounded.scratch.is_none());
+    }
+
+    #[test]
+    fn loop_config_rejects_as_without_over() {
+        let err = loop_wf(r#"{"max": 5, "as": "item"}"#).expect_err("as needs over");
+        assert!(err.to_string().contains("no `over`"), "got: {err}");
+        assert!(loop_wf(r#"{"max": 5, "over": {"var": "data.items"}, "as": "item"}"#).is_ok());
+        assert!(
+            loop_wf(r#"{"max": 5, "over": {"var": "data.items"}}"#).is_ok(),
+            "as is optional"
+        );
+    }
+
+    #[test]
+    fn loop_config_rejects_a_scalar_over_literal() {
+        for over in [r#""data.items""#, "5", "true", "null"] {
+            let json = format!(r#"{{"max": 5, "over": {over}}}"#);
+            assert!(loop_wf(&json).is_err(), "{json} must be rejected");
+        }
+        for over in [r#"{"var": "data.items"}"#, "[1, 2, 3]", "[]"] {
+            let json = format!(r#"{{"max": 5, "over": {over}}}"#);
+            assert!(
+                loop_wf(&json).is_ok(),
+                "{json} is an expression or an array literal"
+            );
+        }
+    }
+
+    #[test]
+    fn loop_config_rejects_a_negative_init_with_over() {
+        assert!(loop_wf(r#"{"init": -1, "max": 5, "over": []}"#).is_err());
+        assert!(
+            loop_wf(r#"{"init": -1, "max": 5}"#).is_ok(),
+            "fine without over, as today"
+        );
+        assert!(
+            loop_wf(r#"{"init": 2, "max": 5, "over": []}"#).is_ok(),
+            "an offset is fine"
+        );
+    }
+
+    #[test]
+    fn loop_config_slot_path_and_collision_matrix() {
+        for (counter, item, scratch, valid) in [
+            ("i", "item", "it", true),
+            ("i", "it.item", "scratch", true),
+            ("a.b", "a.c", "a.d", true),
+            ("i", "i", "it", false),          // as == counter
+            ("i", "item", "item", false),     // scratch == as
+            ("it", "it.item", "x", false),    // as inside the counter
+            ("i", "item", "item.x", false),   // scratch inside as
+            ("it.x", "item", "it", false),    // counter inside scratch
+        ] {
+            let json = format!(
+                r#"{{"max": 5, "over": [], "counter": "{counter}", "as": "{item}", "scratch": "{scratch}"}}"#
+            );
+            assert_eq!(loop_wf(&json).is_ok(), valid, "{json}");
+        }
+        for (field, path) in [
+            ("as", ""),
+            ("as", "a..b"),
+            ("scratch", "."),
+            ("scratch", "a."),
+        ] {
+            let json = format!(r#"{{"max": 5, "over": [], "{field}": "{path}"}}"#);
+            assert!(loop_wf(&json).is_err(), "{json} is a malformed slot path");
+        }
+    }
+
+    #[test]
+    fn slots_overlap_is_segment_aware() {
+        assert!(slots_overlap("it", "it"));
+        assert!(slots_overlap("it", "it.item"));
+        assert!(slots_overlap("it.item", "it"));
+        assert!(!slots_overlap("it", "item"), "a shared prefix is not nesting");
+        assert!(!slots_overlap("a.b", "a.c"));
+    }
+
+    #[test]
+    fn a_setup_step_sharing_an_id_with_a_body_task_is_rejected() {
+        let workflow = Workflow::from_json(&format!(
+            r#"{{ "id": "w", "name": "w",
+                  "loop": {{"max": 5, "setup": [{MAP}]}},
+                  "tasks": [{MAP}] }}"#
+        ))
+        .expect("parses");
+        let err = workflow
+            .validate()
+            .expect_err("setup and body share one id namespace");
+        assert!(err.to_string().contains("Duplicate"), "got: {err}");
+    }
+
+    #[test]
+    fn a_setup_group_carrying_halt_on_is_refused_at_parse() {
+        let err = Workflow::from_json(&format!(
+            r#"{{ "id": "w", "name": "w",
+                  "loop": {{"max": 5, "setup": [
+                    {{"id": "g", "halt_on": "failure", "tasks": [{MAP}]}}]}},
+                  "tasks": [{LOG}] }}"#
+        ))
+        .expect_err("the step grammar applies to setup");
+        assert!(err.to_string().contains("halt_on"), "got: {err}");
+    }
+
+    #[test]
+    fn all_tasks_yields_setup_then_body_and_connector_refs_covers_setup() {
+        let workflow = Workflow::from_json(&format!(
+            r#"{{ "id": "w", "name": "w",
+                  "loop": {{"max": 5, "setup": [{HTTP}]}},
+                  "tasks": [{MAP}, {KAFKA}] }}"#
+        ))
+        .expect("parses");
+        let ids: Vec<&str> = workflow.all_tasks().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["call", "m", "pub"]);
+        let refs: Vec<&str> = workflow.connector_refs().map(|r| r.task_id).collect();
+        assert_eq!(refs, ["call", "pub"], "the setup connector is reported first");
+        assert_eq!(wf(MAP).all_tasks().count(), 1, "no loop: just the body");
+    }
+
+    #[test]
+    fn precompute_paths_fills_all_three_slots() {
+        let mut cfg = loop_wf(
+            r#"{"max": 5, "counter": "i", "over": [], "as": "it.item", "scratch": "scr"}"#,
+        )
+        .unwrap()
+        .loop_config
+        .unwrap();
+        assert!(cfg.item_parts.is_empty() && cfg.scratch_parts.is_empty());
+        cfg.precompute_paths();
+        let parts = |p: &Arc<[Arc<str>]>| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(parts(&cfg.counter_parts), ["temp_data", "i"]);
+        assert_eq!(parts(&cfg.item_parts), ["temp_data", "it", "item"]);
+        assert_eq!(parts(&cfg.scratch_parts), ["temp_data", "scr"]);
     }
 
     #[test]
