@@ -5,6 +5,7 @@ import { useTaskDebugState, useTaskConditionDebugState, useMappingDebugState, us
 import { TreeNode } from './TreeNode';
 import { TREE_COLORS } from './colors';
 import { NODE_IDS } from '../constants';
+import { ForEachBadge } from '../cards';
 import { describeMappingPath } from '../../../utils/dataUtils';
 
 interface TaskNodeProps {
@@ -133,6 +134,7 @@ export function TaskNode({
       label={task.name}
       icon={<Box size={14} />}
       iconColor={TREE_COLORS.task}
+      badge={<ForEachBadge forEach={task.for_each} />}
       isExpanded={isExpanded}
       isSelected={isTaskSelected}
       hasChildren={hasChildren}

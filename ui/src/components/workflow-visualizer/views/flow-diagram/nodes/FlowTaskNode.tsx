@@ -1,7 +1,9 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { AlertTriangle, CircleStop, ShieldX } from 'lucide-react';
+import { AlertTriangle, CircleStop, ShieldX, Split } from 'lucide-react';
 import { FunctionTypeBadge } from '../../../cards/FunctionTypeBadge';
+import type { ForEach } from '../../../../../types';
+import { forEachBadgeLabel, forEachDescription } from '../../../../../types';
 
 export interface FlowTaskData {
   taskName: string;
@@ -10,11 +12,13 @@ export interface FlowTaskData {
   continueOnError?: boolean;
   terminal?: boolean;
   haltOn?: 'never' | 'failure';
+  /** The task's fan-out, when it runs once per element. */
+  forEach?: ForEach;
   [key: string]: unknown;
 }
 
 export const FlowTaskNode = memo(function FlowTaskNode({ data }: NodeProps) {
-  const { taskName, functionName, description, continueOnError, terminal, haltOn } =
+  const { taskName, functionName, description, continueOnError, terminal, haltOn, forEach } =
     data as FlowTaskData;
 
   return (
@@ -43,6 +47,12 @@ export const FlowTaskNode = memo(function FlowTaskNode({ data }: NodeProps) {
       </div>
       <div className="df-flow-task-node-badge">
         <FunctionTypeBadge functionName={functionName} />
+        {forEach && (
+          <span className="df-flow-task-node-for-each" title={forEachDescription(forEach)}>
+            <Split size={11} />
+            <span>{forEachBadgeLabel(forEach)}</span>
+          </span>
+        )}
       </div>
       {description && (
         <div className="df-flow-task-node-desc">{description}</div>

@@ -3,3 +3,4 @@ export { TaskRow } from './TaskRow';
 export { FunctionTypeBadge } from './FunctionTypeBadge';
 export { ConditionBadge } from './ConditionBadge';
 export { LoopBadge } from './LoopBadge';
+export { ForEachBadge } from './ForEachBadge';

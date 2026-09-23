@@ -61,6 +61,8 @@ export interface ErrorInfo {
    * form, so treat it as diagnostic output rather than a user-facing message.
    */
   detail?: string;
+  /** Index of the fan-out element this error came from, when it came from one. */
+  element_index?: number;
 }
 
 /**
@@ -84,6 +86,11 @@ export interface AuditTrail {
    * its meaning (the array index, for per-item loops).
    */
   loop_counter?: number;
+  /**
+   * Index of the element this entry records, for one call of a task's
+   * `for_each`. Absent otherwise. A fan-out records one entry per element.
+   */
+  element_index?: number;
 }
 
 /**
@@ -148,6 +155,11 @@ export interface ExecutionStep {
    * execution.
    */
   loop_counter?: number;
+  /**
+   * Index of the element this step ran for, inside a task's `for_each`.
+   * Absent otherwise.
+   */
+  element_index?: number;
 }
 
 /**

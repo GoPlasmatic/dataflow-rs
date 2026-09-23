@@ -366,6 +366,7 @@ Exported alongside the types, for code that walks definitions or traces:
   `INTEGRATION_FUNCTION_NAMES` — the three config-only built-ins that need a
   handler registered by the host.
 - **Loops:** `loopBadgeLabel`, `loopGuardLabel`, `loopStepLabel`, `loopDescription`
+- **Fan-out:** `forEachBadgeLabel`, `forEachDescription`
 - **Debug:** `createEmptyMessage`, `cloneMessage`, `getMessageAtStep`,
   `getChangesAtStep`, `getWorkflowState`, `getTaskState`, `traceHasSnapshots`
 
@@ -373,7 +374,7 @@ Exported alongside the types, for code that walks definitions or traces:
 
 `Workflow`, `Task`, `TaskGroup`, `Step`, `FunctionConfig`, `JsonLogicValue`,
 `MapMapping`, `MappingItem`, `MapFunctionInput`, `ValidationRule`,
-`ValidationFunctionInput`, `BuiltinFunctionType`, `LoopConfig`,
+`ValidationFunctionInput`, `BuiltinFunctionType`, `LoopConfig`, `ForEach`,
 `WorkflowStatus`, `Rollout`, `Message`,
 `ErrorInfo`, `Change`, `AuditTrail`, `DebugNodeState`, `ConditionResult`,
 `ExecutionStep`, `ExecutionTrace`, `StepResult`, `PlaybackState`,

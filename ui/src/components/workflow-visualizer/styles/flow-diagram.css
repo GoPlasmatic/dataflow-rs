@@ -263,6 +263,22 @@
   flex-shrink: 0;
 }
 
+/* `for_each`: the task runs once per element. Sits beside the function badge
+   rather than among the header's stop signals — it changes how often the task
+   runs, not whether the workflow continues. */
+.df-flow-task-node-for-each {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--sig-collection);
+  border: 1px solid currentColor;
+  vertical-align: middle;
+}
+
 .df-flow-task-node-badge {
   margin-bottom: 4px;
 }

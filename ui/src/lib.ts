@@ -63,6 +63,7 @@ export type {
   ValidationFunctionInput,
   BuiltinFunctionType,
   LoopConfig,
+  ForEach,
   WorkflowStatus,
   Rollout,
   // Debug types
@@ -97,6 +98,8 @@ export {
   loopGuardLabel,
   loopStepLabel,
   loopDescription,
+  forEachBadgeLabel,
+  forEachDescription,
   // Debug helpers
   createEmptyMessage,
   cloneMessage,

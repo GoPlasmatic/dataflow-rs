@@ -72,6 +72,32 @@ export interface Task {
    * error.
    */
   halt_on?: "never" | "failure";
+  /**
+   * Run this task's function once per element of an array. Absent runs it
+   * once. Only handler-backed functions (`http_call`, `enrich`,
+   * `publish_kafka`, custom) may fan out.
+   */
+  for_each?: ForEach;
+}
+
+/**
+ * A task's fan-out. Mirrors `ForEach` in `src/engine/for_each.rs`.
+ *
+ * Every call runs against its own copy of the message, and the calls are
+ * folded back in element order — so `max_concurrency` changes timing, never
+ * results.
+ */
+export interface ForEach {
+  /** JSONLogic evaluated once. Must yield an array. */
+  over: JsonLogicValue;
+  /** `temp_data` field holding the element in each call; the index is at `<as>_index`. */
+  as: string;
+  /** Calls in flight at once. Defaults to 1. */
+  max_concurrency?: number;
+  /** Context path each call writes its result to. Requires `into`. */
+  collect?: string;
+  /** Context path receiving the results as an array, `null` for a failed element. */
+  into?: string;
 }
 
 /**
@@ -474,6 +500,29 @@ export function loopGuardLabel(loop: LoopConfig): string {
 export function loopStepLabel(loop: LoopConfig): string {
   const increment = loop.increment ?? LOOP_INCREMENT_DEFAULT;
   return loop.counter ? `${loop.counter} += ${increment}` : 'next sweep';
+}
+
+/**
+ * Short chip text for a fan-out: `each p`, or `each p ×8` when calls run
+ * concurrently.
+ */
+export function forEachBadgeLabel(forEach: ForEach): string {
+  const concurrency = forEach.max_concurrency ?? 1;
+  return concurrency > 1 ? `each ${forEach.as} ×${concurrency}` : `each ${forEach.as}`;
+}
+
+/** Full-sentence description of a fan-out, for a `title` tooltip. */
+export function forEachDescription(forEach: ForEach): string {
+  const concurrency = forEach.max_concurrency ?? 1;
+  const pace =
+    concurrency > 1 ? `up to ${concurrency} calls at a time` : 'one call at a time';
+  const results = forEach.into
+    ? ` Results land in ${forEach.into}, in element order.`
+    : '';
+  return (
+    `Runs once per element of \`over\`, ${pace}, with the element at ` +
+    `temp_data.${forEach.as} and its index at temp_data.${forEach.as}_index.${results}`
+  );
 }
 
 /** Full-sentence description of the loop contract, for a `title` tooltip. */
