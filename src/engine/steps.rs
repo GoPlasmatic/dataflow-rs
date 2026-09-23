@@ -137,12 +137,38 @@ pub struct AuthoredStep<'a> {
 /// ]);
 /// ```
 pub fn walk_authored_steps(tasks: &Value) -> AuthoredSteps<'_> {
+    walk_authored_steps_at(tasks, "tasks")
+}
+
+/// [`walk_authored_steps`] with the paths rooted at `prefix` instead of
+/// `tasks`.
+///
+/// A loop's `setup` is a second step list on the workflow, and an issue in it
+/// has to point at `loop.setup[1].tasks[0]` — the coordinate the author typed.
+/// `walk_authored_steps_at(setup, "loop.setup")` yields exactly that.
+///
+/// ```
+/// use dataflow_rs::engine::steps::walk_authored_steps_at;
+/// use serde_json::json;
+///
+/// let setup = json!([
+///     {"id": "claim", "function": {"name": "map", "input": {"mappings": []}}},
+///     {"id": "g", "tasks": [
+///         {"id": "read", "function": {"name": "map", "input": {"mappings": []}}}
+///     ]}
+/// ]);
+/// let paths: Vec<String> = walk_authored_steps_at(&setup, "loop.setup")
+///     .map(|s| s.path)
+///     .collect();
+/// assert_eq!(paths, ["loop.setup[0]", "loop.setup[1]", "loop.setup[1].tasks[0]"]);
+/// ```
+pub fn walk_authored_steps_at<'a>(steps: &'a Value, prefix: &str) -> AuthoredSteps<'a> {
     AuthoredSteps {
-        stack: match tasks.as_array() {
+        stack: match steps.as_array() {
             Some(items) => vec![Frame {
                 items,
                 idx: 0,
-                prefix: "tasks".to_string(),
+                prefix: prefix.to_string(),
                 depth: 0,
             }],
             // Not an array: nothing to walk. The caller reports the shape.
@@ -573,6 +599,24 @@ mod tests {
                 "not an array, so nothing to walk: {input}"
             );
         }
+    }
+
+    #[test]
+    fn a_prefixed_walk_roots_every_path_at_the_prefix() {
+        let setup = json!([
+            leaf("claim"),
+            {"id": "g", "condition": true, "tasks": [leaf("batch")]},
+        ]);
+        let paths: Vec<String> = walk_authored_steps_at(&setup, "loop.setup")
+            .map(|s| s.path)
+            .collect();
+        assert_eq!(
+            paths,
+            vec!["loop.setup[0]", "loop.setup[1]", "loop.setup[1].tasks[0]"]
+        );
+        // The unprefixed walker is the `tasks` spelling of the same walk.
+        let plain: Vec<String> = walk_authored_steps(&setup).map(|s| s.path).collect();
+        assert_eq!(plain, vec!["tasks[0]", "tasks[1]", "tasks[1].tasks[0]"]);
     }
 
     #[test]

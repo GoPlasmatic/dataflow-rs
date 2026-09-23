@@ -243,6 +243,7 @@ pub use engine::observer::{
 };
 pub use engine::steps::{
     AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
+    walk_authored_steps_at,
 };
 pub use engine::task_context::TaskContext;
 pub use engine::task_outcome::{HALT_STATUS_CODE, TaskOutcome};
