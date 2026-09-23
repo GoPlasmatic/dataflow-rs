@@ -108,7 +108,8 @@ pub struct WorkflowFinished<'a> {
     pub duration: Duration,
     /// Sweeps run. `1` for a workflow with no `loop`; a looping workflow
     /// reports one event for the whole loop, with the count here — per-sweep
-    /// events would explode cardinality.
+    /// events would explode cardinality. Iterations only: a loop's `setup`
+    /// pass is not counted, so a loop over an empty array reports `0`.
     pub sweeps: u32,
     /// Whether the workflow ended by halting rather than running out of tasks.
     pub halted: bool,
