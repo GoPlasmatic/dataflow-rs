@@ -94,8 +94,13 @@ export interface Change {
   path: string;
   /** Previous value */
   old_value: unknown;
-  /** New value */
+  /** New value — `null` when `removed` */
   new_value: unknown;
+  /**
+   * The key was removed rather than written. Present only on a removal;
+   * `new_value` is then `null`.
+   */
+  removed?: boolean;
 }
 
 /**

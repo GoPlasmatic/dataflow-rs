@@ -115,8 +115,8 @@ pub fn dispatchable_functions(&self) -> impl Iterator<Item = DispatchableFunctio
 // will not reject it for these reasons. Covers UnknownFunction,
 // MissingHandler, InputParse, TemplateCompile, UnknownSecret,
 // SecretInMessageWrite, InvalidSecretStore, DuplicateTemplateKey — plus
-// UnguardedValidation, GroupContinueOnError and EscapedTemplateKey, which are
-// Severity::Advisory and never refused by build(), and MissingHandler, which
+// UnguardedValidation, GroupContinueOnError, EscapedTemplateKey and
+// NullMapping, which are Severity::Advisory and never refused by build(), and MissingHandler, which
 // is Severity::Defect: build() accepts it and every message then fails.
 pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue>
 
@@ -214,17 +214,18 @@ string literal has no protection against a typo that compiles and silently
 never matches. Its variants cover the structural rules —
 `EmptyWorkflowId`, `EmptyWorkflowName`, `NoTasks`, `MissingStepId`,
 `DuplicateStepId`, `EmptyGroup`, `GroupTooDeep`, `MissingFunction`,
-`InvalidFunctionName`, `InvalidTerminal`, `InvalidHaltOn`,
+`InvalidFunctionName`, `InvalidTerminal`, `InvalidHaltOn`, `InvalidMapping`,
 `LoopIncrementTooSmall`, `LoopBoundEmpty`, `LoopCounterInvalid` — the lints
-`check_workflow` adds — `UnguardedValidation`, `GroupContinueOnError` — the
+`check_workflow` adds — `UnguardedValidation`, `GroupContinueOnError`,
+`NullMapping` — the
 registry and secret rules — `UnknownFunction`, `MissingHandler`, `InputParse`,
 `TemplateCompile`, `UnknownSecret`, `SecretInMessageWrite`,
 `InvalidSecretStore`, `DuplicateTemplateKey`, `EscapedTemplateKey` — and the two
 backstops, `ParseFailed` and `ValidateFailed`.
 
-Three codes are `Severity::Advisory` — `EscapedTemplateKey`,
-`UnguardedValidation` and `GroupContinueOnError`: `check_workflow` reports them
-and `build()` never refuses them. `EscapedTemplateKey` lists every `$`-prefixed
+Four codes are `Severity::Advisory` — `EscapedTemplateKey`,
+`UnguardedValidation`, `GroupContinueOnError` and `NullMapping`:
+`check_workflow` reports them and `build()` never refuses them. `EscapedTemplateKey` lists every `$`-prefixed
 template key, so a host upgrading to 3.9 can find each place the escape changed
 what a template emits. `DuplicateTemplateKey`, by contrast, is always a bug and
 is refused. Ask `severity()` rather than keeping a list of which codes are
@@ -817,6 +818,9 @@ pub struct Change {
     pub path: Arc<str>,
     pub old_value: OwnedDataValue,
     pub new_value: OwnedDataValue,
+    /// A removal (`map`'s `unset`); `new_value` is then null. Omitted from
+    /// JSON when false.
+    pub removed: bool,
 }
 ```
 

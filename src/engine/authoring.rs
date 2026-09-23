@@ -19,12 +19,15 @@
 //! sync — see the stages below.
 
 use crate::engine::compiler::TEMPLATE_KEY_ESCAPE;
+use crate::engine::functions::OnNull;
 use crate::engine::functions::config::{BuiltinKind, builtin_function_kind, can_dispatch_in};
+use crate::engine::functions::map::AuthoredMapping;
 use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig, TemplateCompiler};
 use crate::engine::secrets::{SECRET_OPERATOR, Secrets};
 use crate::engine::steps::{StepKind, walk_authored_steps};
 use crate::engine::task::HaltOn;
 use crate::engine::workflow::Workflow;
+use datavalue::OwnedDataValue;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -143,6 +146,23 @@ pub enum IssueCode {
     /// and may already sit on a host's group nodes; refusing it would abort
     /// every workflow in the build.
     GroupContinueOnError,
+    /// A `map` mapping breaks a rule between its keys: it has neither `logic`
+    /// nor `"unset": true`, or both; it carries `on_null` without `logic`; or
+    /// it would remove a context root (`data`, `metadata`, `temp_data`) by a
+    /// literal path. Reported at the offending key, e.g.
+    /// `tasks[0].function.input.mappings[2].unset`.
+    InvalidMapping,
+    /// A `map` mapping whose `logic` always evaluates to `null` — `"logic":
+    /// null`, or anything that folds to it — under the default
+    /// `on_null: "skip"`. A null result is skipped, so the mapping can never
+    /// write anything; it usually stands where the author meant to clear the
+    /// path, which is `"unset": true`.
+    ///
+    /// [`Severity::Advisory`] — reported by
+    /// [`crate::EngineBuilder::check_workflow`] and never by
+    /// [`crate::EngineBuilder::build`]. The mapping is a no-op, not an error,
+    /// and refusing it would fail every build that already carries one.
+    NullMapping,
     /// `loop.increment` is below 1 — the counter would never reach `max`.
     LoopIncrementTooSmall,
     /// `loop.max` is not greater than `loop.init` — no sweep could ever run.
@@ -224,6 +244,8 @@ impl IssueCode {
             Self::InvalidTerminal => "INVALID_TERMINAL",
             Self::InvalidHaltOn => "INVALID_HALT_ON",
             Self::GroupContinueOnError => "GROUP_CONTINUE_ON_ERROR",
+            Self::InvalidMapping => "INVALID_MAPPING",
+            Self::NullMapping => "NULL_MAPPING",
             Self::UnguardedValidation => "UNGUARDED_VALIDATION",
             Self::LoopIncrementTooSmall => "LOOP_INCREMENT_TOO_SMALL",
             Self::LoopBoundEmpty => "LOOP_BOUND_EMPTY",
@@ -251,11 +273,12 @@ impl IssueCode {
     /// direction that turns a screen into a quarantine.
     pub fn severity(self) -> Severity {
         match self {
-            // Reported for an author's attention. `build` accepts all three
+            // Reported for an author's attention. `build` accepts all four
             // and the workflow runs exactly as written.
-            Self::UnguardedValidation | Self::GroupContinueOnError | Self::EscapedTemplateKey => {
-                Severity::Advisory
-            }
+            Self::UnguardedValidation
+            | Self::GroupContinueOnError
+            | Self::EscapedTemplateKey
+            | Self::NullMapping => Severity::Advisory,
 
             // Builds cleanly, then fails every message. The config parses into
             // a typed built-in variant, so `precompile_custom_inputs` never
@@ -285,6 +308,7 @@ impl IssueCode {
             | Self::InvalidFunctionName
             | Self::InvalidTerminal
             | Self::InvalidHaltOn
+            | Self::InvalidMapping
             | Self::LoopIncrementTooSmall
             | Self::LoopBoundEmpty
             | Self::LoopCounterInvalid
@@ -458,6 +482,7 @@ pub(crate) fn check_against_registry(
     issues.extend(check_template_keys(workflow));
     check_unguarded_validation(workflow, &mut issues);
     check_group_continue_on_error(workflow, &mut issues);
+    check_null_mappings(workflow, template_compiler.engine(), &mut issues);
 
     for task in &workflow.tasks {
         let name = task.function.function_name();
@@ -625,6 +650,70 @@ fn check_group_continue_on_error(workflow: &Workflow, issues: &mut Vec<WorkflowI
             });
         }
     }
+}
+
+/// Report a `map` mapping that can never write, because its `logic` always
+/// evaluates to `null` and a null result is skipped.
+///
+/// **Informational.** The mapping is a no-op, and `"logic": null` loaded
+/// before `unset` existed, so refusing it would fail builds that run today.
+/// It is almost always an attempted clear — the shape #59 was filed over —
+/// so the message points at `unset`.
+///
+/// "Always null" is decided the way `Template::compile` decides a constant:
+/// compile against the engine `build()` would use, and evaluate only when the
+/// compiler folded the expression to a literal. So `{"if": [false, 1, null]}`
+/// is reported and `{"var": "data.x"}` — null only when the path misses — is
+/// not. `is_constant`, not `is_static`, for the same reason as there: a rule
+/// whose folding *errored* is not a constant. A rule that fails to compile is
+/// left to `build()`, which reports it with its own error.
+///
+/// Silent for `unset` mappings, which have no logic, and for
+/// `on_null: "unset"`, where an always-null result removes the path on every
+/// message — an odd spelling of `unset`, but not a no-op.
+fn check_null_mappings(
+    workflow: &Workflow,
+    engine: &datalogic_rs::Engine,
+    issues: &mut Vec<WorkflowIssue>,
+) {
+    for task in &workflow.tasks {
+        let FunctionConfig::Map { input, .. } = &task.function else {
+            continue;
+        };
+        for (i, mapping) in input.mappings.iter().enumerate() {
+            if mapping.unset || mapping.on_null != OnNull::Skip {
+                continue;
+            }
+            if !always_null(engine, &mapping.logic) {
+                continue;
+            }
+            issues.push(WorkflowIssue {
+                code: IssueCode::NullMapping,
+                message: format!(
+                    "this mapping's logic is always null, and a null result is skipped,                      so it never writes '{}' — to remove the path use `\"unset\": true`",
+                    mapping.describe_path()
+                ),
+                path: Some(format!("function.input.mappings[{i}].logic")),
+                task_id: Some(task.id.clone()),
+            });
+        }
+    }
+}
+
+/// Whether `logic` compiles to a constant that is `null`.
+fn always_null(engine: &datalogic_rs::Engine, logic: &Value) -> bool {
+    let Ok(compiled) = engine.compile_arc(logic) else {
+        return false;
+    };
+    compiled.is_constant()
+        && matches!(
+            crate::engine::executor::eval_to_owned(
+                engine,
+                &compiled,
+                &OwnedDataValue::Object(Vec::new())
+            ),
+            Ok(OwnedDataValue::Null)
+        )
 }
 
 /// Where an expression's result ends up — what decides whether it may read a
@@ -1244,6 +1333,42 @@ fn check_function(path: &str, node: &Value, id: Option<&str>, issues: &mut Vec<W
             )
             .with_step(id),
         );
+        return;
+    }
+
+    if function.get("name").and_then(Value::as_str) == Some("map") {
+        check_mappings(path, function, id, issues);
+    }
+}
+
+/// The rules between a `map` mapping's keys, asked of the same
+/// [`AuthoredMapping`] the parser applies them through — so this cannot report
+/// a mapping the parser accepts, or miss one it refuses.
+///
+/// A mapping that does not even deserialize (a non-string `on_null`, a
+/// non-bool `unset`) is a *type* error and is left to stage 2, like the other
+/// type errors here.
+fn check_mappings(path: &str, function: &Value, id: Option<&str>, issues: &mut Vec<WorkflowIssue>) {
+    let Some(mappings) = function
+        .get("input")
+        .and_then(|input| input.get("mappings"))
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for (i, mapping) in mappings.iter().enumerate() {
+        if let Ok(authored) = AuthoredMapping::deserialize(mapping)
+            && let Some(problem) = authored.problem()
+        {
+            issues.push(
+                WorkflowIssue::at(
+                    IssueCode::InvalidMapping,
+                    format!("{path}.function.input.mappings[{i}].{}", problem.field),
+                    problem.message,
+                )
+                .with_step(id),
+            );
+        }
     }
 }
 
@@ -1304,7 +1429,7 @@ mod tests {
     /// Every [`IssueCode`], for the checks below that must cover the whole
     /// vocabulary rather than a hand-picked subset. Kept complete by
     /// [`ordinal`] — see [`all_codes_lists_every_variant`].
-    const ALL_CODES: [IssueCode; 27] = [
+    const ALL_CODES: [IssueCode; 29] = [
         IssueCode::EmptyWorkflowId,
         IssueCode::EmptyWorkflowName,
         IssueCode::NoTasks,
@@ -1332,6 +1457,8 @@ mod tests {
         IssueCode::EscapedTemplateKey,
         IssueCode::ParseFailed,
         IssueCode::ValidateFailed,
+        IssueCode::InvalidMapping,
+        IssueCode::NullMapping,
     ];
 
     /// A distinct index per variant, with **no wildcard arm**. Adding an
@@ -1365,6 +1492,8 @@ mod tests {
             IssueCode::EscapedTemplateKey => 24,
             IssueCode::ParseFailed => 25,
             IssueCode::ValidateFailed => 26,
+            IssueCode::InvalidMapping => 27,
+            IssueCode::NullMapping => 28,
         }
     }
 
@@ -1405,6 +1534,7 @@ mod tests {
                 "UNGUARDED_VALIDATION",
                 "GROUP_CONTINUE_ON_ERROR",
                 "ESCAPED_TEMPLATE_KEY",
+                "NULL_MAPPING",
             ]),
             "the advisory set is what a host screens on — changing it is a breaking change"
         );
@@ -1415,7 +1545,7 @@ mod tests {
         );
         assert_eq!(
             by(Severity::Rejected).len(),
-            ALL_CODES.len() - 4,
+            ALL_CODES.len() - 5,
             "every remaining code is a rejection"
         );
     }

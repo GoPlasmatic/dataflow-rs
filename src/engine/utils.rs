@@ -241,10 +241,22 @@ pub fn remove_nested_value(data: &mut OwnedDataValue, path: &str) -> Option<Owne
         return None;
     }
     let parts: Vec<&str> = path.split('.').collect();
+    remove_nested_value_parts(data, &parts)
+}
+
+/// Pre-split variant of [`remove_nested_value`], for callers already holding a
+/// resolved `&[Arc<str>]` — `map`'s `unset` takes the same parts its writes do,
+/// so a removal never re-splits the path. Same contract, `#` handling included.
+pub(crate) fn remove_nested_value_parts<P: AsRef<str>>(
+    data: &mut OwnedDataValue,
+    parts: &[P],
+) -> Option<OwnedDataValue> {
     let (last, parents) = parts.split_last()?;
+    let last = last.as_ref();
 
     let mut current = data;
     for part in parents {
+        let part = part.as_ref();
         current = match current {
             OwnedDataValue::Object(pairs) => {
                 let key = strip_hash_prefix(part);

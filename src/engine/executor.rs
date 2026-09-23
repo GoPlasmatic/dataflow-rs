@@ -19,7 +19,7 @@
 //! `data.MT103` while the heavy `data.input` stays cached.
 
 use crate::engine::error::Result;
-use crate::engine::utils::strip_hash_prefix;
+use crate::engine::utils::{remove_nested_value_parts, strip_hash_prefix};
 use bumpalo::Bump;
 use datalogic_rs::{Engine, Logic};
 use datavalue::{DataValue, OwnedDataValue};
@@ -263,6 +263,29 @@ impl<'a> ArenaContext<'a> {
         // coverage of the splice against the owned source of truth.
         #[cfg(test)]
         self.assert_matches_owned(owned_ctx);
+    }
+
+    /// Removal counterpart of [`Self::apply_mutation_parts_write_through`]:
+    /// take the key at `parts` out of the owned context and bring the cache
+    /// along. Returns what was removed; `None` means nothing was there, and
+    /// neither side changed.
+    ///
+    /// No splice — a removal has no arena value to hand over, and the narrow
+    /// refresh already drops a vanished top slot or depth-2 child and
+    /// re-arenas the one depth-2 subtree a deeper removal dirtied.
+    pub fn apply_removal_parts(
+        &mut self,
+        owned_ctx: &mut OwnedDataValue,
+        parts: &[Arc<str>],
+    ) -> Option<OwnedDataValue> {
+        let removed = remove_nested_value_parts(owned_ctx, parts);
+        if removed.is_some() {
+            self.refresh_after_write_parts(owned_ctx, parts);
+        }
+        // Same differential guard as the write path.
+        #[cfg(test)]
+        self.assert_matches_owned(owned_ctx);
+        removed
     }
 
     /// Attempt the plain-case arena splice for a write of `value_av` at

@@ -340,6 +340,11 @@ impl LogicCompiler {
             let path_label = format!("map path for task {task_id} in workflow {workflow_id}");
             mapping.path.compile(&self.template_compiler, &path_label)?;
 
+            // A removal has no logic to compile; `execute` never reads the slot.
+            if mapping.unset {
+                continue;
+            }
+
             let label = format!(
                 "map logic for task {} in workflow {} (path {})",
                 task_id,

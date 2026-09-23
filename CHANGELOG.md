@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+A way to remove a path from `map` (#59). A null result is skipped, which is what
+lets `{"if": [cond, value, null]}` mean "set or keep", so `null` could never
+also mean "clear" — and nothing else could. Authors cleared with `false`, which
+`missing`, `exists` and `??` still see as present, or wrote `"logic": null`,
+which silently does nothing. In a loop, whose `temp_data` carries over between
+sweeps, that left a per-item slot holding the previous item's value.
+
+### Added
+
+- **`map`: `unset: true`** removes the key at `path`, and takes no `logic`.
+  Removing an absent key is a no-op. An array index removes the element and
+  shifts later ones down, as `utils::remove_nested_value` always has.
+- **`map`: `on_null`** — `"skip"` (the default, unchanged behaviour) or
+  `"unset"`, which makes a null result remove the path, so
+  `{"if": [cond, value, null]}` can mean "set or clear". `OnNull` is the typed
+  form, `#[non_exhaustive]`.
+- **`Change::removed`** — set on the audit entry a removal records, whose
+  `new_value` is `null`. Omitted from JSON when `false`, so every write's audit
+  JSON is byte-identical to before, and a reader that predates the field loads
+  a removal as a write of `null`.
+- **authoring: `IssueCode::InvalidMapping`** (`INVALID_MAPPING`, Rejected) — a
+  mapping with neither or both of `logic` and `unset`, `on_null` without
+  `logic`, or a literal path removing a context root (`data`, `metadata`,
+  `temp_data`). Reported by `validate_authored` at the offending key
+  (`tasks[0].function.input.mappings[2].unset`); the parser refuses the same
+  mappings from the same rule set, so `Engine::build` does too. A *computed*
+  path resolving to a root fails that mapping at run time instead (status
+  `500`), leaving the root in place.
+- **authoring: `IssueCode::NullMapping`** (`NULL_MAPPING`, Advisory) — a
+  mapping whose `logic` always evaluates to `null` (`"logic": null`, or anything
+  that folds to it, such as `{"if": [false, 1, null]}`) under the default
+  `on_null: "skip"`, so it can never write. Reported by `check_workflow` at
+  `function.input.mappings[i].logic`, pointing at `unset`; never refused by
+  `build`. "Always null" is decided the way `Template::compile` decides a
+  constant — `is_constant()`, then one evaluation — so `{"var": "data.x"}`,
+  null only when the path misses, is not reported. Silent under
+  `on_null: "unset"`, where such a mapping removes the path rather than doing
+  nothing. A host that screens on severity is unaffected; one that requires
+  `check_workflow` to return nothing at all will now see this for every
+  `"logic": null` it carries, which is the point.
+
+### Changed
+
+- **BREAKING (construction only): `Change` gained a `removed` field**, so a
+  struct literal built outside the crate no longer compiles until it names
+  `removed: false`. Field reads, and serialized audit JSON for every write, are
+  unaffected. Taken over the alternative of recording a removal as a plain
+  `new_value: null`, which cannot be told apart from writing `null` —
+  something `TaskContext::set` can already do — and would have made the
+  ambiguity permanent to save a one-line edit. `Change` is deliberately not
+  made `#[non_exhaustive]`: unlike `Task` in 3.7.0 it has no hidden fields
+  forcing the issue, and that would stop hosts constructing one at all.
+- **`MapMapping` gained `unset` and `on_null`**, and its `Deserialize` is now
+  hand-written so the rules above hold at parse time. Construction with
+  `..Default::default()` — already required by the hidden `compiled_logic`
+  field — is unaffected. `"logic": null` still loads and is still a no-op —
+  refusing it would fail every build that carries one — and is now reported as
+  `NULL_MAPPING` instead of passing silently.
+- **A mapping missing `logic`** is now reported by `validate_authored` as
+  `INVALID_MAPPING` at `…mappings[i].logic` rather than as `PARSE_FAILED`, and
+  its parse error names `unset` as the alternative.
+
 ## [3.13.0] — 2026-09-13
 
 Two opt-in capabilities arrive with `datalogic-rs` 5.5: a hard ceiling on how

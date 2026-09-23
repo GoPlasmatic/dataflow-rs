@@ -119,8 +119,10 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `INVALID_FUNCTION_NAME` | Rejected | `function` is not an object with a non-empty `name` |
 | `INVALID_TERMINAL` | Rejected | `terminal` is present but not a boolean |
 | `INVALID_HALT_ON` | Rejected | `halt_on` is not `"never"`/`"failure"`, or is on a group |
+| `INVALID_MAPPING` | Rejected | A `map` mapping has neither or both of `logic` and `unset`, carries `on_null` without `logic`, or removes a context root — see [Removing a Path](../built-in-functions/map.md#removing-a-path) |
 | `GROUP_CONTINUE_ON_ERROR` | Advisory | A group carries `continue_on_error`, which the engine does not honour |
 | `UNGUARDED_VALIDATION` | Advisory | A `validation` whose failure stops nothing |
+| `NULL_MAPPING` | Advisory | A `map` mapping whose `logic` is always `null`, so it never writes — use `"unset": true` to remove a path |
 | `LOOP_INCREMENT_TOO_SMALL` | Rejected | `increment < 1` — the counter would never reach `max` |
 | `LOOP_BOUND_EMPTY` | Rejected | `max <= init` — no sweep could ever run |
 | `LOOP_COUNTER_INVALID` | Rejected | `counter` is not a non-empty dotted path |
@@ -191,6 +193,12 @@ upgrade.
 - `GROUP_CONTINUE_ON_ERROR` — the key is real on a task and on a workflow, so a
   host may already carry it on group nodes; refusing it would abort every
   workflow in the build over a key that was never honoured anyway.
+- `NULL_MAPPING` — `"logic": null` loaded long before
+  [`unset`](../built-in-functions/map.md#removing-a-path) existed, and the
+  mapping is a no-op rather than an error, so refusing it would fail builds that
+  run today. It is almost always an attempted clear, which is why the message
+  points at `unset`. Only logic that *folds* to `null` is reported —
+  `{"var": "data.x"}` is null only when the path misses, and stays silent.
 
 ### The one `Defect`
 

@@ -149,6 +149,7 @@ fn finish_publish(
             path: Arc::clone(target_path_arc),
             old_value,
             new_value,
+            removed: false,
         }],
     )
 }

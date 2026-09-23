@@ -154,9 +154,12 @@ function ChangesView({ changes }: ChangesViewProps) {
   return (
     <div className="df-debug-changes-view">
       {changes.map((change, index) => {
-        const isModified = change.old_value !== undefined && change.new_value !== undefined;
+        const isRemoved =
+          change.removed === true ||
+          (change.old_value !== undefined && change.new_value === undefined);
+        const isModified =
+          !isRemoved && change.old_value !== undefined && change.new_value !== undefined;
         const isAdded = change.old_value === undefined && change.new_value !== undefined;
-        const isRemoved = change.old_value !== undefined && change.new_value === undefined;
         const changeType = isAdded ? 'added' : isRemoved ? 'removed' : 'modified';
 
         return (

@@ -508,11 +508,25 @@ pub struct AuditTrail {
 /// hot path. External consumers that need to share a `Change` across threads
 /// can wrap it themselves; in-process pipelines (audit-on map mappings) don't
 /// pay the Arc cost they were never going to use.
+///
+/// A path that was absent before the write records `old_value` as `null`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Change {
     pub path: Arc<str>,
     pub old_value: OwnedDataValue,
+    /// The value written. `null` when [`Self::removed`] is set — read that
+    /// flag rather than this value to tell a removal from a write.
     pub new_value: OwnedDataValue,
+    /// The key at `path` was removed rather than written — a `map` mapping
+    /// with `unset`, or `on_null: "unset"` meeting a null result. `new_value`
+    /// is then `null`, which alone could not tell "now absent" from "now
+    /// holds null".
+    ///
+    /// Skipped when `false`, so every write's audit JSON is byte-identical to
+    /// what it was before removals existed, and a reader that predates the
+    /// field still loads a removal (as a write of `null`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removed: bool,
 }
 
 #[cfg(test)]
@@ -542,6 +556,29 @@ mod tests {
             serde_json::to_value(&with_counter).expect("should serialize")["loop_counter"],
             serde_json::json!(7)
         );
+    }
+
+    #[test]
+    fn a_write_change_keeps_its_historical_wire_shape() {
+        // `removed` is skipped when false, so writes serialize byte for byte as
+        // they did before removals existed.
+        let change = Change {
+            path: Arc::from("data.x"),
+            old_value: OwnedDataValue::Null,
+            new_value: OwnedDataValue::from_i64(1),
+            removed: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&change).unwrap(),
+            serde_json::json!({"path": "data.x", "old_value": null, "new_value": 1})
+        );
+
+        // And a change written before the flag existed reads back as a write.
+        let legacy: Change = serde_json::from_value(
+            serde_json::json!({"path": "data.x", "old_value": null, "new_value": 1}),
+        )
+        .unwrap();
+        assert!(!legacy.removed);
     }
 
     #[test]

@@ -172,7 +172,8 @@ matching version.
 
 - `mod.rs`: `AsyncFunctionHandler` trait, object-safe `Dyn` sibling, registration
 - `parse.rs`: `parse_json`, `parse_xml`
-- `map.rs`: `map` — JSONLogic-driven assignment to dot-paths
+- `map.rs`: `map` — JSONLogic-driven assignment to dot-paths, and removal
+  (`unset`, `on_null`)
 - `validation.rs`: `validation` — rules with custom error messages
 - `filter.rs`: `filter` — pipeline control flow (`halt` / `skip`)
 - `log.rs`: `log` — structured logging at a configurable level
@@ -249,6 +250,19 @@ matching version.
   status the host answers with; that is why the halt goes through the fold.
   `IssueCode::UnguardedValidation` reports the ungated shape at authoring time and
   is **informational** — never add it to `refuse_authoring_issues`.
+- **A null `map` result is skipped, and that is load-bearing.** It is what
+  makes `{"if": [cond, value, null]}` mean "set or keep", so `null` can never
+  mean "clear" — `"logic": null` is a no-op, kept loadable for the installed
+  base and reported by `check_workflow` as the advisory `NULL_MAPPING` (logic
+  that folds to a constant `null`, under `on_null: "skip"` only). Removal is
+  explicit: `unset: true`, or `on_null: "unset"`.
+  The rules between `logic` / `unset` / `on_null` (and "never remove a
+  context root") live once, in `AuthoredMapping::problem`, which both
+  `MapMapping`'s hand-written `Deserialize` and `authoring::check_mappings`
+  call — do not re-derive them in either place. A removal records a `Change`
+  with `removed: true` and `new_value: null`; the flag is skipped when false so
+  write JSON stays byte-identical. The arena cache follows a removal through
+  `ArenaContext::apply_removal_parts` (a narrow refresh, not a splice).
 - **`metadata.progress` is load-bearing.** The workflow executor writes
   `metadata.progress = {workflow_id, task_id, status_code}` after every task.
   Cross-workflow chaining depends on downstream conditions reading it, so do not
@@ -382,6 +396,7 @@ The integration suite is split by topic across `tests/`, one binary per file:
 |---|---|
 | `engine_execution.rs` | Async handler path, sync stretch, shared-arena runs |
 | `mapping_semantics.rs` | `map` write semantics — replace vs. merge, `#` paths |
+| `map_unset.rs` | `map` removal — `unset`, `on_null`, `Change::removed`, the #59 loop slot |
 | `error_handling.rs` | Single error channel, `DataflowError::Service` |
 | `tracing.rs` | Caller-owned `process_message_tracing` |
 | `trace_options.rs` | `TraceOptions` — timing, diffs, budget, redaction |
@@ -420,8 +435,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 745 passing.
-`cargo test -p dataflow-rs` (default features) should report 636 — the operator
+`cargo test --workspace --all-features` should report 762 passing.
+`cargo test -p dataflow-rs` (default features) should report 653 — the operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and

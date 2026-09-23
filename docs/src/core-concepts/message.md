@@ -176,7 +176,10 @@ pub struct AuditTrail {
 pub struct Change {
     pub path: Arc<str>,
     pub old_value: OwnedDataValue,  // owned (not Arc) — one fewer heap alloc per Change
-    pub new_value: OwnedDataValue,
+    pub new_value: OwnedDataValue,  // null when `removed`
+    /// The key was removed rather than written (`map`'s `unset`). Omitted
+    /// from JSON when false.
+    pub removed: bool,
 }
 ```
 

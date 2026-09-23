@@ -10,19 +10,22 @@
 //! - JSONLogic-driven transformations
 //! - Dot-path target paths with auto-creation
 //! - Root-field merge semantics for `data` / `metadata` / `temp_data`
-//! - Null results skip assignment
+//! - Null results skip assignment by default ("set or keep");
+//!   `on_null: "unset"` removes the path instead
+//! - `unset: true` removes a path outright
 //! - Audit-trail change tracking
 
 use crate::engine::error::{DataflowError, Result};
 use crate::engine::executor::{ArenaContext, with_arena};
-use crate::engine::functions::path_template::{ContextRoot, ParamCtx, PathTemplate};
+use crate::engine::functions::path_template::{ContextRoot, ParamCtx, PathTemplate, ResolvedPath};
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::utils::{get_nested_value_parts, set_nested_value_parts};
+use crate::engine::utils::{get_nested_value_parts, set_nested_value_parts, strip_hash_prefix};
 use datalogic_rs::{Engine, Logic};
 use datavalue::OwnedDataValue;
 use log::{debug, error};
-use serde::Deserialize;
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -33,8 +36,20 @@ pub struct MapConfig {
     pub mappings: Vec<MapMapping>,
 }
 
-/// A single mapping that transforms and assigns data.
-#[derive(Debug, Clone, Deserialize, Default)]
+/// A single mapping that transforms and assigns data — or, with
+/// [`unset`](Self::unset), removes it.
+///
+/// Three rules hold between the keys, and a definition breaking one fails to
+/// parse (so [`Workflow::validate_authored`](crate::Workflow::validate_authored)
+/// reports it as [`IssueCode::InvalidMapping`](crate::IssueCode::InvalidMapping)
+/// and `Engine::build` refuses it):
+///
+/// - a mapping has `logic` or `"unset": true`, never both;
+/// - `on_null` needs `logic`, since it says what a null *result* does;
+/// - a removal may not name a context root (`data`, `metadata`, `temp_data`).
+///   A literal path is checked here; a computed one that resolves to a root
+///   fails that mapping at run time instead.
+#[derive(Debug, Clone, Default)]
 pub struct MapMapping {
     /// Target path where the result will be stored (e.g., `"data.user.name"`).
     /// Supports dot notation for nested paths and `#` prefix for numeric field
@@ -49,14 +64,152 @@ pub struct MapMapping {
 
     /// JSONLogic expression (kept as `serde_json::Value` since this is the
     /// shape the compiler accepts; not runtime data).
+    ///
+    /// `Value::Null` on an [`unset`](Self::unset) mapping, which has none.
     pub logic: Value,
+
+    /// Remove the key at `path` instead of writing to it. Takes no `logic`.
+    ///
+    /// A no-op when the key is already absent. A removal is recorded on the
+    /// audit trail as a [`Change`] with [`removed`](Change::removed) set.
+    ///
+    /// This exists because `null` cannot mean "clear": a null result is
+    /// skipped (see [`OnNull::Skip`]), which is what lets
+    /// `{"if": [cond, value, null]}` mean "set or keep".
+    pub unset: bool,
+
+    /// What a `null` result from `logic` does. Defaults to
+    /// [`OnNull::Skip`], the historical behaviour.
+    pub on_null: OnNull,
 
     /// Engine-internal: pre-compiled JSONLogic, populated by `LogicCompiler`.
     /// `None` is logged as an error during execute (the compiler should always
-    /// populate it). Not part of the stable API.
+    /// populate it, except on an `unset` mapping, which has no logic and never
+    /// reads this). Not part of the stable API.
     #[doc(hidden)]
-    #[serde(skip)]
     pub compiled_logic: Option<Arc<Logic>>,
+}
+
+/// What a [`MapMapping`] does when its `logic` evaluates to `null`.
+///
+/// `#[non_exhaustive]`: a later minor may add a spelling — writing an explicit
+/// `null`, say, which no mapping can do today.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum OnNull {
+    /// Leave the path as it was. A `var` that misses and an `if` with no
+    /// matching branch both produce `null`, so skipping is what keeps a
+    /// missing source from wiping its target — and what makes
+    /// `{"if": [cond, value, null]}` mean "set or keep".
+    #[default]
+    Skip,
+    /// Remove the key at `path`, exactly as [`MapMapping::unset`] would:
+    /// `{"if": [cond, value, null]}` then means "set or clear".
+    Unset,
+}
+
+/// A mapping as authored, before the rules between its keys are applied.
+///
+/// Shared by [`MapMapping`]'s `Deserialize` and the authoring walk, so the
+/// rules have one definition and `validate_authored` cannot disagree with the
+/// parser about them.
+#[derive(Deserialize)]
+pub(crate) struct AuthoredMapping {
+    path: PathTemplate<ContextRoot>,
+    /// `Some(Value::Null)` for an explicit `"logic": null`; `None` only when
+    /// the key is absent. A plain `Option<Value>` would fold the two together.
+    #[serde(default, deserialize_with = "present")]
+    logic: Option<Value>,
+    #[serde(default)]
+    unset: bool,
+    /// `Option` so `on_null` without `logic` is caught even when it spells the
+    /// default.
+    #[serde(default)]
+    on_null: Option<OnNull>,
+}
+
+/// Deserialize a field that is present, keeping an explicit `null` as
+/// `Some(Value::Null)`.
+fn present<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
+}
+
+/// A rule between a mapping's keys that an authored mapping breaks.
+pub(crate) struct MappingProblem {
+    /// The mapping key the problem is reported against.
+    pub(crate) field: &'static str,
+    pub(crate) message: &'static str,
+}
+
+impl AuthoredMapping {
+    /// The first rule this mapping breaks, if any.
+    pub(crate) fn problem(&self) -> Option<MappingProblem> {
+        let problem = |field, message| Some(MappingProblem { field, message });
+        match (&self.logic, self.unset) {
+            (None, false) => {
+                return problem(
+                    "logic",
+                    "a mapping needs `logic`, or `\"unset\": true` to remove the path",
+                );
+            }
+            (Some(_), true) => {
+                return problem(
+                    "unset",
+                    "`unset` removes the path and takes no `logic` — to remove it only \
+                     when the result is null, keep `logic` and use `\"on_null\": \"unset\"`",
+                );
+            }
+            _ => {}
+        }
+        if self.logic.is_none() && self.on_null.is_some() {
+            return problem(
+                "on_null",
+                "`on_null` says what a null `logic` result does, and this mapping has no `logic`",
+            );
+        }
+        let removes = self.unset || self.on_null == Some(OnNull::Unset);
+        if removes
+            && let Some(path) = self.path.as_json().as_str()
+            && is_context_root(&path.split('.').collect::<Vec<_>>())
+        {
+            return problem(
+                "path",
+                "a context root (`data`, `metadata`, `temp_data`) cannot be removed — \
+                 remove the keys under it instead",
+            );
+        }
+        None
+    }
+
+    fn into_mapping(self) -> MapMapping {
+        MapMapping {
+            path: self.path,
+            logic: self.logic.unwrap_or(Value::Null),
+            unset: self.unset,
+            on_null: self.on_null.unwrap_or_default(),
+            compiled_logic: None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MapMapping {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let authored = AuthoredMapping::deserialize(d)?;
+        if let Some(problem) = authored.problem() {
+            return Err(D::Error::custom(format_args!(
+                "mapping `{}`: {}",
+                problem.field, problem.message
+            )));
+        }
+        Ok(authored.into_mapping())
+    }
+}
+
+/// Whether `parts` names a context root — the one kind of path a mapping may
+/// write (it merges) but never remove.
+fn is_context_root<P: AsRef<str>>(parts: &[P]) -> bool {
+    matches!(parts, [only] if matches!(strip_hash_prefix(only.as_ref()), "data" | "metadata" | "temp_data"))
 }
 
 impl MapMapping {
@@ -88,21 +241,16 @@ impl MapConfig {
         let mut parsed_mappings = Vec::new();
 
         for mapping in mappings_arr {
-            let path = mapping
-                .get("path")
-                .ok_or_else(|| DataflowError::Validation("Missing 'path' in mapping".to_string()))?
-                .clone();
-
-            let logic = mapping
-                .get("logic")
-                .ok_or_else(|| DataflowError::Validation("Missing 'logic' in mapping".to_string()))?
-                .clone();
-
-            parsed_mappings.push(MapMapping {
-                path: PathTemplate::from(path),
-                logic,
-                compiled_logic: None,
-            });
+            if mapping.get("path").is_none() {
+                return Err(DataflowError::Validation(
+                    "Missing 'path' in mapping".to_string(),
+                ));
+            }
+            // The same parse the workflow deserializer runs, so the rules
+            // between `logic`, `unset` and `on_null` hold here too.
+            let parsed = MapMapping::deserialize(mapping)
+                .map_err(|e| DataflowError::Validation(e.to_string()))?;
+            parsed_mappings.push(parsed);
         }
 
         Ok(Self {
@@ -149,8 +297,8 @@ impl MapConfig {
         engine: &Arc<Engine>,
         mut mapping_snapshots: Option<&mut Vec<Value>>,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
-        // Audit-on runs push one Change per non-null mapping — size for the
-        // common all-mappings-write case up front.
+        // Audit-on runs push one Change per mapping that writes or removes —
+        // size for the common all-mappings-write case up front.
         let mut changes = if message.capture_changes {
             Vec::with_capacity(self.mappings.len())
         } else {
@@ -169,6 +317,20 @@ impl MapConfig {
             // surface; production callers pass `None` and skip it entirely.
             if let Some(buf) = mapping_snapshots.as_deref_mut() {
                 buf.push(Value::from(&message.context));
+            }
+
+            if mapping.unset {
+                // Nothing to evaluate: resolve the destination against the
+                // current context and take the key out.
+                let ctx_av = arena_ctx.as_data_value();
+                let Some(resolved) = resolve_destination(mapping, engine, ctx_av, arena) else {
+                    errors_encountered = true;
+                    continue;
+                };
+                if !remove_at(message, arena_ctx, &resolved, &mut changes) {
+                    errors_encountered = true;
+                }
+                continue;
             }
 
             // Pre-compiled `Arc<Logic>` lives on the mapping; the workflow
@@ -209,10 +371,24 @@ impl MapConfig {
             );
 
             if matches!(transformed_value, OwnedDataValue::Null) {
-                debug!(
-                    "Map: Skipping mapping for path {} as result is null",
-                    mapping.describe_path()
-                );
+                match mapping.on_null {
+                    OnNull::Skip => {
+                        debug!(
+                            "Map: Skipping mapping for path {} as result is null",
+                            mapping.describe_path()
+                        );
+                    }
+                    OnNull::Unset => {
+                        let Some(resolved) = resolve_destination(mapping, engine, ctx_av, arena)
+                        else {
+                            errors_encountered = true;
+                            continue;
+                        };
+                        if !remove_at(message, arena_ctx, &resolved, &mut changes) {
+                            errors_encountered = true;
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -221,20 +397,9 @@ impl MapConfig {
             // pair precomputed at engine construction as two refcount bumps;
             // only a computed path splits here. Resolved *after* the logic so
             // a dynamic destination sees the same context the value did.
-            let resolved = match mapping
-                .path
-                .resolve_in_arena(ParamCtx::new(engine, ctx_av, arena))
-            {
-                Ok(pair) => pair,
-                Err(e) => {
-                    error!(
-                        "Map: Error resolving destination path {}: {:?}",
-                        mapping.describe_path(),
-                        e
-                    );
-                    errors_encountered = true;
-                    continue;
-                }
+            let Some(resolved) = resolve_destination(mapping, engine, ctx_av, arena) else {
+                errors_encountered = true;
+                continue;
             };
             let (path_arc, parts) = (&resolved.0, &*resolved.1);
 
@@ -251,6 +416,7 @@ impl MapConfig {
                     path: Arc::clone(path_arc),
                     old_value,
                     new_value,
+                    removed: false,
                 });
             }
             // Write-through: the owned context write is the source of truth;
@@ -275,6 +441,66 @@ impl MapConfig {
         };
         Ok((outcome, changes))
     }
+}
+
+/// Resolve where `mapping` writes, logging a failure. `None` fails the mapping.
+///
+/// Borrows: a constant path hands back the pair precomputed at engine
+/// construction.
+fn resolve_destination<'a>(
+    mapping: &'a MapMapping,
+    engine: &'a Engine,
+    ctx_av: datavalue::DataValue<'a>,
+    arena: &'a datalogic_rs::bumpalo::Bump,
+) -> Option<std::borrow::Cow<'a, ResolvedPath>> {
+    match mapping
+        .path
+        .resolve_in_arena(ParamCtx::new(engine, ctx_av, arena))
+    {
+        Ok(pair) => Some(pair),
+        Err(e) => {
+            error!(
+                "Map: Error resolving destination path {}: {:?}",
+                mapping.describe_path(),
+                e
+            );
+            None
+        }
+    }
+}
+
+/// Remove the key at `resolved` from the context and the arena cache,
+/// recording the removal when audit capture is on. An absent key is a no-op
+/// and records nothing.
+///
+/// `false` when the path names a context root. A literal root is refused at
+/// parse time, so only a computed path that resolves to one reaches here.
+fn remove_at(
+    message: &mut Message,
+    arena_ctx: &mut ArenaContext<'_>,
+    resolved: &ResolvedPath,
+    changes: &mut Vec<Change>,
+) -> bool {
+    let (path_arc, parts) = (&resolved.0, &*resolved.1);
+    if is_context_root(parts) {
+        error!("Map: Refusing to remove context root {path_arc}");
+        return false;
+    }
+    match arena_ctx.apply_removal_parts(&mut message.context, parts) {
+        Some(old_value) => {
+            if message.capture_changes {
+                changes.push(Change {
+                    path: Arc::clone(path_arc),
+                    old_value,
+                    new_value: OwnedDataValue::Null,
+                    removed: true,
+                });
+            }
+            debug!("Map: Removed {path_arc}");
+        }
+        None => debug!("Map: Nothing to remove at {path_arc}"),
+    }
+    true
 }
 
 /// Pre-split variant of `apply_mapping`. Consumes `parts` for the
@@ -529,6 +755,120 @@ mod tests {
             context_snapshots[1]["data"].get("full_name"),
             Some(&json!("Alice Smith"))
         );
+    }
+
+    fn parse(mapping: serde_json::Value) -> std::result::Result<MapMapping, String> {
+        MapMapping::deserialize(&mapping).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn the_rules_between_mapping_keys() {
+        let unset = parse(json!({"path": "temp_data.x", "unset": true})).unwrap();
+        assert!(unset.unset);
+        assert_eq!(unset.logic, Value::Null);
+        assert_eq!(unset.on_null, OnNull::Skip);
+
+        let on_null =
+            parse(json!({"path": "temp_data.x", "logic": 1, "on_null": "unset"})).unwrap();
+        assert_eq!(on_null.on_null, OnNull::Unset);
+
+        // Back-compat: an explicit null is still accepted, and still skipped.
+        assert!(parse(json!({"path": "data.x", "logic": null})).is_ok());
+
+        for (bad, names) in [
+            (json!({"path": "data.x"}), "`logic`"),
+            (
+                json!({"path": "data.x", "logic": 1, "unset": true}),
+                "`unset`",
+            ),
+            (
+                json!({"path": "data.x", "logic": null, "unset": true}),
+                "`unset`",
+            ),
+            (
+                json!({"path": "data.x", "unset": true, "on_null": "skip"}),
+                "`on_null`",
+            ),
+            (json!({"path": "data", "unset": true}), "`path`"),
+            (json!({"path": "#temp_data", "unset": true}), "`path`"),
+            (
+                json!({"path": "metadata", "logic": 1, "on_null": "unset"}),
+                "`path`",
+            ),
+        ] {
+            let err = parse(bad.clone()).expect_err(&format!("{bad} should be refused"));
+            assert!(err.contains(&format!("mapping {names}")), "{bad}: {err}");
+        }
+
+        // A root is only refused for a removal; writing one still merges.
+        assert!(parse(json!({"path": "data", "logic": {"a": 1}})).is_ok());
+        assert!(parse(json!({"path": "data", "logic": 1, "on_null": "skip"})).is_ok());
+    }
+
+    #[test]
+    fn from_json_applies_the_same_rules() {
+        assert!(
+            MapConfig::from_json(&json!({"mappings": [{"path": "data.x", "unset": true}]}))
+                .unwrap()
+                .mappings[0]
+                .unset
+        );
+        assert!(
+            MapConfig::from_json(
+                &json!({"mappings": [{"path": "data.x", "logic": 1, "unset": true}]})
+            )
+            .is_err()
+        );
+    }
+
+    /// Every removal shape through the arena path, so the unit-test-only
+    /// differential check in `apply_removal_parts` compares the cache against
+    /// a rebuild after each one.
+    #[test]
+    fn removals_keep_the_arena_cache_in_step() {
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
+        let mut message = fresh_message(json!({
+            "a": {"b": {"c": 1, "d": 2}},
+            "items": [1, 2, 3],
+            "top": 1,
+            "7": "hashed"
+        }));
+        set_nested_value(&mut message.context, "extra_root", dv(json!({"k": 1})));
+
+        let mut config = MapConfig {
+            mappings: [
+                "data.a.b.c",
+                "data.items.1",
+                "data.top",
+                "data.#7",
+                "extra_root",
+                "data.not.there",
+            ]
+            .into_iter()
+            .map(|path| MapMapping {
+                path: PathTemplate::from(path),
+                unset: true,
+                ..Default::default()
+            })
+            .chain([MapMapping {
+                path: PathTemplate::from("data.a.b.d"),
+                logic: json!({"var": "data.nope"}),
+                on_null: OnNull::Unset,
+                ..Default::default()
+            }])
+            .collect(),
+        };
+        compile_mappings(&engine, &mut config);
+
+        let (outcome, changes) = config.execute(&mut message, &engine).unwrap();
+        assert_eq!(outcome, TaskOutcome::Success);
+        assert_eq!(
+            Value::from(&message.context["data"]),
+            json!({"a": {"b": {}}, "items": [1, 3]})
+        );
+        assert!(message.context.get("extra_root").is_none());
+        assert_eq!(changes.len(), 6, "the absent path records nothing");
+        assert!(changes.iter().all(|c| c.removed));
     }
 
     #[test]

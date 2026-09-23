@@ -160,6 +160,7 @@ fn parse_json_in(
                 path: Arc::clone(target_path_arc),
                 old_value,
                 new_value,
+                removed: false,
             }],
         ));
     }
@@ -269,6 +270,7 @@ pub(crate) fn parse_xml_in(
             path: Arc::clone(target_path_arc),
             old_value,
             new_value: parsed_owned,
+            removed: false,
         }],
     ))
 }

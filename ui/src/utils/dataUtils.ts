@@ -14,12 +14,21 @@ export function describeMappingPath(path: MappingItem['path']): string {
 }
 
 /**
+ * What to show for a mapping's value. An `unset` mapping has no logic, so it
+ * is shown as a marker string rather than as `undefined`.
+ */
+export function describeMappingValue(mapping: MappingItem): JsonLogicValue {
+  if (mapping.unset) return '(unset)';
+  return mapping.logic ?? null;
+}
+
+/**
  * Convert mappings array to object notation for DataLogic visualization
  */
 export function convertMappingsToObject(mappings: MappingItem[]): Record<string, JsonLogicValue> {
   const result: Record<string, JsonLogicValue> = {};
   for (const mapping of mappings) {
-    result[describeMappingPath(mapping.path)] = mapping.logic;
+    result[describeMappingPath(mapping.path)] = describeMappingValue(mapping);
   }
   return result;
 }

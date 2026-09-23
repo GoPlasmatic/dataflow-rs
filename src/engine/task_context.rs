@@ -296,6 +296,7 @@ impl<'a> TaskContext<'a> {
                 path: Arc::from(path),
                 old_value,
                 new_value,
+                removed: false,
             });
         }
         set_nested_value(&mut self.message.context, path, value);

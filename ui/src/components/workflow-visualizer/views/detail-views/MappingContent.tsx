@@ -3,7 +3,7 @@ import type { JsonLogicValue } from '../../../../types';
 import { getMappingContext } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
 import { useTheme, useDebuggerOptional } from '../../context';
-import { describeMappingPath } from '../../../../utils/dataUtils';
+import { describeMappingPath, describeMappingValue } from '../../../../utils/dataUtils';
 
 interface MappingContentProps {
   selection: Extract<TreeSelectionType, { type: 'mapping' }>;
@@ -16,7 +16,7 @@ export function MappingContent({ selection }: MappingContentProps) {
 
   // Show the mapping as { path: logic }
   const visualData: Record<string, JsonLogicValue> = {
-    [describeMappingPath(mapping.path)]: mapping.logic,
+    [describeMappingPath(mapping.path)]: describeMappingValue(mapping),
   };
 
   // When debugger is active, find the step matching this task and get the context snapshot

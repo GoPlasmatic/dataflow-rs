@@ -273,8 +273,19 @@ export interface MapMapping {
    * it directly.
    */
   path: string | JsonLogicValue;
-  /** JSONLogic expression to compute the value */
-  logic: JsonLogicValue;
+  /**
+   * JSONLogic expression to compute the value. Absent on an `unset` mapping,
+   * which has none. A `null` result is skipped, so logic that is always `null`
+   * never writes; `check_workflow` reports it as `NULL_MAPPING`.
+   */
+  logic?: JsonLogicValue;
+  /** Remove the key at `path` instead of writing it. */
+  unset?: boolean;
+  /**
+   * What a `null` result does: `"skip"` (the default) leaves the path as it
+   * was, `"unset"` removes it.
+   */
+  on_null?: 'skip' | 'unset';
 }
 
 /**

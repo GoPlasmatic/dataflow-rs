@@ -229,7 +229,7 @@ pub use engine::error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use engine::functions::{
     AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind, ConnectorName,
     ContextRoot, DataRoot, DispatchableFunction, EnrichConfig, FilterConfig, FunctionConfig,
-    HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping, PathRoot, PathTemplate,
+    HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping, OnNull, PathRoot, PathTemplate,
     PublishKafkaConfig, Template, TemplateCompiler, ValidationConfig, ValidationRule,
     builtin_function_kind, is_builtin_function,
 };

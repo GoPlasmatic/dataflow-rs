@@ -9,6 +9,7 @@ The map function:
 - Evaluates JSONLogic expressions against message context
 - Assigns results to specified paths
 - Supports nested path creation
+- Removes paths with `unset`
 - Tracks changes for audit trail
 
 ## Basic Usage
@@ -40,7 +41,9 @@ The map function:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `path` | string \| JSONLogic | Yes | Target path (e.g., `"data.user.name"`). Since 3.9 it may be an expression that computes the destination per message — see [Computed Destinations](#computed-destinations) |
-| `logic` | JSONLogic | Yes | Expression to evaluate |
+| `logic` | JSONLogic | Unless `unset` | Expression to evaluate |
+| `unset` | boolean | No | `true` removes the key at `path` instead of writing it. Takes no `logic` — see [Removing a Path](#removing-a-path) |
+| `on_null` | `"skip"` \| `"unset"` | No | What a `null` result does. `"skip"` (the default) leaves the path as it was; `"unset"` removes it |
 
 ## Path Syntax
 
@@ -195,6 +198,57 @@ If a JSONLogic expression evaluates to `null`, the mapping is skipped:
 {"path": "data.copy", "logic": {"var": "data.optional"}}
 ```
 
+That is what makes `{"if": [cond, value, null]}` mean "set or keep": when
+`cond` is false the path keeps whatever it held. It also means `null` cannot
+clear anything — `"logic": null` does nothing at all, and `check_workflow`
+reports it (and any logic that folds to `null`) as the advisory
+`NULL_MAPPING`. To remove a path, say so.
+
+## Removing a Path
+
+`unset: true` removes the key at `path`. It takes no `logic`:
+
+```json
+{"path": "temp_data.retry", "unset": true}
+```
+
+`on_null: "unset"` keeps the `logic` and makes a `null` result remove the path
+instead of being skipped, so `{"if": [cond, value, null]}` means "set or
+clear":
+
+```json
+{
+    "path": "temp_data.reason",
+    "logic": {"if": [{"var": "temp_data.ok"}, null, "FAILED"]},
+    "on_null": "unset"
+}
+```
+
+Removing an absent key is a no-op and records nothing. A removal that does
+happen is recorded on the audit trail as a `Change` with `removed: true` and
+the old value. An array index removes that element and shifts the later ones
+down, so `data.items.0` twice removes the first two.
+
+Clearing with `false` is not the same thing. The key stays present, so
+`missing` and `exists` report it, `{"var": ["temp_data.x", "fallback"]}` and
+`??` return `false` rather than the fallback, and the value travels with the
+message. This matters most in a [loop](../advanced/loops.md), where
+`temp_data` carries over between sweeps: a per-item slot set with "set or
+keep" still holds the previous item's value in every sweep that does not set
+it. Clear it at the end of the sweep with `unset`, or set it with
+`on_null: "unset"`.
+
+Three rules hold between the keys, and a mapping that breaks one fails to
+parse — `validate_authored` reports it as `INVALID_MAPPING` at the key to
+change:
+
+- a mapping has `logic` or `"unset": true`, never both;
+- `on_null` needs `logic`;
+- a context root (`data`, `metadata`, `temp_data`) cannot be removed. A
+  literal root path is refused when the workflow loads; a
+  [computed destination](#computed-destinations) that resolves to one fails
+  that mapping at run time, leaving the root in place.
+
 ## Sequential Mappings
 
 Mappings execute in order, allowing later mappings to use earlier results:
@@ -261,3 +315,5 @@ Mappings execute in order, allowing later mappings to use earlier results:
 2. **Order Matters** - Place dependencies before dependent mappings
 3. **Check for Null** - Handle missing fields with `if` or `!!` checks
 4. **Merge Root Fields** - Use root assignment to merge, not replace
+5. **Clear with `unset`, not `false` or `null`** - `null` is skipped and
+   `false` is a value; only `unset` makes a path absent

@@ -38,6 +38,12 @@ fn workflow(tasks: Value) -> Value {
     json!({"id": "w", "name": "w", "priority": 0, "tasks": tasks})
 }
 
+/// A workflow with one `map` task carrying `mappings`.
+fn mapping_workflow(mappings: Value) -> Value {
+    workflow(json!([{"id": "t", "name": "t",
+                     "function": {"name": "map", "input": {"mappings": mappings}}}]))
+}
+
 /// Every fixture: what it is, and the code it must produce.
 fn broken_fixtures() -> Vec<(&'static str, IssueCode, Value)> {
     vec![
@@ -133,6 +139,32 @@ fn broken_fixtures() -> Vec<(&'static str, IssueCode, Value)> {
             IssueCode::InvalidHaltOn,
             workflow(json!([{"id": "g", "halt_on": "failure", "tasks": [task("inner")]}])),
         ),
+        (
+            "mapping with neither logic nor unset",
+            IssueCode::InvalidMapping,
+            mapping_workflow(json!([{"path": "data.x"}])),
+        ),
+        (
+            "mapping with both logic and unset",
+            IssueCode::InvalidMapping,
+            mapping_workflow(json!([{"path": "data.x", "logic": 1, "unset": true}])),
+        ),
+        (
+            "on_null without logic",
+            IssueCode::InvalidMapping,
+            mapping_workflow(json!([{"path": "data.x", "unset": true, "on_null": "unset"}])),
+        ),
+        (
+            "unset of a context root",
+            IssueCode::InvalidMapping,
+            mapping_workflow(json!([{"path": "temp_data", "unset": true}])),
+        ),
+        (
+            "on_null unset on a context root",
+            IssueCode::InvalidMapping,
+            mapping_workflow(json!([{"path": "data", "logic": {"var": "data.x"},
+                                     "on_null": "unset"}])),
+        ),
     ]
 }
 
@@ -173,6 +205,22 @@ fn empty_iff_the_workflow_loads() {
                         "function": {"name": "map", "input": {"mappings": []}}}])),
         workflow(json!([{"id": "t", "name": "t", "halt_on": "never",
                         "function": {"name": "map", "input": {"mappings": []}}}])),
+        // Removal, both spellings, and the explicit default.
+        mapping_workflow(json!([
+            {"path": "temp_data.slot", "unset": true},
+            {"path": "temp_data.reason", "logic": {"var": "data.r"}, "on_null": "unset"},
+            {"path": "temp_data.kept", "logic": {"var": "data.k"}, "on_null": "skip"},
+            // `unset: false` is the absence of the key, so logic is required
+            // and present.
+            {"path": "temp_data.y", "logic": 1, "unset": false}
+        ])),
+        // Writing a root still merges, and `"logic": null` still loads — it is
+        // the silent no-op #59 is about, but refusing it now would fail every
+        // build that carries one.
+        mapping_workflow(json!([
+            {"path": "temp_data", "logic": {"a": 1}},
+            {"path": "temp_data.x", "logic": null}
+        ])),
     ];
     for json in valid {
         assert!(
@@ -223,6 +271,14 @@ fn a_type_error_falls_through_to_parse_failed() {
         (
             "loop max as a string",
             json!({"id": "w", "name": "w", "loop": {"max": "3"}, "tasks": [task("t")]}),
+        ),
+        (
+            "unset as a string",
+            mapping_workflow(json!([{"path": "data.x", "unset": "yes"}])),
+        ),
+        (
+            "on_null with an unknown spelling",
+            mapping_workflow(json!([{"path": "data.x", "logic": 1, "on_null": "clear"}])),
         ),
     ];
 
@@ -328,14 +384,15 @@ fn a_non_object_input_does_not_panic() {
 /// The set itself is pinned in `authoring.rs`; what is pinned here is that the
 /// classification describes the engine. The behavioural fixtures live beside
 /// the lints that produce them — `an_unguarded_validation_...`,
-/// `a_group_continue_on_error_...`, and `escaped_keys_...` in
-/// `tests/template_keys.rs`.
+/// `a_group_continue_on_error_...`, `a_mapping_that_is_always_null_...`, and
+/// `escaped_keys_...` in `tests/template_keys.rs`.
 #[test]
 fn the_advisory_codes_are_the_ones_build_accepts() {
     for code in [
         IssueCode::UnguardedValidation,
         IssueCode::GroupContinueOnError,
         IssueCode::EscapedTemplateKey,
+        IssueCode::NullMapping,
     ] {
         assert_eq!(code.severity(), Severity::Advisory, "{code:?}");
     }
@@ -946,4 +1003,151 @@ fn a_nested_group_carrying_it_is_reported_too() {
         ["outer", "inner"],
         "each group once, outermost first"
     );
+}
+
+#[test]
+fn an_invalid_mapping_is_reported_at_the_offending_key() {
+    let json = workflow(json!([
+        task("first"),
+        {"id": "g", "condition": true, "tasks": [
+            {"id": "m", "name": "m", "function": {"name": "map", "input": {"mappings": [
+                {"path": "data.ok", "logic": 1},
+                {"path": "data.x", "logic": 1, "unset": true},
+                {"path": "metadata", "unset": true}
+            ]}}}
+        ]}
+    ]));
+
+    let issues = Workflow::validate_authored(&json);
+    let found: Vec<_> = issues
+        .iter()
+        .map(|i| (i.code, i.path.as_deref(), i.task_id.as_deref()))
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            (
+                IssueCode::InvalidMapping,
+                Some("tasks[1].tasks[0].function.input.mappings[1].unset"),
+                Some("m"),
+            ),
+            (
+                IssueCode::InvalidMapping,
+                Some("tasks[1].tasks[0].function.input.mappings[2].path"),
+                Some("m"),
+            ),
+        ],
+        "every bad mapping, at the key the author has to change"
+    );
+    assert!(
+        issues.iter().all(|i| i.severity() == Severity::Rejected),
+        "the parser refuses these, so they are rejections"
+    );
+}
+
+#[test]
+fn the_parser_refuses_what_invalid_mapping_reports_with_the_same_words() {
+    // One rule set behind both surfaces: the message the author sees from
+    // `validate_authored` is the one `Workflow::from_json` fails with.
+    let json = mapping_workflow(json!([{"path": "data.x", "logic": 1, "unset": true}]));
+    let issue = &Workflow::validate_authored(&json)[0];
+    let err = Workflow::from_json(&json.to_string())
+        .expect_err("the parser refuses it")
+        .to_string();
+    assert!(
+        err.contains(&issue.message),
+        "parser error {err:?} should carry {:?}",
+        issue.message
+    );
+}
+
+/// #59's silent half: a mapping that looks like a clear and can never write.
+/// Reported, never refused — `"logic": null` loaded before `unset` existed.
+#[test]
+fn a_mapping_that_is_always_null_is_reported_for_audit_but_never_refused() {
+    let w = wf_tasks(
+        json!([{"id": "m", "name": "m", "function": {"name": "map", "input": {
+            "mappings": [
+                {"path": "temp_data.written", "logic": 1},
+                {"path": "temp_data.slot", "logic": null},
+                {"path": "temp_data.folded", "logic": {"if": [false, 1, null]}}
+            ]
+        }}}]),
+    );
+
+    for issues in [
+        Engine::builder().check_workflow(&w),
+        Engine::builder().build().unwrap().check_workflow(&w),
+    ] {
+        let found: Vec<_> = issues
+            .iter()
+            .map(|i| (i.code, i.path.as_deref(), i.task_id.as_deref()))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    IssueCode::NullMapping,
+                    Some("function.input.mappings[1].logic"),
+                    Some("m"),
+                ),
+                (
+                    IssueCode::NullMapping,
+                    Some("function.input.mappings[2].logic"),
+                    Some("m"),
+                ),
+            ],
+        );
+        assert!(issues[0].message.contains("unset"), "{}", issues[0].message);
+        assert!(issues.iter().all(|i| i.severity() == Severity::Advisory));
+    }
+
+    // Informational: the workflow is legal, still loads, and still builds.
+    assert!(
+        Workflow::validate_authored(&workflow(json!([{"id": "m", "name": "m",
+        "function": {"name": "map", "input": {"mappings": [
+            {"path": "temp_data.slot", "logic": null}
+        ]}}}])))
+        .is_empty()
+    );
+    Engine::builder()
+        .with_workflow(w)
+        .build()
+        .expect("an always-null mapping is reported, never refused");
+}
+
+/// Only a mapping that can *never* write is reported.
+#[test]
+fn a_mapping_that_can_write_or_remove_is_not_an_always_null_mapping() {
+    let cases: Vec<(&str, Value)> = vec![
+        (
+            "null only when the path misses",
+            json!({"path": "temp_data.x", "logic": {"var": "data.x"}}),
+        ),
+        (
+            "set or keep, gated on the message",
+            json!({"path": "temp_data.x", "logic": {"if": [{"var": "data.go"}, 1, null]}}),
+        ),
+        (
+            "an explicit removal has no logic",
+            json!({"path": "temp_data.x", "unset": true}),
+        ),
+        (
+            "an always-null result removes the path under on_null unset",
+            json!({"path": "temp_data.x", "logic": null, "on_null": "unset"}),
+        ),
+        (
+            "folding errored, so it is not a constant",
+            json!({"path": "temp_data.x", "logic": {"/": [1, 0]}}),
+        ),
+    ];
+    for (label, mapping) in cases {
+        let w = wf_tasks(json!([{"id": "m", "name": "m",
+            "function": {"name": "map", "input": {"mappings": [mapping]}}}]));
+        let issues = Engine::builder().check_workflow(&w);
+        assert!(
+            !issues.iter().any(|i| i.code == IssueCode::NullMapping),
+            "{label}: should not fire, got {issues:?}"
+        );
+    }
 }

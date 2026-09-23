@@ -109,6 +109,14 @@ Two things make this work:
 Every operator used here — `reduce`, `<`, `+`, `merge`, and computed-path `val`
 — is a core operator, available without enabling any `ext-*` cargo feature.
 
+**`temp_data` carries over between sweeps**; only the counter is rewritten. A
+per-item slot written only *sometimes* — `{"if": [cond, value, null]}`, whose
+`null` is skipped — still holds the previous item's value in a sweep that does
+not write it. Clear it explicitly: `{"path": "temp_data.slot", "unset": true}`
+at the end of the body, or `"on_null": "unset"` on the mapping that sets it.
+`"logic": null` clears nothing, and `false` is a value that `missing` and `??`
+still see. See [Removing a Path](../built-in-functions/map.md#removing-a-path).
+
 ## Running a fixed number of times
 
 Omit the condition; the bound alone drives the loop.

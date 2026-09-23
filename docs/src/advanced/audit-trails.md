@@ -25,8 +25,16 @@ pub struct Change {
     pub path: Arc<str>,
     pub old_value: OwnedDataValue,
     pub new_value: OwnedDataValue,
+    pub removed: bool,
 }
 ```
+
+`removed` marks a removal — a `map` mapping with `unset`, or
+`on_null: "unset"` meeting a null result (see
+[Removing a Path](../built-in-functions/map.md#removing-a-path)). `new_value`
+is then `null`, which on its own could not tell "now absent" from "now holds
+null", so read the flag. It is omitted from JSON when `false`, which keeps
+every write's audit JSON exactly as it was before removals existed.
 
 `old_value` / `new_value` are owned (not `Arc<OwnedDataValue>`) — one less
 heap allocation per recorded mutation. `workflow_id` / `task_id` are
