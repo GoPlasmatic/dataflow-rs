@@ -16,10 +16,12 @@ use crate::engine::observer::{
     WorkflowStarted,
 };
 use crate::engine::task::{HaltOn, Task};
-use crate::engine::task_context::TaskIdentity;
+use crate::engine::task_context::{CallStamp, TaskIdentity};
 use crate::engine::task_executor::TaskExecutor;
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::trace::{ExecutionStep, ExecutionTrace, StepTiming, duration_us_between};
+use crate::engine::trace::{
+    ExecutionStep, ExecutionTrace, StepStamp, StepTiming, duration_us_between,
+};
 use crate::engine::utils::{
     compute_path_parts, set_nested_value, set_nested_value_parts, strip_hash_prefix,
 };
@@ -65,6 +67,9 @@ struct PassCtx {
     /// Loop counter of the sweep this pass is, or `None` for a workflow
     /// without a `loop`.
     loop_counter: Option<i64>,
+    /// Fan-out element being recorded, or `None` outside a `for_each`. Set
+    /// per element on a copy of the pass by `run_for_each`.
+    element_index: Option<usize>,
 }
 
 impl PassCtx {
@@ -74,6 +79,7 @@ impl PassCtx {
         Self {
             now,
             loop_counter: None,
+            element_index: None,
         }
     }
 
@@ -105,7 +111,10 @@ impl PassCtx {
                 duration_us: duration_us_between(started_at, Utc::now()),
             },
             mapping_contexts,
-            self.loop_counter,
+            StepStamp {
+                loop_counter: self.loop_counter,
+                element_index: self.element_index,
+            },
         );
     }
 }
@@ -1127,6 +1136,7 @@ impl WorkflowExecutor {
             let pass = PassCtx {
                 now,
                 loop_counter: Some(counter),
+                element_index: None,
             };
 
             match self
@@ -1458,7 +1468,10 @@ impl WorkflowExecutor {
                             workflow_id: &workflow.id_arc,
                             task_id: &task.id_arc,
                         }),
-                        pass.loop_counter,
+                        CallStamp {
+                            loop_counter: pass.loop_counter,
+                            element_index: None,
+                        },
                     )
                     .await;
 
@@ -2027,6 +2040,7 @@ impl WorkflowExecutor {
                     status: status as usize,
                     changes,
                     loop_counter: pass.loop_counter,
+                    element_index: pass.element_index,
                 });
 
                 // Update progress metadata for workflow chaining. Always
@@ -2055,15 +2069,16 @@ impl WorkflowExecutor {
                     // `message.errors` as well as the audit trail, so callers
                     // that scan `errors()` see a 5xx-status task even when
                     // the workflow continues past it.
-                    message.errors.push(
-                        ErrorInfo::builder(
-                            "TASK_STATUS_ERROR",
-                            format!("Task {} returned status {}", task_id, status),
-                        )
-                        .workflow_id(workflow_id)
-                        .task_id(task_id)
-                        .build(),
-                    );
+                    let mut info = ErrorInfo::builder(
+                        "TASK_STATUS_ERROR",
+                        format!("Task {} returned status {}", task_id, status),
+                    )
+                    .workflow_id(workflow_id)
+                    .task_id(task_id);
+                    if let Some(index) = pass.element_index {
+                        info = info.element_index(index);
+                    }
+                    message.errors.push(info.build());
                     if continue_on_error {
                         Ok(TaskControlFlow::Continue)
                     } else {
@@ -2103,6 +2118,7 @@ impl WorkflowExecutor {
                     status: 500,
                     changes: vec![],
                     loop_counter: pass.loop_counter,
+                    element_index: pass.element_index,
                 });
 
                 // Same invariant as the Ok arm: `metadata.progress` is written
@@ -2130,6 +2146,9 @@ impl WorkflowExecutor {
                 .task_id(task_id);
                 if let Some(detail) = e.detail() {
                     info = info.detail(detail);
+                }
+                if let Some(index) = pass.element_index {
+                    info = info.element_index(index);
                 }
                 message.errors.push(info.build());
 

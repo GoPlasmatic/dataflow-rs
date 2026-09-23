@@ -499,6 +499,15 @@ pub struct AuditTrail {
     /// byte-identical to what it was before loops existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_counter: Option<i64>,
+    /// Index of the element this entry records, for a task carrying a
+    /// [`crate::engine::for_each::ForEach`]; `None` otherwise. A fan-out
+    /// records one entry per element, in element order.
+    ///
+    /// Also `None` on the single entry an empty or unevaluable `over`
+    /// records, since no element was involved. Skipped when `None`, so an
+    /// ordinary task's audit JSON is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_index: Option<usize>,
 }
 
 /// A single recorded mutation in the audit trail.
@@ -544,17 +553,50 @@ mod tests {
             changes: vec![],
             status: 200,
             loop_counter: None,
+            element_index: None,
         };
         let json = serde_json::to_value(&entry).expect("should serialize");
         assert!(json.get("loop_counter").is_none());
 
         let with_counter = AuditTrail {
             loop_counter: Some(7),
+            element_index: None,
             ..entry
         };
         assert_eq!(
             serde_json::to_value(&with_counter).expect("should serialize")["loop_counter"],
             serde_json::json!(7)
+        );
+    }
+
+    #[test]
+    fn audit_trail_element_index_is_absent_from_json_when_none() {
+        let entry = AuditTrail {
+            workflow_id: Arc::from("w"),
+            task_id: Arc::from("t"),
+            timestamp: Utc::now(),
+            changes: vec![],
+            status: 200,
+            loop_counter: None,
+            element_index: None,
+        };
+        let json = serde_json::to_value(&entry).expect("should serialize");
+        assert!(
+            json.get("element_index").is_none(),
+            "an ordinary task keeps its wire shape"
+        );
+
+        // A reader that predates the field loads an entry without it.
+        let back: AuditTrail = serde_json::from_value(json).expect("should deserialize");
+        assert_eq!(back.element_index, None);
+
+        let fanned = AuditTrail {
+            element_index: Some(4),
+            ..entry
+        };
+        assert_eq!(
+            serde_json::to_value(&fanned).expect("should serialize")["element_index"],
+            serde_json::json!(4)
         );
     }
 

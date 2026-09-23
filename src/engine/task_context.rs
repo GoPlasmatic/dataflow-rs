@@ -42,9 +42,22 @@ pub struct TaskContext<'a> {
     identity: Option<TaskIdentity<'a>>,
     /// Sweep index of the enclosing looping workflow, if any.
     loop_counter: Option<i64>,
+    /// Fan-out element this call runs for, if the task carries `for_each`.
+    element_index: Option<usize>,
     /// The engine's secret store — empty for a context built with
     /// [`Self::new`], for the same reason `identity` is `None` there.
     secrets: &'a Secrets,
+}
+
+/// Where a handler call sits in a run: the loop sweep and the fan-out
+/// element, either of which may be absent.
+///
+/// One parameter rather than two, so the dispatch path stays under clippy's
+/// argument-count limit.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CallStamp {
+    pub loop_counter: Option<i64>,
+    pub element_index: Option<usize>,
 }
 
 /// Which task, in which workflow, the engine is currently running.
@@ -76,6 +89,7 @@ impl<'a> TaskContext<'a> {
             changes: Vec::new(),
             identity: None,
             loop_counter: None,
+            element_index: None,
             secrets: &secrets::EMPTY,
         }
     }
@@ -89,7 +103,7 @@ impl<'a> TaskContext<'a> {
         message: &'a mut Message,
         datalogic: &'a Arc<DatalogicEngine>,
         identity: Option<TaskIdentity<'a>>,
-        loop_counter: Option<i64>,
+        stamp: CallStamp,
         secrets: &'a Secrets,
     ) -> Self {
         Self {
@@ -97,7 +111,8 @@ impl<'a> TaskContext<'a> {
             datalogic,
             changes: Vec::new(),
             identity,
-            loop_counter,
+            loop_counter: stamp.loop_counter,
+            element_index: stamp.element_index,
             secrets,
         }
     }
@@ -145,6 +160,26 @@ impl<'a> TaskContext<'a> {
     #[inline]
     pub fn loop_counter(&self) -> Option<i64> {
         self.loop_counter
+    }
+
+    /// Index of the element this call runs for, when the task carries a
+    /// [`for_each`](crate::engine::for_each::ForEach); `None` otherwise.
+    ///
+    /// The same value the engine binds at `temp_data.<as>_index` in this
+    /// call's view of the message, without the handler having to know the
+    /// `as` name.
+    ///
+    /// ```
+    /// # use dataflow_rs::{TaskContext, engine::message::Message};
+    /// # use serde_json::json;
+    /// # let datalogic = std::sync::Arc::new(datalogic_rs::Engine::new());
+    /// # let mut message = Message::from_value(&json!({}));
+    /// let ctx = TaskContext::new(&mut message, &datalogic);
+    /// assert_eq!(ctx.element_index(), None);
+    /// ```
+    #[inline]
+    pub fn element_index(&self) -> Option<usize> {
+        self.element_index
     }
 
     /// A secret by dotted name, from the store the host configured through

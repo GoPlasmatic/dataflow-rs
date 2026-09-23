@@ -316,6 +316,12 @@ pub struct ErrorInfo {
     /// `Service` error carried one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+
+    /// Index of the fan-out element this error came from, for a task carrying
+    /// a [`crate::engine::for_each::ForEach`]; `None` otherwise. Omitted from
+    /// JSON when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_index: Option<usize>,
 }
 
 /// Default cap on the number of records held at the error-context path.
@@ -465,6 +471,7 @@ impl ErrorInfo {
             timestamp: Some(Utc::now().to_rfc3339()),
             retry_attempted: Some(false),
             retry_count: Some(0),
+            element_index: None,
         }
     }
 
@@ -480,6 +487,7 @@ impl ErrorInfo {
             retry_attempted: None,
             retry_count: None,
             detail: None,
+            element_index: None,
         }
     }
 
@@ -495,6 +503,7 @@ impl ErrorInfo {
             retry_attempted: None,
             retry_count: None,
             detail: None,
+            element_index: None,
         }
     }
 
@@ -523,6 +532,7 @@ pub struct ErrorInfoBuilder {
     retry_attempted: Option<bool>,
     retry_count: Option<u32>,
     detail: Option<String>,
+    element_index: Option<usize>,
 }
 
 impl ErrorInfoBuilder {
@@ -538,6 +548,7 @@ impl ErrorInfoBuilder {
             retry_attempted: None,
             retry_count: None,
             detail: None,
+            element_index: None,
         }
     }
 
@@ -584,6 +595,12 @@ impl ErrorInfoBuilder {
         self
     }
 
+    /// Set the fan-out element this error came from.
+    pub fn element_index(mut self, index: usize) -> Self {
+        self.element_index = Some(index);
+        self
+    }
+
     /// Build the ErrorInfo instance
     pub fn build(self) -> ErrorInfo {
         ErrorInfo {
@@ -596,6 +613,7 @@ impl ErrorInfoBuilder {
             retry_attempted: self.retry_attempted,
             retry_count: self.retry_count,
             detail: self.detail,
+            element_index: self.element_index,
         }
     }
 }

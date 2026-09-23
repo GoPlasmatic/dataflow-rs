@@ -241,6 +241,12 @@ pub struct ExecutionStep {
     /// wire shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_counter: Option<i64>,
+    /// Index of the element this step ran for, for a task carrying a
+    /// [`crate::engine::for_each::ForEach`]; `None` otherwise. Mirrors
+    /// [`crate::engine::message::AuditTrail::element_index`], including being
+    /// skipped when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_index: Option<usize>,
 }
 
 impl ExecutionStep {
@@ -256,6 +262,7 @@ impl ExecutionStep {
             duration_us: None,
             changes: None,
             loop_counter: None,
+            element_index: None,
         }
     }
 
@@ -271,6 +278,7 @@ impl ExecutionStep {
             duration_us: None,
             changes: None,
             loop_counter: None,
+            element_index: None,
         }
     }
 
@@ -286,6 +294,7 @@ impl ExecutionStep {
             duration_us: None,
             changes: None,
             loop_counter: None,
+            element_index: None,
         }
     }
 
@@ -314,6 +323,24 @@ impl ExecutionStep {
         self.loop_counter = loop_counter;
         self
     }
+
+    /// Attach the fan-out element this step ran for. `None` is the ordinary
+    /// case and leaves the step's JSON unchanged.
+    pub fn with_element_index(mut self, element_index: Option<usize>) -> Self {
+        self.element_index = element_index;
+        self
+    }
+}
+
+/// Where in a run one executed step sits: the loop sweep and the fan-out
+/// element, either of which may be absent.
+///
+/// Bundled so that stamping a second coordinate did not push
+/// [`ExecutionTrace::add_executed_step`] past clippy's argument-count limit.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct StepStamp {
+    pub loop_counter: Option<i64>,
+    pub element_index: Option<usize>,
 }
 
 /// Complete execution trace containing all steps
@@ -397,7 +424,7 @@ impl ExecutionTrace {
         message: &Message,
         timing: StepTiming,
         mapping_contexts: Option<Vec<Value>>,
-        loop_counter: Option<i64>,
+        stamp: StepStamp,
     ) {
         let mut step = ExecutionStep {
             workflow_id: workflow_id.to_string(),
@@ -407,7 +434,8 @@ impl ExecutionTrace {
             mapping_contexts: None,
             started_at: Some(timing.started_at),
             duration_us: Some(timing.duration_us),
-            loop_counter,
+            loop_counter: stamp.loop_counter,
+            element_index: stamp.element_index,
             changes: if self.options.changes {
                 // Derived from this task's own audit entry rather than
                 // `audit_trail.last()` unconditionally — that is the
@@ -1142,13 +1170,36 @@ mod tests {
                 duration_us: 42,
             },
             None,
-            Some(7),
+            StepStamp {
+                loop_counter: Some(7),
+                element_index: Some(2),
+            },
         );
 
         let step = &trace.steps[0];
         assert_eq!(step.started_at, Some(started_at));
         assert_eq!(step.duration_us, Some(42));
         assert_eq!(step.loop_counter, Some(7));
+        assert_eq!(step.element_index, Some(2));
         assert_eq!(step.result, StepResult::Executed);
+    }
+
+    #[test]
+    fn execution_step_element_index_is_absent_from_json_when_none() {
+        let plain = ExecutionStep::task_skipped("w", "t");
+        let json = serde_json::to_value(&plain).expect("should serialize");
+        assert!(
+            json.get("element_index").is_none(),
+            "an ordinary step keeps its wire shape"
+        );
+
+        let fanned = ExecutionStep::task_skipped("w", "t").with_element_index(Some(3));
+        assert_eq!(
+            serde_json::to_value(&fanned).expect("should serialize")["element_index"],
+            json!(3)
+        );
+
+        let back: ExecutionStep = serde_json::from_value(json).expect("should deserialize");
+        assert_eq!(back.element_index, None, "a step without the key loads");
     }
 }

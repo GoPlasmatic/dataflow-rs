@@ -12,7 +12,7 @@ use crate::engine::functions::{BoxedFunctionHandler, FunctionConfig};
 use crate::engine::message::{Change, Message};
 use crate::engine::secrets::Secrets;
 use crate::engine::task::Task;
-use crate::engine::task_context::{TaskContext, TaskIdentity};
+use crate::engine::task_context::{CallStamp, TaskContext, TaskIdentity};
 use crate::engine::task_outcome::TaskOutcome;
 use datalogic_rs::Engine;
 use log::{debug, error};
@@ -73,7 +73,8 @@ impl TaskExecutor {
         task: &Task,
         message: &mut Message,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
-        self.execute_in_workflow(task, message, None, None).await
+        self.execute_in_workflow(task, message, None, CallStamp::default())
+            .await
     }
 
     /// As [`Self::execute`], carrying the identity the handler will see through
@@ -88,7 +89,7 @@ impl TaskExecutor {
         task: &Task,
         message: &mut Message,
         identity: Option<TaskIdentity<'_>>,
-        loop_counter: Option<i64>,
+        stamp: CallStamp,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
         debug!(
             "Executing task: {} with function: {:?}",
@@ -129,7 +130,7 @@ impl TaskExecutor {
                     message,
                     input,
                     identity,
-                    loop_counter,
+                    stamp,
                 )
                 .await
             }
@@ -139,7 +140,7 @@ impl TaskExecutor {
                     message,
                     input,
                     identity,
-                    loop_counter,
+                    stamp,
                 )
                 .await
             }
@@ -149,7 +150,7 @@ impl TaskExecutor {
                     message,
                     input,
                     identity,
-                    loop_counter,
+                    stamp,
                 )
                 .await
             }
@@ -165,7 +166,7 @@ impl TaskExecutor {
                         name
                     ))
                 })?;
-                self.dispatch_handler_any(name, message, any_input.as_any(), identity, loop_counter)
+                self.dispatch_handler_any(name, message, any_input.as_any(), identity, stamp)
                     .await
             }
         }
@@ -181,13 +182,13 @@ impl TaskExecutor {
         message: &mut Message,
         input: &T,
         identity: Option<TaskIdentity<'_>>,
-        loop_counter: Option<i64>,
+        stamp: CallStamp,
     ) -> Result<(TaskOutcome, Vec<Change>)>
     where
         T: Any + Send + Sync,
     {
         let any_input: &(dyn Any + Send + Sync) = input;
-        self.dispatch_handler_any(name, message, any_input, identity, loop_counter)
+        self.dispatch_handler_any(name, message, any_input, identity, stamp)
             .await
     }
 
@@ -199,7 +200,7 @@ impl TaskExecutor {
         message: &mut Message,
         any_input: &(dyn Any + Send + Sync),
         identity: Option<TaskIdentity<'_>>,
-        loop_counter: Option<i64>,
+        stamp: CallStamp,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
         let handler = self.task_functions.get(name).ok_or_else(|| {
             error!("Function handler not found: {}", name);
@@ -209,7 +210,7 @@ impl TaskExecutor {
             message,
             &self.engine,
             identity,
-            loop_counter,
+            stamp,
             &self.secrets,
         );
         let outcome = handler.dyn_execute(&mut ctx, any_input).await?;
