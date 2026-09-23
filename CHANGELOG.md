@@ -14,8 +14,43 @@ also mean "clear" — and nothing else could. Authors cleared with `false`, whic
 which silently does nothing. In a loop, whose `temp_data` carries over between
 sweeps, that left a per-item slot holding the previous item's value.
 
+And a `loop` can now iterate an array directly (#60). Iterating a batch needed
+four hand-built idioms around the counter: setup steps guarded by `i == 0`, a
+`filter` halt comparing the counter with the length, a `map` copying `rows[i]`
+into a slot, and a clear of every per-item slot at the top of each sweep. The
+last one failed silently when forgotten, which in a loop means reading the
+previous item's value.
+
 ### Added
 
+- **`loop.setup`** — steps run once, before the first sweep, in the normal
+  step grammar (groups allowed, `terminal` ends the workflow before any
+  sweep). Gated by the workflow condition like the loop itself. Not a sweep:
+  audit entries and trace steps carry no `loop_counter`, and
+  `WorkflowFinished::sweeps` counts sweeps only. Shares the step id namespace
+  with `tasks`. A setup error ends the workflow with no sweeps; under the
+  workflow's `continue_on_error` the message goes on to the next workflow.
+- **`loop.over`** — JSONLogic evaluated once, after setup, yielding the array
+  to iterate. The counter is the element index, so the loop stops at `max` or
+  at the array's end, whichever comes first; `init` is an offset and
+  `increment` a stride. Anything but an array — `null` included — is a
+  `WORKFLOW_ERROR` naming `loop.over`. An empty array runs zero sweeps.
+- **`loop.as`** — the `temp_data` field holding the current element.
+- **`loop.scratch`** — a `temp_data` field reset to `{}` at the start of every
+  sweep, before the condition, so per-item state cannot leak between elements.
+  Independent of `over`.
+- **`Workflow::all_tasks`** — every task the workflow can run, setup first.
+  The compiler, handler resolution, `check_workflow` and `connector_refs` all
+  read it, so a setup step is compiled, resolved and linted exactly like a
+  body step.
+- **`steps::walk_authored_steps_at(steps, prefix)`** — the authored walk
+  rooted at any path; `validate_authored` reports setup issues at
+  `loop.setup[i]…`.
+- **authoring:** `LOOP_SLOT_INVALID`, `LOOP_ITEM_WITHOUT_OVER`,
+  `LOOP_SLOT_COLLISION` and `LOOP_OVER_INVALID`, all Rejected, and refused by
+  `build` from the same predicates. `loop.over` is visited by the secret and
+  template-key checks as a message write, since its elements land in
+  `temp_data`.
 - **`map`: `unset: true`** removes the key at `path`, and takes no `logic`.
   Removing an absent key is a no-op. An array index removes the element and
   shifts later ones down, as `utils::remove_nested_value` always has.
@@ -50,6 +85,18 @@ sweeps, that left a per-item slot holding the previous item's value.
 
 ### Changed
 
+- **BREAKING: `LoopConfig` is `#[non_exhaustive]` and no longer
+  `PartialEq`/`Eq`.** Construct one through `LoopConfig::bounded(max)` and
+  assign fields. `setup` holds `Task`s, which are not comparable, and the
+  compiled `over` cannot be; the hidden compiled fields are why a struct
+  literal would otherwise have to name engine internals. The doc-hidden
+  `precompute_counter_path` is now `precompute_paths`.
+- **An explicit `"over": null` is refused** rather than read as absence, so a
+  generator emitting `null` for a missing batch expression fails at build
+  instead of silently becoming a counter loop. `"loop": null` still means no
+  loop.
+- A counter-only `loop` is unchanged, on the same code path, with no extra
+  condition evaluation.
 - **BREAKING (construction only): `Change` gained a `removed` field**, so a
   struct literal built outside the crate no longer compiles until it names
   `removed: false`. Field reads, and serialized audit JSON for every write, are

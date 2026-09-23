@@ -160,7 +160,8 @@ matching version.
   `IssueCode::severity` is a wildcard-free match on purpose: a new code must be
   classified deliberately, never default into a host's pre-build screen
 - `steps.rs`: The authored step grammar — `flatten` (the parser) and
-  `walk_authored_steps` (the public walker), plus the `is_group` /
+  `walk_authored_steps` / `walk_authored_steps_at` (the public walker, the
+  latter rooted at any prefix such as `loop.setup`), plus the `is_group` /
   `MAX_GROUP_DEPTH` facts both read
 - `observer.rs`: `ExecutionObserver` and its event types — task, workflow and
   message lifecycle callbacks
@@ -204,6 +205,25 @@ matching version.
   counter, so a body task writing that path is overwritten at the next
   increment. Looping workflows are excluded from the shared-arena fully-sync
   run (`joins_sync_run`) so bump-arena memory is freed between sweeps.
+- **A loop with `setup` or `over` runs a pre-phase; a counter-only loop does
+  not.** The pre-phase is the workflow condition plus the `setup` list, run
+  through the same `execute_pass` as a sweep (over a `PassList` naming that
+  list, not `workflow.tasks`), then `over` evaluated once. Only then does the
+  per-sweep sequence start, with two more engine-owned writes after the bound
+  checks: `over[counter]` into `temp_data.<as>` and `{}` into
+  `temp_data.<scratch>`, both before the condition. The counter *is* the
+  element index. Gating the pre-phase on `setup`/`over` is what keeps a
+  counter-only loop free of an extra condition evaluation — the existing loop
+  tests pin that. Setup is not a sweep: `PassCtx::once`, no `loop_counter`,
+  and `span.sweeps` reset after it.
+- **Every pass over a workflow's tasks goes through `Workflow::all_tasks()`**,
+  not `workflow.tasks` — the compiler, `precompile_custom_inputs`,
+  `Workflow::validate`, `connector_refs` and every `authoring::check_*` do.
+  Reading `tasks` alone silently skips a loop's setup steps, which would then
+  run uncompiled or unlinted. `loop.over` is a `Sink::Message` expression in
+  `for_each_expression`, since its elements land in `temp_data`. An explicit
+  `"over": null` is kept as `Some(Null)` (`present_value`) so the parser and
+  `check_loop` agree it is refused.
 - **A group's condition is evaluated once, on entry — not per member.** An
   element of `tasks` carrying a `tasks` key parses as a `TaskGroup`; the tree is
   flattened into `Workflow::tasks` at parse time and each span is recorded on
@@ -405,6 +425,7 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `rollout.rs` | Traffic splits gated on `Message::routing_bucket` |
 | `templates.rs` | `Template` config fields on custom handlers |
 | `workflow_loop.rs` | `LoopConfig` — bounded per-sweep re-execution |
+| `loop_over.rs` | `loop.setup` / `over` / `as` / `scratch` — the array-iteration shape end to end |
 | `task_groups.rs` | `Task::terminal`, `Task::halt_on` and task groups — the guard-clause shape |
 | `task_identity.rs` | `TaskContext` workflow/task ids and `loop_counter` |
 | `operator_vocabulary.rs` | `operator_names` — every mirrored name checked live |

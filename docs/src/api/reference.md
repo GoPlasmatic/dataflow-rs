@@ -215,7 +215,9 @@ never matches. Its variants cover the structural rules —
 `EmptyWorkflowId`, `EmptyWorkflowName`, `NoTasks`, `MissingStepId`,
 `DuplicateStepId`, `EmptyGroup`, `GroupTooDeep`, `MissingFunction`,
 `InvalidFunctionName`, `InvalidTerminal`, `InvalidHaltOn`, `InvalidMapping`,
-`LoopIncrementTooSmall`, `LoopBoundEmpty`, `LoopCounterInvalid` — the lints
+`LoopIncrementTooSmall`, `LoopBoundEmpty`, `LoopCounterInvalid`,
+`LoopSlotInvalid`, `LoopItemWithoutOver`, `LoopSlotCollision`,
+`LoopOverInvalid` — the lints
 `check_workflow` adds — `UnguardedValidation`, `GroupContinueOnError`,
 `NullMapping` — the
 registry and secret rules — `UnknownFunction`, `MissingHandler`, `InputParse`,
@@ -243,6 +245,10 @@ coordinate. Join them with the walker to recover one:
 // Walk the authored step tree — tasks and groups, in document order — yielding
 // each step with the coordinate the author typed.
 pub fn walk_authored_steps(tasks: &serde_json::Value) -> AuthoredSteps<'_>
+
+// The same walk with paths rooted at `prefix` — `"loop.setup"` for a loop's
+// setup list, whose issues point at `loop.setup[i]…`.
+pub fn walk_authored_steps_at<'a>(steps: &'a serde_json::Value, prefix: &str) -> AuthoredSteps<'a>
 ```
 
 ## Retry
@@ -324,7 +330,7 @@ pub fn rule(id: &str, name: &str, condition: Value, tasks: Vec<Task>) -> Self
     "status": "'active' | 'paused' | 'archived' (optional, default: 'active')",
     "tags": "array of string (optional, default: [])",
     "rollout": "{bucket_start, bucket_end} over 0..100 (optional, default: none)",
-    "loop": "{max, init, increment, counter} (optional, default: none)",
+    "loop": "{max, init, increment, counter, setup, over, as, scratch} (optional, default: none)",
     "created_at": "ISO 8601 datetime (optional)",
     "updated_at": "ISO 8601 datetime (optional)"
 }

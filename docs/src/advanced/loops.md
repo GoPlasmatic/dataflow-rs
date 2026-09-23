@@ -23,6 +23,10 @@ number of times, or until a condition on the message goes false.
 | `counter` | no | none | `temp_data` field the engine maintains, e.g. `"i"` → `temp_data.i`. Dot-paths nest. |
 | `init` | no | `0` | First counter value. |
 | `increment` | no | `1` | Added after each sweep. Must be `>= 1`. |
+| `setup` | no | `[]` | Steps run once, before the first sweep, in the normal step grammar. See [Iterating an array](#iterating-an-array). |
+| `over` | no | none | JSONLogic evaluated once, after `setup`. Must yield an array; the loop then also stops at its end. |
+| `as` | no | none | `temp_data` field holding the current element of `over`. Requires `over`. |
+| `scratch` | no | none | `temp_data` field reset to `{}` at the start of every sweep. |
 
 `max` has no default on purpose. It is what makes termination structural: a
 loop stops because of its bound, not because a condition was written correctly.
@@ -43,7 +47,8 @@ One iteration of the loop is called a *sweep*. Per sweep the engine:
 The counter is written *before* the condition is evaluated, so a condition that
 indexes by it resolves on the very first sweep.
 
-A loop ends when the counter reaches `max`, when the condition goes false, when
+A loop ends when the counter reaches `max`, when an `over` array runs out, when
+the condition goes false, when
 a task halts the workflow, or when a task error stops it. Reaching `max` is
 normal completion, not an error — the bound was author-supplied, so hitting it
 is the stated intent.
@@ -52,10 +57,99 @@ The engine owns the counter. It is rewritten before every sweep, so a task in
 the body that writes the same `temp_data` path has its value replaced at the
 next increment.
 
-## Per-item processing
+## Iterating an array
 
-The most common use: run a set of tasks — including async ones like
-`http_call` — once per element of an array.
+The most common use is a batch: read it once, then run a set of tasks —
+including async ones like `http_call` — once per element. `over` makes the
+array the loop's second bound, `as` exposes the element, `setup` holds the
+once-only steps, and `scratch` gives each sweep a fresh object for its own
+state.
+
+```json
+{
+  "id": "batch", "name": "Batch",
+  "loop": {
+    "setup": [
+      { "id": "claim", "name": "Claim the batch",
+        "function": { "name": "http_call", "input": { "connector": "claims" } } },
+      { "id": "read", "name": "Read it",
+        "function": { "name": "map", "input": { "mappings": [
+          { "path": "temp_data.batch", "logic": { "var": "data.claim.body" } } ] } } }
+    ],
+    "over": { "var": "temp_data.batch.items" },
+    "as": "item",
+    "counter": "i",
+    "max": 64,
+    "scratch": "it"
+  },
+  "tasks": [
+    { "id": "call", "name": "Call the API for this item",
+      "continue_on_error": true,
+      "function": { "name": "http_call", "input": { "connector": "item_api" } } },
+    { "id": "note", "name": "Note a failure",
+      "condition": { ">=": [{ "var": "metadata.progress.status_code" }, 500] },
+      "function": { "name": "map", "input": { "mappings": [
+        { "path": "temp_data.it.failed", "logic": true } ] } } },
+    { "id": "collect", "name": "Collect",
+      "function": { "name": "map", "input": { "mappings": [
+        { "path": "data.processed",
+          "logic": { "merge": [{ "var": "data.processed" },
+                     [{ "id": { "var": "temp_data.item.id" },
+                        "failed": { "!!": [{ "var": "temp_data.it.failed" }] } }]] } } ] } } }
+  ]
+}
+```
+
+What the engine does, in order:
+
+```text
+1. evaluates the workflow condition    -> a false result skips setup and loop alike
+2. runs `setup` once                   -> `terminal` or a halt here ends the workflow
+3. evaluates `over` once               -> must be an array; anything else is an error
+then, per sweep:
+4. writes the counter to temp_data
+5. stops if counter >= max, or counter >= the array's length
+6. writes over[counter] to temp_data.<as>
+7. resets temp_data.<scratch> to {}
+8. re-evaluates the workflow condition -> stop if false
+9. runs the task list
+10. adds `increment` to the counter
+```
+
+No guard on the setup steps, no `filter` comparing the counter with the
+length, no `map` copying `rows[i]` into a slot, and no clearing of per-item
+slots: `temp_data.it.failed` starts every item absent, so an item after a
+failed one is not reported as failed.
+
+The counter **is** the element index. `init` is therefore a starting offset and
+`increment` a stride, and `init` must be `>= 0`. With the defaults the loop
+visits every element, up to `max`. Reaching `max` with elements left is normal
+completion, logged as a warning.
+
+- **`over` must yield an array.** `null` — a missing batch — is a workflow
+  error naming `loop.over`, recorded as `WORKFLOW_ERROR`, not a silent
+  zero-sweep run. Zero sweeps is spelled `[]`.
+- **Setup is not a sweep.** Its audit entries and trace steps carry no
+  `loop_counter`, `TaskContext::loop_counter()` is `None` inside it, and the
+  observer's `WorkflowFinished::sweeps` counts sweeps only. Setup shares the
+  step id namespace with `tasks`, and allows groups.
+- **A setup error ends the workflow.** There is no first sweep without a
+  completed setup. With `continue_on_error: true` on the workflow the error is
+  recorded and the *next workflow* still runs; without it the message stops.
+- **`scratch` is reset before the condition**, so a sweep — condition
+  included — starts from `{}`. It is not cleared when the loop ends: like the
+  counter and `as`, it is left holding the last sweep's state.
+- **`as` needs `over`**; `setup` and `scratch` do not, and are just as useful
+  on a counter loop.
+- **The engine's own writes are not audit changes.** The counter, the element
+  and the scratch reset land outside any task; the `loop_counter` stamp is what
+  identifies the sweep.
+
+### Indexing by counter
+
+Before `over` existed, per-item processing indexed the array by the counter
+and let the condition stop the loop. That still works, and is what a loop whose
+length is not an array needs:
 
 ```json
 [
@@ -109,8 +203,10 @@ Two things make this work:
 Every operator used here — `reduce`, `<`, `+`, `merge`, and computed-path `val`
 — is a core operator, available without enabling any `ext-*` cargo feature.
 
-**`temp_data` carries over between sweeps**; only the counter is rewritten. A
-per-item slot written only *sometimes* — `{"if": [cond, value, null]}`, whose
+**`temp_data` carries over between sweeps**; only the engine-owned slots are
+rewritten. For per-item state, `scratch` is the answer — see
+[Iterating an array](#iterating-an-array). Outside it, a per-item slot written
+only *sometimes* — `{"if": [cond, value, null]}`, whose
 `null` is skipped — still holds the previous item's value in a sweep that does
 not write it. Clear it explicitly: `{"path": "temp_data.slot", "unset": true}`
 at the end of the body, or `"on_null": "unset"` on the mapping that sets it.
@@ -217,4 +313,11 @@ These are rejected at `Engine::build()` rather than at runtime:
 
 - `max <= init` — the half-open bound could never run a sweep.
 - `increment < 1` — the counter would never advance.
-- an empty or malformed `counter` path.
+- an empty or malformed `counter`, `as` or `scratch` path.
+- `as` without `over`.
+- an `over` that is a scalar literal (a string, number, boolean or `null`) — it
+  could never be an array.
+- `init < 0` alongside `over` — an index cannot be negative.
+- `counter`, `as` or `scratch` naming the same path, or one inside another
+  (`it` and `it.item`).
+- a `setup` step that breaks the step grammar, or reuses an id from `tasks`.

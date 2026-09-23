@@ -126,6 +126,10 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `LOOP_INCREMENT_TOO_SMALL` | Rejected | `increment < 1` — the counter would never reach `max` |
 | `LOOP_BOUND_EMPTY` | Rejected | `max <= init` — no sweep could ever run |
 | `LOOP_COUNTER_INVALID` | Rejected | `counter` is not a non-empty dotted path |
+| `LOOP_SLOT_INVALID` | Rejected | `as` or `scratch` is not a non-empty dotted path |
+| `LOOP_ITEM_WITHOUT_OVER` | Rejected | `as` is set but there is no `over` to take elements from |
+| `LOOP_SLOT_COLLISION` | Rejected | Two of `counter` / `as` / `scratch` name the same path, or one lies inside the other |
+| `LOOP_OVER_INVALID` | Rejected | `over` is a scalar literal that can never be an array, or `init < 0` alongside `over` — see [Iterating an array](./loops.md#iterating-an-array) |
 | `PARSE_FAILED` | Rejected | Does not deserialize; message carries the field and type |
 | `VALIDATE_FAILED` | Rejected | Backstop — parses, but `validate()` still rejects it |
 | `UNKNOWN_FUNCTION` | Rejected | No handler registered, and not a built-in — usually a typo |
@@ -301,6 +305,27 @@ let leaves: Vec<&str> = walk_authored_steps(&tasks)
     .collect();
 
 assert_eq!(leaves, vec!["load", "greet"]);
+```
+
+A loop's `setup` is a second step list on the same workflow, with the same
+grammar. `walk_authored_steps_at(setup, "loop.setup")` walks it with paths
+rooted where the author typed them, `loop.setup[1].tasks[0]`, and is what
+`validate_authored` itself uses:
+
+```rust
+use dataflow_rs::engine::steps::walk_authored_steps_at;
+use serde_json::json;
+
+let workflow = json!({
+    "loop": {"max": 10, "setup": [
+        {"id": "claim", "function": {"name": "map", "input": {"mappings": []}}}
+    ]}
+});
+
+let paths: Vec<String> = walk_authored_steps_at(&workflow["loop"]["setup"], "loop.setup")
+    .map(|s| s.path)
+    .collect();
+assert_eq!(paths, vec!["loop.setup[0]"]);
 ```
 
 See [Control Flow](./control-flow.md#inspecting-the-authored-shape) for the full
