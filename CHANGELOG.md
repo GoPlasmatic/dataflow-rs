@@ -154,6 +154,14 @@ already loops.
 - **A mapping missing `logic`** is now reported by `validate_authored` as
   `INVALID_MAPPING` at `…mappings[i].logic` rather than as `PARSE_FAILED`, and
   its parse error names `unset` as the alternative.
+- **Dependencies:** `datalogic-rs` 5.5 → 5.6, plus a `cargo update` of the
+  lockfile (`syn`, `cc`, `jiff`, `rand` and others, all semver-compatible).
+- **npm (`@goplasmatic/dataflow-ui`):** `@goplasmatic/dataflow-wasm` ^3.12.0 →
+  ^3.13.0, `@goplasmatic/datalogic-ui` ^5.5 → ^5.6 (matching `datalogic-rs`
+  5.6), `lucide-react` ^1.45 → ^1.47, `eslint` ^10.10 → ^10.11,
+  `typescript-eslint` ^8.70.0 → ^8.70.1, `vite-plugin-dts` ^5.1.0 → ^5.1.1,
+  `eslint-plugin-react-refresh` ^0.5.6 → ^0.5.7. `typescript` stays on ^6:
+  typescript-eslint 8.70.1 still supports only `>=4.8.4 <6.1.0`.
 
 ### Documentation
 
