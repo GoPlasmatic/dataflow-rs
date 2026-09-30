@@ -44,6 +44,7 @@ The map function:
 | `logic` | JSONLogic | Unless `unset` | Expression to evaluate |
 | `unset` | boolean | No | `true` removes the key at `path` instead of writing it. Takes no `logic`; see [Removing a Path](#removing-a-path) |
 | `on_null` | `"skip"` \| `"unset"` | No | What a `null` result does. `"skip"` (the default) leaves the path as it was; `"unset"` removes it |
+| `mode` | `"set"` \| `"append"` \| `"extend"` | No | How a result is written. `"set"` (the default) replaces the value; `"append"` and `"extend"` add to the array at `path`; see [Appending to an Array](#appending-to-an-array) |
 
 ## Path Syntax
 
@@ -246,6 +247,48 @@ change:
   literal root path is refused when the workflow loads; a
   [computed destination](#computed-destinations) that resolves to one fails
   that mapping at run time, leaving the root in place.
+
+## Appending to an Array
+
+`"mode": "append"` pushes the result onto the array at `path`, in place:
+
+```json
+{
+    "path": "data.log",
+    "logic": {"turn": {"var": "temp_data.turn"}, "move": {"var": "temp_data.move"}},
+    "mode": "append"
+}
+```
+
+`"mode": "extend"` pushes each element of an array result instead, so
+`{"logic": [1, 2], "mode": "extend"}` adds two elements where `append` would
+add one two-element array.
+
+Before these modes, the only way to append was to rebuild the array:
+
+```json
+{"path": "data.log", "logic": {"merge": [{"var": "data.log"}, [{"var": "temp_data.entry"}]]}}
+```
+
+That still works, and gives the same result, but it builds the whole new array
+and copies it into the message on every append. In a
+[loop](../advanced/loops.md) that accumulates a log, the total cost grows with
+the square of the log's length. `append` converts and copies only the new
+element, and its audit `Change` records only that element, at its index
+(`data.log.7`), so a traced run does not copy the log either.
+
+What the target may hold:
+
+- missing or `null`: it becomes a new array holding the result;
+- an array: the result is added at the end;
+- anything else: the mapping fails and the task returns `500`. The value is
+  not wrapped into an array.
+
+A `null` result follows `on_null` as for any other mapping: skipped by default,
+or removing the path under `on_null: "unset"`. `extend` with a result that is
+not an array fails the mapping. `mode` needs `logic`, and a context root cannot
+be appended to, since it is an object; both are refused when the workflow
+loads, as `INVALID_MAPPING`.
 
 ## Sequential Mappings
 

@@ -524,7 +524,7 @@ impl ExecutionTrace {
         task_id: &str,
     ) -> Vec<&'m AuditTrail> {
         match self.options.snapshot_audit_trail {
-            AuditTrailScope::Full => message.audit_trail.iter().collect(),
+            AuditTrailScope::Full => message.audit_trail().iter().collect(),
             AuditTrailScope::Own => own_audit_entry(message, workflow_id, task_id)
                 .map(|e| vec![e])
                 .unwrap_or_default(),
@@ -554,6 +554,7 @@ impl ExecutionTrace {
             errors: message.errors.clone(),
             capture_changes: message.capture_changes,
             routing_bucket: message.routing_bucket,
+            audit_mode: message.audit_mode,
         }
     }
 

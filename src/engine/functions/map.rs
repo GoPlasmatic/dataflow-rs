@@ -13,6 +13,7 @@
 //! - Null results skip assignment by default ("set or keep");
 //!   `on_null: "unset"` removes the path instead
 //! - `unset: true` removes a path outright
+//! - `mode: "append"` / `"extend"` add to an array in place
 //! - Audit-trail change tracking
 
 use crate::engine::error::{DataflowError, Result};
@@ -20,9 +21,12 @@ use crate::engine::executor::{ArenaContext, with_arena};
 use crate::engine::functions::path_template::{ContextRoot, ParamCtx, PathTemplate, ResolvedPath};
 use crate::engine::message::{Change, Message};
 use crate::engine::task_outcome::TaskOutcome;
-use crate::engine::utils::{get_nested_value_parts, set_nested_value_parts, strip_hash_prefix};
+use crate::engine::utils::{
+    describe_kind, get_nested_value_parts, get_nested_value_parts_mut, set_nested_value_parts,
+    strip_hash_prefix,
+};
 use datalogic_rs::{Engine, Logic};
-use datavalue::OwnedDataValue;
+use datavalue::{DataValue, OwnedDataValue};
 use log::{debug, error};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
@@ -45,10 +49,10 @@ pub struct MapConfig {
 /// and `Engine::build` refuses it):
 ///
 /// - a mapping has `logic` or `"unset": true`, never both;
-/// - `on_null` needs `logic`, since it says what a null *result* does;
-/// - a removal may not name a context root (`data`, `metadata`, `temp_data`).
-///   A literal path is checked here; a computed one that resolves to a root
-///   fails that mapping at run time instead.
+/// - `on_null` and `mode` need `logic`, since they say what a *result* does;
+/// - a removal, an append or an extend may not name a context root (`data`,
+///   `metadata`, `temp_data`). A literal path is checked here; a computed one
+///   that resolves to a root fails that mapping at run time instead.
 #[derive(Debug, Clone, Default)]
 pub struct MapMapping {
     /// Target path where the result will be stored (e.g., `"data.user.name"`).
@@ -82,6 +86,11 @@ pub struct MapMapping {
     /// [`OnNull::Skip`], the historical behaviour.
     pub on_null: OnNull,
 
+    /// How a non-null result is written. Defaults to [`MapMode::Set`], the
+    /// historical behaviour; [`MapMode::Append`] and [`MapMode::Extend`] add to
+    /// the array at `path` in place.
+    pub mode: MapMode,
+
     /// Engine-internal: pre-compiled JSONLogic, populated by `LogicCompiler`.
     /// `None` is logged as an error during execute (the compiler should always
     /// populate it, except on an `unset` mapping, which has no logic and never
@@ -109,6 +118,30 @@ pub enum OnNull {
     Unset,
 }
 
+/// How a [`MapMapping`] writes a non-null result to its `path`.
+///
+/// `#[non_exhaustive]`: a later minor may add a spelling.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum MapMode {
+    /// Replace the value at `path` (merging, when `path` is a context root).
+    #[default]
+    Set,
+    /// Push the result onto the array at `path`, in place.
+    ///
+    /// A missing or `null` target becomes a one-element array; any other
+    /// non-array target fails the mapping rather than being wrapped. Only the
+    /// result is converted and copied, so appending costs the size of the
+    /// entry, not the size of the array: the `merge` idiom it replaces rebuilt
+    /// the whole array on every append, which made a log accumulated over a
+    /// loop quadratic.
+    Append,
+    /// As [`Self::Append`], pushing each element of an array result. A
+    /// non-array result fails the mapping.
+    Extend,
+}
+
 /// A mapping as authored, before the rules between its keys are applied.
 ///
 /// Shared by [`MapMapping`]'s `Deserialize` and the authoring walk, so the
@@ -127,6 +160,9 @@ pub(crate) struct AuthoredMapping {
     /// default.
     #[serde(default)]
     on_null: Option<OnNull>,
+    /// `Option` for the same reason as `on_null`.
+    #[serde(default)]
+    mode: Option<MapMode>,
 }
 
 /// Deserialize a field that is present, keeping an explicit `null` as
@@ -168,15 +204,29 @@ impl AuthoredMapping {
                 "`on_null` says what a null `logic` result does, and this mapping has no `logic`",
             );
         }
-        let removes = self.unset || self.on_null == Some(OnNull::Unset);
-        if removes
-            && let Some(path) = self.path.as_json().as_str()
-            && is_context_root(&path.split('.').collect::<Vec<_>>())
-        {
+        if self.logic.is_none() && self.mode.is_some() {
+            return problem(
+                "mode",
+                "`mode` says how a `logic` result is written, and this mapping has no `logic`",
+            );
+        }
+        let literal_root = self
+            .path
+            .as_json()
+            .as_str()
+            .is_some_and(|path| is_context_root(&path.split('.').collect::<Vec<_>>()));
+        if literal_root && (self.unset || self.on_null == Some(OnNull::Unset)) {
             return problem(
                 "path",
                 "a context root (`data`, `metadata`, `temp_data`) cannot be removed — \
                  remove the keys under it instead",
+            );
+        }
+        if literal_root && matches!(self.mode, Some(MapMode::Append | MapMode::Extend)) {
+            return problem(
+                "path",
+                "a context root (`data`, `metadata`, `temp_data`) is an object and cannot be \
+                 appended to — name an array under it instead",
             );
         }
         None
@@ -188,6 +238,7 @@ impl AuthoredMapping {
             logic: self.logic.unwrap_or(Value::Null),
             unset: self.unset,
             on_null: self.on_null.unwrap_or_default(),
+            mode: self.mode.unwrap_or_default(),
             compiled_logic: None,
         }
     }
@@ -401,6 +452,20 @@ impl MapConfig {
                 errors_encountered = true;
                 continue;
             };
+            if mapping.mode != MapMode::Set {
+                if !append_at(
+                    message,
+                    arena_ctx,
+                    mapping.mode,
+                    &resolved,
+                    result_av,
+                    transformed_value,
+                    &mut changes,
+                ) {
+                    errors_encountered = true;
+                }
+                continue;
+            }
             let (path_arc, parts) = (&resolved.0, &*resolved.1);
 
             if message.capture_changes {
@@ -501,6 +566,118 @@ fn remove_at(
         None => debug!("Map: Nothing to remove at {path_arc}"),
     }
     true
+}
+
+/// Add a non-null result to the array at `resolved`, in place: one element
+/// for [`MapMode::Append`], each element of an array result for
+/// [`MapMode::Extend`]. A missing or `null` target becomes a new array.
+///
+/// Only the result is copied. The owned array grows by the result's owned form
+/// (already converted for the null check), and the arena cache by a shallow
+/// copy of the old slice plus the result's arena form, so the cost is the size
+/// of the entry, not of the array. Records one [`Change`] per element, at its
+/// index (`data.log.7`), so a traced run does not copy the array either.
+///
+/// `false`, after logging, when the path names a context root, the target is
+/// some other kind of value, or `extend` got a non-array result: no silent
+/// wrapping.
+fn append_at<'a>(
+    message: &mut Message,
+    arena_ctx: &mut ArenaContext<'a>,
+    mode: MapMode,
+    resolved: &ResolvedPath,
+    result_av: &'a DataValue<'a>,
+    result: OwnedDataValue,
+    changes: &mut Vec<Change>,
+) -> bool {
+    let (path_arc, parts) = (&resolved.0, &*resolved.1);
+    if is_context_root(parts) {
+        error!("Map: Refusing to append to context root {path_arc}");
+        return false;
+    }
+    let (items_av, items): (&'a [DataValue<'a>], Vec<OwnedDataValue>) = match (mode, result) {
+        (MapMode::Extend, OwnedDataValue::Array(items)) => match result_av {
+            DataValue::Array(items_av) => (items_av, items),
+            _ => unreachable!("the owned result was converted from this arena value"),
+        },
+        (MapMode::Extend, other) => {
+            error!(
+                "Map: `extend` needs an array result for {path_arc}, got {}",
+                describe_kind(&other)
+            );
+            return false;
+        }
+        (_, value) => (std::slice::from_ref(result_av), vec![value]),
+    };
+    let start = match get_nested_value_parts(&message.context, parts) {
+        None | Some(OwnedDataValue::Null) => 0,
+        Some(OwnedDataValue::Array(existing)) => existing.len(),
+        Some(other) => {
+            error!(
+                "Map: Cannot append to {path_arc}: it holds {}, not an array",
+                describe_kind(other)
+            );
+            return false;
+        }
+    };
+    if message.capture_changes {
+        for (i, item) in items.iter().enumerate() {
+            changes.push(Change {
+                path: Arc::from(format!("{path_arc}.{}", start + i)),
+                old_value: OwnedDataValue::Null,
+                new_value: item.clone(),
+                removed: false,
+            });
+        }
+    }
+
+    let old_av: Option<&[DataValue<'a>]> = if start == 0 {
+        Some(&[])
+    } else {
+        match arena_ctx.cached_at(parts) {
+            Some(DataValue::Array(old)) if old.len() == start => Some(old),
+            _ => None,
+        }
+    };
+    match old_av {
+        Some(old) => {
+            let arena = arena_ctx.arena();
+            let new_av = DataValue::Array(arena.alloc_slice_fill_with(
+                old.len() + items_av.len(),
+                |i| {
+                    if i < old.len() {
+                        old[i]
+                    } else {
+                        items_av[i - old.len()]
+                    }
+                },
+            ));
+            arena_ctx.apply_mutation_parts_write_through(
+                &mut message.context,
+                parts,
+                new_av,
+                |ctx| append_owned(ctx, parts, items),
+            );
+        }
+        // The cache does not hold the array where the owned context does;
+        // re-convert that subtree rather than guess.
+        None => {
+            append_owned(&mut message.context, parts, items);
+            arena_ctx.refresh_for_path_parts(&message.context, parts);
+        }
+    }
+    debug!("Map: Appended to {path_arc}");
+    true
+}
+
+/// The owned half of [`append_at`]: extend the array at `parts`, or create it
+/// when the target is missing or `null` (the caller has refused every other
+/// kind).
+fn append_owned(context: &mut OwnedDataValue, parts: &[Arc<str>], items: Vec<OwnedDataValue>) {
+    match get_nested_value_parts_mut(context, parts) {
+        Some(OwnedDataValue::Array(existing)) => existing.extend(items),
+        _ => set_nested_value_parts(context, parts, OwnedDataValue::Array(items)),
+    }
 }
 
 /// Pre-split variant of `apply_mapping`. Consumes `parts` for the
@@ -795,13 +972,34 @@ mod tests {
                 json!({"path": "metadata", "logic": 1, "on_null": "unset"}),
                 "`path`",
             ),
+            (
+                json!({"path": "data.x", "unset": true, "mode": "append"}),
+                "`mode`",
+            ),
+            (
+                json!({"path": "data", "logic": 1, "mode": "append"}),
+                "`path`",
+            ),
+            (
+                json!({"path": "temp_data", "logic": [1], "mode": "extend"}),
+                "`path`",
+            ),
         ] {
             let err = parse(bad.clone()).expect_err(&format!("{bad} should be refused"));
             assert!(err.contains(&format!("mapping {names}")), "{bad}: {err}");
         }
 
-        // A root is only refused for a removal; writing one still merges.
+        let append = parse(json!({"path": "data.log", "logic": 1, "mode": "append"})).unwrap();
+        assert_eq!(append.mode, MapMode::Append);
+        assert_eq!(
+            parse(json!({"path": "data.x", "logic": 1})).unwrap().mode,
+            MapMode::Set
+        );
+
+        // A root is only refused for a removal or an append; writing one
+        // still merges.
         assert!(parse(json!({"path": "data", "logic": {"a": 1}})).is_ok());
+        assert!(parse(json!({"path": "data", "logic": {"a": 1}, "mode": "set"})).is_ok());
         assert!(parse(json!({"path": "data", "logic": 1, "on_null": "skip"})).is_ok());
     }
 
@@ -869,6 +1067,142 @@ mod tests {
         assert!(message.context.get("extra_root").is_none());
         assert_eq!(changes.len(), 6, "the absent path records nothing");
         assert!(changes.iter().all(|c| c.removed));
+    }
+
+    /// Every append shape through one arena session, with a later mapping
+    /// reading each result, so a stale cache would show. The write-through
+    /// path runs the unit-test differential check after each write; the
+    /// fallback path is checked against a rebuild at the end.
+    #[test]
+    fn appends_keep_the_arena_cache_in_step() {
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
+        let mut message = fresh_message(json!({
+            "nul": null,
+            "a": {"b": {"list": [1]}},
+            "nested": [[1]],
+            "top": 5
+        }));
+        let m = |path: &str, logic: Value, mode: MapMode| MapMapping {
+            path: PathTemplate::from(path),
+            logic,
+            mode,
+            ..Default::default()
+        };
+        let mut config = MapConfig {
+            mappings: vec![
+                m("data.log", json!({"id": 0}), MapMode::Append),
+                m("data.log", json!({"id": 1}), MapMode::Append),
+                m("data.log", json!([2, 3]), MapMode::Extend),
+                m("data.seen", json!({"var": "data.log"}), MapMode::Set),
+                // Append pushes an array result as one element.
+                m("data.log", json!([4]), MapMode::Append),
+                m("data.nul", json!("x"), MapMode::Append),
+                m("data.a.b.list", json!(2), MapMode::Append),
+                m(
+                    "data.a.b.seen",
+                    json!({"var": "data.a.b.list"}),
+                    MapMode::Set,
+                ),
+                m("data.nested.0", json!(2), MapMode::Append),
+                m(
+                    "data.nested_seen",
+                    json!({"var": "data.nested"}),
+                    MapMode::Set,
+                ),
+                m("data.empty", json!([]), MapMode::Extend),
+                m(
+                    "data.skipped",
+                    json!({"var": "data.missing"}),
+                    MapMode::Append,
+                ),
+            ],
+        };
+        compile_mappings(&engine, &mut config);
+
+        with_arena(|arena| {
+            let mut arena_ctx = ArenaContext::from_owned(&message.context, arena);
+            let (outcome, changes) = config
+                .execute_in_arena(&mut message, &mut arena_ctx, &engine, None)
+                .unwrap();
+            assert_eq!(outcome, TaskOutcome::Success);
+            assert_eq!(
+                arena_ctx.as_data_value().to_owned(),
+                ArenaContext::from_owned(&message.context, arena)
+                    .as_data_value()
+                    .to_owned(),
+                "the cache matches a rebuild"
+            );
+            let paths: Vec<&str> = changes
+                .iter()
+                .filter(|c| c.path.starts_with("data.log"))
+                .map(|c| c.path.as_ref())
+                .collect();
+            assert_eq!(
+                paths,
+                [
+                    "data.log.0",
+                    "data.log.1",
+                    "data.log.2",
+                    "data.log.3",
+                    "data.log.4"
+                ]
+            );
+            assert!(changes.iter().all(|c| c.old_value == OwnedDataValue::Null));
+        });
+
+        let log = json!([{"id": 0}, {"id": 1}, 2, 3, [4]]);
+        assert_eq!(
+            Value::from(&message.context["data"]),
+            json!({
+                "nul": ["x"],
+                "a": {"b": {"list": [1, 2], "seen": [1, 2]}},
+                "nested": [[1, 2]],
+                "top": 5,
+                "log": log,
+                "seen": [{"id": 0}, {"id": 1}, 2, 3],
+                "nested_seen": [[1, 2]],
+                "empty": []
+            })
+        );
+    }
+
+    #[test]
+    fn an_append_to_a_non_array_or_an_extend_of_a_non_array_fails_the_mapping() {
+        let engine = Arc::new(crate::engine::compiler::datalogic_engine_builder().build());
+        for (mapping, data) in [
+            (
+                json!({"path": "data.top", "logic": 1, "mode": "append"}),
+                json!({"top": 5}),
+            ),
+            (
+                json!({"path": "data.obj", "logic": [1], "mode": "extend"}),
+                json!({"obj": {"k": 1}}),
+            ),
+            (
+                json!({"path": "data.log", "logic": 1, "mode": "extend"}),
+                json!({"log": []}),
+            ),
+            (
+                json!({"path": {"cat": ["da", "ta"]}, "logic": 1, "mode": "append"}),
+                json!({}),
+            ),
+        ] {
+            let mut message = fresh_message(data.clone());
+            let mut config = MapConfig::from_json(&json!({"mappings": [mapping]})).unwrap();
+            compile_mappings(&engine, &mut config);
+            for m in &mut config.mappings {
+                m.path
+                    .compile(
+                        &crate::engine::functions::TemplateCompiler::new(engine.clone()),
+                        "path",
+                    )
+                    .unwrap();
+            }
+            let (outcome, changes) = config.execute(&mut message, &engine).unwrap();
+            assert_eq!(outcome, TaskOutcome::Status(500), "{mapping}");
+            assert!(changes.is_empty(), "{mapping}");
+            assert_eq!(Value::from(&message.context["data"]), data, "{mapping}");
+        }
     }
 
     #[test]

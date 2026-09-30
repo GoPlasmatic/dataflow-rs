@@ -229,14 +229,14 @@ pub use engine::error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
 pub use engine::functions::{
     AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind, ConnectorName,
     ContextRoot, DataRoot, DispatchableFunction, EnrichConfig, FilterConfig, FunctionConfig,
-    HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping, OnNull, PathRoot, PathTemplate,
-    PublishKafkaConfig, Template, TemplateCompiler, ValidationConfig, ValidationRule,
+    HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping, MapMode, OnNull, PathRoot,
+    PathTemplate, PublishKafkaConfig, Template, TemplateCompiler, ValidationConfig, ValidationRule,
     builtin_function_kind, is_builtin_function,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine::retry::{RetryPolicy, retry_with_attempts, retry_with_policy};
 
-pub use engine::message::{AuditTrail, Change, Message, MessageBuilder};
+pub use engine::message::{AuditMode, AuditTrail, Change, Message, MessageBuilder};
 pub use engine::observer::{
     ExecutionObserver, MessageFinished, MessageStarted, TaskEvent, WorkflowFinished,
     WorkflowStarted,
@@ -245,7 +245,7 @@ pub use engine::steps::{
     AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
     walk_authored_steps_at,
 };
-pub use engine::task_context::TaskContext;
+pub use engine::task_context::{ContextView, TaskContext};
 pub use engine::task_outcome::{HALT_STATUS_CODE, TaskOutcome};
 pub use engine::trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
 pub use engine::{

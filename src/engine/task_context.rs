@@ -15,8 +15,9 @@ use crate::engine::error::{ErrorInfo, Result};
 use crate::engine::message::{Change, Message};
 use crate::engine::secrets::{self, Secrets};
 use crate::engine::utils::{get_nested_value, set_nested_value};
+use bumpalo::Bump;
 use datalogic_rs::{Engine as DatalogicEngine, Logic};
-use datavalue::OwnedDataValue;
+use datavalue::{DataValue, OwnedDataValue};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -203,6 +204,10 @@ impl<'a> TaskContext<'a> {
     /// the message id, payload, or audit trail; for reading and mutating the
     /// `data` / `metadata` / `temp_data` context, prefer the typed helpers on
     /// `TaskContext` itself.
+    ///
+    /// Inside a [`for_each`](crate::ForEach) call this is the call's own copy,
+    /// whose audit trail and errors start empty: it carries the context, id
+    /// and payload, not the message's history.
     #[inline]
     pub fn message(&self) -> &Message {
         self.message
@@ -303,6 +308,50 @@ impl<'a> TaskContext<'a> {
             .map_err(|e| crate::engine::error::from_datalogic_eval(&e))
     }
 
+    /// Run `f` against one arena view of the message context, so several
+    /// expressions cost one conversion of the context instead of one each.
+    ///
+    /// Every [`Self::eval`] (and every [`Template::resolve`] on a field that
+    /// reads the message) converts the *whole* context into the arena before it
+    /// evaluates, so a step costs time in proportion to the size of the
+    /// message, not to what it reads. A handler resolving k templated fields
+    /// pays for k conversions. Inside `with_view` it pays for one: resolve the
+    /// fields with [`Template::resolve_in`] and friends, or evaluate directly
+    /// with [`ContextView::eval`].
+    ///
+    /// The view borrows `self`, so nothing can write to the message while it
+    /// is alive, and the closure is synchronous, so the view cannot be held
+    /// across an `.await`. Resolve what the call needs up front, then do the
+    /// I/O:
+    ///
+    /// ```rust
+    /// # use dataflow_rs::{Result, TaskContext, Template};
+    /// # fn run(ctx: &mut TaskContext<'_>, url: &Template, timeout: &Template) -> Result<()> {
+    /// let (url, timeout_ms) = ctx.with_view(|view| {
+    ///     Ok::<_, dataflow_rs::DataflowError>((
+    ///         url.resolve_string_in(view)?,
+    ///         timeout.resolve_u64_in(view, "timeout_ms")?,
+    ///     ))
+    /// })?;
+    /// // ... await the call with `url` and `timeout_ms` ...
+    /// # let _ = (url, timeout_ms);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`Template::resolve`]: crate::Template::resolve
+    /// [`Template::resolve_in`]: crate::Template::resolve_in
+    pub fn with_view<R>(&self, f: impl FnOnce(&ContextView<'_>) -> R) -> R {
+        crate::engine::executor::with_eval_arena(|arena| {
+            let data = arena.alloc(self.message.context.to_arena(arena));
+            f(&ContextView {
+                datalogic: self.datalogic,
+                arena,
+                data,
+            })
+        })
+    }
+
     /// Look up a value by dot-path against the full context tree (rooted at
     /// the unified `{data, metadata, temp_data}` object). Returns `None` if
     /// the path doesn't resolve.
@@ -359,6 +408,56 @@ impl<'a> TaskContext<'a> {
     #[inline]
     pub fn into_changes(self) -> Vec<Change> {
         self.changes
+    }
+}
+
+/// The message context converted into the arena once, for evaluating several
+/// expressions against it. Built by [`TaskContext::with_view`].
+///
+/// Each method evaluates exactly as its [`TaskContext`] namesake does, with
+/// the same errors, but against this one conversion instead of a fresh one.
+pub struct ContextView<'v> {
+    datalogic: &'v DatalogicEngine,
+    arena: &'v Bump,
+    data: &'v DataValue<'v>,
+}
+
+impl ContextView<'_> {
+    /// As [`TaskContext::eval`], against this view.
+    ///
+    /// # Errors
+    ///
+    /// As [`TaskContext::eval`].
+    pub fn eval(&self, logic: &Logic) -> Result<OwnedDataValue> {
+        self.evaluate(logic).map(|v| v.to_owned())
+    }
+
+    /// As [`TaskContext::eval_json`], against this view.
+    ///
+    /// # Errors
+    ///
+    /// As [`TaskContext::eval`].
+    pub fn eval_json(&self, logic: &Logic) -> Result<JsonValue> {
+        self.evaluate(logic).map(|v| v.to_serde_value())
+    }
+
+    /// As [`TaskContext::eval_to_plain_string`], against this view: a string
+    /// result yields its contents, anything else its compact JSON form.
+    ///
+    /// # Errors
+    ///
+    /// As [`TaskContext::eval`].
+    pub fn eval_to_plain_string(&self, logic: &Logic) -> Result<String> {
+        self.evaluate(logic).map(|v| match v {
+            DataValue::String(s) => s.to_string(),
+            other => other.to_string(),
+        })
+    }
+
+    fn evaluate<'r>(&'r self, logic: &'r Logic) -> Result<&'r DataValue<'r>> {
+        self.datalogic
+            .evaluate(logic, self.data, self.arena)
+            .map_err(|e| crate::engine::error::from_datalogic_eval(&e))
     }
 }
 

@@ -328,6 +328,12 @@ export interface MapMapping {
    * was, `"unset"` removes it.
    */
   on_null?: 'skip' | 'unset';
+  /**
+   * How a result is written: `"set"` (the default) replaces the value,
+   * `"append"` pushes it onto the array at `path`, and `"extend"` pushes each
+   * element of an array result. Since dataflow-rs 3.15.
+   */
+  mode?: 'set' | 'append' | 'extend';
 }
 
 /**

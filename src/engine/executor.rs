@@ -112,7 +112,7 @@ pub(crate) fn eval_to_plain_string(
 /// Note [`with_arena`] deliberately does **not** do this: a nested batch scope
 /// would be an engine bug, and the panic is the right signal for it.
 #[inline]
-fn with_eval_arena<R>(f: impl FnOnce(&Bump) -> R) -> R {
+pub(crate) fn with_eval_arena<R>(f: impl FnOnce(&Bump) -> R) -> R {
     EVAL_ARENA.with(|cell| match cell.try_borrow_mut() {
         Ok(mut arena) => {
             arena.reset();
@@ -221,6 +221,30 @@ impl<'a> ArenaContext<'a> {
     pub fn as_data_value(&self) -> DataValue<'a> {
         let slice = build_object_slice(self.arena, &self.top_keys, &self.top_values);
         DataValue::Object(slice)
+    }
+
+    /// The cached arena value at `parts`, with the same `#` and array-index
+    /// rules as the owned lookup. `None` when the path is not in the cache.
+    ///
+    /// For a write that extends what is already there (`map`'s append) and
+    /// so can build its new cache value from the old one shallowly, instead
+    /// of re-converting the owned subtree.
+    pub fn cached_at(&self, parts: &[Arc<str>]) -> Option<DataValue<'a>> {
+        let (first, rest) = parts.split_first()?;
+        let top = strip_hash_prefix(first);
+        let idx = self.top_keys.iter().position(|k| *k == top)?;
+        let mut current = self.top_values[idx];
+        for part in rest {
+            current = match current {
+                DataValue::Object(pairs) => {
+                    let key = strip_hash_prefix(part);
+                    pairs.iter().find(|(k, _)| *k == key)?.1
+                }
+                DataValue::Array(items) => *items.get(part.parse::<usize>().ok()?)?,
+                _ => return None,
+            };
+        }
+        Some(current)
     }
 
     /// Borrow the underlying arena — needed by callers that want to allocate

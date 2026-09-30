@@ -108,6 +108,24 @@ impl AsyncFunctionHandler for Slow {
     }
 }
 
+/// Writes `temp_data.out = [audit entries, errors]` as the call sees them on
+/// its own message: what a fan-out element carries of the parent's history.
+struct Peek;
+
+#[async_trait]
+impl AsyncFunctionHandler for Peek {
+    type Input = Value;
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
+        let seen = json!([
+            ctx.message().audit_trail().len(),
+            ctx.message().errors().len()
+        ]);
+        ctx.set("temp_data.out", dv(seen));
+        Ok(TaskOutcome::Success)
+    }
+}
+
 /// The issue's `model_infer` shape: a `Template` input resolved per call, and
 /// an `output` path the handler writes to.
 #[derive(Deserialize)]
@@ -165,6 +183,7 @@ fn engine(workflows: Vec<Workflow>) -> Engine {
         .register("echo", Echo)
         .register("increment", Increment)
         .register("infer", Infer)
+        .register("peek", Peek)
         .build()
         .expect("engine should build")
 }
@@ -476,6 +495,32 @@ async fn errors_a_call_records_itself_are_stamped_and_kept() {
         .map(|x| x.element_index)
         .collect();
     assert_eq!(warned, vec![Some(1)]);
+}
+
+/// #67: an element starts from the parent's context only. The parent's audit
+/// trail and errors are not cloned into it (they grow every loop sweep, and
+/// the fold never read them), and both are intact on the real message after.
+#[tokio::test]
+async fn an_element_carries_the_context_but_not_the_parents_history() {
+    let before = Workflow::from_json(
+        &json!({"id": "w0", "name": "w0", "priority": 0, "tasks": [
+            {"id": "pre", "name": "pre", "function": {"name": "map", "input": {"mappings": [
+                {"path": "data.pre", "logic": 1}]}}}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    let mut fan_out = workflow(collect_into(), "peek", json!({}));
+    fan_out.priority = 1;
+    let e = engine(vec![before, fan_out]);
+    let mut m = message(json!([{"id": "a"}, {"id": "b"}]));
+    m.add_error(dataflow_rs::ErrorInfo::builder("EARLIER", "from the host").build());
+    e.process_message(&mut m).await.unwrap();
+
+    assert_eq!(data(&m, "outs"), json!([[0, 0], [0, 0]]));
+    assert_eq!(m.errors()[0].code, "EARLIER");
+    let tasks: Vec<&str> = m.audit_trail().iter().map(|a| a.task_id.as_ref()).collect();
+    assert_eq!(tasks, ["pre", "t", "t", "after"]);
 }
 
 #[tokio::test]

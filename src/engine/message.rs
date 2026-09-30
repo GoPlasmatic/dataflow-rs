@@ -92,6 +92,42 @@ pub struct Message {
     /// `Deserialize` impls keep the 5-field wire shape, so the bucket does not
     /// survive a JSON round trip.
     pub(crate) routing_bucket: Option<u8>,
+    /// Which audit entries the message keeps; see [`AuditMode`]. An in-memory
+    /// hint like `capture_changes`: never serialized.
+    pub(crate) audit_mode: AuditMode,
+}
+
+/// How many [`AuditTrail`] entries a [`Message`] keeps.
+///
+/// The engine records one entry per executed task, and in a looping workflow
+/// that is one per task per sweep, all kept until `process_message` returns.
+/// A host that never reads [`Message::audit_trail`] (because it traces, or
+/// reads `metadata.progress`) can bound or drop them. Set it with
+/// [`MessageBuilder::audit_mode`].
+///
+/// The mode changes only what is *kept*. Status classification, error
+/// records, `metadata.progress`, halting and the observer are identical in
+/// every mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum AuditMode {
+    /// Keep every entry. The default.
+    #[default]
+    Full,
+    /// Keep the most recent `n` entries. `Last(0)` keeps none, like
+    /// [`Self::Off`].
+    ///
+    /// Older entries are dropped in batches, so the message holds at most
+    /// `2n` entries in memory while [`Message::audit_trail`] always shows the
+    /// last `n`.
+    Last(usize),
+    /// Keep no entries.
+    ///
+    /// A trace's per-step `changes` are read from the task's own entry, so
+    /// they come back empty in this mode, as they do with `capture_changes`
+    /// off. Turn `capture_changes` off too: with no entry to hold them, the
+    /// captured copies would be made and dropped for nothing.
+    Off,
 }
 
 // Custom Serialize: stable wire format ({id, payload, context, audit_trail, errors}).
@@ -106,7 +142,7 @@ impl Serialize for Message {
         state.serialize_field("id", &self.id.as_str())?;
         state.serialize_field("payload", &self.payload)?;
         state.serialize_field("context", &self.context)?;
-        state.serialize_field("audit_trail", &self.audit_trail)?;
+        state.serialize_field("audit_trail", self.audit_trail())?;
         state.serialize_field("errors", &self.errors)?;
         state.end()
     }
@@ -137,6 +173,7 @@ impl<'de> Deserialize<'de> for Message {
             errors: data.errors,
             capture_changes: true,
             routing_bucket: None,
+            audit_mode: AuditMode::Full,
         })
     }
 }
@@ -167,6 +204,7 @@ impl Message {
             errors: vec![],
             capture_changes: true,
             routing_bucket: None,
+            audit_mode: AuditMode::Full,
         }
     }
 
@@ -183,6 +221,25 @@ impl Message {
     pub fn from_json_str(payload: &str) -> crate::engine::error::Result<Self> {
         let value: JsonValue = serde_json::from_str(payload).map_err(DataflowError::from_serde)?;
         Ok(Self::from_value(&value))
+    }
+
+    /// A copy for one `for_each` call: the context, id, payload and routing
+    /// bucket, with an empty audit trail and error list, and change capture on.
+    ///
+    /// The fold reads only what the call *adds* (its `Change`s, its errors,
+    /// the `collect` value), so the parent's history is never needed, and it
+    /// is the part that grows every loop sweep (#67).
+    pub(crate) fn fork_for_element(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            payload: Arc::clone(&self.payload),
+            context: self.context.clone(),
+            audit_trail: Vec::new(),
+            errors: Vec::new(),
+            capture_changes: true,
+            routing_bucket: self.routing_bucket,
+            audit_mode: self.audit_mode,
+        }
     }
 
     /// Add an error to the message
@@ -219,10 +276,40 @@ impl Message {
     }
 
     /// Audit-trail entries recorded by the engine, one per task that ran
-    /// (skipped tasks are absent unless `Trace` mode is on).
+    /// (skipped tasks are absent unless `Trace` mode is on). Under
+    /// [`AuditMode::Last`] only the most recent entries, and under
+    /// [`AuditMode::Off`] none.
     #[inline]
     pub fn audit_trail(&self) -> &[AuditTrail] {
-        &self.audit_trail
+        match self.audit_mode {
+            AuditMode::Last(n) => &self.audit_trail[self.audit_trail.len().saturating_sub(n)..],
+            _ => &self.audit_trail,
+        }
+    }
+
+    /// Which audit entries this message keeps. Set it with
+    /// [`MessageBuilder::audit_mode`].
+    #[inline]
+    pub fn audit_mode(&self) -> AuditMode {
+        self.audit_mode
+    }
+
+    /// Record one audit entry under [`Self::audit_mode`]. The only way the
+    /// engine appends to the trail.
+    pub(crate) fn record_audit(&mut self, entry: AuditTrail) {
+        match self.audit_mode {
+            AuditMode::Full => self.audit_trail.push(entry),
+            AuditMode::Off | AuditMode::Last(0) => {}
+            AuditMode::Last(n) => {
+                self.audit_trail.push(entry);
+                // Trim in batches of `n`, so the shift is amortized to O(1)
+                // per entry; `audit_trail()` hides the surplus.
+                if self.audit_trail.len() >= n.saturating_mul(2) {
+                    let excess = self.audit_trail.len() - n;
+                    self.audit_trail.drain(..excess);
+                }
+            }
+        }
     }
 
     /// Errors collected while processing — both validation failures and
@@ -291,6 +378,7 @@ pub struct MessageBuilder {
     id: Option<String>,
     payload: Option<Arc<OwnedDataValue>>,
     capture_changes: Option<bool>,
+    audit_mode: AuditMode,
     data: Option<OwnedDataValue>,
     metadata: Option<OwnedDataValue>,
     temp_data: Option<OwnedDataValue>,
@@ -451,6 +539,25 @@ impl MessageBuilder {
         self
     }
 
+    /// Which audit entries the message keeps. Defaults to
+    /// [`AuditMode::Full`].
+    ///
+    /// A looping workflow records one entry per task per sweep, all kept until
+    /// `process_message` returns. Bound them with [`AuditMode::Last`] or drop
+    /// them with [`AuditMode::Off`] when nothing reads
+    /// [`Message::audit_trail`]; control flow is the same in every mode.
+    ///
+    /// ```
+    /// use dataflow_rs::{AuditMode, Message};
+    ///
+    /// let m = Message::builder().audit_mode(AuditMode::Last(64)).build();
+    /// assert_eq!(m.audit_mode(), AuditMode::Last(64));
+    /// ```
+    pub fn audit_mode(mut self, mode: AuditMode) -> Self {
+        self.audit_mode = mode;
+        self
+    }
+
     /// Finalize. Defaults: id = UUID v7, payload = `OwnedDataValue::Null`,
     /// capture_changes = `true`.
     pub fn build(self) -> Message {
@@ -467,6 +574,7 @@ impl MessageBuilder {
             errors: vec![],
             capture_changes: self.capture_changes.unwrap_or(true),
             routing_bucket: self.routing_bucket,
+            audit_mode: self.audit_mode,
         }
     }
 }
@@ -560,6 +668,30 @@ pub struct Change {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audit_mode_last_holds_at_most_twice_n_and_shows_the_last_n() {
+        let mut m = Message::builder().audit_mode(AuditMode::Last(3)).build();
+        for i in 0..1000_i64 {
+            m.record_audit(AuditTrail {
+                timestamp: Utc::now(),
+                workflow_id: Arc::from("w"),
+                task_id: Arc::from("t"),
+                status: 200,
+                changes: vec![],
+                loop_counter: Some(i),
+                element_index: None,
+            });
+            assert!(m.audit_trail.len() < 6, "the batch trim bounds the Vec");
+            let shown: Vec<i64> = m
+                .audit_trail()
+                .iter()
+                .map(|e| e.loop_counter.unwrap())
+                .collect();
+            let from = (i - 2).max(0);
+            assert_eq!(shown, (from..=i).collect::<Vec<_>>());
+        }
+    }
 
     #[test]
     fn capture_changes_defaults_to_true_on_every_constructor() {

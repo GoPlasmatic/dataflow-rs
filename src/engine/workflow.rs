@@ -48,8 +48,10 @@ pub use crate::engine::rollout::{Rollout, RolloutError};
 /// [`AuditTrail::changes`](crate::AuditTrail::changes) should build the
 /// message with
 /// [`MessageBuilder::capture_changes(false)`](crate::MessageBuilder::capture_changes);
-/// the entries are still recorded, without values. See the Loops guide,
-/// "Memory in long loops".
+/// the entries are still recorded, without values. To bound or drop the
+/// entries themselves, set
+/// [`MessageBuilder::audit_mode`](crate::MessageBuilder::audit_mode). See the
+/// Loops guide, "Memory in long loops".
 ///
 /// # Example
 ///

@@ -68,6 +68,42 @@ pub fn get_nested_value_parts<'b>(
     get_nested_value_impl(data, parts.iter().map(Arc::as_ref))
 }
 
+/// The kind of a value, for error messages that expected an array
+/// (`loop.over`, `for_each.over`, `map`'s append).
+pub(crate) fn describe_kind(value: &OwnedDataValue) -> &'static str {
+    match value {
+        OwnedDataValue::Null => "null",
+        OwnedDataValue::Bool(_) => "a boolean",
+        OwnedDataValue::Number(_) => "a number",
+        OwnedDataValue::String(_) => "a string",
+        OwnedDataValue::Array(_) => "an array",
+        OwnedDataValue::Object(_) => "an object",
+        // The `datetime` and `tensor` variants exist only under those features.
+        #[allow(unreachable_patterns)]
+        _ => "a non-array value",
+    }
+}
+
+/// Mutable counterpart of [`get_nested_value_parts`], with the same `#` and
+/// array-index rules. Creates nothing: a missing segment is `None`.
+pub(crate) fn get_nested_value_parts_mut<'b>(
+    data: &'b mut OwnedDataValue,
+    parts: &[Arc<str>],
+) -> Option<&'b mut OwnedDataValue> {
+    let mut current = data;
+    for part in parts {
+        current = match current {
+            OwnedDataValue::Object(pairs) => {
+                let key = strip_hash_prefix(part);
+                &mut pairs.iter_mut().find(|(k, _)| k == key)?.1
+            }
+            OwnedDataValue::Array(items) => items.get_mut(part.parse::<usize>().ok()?)?,
+            _ => return None,
+        };
+    }
+    Some(current)
+}
+
 /// Shared tree-walk behind [`get_nested_value`] and [`get_nested_value_parts`].
 /// `#`-prefix escape is applied at lookup time via `strip_hash_prefix`, so a
 /// caller passing raw (unstripped) parts — as `get_nested_value_parts` does —

@@ -24,8 +24,8 @@ use crate::engine::trace::{
     ExecutionStep, ExecutionTrace, StepStamp, StepTiming, duration_us_between,
 };
 use crate::engine::utils::{
-    compute_path_parts, get_nested_value_parts, remove_nested_value, set_nested_value,
-    set_nested_value_parts, strip_hash_prefix,
+    compute_path_parts, describe_kind, get_nested_value_parts, remove_nested_value,
+    set_nested_value, set_nested_value_parts, strip_hash_prefix,
 };
 use crate::engine::workflow::{LoopConfig, Workflow};
 use chrono::{DateTime, Utc};
@@ -558,21 +558,6 @@ fn resolve_parts(name: Option<&str>, precomputed: &Arc<[Arc<str>]>) -> Arc<[Arc<
     match name {
         Some(name) if precomputed.is_empty() => compute_path_parts("temp_data", name),
         _ => Arc::clone(precomputed),
-    }
-}
-
-/// The kind of a value, for the `loop.over` error message.
-fn describe_kind(value: &OwnedDataValue) -> &'static str {
-    match value {
-        OwnedDataValue::Null => "null",
-        OwnedDataValue::Bool(_) => "a boolean",
-        OwnedDataValue::Number(_) => "a number",
-        OwnedDataValue::String(_) => "a string",
-        OwnedDataValue::Array(_) => "an array",
-        OwnedDataValue::Object(_) => "an object",
-        // The `datetime` and `tensor` variants exist only under those features.
-        #[allow(unreachable_patterns)]
-        _ => "a non-array value",
     }
 }
 
@@ -1535,7 +1520,9 @@ impl WorkflowExecutor {
     /// One fan-out call, against its own copy of `base`.
     ///
     /// Takes `&Message`, not `&mut`: that is the isolation guarantee. The copy
-    /// carries the element at `temp_data.<as>` and its index at
+    /// ([`Message::fork_for_element`]) carries the context but not the parent's
+    /// audit trail or errors, so everything in its `errors` is the call's own.
+    /// It holds the element at `temp_data.<as>` and its index at
     /// `temp_data.<as>_index`, records every write regardless of the real
     /// message's `capture_changes` (the fold replays them), and is reduced to
     /// an [`ElementOutcome`] as soon as the call ends.
@@ -1547,15 +1534,13 @@ impl WorkflowExecutor {
         item: OwnedDataValue,
     ) -> ElementOutcome {
         let fe = call.for_each;
-        let mut copy = base.clone();
-        copy.capture_changes = true;
+        let mut copy = base.fork_for_element();
         set_nested_value_parts(&mut copy.context, &fe.item_parts, item);
         set_nested_value_parts(
             &mut copy.context,
             &fe.index_parts,
             OwnedDataValue::from(index as u64),
         );
-        let errors_before = copy.errors.len();
 
         let started_at = call.timed.then(Utc::now);
         let result = self
@@ -1593,7 +1578,7 @@ impl WorkflowExecutor {
             index,
             result,
             changes,
-            new_errors: copy.errors.split_off(errors_before),
+            new_errors: copy.errors,
             collected,
             timing,
         }
@@ -2515,7 +2500,7 @@ impl WorkflowExecutor {
                 // by LogicCompiler at engine construction; cloning them is a
                 // refcount bump, not a string copy. `now` is shared with all
                 // other AuditTrails in this process_message call.
-                message.audit_trail.push(AuditTrail {
+                message.record_audit(AuditTrail {
                     timestamp: pass.now,
                     workflow_id: Arc::clone(workflow_id_arc),
                     task_id: Arc::clone(task_id_arc),
@@ -2593,7 +2578,7 @@ impl WorkflowExecutor {
                 error!("Task {} failed: {:?}", task_id, e);
 
                 // Record error in audit trail (Arc clones are refcount bumps).
-                message.audit_trail.push(AuditTrail {
+                message.record_audit(AuditTrail {
                     timestamp: pass.now,
                     workflow_id: Arc::clone(workflow_id_arc),
                     task_id: Arc::clone(task_id_arc),

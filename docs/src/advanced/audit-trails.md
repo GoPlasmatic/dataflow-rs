@@ -244,3 +244,6 @@ fn get_original_value<'a>(message: &'a Message, field: &str) -> Option<&'a Owned
    stay on the message until `process_message` returns, so in a looping
    workflow they grow with every sweep; see
    [Memory in long loops](./loops.md#memory-in-long-loops).
+7. **Bounded trails** - `Message::builder().audit_mode(AuditMode::Last(n))`
+   keeps only the most recent `n` entries, and `AuditMode::Off` keeps none.
+   Control flow and error records are unchanged; only the trail is.

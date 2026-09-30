@@ -229,7 +229,10 @@ matching version.
   `check_loop` agree it is refused.
 - **A task's `for_each` runs every call isolated, then folds in element
   order.** `run_element` takes `&Message`, not `&mut`, on purpose: each call
-  clones the same untouched message (with `capture_changes` forced on), and
+  forks the same untouched message (`Message::fork_for_element`: context, id
+  and payload, with an empty audit trail and error list and `capture_changes`
+  forced on; the history grows every loop sweep and the fold never reads it,
+  #67), and
   the fold (errors, replayed `Change`s, `into[i]`, then one
   `handle_task_result` per element) runs only after every call has finished.
   The fold stops at the first element that fails the task or halts; later
@@ -297,13 +300,32 @@ matching version.
   base and reported by `check_workflow` as the advisory `NULL_MAPPING` (logic
   that folds to a constant `null`, under `on_null: "skip"` only). Removal is
   explicit: `unset: true`, or `on_null: "unset"`.
-  The rules between `logic` / `unset` / `on_null` (and "never remove a
-  context root") live once, in `AuthoredMapping::problem`, which both
+  The rules between `logic` / `unset` / `on_null` / `mode` (and "never remove
+  or append to a context root") live once, in `AuthoredMapping::problem`, which both
   `MapMapping`'s hand-written `Deserialize` and `authoring::check_mappings`
   call. Do not re-derive them in either place. A removal records a `Change`
   with `removed: true` and `new_value: null`; the flag is skipped when false so
   write JSON stays byte-identical. The arena cache follows a removal through
   `ArenaContext::apply_removal_parts` (a narrow refresh, not a splice).
+- **`map`'s `mode: "append"` / `"extend"` must stay O(entry), not O(array)
+  (#69).** `append_at` pushes the already-converted owned result onto the
+  owned array and splices a shallow copy of the cached arena slice plus the
+  result's arena form (`ArenaContext::cached_at`), and records one `Change`
+  per element at `path.<index>`. Building the new array from the owned side,
+  or recording the whole array, reintroduces the quadratic cost the mode
+  exists to remove. A target that is neither missing, `null` nor an array
+  fails the mapping; never wrap it.
+- **`AuditMode` changes only what is kept (#68).** Every audit push goes
+  through `Message::record_audit`; `Last(n)` trims in batches of `n` (the Vec
+  holds up to `2n`) and `audit_trail()` shows the last `n`. Internal readers
+  of the trail (the trace's `own_audit_entry`, snapshots, `Serialize`) must go
+  through `audit_trail()`, never the raw field. Default is `Full`, for the same
+  reason `capture_changes` defaults to `true`.
+- **Several reads of the message cost one conversion only inside
+  `TaskContext::with_view` (#66).** Every `TaskContext::eval` and every
+  `Template::resolve*` converts the whole context into the arena. The `_in`
+  twins go through a private `Source` trait in `template.rs` with the per-call
+  path, so the two cannot drift; add a new resolution method as a pair.
 - **`capture_changes` defaults to `true`, and that was decided, not
   inherited (#63).** The captured copies are retained until `process_message`
   returns, so long loops grow memory with every sweep; the fix chosen was
@@ -448,6 +470,8 @@ The integration suite is split by topic across `tests/`, one binary per file:
 | `engine_execution.rs` | Async handler path, sync stretch, shared-arena runs |
 | `mapping_semantics.rs` | `map` write semantics: replace vs. merge, `#` paths |
 | `map_unset.rs` | `map` removal: `unset`, `on_null`, `Change::removed`, the #59 loop slot |
+| `map_append.rs` | `map` `mode: "append"` / `"extend"`: in-place growth, per-element `Change`s, the rules |
+| `audit_mode.rs` | `AuditMode`: `Full` / `Last(n)` / `Off`, and that control flow is identical in each |
 | `error_handling.rs` | Single error channel, `DataflowError::Service` |
 | `tracing.rs` | Caller-owned `process_message_tracing` |
 | `trace_options.rs` | `TraceOptions`: timing, diffs, budget, redaction |
@@ -488,8 +512,8 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 845 passing.
-`cargo test -p dataflow-rs` (default features) should report 733. The operator
+`cargo test --workspace --all-features` should report 867 passing.
+`cargo test -p dataflow-rs` (default features) should report 753. The operator
 families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and

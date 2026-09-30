@@ -67,6 +67,9 @@ transforms of an array.
 
 Every call runs against **its own copy** of the message, taken before the
 first call. No call sees another's writes, even when they run one at a time.
+The copy is of the context, id and payload only; the audit trail and errors
+recorded so far stay on the real message, so each call's copy starts with
+neither.
 When the calls finish, the engine folds each back in element order.
 
 Isolation makes `max_concurrency` a timing knob only. At `1` and at `8` the

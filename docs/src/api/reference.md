@@ -419,11 +419,15 @@ pub fn from_value(payload: &serde_json::Value) -> Message
 `.payload_json(&serde_json::Value)`, `.capture_changes(bool)`,
 `.data(..)` / `.data_json(..)`, `.metadata(..)` / `.metadata_json(..)`,
 `.temp_data(..)` / `.temp_data_json(..)`, `.routing_bucket(u8)`,
-then `.build() -> Message`.
+`.audit_mode(AuditMode)`, then `.build() -> Message`.
 
 `capture_changes` defaults to `true`. Its copies are held until
 `process_message` returns, so turn it off in long loops unless you read
 `changes`. See [Memory in long loops](../advanced/loops.md#memory-in-long-loops).
+
+`audit_mode` defaults to `AuditMode::Full`. `AuditMode::Last(n)` keeps the most
+recent `n` entries and `AuditMode::Off` keeps none; only the trail changes,
+never control flow.
 
 The three context setters seed `context.data` / `metadata` / `temp_data`
 directly, so a workflow condition reading `data.*` fires without needing a

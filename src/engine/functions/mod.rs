@@ -16,7 +16,7 @@ pub mod validation;
 pub use validation::{ValidationConfig, ValidationRule};
 
 pub mod map;
-pub use map::{MapConfig, MapMapping, OnNull};
+pub use map::{MapConfig, MapMapping, MapMode, OnNull};
 
 pub mod parse;
 pub use parse::ParseConfig;

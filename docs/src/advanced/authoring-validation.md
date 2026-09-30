@@ -119,7 +119,7 @@ assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 | `INVALID_FUNCTION_NAME` | Rejected | `function` is not an object with a non-empty `name` |
 | `INVALID_TERMINAL` | Rejected | `terminal` is present but not a boolean |
 | `INVALID_HALT_ON` | Rejected | `halt_on` is not `"never"`/`"failure"`, or is on a group |
-| `INVALID_MAPPING` | Rejected | A `map` mapping has neither or both of `logic` and `unset`, carries `on_null` without `logic`, or removes a context root; see [Removing a Path](../built-in-functions/map.md#removing-a-path) |
+| `INVALID_MAPPING` | Rejected | A `map` mapping has neither or both of `logic` and `unset`, carries `on_null` or `mode` without `logic`, or removes or appends to a context root; see [Removing a Path](../built-in-functions/map.md#removing-a-path) |
 | `GROUP_CONTINUE_ON_ERROR` | Advisory | A group carries `continue_on_error`, which the engine does not honour |
 | `UNGUARDED_VALIDATION` | Advisory | A `validation` whose failure stops nothing |
 | `NULL_MAPPING` | Advisory | A `map` mapping whose `logic` is always `null`, so it never writes; use `"unset": true` to remove a path |

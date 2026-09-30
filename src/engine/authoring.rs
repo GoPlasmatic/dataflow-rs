@@ -148,9 +148,9 @@ pub enum IssueCode {
     /// every workflow in the build.
     GroupContinueOnError,
     /// A `map` mapping breaks a rule between its keys: it has neither `logic`
-    /// nor `"unset": true`, or both; it carries `on_null` without `logic`; or
-    /// it would remove a context root (`data`, `metadata`, `temp_data`) by a
-    /// literal path. Reported at the offending key, e.g.
+    /// nor `"unset": true`, or both; it carries `on_null` or `mode` without
+    /// `logic`; or it would remove or append to a context root (`data`,
+    /// `metadata`, `temp_data`) by a literal path. Reported at the offending key, e.g.
     /// `tasks[0].function.input.mappings[2].unset`.
     InvalidMapping,
     /// A `map` mapping whose `logic` always evaluates to `null` — `"logic":

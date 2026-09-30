@@ -262,6 +262,63 @@ Things to know about `Template` fields:
 There is no derive macro for this. A hand-written `compile_input` is a few
 lines, and this crate has no proc-macro dependency to add one.
 
+### Resolving several fields at once
+
+Before a `Template` that reads the message is evaluated, the whole message
+context is converted into the evaluator's arena, so one `resolve` costs time in
+proportion to the size of the message. A handler that resolves five fields
+pays for five conversions, and in a loop whose message grows every sweep that
+becomes the dominant cost.
+
+`TaskContext::with_view` converts the context once and hands the closure a
+`ContextView`. Each resolution method has an `_in` twin that takes the view
+and returns the same values and errors:
+
+```rust
+# use async_trait::async_trait;
+# use dataflow_rs::engine::functions::AsyncFunctionHandler;
+# use dataflow_rs::{DataflowError, Result, TaskContext, TaskOutcome, Template, TemplateCompiler};
+# use serde::Deserialize;
+#[derive(Deserialize)]
+struct InferInput {
+    model: Template,
+    prompt: Template,
+    max_tokens: Template,
+}
+
+struct Infer;
+
+#[async_trait]
+impl AsyncFunctionHandler for Infer {
+    type Input = InferInput;
+
+    fn compile_input(input: &mut InferInput, c: &TemplateCompiler) -> Result<()> {
+        input.model.compile(c, "model")?;
+        input.prompt.compile(c, "prompt")?;
+        input.max_tokens.compile(c, "max_tokens")
+    }
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &InferInput) -> Result<TaskOutcome> {
+        // One conversion of the context for all three fields.
+        let (model, prompt, max_tokens) = ctx.with_view(|view| {
+            Ok::<_, DataflowError>((
+                input.model.resolve_string_in(view)?,
+                input.prompt.resolve_in(view)?,
+                input.max_tokens.resolve_u64_in(view, "max_tokens")?,
+            ))
+        })?;
+        // ... await the model call with the resolved values ...
+#       let _ = (model, prompt, max_tokens);
+        Ok(TaskOutcome::Success)
+    }
+}
+```
+
+The closure is synchronous and the view borrows the context, so resolve
+everything the call needs first, then `.await` and write. A field that folded
+to a constant is returned from its cache on both paths, so a handler whose
+fields are all static gains nothing from a view.
+
 ## One handler type, several registrations
 
 `parse_input` and `compile_input` are associated functions (no `&self`)
@@ -392,6 +449,11 @@ the handler having to know the `as` name, and `None` outside a fan-out.
 Each call runs against its own copy of the message, and the engine replays the
 call's writes into the real message afterwards. So write through `ctx.set`: a
 write made through `ctx.message_mut()` directly is not carried back.
+
+The copy carries the context, id and payload, but not the message's history:
+`ctx.message().audit_trail()` and `ctx.message().errors()` start empty in every
+call. Copying them would cost time in proportion to everything the message has
+done so far, per element, and the engine only needs what the call adds.
 
 ## Async Operations
 

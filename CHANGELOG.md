@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Four costs that grew with the message in a long loop, reported from a
+1000-sweep turn loop that fans a model call out over the seats each turn and
+keeps a replay log (#66, #67, #68, #69).
+
+### Added
+
+- **`TaskContext::with_view`** and **`ContextView`** (#66): convert the
+  message context into the arena once and evaluate several expressions
+  against it. Every `Template::resolve*` on a field that reads the message
+  converts the whole context first, so a handler resolving k fields paid for
+  k conversions; inside `with_view` it pays for one. Each resolution method
+  has an `_in` twin taking the view (`resolve_in`, `resolve_string_in`,
+  `resolve_u64_in`, `eval_in`, `eval_into_in`) that returns the same values
+  and errors. The closure is synchronous, so the view cannot cross an
+  `.await`.
+- **`AuditMode`** and **`MessageBuilder::audit_mode`** (#68): `Full` (the
+  default, unchanged), `Last(n)` to keep the most recent `n` entries, or `Off`
+  to keep none. Only what the message keeps changes: status classification,
+  error records, `metadata.progress`, halting and the observer are the same in
+  every mode. Not serialized, like `capture_changes`. A trace's per-step
+  `changes` come from the task's own entry, so they are empty under `Off`.
+- **`map`: `"mode": "append"` and `"extend"`** (`MapMode`, #69): push a
+  result, or each element of an array result, onto the array at `path` in
+  place. A missing or `null` target becomes a new array; any other target
+  fails the mapping rather than being wrapped. Only the result is converted
+  and copied, where the `merge` idiom rebuilt and copied the whole array per
+  append, and the audit `Change` records only the new element at its index
+  (`data.log.7`). The arena cache is updated with a shallow copy of the old
+  slice rather than a re-conversion. `mode` without `logic`, and appending to a
+  literal context root, are `INVALID_MAPPING`.
+
+### Changed
+
+- **A `for_each` element no longer copies the message's history** (#67). Each
+  call started from a deep clone of the whole `Message`, audit trail and
+  errors included, though the fold only reads what the call adds. The copy now
+  carries the context, id and payload, so inside a fan-out
+  `ctx.message().audit_trail()` and `ctx.message().errors()` start empty. A
+  handler that read the parent's history from there must read it before the
+  fan-out.
+- **BREAKING (construction only): `MapMapping` gained `mode`.** A struct
+  literal built outside the crate must name it or use `..Default::default()`,
+  the same trade `unset` and `on_null` made in 3.14.0. Workflow JSON is
+  unaffected.
+
 ## [3.14.0] — 2026-09-23
 
 A way to remove a path from `map` (#59). A null result is skipped, which is what

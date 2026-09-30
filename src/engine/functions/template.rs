@@ -11,7 +11,7 @@
 //! [`Template::is_constant`].
 
 use crate::engine::error::{DataflowError, Result};
-use crate::engine::task_context::TaskContext;
+use crate::engine::task_context::{ContextView, TaskContext};
 use datalogic_rs::Logic;
 use datavalue::OwnedDataValue;
 use serde::{Deserialize, Deserializer};
@@ -29,6 +29,40 @@ pub(crate) fn plain_string_of(value: &OwnedDataValue) -> String {
     match value {
         OwnedDataValue::String(s) => s.clone(),
         other => other.to_string(),
+    }
+}
+
+/// What a [`Template`] evaluates against: a [`TaskContext`], which converts
+/// the message context into the arena per evaluation, or a [`ContextView`],
+/// which converted it once. Private, so the public surface is the named
+/// method pairs (`resolve` / `resolve_in`, …) and the two cannot drift.
+trait Source {
+    fn eval(&self, logic: &Logic) -> Result<OwnedDataValue>;
+    fn eval_json(&self, logic: &Logic) -> Result<Value>;
+    fn eval_to_plain_string(&self, logic: &Logic) -> Result<String>;
+}
+
+impl Source for TaskContext<'_> {
+    fn eval(&self, logic: &Logic) -> Result<OwnedDataValue> {
+        TaskContext::eval(self, logic)
+    }
+    fn eval_json(&self, logic: &Logic) -> Result<Value> {
+        TaskContext::eval_json(self, logic)
+    }
+    fn eval_to_plain_string(&self, logic: &Logic) -> Result<String> {
+        TaskContext::eval_to_plain_string(self, logic)
+    }
+}
+
+impl Source for ContextView<'_> {
+    fn eval(&self, logic: &Logic) -> Result<OwnedDataValue> {
+        ContextView::eval(self, logic)
+    }
+    fn eval_json(&self, logic: &Logic) -> Result<Value> {
+        ContextView::eval_json(self, logic)
+    }
+    fn eval_to_plain_string(&self, logic: &Logic) -> Result<String> {
+        ContextView::eval_to_plain_string(self, logic)
     }
 }
 
@@ -200,17 +234,35 @@ impl Template {
     /// the same thing without the constant cache, kept for handlers that hold
     /// a `Template` they compiled themselves.
     ///
+    /// A field that reads the message converts the whole context into the
+    /// arena per call. A handler resolving several should use
+    /// [`Self::resolve_in`] inside [`TaskContext::with_view`] instead.
+    ///
     /// # Errors
     ///
     /// As [`Self::eval`].
     pub fn resolve(&self, ctx: &TaskContext<'_>) -> Result<OwnedDataValue> {
+        self.resolve_from(ctx)
+    }
+
+    /// As [`Self::resolve`], against a view built once by
+    /// [`TaskContext::with_view`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::eval`].
+    pub fn resolve_in(&self, view: &ContextView<'_>) -> Result<OwnedDataValue> {
+        self.resolve_from(view)
+    }
+
+    fn resolve_from(&self, src: &impl Source) -> Result<OwnedDataValue> {
         if let Some(v) = self.constant() {
             return Ok(v.clone());
         }
         if let Some(v) = self.uncompiled_literal() {
             return Ok(v);
         }
-        self.eval(ctx)
+        src.eval(self.compiled_or_err("eval")?)
     }
 
     /// The authored value, for a config that never went through
@@ -247,13 +299,27 @@ impl Template {
     ///
     /// As [`Self::eval`].
     pub fn resolve_string(&self, ctx: &TaskContext<'_>) -> Result<String> {
+        self.resolve_string_from(ctx)
+    }
+
+    /// As [`Self::resolve_string`], against a view built once by
+    /// [`TaskContext::with_view`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::eval`].
+    pub fn resolve_string_in(&self, view: &ContextView<'_>) -> Result<String> {
+        self.resolve_string_from(view)
+    }
+
+    fn resolve_string_from(&self, src: &impl Source) -> Result<String> {
         if let Some(v) = self.constant() {
             return Ok(plain_string_of(v));
         }
         if let Some(v) = self.uncompiled_literal() {
             return Ok(plain_string_of(&v));
         }
-        self.eval_to_plain_string(ctx)
+        src.eval_to_plain_string(self.compiled_or_err("eval_to_plain_string")?)
     }
 
     /// As [`Self::resolve_string`], against a context already resident in
@@ -334,7 +400,21 @@ impl Template {
     /// because its path was missing is a configuration error worth reporting,
     /// not something to silently default.
     pub fn resolve_u64(&self, ctx: &TaskContext<'_>, label: &str) -> Result<u64> {
-        let value = self.resolve(ctx)?;
+        self.resolve_u64_from(ctx, label)
+    }
+
+    /// As [`Self::resolve_u64`], against a view built once by
+    /// [`TaskContext::with_view`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::resolve_u64`].
+    pub fn resolve_u64_in(&self, view: &ContextView<'_>, label: &str) -> Result<u64> {
+        self.resolve_u64_from(view, label)
+    }
+
+    fn resolve_u64_from(&self, src: &impl Source, label: &str) -> Result<u64> {
+        let value = self.resolve_from(src)?;
         match &value {
             OwnedDataValue::Number(n) => {
                 // Reject NaN, negatives and anything past u64 range before the
@@ -360,14 +440,17 @@ impl Template {
     /// naming the field is the caller's job via `label`, since this type has no
     /// field name of its own to report — or if evaluation itself fails.
     pub fn eval(&self, ctx: &TaskContext<'_>) -> Result<OwnedDataValue> {
-        let logic = self.compiled.as_ref().map(|c| &*c.logic).ok_or_else(|| {
-            DataflowError::LogicEvaluation(
-                "Template::eval called before Template::compile — the engine did not compile \
-                 this field at construction time"
-                    .to_string(),
-            )
-        })?;
-        ctx.eval(logic)
+        ctx.eval(self.compiled_or_err("eval")?)
+    }
+
+    /// As [`Self::eval`], against a view built once by
+    /// [`TaskContext::with_view`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::eval`].
+    pub fn eval_in(&self, view: &ContextView<'_>) -> Result<OwnedDataValue> {
+        view.eval(self.compiled_or_err("eval")?)
     }
 
     /// As [`Self::eval`], deserialized into `T`.
@@ -382,14 +465,24 @@ impl Template {
     /// As [`Self::eval`], plus a deserialization error if the evaluated JSON does
     /// not fit `T`.
     pub fn eval_into<T: serde::de::DeserializeOwned>(&self, ctx: &TaskContext<'_>) -> Result<T> {
-        let logic = self.compiled.as_ref().map(|c| &*c.logic).ok_or_else(|| {
-            DataflowError::LogicEvaluation(
-                "Template::eval_into called before Template::compile — the engine did not \
-                 compile this field at construction time"
-                    .to_string(),
-            )
-        })?;
-        let json = ctx.eval_json(logic)?;
+        self.eval_into_from(ctx)
+    }
+
+    /// As [`Self::eval_into`], against a view built once by
+    /// [`TaskContext::with_view`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::eval_into`].
+    pub fn eval_into_in<T: serde::de::DeserializeOwned>(
+        &self,
+        view: &ContextView<'_>,
+    ) -> Result<T> {
+        self.eval_into_from(view)
+    }
+
+    fn eval_into_from<T: serde::de::DeserializeOwned>(&self, src: &impl Source) -> Result<T> {
+        let json = src.eval_json(self.compiled_or_err("eval_into")?)?;
         serde_json::from_value(json).map_err(DataflowError::from_serde)
     }
 
@@ -403,14 +496,7 @@ impl Template {
     ///
     /// As [`Self::eval`].
     pub fn eval_to_plain_string(&self, ctx: &TaskContext<'_>) -> Result<String> {
-        let logic = self.compiled.as_ref().map(|c| &*c.logic).ok_or_else(|| {
-            DataflowError::LogicEvaluation(
-                "Template::eval_to_plain_string called before Template::compile — the engine \
-                 did not compile this field at construction time"
-                    .to_string(),
-            )
-        })?;
-        ctx.eval_to_plain_string(logic)
+        ctx.eval_to_plain_string(self.compiled_or_err("eval_to_plain_string")?)
     }
 
     /// The authored JSON, unchanged. For handlers that need to report or
@@ -478,6 +564,50 @@ mod tests {
             let t = template_from(v.clone());
             assert_eq!(t.as_json(), &v);
             assert!(!t.is_compiled());
+        }
+    }
+
+    #[test]
+    fn view_and_per_call_resolution_agree_on_values_and_errors() {
+        let dl = engine();
+        let c = TemplateCompiler::new(dl.clone());
+        let mut m = Message::from_value(&json!({}));
+        crate::engine::utils::set_nested_value(
+            &mut m.context,
+            "data",
+            OwnedDataValue::from(&json!({"n": "nan", "k": 5, "s": "x"})),
+        );
+        let ctx = TaskContext::new(&mut m, &dl);
+        for raw in [
+            json!({"var": "data.n"}),
+            json!({"var": "data.k"}),
+            json!({"var": "data.s"}),
+            json!({"/": [{"var": "data.k"}, 0]}),
+            json!({"+": [1, 2]}),
+        ] {
+            let mut t = template_from(raw.clone());
+            t.compile(&c, "t").unwrap();
+            let show = |r: Result<OwnedDataValue>| format!("{r:?}");
+            assert_eq!(
+                show(t.resolve(&ctx)),
+                ctx.with_view(|v| show(t.resolve_in(v))),
+                "{raw}"
+            );
+            assert_eq!(
+                format!("{:?}", t.resolve_string(&ctx)),
+                ctx.with_view(|v| format!("{:?}", t.resolve_string_in(v))),
+                "{raw}"
+            );
+            assert_eq!(
+                format!("{:?}", t.resolve_u64(&ctx, "t")),
+                ctx.with_view(|v| format!("{:?}", t.resolve_u64_in(v, "t"))),
+                "{raw}"
+            );
+            assert_eq!(
+                show(t.eval(&ctx)),
+                ctx.with_view(|v| show(t.eval_in(v))),
+                "{raw}"
+            );
         }
     }
 

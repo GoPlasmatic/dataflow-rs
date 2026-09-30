@@ -289,3 +289,118 @@ async fn one_handler_type_registered_twice_compiles_the_field_each_registration_
     assert_eq!(message.context["data"]["second"]["a"], literal);
     assert_eq!(message.context["data"]["second"]["b"], dv(json!("world")));
 }
+
+// =============================================================================
+// TaskContext::with_view — several fields, one context conversion (#66)
+// =============================================================================
+
+#[derive(serde::Deserialize)]
+struct ViewInput {
+    url: Template,
+    timeout_ms: Template,
+    body: Template,
+    tags: Template,
+    fixed: Template,
+}
+
+/// Resolves every field twice, per call and through one view, and writes both
+/// so the test can assert they agree.
+struct ViewHandler;
+
+#[async_trait]
+impl AsyncFunctionHandler for ViewHandler {
+    type Input = ViewInput;
+
+    fn compile_input(input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> {
+        input.url.compile(c, "url")?;
+        input.timeout_ms.compile(c, "timeout_ms")?;
+        input.body.compile(c, "body")?;
+        input.tags.compile(c, "tags")?;
+        input.fixed.compile(c, "fixed")
+    }
+
+    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Self::Input) -> Result<TaskOutcome> {
+        let per_call = json!({
+            "url": input.url.resolve_string(ctx)?,
+            "timeout_ms": input.timeout_ms.resolve_u64(ctx, "timeout_ms")?,
+            "body": Value::from(&input.body.resolve(ctx)?),
+            "tags": input.tags.eval_into::<Vec<String>>(ctx)?,
+            "fixed": Value::from(&input.fixed.eval(ctx)?),
+        });
+        let viewed = ctx.with_view(|view| -> Result<Value> {
+            // A nested per-call evaluation inside the view's scope falls back
+            // to a fresh arena rather than panicking.
+            let nested = input.url.resolve_string(ctx)?;
+            Ok(json!({
+                "url": input.url.resolve_string_in(view)?,
+                "timeout_ms": input.timeout_ms.resolve_u64_in(view, "timeout_ms")?,
+                "body": Value::from(&input.body.resolve_in(view)?),
+                "tags": input.tags.eval_into_in::<Vec<String>>(view)?,
+                "fixed": Value::from(&input.fixed.eval_in(view)?),
+                "nested": nested,
+            }))
+        })?;
+        ctx.set("data.per_call", dv(per_call));
+        ctx.set("data.viewed", dv(viewed));
+        Ok(TaskOutcome::Success)
+    }
+}
+
+#[tokio::test]
+async fn fields_resolved_through_one_view_match_the_per_call_path() {
+    let wf = Workflow::from_json(
+        &json!({"id": "w", "name": "w", "tasks": [
+            {"id": "v", "name": "v", "function": {"name": "view", "input": {
+                "url": {"cat": ["https://x/", {"var": "data.id"}]},
+                "timeout_ms": {"var": "metadata.timeout"},
+                "body": {"id": {"var": "data.id"}, "seat": {"var": "temp_data.seat"}},
+                "tags": {"var": "data.tags"},
+                "fixed": 7
+            }}}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    let engine = Engine::builder()
+        .with_workflow(wf)
+        .register("view", ViewHandler)
+        .build()
+        .unwrap();
+
+    let mut message = Message::builder()
+        .data(dv(json!({"id": "a1", "tags": ["x", "y"]})))
+        .metadata(dv(json!({"timeout": 250})))
+        .temp_data(dv(json!({"seat": 3})))
+        .build();
+    engine.process_message(&mut message).await.unwrap();
+
+    let per_call = Value::from(&message.context["data"]["per_call"]);
+    let mut viewed = Value::from(&message.context["data"]["viewed"]);
+    assert_eq!(viewed["nested"], json!("https://x/a1"));
+    viewed.as_object_mut().unwrap().remove("nested");
+    assert_eq!(per_call, viewed);
+    assert_eq!(
+        per_call,
+        json!({"url": "https://x/a1", "timeout_ms": 250,
+               "body": {"id": "a1", "seat": 3}, "tags": ["x", "y"], "fixed": 7})
+    );
+}
+
+#[test]
+fn a_view_reports_the_same_errors_as_the_per_call_path() {
+    let dl = std::sync::Arc::new(datalogic_rs::Engine::builder().build());
+    let mut m = Message::builder()
+        .data(dv(json!({"n": "not a number"})))
+        .build();
+    let ctx = TaskContext::new(&mut m, &dl);
+
+    // Uncompiled and not a scalar: both paths name the method.
+    let raw = Template::from(json!({"var": "data.n"}));
+    let per_call = raw.resolve(&ctx).unwrap_err().to_string();
+    let viewed = ctx
+        .with_view(|v| raw.resolve_in(v))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(per_call, viewed);
+    assert!(viewed.contains("before Template::compile"), "{viewed}");
+}

@@ -324,6 +324,25 @@ let message = Message::builder()
 Tracing with `TraceOptions { changes: true }` reports the captured diff and
 does not turn capture on, so it shows empty diffs for such a message.
 
+The entries themselves are small, but a long loop still holds one per task per
+sweep. If nothing reads `Message::audit_trail`, for example because you trace
+the run or route on `metadata.progress`, bound them with `AuditMode::Last(n)`
+or drop them with `AuditMode::Off`:
+
+```rust
+# use dataflow_rs::{AuditMode, Message};
+let message = Message::builder()
+    .capture_changes(false)
+    .audit_mode(AuditMode::Last(64))
+    .build();
+# assert_eq!(message.audit_trail().len(), 0);
+```
+
+The mode changes only what the message keeps. Status classification, error
+records, `metadata.progress` and halting are the same in every mode. A trace's
+per-step `changes` come from the task's own entry, so under `Off` they are
+empty.
+
 ## Performance
 
 A workflow without a `loop` is unaffected: it takes the same code path it
