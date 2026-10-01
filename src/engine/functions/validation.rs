@@ -154,13 +154,20 @@ impl ValidationConfig {
         message: &mut Message,
         engine: &Arc<Engine>,
     ) -> Result<(TaskOutcome, Vec<Change>)> {
-        // Default path: open the arena and convert context once for this
+        // Default path: open the arena and view the context once for this
         // task call. When called from the workflow-level sync-stretch
-        // executor (`execute_in_arena`), the conversion is reused across
-        // multiple tasks in the same stretch.
+        // executor (`execute_in_arena`), the view is reused across multiple
+        // tasks in the same stretch.
+        //
+        // The fields are split so the view can borrow `context` (strings and
+        // keys point into the owned tree) while the rules still push onto
+        // `errors`.
         with_arena(|arena| {
-            let ctx_av: DataValue<'_> = message.context.to_arena(arena);
-            self.run_rules(message, ctx_av, arena, engine)
+            let Message {
+                context, errors, ..
+            } = message;
+            let ctx_av: DataValue<'_> = context.view_in(arena);
+            self.run_rules(errors, ctx_av, arena, engine)
         })
     }
 
@@ -176,14 +183,14 @@ impl ValidationConfig {
     ) -> Result<(TaskOutcome, Vec<Change>)> {
         let arena = arena_ctx.arena();
         let ctx_av = arena_ctx.as_data_value();
-        self.run_rules(message, ctx_av, arena, engine)
+        self.run_rules(&mut message.errors, ctx_av, arena, engine)
     }
 
     /// Shared inner loop: evaluate each rule against `ctx_av` and record
     /// `ErrorInfo` entries for any failures.
     fn run_rules(
         &self,
-        message: &mut Message,
+        errors: &mut Vec<ErrorInfo>,
         ctx_av: DataValue<'_>,
         arena: &bumpalo::Bump,
         engine: &Arc<Engine>,
@@ -248,7 +255,7 @@ impl ValidationConfig {
         }
 
         if !validation_errors.is_empty() {
-            message.errors.extend(validation_errors);
+            errors.extend(validation_errors);
             Ok((TaskOutcome::Status(400), changes))
         } else {
             Ok((TaskOutcome::Success, changes))

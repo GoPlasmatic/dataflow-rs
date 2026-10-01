@@ -265,12 +265,12 @@ lines, and this crate has no proc-macro dependency to add one.
 ### Resolving several fields at once
 
 Before a `Template` that reads the message is evaluated, the whole message
-context is converted into the evaluator's arena, so one `resolve` costs time in
-proportion to the size of the message. A handler that resolves five fields
-pays for five conversions, and in a loop whose message grows every sweep that
-becomes the dominant cost.
+context is viewed into the evaluator's arena, so one `resolve` costs time in
+proportion to the number of arrays and objects in the message, however little
+the expression reads. A handler that resolves five fields pays for five views,
+and in a loop whose message grows every sweep that becomes the dominant cost.
 
-`TaskContext::with_view` converts the context once and hands the closure a
+`TaskContext::with_view` builds that view once and hands the closure a
 `ContextView`. Each resolution method has an `_in` twin that takes the view
 and returns the same values and errors:
 

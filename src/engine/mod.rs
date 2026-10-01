@@ -1261,6 +1261,15 @@ impl EngineBuilder {
     /// Sizing it is empirical — start well above the cost of your legitimate
     /// rules.
     ///
+    /// What a given rule costs is **not stable across datalogic-rs releases**,
+    /// and is not meant to be: each one prices more of the work it was always
+    /// doing. datalogic-rs 5.7 raised the charge for the collection and string
+    /// operators (`merge`, `in`, `keys`, `cat`, `distinct`, iterating an
+    /// object, deep equality, `sort`) from one operation to one per item or per
+    /// 64 bytes, so a rule built from those now reports a far higher count than
+    /// it did under 5.6. Leave headroom, and re-meter after an upgrade rather
+    /// than calibrating to the exact count a rule reports today.
+    ///
     /// # How a refusal reaches you depends on what was being evaluated
     ///
     /// The ceiling is installed on the engine, so it bounds *every* evaluation.

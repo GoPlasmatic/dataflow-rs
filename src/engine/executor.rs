@@ -50,8 +50,14 @@ thread_local! {
 /// Use this for one-shot evals where the context isn't reused across
 /// multiple JSONLogic calls (e.g. a single condition check). For batches of
 /// read-only evals against the same context (validation, log) use
-/// [`with_arena`] and convert the context once via
-/// [`datavalue::OwnedDataValue::to_arena`].
+/// [`with_arena`] and view the context once via
+/// [`datavalue::OwnedDataValue::view_in`].
+///
+/// Passing the *owned* context (rather than an arena `DataValue`) is not the
+/// slow choice it was before datalogic-rs 5.7: its `EvalInput` impl views the
+/// tree through `view_in`, borrowing every string, key and tensor buffer, so
+/// one eval costs the array and object spines and nothing per byte. What
+/// [`with_arena`] still saves is repeating that spine walk per eval.
 #[inline]
 pub(crate) fn eval_to_owned(
     engine: &Engine,
@@ -127,10 +133,9 @@ pub(crate) fn with_eval_arena<R>(f: impl FnOnce(&Bump) -> R) -> R {
 
 /// Run `f` with the worker thread's bump arena rewound. The closure receives
 /// the `Bump` and can amortize work across multiple `engine.evaluate` calls
-/// by converting the input context to `DataValue` once and reusing it. Use
+/// by viewing the input context as a `DataValue` once and reusing it. Use
 /// this for batches of read-only evals against the same context (validation,
-/// log) — it skips the per-eval `to_arena` deep-clone that dominates
-/// realistic profile.
+/// log) — it skips the per-eval spine walk `EvalInput` would repeat.
 #[inline]
 pub(crate) fn with_arena<R>(f: impl FnOnce(&Bump) -> R) -> R {
     EVAL_ARENA.with(|cell| {

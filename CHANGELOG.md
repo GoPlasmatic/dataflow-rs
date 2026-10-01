@@ -13,15 +13,14 @@ keeps a replay log (#66, #67, #68, #69).
 
 ### Added
 
-- **`TaskContext::with_view`** and **`ContextView`** (#66): convert the
-  message context into the arena once and evaluate several expressions
-  against it. Every `Template::resolve*` on a field that reads the message
-  converts the whole context first, so a handler resolving k fields paid for
-  k conversions; inside `with_view` it pays for one. Each resolution method
-  has an `_in` twin taking the view (`resolve_in`, `resolve_string_in`,
-  `resolve_u64_in`, `eval_in`, `eval_into_in`) that returns the same values
-  and errors. The closure is synchronous, so the view cannot cross an
-  `.await`.
+- **`TaskContext::with_view`** and **`ContextView`** (#66): view the message
+  context into the arena once and evaluate several expressions against it.
+  Every `Template::resolve*` on a field that reads the message views the whole
+  context first, so a handler resolving k fields paid for k views; inside
+  `with_view` it pays for one. Each resolution method has an `_in` twin taking
+  the view (`resolve_in`, `resolve_string_in`, `resolve_u64_in`, `eval_in`,
+  `eval_into_in`) that returns the same values and errors. The closure is
+  synchronous, so the view cannot cross an `.await`.
 - **`AuditMode`** and **`MessageBuilder::audit_mode`** (#68): `Full` (the
   default, unchanged), `Last(n)` to keep the most recent `n` entries, or `Off`
   to keep none. Only what the message keeps changes: status classification,
@@ -39,6 +38,46 @@ keeps a replay log (#66, #67, #68, #69).
   literal context root, are `INVALID_MAPPING`.
 
 ### Changed
+
+- **datalogic-rs 5.6 → 5.7.1, datavalue-rs 0.3 → 0.3.1.** Three things reach
+  this crate:
+
+  - **Handing the evaluator the message context no longer copies it**
+    (datalogic-rs #76, the rest of #66). Every `TaskContext::eval` /
+    `eval_json` / `eval_to_plain_string`, every `Template::resolve*`, and the
+    `loop.over` and `for_each` expressions pass the owned context straight to
+    datalogic, which deep-copied each string, key and tensor buffer into its
+    arena before the rule ran. It now views them in place
+    (`OwnedDataValue::view_in`), so one evaluation costs the context's array
+    and object spines and nothing per byte. `with_view` and
+    `ValidationFunction::execute` call `view_in` directly for the same reason.
+    A handler resolving five templated fields against a 2 MB context went from
+    459 µs to 174 µs, and from 95 µs to 36 µs inside one `with_view`. A view
+    is still ~5× cheaper than five per-call resolutions, so `with_view` is
+    worth the same as before.
+
+    What this does *not* move is a sync built-in's cost: `map`, `log`,
+    `filter` and `validation` run against `ArenaContext`, which caches arena
+    values across the owned writes of a workflow and so cannot borrow them.
+    A 1000-sweep append loop measures flat across the upgrade, as do
+    `realistic_benchmark` and `micro_cond_bench`.
+
+  - **`with_ops_budget` counts are higher** (datalogic-rs #77). The
+    collection and string operators (`merge`, `in`, `missing`, `keys`,
+    `values`, `entries`, stepped `slice`, `distinct`, `group_by`, `cat`,
+    `split`, `sort`, deep equality, and iterating an object) were charged one
+    operation however many items they moved; each now charges per item, or per
+    64 bytes of string. A budget calibrated tightly against 5.6 on rules built
+    from those will need re-metering — the count was never stable across
+    releases, and `with_ops_budget`'s documentation now says so. Nothing
+    changes without the `budget` feature and an installed ceiling.
+
+  - **`{"var": [computed_path, default]}` returns the default only when the
+    path misses.** With a path that is an expression rather than a literal,
+    the default was read as a second path segment, so
+    `{"var": [{"cat": ["data.", {"var": "temp_data.field"}]}, "n/a"]}` came
+    back `null` whether or not the path existed. A literal path, and a
+    computed path with no default, are unchanged.
 
 - **A `for_each` element no longer copies the message's history** (#67). Each
   call started from a deep clone of the whole `Message`, audit trail and

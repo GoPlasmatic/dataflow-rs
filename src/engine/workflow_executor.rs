@@ -1684,10 +1684,11 @@ impl WorkflowExecutor {
     /// The workflow condition is folded into the *first* sync stretch's arena
     /// scope: one `ArenaContext::from_owned` walk serves both the condition
     /// eval and the leading run of sync built-in tasks. The owned path
-    /// (`eval_to_owned`) deep-borrowed the entire context — including the
-    /// heavy `data.input` payload — for the condition, and `execute_tasks`
-    /// then walked the same context again to build the first stretch's arena
-    /// form. Mixed sync+async workflows now pay one walk where they paid two.
+    /// (`eval_to_owned`) walks the entire context's spine — every array and
+    /// object of the `data.input` payload included — for the condition, and
+    /// `execute_tasks` then walked the same context again to build the first
+    /// stretch's arena form. Mixed sync+async workflows now pay one walk
+    /// where they paid two.
     /// No `.await` occurs inside the scope, preserving the `!Send` arena
     /// invariant.
     async fn execute_pass(
@@ -2296,8 +2297,8 @@ impl WorkflowExecutor {
                 }
 
                 // Workflow condition in-arena: a folded `None` skips the eval;
-                // a real condition reuses the carried context instead of the
-                // owned-path `eval_to_owned` deep-walk.
+                // a real condition reuses the carried context instead of
+                // repeating the owned-path `eval_to_owned` spine walk.
                 let should_execute = match workflow.compiled_condition.as_ref() {
                     None => true,
                     Some(compiled) => evaluate_condition_in_arena(

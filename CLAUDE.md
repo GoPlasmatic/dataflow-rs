@@ -79,7 +79,8 @@ workspace members, so a `--workspace` invocation always has every operator
 family on. Same reasoning applies to `cargo test -p dataflow-rs`.
 
 **MSRV is 1.98 and CI enforces it.** The floor is *inherited, not chosen*:
-`datalogic-rs` 5.5 and `datavalue-rs` 0.3 both declare `rust-version = "1.98"`,
+`datalogic-rs` 5.7 and `datavalue-rs` 0.3.1 both declare
+`rust-version = "1.98"`,
 so it moves when they move and is not a knob this crate turns. Let-chains
 (`if let ... && let ...`, stable since 1.88) are consequently fine; clippy's
 `collapsible_if` now *asks* for them, so the nested `if let`s the old 1.85
@@ -321,11 +322,24 @@ matching version.
   of the trail (the trace's `own_audit_entry`, snapshots, `Serialize`) must go
   through `audit_trail()`, never the raw field. Default is `Full`, for the same
   reason `capture_changes` defaults to `true`.
-- **Several reads of the message cost one conversion only inside
+- **Several reads of the message cost one context view only inside
   `TaskContext::with_view` (#66).** Every `TaskContext::eval` and every
-  `Template::resolve*` converts the whole context into the arena. The `_in`
-  twins go through a private `Source` trait in `template.rs` with the per-call
-  path, so the two cannot drift; add a new resolution method as a pair.
+  `Template::resolve*` views the whole context into the arena, so each one
+  costs the message's array and object spines however little it reads. The
+  `_in` twins go through a private `Source` trait in `template.rs` with the
+  per-call path, so the two cannot drift; add a new resolution method as a
+  pair.
+- **A view borrows the leaves; only `ArenaContext` copies them.** Since
+  datalogic-rs 5.7 an `&OwnedDataValue` eval input goes through
+  `OwnedDataValue::view_in`, and `with_view` and `ValidationFunction::execute`
+  call it directly: strings, keys and tensor buffers point into
+  `message.context` and only the spines are allocated. `ArenaContext` cannot
+  do this and must keep `to_arena` — it caches arena values *across* the
+  owned writes of a sync stretch, so a borrow of `message.context` could not
+  coexist with the `&mut` those writes need. That is why a loop sweep's cost
+  still tracks the context's bytes while a handler's `eval` no longer does,
+  and why the rest of #66 is dataflow-side work, not an upstream version
+  bump.
 - **`capture_changes` defaults to `true`, and that was decided, not
   inherited (#63).** The captured copies are retained until `process_message`
   returns, so long loops grow memory with every sweep; the fix chosen was

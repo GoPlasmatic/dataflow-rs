@@ -14,8 +14,9 @@ use uuid::Uuid;
 ///
 /// `context` is held as an [`OwnedDataValue`] tree (not `serde_json::Value`)
 /// so the JSONLogic evaluator can borrow it into its arena via
-/// `OwnedDataValue::to_arena` with a single deep walk in, and project the
-/// result back via `DataValue::to_owned` with a single deep walk out — no
+/// `OwnedDataValue::view_in` — one spine walk in, with strings and keys
+/// pointing into this tree rather than copied — and project the result back
+/// via `DataValue::to_owned` with a single deep walk out; no
 /// `serde_json::Value` round-trip in the hot path. The on-the-wire JSON
 /// shape is preserved by datavalue's native `Serialize` / `Deserialize`
 /// impls.

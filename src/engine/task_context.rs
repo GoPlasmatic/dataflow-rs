@@ -309,15 +309,19 @@ impl<'a> TaskContext<'a> {
     }
 
     /// Run `f` against one arena view of the message context, so several
-    /// expressions cost one conversion of the context instead of one each.
+    /// expressions cost one view of the context instead of one each.
     ///
     /// Every [`Self::eval`] (and every [`Template::resolve`] on a field that
-    /// reads the message) converts the *whole* context into the arena before it
-    /// evaluates, so a step costs time in proportion to the size of the
-    /// message, not to what it reads. A handler resolving k templated fields
-    /// pays for k conversions. Inside `with_view` it pays for one: resolve the
-    /// fields with [`Template::resolve_in`] and friends, or evaluate directly
-    /// with [`ContextView::eval`].
+    /// reads the message) builds an arena view of the *whole* context before it
+    /// evaluates, so a step costs time in proportion to the number of arrays
+    /// and objects in the message, not to what it reads. A handler resolving k
+    /// templated fields pays for k views. Inside `with_view` it pays for one:
+    /// resolve the fields with [`Template::resolve_in`] and friends, or
+    /// evaluate directly with [`ContextView::eval`].
+    ///
+    /// Strings, keys and tensor buffers are borrowed rather than copied
+    /// ([`datavalue::OwnedDataValue::view_in`]), on this path and on the
+    /// per-call one, so what a view saves is the spine walk, not the bytes.
     ///
     /// The view borrows `self`, so nothing can write to the message while it
     /// is alive, and the closure is synchronous, so the view cannot be held
@@ -343,7 +347,7 @@ impl<'a> TaskContext<'a> {
     /// [`Template::resolve_in`]: crate::Template::resolve_in
     pub fn with_view<R>(&self, f: impl FnOnce(&ContextView<'_>) -> R) -> R {
         crate::engine::executor::with_eval_arena(|arena| {
-            let data = arena.alloc(self.message.context.to_arena(arena));
+            let data = arena.alloc(self.message.context.view_in(arena));
             f(&ContextView {
                 datalogic: self.datalogic,
                 arena,
