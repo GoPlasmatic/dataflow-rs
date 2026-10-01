@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.0] — 2026-10-01
+
 Four costs that grew with the message in a long loop, reported from a
 1000-sweep turn loop that fans a model call out over the seats each turn and
-keeps a replay log (#66, #67, #68, #69).
+keeps a replay log (#66, #67, #68, #69), and the datalogic-rs 5.7 upgrade that
+carries the rest of #66: handing the evaluator the message context no longer
+copies its strings and keys.
 
 ### Added
 
