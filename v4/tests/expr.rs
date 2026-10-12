@@ -220,3 +220,36 @@ fn secret_refs_finds_literal_and_dynamic_names() {
         ]
     );
 }
+
+#[test]
+fn a_u64_never_saturates_or_truncates() {
+    let e = ExprEngine::default();
+    for lit in ["1.5", "-1.5", "1.8446744073709552e19", "1e20"] {
+        let raw: Value = serde_json::from_str(lit).unwrap();
+        let err = e.compile::<u64>(&raw).unwrap_err();
+        assert_eq!(err.kind(), &ErrorKind::Config, "{lit}");
+        assert!(
+            err.message().contains("not a u64"),
+            "{lit}: {}",
+            err.message()
+        );
+    }
+    let half: Expr<u64> = e.compile(&json!({"/": [1, {"var": "data.d"}]})).unwrap();
+    let err = e.eval(&half, &root(json!({"data": {"d": 2}}))).unwrap_err();
+    assert_eq!(err.kind(), &ErrorKind::Eval);
+    let x: Expr<u64> = e.compile(&json!({"*": [{"var": "data.n"}, 1]})).unwrap();
+    let big: Value = serde_json::from_str(r#"{"data": {"n": 1e20}}"#).unwrap();
+    let err = e.eval(&x, &root(big)).unwrap_err();
+    assert_eq!(err.kind(), &ErrorKind::Eval);
+    assert!(err.message().contains("not a u64"), "{}", err.message());
+}
+
+#[test]
+fn a_string_expression_renders_null_and_bool() {
+    let e = ExprEngine::default();
+    let x: Expr<String> = e.compile(&json!({"var": "data.v"})).unwrap();
+    let out = e.eval(&x, &root(json!({"data": {"v": null}}))).unwrap();
+    assert_eq!(out.value, "null");
+    let out = e.eval(&x, &root(json!({"data": {"v": true}}))).unwrap();
+    assert_eq!(out.value, "true");
+}

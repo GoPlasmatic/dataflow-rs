@@ -81,17 +81,7 @@ impl FromValue for u64 {
     type Out<'a> = Self;
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
-            DataValue::Number(n) => match n.as_u64() {
-                Some(u) => Ok(u),
-                None => {
-                    let f = n.as_f64();
-                    if f >= 0.0 && f.fract() == 0.0 && f <= Self::MAX as f64 {
-                        Ok(f as Self)
-                    } else {
-                        Err(format!("{v} is not a u64"))
-                    }
-                }
-            },
+            DataValue::Number(n) => n.as_u64().ok_or_else(|| format!("{v} is not a u64")),
             other => Err(format!("{other} is not a u64")),
         }
     }

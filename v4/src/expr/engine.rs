@@ -94,6 +94,7 @@ impl ExprEngine {
     /// # Errors
     ///
     /// [`ErrorKind::Compile`] when datalogic refuses the expression;
+    /// [`ErrorKind::Eval`] when evaluating a constant at fold time fails;
     /// [`ErrorKind::Config`] when a folded constant is not a `T`.
     pub fn compile<T: FromValue>(&self, raw: &Value) -> Result<Expr<T>> {
         let logic = self
