@@ -101,14 +101,37 @@ fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     }
 }
 
-/// What v3 recorded for one definition, as rows: every `authored` issue, and
+/// The `checked` codes whose v4 rule comes in phase 3, with the built-in
+/// configs and the lints over a whole workflow. Their issues are not compared
+/// yet; the driver lists each as skipped.
+pub const PHASE_3_CODES: &[&str] = &[
+    "UNGUARDED_VALIDATION",
+    "ESCAPED_TEMPLATE_KEY",
+    "DUPLICATE_TEMPLATE_KEY",
+    "SECRET_IN_MESSAGE_WRITE",
+];
+
+/// What v3 recorded for one definition.
+#[derive(Debug, Default)]
+pub struct Expected {
+    /// The rows v4 is compared against.
+    pub rows: Vec<Row>,
+    /// The `checked` issues of a phase 3 code, not compared.
+    pub phase_3: Vec<Row>,
+    /// Any other `checked` issue: neither compared nor deferred, which the
+    /// driver fails on rather than drop.
+    pub uncovered: Vec<Row>,
+}
+
+/// What v3 recorded for one definition. Every `authored` issue is a row, and
 /// every `checked` issue coded `GROUP_CONTINUE_ON_ERROR` or `NULL_MAPPING`,
-/// the latter's path made absolute with the authored path of its task, taken
-/// from v4's walk of `def`.
-pub fn expected(record: &Json, def: Option<&WorkflowDef>) -> Vec<Row> {
-    let mut rows = Vec::new();
+/// its path made absolute with the authored path of its task, taken from v4's
+/// walk of `def`. The other `checked` issues are sorted into `phase_3` and
+/// `uncovered`, their paths made absolute the same way when `def` is `Some`.
+pub fn expected(record: &Json, def: Option<&WorkflowDef>) -> Expected {
+    let mut out = Expected::default();
     for issue in list(record, "authored") {
-        rows.push(Row::new(
+        out.rows.push(Row::new(
             text(issue, "code").expect("an issue has a code"),
             text(issue, "severity").expect("an issue has a severity"),
             text(issue, "path").map(str::to_owned),
@@ -116,22 +139,28 @@ pub fn expected(record: &Json, def: Option<&WorkflowDef>) -> Vec<Row> {
     }
     for issue in list(record, "checked") {
         let code = text(issue, "code").expect("an issue has a code");
-        if code != "GROUP_CONTINUE_ON_ERROR" && code != "NULL_MAPPING" {
-            continue;
-        }
+        let compared = code == "GROUP_CONTINUE_ON_ERROR" || code == "NULL_MAPPING";
         let task_id = text(issue, "task_id").expect("a checked issue names its task");
-        let base = step_path(
-            def.expect("a checked issue needs a parsed definition"),
-            task_id,
-        );
         let relative = text(issue, "path").expect("a checked issue has a path");
-        rows.push(Row::new(
+        let path = match def {
+            Some(def) => format!("{}.{relative}", step_path(def, task_id)),
+            None if compared => panic!("a checked issue needs a parsed definition"),
+            None => format!("{relative} on step `{task_id}`"),
+        };
+        let row = Row::new(
             code,
             text(issue, "severity").expect("an issue has a severity"),
-            Some(format!("{base}.{relative}")),
-        ));
+            Some(path),
+        );
+        if compared {
+            out.rows.push(row);
+        } else if PHASE_3_CODES.contains(&code) {
+            out.phase_3.push(row);
+        } else {
+            out.uncovered.push(row);
+        }
     }
-    rows
+    out
 }
 
 /// The authored path of the step with this id.
