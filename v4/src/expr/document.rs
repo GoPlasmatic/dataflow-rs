@@ -12,6 +12,11 @@ use std::str::FromStr;
 /// A document of `var` holes in otherwise literal data, `$` keys kept
 /// verbatim. It is for payloads such as a MongoDB filter, where `$oid` is data
 /// and `{"var": ...}` is the only live part.
+///
+/// Any other operator-shaped node, `val` included, stays data and is reported
+/// as `OPERATOR_IN_DOCUMENT`; a `secret` node is refused as
+/// `SECRET_IN_DOCUMENT`. A hole's default is data too, and is checked the same
+/// way.
 pub struct Interpolated {
     raw: Value,
     node: Node,
@@ -95,7 +100,7 @@ impl Node {
 pub(crate) fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Interpolated> {
     let before = cx.rejected();
     let mut holes = Vec::new();
-    let node = walk(raw, cx, &mut holes);
+    let node = walk(raw, cx, Some(&mut holes));
     (cx.rejected() == before).then(|| Interpolated {
         raw: raw.clone(),
         node,
@@ -103,13 +108,20 @@ pub(crate) fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Interpolate
     })
 }
 
-fn walk(raw: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>) -> Node {
+/// Walks one node. `holes` is `None` inside a hole's default, which is data
+/// through and through: a `var` there opens no hole, and is an operator left
+/// as data like any other.
+fn walk(raw: &Value, cx: &mut CompileCx<'_>, mut holes: Option<&mut Vec<Hole>>) -> Node {
     match raw {
         Value::Object(o) => {
             if o.len() == 1 {
                 let (key, arg) = o.iter().next().expect("one entry");
+                if key == "var"
+                    && let Some(holes) = holes.as_deref_mut()
+                {
+                    return hole(raw, arg, cx, holes);
+                }
                 match key.as_str() {
-                    "var" => return hole(raw, arg, cx, holes),
                     "secret" => {
                         cx.issue(
                             IssueCode::SecretInDocument,
@@ -117,7 +129,6 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>) -> Node {
                         );
                         return Node::Literal(raw.clone());
                     }
-                    "val" => {}
                     name if cx.exprs().operators().iter().any(|op| op.name == name) => {
                         cx.at(name, |cx| {
                             cx.issue(
@@ -134,7 +145,10 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>) -> Node {
             }
             let children: Vec<(String, Node)> = o
                 .iter()
-                .map(|(k, v)| (k.clone(), cx.at(k.as_str(), |cx| walk(v, cx, holes))))
+                .map(|(k, v)| {
+                    let node = cx.at(k.as_str(), |cx| walk(v, cx, holes.as_deref_mut()));
+                    (k.clone(), node)
+                })
                 .collect();
             if children.iter().all(|(_, n)| matches!(n, Node::Literal(_))) {
                 Node::Literal(raw.clone())
@@ -146,7 +160,7 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>) -> Node {
             let children: Vec<Node> = a
                 .iter()
                 .enumerate()
-                .map(|(i, v)| cx.at(i, |cx| walk(v, cx, holes)))
+                .map(|(i, v)| cx.at(i, |cx| walk(v, cx, holes.as_deref_mut())))
                 .collect();
             if children.iter().all(|n| matches!(n, Node::Literal(_))) {
                 Node::Literal(raw.clone())
@@ -158,39 +172,41 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>) -> Node {
     }
 }
 
+/// A `var` node: a hole reading its path, its default walked as data.
 fn hole(raw: &Value, arg: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>) -> Node {
     let (path, default) = match arg {
-        Value::String(p) => (Some(p.as_str()), Value::Null),
-        Value::Array(a) if matches!(a.len(), 1 | 2) => {
-            (a[0].as_str(), a.get(1).cloned().unwrap_or(Value::Null))
-        }
-        _ => (None, Value::Null),
+        Value::String(p) => (Some(p.as_str()), None),
+        Value::Array(a) if matches!(a.len(), 1 | 2) => (a[0].as_str(), a.get(1)),
+        _ => (None, None),
     };
-    let Some(path) = path else {
-        cx.issue(
-            IssueCode::InvalidPath,
-            "`var` takes a path string, or [path] or [path, default]",
-        );
+    let parsed = match path {
+        None => Err("`var` takes a path string, or [path] or [path, default]".to_owned()),
+        Some(path) if path.split('.').next() == Some("payload") => {
+            cx.issue(
+                IssueCode::PayloadVar,
+                format!("`{path}` reads the payload, which is not in the context; the hole always yields its default"),
+            );
+            Ok(None)
+        }
+        Some(path) => Path::from_str(path)
+            .map(Some)
+            .map_err(|e| e.message().to_owned()),
+    };
+    if let Err(message) = &parsed {
+        cx.issue(IssueCode::InvalidPath, message.clone());
+    }
+    // The default is never evaluated: a secret or an operator in it would be
+    // handed on as written, so it is reported as anywhere else in the
+    // document.
+    if let Some(default) = default {
+        cx.at("var", |cx| cx.at(1, |cx| walk(default, cx, None)));
+    }
+    let Ok(path) = parsed else {
         return Node::Literal(raw.clone());
     };
-    let parsed = if path.split('.').next() == Some("payload") {
-        cx.issue(
-            IssueCode::PayloadVar,
-            format!("`{path}` reads the payload, which is not in the context; the hole always yields its default"),
-        );
-        None
-    } else {
-        match Path::from_str(path) {
-            Ok(p) => Some(p),
-            Err(e) => {
-                cx.issue(IssueCode::InvalidPath, e.message().to_owned());
-                return Node::Literal(raw.clone());
-            }
-        }
-    };
     holes.push(Hole {
-        path: parsed,
-        default: OwnedDataValue::from(&default),
+        path,
+        default: default.map_or(OwnedDataValue::Null, OwnedDataValue::from),
     });
     Node::Hole(holes.len() - 1)
 }
@@ -291,6 +307,19 @@ mod tests {
             }
             _ => panic!("expected an object node"),
         }
+    }
+
+    #[test]
+    fn a_val_and_an_operator_shaped_default_resolve_as_written() {
+        let c = ctx(json!({"data": {"x": 5}, "metadata": {}, "temp_data": {}}));
+        let d = doc(&json!({
+            "v": {"val": ["data", "x"]},
+            "h": {"var": ["data.missing", {"var": "data.x"}]}
+        }));
+        assert_eq!(
+            d.resolve_owned(&c).to_json_string(),
+            r#"{"h":{"var":"data.x"},"v":{"val":["data","x"]}}"#
+        );
     }
 
     #[test]

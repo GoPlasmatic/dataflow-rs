@@ -99,6 +99,59 @@ fn an_operator_in_a_document_is_advisory_and_stays_data() {
 }
 
 #[test]
+fn a_val_in_a_document_is_an_operator_that_stays_data() {
+    // Only `var` is a hole: `val` reads the context in an expression, but in
+    // a document it is data, and said so like any other operator.
+    let (out, issues) = compile::<Interpolated>(&json!({"k": {"val": ["data", "x"]}}));
+    let doc = out.unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].code, IssueCode::OperatorInDocument);
+    assert_eq!(issues[0].severity, Severity::Advisory);
+    assert_eq!(issues[0].path.to_string(), "k.val");
+    assert_eq!(holes(&doc), Vec::<String>::new());
+}
+
+#[test]
+fn a_holes_default_is_data_and_is_walked() {
+    // A secret as a hole's default would be handed on as the literal object.
+    let (out, issues) =
+        compile::<Interpolated>(&json!({"a": {"var": ["data.x", {"secret": "k"}]}}));
+    assert!(out.is_none());
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].code, IssueCode::SecretInDocument);
+    assert_eq!(issues[0].path.to_string(), "a.var[1]");
+
+    // An operator-shaped default, `var` included, stays data with the
+    // Advisory, and opens no hole.
+    let (out, issues) = compile::<Interpolated>(
+        &json!({"a": {"var": ["data.x", {"cat": ["p", {"var": "data.y"}]}]}}),
+    );
+    let doc = out.unwrap();
+    let at: Vec<(IssueCode, String)> = issues
+        .iter()
+        .map(|i| (i.code, i.path.to_string()))
+        .collect();
+    assert_eq!(
+        at,
+        [
+            (IssueCode::OperatorInDocument, "a.var[1].cat".to_string()),
+            (
+                IssueCode::OperatorInDocument,
+                "a.var[1].cat[1].var".to_string()
+            ),
+        ]
+    );
+    assert!(issues.iter().all(|i| i.severity == Severity::Advisory));
+    assert_eq!(holes(&doc), ["data.x"]);
+
+    // A default beside a bad path is walked too: every issue is reported.
+    let (_, issues) =
+        compile::<Interpolated>(&json!({"a": {"var": ["results.x", {"secret": "k"}]}}));
+    let codes: Vec<IssueCode> = issues.iter().map(|i| i.code).collect();
+    assert_eq!(codes, [IssueCode::InvalidPath, IssueCode::SecretInDocument]);
+}
+
+#[test]
 fn a_secret_in_a_document_is_rejected() {
     let (out, issues) = compile::<Interpolated>(&json!({"t": {"secret": "api"}}));
     assert!(out.is_none());
