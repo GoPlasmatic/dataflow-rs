@@ -1,6 +1,7 @@
 //! Config fields: the types a function's `input` is made of, and the context
 //! that compiles them with every issue at its own path.
 
+use super::document::Interpolated;
 use super::engine::ExprEngine;
 use super::expr::{Expr, FromValue};
 use crate::base::typo::near_miss;
@@ -100,6 +101,9 @@ pub trait ExprVisitor {
     /// An expression at `at`; `records` is set when the engine records its
     /// result.
     fn expr(&mut self, _at: &AuthoredPath, _raw: &Value, _records: bool) {}
+
+    /// An interpolated document at `at`.
+    fn interpolated(&mut self, _at: &AuthoredPath, _doc: &Interpolated) {}
 }
 
 /// A walk over a compiled config's expressions.
@@ -137,6 +141,11 @@ impl<'v> Visit<'v> {
     /// Reports an expression at the current path.
     pub fn expr(&mut self, raw: &Value) {
         self.visitor.expr(&self.path, raw, self.records);
+    }
+
+    /// Reports an interpolated document at the current path.
+    pub fn interpolated(&mut self, doc: &Interpolated) {
+        self.visitor.interpolated(&self.path, doc);
     }
 }
 
