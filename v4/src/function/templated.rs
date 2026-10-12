@@ -17,16 +17,28 @@ use std::str::FromStr;
 #[allow(dead_code, reason = "a literal is read by phase 5's `get`")]
 enum TemplatedField {
     Expr(Expr<OwnedDataValue>),
+    /// An `Expr(ValueKind::Path)` field, compiled as the derive's `Expr<Path>`
+    /// is, so it is refused the same way.
+    Path(Expr<Path>),
     Interpolated(Interpolated),
     Literal(OwnedDataValue),
     Output(Output),
+}
+
+/// A compiled runtime field with its name, and whether the engine records
+/// its result ([`FieldSpec::records`]).
+#[derive(Debug)]
+struct Field {
+    name: Box<str>,
+    records: bool,
+    value: TemplatedField,
 }
 
 /// A plugin function's config: the fields its manifest declared, compiled by
 /// their kinds. The fields come from the [`CompileCx`]'s runtime fields.
 #[derive(Debug)]
 pub struct Templated {
-    fields: Vec<(Box<str>, TemplatedField)>,
+    fields: Vec<Field>,
 }
 
 fn raw_fits(kind: ValueKind, raw: &Value) -> bool {
@@ -68,6 +80,9 @@ fn expected(kind: ValueKind) -> &'static str {
 /// Compiles `raw` as the spec's kind, at the current path.
 fn field(kind: FieldKind, raw: &Value, cx: &mut CompileCx<'_>) -> Option<TemplatedField> {
     match kind {
+        FieldKind::Expr(ValueKind::Path) => {
+            <Expr<Path>>::compile(raw, cx).map(TemplatedField::Path)
+        }
         FieldKind::Expr(vk) => {
             let expr = <Expr<OwnedDataValue>>::compile(raw, cx)?;
             if expr.constant().is_some_and(|c| !constant_fits(vk, c)) {
@@ -117,8 +132,12 @@ impl Templated {
         let mut fields = Vec::new();
         for spec in specs {
             cx.at(&*spec.name, |cx| {
-                if let Some(compiled) = Self::one(spec, object.get(&*spec.name), cx) {
-                    fields.push((Box::from(&*spec.name), compiled));
+                if let Some(value) = Self::one(spec, object.get(&*spec.name), cx) {
+                    fields.push(Field {
+                        name: Box::from(&*spec.name),
+                        records: spec.records,
+                        value,
+                    });
                 }
             });
         }
@@ -159,12 +178,15 @@ impl Templated {
     }
 
     fn walk(&self, v: &mut Visit<'_>) {
-        for (name, field) in &self.fields {
-            v.at(&**name, |v| match field {
-                TemplatedField::Expr(expr) => v.expr(expr.raw()),
-                TemplatedField::Output(output) => v.expr(output.path().raw()),
-                TemplatedField::Interpolated(doc) => v.interpolated(doc),
-                TemplatedField::Literal(_) => {}
+        for field in &self.fields {
+            v.at(&*field.name, |v| {
+                v.recording(field.records, |v| match &field.value {
+                    TemplatedField::Expr(expr) => v.expr(expr.raw()),
+                    TemplatedField::Path(expr) => v.expr(expr.raw()),
+                    TemplatedField::Output(output) => v.expr(output.path().raw()),
+                    TemplatedField::Interpolated(doc) => v.interpolated(doc),
+                    TemplatedField::Literal(_) => {}
+                });
             });
         }
     }

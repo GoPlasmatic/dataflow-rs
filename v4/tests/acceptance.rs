@@ -304,3 +304,69 @@ fn a_field_whose_expression_does_not_compile_is_template_compile() {
         )]
     );
 }
+
+#[test]
+fn a_path_expr_field_refuses_a_literal_that_is_not_a_path_as_the_derive_does() {
+    let fields = vec![FieldSpec::runtime(
+        "to",
+        FieldKind::Expr(ValueKind::Path),
+        true,
+    )];
+    for good in [json!("data.x"), json!({"var": "data.k"})] {
+        let (out, issues) = compile::<Templated>(&json!({ "to": good }), Some(&fields));
+        assert!(out.is_some() && issues.is_empty(), "{good}: {issues:?}");
+    }
+    // As `Expr<Path>` reports them: a literal string that is not a context
+    // path is INVALID_PATH, and anything else that cannot be one INPUT_PARSE.
+    for (bad, code) in [
+        (json!("rows"), IssueCode::InvalidPath),
+        (json!(5), IssueCode::InputParse),
+    ] {
+        let (out, issues) = compile::<Templated>(&json!({ "to": bad }), Some(&fields));
+        assert!(out.is_none(), "{bad}");
+        assert_eq!(
+            triples(&issues),
+            [at(code, Severity::Rejected, ".to")],
+            "{bad}"
+        );
+    }
+}
+
+/// Each expression's path and its `records` flag.
+#[derive(Default)]
+struct Recorded(Vec<(String, bool)>);
+
+impl ExprVisitor for Recorded {
+    fn expr(&mut self, at: &AuthoredPath, _raw: &Value, records: bool) {
+        self.0.push((at.to_string(), records));
+    }
+    fn interpolated(&mut self, at: &AuthoredPath, _doc: &Interpolated) {
+        self.0.push((format!("doc {at}"), false));
+    }
+}
+
+#[test]
+fn a_runtime_field_that_records_is_visited_as_recorded() {
+    let mut url = FieldSpec::runtime("url", FieldKind::Expr(ValueKind::String), true);
+    url.records = true;
+    let fields = vec![
+        url,
+        FieldSpec::runtime("body", FieldKind::Expr(ValueKind::Any), false),
+        FieldSpec::runtime("output", FieldKind::Output, false).with_default("\"data\""),
+    ];
+    let (out, issues) = compile::<Templated>(
+        &json!({"url": {"var": "data.u"}, "body": {"var": "data.b"}}),
+        Some(&fields),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let mut seen = Recorded::default();
+    out.unwrap().visit(&mut seen);
+    assert_eq!(
+        seen.0,
+        [
+            ("url".to_string(), true),
+            ("body".to_string(), false),
+            ("output".to_string(), false),
+        ]
+    );
+}
