@@ -291,7 +291,15 @@ impl<'j> Walk<'j> {
 
         let id = id.unwrap_or_default().to_string();
         if group {
-            self.group(obj, at, id, terminal, ext, setup, depth)
+            let head = GroupHead {
+                at,
+                id,
+                terminal,
+                ext,
+                setup,
+                depth,
+            };
+            self.group(obj, head)
         } else {
             // 4.5
             let function_name = obj
@@ -322,20 +330,15 @@ impl<'j> Walk<'j> {
     }
 
     /// The rest of a group, from 4.4 on, then its members.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the half of `step` a group takes, with what `step` already read"
-    )]
-    fn group(
-        &mut self,
-        obj: &'j Map<String, Value>,
-        at: AuthoredPath,
-        id: String,
-        terminal: bool,
-        mut ext: Ext,
-        setup: bool,
-        depth: usize,
-    ) -> StepDef {
+    fn group(&mut self, obj: &'j Map<String, Value>, head: GroupHead) -> StepDef {
+        let GroupHead {
+            at,
+            id,
+            terminal,
+            mut ext,
+            setup,
+            depth,
+        } = head;
         // 4.4
         if obj.contains_key("halt_on") {
             self.report(
@@ -559,18 +562,20 @@ impl<'j> Walk<'j> {
         }
     }
 
+    /// A timestamp, read as v3's serde read it: chrono's `FromStr`, which
+    /// takes RFC 3339 and its relaxed forms (a space for the `T`, an offset
+    /// without its colon, and chrono's own `Display`, `… UTC`).
     fn timestamp(&mut self, obj: &Map<String, Value>, key: &str) -> Option<DateTime<Utc>> {
         match obj.get(key) {
             None | Some(Value::Null) => None,
             Some(raw) => {
                 let parsed = raw
                     .as_str()
-                    .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-                    .map(|time| time.with_timezone(&Utc));
+                    .and_then(|text| text.parse::<DateTime<Utc>>().ok());
                 if parsed.is_none() {
                     self.parse_failed(
                         AuthoredPath::root().join(key),
-                        "expected an RFC 3339 timestamp",
+                        "expected a timestamp such as \"2026-01-02T03:04:05Z\"",
                     );
                 }
                 parsed
@@ -606,6 +611,18 @@ impl<'j> Walk<'j> {
         }
         bucket
     }
+}
+
+/// What `step` read of a group before handing it to `group`.
+struct GroupHead {
+    at: AuthoredPath,
+    id: String,
+    terminal: bool,
+    ext: Ext,
+    /// Whether the group sits under `loop.setup`.
+    setup: bool,
+    /// Its enclosing groups.
+    depth: usize,
 }
 
 impl NodeHeader {

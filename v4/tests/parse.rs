@@ -445,6 +445,22 @@ fn rule_4_5_for_each_on_a_group_is_refused() {
 }
 
 #[test]
+fn rules_4_4_and_4_5_refuse_a_groups_halt_on_and_for_each_even_when_null() {
+    // v3's `check_shape` asks whether the key is present, whatever its value.
+    let parsed = compat(&wf(json!([
+        {"id": "g", "halt_on": null, "for_each": null, "tasks": [leaf("t")]}
+    ])));
+    assert_eq!(
+        rows(&parsed),
+        vec![
+            row(C::InvalidHaltOn, R, "tasks[0].halt_on"),
+            row(C::InvalidForEach, R, "tasks[0].for_each"),
+        ]
+    );
+    assert!(parsed.def.is_none());
+}
+
+#[test]
 fn rule_4_6_a_task_has_a_function_with_a_non_empty_name() {
     let parsed = compat(&wf(json!([
         {"id": "a"},
@@ -993,6 +1009,36 @@ fn rule_7_rollout_needs_both_bounds() {
     assert_eq!(def_none.rollout, None);
 }
 
+#[test]
+fn rule_7_timestamps_are_read_as_v3_read_them() {
+    // v3 read them through chrono's serde, which is `FromStr`: RFC 3339 and
+    // its relaxed forms, chrono's own `Display` among them.
+    for (text, utc) in [
+        ("2026-01-02T03:04:05Z", "2026-01-02T03:04:05+00:00"),
+        ("2026-01-02T05:04:05+02:00", "2026-01-02T03:04:05+00:00"),
+        ("2026-01-02 03:04:05 UTC", "2026-01-02T03:04:05+00:00"),
+        ("2026-01-02T03:04:05+0000", "2026-01-02T03:04:05+00:00"),
+    ] {
+        let def = def_of(&json!({
+            "id": "w", "created_at": text, "updated_at": text, "tasks": [leaf("t")]
+        }));
+        assert_eq!(
+            def.created_at.map(|t| t.to_rfc3339()).as_deref(),
+            Some(utc),
+            "{text}"
+        );
+        assert_eq!(def.updated_at, def.created_at, "{text}");
+        let v3: dataflow_rs_v3::Workflow = serde_json::from_value(json!({
+            "id": "w", "name": "w", "created_at": text, "tasks": []
+        }))
+        .unwrap_or_else(|e| panic!("v3 loads {text}: {e}"));
+        assert_eq!(v3.created_at, def.created_at, "{text}");
+    }
+
+    let parsed = compat(&json!({"id": "w", "created_at": "2026-01-02", "tasks": [leaf("t")]}));
+    assert_eq!(rows(&parsed), vec![row(C::ParseFailed, R, "created_at")]);
+}
+
 fn def_of(json: &Value) -> WorkflowDef {
     built(compat(json))
 }
@@ -1253,8 +1299,51 @@ fn an_unknown_key_already_in_ext_is_refused() {
             row(C::ParseFailed, R, "path"),
         ]
     );
-    assert!(parsed.issues[0].message.contains("ext"));
+    for issue in &parsed.issues {
+        assert!(
+            issue.message.contains("authored `ext`"),
+            "{}",
+            issue.message
+        );
+    }
     assert!(parsed.def.is_none());
+}
+
+#[test]
+fn two_unknown_keys_moving_to_one_ext_name_refuse_the_second() {
+    // The loop's `maxx` moves to `loop.maxx` (rule 5); the workflow's own key
+    // spelled `loop.maxx` would land on the same name (rule 7). Neither came
+    // from the authored `ext`.
+    let parsed = compat(&json!({
+        "id": "w", "loop.maxx": 1, "loop": {"max": 3, "maxx": 2}, "tasks": [leaf("t")]
+    }));
+    assert_eq!(
+        rows(&parsed),
+        vec![
+            row(C::LikelyTypo, D, "loop.maxx"),
+            row(C::ParseFailed, R, "loop.maxx"),
+        ]
+    );
+    // Same display, different paths: `loop` then `maxx`, and one key.
+    assert_eq!(parsed.issues[0].path.segs().len(), 2);
+    assert_eq!(parsed.issues[1].path.segs().len(), 1);
+    let message = &parsed.issues[1].message;
+    assert!(message.contains("already kept there"), "{message}");
+    assert!(!message.contains("authored"), "{message}");
+}
+
+#[test]
+fn a_hostile_unknown_key_costs_linear_time() {
+    // A million-character key: far longer than every known key, so no
+    // distance is computed and nothing quadratic is allocated.
+    let key = "k".repeat(1_000_000);
+    let mut json = json!({"id": "w", "tasks": [leaf("t")]});
+    json[key.as_str()] = json!(1);
+    let parsed = compat(&json);
+    assert_eq!(parsed.issues.len(), 1);
+    assert_eq!(parsed.issues[0].code, C::UnknownKey);
+    assert_eq!(parsed.issues[0].severity, A);
+    assert!(built(parsed).header.ext.contains_key(&key));
 }
 
 // ---------------------------------------------------------------------------
