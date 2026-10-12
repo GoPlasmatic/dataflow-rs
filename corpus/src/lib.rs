@@ -9,6 +9,7 @@
 
 pub mod case;
 pub mod compare;
+pub mod contract;
 pub mod json;
 pub mod normalise;
 pub mod path;
