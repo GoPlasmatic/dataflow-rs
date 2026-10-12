@@ -1223,19 +1223,39 @@ fn nested_unknown_keys_land_in_the_owning_nodes_ext() {
 }
 
 #[test]
-fn v3_keys_are_unknown_until_the_compat_reader_rewrites_them() {
-    // Task 11 rewrites these; until then they are ordinary unknown keys.
-    let parsed = compat(&json!({
+fn v3_keys_are_rewritten_under_compat_and_unknown_without() {
+    // The compat reader's rules are `tests/compat.rs`'s; here, only that the
+    // v3 keys never reach the walk as unknown keys under compat, and are
+    // Rejected unknown keys without it.
+    let json = json!({
         "id": "w", "continue_on_error": true,
         "tasks": [{"id": "t", "continue_on_error": true, "halt_on": "failure",
                    "function": {"name": "f"}}]
-    }));
+    });
+    let parsed = compat(&json);
     assert_eq!(
         rows(&parsed),
         vec![
-            row(C::UnknownKey, A, "tasks[0].continue_on_error"),
-            row(C::UnknownKey, A, "tasks[0].halt_on"),
-            row(C::UnknownKey, A, "continue_on_error"),
+            row(C::V3Spelling, A, "continue_on_error"),
+            row(C::V3Spelling, A, "tasks[0].continue_on_error"),
+            row(C::V3Spelling, A, "tasks[0].halt_on"),
+        ]
+    );
+    let def = built(parsed);
+    assert_eq!(def.on_failure, WorkflowFailurePolicy::Continue);
+    let t = task(&def.tasks[0]);
+    assert_eq!(
+        (t.on_failure, t.on_rejection),
+        (FailurePolicy::Halt, RejectionPolicy::Halt)
+    );
+    assert!(t.header.ext.is_empty());
+
+    assert_eq!(
+        rows(&strict(&json)),
+        vec![
+            row(C::UnknownKey, R, "tasks[0].continue_on_error"),
+            row(C::UnknownKey, R, "tasks[0].halt_on"),
+            row(C::UnknownKey, R, "continue_on_error"),
         ]
     );
 }

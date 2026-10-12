@@ -1,9 +1,9 @@
 //! `loop`: its rules in v3's `check_loop` order, and the slot predicates it
 //! shares with `for_each`, copied from v3.
 
-use super::keys::{Ext, LOOP_KEYS};
+use super::keys::{Ext, LOOP};
 use super::parse::Walk;
-use super::types::{Logic, LoopDef};
+use super::types::{Logic, LoopDef, defaults};
 use crate::base::{AuthoredPath, IssueCode};
 use serde_json::{Map, Value};
 
@@ -71,7 +71,7 @@ impl<'j> Walk<'j> {
             );
         }
         // v3 bounds an unreadable `init` at its default.
-        let init_or_default = init.flatten().unwrap_or(0);
+        let init_or_default = init.flatten().unwrap_or(defaults::INIT);
         if let Some(max) = max
             && max <= init_or_default
         {
@@ -138,7 +138,7 @@ impl<'j> Walk<'j> {
             }
         }
 
-        self.unknown_keys(config, LOOP_KEYS, &[], &at, "loop.", ext);
+        self.unknown_keys(config, &LOOP, &[], &at, "loop.", ext);
 
         // Rule 6.
         let setup_at = at.join("setup");
@@ -153,8 +153,8 @@ impl<'j> Walk<'j> {
 
         LoopDef {
             counter,
-            init: init.flatten().unwrap_or(0),
-            increment: increment.flatten().unwrap_or(1),
+            init: init_or_default,
+            increment: increment.flatten().unwrap_or(defaults::INCREMENT),
             max: max.unwrap_or(0),
             setup,
             over: over.cloned().map(Logic),

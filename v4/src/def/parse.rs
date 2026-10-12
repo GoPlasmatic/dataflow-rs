@@ -1,5 +1,6 @@
 //! `parse`: one walk over the authored JSON that builds a [`WorkflowDef`] and
-//! is also the linter.
+//! is also the linter. With the compat reader on, the reader's pre-pass
+//! rewrites the v3 spellings first, and its issues come first.
 //!
 //! The issues come out in v3's rule order, which is not the key order:
 //!
@@ -15,9 +16,10 @@
 //! 7. the workflow's other keys, `rollout` with its unknown keys, then the
 //!    workflow's own unknown keys.
 
-use super::keys::{Ext, FUNCTION_KEYS, GROUP_KEYS, ROLLOUT_KEYS, TASK_KEYS, WORKFLOW_KEYS};
+use super::keys::{Ext, FUNCTION, GROUP, ROLLOUT, TASK, WORKFLOW};
+use super::reader::{self, Rewrite};
 use super::types::{
-    FunctionRef, GroupDef, Logic, NodeHeader, Spelling, StepDef, TaskDef, WorkflowDef,
+    FunctionRef, GroupDef, Logic, NodeHeader, Spelling, StepDef, TaskDef, WorkflowDef, defaults,
 };
 use super::{MAX_GROUP_DEPTH, Rollout};
 use crate::base::{AuthoredPath, Issue, IssueCode, Severity, StepKind};
@@ -30,9 +32,11 @@ use std::sync::LazyLock;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ParseOptions {
-    /// Whether the compat reader runs. With it on (the default), an unknown
-    /// key takes its default severity and moves into the owning node's `ext`.
-    /// With it off, every unknown key is Rejected and nothing moves.
+    /// Whether the compat reader runs. With it on (the default), each v3
+    /// spelling is rewritten and reported as a `V3_SPELLING` (see
+    /// [`compat`](crate::compat)), and an unknown key takes its default
+    /// severity and moves into the owning node's `ext`. With it off, every v3
+    /// key and every unknown key is Rejected, and nothing moves.
     pub compat: bool,
 }
 
@@ -65,10 +69,19 @@ pub struct Parsed {
 /// issue, and the definition is built exactly when none is Rejected.
 ///
 /// Every structural rule is here, at v3's codes and authored paths. A missing
-/// or ill-typed key is `PARSE_FAILED` at its own path.
+/// or ill-typed key is `PARSE_FAILED` at its own path. With the compat reader
+/// on, the v3 spellings are rewritten first, each reported as a
+/// `V3_SPELLING` at the v3 key, and the reader's issues come before the
+/// walk's.
 pub fn parse(json: &Value, opts: ParseOptions) -> Parsed {
+    parse_with_rewrites(json, opts).0
+}
+
+/// [`parse`], keeping the compat reader's rewrites for
+/// [`migrate_v3`](crate::compat::migrate_v3).
+pub(crate) fn parse_with_rewrites(json: &Value, opts: ParseOptions) -> (Parsed, Vec<Rewrite>) {
     let Some(object) = json.as_object() else {
-        return Parsed {
+        let parsed = Parsed {
             def: None,
             issues: vec![Issue::new(
                 IssueCode::ParseFailed,
@@ -76,10 +89,22 @@ pub fn parse(json: &Value, opts: ParseOptions) -> Parsed {
                 "a workflow definition must be a JSON object",
             )],
         };
+        return (parsed, Vec::new());
     };
+    if !opts.compat {
+        return (walk(object, false, Vec::new()), Vec::new());
+    }
+    // The reader rewrites a copy; the walk reads the copy.
+    let mut rewritten = object.clone();
+    let read = reader::read(&mut rewritten);
+    (walk(&rewritten, true, read.issues), read.rewrites)
+}
+
+/// The walk over `object`, its issues following `issues`.
+fn walk(object: &Map<String, Value>, compat: bool, issues: Vec<Issue>) -> Parsed {
     let mut walk = Walk {
-        compat: opts.compat,
-        issues: Vec::new(),
+        compat,
+        issues,
         seen: HashMap::new(),
         step: None,
     };
@@ -181,9 +206,9 @@ impl<'j> Walk<'j> {
         self.step = None;
 
         // 7.
-        let priority = self.u32_or(obj, "priority", &root, 0);
-        let version = self.u32_or(obj, "version", &root, 1);
-        let channel = self.string_or(obj, "channel", &root, "default");
+        let priority = self.u32_or(obj, "priority", &root, defaults::PRIORITY);
+        let version = self.u32_or(obj, "version", &root, defaults::VERSION);
+        let channel = self.string_or(obj, "channel", &root, defaults::CHANNEL);
         let status = self.spelled(obj, "status", &root);
         let on_failure = self.spelled(obj, "on_failure", &root);
         let rollout = self.rollout(obj.get("rollout"), &mut ext);
@@ -191,7 +216,7 @@ impl<'j> Walk<'j> {
         let created_at = self.timestamp(obj, "created_at");
         let updated_at = self.timestamp(obj, "updated_at");
         self.ext_is_object(obj, &root);
-        self.unknown_keys(obj, WORKFLOW_KEYS, &[], &root, "", &mut ext);
+        self.unknown_keys(obj, &WORKFLOW, &[], &root, "", &mut ext);
 
         WorkflowDef {
             id: id.unwrap_or_default(),
@@ -315,7 +340,7 @@ impl<'j> Walk<'j> {
             let on_failure = self.spelled(obj, "on_failure", &at);
             let on_rejection = self.spelled(obj, "on_rejection", &at);
             self.ext_is_object(obj, &at);
-            self.unknown_keys(obj, TASK_KEYS, &[], &at, "", &mut ext);
+            self.unknown_keys(obj, &TASK, &[], &at, "", &mut ext);
             StepDef::Task(TaskDef {
                 id,
                 header: header.with_ext(ext),
@@ -382,7 +407,7 @@ impl<'j> Walk<'j> {
         let condition = obj.get("condition").cloned().map(Logic);
         self.ext_is_object(obj, &at);
         // `halt_on` and `for_each` were refused above, not unknown.
-        self.unknown_keys(obj, GROUP_KEYS, &["halt_on", "for_each"], &at, "", &mut ext);
+        self.unknown_keys(obj, &GROUP, &["halt_on", "for_each"], &at, "", &mut ext);
 
         // A group too deep is not descended into.
         let tasks = if too_deep {
@@ -428,7 +453,7 @@ impl<'j> Walk<'j> {
         if name.is_none() {
             self.invalid_function_name(&at);
         }
-        self.unknown_keys(function, FUNCTION_KEYS, &[], &at, "function.", ext);
+        self.unknown_keys(function, &FUNCTION, &[], &at, "function.", ext);
         FunctionRef {
             name: name.unwrap_or_default().to_string(),
             input: function
@@ -596,7 +621,7 @@ impl<'j> Walk<'j> {
         };
         let start = self.bucket(obj, "bucket_start", &at);
         let end = self.bucket(obj, "bucket_end", &at);
-        self.unknown_keys(obj, ROLLOUT_KEYS, &[], &at, "rollout.", ext);
+        self.unknown_keys(obj, &ROLLOUT, &[], &at, "rollout.", ext);
         Some(Rollout::new(start?, end?))
     }
 

@@ -3,7 +3,10 @@
 //! A definition is plain data with raw expressions. It enters only through
 //! [`parse`], which is also the linter: one walk over the authored JSON builds
 //! a [`WorkflowDef`] and reports every issue at the path the author typed, at
-//! v3's codes for v3's rules.
+//! v3's codes for v3's rules. With [`ParseOptions::compat`] on, the compat
+//! reader rewrites v3's spellings first (see [`compat`](crate::compat)). A
+//! definition serializes in the v4 spelling, which `parse` reads back with the
+//! reader off.
 //!
 //! ```
 //! # extern crate dataflow_rs_v4 as dataflow_rs;
@@ -27,9 +30,12 @@ mod for_each;
 mod keys;
 mod loops;
 mod parse;
+pub(crate) mod reader;
 mod rollout;
+mod ser;
 mod types;
 
+pub(crate) use parse::parse_with_rewrites;
 pub use parse::{ParseOptions, Parsed, parse};
 pub use rollout::{Rollout, RolloutError};
 pub use types::{

@@ -4,7 +4,9 @@
 //! `loop.<key>`, `for_each.<key>`, `rollout.<key>` or `function.<key>`. It is a
 //! `LIKELY_TYPO` when it is a near miss of a known key at its level, otherwise
 //! an `UNKNOWN_KEY`. With the compat reader on, each takes its default
-//! severity; with it off, both are Rejected and nothing moves.
+//! severity, and the level's v3 spellings are near-miss candidates too; with
+//! it off, both are Rejected, nothing moves, and no v3 spelling is a
+//! candidate.
 
 use super::parse::Walk;
 use crate::base::typo::near_miss;
@@ -13,7 +15,7 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 
 /// A workflow's keys.
-pub(super) const WORKFLOW_KEYS: &[&str] = &[
+const WORKFLOW_KEYS: &[&str] = &[
     "id",
     "name",
     "description",
@@ -33,7 +35,7 @@ pub(super) const WORKFLOW_KEYS: &[&str] = &[
 ];
 
 /// A task's keys.
-pub(super) const TASK_KEYS: &[&str] = &[
+const TASK_KEYS: &[&str] = &[
     "id",
     "name",
     "description",
@@ -47,7 +49,7 @@ pub(super) const TASK_KEYS: &[&str] = &[
 ];
 
 /// A group's keys.
-pub(super) const GROUP_KEYS: &[&str] = &[
+const GROUP_KEYS: &[&str] = &[
     "id",
     "name",
     "description",
@@ -58,7 +60,7 @@ pub(super) const GROUP_KEYS: &[&str] = &[
 ];
 
 /// `loop`'s keys.
-pub(super) const LOOP_KEYS: &[&str] = &[
+const LOOP_KEYS: &[&str] = &[
     "counter",
     "init",
     "increment",
@@ -70,13 +72,68 @@ pub(super) const LOOP_KEYS: &[&str] = &[
 ];
 
 /// `for_each`'s keys.
-pub(super) const FOR_EACH_KEYS: &[&str] = &["over", "as", "max_concurrency", "collect", "into"];
+const FOR_EACH_KEYS: &[&str] = &["over", "as", "max_concurrency", "collect", "into"];
 
 /// `rollout`'s keys.
-pub(super) const ROLLOUT_KEYS: &[&str] = &["bucket_start", "bucket_end"];
+const ROLLOUT_KEYS: &[&str] = &["bucket_start", "bucket_end"];
 
 /// `function`'s keys.
-pub(super) const FUNCTION_KEYS: &[&str] = &["name", "input"];
+const FUNCTION_KEYS: &[&str] = &["name", "input"];
+
+/// A workflow's v3 spellings, which the compat reader rewrites.
+const WORKFLOW_V3_KEYS: &[&str] = &["continue_on_error"];
+
+/// A task's v3 spellings, which the compat reader rewrites.
+const TASK_V3_KEYS: &[&str] = &["continue_on_error", "halt_on"];
+
+/// A group's v3 spelling, which the compat reader moves into its `ext`.
+const GROUP_V3_KEYS: &[&str] = &["continue_on_error"];
+
+/// The keys of a `publish_json` or `publish_xml` input. The compat reader
+/// moves any other into the task's `ext`.
+pub(super) const PUBLISH_KEYS: &[&str] = &["source", "target", "pretty", "root_element"];
+
+/// One level's table: its known keys, and the v3 spellings the compat reader
+/// takes there.
+pub(super) struct Level {
+    known: &'static [&'static str],
+    v3: &'static [&'static str],
+}
+
+impl Level {
+    const fn new(known: &'static [&'static str]) -> Self {
+        Self { known, v3: &[] }
+    }
+
+    /// Whether `key` is one of the level's known keys.
+    pub(super) fn knows(&self, key: &str) -> bool {
+        self.known.contains(&key)
+    }
+}
+
+/// A workflow.
+pub(super) const WORKFLOW: Level = Level {
+    known: WORKFLOW_KEYS,
+    v3: WORKFLOW_V3_KEYS,
+};
+/// A task.
+pub(super) const TASK: Level = Level {
+    known: TASK_KEYS,
+    v3: TASK_V3_KEYS,
+};
+/// A group.
+pub(super) const GROUP: Level = Level {
+    known: GROUP_KEYS,
+    v3: GROUP_V3_KEYS,
+};
+/// `loop`.
+pub(super) const LOOP: Level = Level::new(LOOP_KEYS);
+/// `for_each`.
+pub(super) const FOR_EACH: Level = Level::new(FOR_EACH_KEYS);
+/// `rollout`.
+pub(super) const ROLLOUT: Level = Level::new(ROLLOUT_KEYS);
+/// `function`.
+pub(super) const FUNCTION: Level = Level::new(FUNCTION_KEYS);
 
 /// A node's `ext` as it is built: the authored object's entries, then the
 /// unknown keys moved into it, each remembered with the path it came from.
@@ -101,27 +158,36 @@ impl Ext {
 }
 
 impl Walk<'_> {
-    /// Reports each key of `obj` that is neither in `known` nor in `skip`,
-    /// in the object's key order, and moves it into `ext` as
+    /// Reports each key of `obj` that is neither known at `level` nor in
+    /// `skip`, in the object's key order, and moves it into `ext` as
     /// `<prefix><key>` when the compat reader is on.
     ///
     /// `skip` names keys refused by a rule of their own, which are not also
-    /// unknown.
+    /// unknown. Under compat, a near miss of one of the level's v3 spellings
+    /// is a `LIKELY_TYPO` naming it; the reader has already taken the
+    /// spelling itself.
     pub(super) fn unknown_keys(
         &mut self,
         obj: &Map<String, Value>,
-        known: &[&str],
+        level: &Level,
         skip: &[&str],
         at: &AuthoredPath,
         prefix: &str,
         ext: &mut Ext,
     ) {
+        // Built on the first unknown key: the known keys, then (under compat)
+        // the v3 spellings, so a tie goes to the v4 key.
+        let mut candidates: Option<Vec<&str>> = None;
         for (key, value) in obj {
-            if known.contains(&key.as_str()) || skip.contains(&key.as_str()) {
+            if level.knows(key) || skip.contains(&key.as_str()) {
                 continue;
             }
             let path = at.join(key.as_str());
-            let near = near_miss(key, known);
+            let candidates = candidates.get_or_insert_with(|| {
+                let v3 = if self.compat { level.v3 } else { &[] };
+                level.known.iter().chain(v3).copied().collect()
+            });
+            let near = near_miss(key, candidates);
             let (code, message) = match near {
                 Some(near) => (
                     IssueCode::LikelyTypo,

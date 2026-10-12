@@ -2,10 +2,10 @@
 //! (`ForEach::problem`) with v3's messages, then its unknown keys.
 
 use super::BUILTIN_FUNCTIONS;
-use super::keys::{Ext, FOR_EACH_KEYS};
+use super::keys::{Ext, FOR_EACH};
 use super::loops::{is_slot_path, over_literal_problem, slots_overlap};
 use super::parse::Walk;
-use super::types::{ForEachDef, Logic};
+use super::types::{ForEachDef, Logic, defaults};
 use crate::base::{AuthoredPath, IssueCode};
 use serde_json::{Map, Value};
 
@@ -82,7 +82,7 @@ fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
         ));
     }
     let max_concurrency = match obj.get("max_concurrency") {
-        None => 1,
+        None => defaults::MAX_CONCURRENCY,
         Some(raw) => raw
             .as_u64()
             .and_then(|n| usize::try_from(n).ok())
@@ -194,7 +194,7 @@ impl Walk<'_> {
             }
         };
         if let Some(obj) = raw.as_object() {
-            self.unknown_keys(obj, FOR_EACH_KEYS, &[], &at, "for_each.", ext);
+            self.unknown_keys(obj, &FOR_EACH, &[], &at, "for_each.", ext);
         }
         def
     }

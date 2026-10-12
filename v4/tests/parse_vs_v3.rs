@@ -5,8 +5,9 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // side's structural issues (code, path, message and step id, in order) must
 // be equal, and the two must agree on refusing.
 //
-// Not compared: `INVALID_MAPPING`, which v4 reports from `map`'s config, and
-// v3's type errors, which carry no path (v4 reports each at its key). The
+// Not compared: `INVALID_MAPPING`, which v4 reports from `map`'s config;
+// v3's type errors, which carry no path (v4 reports each at its key); and the
+// compat reader's `V3_SPELLING`s, which report a rewrite v3 never needed. The
 // corpus-wide comparison is the corpus driver's.
 
 use dataflow_rs::def::{ParseOptions, parse};
@@ -34,8 +35,8 @@ fn v3_refuses(json: &Value) -> bool {
     !V3::validate_authored(json).is_empty()
 }
 
-/// v4's issues at v3's structural codes: everything but `PARSE_FAILED` and
-/// the unknown-key codes v3 has no counterpart for.
+/// v4's issues at v3's structural codes: everything but `PARSE_FAILED`, the
+/// unknown-key codes and the rewrites, which v3 has no counterpart for.
 fn v4_rows(json: &Value) -> Vec<Row> {
     parse(json, ParseOptions::default())
         .issues
@@ -43,7 +44,10 @@ fn v4_rows(json: &Value) -> Vec<Row> {
         .filter(|i| {
             !matches!(
                 i.code,
-                IssueCode::ParseFailed | IssueCode::LikelyTypo | IssueCode::UnknownKey
+                IssueCode::ParseFailed
+                    | IssueCode::LikelyTypo
+                    | IssueCode::UnknownKey
+                    | IssueCode::V3Spelling
             )
         })
         .map(|i| {
@@ -348,6 +352,76 @@ fn agreeing() -> Vec<(&'static str, Value)> {
             "created_at yesterday",
             json!({"id": "w", "name": "w", "created_at": "yesterday", "tasks": [t("a")]}),
         ),
+        // The compat reader: what v3 loads loads, and what it refuses is
+        // refused, at v3's code and path where v3 gives one.
+        (
+            "a task's halt_on of an unknown value",
+            wf(json!([t_with("a", json!({"halt_on": "sometimes"}))])),
+        ),
+        (
+            "a task's halt_on null",
+            wf(json!([t_with("a", json!({"halt_on": null}))])),
+        ),
+        (
+            "a task's halt_on and continue_on_error",
+            wf(json!([t_with(
+                "a",
+                json!({"halt_on": "failure", "continue_on_error": true})
+            )])),
+        ),
+        (
+            "a task's halt_on never and continue_on_error false",
+            wf(json!([t_with(
+                "a",
+                json!({"halt_on": "never", "continue_on_error": false})
+            )])),
+        ),
+        (
+            "a task's continue_on_error a string",
+            wf(json!([t_with("a", json!({"continue_on_error": "yes"}))])),
+        ),
+        (
+            "a workflow's continue_on_error",
+            json!({"id": "w", "name": "w", "continue_on_error": true, "tasks": [t("a")]}),
+        ),
+        (
+            "a workflow's continue_on_error null",
+            json!({"id": "w", "name": "w", "continue_on_error": null, "tasks": [t("a")]}),
+        ),
+        (
+            "validate",
+            wf(json!([{"id": "a", "name": "a",
+                       "function": {"name": "validate", "input": {"rules": []}}}])),
+        ),
+        (
+            "the pre-3.9 aliases",
+            wf(json!([
+                {"id": "call", "name": "call", "function": {"name": "http_call", "input": {
+                    "connector": "c", "path_logic": {"var": "data.id"},
+                    "body_logic": {"var": "data.obj"}, "output": "data.resp"}}},
+                {"id": "kafka", "name": "kafka", "function": {"name": "publish_kafka", "input": {
+                    "connector": "c", "topic": "t", "key_logic": {"var": "data.id"},
+                    "value_logic": {"var": "data.obj"}}}}
+            ])),
+        ),
+        (
+            "an alias beside its target",
+            wf(
+                json!([{"id": "call", "name": "call", "function": {"name": "http_call",
+                       "input": {"connector": "c", "path": "/a", "path_logic": "/b"}}}]),
+            ),
+        ),
+        (
+            "a stray publish_json input key",
+            wf(
+                json!([{"id": "p", "name": "p", "function": {"name": "publish_json",
+                       "input": {"source": "s", "target": "t", "targte": "u"}}}]),
+            ),
+        ),
+        (
+            "a group's continue_on_error false",
+            wf(json!([{"id": "g", "continue_on_error": false, "tasks": [t("a")]}])),
+        ),
     ]
 }
 
@@ -431,23 +505,28 @@ fn where_v4_differs_from_v3_it_is_deliberate() {
              halt_on on any group is refused",
         ),
         (
-            "a task's halt_on of an unknown value",
-            wf(json!([t_with("a", json!({"halt_on": "sometimes"}))])),
-            vec![r("INVALID_HALT_ON", "tasks[0].halt_on")],
-            vec![],
-            (true, false),
-            "until Task 11's compat reader: a task's halt_on is an unknown key",
+            "a task's halt_on of an unknown value after an empty workflow id",
+            json!({"id": "", "name": "w", "tasks": [t_with("a", json!({"halt_on": "x"}))]}),
+            vec![
+                r("EMPTY_WORKFLOW_ID", "id"),
+                r("INVALID_HALT_ON", "tasks[0].halt_on"),
+            ],
+            vec![
+                r("INVALID_HALT_ON", "tasks[0].halt_on"),
+                r("EMPTY_WORKFLOW_ID", "id"),
+            ],
+            (true, true),
+            "the compat reader runs before the walk, so its refusals come first; v3 checks a \
+             task's halt_on in its step walk",
         ),
         (
-            "for_each on validate",
-            wf(
-                json!([{"id": "a", "name": "a", "for_each": {"over": [], "as": "p"},
-                       "function": {"name": "validate", "input": {"rules": []}}}]),
-            ),
-            vec![r("INVALID_FOR_EACH", "tasks[0].for_each")],
+            "a group's continue_on_error true",
+            wf(json!([{"id": "g", "continue_on_error": true, "tasks": [t("a")]}])),
             vec![],
-            (true, false),
-            "until Task 11's compat reader rewrites validate to validation",
+            vec![r("GROUP_CONTINUE_ON_ERROR", "tasks[0].continue_on_error")],
+            (false, false),
+            "v3 reports it from check_workflow, not validate_authored, at the bare key \
+             `continue_on_error`; v4's one walk reports it at its path",
         ),
     ] {
         assert_eq!(codes(v3_rows(&json)), v3, "{label}: v3 ({why})");
@@ -458,4 +537,24 @@ fn where_v4_differs_from_v3_it_is_deliberate() {
             "{label}: refusals ({why})"
         );
     }
+}
+
+#[test]
+fn for_each_on_validate_is_refused_as_v3_refuses_it_naming_v4s_built_in() {
+    // The compat reader rewrites `validate` before the walk, so the refusal
+    // is v3's at v3's path. Its message names the built-in by v4's name,
+    // `validation`; v3's names its own, `validate`, for either spelling.
+    let json = wf(
+        json!([{"id": "a", "name": "a", "for_each": {"over": [], "as": "p"},
+                          "function": {"name": "validate", "input": {"rules": []}}}]),
+    );
+    let (v3, v4) = (v3_rows(&json), v4_rows(&json));
+    assert_eq!(codes(v4.clone()), codes(v3.clone()));
+    assert_eq!(
+        codes(v4.clone()),
+        vec![r("INVALID_FOR_EACH", "tasks[0].for_each")]
+    );
+    assert_eq!(v4[0].3, v3[0].3, "step id");
+    assert_eq!(v4[0].2, v3[0].2.replace("'validate'", "'validation'"));
+    assert_eq!((v3_refuses(&json), v4_refuses(&json)), (true, true));
 }
