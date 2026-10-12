@@ -27,6 +27,15 @@ it. v3 is the oracle: a recording is what v3 did, never what someone expected it
 When v4 replaces v3's API on `main`, `corpus/v3` stays on `v3-maintenance`, and a v4 driver reads
 the same cases through `dataflow-corpus`.
 
+## v4's driver
+
+`corpus/v4/` (`dataflow-corpus-v4`) reads the same cases through `dataflow-corpus`. In phase 2 it
+checks parsing only (`tests/definitions.rs`): for every definition no deviation covers, v4's
+`parse` issues, plus the issues of compiling each `map` task's config, must equal what v3 recorded
+(`authored`, and the `GROUP_CONTINUE_ON_ERROR` and `NULL_MAPPING` issues of `checked`), as
+`(code, severity, path)`. Skips are printed with their reason. Later phases extend it to builds and
+runs.
+
 ## A case
 
 ```json

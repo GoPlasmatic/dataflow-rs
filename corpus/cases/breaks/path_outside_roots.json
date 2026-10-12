@@ -1,0 +1,47 @@
+{
+  "description": "v3's map writes any top-level context key, so a path outside data, metadata and temp_data creates context.extra; v4 refuses the path.",
+  "covers": [
+    "break.15"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "extra.x",
+                  "logic": "v"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ],
+  "deviations": [
+    {
+      "break": "15",
+      "paths": [
+        "/definitions/0",
+        "/build",
+        "/steps"
+      ],
+      "note": "v4 refuses a path outside data, metadata and temp_data (INVALID_PATH); v3 writes context.extra"
+    }
+  ]
+}
