@@ -112,11 +112,30 @@ cargo run --example micro_subtree_write_bench --release   # k map writes into on
 cargo run --example micro_multiworkflow_bench --release   # N chained workflows, one message
 cargo run --example async_handler_benchmark --release     # Marginal cost of one custom handler
 cargo run --example map_performance_test --release        # 10 chained mappings across all 3 roots
+cargo run --example loop_scaling --release            # 1000-sweep append loop over a large context (#66-#69)
+cargo run --example large_context_handler --release   # Five Template fields over a 2 MiB context, per call
+cargo run --example fan_out --release                 # for_each over 100 elements on a 2 MiB context
+cargo run --example orion_connector --release         # Orion-shaped connector: document folds, output, a layer
+cargo run --example observed_run --release            # The realistic workload with a counting observer
 ```
 
-The last four are regression guards for optimizations that have already landed
-(the arena write-through splice and the shared-arena workflow run), not open
-investigations. Read them as "this must stay flat", not "this is the plan".
+`micro_subtree_write_bench` through `map_performance_test` are regression
+guards for optimizations that have already landed (the arena write-through
+splice and the shared-arena workflow run), not open investigations. Read them
+as "this must stay flat", not "this is the plan".
+
+The five after them are rows of the v4 performance gate, written against 3.15
+so the floor exists before any v4 code does. They measure where 3.15 pays per
+byte or node a message carries, or per clock read, which is where v4 claims its
+wins, so read them as the baseline v4 must beat. They share `examples/shared/`,
+which is not an example itself.
+
+**A benchmark checks its result before it times anything.** A workload that
+silently does less than it says still reports a plausible number:
+`realistic_benchmark` wrote `data.MT103.20`, a bare numeric segment and so an
+array index, which turned `data.MT103` into a null-padded array, dropped every
+keyed write into it, and failed 8 of its 12 rules on every message until its
+paths were spelled `#20`, `#59` and `#70`.
 
 Benchmark numbers carry roughly ±2-3% run-to-run noise and occasional transient
 P99 spikes. Compare the mean of 3+ runs before claiming a regression or a win.
