@@ -592,6 +592,38 @@ fn a_stray_publish_key_joins_an_authored_ext_and_refuses_a_collision() {
         rows(&parsed),
         vec![row(C::ParseFailed, R, "tasks[0].function.input.x")]
     );
+    assert_eq!(
+        parsed.issues[0].message,
+        "`x` appears both on the node and in its authored `ext`, as `function.input.x`"
+    );
+    assert!(parsed.def.is_none());
+}
+
+#[test]
+fn a_key_the_walk_moves_onto_one_the_reader_moved_names_the_first() {
+    // The reader moves the stray `x` to `function.input.x`; the task's own
+    // unknown key of that name would land on it. Neither is authored `ext`.
+    let json = wf(json!([{"id": "t", "function.input.x": 2,
+                          "function": {"name": "publish_json",
+                                       "input": {"source": "s", "target": "t", "x": 1}}}]));
+    let parsed = compat(&json);
+    assert_eq!(
+        rows(&parsed)
+            .into_iter()
+            .map(|(code, severity, _)| (code, severity))
+            .collect::<Vec<_>>(),
+        vec![(C::UnknownKey, A), (C::ParseFailed, R)]
+    );
+    assert_eq!(
+        parsed.issues[0].path.to_string(),
+        "tasks[0].function.input.x"
+    );
+    assert_eq!(parsed.issues[1].path.segs().len(), 3, "the task's own key");
+    assert_eq!(
+        parsed.issues[1].message,
+        "`function.input.x` cannot be kept in `ext` as `function.input.x`: the key at \
+         `tasks[0].function.input.x` is already kept there"
+    );
     assert!(parsed.def.is_none());
 }
 

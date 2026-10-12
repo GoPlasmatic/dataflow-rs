@@ -38,11 +38,13 @@
 
 use super::MAX_GROUP_DEPTH;
 use super::keys::{
-    GROUP_V3_KEYS, PUBLISH_KEYS, TASK_POLICIES, TASK_V3_KEYS, WORKFLOW_POLICIES, WORKFLOW_V3_KEYS,
+    Ext, GROUP_V3_KEYS, PUBLISH_KEYS, TASK_POLICIES, TASK_V3_KEYS, WORKFLOW_POLICIES,
+    WORKFLOW_V3_KEYS,
 };
-use crate::base::typo::near_miss;
+use crate::base::typo::unknown_key;
 use crate::base::{AuthoredPath, Issue, IssueCode, StepKind};
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 
 /// One v3 spelling the compat reader rewrote.
 ///
@@ -78,10 +80,13 @@ const ALIASES: &[(&str, &str, &str)] = &[
     ("publish_kafka", "value_logic", "value"),
 ];
 
-/// What the reader found: its issues, in document order, and its rewrites.
+/// What the reader found: its issues, in document order, its rewrites, and
+/// the `ext` of each node it moved a key into, by the node's path, for the
+/// walk to go on building.
 pub(super) struct Read {
     pub(super) issues: Vec<Issue>,
     pub(super) rewrites: Vec<Rewrite>,
+    pub(super) exts: HashMap<AuthoredPath, Ext>,
 }
 
 /// Rewrites the v3 spellings in `workflow`, in place.
@@ -89,6 +94,7 @@ pub(super) fn read(workflow: &mut Map<String, Value>) -> Read {
     let mut reader = Read {
         issues: Vec::new(),
         rewrites: Vec::new(),
+        exts: HashMap::new(),
     };
     reader.workflow(workflow);
     reader
@@ -342,7 +348,7 @@ impl Read {
             path: at.join(KEY),
             field: None,
         };
-        self.keep_in_ext(obj, moved, code, message, step);
+        self.keep_in_ext(obj, at, moved, code, message, step);
     }
 
     fn task(&mut self, obj: &mut Map<String, Value>, at: &AuthoredPath, step: &Step) {
@@ -428,9 +434,10 @@ impl Read {
         let Some(Value::Object(slot)) = obj.get_mut("function") else {
             return;
         };
-        // Taken out of the task for the moment, so a stray input key can be
-        // put in the task's `ext`; put back in its place below.
+        // Taken out of the task for the moment, so the task's authored `ext`
+        // can be read as its input changes; put back in its place below.
         let mut fields = std::mem::take(slot);
+        let task = at;
         let at = at.join("function");
         let name = fields
             .get("name")
@@ -448,7 +455,7 @@ impl Read {
                 let at = at.join("input");
                 if name == "publish_json" || name == "publish_xml" {
                     for (key, value) in strays(input) {
-                        self.stray(obj, &at, key, value, step);
+                        self.stray(obj, task, &at, key, value, step);
                     }
                 } else {
                     self.aliases(input, &name, &at, step);
@@ -507,27 +514,20 @@ impl Read {
         }
     }
 
-    /// A publish input's key other than its four, moved into the task's
-    /// `ext` as `function.input.<key>`.
+    /// A publish input's key other than its four, moved into the `ext` of
+    /// the task at `task` as `function.input.<key>`; `at` is the input.
     fn stray(
         &mut self,
-        obj: &mut Map<String, Value>,
+        obj: &Map<String, Value>,
+        task: &AuthoredPath,
         at: &AuthoredPath,
         key: String,
         value: Value,
         step: &Step,
     ) {
         let name = format!("function.input.{key}");
-        let (code, message) = match near_miss(&key, PUBLISH_KEYS) {
-            Some(near) => (
-                IssueCode::LikelyTypo,
-                format!("unknown key `{key}`, did you mean `{near}`? (kept in `ext` as `{name}`)"),
-            ),
-            None => (
-                IssueCode::UnknownKey,
-                format!("unknown key `{key}` (kept in `ext` as `{name}`)"),
-            ),
-        };
+        let (code, message) = unknown_key(&key, PUBLISH_KEYS);
+        let message = format!("{message} (kept in `ext` as `{name}`)");
         let moved = Moved {
             key: &key,
             path: at.join(key.as_str()),
@@ -535,15 +535,16 @@ impl Read {
             name,
             value,
         };
-        self.keep_in_ext(obj, moved, code, message, step);
+        self.keep_in_ext(obj, task, moved, code, message, step);
     }
 
-    /// Puts a moved key into the node's `ext`, creating it, and reports it.
-    /// A name the authored `ext` already holds is refused. An `ext` that is
-    /// not an object keeps nothing; the walk refuses it.
+    /// Puts a moved key into the `ext` of the node `obj` at `node`, which the
+    /// walk goes on building, and reports it; a collision is refused by
+    /// [`Ext::keep`], the walk's own rule.
     fn keep_in_ext(
         &mut self,
-        obj: &mut Map<String, Value>,
+        obj: &Map<String, Value>,
+        node: &AuthoredPath,
         moved: Moved<'_>,
         code: IssueCode,
         message: String,
@@ -556,20 +557,16 @@ impl Read {
             path,
             field,
         } = moved;
-        let ext = obj
-            .entry("ext")
-            .or_insert_with(|| Value::Object(Map::new()));
-        if let Value::Object(ext) = ext {
-            if ext.contains_key(&name) {
-                let message = format!(
-                    "`{key}` appears both on the node and in its authored `ext`, as `{name}`"
-                );
-                self.report(IssueCode::ParseFailed, path, message, Some(step), field);
-                return;
+        let ext = self
+            .exts
+            .entry(node.clone())
+            .or_insert_with(|| Ext::authored(obj.get("ext")));
+        match ext.keep(key, name, value, path.clone()) {
+            Ok(()) => self.report(code, path, message, Some(step), field),
+            Err(collision) => {
+                self.report(IssueCode::ParseFailed, path, collision, Some(step), field);
             }
-            ext.insert(name, value);
         }
-        self.report(code, path, message, Some(step), field);
     }
 }
 

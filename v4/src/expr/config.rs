@@ -4,7 +4,7 @@
 use super::document::Interpolated;
 use super::engine::ExprEngine;
 use super::expr::{Expr, FromValue};
-use crate::base::typo::near_miss;
+use crate::base::typo::unknown_key;
 use crate::base::{AuthoredPath, ErrorKind, Issue, IssueCode, PathSeg, Severity, StepKind};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
@@ -249,19 +249,8 @@ impl<'a> CompileCx<'a> {
     /// Rejected `UNKNOWN_KEY`.
     #[doc(hidden)]
     pub fn unknown_key(&mut self, key: &str, known: &[&str]) {
-        if let Some(near) = near_miss(key, known) {
-            self.issue_as(
-                IssueCode::LikelyTypo,
-                Severity::Rejected,
-                format!("unknown key `{key}`, did you mean `{near}`?"),
-            );
-        } else {
-            self.issue_as(
-                IssueCode::UnknownKey,
-                Severity::Rejected,
-                format!("unknown key `{key}`"),
-            );
-        }
+        let (code, message) = unknown_key(key, known);
+        self.issue_as(code, Severity::Rejected, message);
     }
 }
 

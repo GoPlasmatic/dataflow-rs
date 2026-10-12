@@ -11,8 +11,8 @@
 //! there stay for the function's config to refuse.
 
 use super::parse::Walk;
-use crate::base::typo::near_miss;
-use crate::base::{AuthoredPath, IssueCode, Severity};
+use crate::base::typo::unknown_key;
+use crate::base::{AuthoredPath, Severity};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -144,7 +144,8 @@ pub(super) const ROLLOUT: Level = Level::new(ROLLOUT_KEYS);
 pub(super) const FUNCTION: Level = Level::new(FUNCTION_KEYS);
 
 /// A node's `ext` as it is built: the authored object's entries, then the
-/// unknown keys moved into it, each remembered with the path it came from.
+/// keys moved into it (by the compat reader, then by the walk), each
+/// remembered with the path it came from.
 pub(super) struct Ext {
     map: Map<String, Value>,
     moved: HashMap<String, AuthoredPath>,
@@ -158,6 +159,35 @@ impl Ext {
             map: raw.and_then(Value::as_object).cloned().unwrap_or_default(),
             moved: HashMap::new(),
         }
+    }
+
+    /// Keeps `value`, moved from the key `key` at `from`, as `name`. The one
+    /// collision rule for every move, the reader's and the walk's: `Err` with
+    /// the message when `ext` already holds `name`, naming where that entry
+    /// came from.
+    pub(super) fn keep(
+        &mut self,
+        key: &str,
+        name: String,
+        value: Value,
+        from: AuthoredPath,
+    ) -> Result<(), String> {
+        if self.map.contains_key(&name) {
+            return Err(match self.moved.get(&name) {
+                Some(first) => format!(
+                    "`{key}` cannot be kept in `ext` as `{name}`: the key at `{first}` is \
+                     already kept there"
+                ),
+                None => {
+                    format!(
+                        "`{key}` appears both on the node and in its authored `ext`, as `{name}`"
+                    )
+                }
+            });
+        }
+        self.map.insert(name.clone(), value);
+        self.moved.insert(name, from);
+        Ok(())
     }
 
     pub(super) fn into_map(self) -> Map<String, Value> {
@@ -195,41 +225,16 @@ impl Walk<'_> {
                 let v3 = if self.compat { level.v3 } else { &[] };
                 level.known.iter().chain(v3).copied().collect()
             });
-            let near = near_miss(key, candidates);
-            let (code, message) = match near {
-                Some(near) => (
-                    IssueCode::LikelyTypo,
-                    format!("unknown key `{key}`, did you mean `{near}`?"),
-                ),
-                None => (IssueCode::UnknownKey, format!("unknown key `{key}`")),
-            };
+            let (code, message) = unknown_key(key, candidates);
             if !self.compat {
                 self.report_as(code, Severity::Rejected, path, message);
                 continue;
             }
             let name = format!("{prefix}{key}");
-            if let Some(first) = ext.moved.get(&name) {
-                let message = format!(
-                    "unknown key `{key}` cannot be kept in `ext` as `{name}`: the unknown key at \
-                     `{first}` is already kept there"
-                );
-                self.parse_failed(path, message);
-                continue;
+            match ext.keep(key, name.clone(), value.clone(), path.clone()) {
+                Ok(()) => self.report(code, path, format!("{message} (kept in `ext` as `{name}`)")),
+                Err(collision) => self.parse_failed(path, collision),
             }
-            if ext.map.contains_key(&name) {
-                let message = format!(
-                    "`{key}` appears both on the node and in its authored `ext`, as `{name}`"
-                );
-                self.parse_failed(path, message);
-                continue;
-            }
-            self.report(
-                code,
-                path.clone(),
-                format!("{message} (kept in `ext` as `{name}`)"),
-            );
-            ext.map.insert(name.clone(), value.clone());
-            ext.moved.insert(name, path);
         }
     }
 }

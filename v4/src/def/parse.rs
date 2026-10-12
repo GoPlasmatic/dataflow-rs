@@ -100,21 +100,32 @@ pub(crate) fn parse_with_rewrites(json: &Value, opts: ParseOptions) -> (Parsed, 
         return (parsed, Vec::new());
     };
     if !opts.compat {
-        return (walk(object, false, Vec::new()), Vec::new());
+        return (walk(object, false, Vec::new(), HashMap::new()), Vec::new());
     }
-    // The reader rewrites a copy; the walk reads the copy.
+    // The reader rewrites a copy; the walk reads the copy, and goes on
+    // building the `ext`s the reader moved keys into.
     let mut rewritten = object.clone();
     let read = reader::read(&mut rewritten);
-    (walk(&rewritten, true, read.issues), read.rewrites)
+    (
+        walk(&rewritten, true, read.issues, read.exts),
+        read.rewrites,
+    )
 }
 
-/// The walk over `object`, its issues following `issues`.
-fn walk(object: &Map<String, Value>, compat: bool, issues: Vec<Issue>) -> Parsed {
+/// The walk over `object`, its issues following `issues`, with the `ext`s the
+/// reader began.
+fn walk(
+    object: &Map<String, Value>,
+    compat: bool,
+    issues: Vec<Issue>,
+    exts: HashMap<AuthoredPath, Ext>,
+) -> Parsed {
     let mut walk = Walk {
         compat,
         issues,
         seen: HashMap::new(),
         step: None,
+        exts,
     };
     let def = walk.workflow(object);
     let rejected = walk.issues.iter().any(|i| i.severity == Severity::Rejected);
@@ -134,6 +145,8 @@ pub(super) struct Walk<'j> {
     seen: HashMap<&'j str, AuthoredPath>,
     /// The kind and id of the step being walked.
     step: Option<(StepKind, Option<&'j str>)>,
+    /// The `ext` of each node the compat reader moved a key into, by path.
+    exts: HashMap<AuthoredPath, Ext>,
 }
 
 impl<'j> Walk<'j> {
@@ -167,9 +180,17 @@ impl<'j> Walk<'j> {
         self.report(IssueCode::ParseFailed, path, message);
     }
 
+    /// The `ext` of the node at `at`: the one the reader began, else the
+    /// authored one.
+    fn ext(&mut self, at: &AuthoredPath, obj: &Map<String, Value>) -> Ext {
+        self.exts
+            .remove(at)
+            .unwrap_or_else(|| Ext::authored(obj.get("ext")))
+    }
+
     fn workflow(&mut self, obj: &'j Map<String, Value>) -> WorkflowDef {
         let root = AuthoredPath::root();
-        let mut ext = Ext::authored(obj.get("ext"));
+        let mut ext = self.ext(&root, obj);
 
         // 1.
         let id = non_empty_str(obj.get("id")).map(str::to_string);
@@ -282,7 +303,7 @@ impl<'j> Walk<'j> {
             StepKind::Task
         };
         self.step = Some((kind, id));
-        let mut ext = Ext::authored(obj.get("ext"));
+        let mut ext = self.ext(&at, obj);
 
         // 4.2: the id and its namespace.
         match id {

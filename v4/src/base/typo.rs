@@ -1,4 +1,22 @@
-//! Near-miss detection for unknown keys.
+//! Near-miss detection for unknown keys, and what an unknown key is reported
+//! as.
+
+use super::IssueCode;
+
+/// What an unknown `key` is: a `LIKELY_TYPO` naming the nearest of
+/// `candidates` when it is a near miss of one, otherwise an `UNKNOWN_KEY`,
+/// each with its message. The one classification behind every unknown key,
+/// in a definition and in a function's config; the caller decides the
+/// severity, where the issue goes, and what it adds to the message.
+pub(crate) fn unknown_key(key: &str, candidates: &[&str]) -> (IssueCode, String) {
+    match near_miss(key, candidates) {
+        Some(near) => (
+            IssueCode::LikelyTypo,
+            format!("unknown key `{key}`, did you mean `{near}`?"),
+        ),
+        None => (IssueCode::UnknownKey, format!("unknown key `{key}`")),
+    }
+}
 
 /// The nearest known key to `key`, if one is close enough to be a misspelling.
 ///
@@ -182,5 +200,20 @@ mod tests {
     fn ties_go_to_the_first_and_exact_matches_are_not_near() {
         assert_eq!(near_miss("ab", &["ac", "ad"]), Some("ac"));
         assert_eq!(near_miss("id", WORKFLOW_KEYS), None);
+    }
+
+    #[test]
+    fn an_unknown_key_is_a_typo_naming_its_near_key_or_unknown() {
+        assert_eq!(
+            unknown_key("conditon", TASK_KEYS),
+            (
+                IssueCode::LikelyTypo,
+                "unknown key `conditon`, did you mean `condition`?".to_owned()
+            )
+        );
+        assert_eq!(
+            unknown_key("owner", TASK_KEYS),
+            (IssueCode::UnknownKey, "unknown key `owner`".to_owned())
+        );
     }
 }
