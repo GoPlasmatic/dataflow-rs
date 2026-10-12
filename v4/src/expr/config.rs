@@ -266,7 +266,18 @@ impl<'a> CompileCx<'a> {
 }
 
 /// A type a config is made of.
+///
+/// An `Option<T>` field is optional: an absent key is `None`, and so is an
+/// explicit `null`, unless `T` takes `null` as a value
+/// ([`NULL_IS_VALUE`](Self::NULL_IS_VALUE)), as an [`Expr`], an
+/// [`Interpolated`] document and any JSON value do. There the `null` is
+/// compiled as `T`: `map`'s `"logic": null` is a constant `null` expression,
+/// not a missing `logic`.
 pub trait ConfigField: Sized + Send + Sync + 'static {
+    /// Whether `null` is one of the type's values. When it is not, an explicit
+    /// `null` in an `Option<Self>` field means `None`.
+    const NULL_IS_VALUE: bool = false;
+
     /// Compiles `raw`; `None` after recording at least one issue.
     fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self>;
 
@@ -324,6 +335,7 @@ scalar_field! {
 }
 
 impl ConfigField for OwnedDataValue {
+    const NULL_IS_VALUE: bool = true;
     fn compile(raw: &Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
         Some(Self::from(raw))
     }
@@ -333,6 +345,7 @@ impl ConfigField for OwnedDataValue {
 }
 
 impl ConfigField for Value {
+    const NULL_IS_VALUE: bool = true;
     fn compile(raw: &Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
         Some(raw.clone())
     }
@@ -342,6 +355,8 @@ impl ConfigField for Value {
 }
 
 impl<T: FromValue> ConfigField for Expr<T> {
+    /// `null` is a constant expression.
+    const NULL_IS_VALUE: bool = true;
     fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
         match cx.exprs().compile::<T>(raw) {
             Ok(expr) => Some(expr),
@@ -369,7 +384,12 @@ impl<T: FromValue> ConfigField for Expr<T> {
 }
 
 impl<T: ConfigField> ConfigField for Option<T> {
+    /// `null` is `None`, or `T`'s own `null`.
+    const NULL_IS_VALUE: bool = true;
     fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+        if raw.is_null() && !T::NULL_IS_VALUE {
+            return Some(None);
+        }
         T::compile(raw, cx).map(Some)
     }
     fn absent() -> Option<Self> {

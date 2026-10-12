@@ -212,6 +212,8 @@ fn hole(raw: &Value, arg: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>)
 }
 
 impl ConfigField for Interpolated {
+    /// `null` is a document with no hole.
+    const NULL_IS_VALUE: bool = true;
     fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
         compile(raw, cx)
     }

@@ -91,17 +91,45 @@ fn scalars_say_what_they_expected() {
 }
 
 #[test]
-fn option_is_absent_ok_and_null_compiles_as_t() {
+fn option_is_absent_ok_and_compiles_t_when_present() {
     assert!(matches!(<Option<bool>>::absent(), Some(None)));
     assert!(<bool>::absent().is_none());
     let (v, i) = compile::<Option<bool>>(&json!(true), root());
     assert!(i.is_empty());
     assert_eq!(v, Some(Some(true)));
-    let (v, i) = compile::<Option<bool>>(&Value::Null, root());
+    let (v, i) = compile::<Option<bool>>(&json!("yes"), root());
     assert!(v.is_none());
-    assert_eq!(i.len(), 1);
+    assert_eq!(i[0].code, IssueCode::InputParse);
+}
+
+#[test]
+fn an_explicit_null_is_none_unless_t_takes_null_as_a_value() {
+    // `T` has no null: an explicit `null` says "none", with no issue.
+    let (v, i) = compile::<Option<bool>>(&Value::Null, root());
+    assert!(i.is_empty(), "{i:?}");
+    assert_eq!(v, Some(None));
+    let (v, i) = compile::<Option<String>>(&Value::Null, root());
+    assert!(i.is_empty(), "{i:?}");
+    assert_eq!(v, Some(None));
+    let (v, i) = compile::<Option<u64>>(&Value::Null, root());
+    assert!(i.is_empty(), "{i:?}");
+    assert_eq!(v, Some(None));
+    let (v, i) = compile::<Option<Vec<bool>>>(&Value::Null, root());
+    assert!(i.is_empty(), "{i:?}");
+    assert_eq!(v, Some(None));
+
+    // `T` takes `null` as a value: the `null` is that value.
+    let (v, i) = compile::<Option<Expr>>(&Value::Null, root());
+    assert!(i.is_empty(), "{i:?}");
+    let expr = v.unwrap().expect("a constant null expression");
+    assert_eq!(expr.constant(), Some(&OwnedDataValue::Null));
     let (v, _) = compile::<Option<OwnedDataValue>>(&Value::Null, root());
+    assert_eq!(v, Some(Some(OwnedDataValue::Null)));
+    let (v, _) = compile::<Option<Value>>(&Value::Null, root());
+    assert_eq!(v, Some(Some(Value::Null)));
+    let (v, _) = compile::<Option<dataflow_rs::expr::Interpolated>>(&Value::Null, root());
     assert!(matches!(v, Some(Some(_))));
+    const { assert!(<Expr>::NULL_IS_VALUE && !<String>::NULL_IS_VALUE) };
 }
 
 #[test]
