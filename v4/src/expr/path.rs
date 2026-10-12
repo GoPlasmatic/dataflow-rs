@@ -51,7 +51,7 @@ pub(crate) struct Seg {
 }
 
 impl Seg {
-    fn parse(raw: &str) -> Self {
+    pub(crate) fn parse(raw: &str) -> Self {
         Self {
             key: raw.strip_prefix('#').unwrap_or(raw).into(),
             index: raw.parse().ok(),
@@ -191,7 +191,7 @@ pub(crate) fn chain(segs: &[Seg], value: OwnedDataValue) -> OwnedDataValue {
     container
 }
 
-fn get<'v>(mut v: &'v OwnedDataValue, segs: &[Seg]) -> Option<&'v OwnedDataValue> {
+pub(crate) fn get<'v>(mut v: &'v OwnedDataValue, segs: &[Seg]) -> Option<&'v OwnedDataValue> {
     for seg in segs {
         v = match v {
             OwnedDataValue::Object(pairs) => &pairs.iter().find(|(k, _)| **k == *seg.key)?.1,
