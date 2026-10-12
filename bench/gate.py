@@ -10,8 +10,8 @@ this reads only that line.
 
     gate.py baseline --bins DIR --rounds N --out FILE [--only a,b]
         Run the binaries round-robin for N + 1 rounds, discard round 0 as
-        cold, and write every run, each metric's mean and its spread, with the
-        build, the machine and the method, to FILE.
+        cold, and write every run, each metric's mean, median and spread, with
+        the build, the machine and the method, to FILE.
 
 Phase 4 adds `compare`, which interleaves two build directories.
 """
@@ -86,7 +86,7 @@ def run_once(bins, name):
     return gate_line(name, done.stdout)
 
 
-def machine():
+def machine(load_before):
     def ctl(key):
         return sh("sysctl", "-n", key)
 
@@ -98,6 +98,7 @@ def machine():
         "memory_gb": round(int(ctl("hw.memsize")) / 2**30),
         "os": "macOS " + sh("sw_vers", "-productVersion"),
         "power": power[0] if power else "unknown",
+        "load_avg_before": [round(x, 2) for x in load_before],
     }
 
 
@@ -109,6 +110,7 @@ def baseline(args):
     with open(os.path.join(args.bins, "build.json")) as f:
         build_info = json.load(f)
 
+    load_before = os.getloadavg()
     runs = {name: [] for name in names}
     for round_no in range(args.rounds + 1):
         for name in names:
@@ -129,13 +131,14 @@ def baseline(args):
                 "better": metric["better"],
                 "runs": values,
                 "mean": mean,
+                "median": statistics.median(values),
                 "spread_pct": (max(values) - min(values)) / abs(mean) * 100 if mean else 0.0,
             }
         benches[name] = table
 
     out = {
         "build": build_info,
-        "machine": machine(),
+        "machine": machine(load_before),
         "method": {"rounds": args.rounds, "discarded_rounds": 1, "order": names},
         "benches": benches,
     }
@@ -144,7 +147,7 @@ def baseline(args):
         f.write("\n")
     for name, table in benches.items():
         for metric, row in table.items():
-            print(f"{name:<28} {metric:<34} {row['mean']:>14.2f} {row['unit']:<11} ±{row['spread_pct']:.1f}%")
+            print(f"{name:<28} {metric:<34} {row['mean']:>14.2f} {row['median']:>14.2f} {row['unit']:<11} ±{row['spread_pct']:.1f}%")
 
 
 def main():
