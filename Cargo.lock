@@ -329,6 +329,7 @@ version = "0.0.0"
 dependencies = [
  "bumpalo",
  "chrono",
+ "dataflow-corpus",
  "dataflow-rs-derive",
  "datalogic-rs",
  "datavalue-rs",

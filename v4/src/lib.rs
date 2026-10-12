@@ -17,3 +17,5 @@ pub mod expr;
 pub mod function;
 pub mod program;
 pub mod run;
+
+pub use crate::base::{Error, Issue, Result};

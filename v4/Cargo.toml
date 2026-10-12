@@ -39,3 +39,6 @@ dataflow-rs-derive = { path = "../derive" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+dataflow-corpus = { path = "../corpus" }
