@@ -53,10 +53,21 @@ pub(crate) struct Seg {
 impl Seg {
     pub(crate) fn parse(raw: &str) -> Self {
         Self {
-            key: raw.strip_prefix('#').unwrap_or(raw).into(),
-            index: raw.parse().ok(),
+            key: seg_key(raw).into(),
+            index: seg_index(raw),
         }
     }
+}
+
+/// A raw segment's key on an object: one leading `#` stripped.
+fn seg_key(raw: &str) -> &str {
+    raw.strip_prefix('#').unwrap_or(raw)
+}
+
+/// A raw segment's index on an array: the raw segment parsed as `usize`, so
+/// `#20` is never one.
+fn seg_index(raw: &str) -> Option<usize> {
+    raw.parse().ok()
 }
 
 /// A root plus typed segments, parsed once. A segment is a key on an object
@@ -191,15 +202,26 @@ pub(crate) fn chain(segs: &[Seg], value: OwnedDataValue) -> OwnedDataValue {
     container
 }
 
-pub(crate) fn get<'v>(mut v: &'v OwnedDataValue, segs: &[Seg]) -> Option<&'v OwnedDataValue> {
-    for seg in segs {
-        v = match v {
-            OwnedDataValue::Object(pairs) => &pairs.iter().find(|(k, _)| **k == *seg.key)?.1,
-            OwnedDataValue::Array(items) => items.get(seg.index?)?,
-            _ => return None,
-        };
+/// One step of a read: `key` on an object, `index` on an array.
+fn hop<'v>(v: &'v OwnedDataValue, key: &str, index: Option<usize>) -> Option<&'v OwnedDataValue> {
+    match v {
+        OwnedDataValue::Object(pairs) => pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+        OwnedDataValue::Array(items) => items.get(index?),
+        _ => None,
     }
-    Some(v)
+}
+
+pub(crate) fn get<'v>(v: &'v OwnedDataValue, segs: &[Seg]) -> Option<&'v OwnedDataValue> {
+    segs.iter()
+        .try_fold(v, |v, seg| hop(v, &seg.key, seg.index))
+}
+
+/// [`get`] over a dotted path read segment by segment, by the same rules,
+/// allocating nothing: for a lookup that is not worth parsing once.
+pub(crate) fn get_dotted<'v>(v: &'v OwnedDataValue, dotted: &str) -> Option<&'v OwnedDataValue> {
+    dotted
+        .split('.')
+        .try_fold(v, |v, raw| hop(v, seg_key(raw), seg_index(raw)))
 }
 
 fn get_mut<'v>(mut v: &'v mut OwnedDataValue, segs: &[Seg]) -> Option<&'v mut OwnedDataValue> {
@@ -431,6 +453,34 @@ mod tests {
         );
         let gone = path("data.rows.0.t").remove(&mut ctx).unwrap();
         assert_eq!(gone.map(|v| text(&v)), Some("1".into()));
+    }
+
+    #[test]
+    fn a_dotted_read_follows_the_parsed_segments_rules() {
+        let v = json(r##"{"a":{"20":"key","#b":"x","b":"hash","rows":[{"t":1},{"t":2}]}}"##);
+        for dotted in [
+            "a.20",
+            "a.#20",
+            "a.b",
+            "a.#b",
+            "a.##b",
+            "a.rows.1.t",
+            "a.rows.#1",
+            "a.rows.x",
+            "a",
+            "a.",
+            "",
+            "zz",
+        ] {
+            let segs: Vec<Seg> = dotted.split('.').map(Seg::parse).collect();
+            assert_eq!(
+                get_dotted(&v, dotted).map(text),
+                get(&v, &segs).map(text),
+                "{dotted}"
+            );
+        }
+        assert_eq!(get_dotted(&v, "a.#b").map(text), Some(r#""hash""#.into()));
+        assert_eq!(get_dotted(&v, "a.rows.#1"), None);
     }
 
     #[test]

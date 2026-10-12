@@ -6,7 +6,7 @@
 //! echo back as literal data, so `{"secret": "k"}` on a plain engine would be
 //! handed on as an ordinary object.
 
-use super::path::{Seg, get};
+use super::path::get_dotted;
 use crate::base::{Error, ErrorKind, Result};
 use datalogic_rs::bumpalo::Bump;
 use datalogic_rs::operator::EvalContext;
@@ -50,13 +50,13 @@ impl Secrets {
         Ok(Self { root })
     }
 
-    /// Looks up a dotted path. The empty path is `None`, never the whole store.
+    /// Looks up a dotted path, by a context path's segment rules. The empty
+    /// path is `None`, never the whole store. A lookup allocates nothing.
     pub fn get(&self, path: &str) -> Option<&OwnedDataValue> {
         if path.is_empty() {
             return None;
         }
-        let segs: Vec<Seg> = path.split('.').map(Seg::parse).collect();
-        get(&self.root, &segs)
+        get_dotted(&self.root, path)
     }
 
     /// Top-level key names. Never values.
