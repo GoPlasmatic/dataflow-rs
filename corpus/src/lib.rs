@@ -8,7 +8,11 @@
 //! v3's driver is `corpus/v3`, and v4's will sit beside it.
 
 pub mod case;
+pub mod compare;
 pub mod json;
+pub mod normalise;
+pub mod path;
+pub mod replay;
 
 pub use case::Case;
 pub use json::Json;
