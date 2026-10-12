@@ -1,0 +1,43 @@
+{
+  "description": "version, tags, created_at and updated_at are kept and never read: the workflow runs as if they were absent.",
+  "covers": [
+    "schema.workflow-fields"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "version": 7,
+      "tags": [
+        "a",
+        "b"
+      ],
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-02-01T00:00:00Z",
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.x",
+                  "logic": 1
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ]
+}

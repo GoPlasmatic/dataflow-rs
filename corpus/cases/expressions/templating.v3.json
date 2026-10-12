@@ -1,0 +1,187 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "x": 5,
+              "out": {
+                "result": 5
+              },
+              "typo": {
+                "totally_made_up_op_xyz": [
+                  "a",
+                  5
+                ]
+              }
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.out",
+                  "old_value": null,
+                  "new_value": {
+                    "result": 5
+                  }
+                },
+                {
+                  "path": "data.typo",
+                  "old_value": null,
+                  "new_value": {
+                    "totally_made_up_op_xyz": [
+                      "a",
+                      5
+                    ]
+                  }
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "x": 5,
+                    "out": {
+                      "result": 5
+                    },
+                    "typo": {
+                      "totally_made_up_op_xyz": [
+                        "a",
+                        5
+                      ]
+                    }
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.out",
+                        "old_value": null,
+                        "new_value": {
+                          "result": 5
+                        }
+                      },
+                      {
+                        "path": "data.typo",
+                        "old_value": null,
+                        "new_value": {
+                          "totally_made_up_op_xyz": [
+                            "a",
+                            5
+                          ]
+                        }
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "x": 5
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "out": {
+                      "result": 5
+                    },
+                    "x": 5
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.out",
+                  "old_value": null,
+                  "new_value": {
+                    "result": 5
+                  }
+                },
+                {
+                  "path": "data.typo",
+                  "old_value": null,
+                  "new_value": {
+                    "totally_made_up_op_xyz": [
+                      "a",
+                      5
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

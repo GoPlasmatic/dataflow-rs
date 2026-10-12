@@ -1,0 +1,259 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "literal": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "literal",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "one",
+              "task_id": "gate",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 299
+            },
+            {
+              "workflow_id": "string_true",
+              "task_id": "gate",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 299
+            },
+            {
+              "workflow_id": "literal",
+              "task_id": "gate",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 200
+            },
+            {
+              "workflow_id": "literal",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.literal",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "one",
+              "task_id": "gate",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "one",
+                      "task_id": "gate",
+                      "status_code": 299
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "one",
+                    "task_id": "gate",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 299
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "string_true",
+              "task_id": "gate",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "string_true",
+                      "task_id": "gate",
+                      "status_code": 299
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "string_true",
+                    "task_id": "gate",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 299
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "literal",
+              "task_id": "gate",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "literal",
+                      "task_id": "gate",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "literal",
+                    "task_id": "gate",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "literal",
+              "task_id": "after",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "literal": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "literal",
+                      "task_id": "after",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "literal",
+                    "task_id": "after",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.literal",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {},
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "gate",
+                      "workflow_id": "literal"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.literal",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 //! function to port to replay the corpus.
 //!
 //! In order, `execute`:
-//! 1. yields `yields` times;
+//! 1. yields `yields` times (a template, so a fan-out element can choose);
 //! 2. writes its identity to `identity`;
 //! 3. applies `set`, each write through `ctx.set`;
 //! 4. pushes `errors` through `ctx.add_error`;
@@ -35,7 +35,7 @@ pub struct ScriptInput {
     #[serde(default)]
     pub identity: Option<String>,
     #[serde(default)]
-    pub yields: u32,
+    pub yields: Option<Template>,
     #[serde(default)]
     pub outcome: Option<Template>,
 }
@@ -70,6 +70,9 @@ impl AsyncFunctionHandler for Script {
                 value.compile(c, &format!("set[{i}].value"))?;
             }
         }
+        if let Some(yields) = &mut input.yields {
+            yields.compile(c, "yields")?;
+        }
         if let Some(outcome) = &mut input.outcome {
             outcome.compile(c, "outcome")?;
         }
@@ -77,8 +80,11 @@ impl AsyncFunctionHandler for Script {
     }
 
     async fn execute(&self, ctx: &mut TaskContext<'_>, input: &ScriptInput) -> Result<TaskOutcome> {
-        for _ in 0..input.yields {
-            tokio::task::yield_now().await;
+        if let Some(yields) = &input.yields {
+            let n = Value::from(&yields.eval(ctx)?).as_u64().unwrap_or(0);
+            for _ in 0..n {
+                tokio::task::yield_now().await;
+            }
         }
         if let Some(path) = &input.identity {
             let identity = json!({

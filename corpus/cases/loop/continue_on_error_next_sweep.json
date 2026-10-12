@@ -1,0 +1,72 @@
+{
+  "description": "Under workflow continue_on_error, a task failing with 500 ends the current sweep, and the next sweep starts: the counter sequence skips only the failing sweep's later task.",
+  "covers": [
+    "loop.continue-on-error"
+  ],
+  "mirrors": [
+    "tests/workflow_loop.rs::a_failing_task_with_workflow_continue_on_error_advances_to_the_next_sweep"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "continue_on_error": true,
+      "loop": {
+        "counter": "i",
+        "max": 3
+      },
+      "tasks": [
+        {
+          "id": "fail",
+          "name": "fail",
+          "function": {
+            "name": "script",
+            "input": {
+              "outcome": {
+                "if": [
+                  {
+                    "==": [
+                      {
+                        "var": "temp_data.i"
+                      },
+                      1
+                    ]
+                  },
+                  {
+                    "status": 500
+                  },
+                  "success"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.seen",
+                  "logic": {
+                    "var": "temp_data.i"
+                  },
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ]
+}

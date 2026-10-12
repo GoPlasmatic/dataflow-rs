@@ -1,0 +1,211 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {
+            "a": 1
+          },
+          "context": {
+            "data": {
+              "present": "d",
+              "from_data": "d",
+              "from_metadata": "m",
+              "from_temp": "t"
+            },
+            "metadata": {
+              "mk": "m",
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "tk": "t"
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.from_data",
+                  "old_value": null,
+                  "new_value": "d"
+                },
+                {
+                  "path": "data.from_metadata",
+                  "old_value": null,
+                  "new_value": "m"
+                },
+                {
+                  "path": "data.from_temp",
+                  "old_value": null,
+                  "new_value": "t"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {
+                  "a": 1
+                },
+                "context": {
+                  "data": {
+                    "present": "d",
+                    "from_data": "d",
+                    "from_metadata": "m",
+                    "from_temp": "t"
+                  },
+                  "metadata": {
+                    "mk": "m",
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "tk": "t"
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.from_data",
+                        "old_value": null,
+                        "new_value": "d"
+                      },
+                      {
+                        "path": "data.from_metadata",
+                        "old_value": null,
+                        "new_value": "m"
+                      },
+                      {
+                        "path": "data.from_temp",
+                        "old_value": null,
+                        "new_value": "t"
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "present": "d"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "mk": "m",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {
+                    "tk": "t"
+                  }
+                },
+                {
+                  "data": {
+                    "present": "d"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "mk": "m",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {
+                    "tk": "t"
+                  }
+                },
+                {
+                  "data": {
+                    "from_data": "d",
+                    "present": "d"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "mk": "m",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {
+                    "tk": "t"
+                  }
+                },
+                {
+                  "data": {
+                    "from_data": "d",
+                    "from_metadata": "m",
+                    "present": "d"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "mk": "m",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {
+                    "tk": "t"
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.from_data",
+                  "old_value": null,
+                  "new_value": "d"
+                },
+                {
+                  "path": "data.from_metadata",
+                  "old_value": null,
+                  "new_value": "m"
+                },
+                {
+                  "path": "data.from_temp",
+                  "old_value": null,
+                  "new_value": "t"
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

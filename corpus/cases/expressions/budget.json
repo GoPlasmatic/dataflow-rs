@@ -1,0 +1,462 @@
+{
+  "description": "The ops budget bounds every evaluation, but only a host function's template reports BUDGET_EXCEEDED: a workflow condition over budget fails closed to false, a map mapping over budget is logged and the task returns 500 while later mappings still run, and a script value over budget returns Err with BUDGET_EXCEEDED. A cheap expression passes. The ceiling survives a reload, so the second run records the same message.",
+  "covers": [
+    "expr.budget",
+    "expr.budget-split",
+    "code.BUDGET_EXCEEDED",
+    "run.reload"
+  ],
+  "mirrors": [
+    "tests/ops_budget.rs::an_expression_over_the_ceiling_is_refused_with_its_own_error_code",
+    "tests/ops_budget.rs::the_ceiling_survives_a_hot_reload"
+  ],
+  "requires": {
+    "on": [
+      "budget"
+    ]
+  },
+  "engine": {
+    "ops_budget": 30
+  },
+  "workflows": [
+    {
+      "id": "cond",
+      "name": "cond",
+      "condition": {
+        ">": [
+          {
+            "reduce": [
+              {
+                "var": "data.xs"
+              },
+              {
+                "+": [
+                  {
+                    "var": "current"
+                  },
+                  {
+                    "var": "accumulator"
+                  }
+                ]
+              },
+              0
+            ]
+          },
+          0
+        ]
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.cond_ran",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mapw",
+      "name": "mapw",
+      "continue_on_error": true,
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "continue_on_error": true,
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.sum",
+                  "logic": {
+                    "reduce": [
+                      {
+                        "var": "data.xs"
+                      },
+                      {
+                        "+": [
+                          {
+                            "var": "current"
+                          },
+                          {
+                            "var": "accumulator"
+                          }
+                        ]
+                      },
+                      0
+                    ]
+                  }
+                },
+                {
+                  "path": "data.after_map",
+                  "logic": {
+                    "+": [
+                      {
+                        "var": "data.one"
+                      },
+                      1
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "scriptw",
+      "name": "scriptw",
+      "continue_on_error": true,
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "continue_on_error": true,
+          "function": {
+            "name": "script",
+            "input": {
+              "set": [
+                {
+                  "path": "data.total",
+                  "value": {
+                    "reduce": [
+                      {
+                        "var": "data.xs"
+                      },
+                      {
+                        "+": [
+                          {
+                            "var": "current"
+                          },
+                          {
+                            "var": "accumulator"
+                          }
+                        ]
+                      },
+                      0
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "cheap",
+      "name": "cheap",
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.cheap",
+                  "logic": {
+                    "+": [
+                      {
+                        "var": "data.one"
+                      },
+                      2
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "data": {
+            "one": 1,
+            "xs": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        "trace": false
+      }
+    },
+    {
+      "reload": {
+        "workflows": [
+          {
+            "id": "cond",
+            "name": "cond",
+            "condition": {
+              ">": [
+                {
+                  "reduce": [
+                    {
+                      "var": "data.xs"
+                    },
+                    {
+                      "+": [
+                        {
+                          "var": "current"
+                        },
+                        {
+                          "var": "accumulator"
+                        }
+                      ]
+                    },
+                    0
+                  ]
+                },
+                0
+              ]
+            },
+            "tasks": [
+              {
+                "id": "t",
+                "name": "t",
+                "function": {
+                  "name": "map",
+                  "input": {
+                    "mappings": [
+                      {
+                        "path": "data.cond_ran",
+                        "logic": true
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "mapw",
+            "name": "mapw",
+            "continue_on_error": true,
+            "tasks": [
+              {
+                "id": "t",
+                "name": "t",
+                "continue_on_error": true,
+                "function": {
+                  "name": "map",
+                  "input": {
+                    "mappings": [
+                      {
+                        "path": "data.sum",
+                        "logic": {
+                          "reduce": [
+                            {
+                              "var": "data.xs"
+                            },
+                            {
+                              "+": [
+                                {
+                                  "var": "current"
+                                },
+                                {
+                                  "var": "accumulator"
+                                }
+                              ]
+                            },
+                            0
+                          ]
+                        }
+                      },
+                      {
+                        "path": "data.after_map",
+                        "logic": {
+                          "+": [
+                            {
+                              "var": "data.one"
+                            },
+                            1
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "scriptw",
+            "name": "scriptw",
+            "continue_on_error": true,
+            "tasks": [
+              {
+                "id": "t",
+                "name": "t",
+                "continue_on_error": true,
+                "function": {
+                  "name": "script",
+                  "input": {
+                    "set": [
+                      {
+                        "path": "data.total",
+                        "value": {
+                          "reduce": [
+                            {
+                              "var": "data.xs"
+                            },
+                            {
+                              "+": [
+                                {
+                                  "var": "current"
+                                },
+                                {
+                                  "var": "accumulator"
+                                }
+                              ]
+                            },
+                            0
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "cheap",
+            "name": "cheap",
+            "tasks": [
+              {
+                "id": "t",
+                "name": "t",
+                "function": {
+                  "name": "map",
+                  "input": {
+                    "mappings": [
+                      {
+                        "path": "data.cheap",
+                        "logic": {
+                          "+": [
+                            {
+                              "var": "data.one"
+                            },
+                            2
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "run": {
+        "message": {
+          "data": {
+            "one": 1,
+            "xs": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        "trace": false,
+        "same_as": 0
+      }
+    }
+  ]
+}

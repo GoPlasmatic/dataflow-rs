@@ -1,0 +1,81 @@
+{
+  "description": "The workflow condition is re-checked before every sweep: the body turns data.go off at counter 2, and the loop ends after that sweep.",
+  "covers": [
+    "loop.condition"
+  ],
+  "mirrors": [
+    "src/workflow_executor::loop_exits_early_when_the_condition_goes_false"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "condition": {
+        "==": [
+          {
+            "var": "data.go"
+          },
+          true
+        ]
+      },
+      "loop": {
+        "counter": "i",
+        "max": 10
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.seen",
+                  "logic": {
+                    "var": "temp_data.i"
+                  },
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "stop",
+          "name": "stop",
+          "condition": {
+            "==": [
+              {
+                "var": "temp_data.i"
+              },
+              2
+            ]
+          },
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.go",
+                  "logic": false
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "data": {
+            "go": true
+          }
+        }
+      }
+    }
+  ]
+}

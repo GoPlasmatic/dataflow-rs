@@ -1,0 +1,15 @@
+{
+  "description": "Only a literal true passes. A failing rule appends VALIDATION_ERROR with its message, rendered only on failure; a rule that fails to evaluate appends EVALUATION_ERROR; the task returns 400 and the next task runs.",
+  "covers": ["validation", "code.VALIDATION_ERROR", "code.EVALUATION_ERROR"],
+  "mirrors": ["src/validation::test_validation_execute_fails", "tests/jsonlogic_params.rs::a_passing_rule_never_renders_its_message"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "check", "name": "check", "function": {"name": "validation", "input": {"rules": [
+        {"logic": true, "message": {"+": [{"var": "data.word"}, "a number"]}},
+        {"logic": false, "message": {"cat": ["bad ", {"var": "data.v"}]}},
+        {"logic": {"+": [{"var": "data.word"}, "a number"]}, "message": "never shown"}]}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.after", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"v": 5, "word": "not"}}}}]
+}

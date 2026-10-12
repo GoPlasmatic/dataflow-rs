@@ -1,0 +1,37 @@
+{
+  "description": "An explicit \"over\": null is kept as present and refused like any literal that can never be an array.",
+  "covers": [
+    "loop.over"
+  ],
+  "mirrors": [
+    "src/workflow::loop_config_rejects_a_scalar_over_literal"
+  ],
+  "workflows": [
+    {
+      "id": "null_over",
+      "name": "null_over",
+      "loop": {
+        "counter": "i",
+        "max": 5,
+        "over": null
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.t",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

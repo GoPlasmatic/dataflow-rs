@@ -1,0 +1,19 @@
+{
+  "description": "mode: append pushes one element and records one change at path.<index>; extend pushes each element with a change each; appending to a non-array target fails the mapping and leaves the value. mode without logic, and appending to a root, are INVALID_MAPPING.",
+  "covers": ["map.mode"],
+  "mirrors": ["tests/map_append.rs::each_append_records_only_its_element", "tests/map_append.rs::extend_pushes_each_element_and_a_null_result_follows_on_null", "tests/map_append.rs::validate_authored_reports_the_mode_rules_at_their_keys"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "t", "name": "t", "continue_on_error": true, "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.list", "logic": 1, "mode": "append"},
+        {"path": "data.list", "logic": [2, 3], "mode": "extend"},
+        {"path": "data.s", "logic": "x", "mode": "append"}]}}}]},
+    {"id": "no_logic", "name": "no_logic", "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.list", "mode": "append"}]}}}]},
+    {"id": "root", "name": "root", "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data", "logic": 1, "mode": "append"}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"s": "str", "list": [0]}}}}]
+}

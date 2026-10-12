@@ -1,0 +1,37 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [
+        {
+          "code": "DUPLICATE_STEP_ID",
+          "severity": "REJECTED",
+          "path": "tasks[0].tasks[0].id",
+          "task_id": "a",
+          "message": "step id 'a' is already used at tasks[0] — task groups share the task id namespace"
+        }
+      ],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [
+        {
+          "code": "DUPLICATE_STEP_ID",
+          "severity": "REJECTED",
+          "path": "loop.setup[0].id",
+          "task_id": "s",
+          "message": "step id 's' is already used at tasks[0] — task groups share the task id namespace"
+        }
+      ],
+      "checked": []
+    }
+  ],
+  "build": {
+    "error": {
+      "code": "WORKFLOW_ERROR",
+      "message": "Workflow error: Duplicate task ID 'a' in workflow"
+    }
+  },
+  "steps": []
+}

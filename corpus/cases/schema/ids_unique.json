@@ -1,0 +1,60 @@
+{
+  "description": "Step ids are one namespace: a clean definition parses and runs; ids colliding across a group and a task, or across loop.setup and the body, are refused at build (see ids_unique_refused).",
+  "covers": [
+    "schema.unique-ids"
+  ],
+  "mirrors": [
+    "tests/task_groups.rs::a_group_id_colliding_with_a_task_id_is_rejected"
+  ],
+  "workflows": [
+    {
+      "id": "clean",
+      "name": "clean",
+      "tasks": [
+        {
+          "id": "a",
+          "name": "a",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.a",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "g",
+          "condition": true,
+          "tasks": [
+            {
+              "id": "b",
+              "name": "b",
+              "function": {
+                "name": "map",
+                "input": {
+                  "mappings": [
+                    {
+                      "path": "data.b",
+                      "logic": true
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ]
+}

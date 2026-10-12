@@ -1,0 +1,335 @@
+{
+  "definitions": [
+    {
+      "parse": {
+        "error": {
+          "code": "DESERIALIZATION_ERROR",
+          "message": "Deserialization error: missing field `max` at line 1 column 40"
+        }
+      },
+      "authored": [
+        {
+          "code": "PARSE_FAILED",
+          "severity": "REJECTED",
+          "path": null,
+          "task_id": null,
+          "message": "missing field `max`"
+        }
+      ],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "seen": [
+                1,
+                3,
+                5
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "stride",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "i": 7
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "stride",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.0",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "stride",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.1",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "status": 200,
+              "loop_counter": 3
+            },
+            {
+              "workflow_id": "stride",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.2",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "status": 200,
+              "loop_counter": 5
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "stride",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "seen": [
+                      1
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "stride",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "i": 1
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "stride",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.seen.0",
+                        "old_value": null,
+                        "new_value": 1
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 1
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {},
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {
+                    "i": 1
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.seen.0",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "stride",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "seen": [
+                      1,
+                      3
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "stride",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "i": 3
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "stride",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.seen.1",
+                        "old_value": null,
+                        "new_value": 3
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 3
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "seen": [
+                      1
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "stride"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 3
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.seen.1",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "loop_counter": 3
+            },
+            {
+              "workflow_id": "stride",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "seen": [
+                      1,
+                      3,
+                      5
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "stride",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "i": 5
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "stride",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.seen.2",
+                        "old_value": null,
+                        "new_value": 5
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 5
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "seen": [
+                      1,
+                      3
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "stride"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 5
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.seen.2",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "loop_counter": 5
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

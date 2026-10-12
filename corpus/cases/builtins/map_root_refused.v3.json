@@ -1,0 +1,150 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "x": 1,
+              "after": "ran"
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after",
+                  "old_value": null,
+                  "new_value": "ran"
+                }
+              ],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task t returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "x": 1,
+                    "after": "ran"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.after",
+                        "old_value": null,
+                        "new_value": "ran"
+                      }
+                    ],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task t returned status 500",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "x": 1
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "x": 1
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.after",
+                  "old_value": null,
+                  "new_value": "ran"
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

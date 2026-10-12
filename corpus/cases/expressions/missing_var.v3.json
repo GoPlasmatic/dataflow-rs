@@ -1,0 +1,208 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "x": 0,
+              "n": null,
+              "defaulted": "dflt",
+              "zero": 0,
+              "static_default": "sd"
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.defaulted",
+                  "old_value": null,
+                  "new_value": "dflt"
+                },
+                {
+                  "path": "data.zero",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.static_default",
+                  "old_value": null,
+                  "new_value": "sd"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "x": 0,
+                    "n": null,
+                    "defaulted": "dflt",
+                    "zero": 0,
+                    "static_default": "sd"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.defaulted",
+                        "old_value": null,
+                        "new_value": "dflt"
+                      },
+                      {
+                        "path": "data.zero",
+                        "old_value": null,
+                        "new_value": 0
+                      },
+                      {
+                        "path": "data.static_default",
+                        "old_value": null,
+                        "new_value": "sd"
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "n": null,
+                    "x": 0
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "n": null,
+                    "x": 0
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "defaulted": "dflt",
+                    "n": null,
+                    "x": 0
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "defaulted": "dflt",
+                    "n": null,
+                    "x": 0,
+                    "zero": 0
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "defaulted": "dflt",
+                    "n": null,
+                    "x": 0,
+                    "zero": 0
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.defaulted",
+                  "old_value": null,
+                  "new_value": "dflt"
+                },
+                {
+                  "path": "data.zero",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.static_default",
+                  "old_value": null,
+                  "new_value": "sd"
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

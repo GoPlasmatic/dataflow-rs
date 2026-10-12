@@ -1,0 +1,204 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "exit": true,
+              "later_workflow": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "second",
+                "task_id": "later",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "first",
+              "task_id": "exit",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.exit",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "second",
+              "task_id": "later",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.later_workflow",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "first",
+              "task_id": "exit",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "exit": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "first",
+                      "task_id": "exit",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "first",
+                    "task_id": "exit",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.exit",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {},
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.exit",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            },
+            {
+              "workflow_id": "second",
+              "task_id": "later",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "exit": true,
+                    "later_workflow": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "second",
+                      "task_id": "later",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "second",
+                    "task_id": "later",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.later_workflow",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "exit": true
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "exit",
+                      "workflow_id": "first"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.later_workflow",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,216 @@
+{
+  "description": "terminal and halt_on apply after the status is classified and only upgrade a continue: a terminal task returning 500 still records TASK_STATUS_ERROR and stops the engine; halt_on: failure with 500 likewise propagates; halt_on: failure with 400 halts only its own workflow and the next one runs.",
+  "covers": [
+    "run.terminal-halt-on"
+  ],
+  "mirrors": [
+    "tests/task_groups.rs::terminal_task_returning_5xx_still_records_and_propagates",
+    "tests/task_groups.rs::halt_on_failure_with_5xx_and_no_continue_on_error_still_propagates",
+    "tests/task_groups.rs::halt_on_failure_keeps_its_own_audit_status"
+  ],
+  "workflows": [
+    {
+      "id": "terminal_500",
+      "name": "terminal_500",
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "terminal": true,
+          "function": {
+            "name": "script",
+            "input": {
+              "outcome": {
+                "status": 500
+              }
+            }
+          }
+        },
+        {
+          "id": "after",
+          "name": "after",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.after_ran",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "next",
+      "name": "next",
+      "priority": 1,
+      "tasks": [
+        {
+          "id": "n",
+          "name": "n",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.next_ran",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "id": "terminal_500"
+        }
+      }
+    },
+    {
+      "reload": {
+        "workflows": [
+          {
+            "id": "halt_on_500",
+            "name": "halt_on_500",
+            "tasks": [
+              {
+                "id": "t",
+                "name": "t",
+                "halt_on": "failure",
+                "function": {
+                  "name": "script",
+                  "input": {
+                    "outcome": {
+                      "status": 500
+                    }
+                  }
+                }
+              },
+              {
+                "id": "after",
+                "name": "after",
+                "function": {
+                  "name": "map",
+                  "input": {
+                    "mappings": [
+                      {
+                        "path": "data.after_ran",
+                        "logic": true
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "next",
+            "name": "next",
+            "priority": 1,
+            "tasks": [
+              {
+                "id": "n",
+                "name": "n",
+                "function": {
+                  "name": "map",
+                  "input": {
+                    "mappings": [
+                      {
+                        "path": "data.next_ran",
+                        "logic": true
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "run": {
+        "message": {
+          "id": "halt_on_500"
+        }
+      }
+    },
+    {
+      "reload": {
+        "workflows": [
+          {
+            "id": "halt_on_400",
+            "name": "halt_on_400",
+            "tasks": [
+              {
+                "id": "t",
+                "name": "t",
+                "halt_on": "failure",
+                "function": {
+                  "name": "script",
+                  "input": {
+                    "outcome": {
+                      "status": 400
+                    }
+                  }
+                }
+              },
+              {
+                "id": "after",
+                "name": "after",
+                "function": {
+                  "name": "map",
+                  "input": {
+                    "mappings": [
+                      {
+                        "path": "data.after_ran",
+                        "logic": true
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "next",
+            "name": "next",
+            "priority": 1,
+            "tasks": [
+              {
+                "id": "n",
+                "name": "n",
+                "function": {
+                  "name": "map",
+                  "input": {
+                    "mappings": [
+                      {
+                        "path": "data.next_ran",
+                        "logic": true
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "run": {
+        "message": {
+          "id": "halt_on_400"
+        }
+      }
+    }
+  ]
+}

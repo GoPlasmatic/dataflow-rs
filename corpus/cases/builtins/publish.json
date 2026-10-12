@@ -1,0 +1,14 @@
+{
+  "description": "publish_json serializes a data-rooted source into a data-rooted target: compact keeps the source's key order, pretty sorts the keys. A missing source and a null source each fail the task with VALIDATION_ERROR. publish_xml serializes under root_element.",
+  "covers": ["publish", "publish.null-source"],
+  "mirrors": ["src/publish::test_execute_publish_json_not_found"],
+  "workflows": [
+    {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
+      {"id": "json", "name": "json", "function": {"name": "publish_json", "input": {"source": "obj", "target": "out"}}},
+      {"id": "pretty", "name": "pretty", "function": {"name": "publish_json", "input": {"source": "data.obj", "target": "pretty_out", "pretty": true}}},
+      {"id": "missing", "name": "missing", "continue_on_error": true, "function": {"name": "publish_json", "input": {"source": "absent", "target": "m"}}},
+      {"id": "null", "name": "null", "continue_on_error": true, "function": {"name": "publish_json", "input": {"source": "nul", "target": "n"}}},
+      {"id": "xml", "name": "xml", "function": {"name": "publish_xml", "input": {"source": "obj", "target": "xml", "root_element": "doc"}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"obj": {"b": 1, "a": [1, "x"]}, "nul": null}}}}]
+}

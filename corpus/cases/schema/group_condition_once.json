@@ -1,0 +1,71 @@
+{
+  "description": "A group's condition is evaluated once, on entry: a member that turns the condition off does not stop its sibling.",
+  "covers": [
+    "schema.group-condition"
+  ],
+  "mirrors": [
+    "tests/task_groups.rs::a_group_condition_is_evaluated_once_on_entry"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "tasks": [
+        {
+          "id": "g",
+          "condition": {
+            "==": [
+              {
+                "var": "data.open"
+              },
+              true
+            ]
+          },
+          "tasks": [
+            {
+              "id": "close",
+              "name": "close",
+              "function": {
+                "name": "map",
+                "input": {
+                  "mappings": [
+                    {
+                      "path": "data.open",
+                      "logic": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": "second",
+              "name": "second",
+              "function": {
+                "name": "map",
+                "input": {
+                  "mappings": [
+                    {
+                      "path": "data.second",
+                      "logic": true
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "data": {
+            "open": true
+          }
+        }
+      }
+    }
+  ]
+}

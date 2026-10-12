@@ -1,0 +1,70 @@
+{
+  "description": "loop.setup runs once, before the first sweep, without a counter: it appends \"setup\" and sees a null counter; the body then appends 0, 1, 2.",
+  "covers": [
+    "loop.setup"
+  ],
+  "mirrors": [
+    "src/workflow_executor::setup_runs_once_before_the_first_iteration_without_a_loop_counter"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "loop": {
+        "counter": "i",
+        "max": 3,
+        "setup": [
+          {
+            "id": "prep",
+            "name": "prep",
+            "function": {
+              "name": "map",
+              "input": {
+                "mappings": [
+                  {
+                    "path": "data.seen",
+                    "logic": "setup",
+                    "mode": "append"
+                  },
+                  {
+                    "path": "data.setup_counter",
+                    "logic": {
+                      "var": "temp_data.i"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.seen",
+                  "logic": {
+                    "var": "temp_data.i"
+                  },
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ]
+}

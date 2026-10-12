@@ -1,0 +1,20 @@
+{
+  "description": "Two error channels: a task that returns Err without continue_on_error stops the engine, reported to the caller, and message.errors holds everything, here the task's record plus a WORKFLOW_ERROR wrapper.",
+  "covers": ["run.error-channels", "break.4", "code.WORKFLOW_ERROR"],
+  "mirrors": ["tests/error_handling.rs::task_err_with_continue_on_error_false_pushes_wrapper_to_errors"],
+  "workflows": [
+    {"id": "w", "name": "w", "priority": 0, "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "script", "input": {
+        "outcome": {"error": {"variant": "task", "message": "broken"}}}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.after_ran", "logic": true}]}}}]},
+    {"id": "next", "name": "next", "priority": 1, "tasks": [
+      {"id": "n", "name": "n", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.next_ran", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {}}}],
+  "deviations": [
+    {"break": "4", "paths": ["/steps/0/run/message/errors", "/steps/0/run/trace"],
+     "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"}
+  ]
+}

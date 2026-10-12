@@ -1,0 +1,18 @@
+{
+  "description": "An audit entry carries loop_counter only inside a loop and element_index only inside a fan-out, and both inside a fan-out in a loop; outside both it carries neither key.",
+  "covers": ["run.audit-optional-fields"],
+  "mirrors": ["src/message::audit_trail_loop_counter_is_absent_from_json_when_none", "src/message::audit_trail_element_index_is_absent_from_json_when_none", "tests/for_each.rs::a_fan_out_inside_a_loop_stamps_both_coordinates"],
+  "workflows": [
+    {"id": "plain", "name": "plain", "priority": 0, "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.plain", "logic": true}]}}}]},
+    {"id": "looped", "name": "looped", "priority": 1, "loop": {"counter": "i", "max": 2}, "tasks": [
+      {"id": "fan", "name": "fan",
+       "for_each": {"over": {"var": "data.items"}, "as": "p"},
+       "function": {"name": "script", "input": {
+         "set": [{"path": "temp_data.last", "value": {"cat": [{"var": "temp_data.i"}, "/", {"var": "temp_data.p"}]}}]}}},
+      {"id": "count", "name": "count", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.sweeps", "logic": {"var": "temp_data.i"}, "mode": "append"}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"items": ["a", "b"]}}}}]
+}

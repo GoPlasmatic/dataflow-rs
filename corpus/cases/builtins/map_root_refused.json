@@ -1,0 +1,12 @@
+{
+  "description": "A computed path that resolves to a context root fails its unset mapping and leaves the root intact; the later mapping still writes and the task returns 500.",
+  "covers": ["map.removal"],
+  "mirrors": ["tests/map_unset.rs::a_computed_path_resolving_to_a_root_fails_the_mapping_and_leaves_the_root"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "t", "name": "t", "continue_on_error": true, "function": {"name": "map", "input": {"mappings": [
+        {"path": {"cat": ["da", "ta"]}, "unset": true},
+        {"path": "data.after", "logic": "ran"}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"x": 1}}}}]
+}

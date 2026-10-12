@@ -1,0 +1,57 @@
+{
+  "description": "continue_on_error on a group is recorded and never honoured: a member returning 500 stops the message, the task after the group does not run, and the flag is reported as GROUP_CONTINUE_ON_ERROR.",
+  "covers": [
+    "schema.group-continue-on-error"
+  ],
+  "mirrors": [
+    "tests/task_groups.rs::a_group_continue_on_error_is_recorded_but_never_honoured"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "tasks": [
+        {
+          "id": "g",
+          "continue_on_error": true,
+          "tasks": [
+            {
+              "id": "boom",
+              "name": "boom",
+              "function": {
+                "name": "script",
+                "input": {
+                  "outcome": {
+                    "status": 500
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "after",
+          "name": "after",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.after",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ]
+}

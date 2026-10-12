@@ -1,0 +1,12 @@
+{
+  "description": "Under templating a single-key object whose key is no operator is an output template: it evaluates its argument and emits a structured object.",
+  "covers": ["expr.templating"],
+  "mirrors": ["src/compiler::an_unrecognised_operator_is_not_an_error_under_templating", "tests/template_keys.rs::an_ordinary_single_key_output_template_is_not_reported"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.out", "logic": {"result": {"var": "data.x"}}},
+        {"path": "data.typo", "logic": {"totally_made_up_op_xyz": ["a", {"var": "data.x"}]}}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"x": 5}}}}]
+}

@@ -1,0 +1,16 @@
+{
+  "description": "With every operator family off (the default build), a gated operator is no name the engine knows: under templating it echoes back as a literal object, and datetime-shaped strings compare as plain strings.",
+  "covers": ["expr.operator-families"],
+  "mirrors": ["src/compiler::a_gated_operator_echoes_back_while_its_family_is_off", "src/compiler::datetime_feature_changes_plain_string_comparison"],
+  "requires": {"off": ["all-operators", "tensor"]},
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.starts_with", "logic": {"starts_with": ["hello", "he"]}},
+        {"path": "data.abs", "logic": {"abs": -5}},
+        {"path": "data.shape", "logic": {"shape": [{"tensor": [[1, 2, 3], "u8"]}]}},
+        {"path": "data.escaped_shape", "logic": {"$shape": [1, 2, 3]}},
+        {"path": "data.dates_equal", "logic": {"==": ["2024-01-15T00:00:00Z", "2024-01-15T01:00:00+01:00"]}}]}}}]}
+  ],
+  "steps": [{"run": {"message": {}}}]
+}

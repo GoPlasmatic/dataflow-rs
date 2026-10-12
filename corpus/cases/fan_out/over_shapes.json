@@ -1,0 +1,20 @@
+{
+  "description": "An empty over writes into = [] with one audit record and no element; a non-array over is one task error, which continue_on_error lets the workflow carry on past.",
+  "covers": ["fanout.over"],
+  "mirrors": ["tests/for_each.rs::an_empty_over_writes_an_empty_array_and_one_record", "tests/for_each.rs::a_non_array_over_is_one_task_error"],
+  "workflows": [
+    {"id": "empty", "name": "empty", "priority": 0, "tasks": [
+      {"id": "t", "name": "t",
+       "for_each": {"over": {"var": "data.empty"}, "as": "p", "collect": "temp_data.out", "into": "data.empty_results"},
+       "function": {"name": "script", "input": {
+         "set": [{"path": "temp_data.out", "value": {"var": "temp_data.p"}}]}}}]},
+    {"id": "scalar", "name": "scalar", "priority": 1, "tasks": [
+      {"id": "t", "name": "t", "continue_on_error": true,
+       "for_each": {"over": {"var": "data.scalar"}, "as": "p", "collect": "temp_data.out", "into": "data.scalar_results"},
+       "function": {"name": "script", "input": {
+         "set": [{"path": "temp_data.out", "value": {"var": "temp_data.p"}}]}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.after_ran", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"empty": [], "scalar": "x"}}}}]
+}

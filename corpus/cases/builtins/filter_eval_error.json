@@ -1,0 +1,11 @@
+{
+  "description": "A filter condition that fails to evaluate rejects, halting its workflow.",
+  "covers": ["filter.eval-error"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "gate", "name": "gate", "function": {"name": "filter", "input": {"condition": {"+": [{"var": "data.word"}, "a number"]}}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.after", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"word": "not"}}}}]
+}

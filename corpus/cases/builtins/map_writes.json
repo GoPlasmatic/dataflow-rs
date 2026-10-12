@@ -1,0 +1,13 @@
+{
+  "description": "Writing a context root merges into it; a destination can be computed from the message; a later mapping sees an earlier one's write.",
+  "covers": ["map.writes"],
+  "mirrors": ["tests/mapping_semantics.rs::test_data_field_replacement_behavior", "tests/jsonlogic_params.rs::a_map_destination_can_be_computed_from_the_message"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data", "logic": {"a": 1}},
+        {"path": {"cat": ["data.", {"var": "data.k"}]}, "logic": "computed"},
+        {"path": "data.c", "logic": {"+": [{"var": "data.a"}, 10]}}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"b": 2, "k": "dyn"}}}}]
+}

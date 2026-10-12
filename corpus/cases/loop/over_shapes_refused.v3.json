@@ -1,0 +1,24 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [
+        {
+          "code": "LOOP_OVER_INVALID",
+          "severity": "REJECTED",
+          "path": "loop.over",
+          "task_id": null,
+          "message": "loop over must be a JSONLogic expression or an array literal — null can never evaluate to an array"
+        }
+      ],
+      "checked": []
+    }
+  ],
+  "build": {
+    "error": {
+      "code": "WORKFLOW_ERROR",
+      "message": "Workflow error: Workflow null_over: loop over must be a JSONLogic expression or an array literal — null can never evaluate to an array"
+    }
+  },
+  "steps": []
+}

@@ -1,0 +1,13 @@
+{
+  "description": "What the parse built-ins do with bad input. parse_json of a string that is not JSON stores the string as it is and succeeds. parse_xml of a string that is not XML, and of a source that is not a string, each fail the task with VALIDATION_ERROR, not DESERIALIZATION_ERROR. DESERIALIZATION_ERROR is what a definition whose parse_json config lacks target is refused with when it parses.",
+  "covers": ["code.DESERIALIZATION_ERROR"],
+  "workflows": [
+    {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
+      {"id": "bad_json", "name": "bad_json", "continue_on_error": true, "function": {"name": "parse_json", "input": {"source": "data.bad", "target": "out"}}},
+      {"id": "bad_xml", "name": "bad_xml", "continue_on_error": true, "function": {"name": "parse_xml", "input": {"source": "data.bad_xml", "target": "x"}}},
+      {"id": "not_string", "name": "not_string", "continue_on_error": true, "function": {"name": "parse_xml", "input": {"source": "data.obj", "target": "y"}}}]},
+    {"id": "no_target", "name": "no_target", "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "parse_json", "input": {"source": "payload"}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"bad": "{not json", "bad_xml": "<<<", "obj": {"a": 1}}}}}]
+}

@@ -1,0 +1,355 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": [
+        {
+          "code": "ESCAPED_TEMPLATE_KEY",
+          "severity": "ADVISORY",
+          "path": "function.input.mappings[0].logic.$cat",
+          "task_id": "t",
+          "message": "'$cat' is emitted as 'cat' — one '$' is stripped from every template key. Double it to '$$cat' to emit '$cat' itself"
+        },
+        {
+          "code": "ESCAPED_TEMPLATE_KEY",
+          "severity": "ADVISORY",
+          "path": "function.input.mappings[2].logic.$$x",
+          "task_id": "t",
+          "message": "'$$x' is emitted as '$x' — one '$' is stripped from every template key. Double it to '$$$x' to emit '$$x' itself"
+        },
+        {
+          "code": "ESCAPED_TEMPLATE_KEY",
+          "severity": "ADVISORY",
+          "path": "function.input.mappings[3].logic.$$$oid",
+          "task_id": "t",
+          "message": "'$$$oid' is emitted as '$$oid' — one '$' is stripped from every template key. Double it to '$$$$oid' to emit '$$$oid' itself"
+        },
+        {
+          "code": "ESCAPED_TEMPLATE_KEY",
+          "severity": "ADVISORY",
+          "path": "function.input.mappings[4].logic.$oid",
+          "task_id": "t",
+          "message": "'$oid' is emitted as 'oid' — one '$' is stripped from every template key. Double it to '$$oid' to emit '$oid' itself"
+        }
+      ]
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "id": "abc",
+              "escaped": {
+                "cat": [
+                  "a",
+                  "b"
+                ]
+              },
+              "operator": "ab",
+              "double": {
+                "$x": 1
+              },
+              "triple": {
+                "$$oid": "abc"
+              },
+              "computed": {
+                "oid": "abc",
+                "kind": "ref"
+              }
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.escaped",
+                  "old_value": null,
+                  "new_value": {
+                    "cat": [
+                      "a",
+                      "b"
+                    ]
+                  }
+                },
+                {
+                  "path": "data.operator",
+                  "old_value": null,
+                  "new_value": "ab"
+                },
+                {
+                  "path": "data.double",
+                  "old_value": null,
+                  "new_value": {
+                    "$x": 1
+                  }
+                },
+                {
+                  "path": "data.triple",
+                  "old_value": null,
+                  "new_value": {
+                    "$$oid": "abc"
+                  }
+                },
+                {
+                  "path": "data.computed",
+                  "old_value": null,
+                  "new_value": {
+                    "oid": "abc",
+                    "kind": "ref"
+                  }
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "id": "abc",
+                    "escaped": {
+                      "cat": [
+                        "a",
+                        "b"
+                      ]
+                    },
+                    "operator": "ab",
+                    "double": {
+                      "$x": 1
+                    },
+                    "triple": {
+                      "$$oid": "abc"
+                    },
+                    "computed": {
+                      "oid": "abc",
+                      "kind": "ref"
+                    }
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.escaped",
+                        "old_value": null,
+                        "new_value": {
+                          "cat": [
+                            "a",
+                            "b"
+                          ]
+                        }
+                      },
+                      {
+                        "path": "data.operator",
+                        "old_value": null,
+                        "new_value": "ab"
+                      },
+                      {
+                        "path": "data.double",
+                        "old_value": null,
+                        "new_value": {
+                          "$x": 1
+                        }
+                      },
+                      {
+                        "path": "data.triple",
+                        "old_value": null,
+                        "new_value": {
+                          "$$oid": "abc"
+                        }
+                      },
+                      {
+                        "path": "data.computed",
+                        "old_value": null,
+                        "new_value": {
+                          "oid": "abc",
+                          "kind": "ref"
+                        }
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "id": "abc"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "escaped": {
+                      "cat": [
+                        "a",
+                        "b"
+                      ]
+                    },
+                    "id": "abc"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "escaped": {
+                      "cat": [
+                        "a",
+                        "b"
+                      ]
+                    },
+                    "id": "abc",
+                    "operator": "ab"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "double": {
+                      "$x": 1
+                    },
+                    "escaped": {
+                      "cat": [
+                        "a",
+                        "b"
+                      ]
+                    },
+                    "id": "abc",
+                    "operator": "ab"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "double": {
+                      "$x": 1
+                    },
+                    "escaped": {
+                      "cat": [
+                        "a",
+                        "b"
+                      ]
+                    },
+                    "id": "abc",
+                    "operator": "ab",
+                    "triple": {
+                      "$$oid": "abc"
+                    }
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.escaped",
+                  "old_value": null,
+                  "new_value": {
+                    "cat": [
+                      "a",
+                      "b"
+                    ]
+                  }
+                },
+                {
+                  "path": "data.operator",
+                  "old_value": null,
+                  "new_value": "ab"
+                },
+                {
+                  "path": "data.double",
+                  "old_value": null,
+                  "new_value": {
+                    "$x": 1
+                  }
+                },
+                {
+                  "path": "data.triple",
+                  "old_value": null,
+                  "new_value": {
+                    "$$oid": "abc"
+                  }
+                },
+                {
+                  "path": "data.computed",
+                  "old_value": null,
+                  "new_value": {
+                    "oid": "abc",
+                    "kind": "ref"
+                  }
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

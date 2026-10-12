@@ -1,0 +1,23 @@
+{
+  "description": "terminal and halt_on apply once, to the whole fan-out: every element runs, then the workflow halts. halt_on: failure halts after the whole fan-out, not at its first failed element.",
+  "covers": ["fanout.fold"],
+  "mirrors": ["tests/for_each.rs::terminal_halts_after_the_whole_fan_out", "tests/for_each.rs::halt_on_failure_halts_after_the_whole_fan_out"],
+  "workflows": [
+    {"id": "terminal", "name": "terminal", "priority": 0, "tasks": [
+      {"id": "t", "name": "t", "terminal": true,
+       "for_each": {"over": {"var": "data.items"}, "as": "p", "collect": "temp_data.out", "into": "data.terminal_results"},
+       "function": {"name": "script", "input": {
+         "set": [{"path": "temp_data.out", "value": {"var": "temp_data.p_index"}}]}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.terminal_after_ran", "logic": true}]}}}]},
+    {"id": "halt_on", "name": "halt_on", "priority": 1, "tasks": [
+      {"id": "t", "name": "t", "continue_on_error": true, "halt_on": "failure",
+       "for_each": {"over": {"var": "data.items"}, "as": "p", "collect": "temp_data.out", "into": "data.halt_on_results"},
+       "function": {"name": "script", "input": {
+         "set": [{"path": "temp_data.out", "value": {"var": "temp_data.p_index"}}],
+         "outcome": {"if": [{"==": [{"var": "temp_data.p_index"}, 0]}, {"status": 500}, "success"]}}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.halt_on_after_ran", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"items": ["a", "b", "c"]}}}}]
+}

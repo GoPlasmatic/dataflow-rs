@@ -1,0 +1,748 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "items": [
+                {
+                  "o": "success"
+                },
+                {
+                  "o": {
+                    "status": 500
+                  }
+                },
+                {
+                  "o": {
+                    "error": {
+                      "variant": "task",
+                      "message": "boom"
+                    }
+                  }
+                },
+                {
+                  "o": "success"
+                }
+              ],
+              "results": [
+                0,
+                null,
+                null,
+                3
+              ],
+              "after_ran": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "out": 3,
+              "last_writer": 3
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "temp_data.last_writer",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.results.0",
+                  "old_value": null,
+                  "new_value": 0
+                }
+              ],
+              "status": 200,
+              "element_index": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "temp_data.last_writer",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.results.1",
+                  "old_value": null,
+                  "new_value": null
+                }
+              ],
+              "status": 500,
+              "element_index": 1
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500,
+              "element_index": 2
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 3
+                },
+                {
+                  "path": "temp_data.last_writer",
+                  "old_value": null,
+                  "new_value": 3
+                },
+                {
+                  "path": "data.results.3",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "status": 200,
+              "element_index": 3
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after_ran",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task t returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "element_index": 1
+            },
+            {
+              "code": "TASK_ERROR",
+              "message": "Task t error: Task error: boom",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "element_index": 2
+            }
+          ]
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": {
+                          "status": 500
+                        }
+                      },
+                      {
+                        "o": {
+                          "error": {
+                            "variant": "task",
+                            "message": "boom"
+                          }
+                        }
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      null,
+                      null,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 0,
+                    "last_writer": 0
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 0
+                      },
+                      {
+                        "path": "temp_data.last_writer",
+                        "old_value": null,
+                        "new_value": 0
+                      },
+                      {
+                        "path": "data.results.0",
+                        "old_value": null,
+                        "new_value": 0
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 0
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "temp_data.last_writer",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.results.0",
+                  "old_value": null,
+                  "new_value": 0
+                }
+              ],
+              "element_index": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": {
+                          "status": 500
+                        }
+                      },
+                      {
+                        "o": {
+                          "error": {
+                            "variant": "task",
+                            "message": "boom"
+                          }
+                        }
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      null,
+                      null,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {
+                    "out": 1,
+                    "last_writer": 1
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 1
+                      },
+                      {
+                        "path": "temp_data.last_writer",
+                        "old_value": null,
+                        "new_value": 1
+                      },
+                      {
+                        "path": "data.results.1",
+                        "old_value": null,
+                        "new_value": null
+                      }
+                    ],
+                    "status": 500,
+                    "element_index": 1
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task t returned status 500",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 1
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "temp_data.last_writer",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.results.1",
+                  "old_value": null,
+                  "new_value": null
+                }
+              ],
+              "element_index": 1
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": {
+                          "status": 500
+                        }
+                      },
+                      {
+                        "o": {
+                          "error": {
+                            "variant": "task",
+                            "message": "boom"
+                          }
+                        }
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      null,
+                      null,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {
+                    "out": 1,
+                    "last_writer": 1
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500,
+                    "element_index": 2
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task t returned status 500",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 1
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task t error: Task error: boom",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 2
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [],
+              "element_index": 2
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": {
+                          "status": 500
+                        }
+                      },
+                      {
+                        "o": {
+                          "error": {
+                            "variant": "task",
+                            "message": "boom"
+                          }
+                        }
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      null,
+                      null,
+                      3
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 3,
+                    "last_writer": 3
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 3
+                      },
+                      {
+                        "path": "temp_data.last_writer",
+                        "old_value": null,
+                        "new_value": 3
+                      },
+                      {
+                        "path": "data.results.3",
+                        "old_value": null,
+                        "new_value": 3
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 3
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task t returned status 500",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 1
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task t error: Task error: boom",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 2
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 3
+                },
+                {
+                  "path": "temp_data.last_writer",
+                  "old_value": null,
+                  "new_value": 3
+                },
+                {
+                  "path": "data.results.3",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "element_index": 3
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": {
+                          "status": 500
+                        }
+                      },
+                      {
+                        "o": {
+                          "error": {
+                            "variant": "task",
+                            "message": "boom"
+                          }
+                        }
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      null,
+                      null,
+                      3
+                    ],
+                    "after_ran": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "after",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 3,
+                    "last_writer": 3
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "after",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.after_ran",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task t returned status 500",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 1
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task t error: Task error: boom",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 2
+                  }
+                ]
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": {
+                          "status": 500
+                        }
+                      },
+                      {
+                        "o": {
+                          "error": {
+                            "message": "boom",
+                            "variant": "task"
+                          }
+                        }
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      null,
+                      null,
+                      3
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "last_writer": 3,
+                    "out": 3
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.after_ran",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

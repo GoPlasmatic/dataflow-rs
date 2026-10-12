@@ -1,0 +1,222 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": [
+        {
+          "code": "UNGUARDED_VALIDATION",
+          "severity": "ADVISORY",
+          "path": "halt_on",
+          "task_id": "check",
+          "message": "a failing rule here records status 400 and task 'after' still runs — `continue_on_error` covers 5xx and Err only. Add `\"halt_on\": \"failure\"` to stop the workflow, or gate what follows on `metadata.progress.status_code`"
+        }
+      ]
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "v": 5,
+              "word": "not",
+              "after": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "check",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 400
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "VALIDATION_ERROR",
+              "message": "bad 5",
+              "path": null,
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "EVALUATION_ERROR",
+              "message": "Failed to evaluate rule 2: Thrown: {\"type\":\"NaN\"} (in operator: +)",
+              "path": null,
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "check",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "v": 5,
+                    "word": "not"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "check",
+                      "status_code": 400
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "check",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 400
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "VALIDATION_ERROR",
+                    "message": "bad 5",
+                    "path": null,
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "EVALUATION_ERROR",
+                    "message": "Failed to evaluate rule 2: Thrown: {\"type\":\"NaN\"} (in operator: +)",
+                    "path": null,
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "v": 5,
+                    "word": "not",
+                    "after": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "after",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "after",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.after",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "VALIDATION_ERROR",
+                    "message": "bad 5",
+                    "path": null,
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "EVALUATION_ERROR",
+                    "message": "Failed to evaluate rule 2: Thrown: {\"type\":\"NaN\"} (in operator: +)",
+                    "path": null,
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "v": 5,
+                    "word": "not"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 400,
+                      "task_id": "check",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.after",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

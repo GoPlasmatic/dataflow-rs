@@ -1,0 +1,83 @@
+{
+  "description": "The v3 host contract a v4 Function replaces: a handler with a typed input reads its identity, writes through ctx.set (each write audited), records an error with add_error (stamped with no workflow or task id), and returns a status. A handler that writes and then returns Skip gets no audit entry and no progress, but v3 keeps its write in the context, unaudited. Break 11: No message difference: v4 replaces AsyncFunctionHandler and TaskContext with Function and Ctx, and its corpus runner ports script onto them.",
+  "covers": [
+    "break.11"
+  ],
+  "mirrors": [
+    "tests/task_identity.rs",
+    "tests/engine_execution.rs"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "tasks": [
+        {
+          "id": "host",
+          "name": "host",
+          "function": {
+            "name": "script",
+            "input": {
+              "identity": "data.identity",
+              "set": [
+                {
+                  "path": "data.first",
+                  "value": {
+                    "cat": [
+                      "seen ",
+                      {
+                        "var": "data.input"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "path": "temp_data.second",
+                  "raw": {
+                    "kept": "verbatim"
+                  }
+                }
+              ],
+              "errors": [
+                {
+                  "code": "HOST_WARNING",
+                  "message": "recorded by the handler"
+                }
+              ],
+              "outcome": {
+                "status": 201
+              }
+            }
+          }
+        },
+        {
+          "id": "skipper",
+          "name": "skipper",
+          "function": {
+            "name": "script",
+            "input": {
+              "set": [
+                {
+                  "path": "data.skipper_wrote",
+                  "raw": true
+                }
+              ],
+              "outcome": "skip"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "data": {
+            "input": "x"
+          }
+        }
+      }
+    }
+  ]
+}

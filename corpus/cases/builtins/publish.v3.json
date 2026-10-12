@@ -1,0 +1,435 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "obj": {
+                "b": 1,
+                "a": [
+                  1,
+                  "x"
+                ]
+              },
+              "nul": null,
+              "out": "{\"b\":1,\"a\":[1,\"x\"]}",
+              "pretty_out": "{\n  \"a\": [\n    1,\n    \"x\"\n  ],\n  \"b\": 1\n}",
+              "xml": "<doc><a><item>1</item><item>x</item></a><b>1</b></doc>"
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "xml",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "json",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.out",
+                  "old_value": null,
+                  "new_value": "{\"b\":1,\"a\":[1,\"x\"]}"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "pretty",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.pretty_out",
+                  "old_value": null,
+                  "new_value": "{\n  \"a\": [\n    1,\n    \"x\"\n  ],\n  \"b\": 1\n}"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "missing",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "null",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "xml",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.xml",
+                  "old_value": null,
+                  "new_value": "<doc><a><item>1</item><item>x</item></a><b>1</b></doc>"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "VALIDATION_ERROR",
+              "message": "Task missing error: Validation error: PublishJson: Source 'data.absent' not found or is null",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "missing",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "VALIDATION_ERROR",
+              "message": "Task null error: Validation error: PublishJson: Source 'data.nul' not found or is null",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "null",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "json",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "b": 1,
+                      "a": [
+                        1,
+                        "x"
+                      ]
+                    },
+                    "nul": null,
+                    "out": "{\"b\":1,\"a\":[1,\"x\"]}"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "json",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "json",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.out",
+                        "old_value": null,
+                        "new_value": "{\"b\":1,\"a\":[1,\"x\"]}"
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.out",
+                  "old_value": null,
+                  "new_value": "{\"b\":1,\"a\":[1,\"x\"]}"
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "pretty",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "b": 1,
+                      "a": [
+                        1,
+                        "x"
+                      ]
+                    },
+                    "nul": null,
+                    "out": "{\"b\":1,\"a\":[1,\"x\"]}",
+                    "pretty_out": "{\n  \"a\": [\n    1,\n    \"x\"\n  ],\n  \"b\": 1\n}"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "pretty",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "pretty",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.pretty_out",
+                        "old_value": null,
+                        "new_value": "{\n  \"a\": [\n    1,\n    \"x\"\n  ],\n  \"b\": 1\n}"
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.pretty_out",
+                  "old_value": null,
+                  "new_value": "{\n  \"a\": [\n    1,\n    \"x\"\n  ],\n  \"b\": 1\n}"
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "missing",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "b": 1,
+                      "a": [
+                        1,
+                        "x"
+                      ]
+                    },
+                    "nul": null,
+                    "out": "{\"b\":1,\"a\":[1,\"x\"]}",
+                    "pretty_out": "{\n  \"a\": [\n    1,\n    \"x\"\n  ],\n  \"b\": 1\n}"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "missing",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "missing",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Task missing error: Validation error: PublishJson: Source 'data.absent' not found or is null",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "missing",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "null",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "b": 1,
+                      "a": [
+                        1,
+                        "x"
+                      ]
+                    },
+                    "nul": null,
+                    "out": "{\"b\":1,\"a\":[1,\"x\"]}",
+                    "pretty_out": "{\n  \"a\": [\n    1,\n    \"x\"\n  ],\n  \"b\": 1\n}"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "null",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "null",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Task missing error: Validation error: PublishJson: Source 'data.absent' not found or is null",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "missing",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Task null error: Validation error: PublishJson: Source 'data.nul' not found or is null",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "null",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "xml",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "b": 1,
+                      "a": [
+                        1,
+                        "x"
+                      ]
+                    },
+                    "nul": null,
+                    "out": "{\"b\":1,\"a\":[1,\"x\"]}",
+                    "pretty_out": "{\n  \"a\": [\n    1,\n    \"x\"\n  ],\n  \"b\": 1\n}",
+                    "xml": "<doc><a><item>1</item><item>x</item></a><b>1</b></doc>"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "xml",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "xml",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.xml",
+                        "old_value": null,
+                        "new_value": "<doc><a><item>1</item><item>x</item></a><b>1</b></doc>"
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Task missing error: Validation error: PublishJson: Source 'data.absent' not found or is null",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "missing",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Task null error: Validation error: PublishJson: Source 'data.nul' not found or is null",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "null",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.xml",
+                  "old_value": null,
+                  "new_value": "<doc><a><item>1</item><item>x</item></a><b>1</b></doc>"
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

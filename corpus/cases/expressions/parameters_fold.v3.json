@@ -1,0 +1,329 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "key": "dynamic",
+              "folded": "ab",
+              "number": 5,
+              "dynamic": 5,
+              "config": {
+                "var": "data.number"
+              },
+              "evaluated": 5
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "host",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "literal",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.folded",
+                  "old_value": null,
+                  "new_value": "ab"
+                },
+                {
+                  "path": "data.number",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "computed",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.dynamic",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "host",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.config",
+                  "old_value": null,
+                  "new_value": {
+                    "var": "data.number"
+                  }
+                },
+                {
+                  "path": "data.evaluated",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "literal",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "key": "dynamic",
+                    "folded": "ab",
+                    "number": 5
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "literal",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "literal",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.folded",
+                        "old_value": null,
+                        "new_value": "ab"
+                      },
+                      {
+                        "path": "data.number",
+                        "old_value": null,
+                        "new_value": 5
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "key": "dynamic"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "folded": "ab",
+                    "key": "dynamic"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.folded",
+                  "old_value": null,
+                  "new_value": "ab"
+                },
+                {
+                  "path": "data.number",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "computed",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "key": "dynamic",
+                    "folded": "ab",
+                    "number": 5,
+                    "dynamic": 5
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "computed",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "computed",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.dynamic",
+                        "old_value": null,
+                        "new_value": 5
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "folded": "ab",
+                    "key": "dynamic",
+                    "number": 5
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "literal",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.dynamic",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "host",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "key": "dynamic",
+                    "folded": "ab",
+                    "number": 5,
+                    "dynamic": 5,
+                    "config": {
+                      "var": "data.number"
+                    },
+                    "evaluated": 5
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "host",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "host",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.config",
+                        "old_value": null,
+                        "new_value": {
+                          "var": "data.number"
+                        }
+                      },
+                      {
+                        "path": "data.evaluated",
+                        "old_value": null,
+                        "new_value": 5
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.config",
+                  "old_value": null,
+                  "new_value": {
+                    "var": "data.number"
+                  }
+                },
+                {
+                  "path": "data.evaluated",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

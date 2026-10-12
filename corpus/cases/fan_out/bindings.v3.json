@@ -1,0 +1,723 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "items": [
+                {
+                  "id": "a"
+                },
+                {
+                  "id": "b"
+                },
+                {
+                  "id": "c"
+                }
+              ],
+              "results": [
+                {
+                  "by_get": {
+                    "id": "a"
+                  },
+                  "index_by_get": 0,
+                  "by_eval": {
+                    "id": "a"
+                  },
+                  "index_by_eval": 0
+                },
+                {
+                  "by_get": {
+                    "id": "b"
+                  },
+                  "index_by_get": 1,
+                  "by_eval": {
+                    "id": "b"
+                  },
+                  "index_by_eval": 1
+                },
+                {
+                  "by_get": {
+                    "id": "c"
+                  },
+                  "index_by_get": 2,
+                  "by_eval": {
+                    "id": "c"
+                  },
+                  "index_by_eval": 2
+                }
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "out": {
+                "by_get": {
+                  "id": "c"
+                },
+                "index_by_get": 2,
+                "by_eval": {
+                  "id": "c"
+                },
+                "index_by_eval": 2
+              }
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out.by_get",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "a"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_get",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "temp_data.out.by_eval",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "a"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_eval",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.results.0",
+                  "old_value": null,
+                  "new_value": {
+                    "by_get": {
+                      "id": "a"
+                    },
+                    "index_by_get": 0,
+                    "by_eval": {
+                      "id": "a"
+                    },
+                    "index_by_eval": 0
+                  }
+                }
+              ],
+              "status": 200,
+              "element_index": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out.by_get",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "b"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_get",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "temp_data.out.by_eval",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "b"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_eval",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.results.1",
+                  "old_value": null,
+                  "new_value": {
+                    "by_get": {
+                      "id": "b"
+                    },
+                    "index_by_get": 1,
+                    "by_eval": {
+                      "id": "b"
+                    },
+                    "index_by_eval": 1
+                  }
+                }
+              ],
+              "status": 200,
+              "element_index": 1
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out.by_get",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "c"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_get",
+                  "old_value": null,
+                  "new_value": 2
+                },
+                {
+                  "path": "temp_data.out.by_eval",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "c"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_eval",
+                  "old_value": null,
+                  "new_value": 2
+                },
+                {
+                  "path": "data.results.2",
+                  "old_value": null,
+                  "new_value": {
+                    "by_get": {
+                      "id": "c"
+                    },
+                    "index_by_get": 2,
+                    "by_eval": {
+                      "id": "c"
+                    },
+                    "index_by_eval": 2
+                  }
+                }
+              ],
+              "status": 200,
+              "element_index": 2
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "id": "a"
+                      },
+                      {
+                        "id": "b"
+                      },
+                      {
+                        "id": "c"
+                      }
+                    ],
+                    "results": [
+                      {
+                        "by_get": {
+                          "id": "a"
+                        },
+                        "index_by_get": 0,
+                        "by_eval": {
+                          "id": "a"
+                        },
+                        "index_by_eval": 0
+                      },
+                      null,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": {
+                      "by_get": {
+                        "id": "a"
+                      },
+                      "index_by_get": 0,
+                      "by_eval": {
+                        "id": "a"
+                      },
+                      "index_by_eval": 0
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out.by_get",
+                        "old_value": null,
+                        "new_value": {
+                          "id": "a"
+                        }
+                      },
+                      {
+                        "path": "temp_data.out.index_by_get",
+                        "old_value": null,
+                        "new_value": 0
+                      },
+                      {
+                        "path": "temp_data.out.by_eval",
+                        "old_value": null,
+                        "new_value": {
+                          "id": "a"
+                        }
+                      },
+                      {
+                        "path": "temp_data.out.index_by_eval",
+                        "old_value": null,
+                        "new_value": 0
+                      },
+                      {
+                        "path": "data.results.0",
+                        "old_value": null,
+                        "new_value": {
+                          "by_get": {
+                            "id": "a"
+                          },
+                          "index_by_get": 0,
+                          "by_eval": {
+                            "id": "a"
+                          },
+                          "index_by_eval": 0
+                        }
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 0
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out.by_get",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "a"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_get",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "temp_data.out.by_eval",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "a"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_eval",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.results.0",
+                  "old_value": null,
+                  "new_value": {
+                    "by_get": {
+                      "id": "a"
+                    },
+                    "index_by_get": 0,
+                    "by_eval": {
+                      "id": "a"
+                    },
+                    "index_by_eval": 0
+                  }
+                }
+              ],
+              "element_index": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "id": "a"
+                      },
+                      {
+                        "id": "b"
+                      },
+                      {
+                        "id": "c"
+                      }
+                    ],
+                    "results": [
+                      {
+                        "by_get": {
+                          "id": "a"
+                        },
+                        "index_by_get": 0,
+                        "by_eval": {
+                          "id": "a"
+                        },
+                        "index_by_eval": 0
+                      },
+                      {
+                        "by_get": {
+                          "id": "b"
+                        },
+                        "index_by_get": 1,
+                        "by_eval": {
+                          "id": "b"
+                        },
+                        "index_by_eval": 1
+                      },
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": {
+                      "by_get": {
+                        "id": "b"
+                      },
+                      "index_by_get": 1,
+                      "by_eval": {
+                        "id": "b"
+                      },
+                      "index_by_eval": 1
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out.by_get",
+                        "old_value": null,
+                        "new_value": {
+                          "id": "b"
+                        }
+                      },
+                      {
+                        "path": "temp_data.out.index_by_get",
+                        "old_value": null,
+                        "new_value": 1
+                      },
+                      {
+                        "path": "temp_data.out.by_eval",
+                        "old_value": null,
+                        "new_value": {
+                          "id": "b"
+                        }
+                      },
+                      {
+                        "path": "temp_data.out.index_by_eval",
+                        "old_value": null,
+                        "new_value": 1
+                      },
+                      {
+                        "path": "data.results.1",
+                        "old_value": null,
+                        "new_value": {
+                          "by_get": {
+                            "id": "b"
+                          },
+                          "index_by_get": 1,
+                          "by_eval": {
+                            "id": "b"
+                          },
+                          "index_by_eval": 1
+                        }
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 1
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out.by_get",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "b"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_get",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "temp_data.out.by_eval",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "b"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_eval",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.results.1",
+                  "old_value": null,
+                  "new_value": {
+                    "by_get": {
+                      "id": "b"
+                    },
+                    "index_by_get": 1,
+                    "by_eval": {
+                      "id": "b"
+                    },
+                    "index_by_eval": 1
+                  }
+                }
+              ],
+              "element_index": 1
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "id": "a"
+                      },
+                      {
+                        "id": "b"
+                      },
+                      {
+                        "id": "c"
+                      }
+                    ],
+                    "results": [
+                      {
+                        "by_get": {
+                          "id": "a"
+                        },
+                        "index_by_get": 0,
+                        "by_eval": {
+                          "id": "a"
+                        },
+                        "index_by_eval": 0
+                      },
+                      {
+                        "by_get": {
+                          "id": "b"
+                        },
+                        "index_by_get": 1,
+                        "by_eval": {
+                          "id": "b"
+                        },
+                        "index_by_eval": 1
+                      },
+                      {
+                        "by_get": {
+                          "id": "c"
+                        },
+                        "index_by_get": 2,
+                        "by_eval": {
+                          "id": "c"
+                        },
+                        "index_by_eval": 2
+                      }
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": {
+                      "by_get": {
+                        "id": "c"
+                      },
+                      "index_by_get": 2,
+                      "by_eval": {
+                        "id": "c"
+                      },
+                      "index_by_eval": 2
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out.by_get",
+                        "old_value": null,
+                        "new_value": {
+                          "id": "c"
+                        }
+                      },
+                      {
+                        "path": "temp_data.out.index_by_get",
+                        "old_value": null,
+                        "new_value": 2
+                      },
+                      {
+                        "path": "temp_data.out.by_eval",
+                        "old_value": null,
+                        "new_value": {
+                          "id": "c"
+                        }
+                      },
+                      {
+                        "path": "temp_data.out.index_by_eval",
+                        "old_value": null,
+                        "new_value": 2
+                      },
+                      {
+                        "path": "data.results.2",
+                        "old_value": null,
+                        "new_value": {
+                          "by_get": {
+                            "id": "c"
+                          },
+                          "index_by_get": 2,
+                          "by_eval": {
+                            "id": "c"
+                          },
+                          "index_by_eval": 2
+                        }
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 2
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out.by_get",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "c"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_get",
+                  "old_value": null,
+                  "new_value": 2
+                },
+                {
+                  "path": "temp_data.out.by_eval",
+                  "old_value": null,
+                  "new_value": {
+                    "id": "c"
+                  }
+                },
+                {
+                  "path": "temp_data.out.index_by_eval",
+                  "old_value": null,
+                  "new_value": 2
+                },
+                {
+                  "path": "data.results.2",
+                  "old_value": null,
+                  "new_value": {
+                    "by_get": {
+                      "id": "c"
+                    },
+                    "index_by_get": 2,
+                    "by_eval": {
+                      "id": "c"
+                    },
+                    "index_by_eval": 2
+                  }
+                }
+              ],
+              "element_index": 2
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

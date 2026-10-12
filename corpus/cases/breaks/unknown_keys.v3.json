@@ -1,0 +1,824 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "obj": {
+                "a": 1
+              },
+              "order": [
+                "wf_typo",
+                "task_typo",
+                "loop_key",
+                "loop_key",
+                "rollout_key"
+              ],
+              "fanned": [
+                1,
+                2
+              ],
+              "published": "{\"a\":1}"
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "publish_key",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "out": 2
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "wf_typo",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.0",
+                  "old_value": null,
+                  "new_value": "wf_typo"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "task_typo",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.1",
+                  "old_value": null,
+                  "new_value": "task_typo"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "loop_key",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.2",
+                  "old_value": null,
+                  "new_value": "loop_key"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "loop_key",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.3",
+                  "old_value": null,
+                  "new_value": "loop_key"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "for_each_key",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.fanned.0",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "element_index": 0
+            },
+            {
+              "workflow_id": "for_each_key",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 2
+                },
+                {
+                  "path": "data.fanned.1",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "status": 200,
+              "element_index": 1
+            },
+            {
+              "workflow_id": "rollout_key",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.4",
+                  "old_value": null,
+                  "new_value": "rollout_key"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "publish_key",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.published",
+                  "old_value": null,
+                  "new_value": "{\"a\":1}"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "wf_typo",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "wf_typo",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "wf_typo",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.order.0",
+                        "old_value": null,
+                        "new_value": "wf_typo"
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    }
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.order.0",
+                  "old_value": null,
+                  "new_value": "wf_typo"
+                }
+              ]
+            },
+            {
+              "workflow_id": "task_typo",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "task_typo",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "task_typo",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.order.1",
+                        "old_value": null,
+                        "new_value": "task_typo"
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "wf_typo"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.order.1",
+                  "old_value": null,
+                  "new_value": "task_typo"
+                }
+              ]
+            },
+            {
+              "workflow_id": "loop_key",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo",
+                      "loop_key"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "loop_key",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "loop_key",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.order.2",
+                        "old_value": null,
+                        "new_value": "loop_key"
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 0
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "task_typo"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.order.2",
+                  "old_value": null,
+                  "new_value": "loop_key"
+                }
+              ],
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "loop_key",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo",
+                      "loop_key",
+                      "loop_key"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "loop_key",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "loop_key",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.order.3",
+                        "old_value": null,
+                        "new_value": "loop_key"
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 1
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo",
+                      "loop_key"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "loop_key"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.order.3",
+                  "old_value": null,
+                  "new_value": "loop_key"
+                }
+              ],
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "for_each_key",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo",
+                      "loop_key",
+                      "loop_key"
+                    ],
+                    "fanned": [
+                      1,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "for_each_key",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 1
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "for_each_key",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 1
+                      },
+                      {
+                        "path": "data.fanned.0",
+                        "old_value": null,
+                        "new_value": 1
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 0
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.fanned.0",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "element_index": 0
+            },
+            {
+              "workflow_id": "for_each_key",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo",
+                      "loop_key",
+                      "loop_key"
+                    ],
+                    "fanned": [
+                      1,
+                      2
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "for_each_key",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 2
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "for_each_key",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 2
+                      },
+                      {
+                        "path": "data.fanned.1",
+                        "old_value": null,
+                        "new_value": 2
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 1
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 2
+                },
+                {
+                  "path": "data.fanned.1",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "element_index": 1
+            },
+            {
+              "workflow_id": "rollout_key",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo",
+                      "loop_key",
+                      "loop_key",
+                      "rollout_key"
+                    ],
+                    "fanned": [
+                      1,
+                      2
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "rollout_key",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 2
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "rollout_key",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.order.4",
+                        "old_value": null,
+                        "new_value": "rollout_key"
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "fanned": [
+                      1,
+                      2
+                    ],
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo",
+                      "loop_key",
+                      "loop_key"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "for_each_key"
+                    }
+                  },
+                  "temp_data": {
+                    "out": 2
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.order.4",
+                  "old_value": null,
+                  "new_value": "rollout_key"
+                }
+              ]
+            },
+            {
+              "workflow_id": "publish_key",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "obj": {
+                      "a": 1
+                    },
+                    "order": [
+                      "wf_typo",
+                      "task_typo",
+                      "loop_key",
+                      "loop_key",
+                      "rollout_key"
+                    ],
+                    "fanned": [
+                      1,
+                      2
+                    ],
+                    "published": "{\"a\":1}"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "publish_key",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 2
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "publish_key",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.published",
+                        "old_value": null,
+                        "new_value": "{\"a\":1}"
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.published",
+                  "old_value": null,
+                  "new_value": "{\"a\":1}"
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

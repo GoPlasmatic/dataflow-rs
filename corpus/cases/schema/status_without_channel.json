@@ -1,0 +1,100 @@
+{
+  "description": "Without a channel, v3 runs every workflow whatever its status: active, paused and archived all append.",
+  "covers": [
+    "schema.status",
+    "break.7"
+  ],
+  "workflows": [
+    {
+      "id": "active",
+      "name": "active",
+      "channel": "c",
+      "status": "active",
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.order",
+                  "logic": "active",
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "paused",
+      "name": "paused",
+      "channel": "c",
+      "status": "paused",
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.order",
+                  "logic": "paused",
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "archived",
+      "name": "archived",
+      "channel": "c",
+      "status": "archived",
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.order",
+                  "logic": "archived",
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ],
+  "deviations": [
+    {
+      "break": "7",
+      "paths": [
+        "/steps/0/run/message/context/data/order",
+        "/steps/0/run/message/context/metadata/progress",
+        "/steps/0/run/message/audit_trail",
+        "/steps/0/run/trace"
+      ],
+      "note": "v4 runs only active workflows, with or without a channel"
+    }
+  ]
+}

@@ -1,0 +1,244 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "input": "x",
+              "identity": {
+                "element_index": null,
+                "loop_counter": null,
+                "task_id": "host",
+                "workflow_id": "w"
+              },
+              "first": "seen x",
+              "skipper_wrote": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "host",
+                "status_code": 201
+              }
+            },
+            "temp_data": {
+              "second": {
+                "kept": "verbatim"
+              }
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "host",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.identity",
+                  "old_value": null,
+                  "new_value": {
+                    "element_index": null,
+                    "loop_counter": null,
+                    "task_id": "host",
+                    "workflow_id": "w"
+                  }
+                },
+                {
+                  "path": "data.first",
+                  "old_value": null,
+                  "new_value": "seen x"
+                },
+                {
+                  "path": "temp_data.second",
+                  "old_value": null,
+                  "new_value": {
+                    "kept": "verbatim"
+                  }
+                }
+              ],
+              "status": 201
+            }
+          ],
+          "errors": [
+            {
+              "code": "HOST_WARNING",
+              "message": "recorded by the handler",
+              "path": null,
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "host",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "input": "x",
+                    "identity": {
+                      "element_index": null,
+                      "loop_counter": null,
+                      "task_id": "host",
+                      "workflow_id": "w"
+                    },
+                    "first": "seen x"
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "host",
+                      "status_code": 201
+                    }
+                  },
+                  "temp_data": {
+                    "second": {
+                      "kept": "verbatim"
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "host",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.identity",
+                        "old_value": null,
+                        "new_value": {
+                          "element_index": null,
+                          "loop_counter": null,
+                          "task_id": "host",
+                          "workflow_id": "w"
+                        }
+                      },
+                      {
+                        "path": "data.first",
+                        "old_value": null,
+                        "new_value": "seen x"
+                      },
+                      {
+                        "path": "temp_data.second",
+                        "old_value": null,
+                        "new_value": {
+                          "kept": "verbatim"
+                        }
+                      }
+                    ],
+                    "status": 201
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "HOST_WARNING",
+                    "message": "recorded by the handler",
+                    "path": null,
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.identity",
+                  "old_value": null,
+                  "new_value": {
+                    "element_index": null,
+                    "loop_counter": null,
+                    "task_id": "host",
+                    "workflow_id": "w"
+                  }
+                },
+                {
+                  "path": "data.first",
+                  "old_value": null,
+                  "new_value": "seen x"
+                },
+                {
+                  "path": "temp_data.second",
+                  "old_value": null,
+                  "new_value": {
+                    "kept": "verbatim"
+                  }
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "skipper",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "input": "x",
+                    "identity": {
+                      "element_index": null,
+                      "loop_counter": null,
+                      "task_id": "host",
+                      "workflow_id": "w"
+                    },
+                    "first": "seen x",
+                    "skipper_wrote": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "host",
+                      "status_code": 201
+                    }
+                  },
+                  "temp_data": {
+                    "second": {
+                      "kept": "verbatim"
+                    }
+                  }
+                },
+                "audit_trail": [],
+                "errors": [
+                  {
+                    "code": "HOST_WARNING",
+                    "message": "recorded by the handler",
+                    "path": null,
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

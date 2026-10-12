@@ -1,0 +1,397 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "items": [
+                {
+                  "o": "success"
+                },
+                {
+                  "o": "halt"
+                },
+                {
+                  "o": "success"
+                },
+                {
+                  "o": "success"
+                }
+              ],
+              "results": [
+                0,
+                1,
+                null,
+                null
+              ],
+              "next_ran": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "next",
+                "task_id": "n",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "out": 1
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.results.0",
+                  "old_value": null,
+                  "new_value": 0
+                }
+              ],
+              "status": 200,
+              "element_index": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.results.1",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 299,
+              "element_index": 1
+            },
+            {
+              "workflow_id": "next",
+              "task_id": "n",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.next_ran",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": "halt"
+                      },
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      null,
+                      null,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 0
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 0
+                      },
+                      {
+                        "path": "data.results.0",
+                        "old_value": null,
+                        "new_value": 0
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 0
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.results.0",
+                  "old_value": null,
+                  "new_value": 0
+                }
+              ],
+              "element_index": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": "halt"
+                      },
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      1,
+                      null,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 299
+                    }
+                  },
+                  "temp_data": {
+                    "out": 1
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 1
+                      },
+                      {
+                        "path": "data.results.1",
+                        "old_value": null,
+                        "new_value": 1
+                      }
+                    ],
+                    "status": 299,
+                    "element_index": 1
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.results.1",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "element_index": 1
+            },
+            {
+              "workflow_id": "next",
+              "task_id": "n",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": "halt"
+                      },
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      1,
+                      null,
+                      null
+                    ],
+                    "next_ran": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "next",
+                      "task_id": "n",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 1
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "next",
+                    "task_id": "n",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.next_ran",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "items": [
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": "halt"
+                      },
+                      {
+                        "o": "success"
+                      },
+                      {
+                        "o": "success"
+                      }
+                    ],
+                    "results": [
+                      0,
+                      1,
+                      null,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 299,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "out": 1
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.next_ran",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

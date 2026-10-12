@@ -1,0 +1,22 @@
+{
+  "description": "A run whose second task returns Err without continue_on_error stops the engine. v3's trace holds only the step before the failure: the failing step is missing (break 5). The failing handler's write stays in the context with an empty change list on its audit entry.",
+  "covers": ["break.5", "break.13"],
+  "mirrors": ["tests/tracing.rs"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "ok", "name": "ok", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.ok", "logic": true}]}}},
+      {"id": "fails", "name": "fails", "function": {"name": "script", "input": {
+        "set": [{"path": "data.partial", "raw": true}],
+        "outcome": {"error": {"variant": "service", "code": "PARTNER_DOWN", "message": "down"}}}}},
+      {"id": "never", "name": "never", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.never", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {}}}],
+  "deviations": [
+    {"break": "5", "paths": ["/steps/0/run/trace"],
+     "note": "v4's trace is the initial context plus each step's changes, with no snapshots, and records the failing step"},
+    {"break": "13", "paths": ["/steps/0/run/trace"],
+     "note": "The UI 4.0 debugger renders this failing run from v4's trace"}
+  ]
+}

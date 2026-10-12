@@ -486,6 +486,12 @@
     "v3": true
   },
   {
+    "id": "break.14",
+    "source": "06",
+    "row": "14",
+    "v3": true
+  },
+  {
     "id": "code.LOGIC_ERROR",
     "source": "04",
     "row": "LOGIC_ERROR",
@@ -594,8 +600,8 @@
     "id": "code.COMPILATION_ERROR",
     "source": "04",
     "row": "COMPILATION_ERROR",
-    "v3": true,
-    "expect_code": "COMPILATION_ERROR"
+    "v3": false,
+    "reason": "v3 writes it only for a validation rule that build left uncompiled, and build never does: compiler.rs compiles every rule or fails the build, so validation.rs:209 is unreachable through the engine (16 rule shapes probed, 2026-10-12)"
   },
   {
     "id": "code.CANCELLED",

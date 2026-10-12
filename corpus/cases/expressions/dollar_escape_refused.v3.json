@@ -1,0 +1,31 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": [
+        {
+          "code": "ESCAPED_TEMPLATE_KEY",
+          "severity": "ADVISORY",
+          "path": "function.input.mappings[0].logic.$a",
+          "task_id": "t",
+          "message": "'$a' is emitted as 'a' — one '$' is stripped from every template key. Double it to '$$a' to emit '$a' itself"
+        },
+        {
+          "code": "DUPLICATE_TEMPLATE_KEY",
+          "severity": "REJECTED",
+          "path": "function.input.mappings[0].logic.a",
+          "task_id": "t",
+          "message": "'$a' and 'a' both emit the key 'a', so this object would carry it twice — later reads see only the first while serialization emits both"
+        }
+      ]
+    }
+  ],
+  "build": {
+    "error": {
+      "code": "VALIDATION_ERROR",
+      "message": "Validation error: workflow 'w': function.input.mappings[0].logic.a: '$a' and 'a' both emit the key 'a', so this object would carry it twice — later reads see only the first while serialization emits both [DUPLICATE_TEMPLATE_KEY]"
+    }
+  },
+  "steps": []
+}

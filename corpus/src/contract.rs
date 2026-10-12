@@ -119,6 +119,7 @@ mod tests {
         "break.11",
         "break.12",
         "break.13",
+        "break.14",
         "code.LOGIC_ERROR",
         "code.BUDGET_EXCEEDED",
         "code.FUNCTION_NOT_FOUND",

@@ -1,0 +1,61 @@
+{
+  "description": "loop.scratch is reset to {} at the start of every sweep: each sweep reads temp_data.s.mark before setting it, and sees it absent every time (\"fresh\", never \"leaked\"); temp_data.keep is untouched, and s is left holding the last sweep's state.",
+  "covers": [
+    "loop.scratch"
+  ],
+  "mirrors": [
+    "src/workflow_executor::scratch_is_reset_at_the_start_of_every_iteration"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "loop": {
+        "counter": "i",
+        "max": 3,
+        "scratch": "s"
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.seen",
+                  "logic": {
+                    "if": [
+                      {
+                        "var": "temp_data.s.mark"
+                      },
+                      "leaked",
+                      "fresh"
+                    ]
+                  },
+                  "mode": "append"
+                },
+                {
+                  "path": "temp_data.s.mark",
+                  "logic": 1
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "temp_data": {
+            "keep": "me"
+          }
+        }
+      }
+    }
+  ]
+}

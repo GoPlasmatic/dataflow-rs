@@ -1,0 +1,80 @@
+{
+  "description": "A group whose id equals a member task's id, and a loop.setup step sharing a body task's id, both parse and are refused at build (Workflow::validate); validate_authored reports each.",
+  "covers": [
+    "schema.unique-ids"
+  ],
+  "mirrors": [
+    "tests/task_groups.rs::a_group_id_colliding_with_a_task_id_is_rejected",
+    "src/workflow::a_setup_step_sharing_an_id_with_a_body_task_is_rejected"
+  ],
+  "workflows": [
+    {
+      "id": "group_collision",
+      "name": "group_collision",
+      "tasks": [
+        {
+          "id": "a",
+          "condition": true,
+          "tasks": [
+            {
+              "id": "a",
+              "name": "a",
+              "function": {
+                "name": "map",
+                "input": {
+                  "mappings": [
+                    {
+                      "path": "data.a",
+                      "logic": true
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "setup_collision",
+      "name": "setup_collision",
+      "loop": {
+        "max": 2,
+        "setup": [
+          {
+            "id": "s",
+            "name": "s",
+            "function": {
+              "name": "map",
+              "input": {
+                "mappings": [
+                  {
+                    "path": "data.s",
+                    "logic": true
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "tasks": [
+        {
+          "id": "s",
+          "name": "s",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.s",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

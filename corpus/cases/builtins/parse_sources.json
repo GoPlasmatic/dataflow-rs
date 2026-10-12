@@ -1,0 +1,17 @@
+{
+  "description": "parse_json reads payload (reachable nowhere else), payload.<path>, data.<path> or any other context path; its target is always rooted at data, so a target spelled data.t lands at data.data.t; a JSON string source is re-parsed. parse_xml parses an XML string into data, dropping the root element and keeping text as $text.",
+  "covers": ["parse"],
+  "mirrors": ["src/parse::test_execute_parse_json_from_payload", "src/parse::test_execute_parse_json_from_string_payload", "src/path_template::a_static_data_rooted_target_gains_the_data_prefix"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "whole", "name": "whole", "function": {"name": "parse_json", "input": {"source": "payload", "target": "p"}}},
+      {"id": "nested", "name": "nested", "function": {"name": "parse_json", "input": {"source": "payload.inner", "target": "i"}}},
+      {"id": "string", "name": "string", "function": {"name": "parse_json", "input": {"source": "data.raw", "target": "r"}}},
+      {"id": "context", "name": "context", "function": {"name": "parse_json", "input": {"source": "temp_data.t", "target": "data.t"}}},
+      {"id": "xml", "name": "xml", "function": {"name": "parse_xml", "input": {"source": "payload.xml", "target": "x"}}}]}
+  ],
+  "steps": [{"run": {"message": {
+    "payload": {"inner": {"k": 1}, "xml": "<root><a>1</a><b>two</b></root>"},
+    "data": {"raw": "{\"r\": 1, \"s\": [true]}"},
+    "temp_data": {"t": {"from": "temp"}}}}}]
+}

@@ -1,0 +1,37 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [
+        {
+          "code": "LOOP_BOUND_EMPTY",
+          "severity": "REJECTED",
+          "path": "loop.max",
+          "task_id": null,
+          "message": "loop max (5) must be greater than init (5) — the bound is half-open, so this could never run a sweep"
+        }
+      ],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [
+        {
+          "code": "LOOP_INCREMENT_TOO_SMALL",
+          "severity": "REJECTED",
+          "path": "loop.increment",
+          "task_id": null,
+          "message": "loop increment must be >= 1, got 0 (a non-advancing counter would never reach max)"
+        }
+      ],
+      "checked": []
+    }
+  ],
+  "build": {
+    "error": {
+      "code": "WORKFLOW_ERROR",
+      "message": "Workflow error: Workflow max_at_init: loop max (5) must be greater than init (5) — the bound is half-open, so this could never run a sweep"
+    }
+  },
+  "steps": []
+}

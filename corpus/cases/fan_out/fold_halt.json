@@ -1,0 +1,20 @@
+{
+  "description": "An element that halts stops new calls and ends the fold after it: later elements contribute nothing, the workflow halts, and the next workflow still runs.",
+  "covers": ["fanout.fold"],
+  "mirrors": ["tests/for_each.rs::an_element_halt_stops_new_calls_and_halts_the_workflow"],
+  "workflows": [
+    {"id": "w", "name": "w", "priority": 0, "tasks": [
+      {"id": "t", "name": "t",
+       "for_each": {"over": {"var": "data.items"}, "as": "p", "collect": "temp_data.out", "into": "data.results"},
+       "function": {"name": "script", "input": {
+         "set": [{"path": "temp_data.out", "value": {"var": "temp_data.p_index"}}],
+         "outcome": {"var": "temp_data.p.o"}}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.after_ran", "logic": true}]}}}]},
+    {"id": "next", "name": "next", "priority": 1, "tasks": [
+      {"id": "n", "name": "n", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.next_ran", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"items": [
+    {"o": "success"}, {"o": "halt"}, {"o": "success"}, {"o": "success"}]}}}}]
+}

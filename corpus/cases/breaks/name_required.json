@@ -1,0 +1,117 @@
+{
+  "description": "v3 requires name on a workflow and on a task: each refuses at parse with DESERIALIZATION_ERROR (validate_authored reports EMPTY_WORKFLOW_NAME for the workflow, but only PARSE_FAILED with no path for the task). A group without a name already parses and runs. Only the two named definitions run.",
+  "covers": [
+    "break.6"
+  ],
+  "workflows": [
+    {
+      "id": "no_workflow_name",
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.order",
+                  "logic": "no_workflow_name",
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "no_task_name",
+      "name": "no_task_name",
+      "tasks": [
+        {
+          "id": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.order",
+                  "logic": "no_task_name",
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "no_group_name",
+      "name": "no_group_name",
+      "tasks": [
+        {
+          "id": "g",
+          "tasks": [
+            {
+              "id": "t",
+              "name": "t",
+              "function": {
+                "name": "map",
+                "input": {
+                  "mappings": [
+                    {
+                      "path": "data.order",
+                      "logic": "no_group_name",
+                      "mode": "append"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "named",
+      "name": "named",
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.order",
+                  "logic": "named",
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ],
+  "deviations": [
+    {
+      "break": "6",
+      "paths": [
+        "/definitions/0",
+        "/definitions/1",
+        "/steps/0/run"
+      ],
+      "note": "name is optional on every node in v4, so both definitions parse and run"
+    }
+  ]
+}

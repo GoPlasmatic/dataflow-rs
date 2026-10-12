@@ -1,0 +1,16 @@
+{
+  "description": "Workflows run sequentially, and a halt stops one workflow only: a terminal task ends its own workflow, and the next workflow still runs.",
+  "covers": ["run.sequential"],
+  "mirrors": ["tests/task_groups.rs::terminal_halt_stops_only_its_own_workflow"],
+  "workflows": [
+    {"id": "first", "name": "first", "priority": 0, "tasks": [
+      {"id": "exit", "name": "exit", "terminal": true, "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.exit", "logic": true}]}}},
+      {"id": "unreachable", "name": "unreachable", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.unreachable", "logic": true}]}}}]},
+    {"id": "second", "name": "second", "priority": 1, "tasks": [
+      {"id": "later", "name": "later", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.later_workflow", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {}}}]
+}

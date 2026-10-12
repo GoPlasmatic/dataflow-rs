@@ -1,0 +1,12 @@
+{
+  "description": "A truthy value that is not the literal true fails a validation rule: 1, \"yes\" and [1] each append VALIDATION_ERROR.",
+  "covers": ["validation.truthy-non-bool"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "check", "name": "check", "function": {"name": "validation", "input": {"rules": [
+        {"logic": 1, "message": "one"},
+        {"logic": "yes", "message": "yes"},
+        {"logic": [1], "message": "array"}]}}}]}
+  ],
+  "steps": [{"run": {"message": {}}}]
+}

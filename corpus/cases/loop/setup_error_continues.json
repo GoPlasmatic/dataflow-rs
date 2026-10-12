@@ -1,0 +1,86 @@
+{
+  "description": "A setup step that fails, in a workflow with continue_on_error, is recorded; no sweep runs, and the next workflow does.",
+  "covers": [
+    "loop.setup"
+  ],
+  "mirrors": [
+    "src/workflow_executor::a_setup_error_stops_the_message_unless_the_workflow_continues_on_error"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "continue_on_error": true,
+      "loop": {
+        "counter": "i",
+        "max": 3,
+        "setup": [
+          {
+            "id": "boom",
+            "name": "boom",
+            "function": {
+              "name": "script",
+              "input": {
+                "outcome": {
+                  "error": {
+                    "variant": "task",
+                    "message": "setup failed"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.seen",
+                  "logic": {
+                    "var": "temp_data.i"
+                  },
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "after",
+      "name": "after",
+      "priority": 1,
+      "tasks": [
+        {
+          "id": "after",
+          "name": "after",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.after",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ]
+}

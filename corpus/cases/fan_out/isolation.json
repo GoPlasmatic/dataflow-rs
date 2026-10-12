@@ -1,0 +1,20 @@
+{
+  "description": "Every fan-out call runs on its own copy of the message: each sees temp_data.seen as it was before the fan-out, and an element's history does not repeat the parent's audit trail.",
+  "covers": ["fanout.isolation"],
+  "mirrors": ["tests/for_each.rs::calls_are_isolated_from_each_other", "tests/for_each.rs::an_element_carries_the_context_but_not_the_parents_history"],
+  "workflows": [
+    {"id": "pre", "name": "pre", "priority": 0, "tasks": [
+      {"id": "pre", "name": "pre", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.pre", "logic": 1}]}}}]},
+    {"id": "w", "name": "w", "priority": 1, "tasks": [
+      {"id": "t", "name": "t",
+       "for_each": {"over": {"var": "data.items"}, "as": "p", "collect": "temp_data.out", "into": "data.results"},
+       "function": {"name": "script", "input": {
+         "set": [
+           {"path": "temp_data.seen", "value": {"+": [{"var": "temp_data.seen"}, 1]}},
+           {"path": "temp_data.out", "value": {"var": "temp_data.seen"}}]}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.after_ran", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"items": ["a", "b", "c"]}, "temp_data": {"seen": 0}}}}]
+}

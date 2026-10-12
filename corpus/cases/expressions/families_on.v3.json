@@ -1,0 +1,290 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": [
+        {
+          "code": "ESCAPED_TEMPLATE_KEY",
+          "severity": "ADVISORY",
+          "path": "function.input.mappings[3].logic.$shape",
+          "task_id": "t",
+          "message": "'$shape' is emitted as 'shape' — one '$' is stripped from every template key. Double it to '$$shape' to emit '$shape' itself"
+        }
+      ]
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "starts_with": true,
+              "abs": 5,
+              "shape": [
+                3
+              ],
+              "escaped_shape": {
+                "shape": [
+                  1,
+                  2,
+                  3
+                ]
+              },
+              "dates_equal": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.starts_with",
+                  "old_value": null,
+                  "new_value": true
+                },
+                {
+                  "path": "data.abs",
+                  "old_value": null,
+                  "new_value": 5
+                },
+                {
+                  "path": "data.shape",
+                  "old_value": null,
+                  "new_value": [
+                    3
+                  ]
+                },
+                {
+                  "path": "data.escaped_shape",
+                  "old_value": null,
+                  "new_value": {
+                    "shape": [
+                      1,
+                      2,
+                      3
+                    ]
+                  }
+                },
+                {
+                  "path": "data.dates_equal",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "starts_with": true,
+                    "abs": 5,
+                    "shape": [
+                      3
+                    ],
+                    "escaped_shape": {
+                      "shape": [
+                        1,
+                        2,
+                        3
+                      ]
+                    },
+                    "dates_equal": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.starts_with",
+                        "old_value": null,
+                        "new_value": true
+                      },
+                      {
+                        "path": "data.abs",
+                        "old_value": null,
+                        "new_value": 5
+                      },
+                      {
+                        "path": "data.shape",
+                        "old_value": null,
+                        "new_value": [
+                          3
+                        ]
+                      },
+                      {
+                        "path": "data.escaped_shape",
+                        "old_value": null,
+                        "new_value": {
+                          "shape": [
+                            1,
+                            2,
+                            3
+                          ]
+                        }
+                      },
+                      {
+                        "path": "data.dates_equal",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {},
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "starts_with": true
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "abs": 5,
+                    "starts_with": true
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "abs": 5,
+                    "shape": [
+                      3
+                    ],
+                    "starts_with": true
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                },
+                {
+                  "data": {
+                    "abs": 5,
+                    "escaped_shape": {
+                      "shape": [
+                        1,
+                        2,
+                        3
+                      ]
+                    },
+                    "shape": [
+                      3
+                    ],
+                    "starts_with": true
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.starts_with",
+                  "old_value": null,
+                  "new_value": true
+                },
+                {
+                  "path": "data.abs",
+                  "old_value": null,
+                  "new_value": 5
+                },
+                {
+                  "path": "data.shape",
+                  "old_value": null,
+                  "new_value": [
+                    3
+                  ]
+                },
+                {
+                  "path": "data.escaped_shape",
+                  "old_value": null,
+                  "new_value": {
+                    "shape": [
+                      1,
+                      2,
+                      3
+                    ]
+                  }
+                },
+                {
+                  "path": "data.dates_equal",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

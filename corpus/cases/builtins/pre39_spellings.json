@@ -1,0 +1,22 @@
+{
+  "description": "The pre-3.9 spellings path_logic, body_logic, key_logic, value_logic and output load as aliases; supplying both spellings of one field is a duplicate-field refusal when the definition parses.",
+  "covers": ["schema.pre39-spellings", "break.8"],
+  "mirrors": ["src/integration::the_pre_39_logic_spellings_still_deserialize", "src/integration::supplying_both_spellings_is_a_duplicate_field_error"],
+  "workflows": [
+    {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
+      {"id": "call", "name": "call", "continue_on_error": true, "function": {"name": "http_call", "input": {
+        "connector": "c", "path_logic": {"var": "data.id"}, "body_logic": {"var": "data.obj"}, "output": "data.resp"}}},
+      {"id": "enrich", "name": "enrich", "continue_on_error": true, "function": {"name": "enrich", "input": {
+        "connector": "c", "merge_path": "data.out", "path_logic": {"var": "data.id"}}}},
+      {"id": "kafka", "name": "kafka", "continue_on_error": true, "function": {"name": "publish_kafka", "input": {
+        "connector": "c", "topic": "t", "key_logic": {"var": "data.id"}, "value_logic": {"var": "data.obj"}}}}]},
+    {"id": "both", "name": "both", "tasks": [
+      {"id": "call", "name": "call", "function": {"name": "http_call", "input": {
+        "connector": "c", "path": "/a", "path_logic": {"var": "data.id"}}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"id": 7, "obj": {"a": 1}}}}}],
+  "deviations": [
+    {"break": "8", "paths": ["/definitions/0/authored", "/definitions/1"], "note": "v4's compat reader rewrites each alias with an Advisory"},
+    {"break": "3", "paths": ["/build", "/steps"], "note": "no handler is registered, which v4 reports at compile"}
+  ]
+}

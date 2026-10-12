@@ -1,0 +1,19 @@
+{
+  "description": "Only a literal true passes a filter: conditions 1 and \"true\" both reject and halt their workflow, while true passes.",
+  "covers": ["filter.literal-true"],
+  "workflows": [
+    {"id": "one", "name": "one", "priority": 1, "tasks": [
+      {"id": "gate", "name": "gate", "function": {"name": "filter", "input": {"condition": 1}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.one", "logic": true}]}}}]},
+    {"id": "string_true", "name": "string_true", "priority": 2, "tasks": [
+      {"id": "gate", "name": "gate", "function": {"name": "filter", "input": {"condition": "true"}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.string_true", "logic": true}]}}}]},
+    {"id": "literal", "name": "literal", "priority": 3, "tasks": [
+      {"id": "gate", "name": "gate", "function": {"name": "filter", "input": {"condition": true}}},
+      {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.literal", "logic": true}]}}}]}
+  ],
+  "steps": [{"run": {"message": {}}}]
+}

@@ -1,0 +1,579 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {
+            "inner": {
+              "k": 1
+            },
+            "xml": "<root><a>1</a><b>two</b></root>"
+          },
+          "context": {
+            "data": {
+              "raw": "{\"r\": 1, \"s\": [true]}",
+              "p": {
+                "inner": {
+                  "k": 1
+                },
+                "xml": "<root><a>1</a><b>two</b></root>"
+              },
+              "i": {
+                "k": 1
+              },
+              "r": {
+                "r": 1,
+                "s": [
+                  true
+                ]
+              },
+              "data": {
+                "t": {
+                  "from": "temp"
+                }
+              },
+              "x": {
+                "a": {
+                  "$text": "1"
+                },
+                "b": {
+                  "$text": "two"
+                }
+              }
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "xml",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "t": {
+                "from": "temp"
+              }
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "whole",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.p",
+                  "old_value": null,
+                  "new_value": {
+                    "inner": {
+                      "k": 1
+                    },
+                    "xml": "<root><a>1</a><b>two</b></root>"
+                  }
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "nested",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.i",
+                  "old_value": null,
+                  "new_value": {
+                    "k": 1
+                  }
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "string",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.r",
+                  "old_value": null,
+                  "new_value": {
+                    "r": 1,
+                    "s": [
+                      true
+                    ]
+                  }
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "context",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.data.t",
+                  "old_value": null,
+                  "new_value": {
+                    "from": "temp"
+                  }
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "xml",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.x",
+                  "old_value": null,
+                  "new_value": {
+                    "a": {
+                      "$text": "1"
+                    },
+                    "b": {
+                      "$text": "two"
+                    }
+                  }
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "whole",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {
+                  "inner": {
+                    "k": 1
+                  },
+                  "xml": "<root><a>1</a><b>two</b></root>"
+                },
+                "context": {
+                  "data": {
+                    "raw": "{\"r\": 1, \"s\": [true]}",
+                    "p": {
+                      "inner": {
+                        "k": 1
+                      },
+                      "xml": "<root><a>1</a><b>two</b></root>"
+                    }
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "whole",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "t": {
+                      "from": "temp"
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "whole",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.p",
+                        "old_value": null,
+                        "new_value": {
+                          "inner": {
+                            "k": 1
+                          },
+                          "xml": "<root><a>1</a><b>two</b></root>"
+                        }
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.p",
+                  "old_value": null,
+                  "new_value": {
+                    "inner": {
+                      "k": 1
+                    },
+                    "xml": "<root><a>1</a><b>two</b></root>"
+                  }
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "nested",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {
+                  "inner": {
+                    "k": 1
+                  },
+                  "xml": "<root><a>1</a><b>two</b></root>"
+                },
+                "context": {
+                  "data": {
+                    "raw": "{\"r\": 1, \"s\": [true]}",
+                    "p": {
+                      "inner": {
+                        "k": 1
+                      },
+                      "xml": "<root><a>1</a><b>two</b></root>"
+                    },
+                    "i": {
+                      "k": 1
+                    }
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "nested",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "t": {
+                      "from": "temp"
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "nested",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.i",
+                        "old_value": null,
+                        "new_value": {
+                          "k": 1
+                        }
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.i",
+                  "old_value": null,
+                  "new_value": {
+                    "k": 1
+                  }
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "string",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {
+                  "inner": {
+                    "k": 1
+                  },
+                  "xml": "<root><a>1</a><b>two</b></root>"
+                },
+                "context": {
+                  "data": {
+                    "raw": "{\"r\": 1, \"s\": [true]}",
+                    "p": {
+                      "inner": {
+                        "k": 1
+                      },
+                      "xml": "<root><a>1</a><b>two</b></root>"
+                    },
+                    "i": {
+                      "k": 1
+                    },
+                    "r": {
+                      "r": 1,
+                      "s": [
+                        true
+                      ]
+                    }
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "string",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "t": {
+                      "from": "temp"
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "string",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.r",
+                        "old_value": null,
+                        "new_value": {
+                          "r": 1,
+                          "s": [
+                            true
+                          ]
+                        }
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.r",
+                  "old_value": null,
+                  "new_value": {
+                    "r": 1,
+                    "s": [
+                      true
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "context",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {
+                  "inner": {
+                    "k": 1
+                  },
+                  "xml": "<root><a>1</a><b>two</b></root>"
+                },
+                "context": {
+                  "data": {
+                    "raw": "{\"r\": 1, \"s\": [true]}",
+                    "p": {
+                      "inner": {
+                        "k": 1
+                      },
+                      "xml": "<root><a>1</a><b>two</b></root>"
+                    },
+                    "i": {
+                      "k": 1
+                    },
+                    "r": {
+                      "r": 1,
+                      "s": [
+                        true
+                      ]
+                    },
+                    "data": {
+                      "t": {
+                        "from": "temp"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "context",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "t": {
+                      "from": "temp"
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "context",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.data.t",
+                        "old_value": null,
+                        "new_value": {
+                          "from": "temp"
+                        }
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.data.t",
+                  "old_value": null,
+                  "new_value": {
+                    "from": "temp"
+                  }
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "xml",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {
+                  "inner": {
+                    "k": 1
+                  },
+                  "xml": "<root><a>1</a><b>two</b></root>"
+                },
+                "context": {
+                  "data": {
+                    "raw": "{\"r\": 1, \"s\": [true]}",
+                    "p": {
+                      "inner": {
+                        "k": 1
+                      },
+                      "xml": "<root><a>1</a><b>two</b></root>"
+                    },
+                    "i": {
+                      "k": 1
+                    },
+                    "r": {
+                      "r": 1,
+                      "s": [
+                        true
+                      ]
+                    },
+                    "data": {
+                      "t": {
+                        "from": "temp"
+                      }
+                    },
+                    "x": {
+                      "a": {
+                        "$text": "1"
+                      },
+                      "b": {
+                        "$text": "two"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "xml",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "t": {
+                      "from": "temp"
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "xml",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.x",
+                        "old_value": null,
+                        "new_value": {
+                          "a": {
+                            "$text": "1"
+                          },
+                          "b": {
+                            "$text": "two"
+                          }
+                        }
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.x",
+                  "old_value": null,
+                  "new_value": {
+                    "a": {
+                      "$text": "1"
+                    },
+                    "b": {
+                      "$text": "two"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,147 @@
+{
+  "description": "max still bounds an over loop (five elements, max 2: two sweeps); an empty over runs no sweep and writes no task's output; a non-array over, under continue_on_error, is a recorded WORKFLOW_ERROR and the next workflow runs. Each loop has its own counter and binding, so what each leaves in temp_data is visible.",
+  "covers": [
+    "loop.over"
+  ],
+  "mirrors": [
+    "src/workflow_executor::max_still_bounds_an_over_loop",
+    "src/workflow_executor::an_empty_over_runs_no_iteration_but_the_workflow_still_executed",
+    "src/workflow_executor::a_non_array_over_is_a_workflow_error"
+  ],
+  "workflows": [
+    {
+      "id": "bounded",
+      "name": "bounded",
+      "loop": {
+        "counter": "bi",
+        "max": 2,
+        "over": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "as": "bitem"
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.bounded",
+                  "logic": {
+                    "var": "temp_data.bitem"
+                  },
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "empty",
+      "name": "empty",
+      "priority": 1,
+      "loop": {
+        "counter": "ei",
+        "max": 5,
+        "over": [],
+        "as": "eitem"
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.empty",
+                  "logic": {
+                    "var": "temp_data.eitem"
+                  },
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "not_array",
+      "name": "not_array",
+      "priority": 2,
+      "continue_on_error": true,
+      "loop": {
+        "counter": "ni",
+        "max": 5,
+        "over": {
+          "var": "data.scalar"
+        },
+        "as": "nitem"
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.not_array",
+                  "logic": {
+                    "var": "temp_data.nitem"
+                  },
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "after",
+      "name": "after",
+      "priority": 3,
+      "tasks": [
+        {
+          "id": "after",
+          "name": "after",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.after",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "data": {
+            "scalar": "nope"
+          }
+        }
+      }
+    }
+  ]
+}

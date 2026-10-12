@@ -1,0 +1,272 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "one": 1,
+              "xs": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
+              "after_map": 2,
+              "cheap": 3
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "cheap",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "mapw",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after_map",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "status": 500
+            },
+            {
+              "workflow_id": "scriptw",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "cheap",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.cheap",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task t returned status 500",
+              "path": null,
+              "workflow_id": "mapw",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "BUDGET_EXCEEDED",
+              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "path": null,
+              "workflow_id": "scriptw",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "reload": "ok"
+    },
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "one": 1,
+              "xs": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
+              "after_map": 2,
+              "cheap": 3
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "cheap",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "mapw",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after_map",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "status": 500
+            },
+            {
+              "workflow_id": "scriptw",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "cheap",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.cheap",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task t returned status 500",
+              "path": null,
+              "workflow_id": "mapw",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "BUDGET_EXCEEDED",
+              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "path": null,
+              "workflow_id": "scriptw",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

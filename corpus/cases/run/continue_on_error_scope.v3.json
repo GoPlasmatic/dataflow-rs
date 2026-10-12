@@ -1,0 +1,521 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": {
+          "error": {
+            "code": "TASK_ERROR",
+            "message": "Task error: Task stops failed with status 503",
+            "retryable": false
+          }
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "after_400": true,
+              "after_500": true,
+              "after_err": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "stops",
+                "status_code": 503
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "rejected",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 400
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after_400",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after_400",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "failed",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after_500",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after_500",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "erred",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after_err",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after_err",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "stops",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 503
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task failed returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "failed",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "TASK_ERROR",
+              "message": "Task erred error: Task error: tolerated",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "erred",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task stops returned status 503",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "stops",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "WORKFLOW_ERROR",
+              "message": "Workflow w error: Task error: Task stops failed with status 503",
+              "path": null,
+              "workflow_id": "w",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": {
+          "outcome": {
+            "error": {
+              "code": "TASK_ERROR",
+              "message": "Task error: Task stops failed with status 503",
+              "retryable": false
+            }
+          },
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "rejected",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "rejected",
+                      "status_code": 400
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "rejected",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 400
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after_400",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "after_400": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "after_400",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "after_400",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.after_400",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {},
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 400,
+                      "task_id": "rejected",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.after_400",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "failed",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "after_400": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "failed",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "failed",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task failed returned status 500",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "failed",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after_500",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "after_400": true,
+                    "after_500": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "after_500",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "after_500",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.after_500",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task failed returned status 500",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "failed",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "after_400": true
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 500,
+                      "task_id": "failed",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.after_500",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "erred",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "after_400": true,
+                    "after_500": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "erred",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "erred",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task failed returned status 500",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "failed",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task erred error: Task error: tolerated",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "erred",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after_err",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "after_400": true,
+                    "after_500": true,
+                    "after_err": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "after_err",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "after_err",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.after_err",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task failed returned status 500",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "failed",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task erred error: Task error: tolerated",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "erred",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "after_400": true,
+                    "after_500": true
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 500,
+                      "task_id": "erred",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.after_err",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

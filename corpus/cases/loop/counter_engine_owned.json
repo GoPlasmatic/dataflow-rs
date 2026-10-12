@@ -1,0 +1,61 @@
+{
+  "description": "The engine owns the counter: a body task writing 100 to it after the counter was read is overwritten at the next increment, so the sweeps still see 0, 1, 2 and the loop runs all three.",
+  "covers": [
+    "loop.counter"
+  ],
+  "mirrors": [
+    "src/workflow_executor::the_engine_owns_the_counter_even_if_a_body_task_writes_it"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "loop": {
+        "counter": "i",
+        "max": 3
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.seen",
+                  "logic": {
+                    "var": "temp_data.i"
+                  },
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "clobber",
+          "name": "clobber",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "temp_data.i",
+                  "logic": 100
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ]
+}

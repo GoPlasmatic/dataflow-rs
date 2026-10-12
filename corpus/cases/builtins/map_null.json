@@ -1,0 +1,14 @@
+{
+  "description": "A null map result is skipped (set or keep); on_null: \"unset\" removes the key on null and writes otherwise; an explicit \"logic\": null is a no-op reported as NULL_MAPPING.",
+  "covers": ["map.null"],
+  "mirrors": ["tests/map_unset.rs::a_null_result_is_still_skipped_by_default", "tests/map_unset.rs::on_null_unset_clears_on_null_and_writes_otherwise"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.x", "logic": {"var": "data.missing"}},
+        {"path": "data.y", "logic": {"var": "data.missing"}, "on_null": "unset"},
+        {"path": "data.z", "logic": 5, "on_null": "unset"},
+        {"path": "data.w", "logic": null}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"x": 1, "y": 2, "w": 3}}}}]
+}

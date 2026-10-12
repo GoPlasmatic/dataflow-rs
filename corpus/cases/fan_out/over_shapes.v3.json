@@ -1,0 +1,275 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "empty": [],
+              "scalar": "x",
+              "empty_results": [],
+              "after_ran": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "scalar",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "empty",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.empty_results",
+                  "old_value": null,
+                  "new_value": []
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "scalar",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "scalar",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after_ran",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_ERROR",
+              "message": "Task t error: Task error: Task t: for_each.over must evaluate to an array, got a string",
+              "path": null,
+              "workflow_id": "scalar",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "empty",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "empty": [],
+                    "scalar": "x",
+                    "empty_results": []
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "empty",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "empty",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.empty_results",
+                        "old_value": null,
+                        "new_value": []
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.empty_results",
+                  "old_value": null,
+                  "new_value": []
+                }
+              ]
+            },
+            {
+              "workflow_id": "scalar",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "empty": [],
+                    "scalar": "x",
+                    "empty_results": []
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "scalar",
+                      "task_id": "t",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "scalar",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task t error: Task error: Task t: for_each.over must evaluate to an array, got a string",
+                    "path": null,
+                    "workflow_id": "scalar",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "scalar",
+              "task_id": "after",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "empty": [],
+                    "scalar": "x",
+                    "empty_results": [],
+                    "after_ran": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "scalar",
+                      "task_id": "after",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "scalar",
+                    "task_id": "after",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.after_ran",
+                        "old_value": null,
+                        "new_value": true
+                      }
+                    ],
+                    "status": 200
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task t error: Task error: Task t: for_each.over must evaluate to an array, got a string",
+                    "path": null,
+                    "workflow_id": "scalar",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "empty": [],
+                    "empty_results": [],
+                    "scalar": "x"
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 500,
+                      "task_id": "t",
+                      "workflow_id": "scalar"
+                    }
+                  },
+                  "temp_data": {}
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.after_ran",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ]
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

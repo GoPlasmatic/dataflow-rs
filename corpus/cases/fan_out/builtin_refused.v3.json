@@ -1,0 +1,24 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [
+        {
+          "code": "INVALID_FOR_EACH",
+          "severity": "REJECTED",
+          "path": "tasks[0].for_each",
+          "task_id": "t",
+          "message": "for_each runs a handler-backed function once per element, and 'map' is a built-in that runs inline — use JSONLogic's map, filter or reduce over the array instead"
+        }
+      ],
+      "checked": []
+    }
+  ],
+  "build": {
+    "error": {
+      "code": "WORKFLOW_ERROR",
+      "message": "Workflow error: Task 't': for_each runs a handler-backed function once per element, and 'map' is a built-in that runs inline — use JSONLogic's map, filter or reduce over the array instead"
+    }
+  },
+  "steps": []
+}

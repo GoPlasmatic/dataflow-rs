@@ -1,0 +1,61 @@
+{
+  "description": "loop.over is evaluated once, after setup: each sweep sees over[counter] in temp_data.item, and the body growing data.items does not add sweeps.",
+  "covers": [
+    "loop.over",
+    "loop.over-once"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "loop": {
+        "counter": "i",
+        "max": 10,
+        "over": {
+          "var": "data.items"
+        },
+        "as": "item"
+      },
+      "tasks": [
+        {
+          "id": "t",
+          "name": "t",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.seen",
+                  "logic": {
+                    "var": "temp_data.item"
+                  },
+                  "mode": "append"
+                },
+                {
+                  "path": "data.items",
+                  "logic": "x",
+                  "mode": "append"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "data": {
+            "items": [
+              "a",
+              "b",
+              "c"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,668 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    },
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "items": [
+                "a",
+                "b",
+                "c"
+              ],
+              "terminal_results": [
+                0,
+                1,
+                2
+              ],
+              "halt_on_results": [
+                null,
+                1,
+                2
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "halt_on",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "out": 2
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "terminal",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.terminal_results.0",
+                  "old_value": null,
+                  "new_value": 0
+                }
+              ],
+              "status": 200,
+              "element_index": 0
+            },
+            {
+              "workflow_id": "terminal",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.terminal_results.1",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "element_index": 1
+            },
+            {
+              "workflow_id": "terminal",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 2
+                },
+                {
+                  "path": "data.terminal_results.2",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "status": 200,
+              "element_index": 2
+            },
+            {
+              "workflow_id": "halt_on",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": 2,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.halt_on_results.0",
+                  "old_value": null,
+                  "new_value": null
+                }
+              ],
+              "status": 500,
+              "element_index": 0
+            },
+            {
+              "workflow_id": "halt_on",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": 2,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.halt_on_results.1",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "element_index": 1
+            },
+            {
+              "workflow_id": "halt_on",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": 2,
+                  "new_value": 2
+                },
+                {
+                  "path": "data.halt_on_results.2",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "status": 200,
+              "element_index": 2
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task t returned status 500",
+              "path": null,
+              "workflow_id": "halt_on",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "element_index": 0
+            }
+          ]
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "terminal",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c"
+                    ],
+                    "terminal_results": [
+                      0,
+                      null,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "terminal",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 0
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "terminal",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 0
+                      },
+                      {
+                        "path": "data.terminal_results.0",
+                        "old_value": null,
+                        "new_value": 0
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 0
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.terminal_results.0",
+                  "old_value": null,
+                  "new_value": 0
+                }
+              ],
+              "element_index": 0
+            },
+            {
+              "workflow_id": "terminal",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c"
+                    ],
+                    "terminal_results": [
+                      0,
+                      1,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "terminal",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 1
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "terminal",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 1
+                      },
+                      {
+                        "path": "data.terminal_results.1",
+                        "old_value": null,
+                        "new_value": 1
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 1
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.terminal_results.1",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "element_index": 1
+            },
+            {
+              "workflow_id": "terminal",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c"
+                    ],
+                    "terminal_results": [
+                      0,
+                      1,
+                      2
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "terminal",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 2
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "terminal",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": null,
+                        "new_value": 2
+                      },
+                      {
+                        "path": "data.terminal_results.2",
+                        "old_value": null,
+                        "new_value": 2
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 2
+                  }
+                ],
+                "errors": []
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": null,
+                  "new_value": 2
+                },
+                {
+                  "path": "data.terminal_results.2",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "element_index": 2
+            },
+            {
+              "workflow_id": "halt_on",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c"
+                    ],
+                    "terminal_results": [
+                      0,
+                      1,
+                      2
+                    ],
+                    "halt_on_results": [
+                      null,
+                      null,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "halt_on",
+                      "task_id": "t",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {
+                    "out": 0
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "halt_on",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": 2,
+                        "new_value": 0
+                      },
+                      {
+                        "path": "data.halt_on_results.0",
+                        "old_value": null,
+                        "new_value": null
+                      }
+                    ],
+                    "status": 500,
+                    "element_index": 0
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task t returned status 500",
+                    "path": null,
+                    "workflow_id": "halt_on",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 0
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": 2,
+                  "new_value": 0
+                },
+                {
+                  "path": "data.halt_on_results.0",
+                  "old_value": null,
+                  "new_value": null
+                }
+              ],
+              "element_index": 0
+            },
+            {
+              "workflow_id": "halt_on",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c"
+                    ],
+                    "terminal_results": [
+                      0,
+                      1,
+                      2
+                    ],
+                    "halt_on_results": [
+                      null,
+                      1,
+                      null
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "halt_on",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 1
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "halt_on",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": 2,
+                        "new_value": 1
+                      },
+                      {
+                        "path": "data.halt_on_results.1",
+                        "old_value": null,
+                        "new_value": 1
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 1
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task t returned status 500",
+                    "path": null,
+                    "workflow_id": "halt_on",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 0
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": 2,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.halt_on_results.1",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "element_index": 1
+            },
+            {
+              "workflow_id": "halt_on",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c"
+                    ],
+                    "terminal_results": [
+                      0,
+                      1,
+                      2
+                    ],
+                    "halt_on_results": [
+                      null,
+                      1,
+                      2
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "halt_on",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "out": 2
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "halt_on",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "temp_data.out",
+                        "old_value": 2,
+                        "new_value": 2
+                      },
+                      {
+                        "path": "data.halt_on_results.2",
+                        "old_value": null,
+                        "new_value": 2
+                      }
+                    ],
+                    "status": 200,
+                    "element_index": 2
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "TASK_STATUS_ERROR",
+                    "message": "Task t returned status 500",
+                    "path": null,
+                    "workflow_id": "halt_on",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "element_index": 0
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "temp_data.out",
+                  "old_value": 2,
+                  "new_value": 2
+                },
+                {
+                  "path": "data.halt_on_results.2",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "element_index": 2
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

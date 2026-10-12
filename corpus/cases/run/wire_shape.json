@@ -1,0 +1,76 @@
+{
+  "description": "The wire message is exactly {id, payload, context, audit_trail, errors}: capture_changes, routing_bucket and audit_mode change what is kept but never serialize. Break 12: No wire difference: v4 moves capture_changes, audit_mode and routing_bucket from the message to RunOptions with unchanged defaults, so its runner maps this case's run options onto RunOptions.",
+  "covers": [
+    "run.wire-shape",
+    "run.wire-key-set",
+    "break.12"
+  ],
+  "mirrors": [
+    "tests/audit_mode.rs::the_wire_shape_carries_only_the_kept_entries"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "tasks": [
+        {
+          "id": "a",
+          "name": "a",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.a",
+                  "logic": 1
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "b",
+          "name": "b",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.b",
+                  "logic": 2
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "id": "defaults",
+          "payload": {
+            "p": 1
+          }
+        }
+      }
+    },
+    {
+      "run": {
+        "message": {
+          "id": "options",
+          "payload": {
+            "p": 1
+          }
+        },
+        "capture_changes": false,
+        "routing_bucket": 7,
+        "audit_mode": {
+          "last": 1
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "description": "Unknown keys are ignored: a workflow-level typo (conditon), the UI's path key, a task-level typo, and stray keys inside loop, for_each, rollout and a publish_json input all load, and each workflow runs as if the key were absent.",
+  "covers": ["break.2"],
+  "workflows": [
+    {"id": "wf_typo", "name": "wf_typo", "conditon": false, "path": "ui/folder", "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.order", "logic": "wf_typo", "mode": "append"}]}}}]},
+    {"id": "task_typo", "name": "task_typo", "tasks": [
+      {"id": "t", "name": "t", "conditon": false, "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.order", "logic": "task_typo", "mode": "append"}]}}}]},
+    {"id": "loop_key", "name": "loop_key", "loop": {"max": 2, "maxx": 5}, "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.order", "logic": "loop_key", "mode": "append"}]}}}]},
+    {"id": "for_each_key", "name": "for_each_key", "tasks": [
+      {"id": "t", "name": "t", "for_each": {"over": [1, 2], "as": "p", "ass": "q", "collect": "temp_data.out", "into": "data.fanned"},
+       "function": {"name": "script", "input": {"set": [{"path": "temp_data.out", "get": "temp_data.p"}]}}}]},
+    {"id": "rollout_key", "name": "rollout_key", "rollout": {"bucket_start": 0, "bucket_end": 100, "bucket_strat": 5}, "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.order", "logic": "rollout_key", "mode": "append"}]}}}]},
+    {"id": "publish_key", "name": "publish_key", "tasks": [
+      {"id": "t", "name": "t", "function": {"name": "publish_json", "input": {"source": "obj", "target": "published", "targte": "elsewhere"}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"obj": {"a": 1}}}}}],
+  "deviations": [
+    {"break": "2", "paths": ["/definitions/*/authored", "/definitions/*/checked"],
+     "note": "v4 reports each unknown key: a LIKELY_TYPO Defect for a near miss, an UNKNOWN_KEY Advisory otherwise"}
+  ]
+}

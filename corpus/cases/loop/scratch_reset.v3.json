@@ -1,0 +1,445 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "seen": [
+                "fresh",
+                "fresh",
+                "fresh"
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "keep": "me",
+              "i": 3,
+              "s": {
+                "mark": 1
+              }
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.0",
+                  "old_value": null,
+                  "new_value": "fresh"
+                },
+                {
+                  "path": "temp_data.s.mark",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.1",
+                  "old_value": null,
+                  "new_value": "fresh"
+                },
+                {
+                  "path": "temp_data.s.mark",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.2",
+                  "old_value": null,
+                  "new_value": "fresh"
+                },
+                {
+                  "path": "temp_data.s.mark",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "loop_counter": 2
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "seen": [
+                      "fresh"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "keep": "me",
+                    "i": 0,
+                    "s": {
+                      "mark": 1
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.seen.0",
+                        "old_value": null,
+                        "new_value": "fresh"
+                      },
+                      {
+                        "path": "temp_data.s.mark",
+                        "old_value": null,
+                        "new_value": 1
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 0
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {},
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {
+                    "i": 0,
+                    "keep": "me",
+                    "s": {}
+                  }
+                },
+                {
+                  "data": {
+                    "seen": [
+                      "fresh"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {
+                    "i": 0,
+                    "keep": "me",
+                    "s": {}
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.seen.0",
+                  "old_value": null,
+                  "new_value": "fresh"
+                },
+                {
+                  "path": "temp_data.s.mark",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "seen": [
+                      "fresh",
+                      "fresh"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "keep": "me",
+                    "i": 1,
+                    "s": {
+                      "mark": 1
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.seen.1",
+                        "old_value": null,
+                        "new_value": "fresh"
+                      },
+                      {
+                        "path": "temp_data.s.mark",
+                        "old_value": null,
+                        "new_value": 1
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 1
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "seen": [
+                      "fresh"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 1,
+                    "keep": "me",
+                    "s": {}
+                  }
+                },
+                {
+                  "data": {
+                    "seen": [
+                      "fresh",
+                      "fresh"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 1,
+                    "keep": "me",
+                    "s": {}
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.seen.1",
+                  "old_value": null,
+                  "new_value": "fresh"
+                },
+                {
+                  "path": "temp_data.s.mark",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "seen": [
+                      "fresh",
+                      "fresh",
+                      "fresh"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "keep": "me",
+                    "i": 2,
+                    "s": {
+                      "mark": 1
+                    }
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.seen.2",
+                        "old_value": null,
+                        "new_value": "fresh"
+                      },
+                      {
+                        "path": "temp_data.s.mark",
+                        "old_value": null,
+                        "new_value": 1
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 2
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "seen": [
+                      "fresh",
+                      "fresh"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 2,
+                    "keep": "me",
+                    "s": {}
+                  }
+                },
+                {
+                  "data": {
+                    "seen": [
+                      "fresh",
+                      "fresh",
+                      "fresh"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 2,
+                    "keep": "me",
+                    "s": {}
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.seen.2",
+                  "old_value": null,
+                  "new_value": "fresh"
+                },
+                {
+                  "path": "temp_data.s.mark",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "loop_counter": 2
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

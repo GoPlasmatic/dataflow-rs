@@ -1,0 +1,112 @@
+{
+  "description": "AuditMode Full (the default), Last(n) and Off change only what the audit trail keeps: the context, progress and error records are identical in every mode. In v3 the traced run's per-step changes are empty under Off and Last(0) as well.",
+  "covers": [
+    "run.audit-mode"
+  ],
+  "mirrors": [
+    "tests/audit_mode.rs::last_keeps_the_most_recent_entries_in_order",
+    "tests/audit_mode.rs::off_and_last_zero_keep_nothing",
+    "tests/audit_mode.rs::the_mode_changes_nothing_but_the_trail"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "tasks": [
+        {
+          "id": "a",
+          "name": "a",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.a",
+                  "logic": 1
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "reject",
+          "name": "reject",
+          "function": {
+            "name": "script",
+            "input": {
+              "outcome": {
+                "status": 400
+              }
+            }
+          }
+        },
+        {
+          "id": "b",
+          "name": "b",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.b",
+                  "logic": 2
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "boom",
+          "name": "boom",
+          "continue_on_error": true,
+          "function": {
+            "name": "script",
+            "input": {
+              "outcome": {
+                "status": 500
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {
+          "id": "full"
+        },
+        "audit_mode": "full"
+      }
+    },
+    {
+      "run": {
+        "message": {
+          "id": "last_1"
+        },
+        "audit_mode": {
+          "last": 1
+        }
+      }
+    },
+    {
+      "run": {
+        "message": {
+          "id": "last_0"
+        },
+        "audit_mode": {
+          "last": 0
+        }
+      }
+    },
+    {
+      "run": {
+        "message": {
+          "id": "off"
+        },
+        "audit_mode": "off"
+      }
+    }
+  ]
+}

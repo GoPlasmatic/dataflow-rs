@@ -1,0 +1,17 @@
+{
+  "description": "Every built-in parameter is JSONLogic and a literal is its own value, while a host function's input is config: a JSONLogic-shaped value in the script's raw write is written verbatim, never evaluated.",
+  "covers": ["expr.parameters"],
+  "mirrors": ["src/template::the_static_spelling_of_every_parameter_folds_to_a_constant", "tests/template_keys.rs::a_custom_tasks_input_is_config_not_a_template"],
+  "workflows": [
+    {"id": "w", "name": "w", "tasks": [
+      {"id": "literal", "name": "literal", "function": {"name": "map", "input": {"mappings": [
+        {"path": "data.folded", "logic": {"cat": ["a", "b"]}},
+        {"path": "data.number", "logic": 5}]}}},
+      {"id": "computed", "name": "computed", "function": {"name": "map", "input": {"mappings": [
+        {"path": {"cat": ["data.", {"var": "data.key"}]}, "logic": {"var": "data.number"}}]}}},
+      {"id": "host", "name": "host", "function": {"name": "script", "input": {
+        "set": [{"path": "data.config", "raw": {"var": "data.number"}},
+                {"path": "data.evaluated", "value": {"var": "data.number"}}]}}}]}
+  ],
+  "steps": [{"run": {"message": {"data": {"key": "dynamic"}}}}]
+}

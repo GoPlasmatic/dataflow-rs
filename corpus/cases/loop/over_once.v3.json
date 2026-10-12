@@ -1,0 +1,493 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "items": [
+                "a",
+                "b",
+                "c",
+                "x",
+                "x",
+                "x"
+              ],
+              "seen": [
+                "a",
+                "b",
+                "c"
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "i": 3,
+              "item": "c"
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.0",
+                  "old_value": null,
+                  "new_value": "a"
+                },
+                {
+                  "path": "data.items.3",
+                  "old_value": null,
+                  "new_value": "x"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.1",
+                  "old_value": null,
+                  "new_value": "b"
+                },
+                {
+                  "path": "data.items.4",
+                  "old_value": null,
+                  "new_value": "x"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.2",
+                  "old_value": null,
+                  "new_value": "c"
+                },
+                {
+                  "path": "data.items.5",
+                  "old_value": null,
+                  "new_value": "x"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 2
+            }
+          ],
+          "errors": []
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c",
+                      "x"
+                    ],
+                    "seen": [
+                      "a"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "i": 0,
+                    "item": "a"
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.seen.0",
+                        "old_value": null,
+                        "new_value": "a"
+                      },
+                      {
+                        "path": "data.items.3",
+                        "old_value": null,
+                        "new_value": "x"
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 0
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {
+                    "i": 0,
+                    "item": "a"
+                  }
+                },
+                {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c"
+                    ],
+                    "seen": [
+                      "a"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>"
+                  },
+                  "temp_data": {
+                    "i": 0,
+                    "item": "a"
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.seen.0",
+                  "old_value": null,
+                  "new_value": "a"
+                },
+                {
+                  "path": "data.items.3",
+                  "old_value": null,
+                  "new_value": "x"
+                }
+              ],
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c",
+                      "x",
+                      "x"
+                    ],
+                    "seen": [
+                      "a",
+                      "b"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "i": 1,
+                    "item": "b"
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.seen.1",
+                        "old_value": null,
+                        "new_value": "b"
+                      },
+                      {
+                        "path": "data.items.4",
+                        "old_value": null,
+                        "new_value": "x"
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 1
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c",
+                      "x"
+                    ],
+                    "seen": [
+                      "a"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 1,
+                    "item": "b"
+                  }
+                },
+                {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c",
+                      "x"
+                    ],
+                    "seen": [
+                      "a",
+                      "b"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 1,
+                    "item": "b"
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.seen.1",
+                  "old_value": null,
+                  "new_value": "b"
+                },
+                {
+                  "path": "data.items.4",
+                  "old_value": null,
+                  "new_value": "x"
+                }
+              ],
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c",
+                      "x",
+                      "x",
+                      "x"
+                    ],
+                    "seen": [
+                      "a",
+                      "b",
+                      "c"
+                    ]
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 200
+                    }
+                  },
+                  "temp_data": {
+                    "i": 2,
+                    "item": "c"
+                  }
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [
+                      {
+                        "path": "data.seen.2",
+                        "old_value": null,
+                        "new_value": "c"
+                      },
+                      {
+                        "path": "data.items.5",
+                        "old_value": null,
+                        "new_value": "x"
+                      }
+                    ],
+                    "status": 200,
+                    "loop_counter": 2
+                  }
+                ],
+                "errors": []
+              },
+              "mapping_contexts": [
+                {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c",
+                      "x",
+                      "x"
+                    ],
+                    "seen": [
+                      "a",
+                      "b"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 2,
+                    "item": "c"
+                  }
+                },
+                {
+                  "data": {
+                    "items": [
+                      "a",
+                      "b",
+                      "c",
+                      "x",
+                      "x"
+                    ],
+                    "seen": [
+                      "a",
+                      "b",
+                      "c"
+                    ]
+                  },
+                  "metadata": {
+                    "engine_version": "<engine_version>",
+                    "processed_at": "<timestamp>",
+                    "progress": {
+                      "status_code": 200,
+                      "task_id": "t",
+                      "workflow_id": "w"
+                    }
+                  },
+                  "temp_data": {
+                    "i": 2,
+                    "item": "c"
+                  }
+                }
+              ],
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": [
+                {
+                  "path": "data.seen.2",
+                  "old_value": null,
+                  "new_value": "c"
+                },
+                {
+                  "path": "data.items.5",
+                  "old_value": null,
+                  "new_value": "x"
+                }
+              ],
+              "loop_counter": 2
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

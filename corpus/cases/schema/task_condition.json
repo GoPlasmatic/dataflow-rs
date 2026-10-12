@@ -1,0 +1,68 @@
+{
+  "description": "A task's condition defaults to true: a task with none runs, one with true runs, one with false is skipped (the trace shows it skipped).",
+  "covers": [
+    "schema.task-condition"
+  ],
+  "workflows": [
+    {
+      "id": "w",
+      "name": "w",
+      "tasks": [
+        {
+          "id": "none",
+          "name": "none",
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.none",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "yes",
+          "name": "yes",
+          "condition": true,
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.yes",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "no",
+          "name": "no",
+          "condition": false,
+          "function": {
+            "name": "map",
+            "input": {
+              "mappings": [
+                {
+                  "path": "data.no",
+                  "logic": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "message": {}
+      }
+    }
+  ]
+}
