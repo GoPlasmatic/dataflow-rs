@@ -358,19 +358,6 @@ fn a_valid_default_json_round_trips() {
     );
 }
 
-#[derive(Debug, FunctionConfig)]
-struct BadDefault {
-    #[config(default_json = "{not json")]
-    extra: Value,
-}
-
-#[test]
-#[should_panic(expected = "BadDefault::extra")]
-fn a_default_json_that_is_not_json_panics_naming_the_field() {
-    let (out, _) = compile::<BadDefault>(&json!({}));
-    drop(out.map(|b| b.extra));
-}
-
 fn field<'f>(fields: &'f [FieldSpec], name: &str) -> &'f FieldSpec {
     fields
         .iter()

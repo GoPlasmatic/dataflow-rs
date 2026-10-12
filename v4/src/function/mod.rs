@@ -39,7 +39,8 @@ pub mod __private {
         key: &'static str,
         /// The default, as JSON text.
         default: Option<&'static str>,
-        /// `Struct::field`, for the panic on a default that is not JSON.
+        /// `Struct::field`, for the message of a default that is not JSON,
+        /// which the derive refuses at expansion.
         site: &'static str,
         /// An output: an explicit `null` is absent.
         output: bool,
@@ -89,14 +90,12 @@ pub mod __private {
         }
     }
 
-    /// A declared default, parsed.
-    ///
-    /// # Panics
-    ///
-    /// When the text is not JSON: a `default_json` the author got wrong.
+    /// A declared default, parsed. The derive writes every default as JSON
+    /// and refuses a `default_json` that is not, so this cannot fail.
     fn default(text: &str, site: &str) -> Value {
-        serde_json::from_str(text)
-            .unwrap_or_else(|e| panic!("the default of `{site}` is not JSON ({e}): {text}"))
+        serde_json::from_str(text).unwrap_or_else(|e| {
+            unreachable!("the default of `{site}` was validated by the derive ({e}): {text}")
+        })
     }
 
     fn missing(key: &str, cx: &mut CompileCx<'_>) {

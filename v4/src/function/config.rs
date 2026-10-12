@@ -111,6 +111,19 @@ use serde_json::Value;
 ///     x: bool,
 /// }
 /// ```
+///
+/// A `default_json` that is not JSON, refused where it is written rather than
+/// when a definition is first compiled:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # use dataflow_rs::function::FunctionConfig;
+/// #[derive(FunctionConfig)]
+/// struct BadDefault {
+///     #[config(default_json = "{not json")]
+///     extra: serde_json::Value,
+/// }
+/// ```
 pub trait FunctionConfig: Sized + Send + Sync + 'static {
     /// Every issue in the config, each at its exact path below the
     /// [`CompileCx`]'s root. `None` when any is Rejected.

@@ -25,7 +25,7 @@ use syn::{
 /// | --- | --- | --- |
 /// | `#[config(rename = "k")]` | field | The JSON key; the default is the field's name |
 /// | `#[config(default = <literal>)]` | field | A string, integer, float or bool, compiled through the field's type when the key is absent |
-/// | `#[config(default_json = "<json>")]` | field | Any JSON default, as text |
+/// | `#[config(default_json = "<json>")]` | field | Any JSON default, as text; text that is not JSON is a compile error |
 /// | `#[config(serde)]` | field | Read with `serde_json`; an error is `INPUT_PARSE`, and an absent key is read from `null` |
 /// | `#[config(records)]` | field | The engine records the field's result; inherited by everything below it |
 /// | `#[output(default = "p")]` | output | The default when the key is absent or `null` |
@@ -199,7 +199,7 @@ fn parse_field(field: &syn::Field) -> Result<Field<'_>> {
                     let json = literal_json(meta.value()?)?;
                     set_default(&mut f.default, json, &meta)?;
                 } else if meta.path.is_ident("default_json") {
-                    let json = meta.value()?.parse::<LitStr>()?.value();
+                    let json = json_text(&meta.value()?.parse::<LitStr>()?)?;
                     set_default(&mut f.default, json, &meta)?;
                 } else if meta.path.is_ident("serde") {
                     f.serde = true;
@@ -321,6 +321,19 @@ fn literal_json(input: ParseStream<'_>) -> Result<String> {
             other,
             "`default` takes a string, integer, float or bool literal; use `default_json` \
              for anything else",
+        )),
+    }
+}
+
+/// A `default_json`'s text, refused here when it is not JSON, so the
+/// generated code parses it infallibly.
+fn json_text(lit: &LitStr) -> Result<String> {
+    let text = lit.value();
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(_) => Ok(text),
+        Err(e) => Err(Error::new_spanned(
+            lit,
+            format!("`default_json` is not JSON ({e}): {text}"),
         )),
     }
 }
