@@ -1,5 +1,6 @@
 //! `FunctionConfig`: a function's input, compiled once at build.
 
+use crate::base::IssueCode;
 use crate::expr::{CompileCx, ExprVisitor, FieldSpec};
 use serde_json::Value;
 
@@ -29,7 +30,7 @@ impl FunctionConfig for () {
                 }
             }
             _ => cx.issue(
-                crate::IssueCode::InputParse,
+                IssueCode::InputParse,
                 "expected an object or null, this function takes no input",
             ),
         }

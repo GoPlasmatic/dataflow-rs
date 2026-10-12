@@ -2,7 +2,8 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::expr::{Evaluated, ExprEngine, escaped_keys, secret_refs};
-use dataflow_rs::{ErrorKind, Expr, Path};
+use dataflow_rs::run::ErrorKind;
+use dataflow_rs::{Expr, Path};
 use serde_json::{Value, json};
 use std::borrow::Cow;
 

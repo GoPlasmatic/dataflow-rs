@@ -5,7 +5,8 @@ use dataflow_rs::expr::{
     CompileCx, ConfigField, ExprEngine, ExprVisitor, FieldKind, FieldSpec, ValueKind, Visit,
 };
 use dataflow_rs::function::FunctionConfig;
-use dataflow_rs::{AuthoredPath, Expr, Issue, IssueCode, Path, Severity, StepKind};
+use dataflow_rs::program::{AuthoredPath, IssueCode, Severity, StepKind};
+use dataflow_rs::{Expr, Issue, Path};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -181,6 +182,8 @@ fn unknown_keys_are_typo_or_unknown() {
     cx.at("colection", |cx| cx.unknown_key("colection", &known));
     cx.at("zzz", |cx| cx.unknown_key("zzz", &known));
     drop(cx);
+    assert_eq!(issues[0].field.as_deref(), Some("colection"));
+    assert_eq!(issues[1].field.as_deref(), Some("zzz"));
     assert_eq!(issues[0].code, IssueCode::LikelyTypo);
     assert_eq!(issues[0].severity, Severity::Rejected);
     assert!(issues[0].message.contains("collection"));
@@ -327,4 +330,15 @@ fn unit_config_refuses_keys_and_non_objects() {
     assert_eq!(issues[0].code, IssueCode::InputParse);
     assert!(<() as FunctionConfig>::fields().is_empty());
     <() as FunctionConfig>::visit(&(), &mut Collect::default());
+}
+
+#[test]
+fn an_index_below_the_root_carries_no_field() {
+    let engine = ExprEngine::default();
+    let mut issues = Vec::new();
+    let mut cx =
+        CompileCx::new(&engine, &mut issues).at_path("tasks[0].function.input".parse().unwrap());
+    cx.at(0usize, |cx| cx.issue(IssueCode::InputParse, "x"));
+    drop(cx);
+    assert_eq!(issues[0].field, None);
 }

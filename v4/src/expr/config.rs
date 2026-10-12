@@ -33,10 +33,6 @@ pub enum ValueKind {
 /// What a config field is, for tooling.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
-#[expect(
-    clippy::use_self,
-    reason = "the contract spells the element thunks `fn() -> FieldKind`"
-)]
 pub enum FieldKind {
     /// A literal of the given kind, never evaluated.
     Literal(ValueKind),
@@ -49,9 +45,9 @@ pub enum FieldKind {
     /// A runtime-declared set of fields.
     Templated,
     /// An array of the element kind.
-    List(fn() -> FieldKind),
+    List(fn() -> Self),
     /// An object whose values are of the given kind.
-    Map(fn() -> FieldKind),
+    Map(fn() -> Self),
     /// A nested config's fields.
     Nested(fn() -> &'static [FieldSpec]),
 }
