@@ -237,7 +237,12 @@ in front of users.
 
 ## Pull Requests
 
-1. Fork the repository and branch from `main`
+**Which branch.** `main` is the next major version, 4.0, under construction. A
+fix for the 3.x release on crates.io and npm goes to `v3-maintenance`, which
+takes fixes only; a feature goes to `main`.
+
+1. Fork the repository and branch from `main`, or from `v3-maintenance` for a
+   3.x fix
 2. Make your change, with tests covering it
 3. Run the checks above
 4. Open a PR describing what changed and why

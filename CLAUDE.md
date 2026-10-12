@@ -154,6 +154,15 @@ round-robin, discards the cold round, and writes every run with the build,
 machine and method. The freeze baseline is `bench/baseline/3.15.0-freeze.json`.
 A metric's name is a contract: a port of a benchmark keeps it.
 
+### Branches
+
+**`main` is v4 under construction** from the freeze until 4.0.0. 3.x fixes go
+to `v3-maintenance`, which takes fixes only and deploys the documentation site.
+The corpus recordings (`corpus/cases/**/*.v3.json`) are owned by v3: a fix there
+that changes behaviour re-records its cases, and the recordings are copied here
+the same week. Never edit one to match v4; declare a deviation against a break
+instead.
+
 ### Release Process
 
 Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI and
