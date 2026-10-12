@@ -20,6 +20,11 @@ to the root `Cargo.toml` version by the release workflow:
 `wasm/` is a workspace member; `ui/` is a separate npm project driven by the
 release workflow. Bumping a version means bumping all three.
 
+The other workspace members are never published: `docs-tests/` (the docs'
+doctests), `corpus/` and `corpus/v3` (the golden corpus and v3's driver), and,
+while v4 is built beside v3, `v4/`, `derive/` and `corpus/v4` (see "v4 under
+construction" below).
+
 ### Core Architecture
 
 - **Engine**: Central async component that processes messages through workflows sequentially
@@ -64,7 +69,7 @@ private item, or an unbackticked generic like `Arc<Logic>` that rustdoc parses
 as an HTML tag. All of these ship silently to docs.rs as dead or mangled text.
 
 Lint *policy* lives in `[workspace.lints]` in the root `Cargo.toml`, inherited
-by all three members, so a bare `cargo clippy` and rust-analyzer enforce what CI
+by every member, so a bare `cargo clippy` and rust-analyzer enforce what CI
 enforces. Adding a lint there means fixing every existing violation in the same
 change: CI's `-D warnings` gives no grace period.
 
@@ -167,6 +172,37 @@ The corpus recordings (`corpus/cases/**/*.v3.json`) are owned by v3: a fix there
 that changes behaviour re-records its cases, and the recordings are copied here
 the same week. Never edit one to match v4; declare a deviation against a break
 instead.
+
+### v4 under construction
+
+**v4 is built beside v3, not in place of it,** until phase 7: in `v4/`
+(`dataflow-rs-v4`, library `dataflow_rs_v4`) and `derive/`
+(`dataflow-rs-derive`), with `corpus/v4` (`dataflow-corpus-v4`) as its corpus
+driver. The reason is 08's phase 4 fallback, which ships phases 2 and 3 as a
+layer over v3: v3's root crate must keep building on `main`, with its tests,
+examples, docs-tests, wasm and `corpus/v3`.
+
+`v4/` follows the design documents (`design-v4/`, untracked), not this file's
+v3 rulebook: everything under "Code Structure" below describes v3's `src/`.
+
+The derive emits `::dataflow_rs::` paths. v4 itself says
+`extern crate self as dataflow_rs`, every test in `v4/tests/` starts with
+`extern crate dataflow_rs_v4 as dataflow_rs;`, and a dependent renames the
+dependency (`dataflow-rs = { package = "dataflow-rs-v4", … }`, as `corpus/v4`
+does).
+
+v4's own checks, beside the workspace-wide ones above:
+
+```bash
+cargo clippy -p dataflow-rs-v4 --all-targets -- -D warnings
+cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
+cargo test -p dataflow-rs-v4
+cargo test -p dataflow-corpus-v4
+for f in datetime ext-string ext-array ext-math ext-control ext-object \
+         error-handling all-operators tensor budget; do
+  cargo test -p dataflow-rs-v4 --no-default-features --features "$f"
+done
+```
 
 ### Release Process
 
@@ -578,11 +614,13 @@ alters what a message ends up as re-records the affected cases and is read
 before it is committed; never edit a `.v3.json` by hand. The comparator is
 order-sensitive, because key order is wire data.
 
-`cargo test --workspace --all-features` should report 902 passing: the
-engine's 867 plus the corpus's 35 (its case checks are one test each way).
-`cargo test -p dataflow-rs` (default features) should report 753, and
-`cargo test -p dataflow-corpus-v3` 3. The operator families are
-`#[cfg]`-gated on both sides, so the counts legitimately differ.
+`cargo test --workspace --all-features` should report 1200 passing: the
+engine's 867 plus the corpus's 35 (its case checks are one test each way),
+v4's 296 and v4's corpus driver's 2. `cargo test -p dataflow-rs` (default
+features) should report 753, `cargo test -p dataflow-corpus-v3` 3,
+`cargo test -p dataflow-rs-v4` 285 and `cargo test -p dataflow-corpus-v4` 2.
+The operator families are `#[cfg]`-gated on both sides, so the counts
+legitimately differ.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and
 `with_ops_budget`'s doctest is gated too.
