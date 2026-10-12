@@ -25,6 +25,8 @@ use std::time::Instant;
 
 #[path = "shared/bench.rs"]
 mod bench;
+#[path = "shared/gate.rs"]
+mod gate;
 
 const CONTEXT_BYTES: usize = 2 * 1024 * 1024;
 const ELEMENTS: usize = 100;
@@ -141,6 +143,10 @@ async fn main() {
             .expect("the fan-out runs");
         samples.push(start.elapsed());
     }
-    samples.row("one fan-out, per message", 1, "message");
-    samples.row("one fan-out, per element", ELEMENTS, "element");
+    let per_message = samples.row("one fan-out, per message", 1, "message");
+    let per_element = samples.row("one fan-out, per element", ELEMENTS, "element");
+    gate::Gate::new("fan_out")
+        .row("per_message", per_message, "µs/message")
+        .row("per_element", per_element, "µs/element")
+        .emit();
 }

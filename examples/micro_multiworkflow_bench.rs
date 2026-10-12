@@ -46,6 +46,9 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Instant;
 
+#[path = "shared/gate.rs"]
+mod gate;
+
 const N: usize = 500_000;
 const WARMUP: usize = 50_000;
 const NUM_STAGES: usize = 5;
@@ -257,4 +260,10 @@ async fn main() {
         sp - g,
         (sp - g) / g * 100.0,
     );
+
+    gate::Gate::new("micro_multiworkflow_bench")
+        .lower("grouped.ns_per_msg", g, "ns/msg")
+        .lower("split_true.ns_per_msg", st, "ns/msg")
+        .lower("split_progress.ns_per_msg", sp, "ns/msg")
+        .emit();
 }

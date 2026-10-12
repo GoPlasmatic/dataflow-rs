@@ -39,6 +39,8 @@ use std::time::Instant;
 
 #[path = "shared/bench.rs"]
 mod bench;
+#[path = "shared/gate.rs"]
+mod gate;
 
 const TOTAL_MESSAGES: usize = 500_000;
 const WARMUP_MESSAGES: usize = 5_000;
@@ -280,11 +282,15 @@ async fn main() {
     println!("Messages: {TOTAL_MESSAGES}, cores: {}\n", num_cpus::get());
     let (mut samples, throughput) =
         bench::spawned(&engine, &payload, WARMUP_MESSAGES, TOTAL_MESSAGES).await;
-    samples.row("parse + connector + map", 1, "message");
+    let row = samples.row("parse + connector + map", 1, "message");
     println!("Throughput: {throughput:.0} msg/s");
     let n = calls.load(Ordering::Relaxed);
     println!(
         "Inside the layer: {:.2} µs per call, over {n} calls",
         nanos.load(Ordering::Relaxed) as f64 / n as f64 / 1000.0
     );
+    gate::Gate::new("orion_connector")
+        .row("connector", row, "µs/message")
+        .higher("connector.throughput", throughput, "msg/s")
+        .emit();
 }

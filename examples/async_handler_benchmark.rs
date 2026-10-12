@@ -27,6 +27,9 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[path = "shared/gate.rs"]
+mod gate;
+
 const TOTAL_MESSAGES: usize = 500_000;
 const WARMUP_MESSAGES: usize = 5_000;
 
@@ -333,5 +336,16 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     );
 
     println!("\n✅ Benchmark complete!");
+
+    let micros = |d: Duration| d.as_secs_f64() * 1e6;
+    gate::Gate::new("async_handler_benchmark")
+        .higher("sync_only.throughput", sync_tp, "msg/s")
+        .lower("sync_only.mean", avg_us, "µs")
+        .lower("sync_only.p99", micros(sync_pcts.3), "µs")
+        .higher("with_custom.throughput", async_tp, "msg/s")
+        .lower("with_custom.mean", async_us, "µs")
+        .lower("with_custom.p99", micros(async_pcts.3), "µs")
+        .lower("marginal", delta_us, "µs")
+        .emit();
     Ok(())
 }

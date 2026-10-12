@@ -20,6 +20,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "shared/bench.rs"]
 mod bench;
+#[path = "shared/gate.rs"]
+mod gate;
 #[path = "shared/iso20022.rs"]
 mod iso20022;
 
@@ -85,12 +87,18 @@ async fn main() {
         bench::spawned(&unobserved, &payload, WARMUP_MESSAGES, TOTAL_MESSAGES).await;
     let (mut watched, watched_tp) =
         bench::spawned(&observed, &payload, WARMUP_MESSAGES, TOTAL_MESSAGES).await;
-    plain.row("unobserved", 1, "message");
-    watched.row("observed, counting only", 1, "message");
+    let plain_row = plain.row("unobserved", 1, "message");
+    let watched_row = watched.row("observed, counting only", 1, "message");
     println!();
     println!("Throughput: unobserved {plain_tp:.0} msg/s, observed {watched_tp:.0} msg/s");
     println!(
         "Observing costs {:+.1}% throughput",
         (watched_tp - plain_tp) / plain_tp * 100.0
     );
+    gate::Gate::new("observed_run")
+        .row("unobserved", plain_row, "µs/message")
+        .higher("unobserved.throughput", plain_tp, "msg/s")
+        .row("observed", watched_row, "µs/message")
+        .higher("observed.throughput", watched_tp, "msg/s")
+        .emit();
 }

@@ -28,6 +28,9 @@ use dataflow_rs::{Engine, Message, Workflow};
 use serde_json::{Value, json};
 use std::time::Instant;
 
+#[path = "shared/gate.rs"]
+mod gate;
+
 /// (k mappings, messages to time). Message counts shrink as k grows to keep
 /// each config's wall time comparable.
 const CONFIGS: &[(usize, usize)] = &[(5, 150_000), (25, 60_000), (100, 15_000)];
@@ -140,4 +143,10 @@ async fn main() {
          (1.0x = linear write cost; the pre-write-through engine grows with k)",
         mn / m0
     );
+
+    let mut gate = gate::Gate::new("micro_subtree_write_bench");
+    for &(k, ns_mapping) in &per_mapping {
+        gate.lower(format!("k={k}.ns_per_mapping"), ns_mapping, "ns/mapping");
+    }
+    gate.lower("scaling", mn / m0, "x").emit();
 }

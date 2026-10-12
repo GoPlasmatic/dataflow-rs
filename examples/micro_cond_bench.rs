@@ -18,6 +18,9 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Instant;
 
+#[path = "shared/gate.rs"]
+mod gate;
+
 const N: usize = 2_000_000;
 const WARMUP: usize = 100_000;
 
@@ -112,4 +115,8 @@ async fn main() {
         el.as_nanos() as f64 / N as f64,
         N as f64 / el.as_secs_f64()
     );
+
+    gate::Gate::new("micro_cond_bench")
+        .lower("ns_per_msg", el.as_nanos() as f64 / N as f64, "ns/msg")
+        .emit();
 }

@@ -18,6 +18,8 @@ use futures::future::join_all;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[path = "shared/gate.rs"]
+mod gate;
 #[path = "shared/iso20022.rs"]
 mod iso20022;
 
@@ -170,6 +172,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         throughput * 38.0
     );
     println!("\n✅ Benchmark complete!");
+
+    let micros = |d: Duration| d.as_secs_f64() * 1e6;
+    gate::Gate::new("realistic_benchmark")
+        .higher("throughput", throughput, "msg/s")
+        .lower("mean", micros(avg), "µs")
+        .lower("p99", micros(p99), "µs")
+        .emit();
 
     Ok(())
 }

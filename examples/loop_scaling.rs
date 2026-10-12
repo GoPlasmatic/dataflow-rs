@@ -36,6 +36,8 @@ use std::time::Instant;
 
 #[path = "shared/bench.rs"]
 mod bench;
+#[path = "shared/gate.rs"]
+mod gate;
 
 /// The context before the loop starts: carried by every sweep, read by none.
 const CONTEXT_BYTES: usize = 256 * 1024;
@@ -181,6 +183,7 @@ async fn main() {
     let base = OwnedDataValue::from(&json!({ "input": input, "state": { "score": 0 } }));
 
     let mut means = Vec::new();
+    let mut gate = gate::Gate::new("loop_scaling");
     for &(sweeps, messages) in CONFIGS {
         for by_handler in [false, true] {
             let engine = engine(sweeps, by_handler);
@@ -198,11 +201,9 @@ async fn main() {
             }
             let how = if by_handler { "handler" } else { "map" };
             let label = format!("{sweeps:>4} sweeps, decide by {how}");
-            means.push((
-                sweeps,
-                by_handler,
-                samples.row(&label, sweeps as usize, "sweep"),
-            ));
+            let row = samples.row(&label, sweeps as usize, "sweep");
+            gate.row(&format!("sweeps={sweeps}.{how}"), row, "µs/sweep");
+            means.push((sweeps, by_handler, row.0));
         }
     }
 
@@ -221,4 +222,5 @@ async fn main() {
             mean_at(1000) / mean_at(250)
         );
     }
+    gate.emit();
 }

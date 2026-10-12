@@ -40,11 +40,11 @@ impl Samples {
         (micros(mean), micros(at(50)), micros(at(99)))
     }
 
-    /// Prints one row and returns its mean.
-    pub fn row(&mut self, label: &str, per: usize, unit: &str) -> f64 {
+    /// Prints one row and returns its mean, P50 and P99.
+    pub fn row(&mut self, label: &str, per: usize, unit: &str) -> (f64, f64, f64) {
         let (mean, p50, p99) = self.summary(per);
         println!("{label:<36} mean {mean:>10.2}   p50 {p50:>10.2}   p99 {p99:>10.2}   µs/{unit}");
-        mean
+        (mean, p50, p99)
     }
 }
 

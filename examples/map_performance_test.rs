@@ -10,6 +10,9 @@ use dataflow_rs::engine::{Engine, Message, Workflow};
 use serde_json::json;
 use std::time::Instant;
 
+#[path = "shared/gate.rs"]
+mod gate;
+
 #[tokio::main]
 async fn main() {
     // Create a workflow with multiple sequential mappings
@@ -117,4 +120,13 @@ async fn main() {
         "Mapping throughput: {:.0} mappings/second",
         throughput * 10.0
     );
+
+    gate::Gate::new("map_performance_test")
+        .higher("throughput", throughput, "msg/s")
+        .lower(
+            "mean",
+            duration.as_secs_f64() * 1e6 / iterations as f64,
+            "µs",
+        )
+        .emit();
 }

@@ -33,6 +33,8 @@ use std::time::Instant;
 
 #[path = "shared/bench.rs"]
 mod bench;
+#[path = "shared/gate.rs"]
+mod gate;
 
 const CONTEXT_BYTES: usize = 2 * 1024 * 1024;
 const CALLS: usize = 1000;
@@ -160,6 +162,7 @@ async fn main() {
     let metadata = OwnedDataValue::from(&json!({ "tenant": "acme" }));
 
     let mut means = Vec::new();
+    let mut gate = gate::Gate::new("large_context_handler");
     for &(name, mode) in MODES {
         let engine = Engine::builder()
             .with_workflow(workflow(name))
@@ -181,7 +184,9 @@ async fn main() {
             engine.process_message(&mut m).await.expect("the loop runs");
             samples.push(start.elapsed());
         }
-        means.push(samples.row(name, CALLS, "call"));
+        let row = samples.row(name, CALLS, "call");
+        gate.row(name, row, "µs/call");
+        means.push(row.0);
     }
 
     println!();
@@ -190,4 +195,5 @@ async fn main() {
         means[1] - means[0],
         means[2] - means[0]
     );
+    gate.emit();
 }
