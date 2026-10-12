@@ -7,6 +7,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use syn::ext::IdentExt;
 use syn::parse::ParseStream;
 use syn::{
     Attribute, Data, DeriveInput, Error, Expr, ExprLit, Fields, Ident, Lit, LitStr, Meta, Path,
@@ -57,6 +58,8 @@ struct Field<'a> {
 
 fn expand(input: &DeriveInput) -> Result<TokenStream2> {
     let name = &input.ident;
+    // A raw identifier names its key and its messages without the `r#`.
+    let shown = name.unraw();
     let named = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(named) => &named.named,
@@ -96,7 +99,7 @@ fn expand(input: &DeriveInput) -> Result<TokenStream2> {
             Error::new_spanned(
                 name,
                 format!(
-                    "`{name}` has {outputs} outputs: mark exactly one of them `#[output(primary)]`"
+                    "`{shown}` has {outputs} outputs: mark exactly one of them `#[output(primary)]`"
                 ),
             ),
         );
@@ -160,7 +163,8 @@ fn parse_field(field: &syn::Field) -> Result<Field<'_>> {
     let mut f = Field {
         ident,
         ty: &field.ty,
-        key: ident.to_string(),
+        // `r#type` is the key `type`.
+        key: ident.unraw().to_string(),
         default: None,
         serde: false,
         records: false,
@@ -170,9 +174,25 @@ fn parse_field(field: &syn::Field) -> Result<Field<'_>> {
     };
     let mut output_attr = false;
     let mut docs = Vec::new();
+    // Each `config(…)` and `output(…)` key this field has given, across all of
+    // its attributes: a repeat is refused, as a second `default` is.
+    let mut given: Vec<String> = Vec::new();
+    let mut once = |attr: &str, meta: &syn::meta::ParseNestedMeta<'_>| -> Result<()> {
+        let key = meta
+            .path
+            .get_ident()
+            .map_or_else(String::new, ToString::to_string);
+        let seen = format!("{attr}({key})");
+        if given.contains(&seen) {
+            return Err(meta.error(format!("`{key}` is given twice on this field")));
+        }
+        given.push(seen);
+        Ok(())
+    };
     for attr in &field.attrs {
         if attr.path().is_ident("config") {
             attr.parse_nested_meta(|meta| {
+                once("config", &meta)?;
                 if meta.path.is_ident("rename") {
                     f.key = meta.value()?.parse::<LitStr>()?.value();
                 } else if meta.path.is_ident("default") {
@@ -198,6 +218,7 @@ fn parse_field(field: &syn::Field) -> Result<Field<'_>> {
         } else if attr.path().is_ident("output") {
             output_attr = true;
             attr.parse_nested_meta(|meta| {
+                once("output", &meta)?;
                 if meta.path.is_ident("default") {
                     let path = meta.value()?.parse::<LitStr>()?.value();
                     set_default(&mut f.default, json_string(&path), &meta)?;
@@ -224,6 +245,13 @@ fn parse_field(field: &syn::Field) -> Result<Field<'_>> {
         return Err(Error::new_spanned(
             ident,
             "a `#[config(serde)]` field cannot be an `#[output]`",
+        ));
+    }
+    if f.serde && f.records {
+        return Err(Error::new_spanned(
+            ident,
+            "a `#[config(serde)]` field holds no expression, so it cannot be \
+             `#[config(records)]`",
         ));
     }
     f.output = output_attr || (!f.serde && is_output_type(f.ty));
@@ -279,7 +307,16 @@ fn literal_json(input: ParseStream<'_>) -> Result<String> {
         Lit::Bool(b) if !negative => Ok(b.value().to_string()),
         Lit::Int(i) => Ok(format!("{sign}{}", i.base10_digits())),
         // Through `f64` so the text is JSON: Rust's `1.` and `1_0.5` are not.
-        Lit::Float(f) => Ok(format!("{sign}{:?}", f.base10_parse::<f64>()?)),
+        Lit::Float(f) => {
+            let value = f.base10_parse::<f64>()?;
+            if !value.is_finite() {
+                return Err(Error::new_spanned(
+                    f,
+                    "a float `default` must be finite; JSON has no infinity",
+                ));
+            }
+            Ok(format!("{sign}{value:?}"))
+        }
         other => Err(Error::new_spanned(
             other,
             "`default` takes a string, integer, float or bool literal; use `default_json` \
@@ -323,7 +360,7 @@ fn generate(name: &Ident, check: Option<&Path>, fields: &[Field<'_>]) -> TokenSt
     let compiles = fields.iter().zip(&vars).map(|(f, var)| {
         let (ty, key, output) = (f.ty, &f.key, f.output);
         let default = option(f.default.as_deref());
-        let site = format!("{name}::{}", f.ident);
+        let site = format!("{}::{}", name.unraw(), f.ident.unraw());
         let helper = if f.serde {
             quote!(serde_field)
         } else {

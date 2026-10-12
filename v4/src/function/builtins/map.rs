@@ -127,7 +127,10 @@ impl Mapping {
                 "`mode` says how a `logic` result is written, and this mapping has no `logic`",
             ));
         }
-        let literal_root = self.path.constant().is_some_and(Path::is_root);
+        // v3's rule: only an authored string naming a root. A computed path
+        // that folds to one is left to the write, as v3 left it.
+        let literal_root =
+            self.path.raw().is_string() && self.path.constant().is_some_and(Path::is_root);
         if literal_root && (self.unset || self.on_null == Some(OnNull::Unset)) {
             return Some((
                 "path",
@@ -240,9 +243,20 @@ mod tests {
         let (_, issues) = one(json!({"path": "metadata", "logic": 1, "mode": "append"}));
         assert_eq!(issues[0].path.to_string(), "mappings[0].path");
         assert!(issues[0].message.contains("cannot be appended to"));
-        // A computed path that folds to a root is still a literal root.
-        let (_, issues) = one(json!({"path": {"cat": ["temp", "_data"]}, "unset": true}));
-        assert_eq!(issues[0].code, IssueCode::InvalidMapping);
+        // As in v3, only a literal string names a root here: a computed path
+        // that folds to one compiles, and refusing its write is the runtime's.
+        let (config, issues) = one(json!({"path": {"cat": ["da", "ta"]}, "unset": true}));
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(
+            config.unwrap().mappings[0]
+                .path
+                .constant()
+                .unwrap()
+                .is_root()
+        );
+        let (_, issues) = one(json!({"path": {"cat": ["temp", "_data"]}, "logic": 1,
+                                     "mode": "extend"}));
+        assert!(issues.is_empty(), "{issues:?}");
     }
 
     #[test]

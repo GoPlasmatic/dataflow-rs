@@ -16,14 +16,16 @@ pub use dataflow_rs_derive::FunctionConfig;
 #[doc(hidden)]
 pub mod __private {
     pub use super::config::FunctionConfig;
-    pub use crate::base::{AuthoredPath, IssueCode};
+    pub use crate::base::AuthoredPath;
     pub use crate::expr::{
         CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, ValueKind, Visit,
     };
-    pub use serde_json::{self, Map, Value};
+    pub use serde_json::Value;
     pub use std::sync::OnceLock;
 
+    use crate::base::IssueCode;
     use serde::de::DeserializeOwned;
+    use serde_json::Map;
     use std::borrow::Cow;
 
     /// One field's key and its declared default, for the compile helpers.

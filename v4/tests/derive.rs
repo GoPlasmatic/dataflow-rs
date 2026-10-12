@@ -478,6 +478,43 @@ fn a_lone_output_is_the_primary() {
     assert_eq!(cfg.unwrap().out.constant().unwrap().to_string(), "data.r");
 }
 
+/// A raw identifier: the field `r#type` is the key `type`.
+#[derive(Debug, FunctionConfig)]
+struct Raw {
+    r#type: Expr<String>,
+}
+
+#[test]
+fn a_raw_field_name_keeps_its_key() {
+    let (cfg, issues) = compile::<Raw>(&json!({"type": "x"}));
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(
+        cfg.unwrap().r#type.constant().map(String::as_str),
+        Some("x")
+    );
+    assert_eq!(Raw::fields()[0].name, "type");
+
+    let (cfg, issues) = compile::<Raw>(&json!({}));
+    assert!(cfg.is_none());
+    assert_eq!(
+        summary(&issues),
+        [(IssueCode::InputParse, "tasks[0].function.input.type".into())]
+    );
+    assert_eq!(issues[0].message, "missing field `type`");
+
+    // The Rust spelling is not a key.
+    let (cfg, issues) = compile::<Raw>(&json!({"r#type": "x"}));
+    assert!(cfg.is_none());
+    let codes: Vec<IssueCode> = issues.iter().map(|i| i.code).collect();
+    assert_eq!(codes, [IssueCode::LikelyTypo, IssueCode::InputParse]);
+    assert!(issues[0].message.contains("did you mean `type`"));
+
+    let (cfg, _) = compile::<Raw>(&json!({"type": {"var": "data.t"}}));
+    let mut seen = Collect::default();
+    FunctionConfig::visit(&cfg.unwrap(), &mut seen);
+    assert_eq!(seen.exprs[0].0, "type");
+}
+
 #[derive(Default)]
 struct Collect {
     exprs: Vec<(String, Value, bool)>,

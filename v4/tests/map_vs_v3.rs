@@ -73,38 +73,28 @@ fn v4_compile(mappings: &[Value]) -> (Option<MapConfig>, Vec<Issue>) {
 /// One issue: its code, path and message.
 type Row = (String, String, String);
 
-fn v4_issues(mappings: &[Value], code: IssueCode) -> Vec<Row> {
+/// Every issue v4 reports for `mappings`, of any code.
+fn v4_rows(mappings: &[Value]) -> Vec<Row> {
     v4_compile(mappings)
         .1
         .into_iter()
-        .filter(|i| i.code == code)
         .map(|i| (i.code.as_str().to_owned(), i.path.to_string(), i.message))
         .collect()
 }
 
-fn v3_invalid(mappings: &[Value]) -> Vec<Row> {
-    dataflow_rs_v3::Workflow::validate_authored(&workflow(mappings))
+fn v4_issues(mappings: &[Value], code: IssueCode) -> Vec<Row> {
+    v4_rows(mappings)
         .into_iter()
-        .filter(|i| i.code == dataflow_rs_v3::IssueCode::InvalidMapping)
-        .map(|i| (i.code.as_str().to_owned(), i.path.unwrap(), i.message))
+        .filter(|(c, _, _)| c == code.as_str())
         .collect()
 }
 
-/// The index of the mapping an issue path sits in.
-fn mapping_index(path: &str) -> usize {
-    let rest = path
-        .strip_prefix(&format!("{ROOT}.mappings["))
-        .unwrap_or_else(|| panic!("not a mapping path: {path}"));
-    rest[..rest.find(']').unwrap()].parse().unwrap()
-}
-
-#[test]
-fn invalid_mapping_matches_v3_issue_for_issue() {
-    let all = mappings();
-    let v3 = v3_invalid(&all);
-    let v4 = v4_issues(&all, IssueCode::InvalidMapping);
-    assert!(!v3.is_empty(), "the comparison must not be vacuous");
-    assert_eq!(v4, v3);
+/// Every issue v3's `validate_authored` reports, of any code.
+fn v3_authored(mappings: &[Value]) -> Vec<Row> {
+    dataflow_rs_v3::Workflow::validate_authored(&workflow(mappings))
+        .into_iter()
+        .map(|i| (i.code.as_str().to_owned(), i.path.unwrap(), i.message))
+        .collect()
 }
 
 /// v3's `NULL_MAPPING` message with a literal path named as `describe_path`
@@ -120,29 +110,14 @@ fn dotted(message: &str) -> String {
     format!("{head}'{path}'{tail}")
 }
 
-#[test]
-fn null_mapping_matches_v3_issue_for_issue() {
-    let all = mappings();
-    // v3 refuses a definition with an INVALID_MAPPING before `check_workflow`
-    // can run, so both sides check the mappings v3 accepts.
-    let refused: BTreeSet<usize> = v3_invalid(&all)
-        .iter()
-        .map(|(_, path, _)| mapping_index(path))
-        .collect();
-    let accepted: Vec<Value> = all
-        .into_iter()
-        .enumerate()
-        .filter(|(i, _)| !refused.contains(i))
-        .map(|(_, m)| m)
-        .collect();
-    assert!(!accepted.is_empty() && !refused.is_empty());
-
-    let workflow = dataflow_rs_v3::Workflow::from_json(&workflow(&accepted).to_string())
+/// Every issue v3's `check_workflow` reports for `mappings`, which v3 must
+/// accept, of any code, with the path prefixed `tasks[0].`.
+fn v3_checked(mappings: &[Value]) -> Vec<Row> {
+    let workflow = dataflow_rs_v3::Workflow::from_json(&workflow(mappings).to_string())
         .expect("v3 accepts every mapping it reported nothing for");
-    let v3: Vec<Row> = dataflow_rs_v3::Engine::builder()
+    dataflow_rs_v3::Engine::builder()
         .check_workflow(&workflow)
         .into_iter()
-        .filter(|i| i.code == dataflow_rs_v3::IssueCode::NullMapping)
         .map(|i| {
             (
                 i.code.as_str().to_owned(),
@@ -150,13 +125,94 @@ fn null_mapping_matches_v3_issue_for_issue() {
                 dotted(&i.message),
             )
         })
-        .collect();
-    let v4 = v4_issues(&accepted, IssueCode::NullMapping);
-    assert!(!v3.is_empty(), "the comparison must not be vacuous");
-    assert_eq!(v4, v3);
+        .collect()
+}
 
-    // v4 accepts every mapping v3 accepts: nothing else it reports is Rejected.
+/// The index of the mapping an issue path sits in.
+fn mapping_index(path: &str) -> usize {
+    let rest = path
+        .strip_prefix(&format!("{ROOT}.mappings["))
+        .unwrap_or_else(|| panic!("not a mapping path: {path}"));
+    rest[..rest.find(']').unwrap()].parse().unwrap()
+}
+
+/// `path` with its mapping index replaced by `index`.
+fn reindexed(path: &str, index: usize) -> String {
+    let below = path
+        .strip_prefix(&format!("{ROOT}.mappings["))
+        .unwrap_or_else(|| panic!("not a mapping path: {path}"));
+    let rest = &below[below.find(']').unwrap()..];
+    format!("{ROOT}.mappings[{index}{rest}")
+}
+
+/// The 216 split by v3's verdict: the indices it refused, and the indices and
+/// mappings it accepted.
+fn split(all: &[Value]) -> (BTreeSet<usize>, Vec<usize>, Vec<Value>) {
+    let refused: BTreeSet<usize> = v3_authored(all)
+        .iter()
+        .map(|(_, path, _)| mapping_index(path))
+        .collect();
+    let (indices, accepted) = all
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !refused.contains(i))
+        .map(|(i, m)| (i, m.clone()))
+        .unzip();
+    (refused, indices, accepted)
+}
+
+#[test]
+fn invalid_mapping_matches_v3_issue_for_issue() {
+    let all = mappings();
+    let v3 = v3_authored(&all);
+    assert!(!v3.is_empty(), "the comparison must not be vacuous");
+    // Nothing but INVALID_MAPPING, so filtering v4's list hides nothing on v3's.
+    assert!(v3.iter().all(|(code, _, _)| code == "INVALID_MAPPING"));
+    // Exactly one issue per refused mapping: the first rule it breaks.
+    let (refused, _, _) = split(&all);
+    assert_eq!(refused.len(), v3.len());
+    assert_eq!(v4_issues(&all, IssueCode::InvalidMapping), v3);
+}
+
+#[test]
+fn null_mapping_matches_v3_issue_for_issue() {
+    let all = mappings();
+    // v3 refuses a definition with an INVALID_MAPPING before `check_workflow`
+    // can run, so both sides check the mappings v3 accepts.
+    let (refused, _, accepted) = split(&all);
+    assert!(!accepted.is_empty() && !refused.is_empty());
+
+    let v3 = v3_checked(&accepted);
+    assert!(!v3.is_empty(), "the comparison must not be vacuous");
+    assert!(v3.iter().all(|(code, _, _)| code == "NULL_MAPPING"));
+    assert_eq!(v4_rows(&accepted), v3);
+
+    // v4 accepts every mapping v3 accepts: nothing it reports is Rejected.
     let (config, issues) = v4_compile(&accepted);
     assert!(config.is_some(), "{issues:?}");
     assert_eq!(config.unwrap().mappings.len(), accepted.len());
+}
+
+/// v4's whole issue list over the 216, of every code, is v3's: the
+/// `INVALID_MAPPING` row of each mapping v3 refuses, and the `NULL_MAPPING`
+/// row of each it accepts but would never write, in mapping order. A stray
+/// issue of any other code, or a second issue on one mapping, fails it.
+#[test]
+fn every_issue_v4_reports_over_the_216_is_one_v3_reports() {
+    let all = mappings();
+    let (_, indices, accepted) = split(&all);
+    let mut expected: Vec<(usize, Row)> = v3_authored(&all)
+        .into_iter()
+        .map(|row| (mapping_index(&row.1), row))
+        .collect();
+    for (code, path, message) in v3_checked(&accepted) {
+        let index = indices[mapping_index(&path)];
+        expected.push((index, (code, reindexed(&path, index), message)));
+    }
+    expected.sort_by_key(|(index, _)| *index);
+    let expected: Vec<Row> = expected.into_iter().map(|(_, row)| row).collect();
+
+    let (config, _) = v4_compile(&all);
+    assert!(config.is_none());
+    assert_eq!(v4_rows(&all), expected);
 }

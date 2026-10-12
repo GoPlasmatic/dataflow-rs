@@ -54,6 +54,63 @@ use serde_json::Value;
 ///     failed: Output,
 /// }
 /// ```
+///
+/// The derive refuses what it cannot honour. An unknown `config` key:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # use dataflow_rs::function::FunctionConfig;
+/// #[derive(FunctionConfig)]
+/// struct Unknown {
+///     #[config(renamed = "k")]
+///     a: bool,
+/// }
+/// ```
+///
+/// A generic struct, even one whose parameter is a config field:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # use dataflow_rs::expr::ConfigField;
+/// # use dataflow_rs::function::FunctionConfig;
+/// #[derive(FunctionConfig)]
+/// struct Generic<T: ConfigField> {
+///     a: T,
+/// }
+/// ```
+///
+/// A tuple struct:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # use dataflow_rs::function::FunctionConfig;
+/// #[derive(FunctionConfig)]
+/// struct Tuple(bool);
+/// ```
+///
+/// `records` on a `serde` field, which holds no expression to record:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # use dataflow_rs::function::FunctionConfig;
+/// #[derive(FunctionConfig)]
+/// struct Recorded {
+///     #[config(serde, records)]
+///     a: Option<bool>,
+/// }
+/// ```
+///
+/// A key given twice on one field:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # use dataflow_rs::function::FunctionConfig;
+/// #[derive(FunctionConfig)]
+/// struct Renamed {
+///     #[config(rename = "a", rename = "b")]
+///     x: bool,
+/// }
+/// ```
 pub trait FunctionConfig: Sized + Send + Sync + 'static {
     /// Every issue in the config, each at its exact path below the
     /// [`CompileCx`]'s root. `None` when any is Rejected.
