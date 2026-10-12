@@ -27,14 +27,19 @@
 //!
 //! The reader refuses a `continue_on_error` that is not a bool
 //! (`PARSE_FAILED`), a `halt_on` that is not `"never"` or `"failure"`
-//! (`INVALID_HALT_ON`, v3's message), and a v3 key written beside its v4
-//! counterpart (`PARSE_FAILED` at the v3 key, as v3's duplicate field was):
-//! `continue_on_error` with `on_failure`, `halt_on` with `on_rejection`, an
-//! alias with its target. A refused key is taken out all the same, so the walk
-//! does not report it twice.
+//! (`INVALID_HALT_ON`, v3's message), and a v3 key written beside a v4 one
+//! (`PARSE_FAILED` at the v3 key, as v3's duplicate field was): on one node,
+//! any v3 policy key (`continue_on_error`, a task's `halt_on`) beside any v4
+//! policy key (`on_failure`, a task's `on_rejection`), and an alias beside its
+//! target. The two flags make one policy, so a v3 flag beside the v4 key of
+//! the other axis would be a guess at how the author meant them to combine. A
+//! refused key is taken out all the same, so the walk does not report it
+//! twice.
 
 use super::MAX_GROUP_DEPTH;
-use super::keys::PUBLISH_KEYS;
+use super::keys::{
+    GROUP_V3_KEYS, PUBLISH_KEYS, TASK_POLICIES, TASK_V3_KEYS, WORKFLOW_POLICIES, WORKFLOW_V3_KEYS,
+};
 use crate::base::typo::near_miss;
 use crate::base::{AuthoredPath, Issue, IssueCode, StepKind};
 use serde_json::{Map, Value};
@@ -46,8 +51,8 @@ use serde_json::{Map, Value};
 /// - a policy flag is `key: value`, and its v4 side lists the policies the
 ///   reader wrote, such as `continue_on_error: true` read as
 ///   `on_failure: continue, on_rejection: continue`. A task's two flags are
-///   read together, so each of its rewrites names the same policies; a policy
-///   the task already spelled in v4 is kept and not listed;
+///   read together, so each of its rewrites names the same policies (a flag
+///   beside a v4 policy is refused, not rewritten);
 /// - a function name or an input key is the bare name: `validate` read as
 ///   `validation`, `path_logic` read as `path`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +151,25 @@ fn both(v3: &str, v4: &str) -> String {
     format!("`{v3}` is the v3 spelling of `{v4}`, and both are written: keep `{v4}`")
 }
 
+/// The v4 policy keys of `policies` that `obj` holds, in the table's order.
+fn policies_in(obj: &Map<String, Value>, policies: &[&'static str]) -> Vec<&'static str> {
+    policies
+        .iter()
+        .copied()
+        .filter(|key| obj.contains_key(*key))
+        .collect()
+}
+
+/// A v3 policy key written beside v4 policy keys on one `node`, whose v4
+/// spelling is its `policies`.
+fn mixed(v3: &str, v4: &[&str], node: &str, policies: &str) -> String {
+    let v4: Vec<String> = v4.iter().map(|key| format!("`{key}`")).collect();
+    format!(
+        "v3's `{v3}` and v4's {} on one {node}; write only the v4 {policies}",
+        v4.join(" and ")
+    )
+}
+
 impl Read {
     fn report(
         &mut self,
@@ -181,7 +205,12 @@ impl Read {
 
     fn workflow(&mut self, obj: &mut Map<String, Value>) {
         let root = AuthoredPath::root();
-        for key in keys_among(obj, &["continue_on_error", "loop", "tasks"]) {
+        let wanted: Vec<&'static str> = WORKFLOW_V3_KEYS
+            .iter()
+            .copied()
+            .chain(["loop", "tasks"])
+            .collect();
+        for key in keys_among(obj, &wanted) {
             match key {
                 "continue_on_error" => self.workflow_flag(obj, &root),
                 "loop" => {
@@ -217,8 +246,9 @@ impl Read {
             );
             return;
         };
-        if obj.contains_key("on_failure") {
-            let message = both("continue_on_error", "on_failure");
+        let v4 = policies_in(obj, WORKFLOW_POLICIES);
+        if !v4.is_empty() {
+            let message = mixed("continue_on_error", &v4, "workflow", "policy");
             self.report(IssueCode::ParseFailed, path, message, None, None);
             return;
         }
@@ -272,7 +302,8 @@ impl Read {
         depth: usize,
     ) {
         // A group too deep is not descended into, as the walk does not.
-        for key in keys_among(obj, &["continue_on_error", "tasks"]) {
+        let wanted: Vec<&'static str> = GROUP_V3_KEYS.iter().copied().chain(["tasks"]).collect();
+        for key in keys_among(obj, &wanted) {
             if key == "continue_on_error" {
                 self.group_flag(obj, at, step);
             } else if depth < MAX_GROUP_DEPTH
@@ -315,14 +346,18 @@ impl Read {
     }
 
     fn task(&mut self, obj: &mut Map<String, Value>, at: &AuthoredPath, step: &Step) {
-        let order = keys_among(obj, &["continue_on_error", "halt_on", "function"]);
-        let has_flags = obj.contains_key("continue_on_error") || obj.contains_key("halt_on");
+        let wanted: Vec<&'static str> = TASK_V3_KEYS.iter().copied().chain(["function"]).collect();
+        let order = keys_among(obj, &wanted);
+        let has_flags = TASK_V3_KEYS.iter().any(|key| obj.contains_key(*key));
+        // Any v4 policy beside any v3 flag refuses every flag.
+        let v4_policies = policies_in(obj, TASK_POLICIES);
+        let refuse_mixed = |v3: &str| Flag::Refused {
+            code: IssueCode::ParseFailed,
+            message: mixed(v3, &v4_policies, "task", "policies"),
+        };
         let continue_on_error = match take(obj, "continue_on_error") {
             None => Flag::Absent,
-            Some(Value::Bool(_)) if obj.contains_key("on_failure") => Flag::Refused {
-                code: IssueCode::ParseFailed,
-                message: both("continue_on_error", "on_failure"),
-            },
+            Some(Value::Bool(_)) if !v4_policies.is_empty() => refuse_mixed("continue_on_error"),
             Some(Value::Bool(set)) => Flag::Valid {
                 text: format!("continue_on_error: {set}"),
                 set,
@@ -335,15 +370,10 @@ impl Read {
         let halt_on = match take(obj, "halt_on") {
             None => Flag::Absent,
             Some(raw) => match raw.as_str() {
-                Some(spelling @ ("never" | "failure")) if !obj.contains_key("on_rejection") => {
-                    Flag::Valid {
-                        text: format!("halt_on: {spelling}"),
-                        set: spelling == "failure",
-                    }
-                }
-                Some("never" | "failure") => Flag::Refused {
-                    code: IssueCode::ParseFailed,
-                    message: both("halt_on", "on_rejection"),
+                Some("never" | "failure") if !v4_policies.is_empty() => refuse_mixed("halt_on"),
+                Some(spelling @ ("never" | "failure")) => Flag::Valid {
+                    text: format!("halt_on: {spelling}"),
+                    set: spelling == "failure",
                 },
                 // v3's message, from `check_shape`.
                 _ => Flag::Refused {
@@ -353,22 +383,18 @@ impl Read {
             },
         };
 
-        // 06's policy table: the two flags make one policy.
-        let v4 = if has_flags {
+        // 06's policy table: the two flags make one policy. A flag beside a
+        // v4 policy was refused above, so here neither policy is written.
+        let v4 = if has_flags && v4_policies.is_empty() {
             let (on_failure, on_rejection) = match (continue_on_error.is_set(), halt_on.is_set()) {
                 (false, false) => ("fail", "continue"),
                 (true, false) => ("continue", "continue"),
                 (false, true) => ("fail", "halt"),
                 (true, true) => ("halt", "halt"),
             };
-            let mut written = Vec::new();
-            for (key, policy) in [("on_failure", on_failure), ("on_rejection", on_rejection)] {
-                if !obj.contains_key(key) {
-                    obj.insert(key.into(), Value::String(policy.into()));
-                    written.push(format!("{key}: {policy}"));
-                }
-            }
-            written.join(", ")
+            obj.insert("on_failure".into(), Value::String(on_failure.into()));
+            obj.insert("on_rejection".into(), Value::String(on_rejection.into()));
+            format!("on_failure: {on_failure}, on_rejection: {on_rejection}")
         } else {
             String::new()
         };

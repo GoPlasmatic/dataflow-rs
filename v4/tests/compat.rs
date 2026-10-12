@@ -211,48 +211,80 @@ fn a_tasks_two_flags_land_as_the_policy_table_says() {
 }
 
 #[test]
-fn a_flag_beside_the_other_axis_rewrites_only_its_own() {
-    // `halt_on` reaches `on_failure` only together with `continue_on_error`;
-    // an authored v4 key on the other axis is kept.
+fn a_v3_policy_beside_any_v4_policy_is_a_parse_failure_at_the_v3_key() {
+    // One policy, two spellings: which wins would be a guess, so neither
+    // does. Each v3 key is refused, naming the v4 key beside it.
+    for (flags, refused) in [
+        (
+            json!({"halt_on": "failure", "on_failure": "continue"}),
+            vec![("halt_on", "on_failure")],
+        ),
+        (
+            json!({"continue_on_error": true, "on_rejection": "halt"}),
+            vec![("continue_on_error", "on_rejection")],
+        ),
+        (
+            json!({"continue_on_error": false, "on_failure": "halt"}),
+            vec![("continue_on_error", "on_failure")],
+        ),
+        (
+            json!({"halt_on": "never", "on_rejection": "halt"}),
+            vec![("halt_on", "on_rejection")],
+        ),
+        (
+            json!({"continue_on_error": true, "halt_on": "failure", "on_rejection": "halt"}),
+            vec![
+                ("continue_on_error", "on_rejection"),
+                ("halt_on", "on_rejection"),
+            ],
+        ),
+    ] {
+        let json = wf(json!([task_with(flags.clone())]));
+        let parsed = compat(&json);
+        let expected: Vec<Row> = refused
+            .iter()
+            .map(|(v3, _)| row(C::ParseFailed, R, &format!("tasks[0].{v3}")))
+            .collect();
+        assert_eq!(rows(&parsed), expected, "{flags}");
+        for (issue, (v3, v4)) in parsed.issues.iter().zip(&refused) {
+            assert_eq!(
+                issue.message,
+                format!("v3's `{v3}` and v4's `{v4}` on one task; write only the v4 policies"),
+                "{flags}"
+            );
+            assert_eq!(issue.step_id.as_deref(), Some("t"), "{flags}");
+        }
+        assert!(parsed.def.is_none(), "{flags}");
+        assert!(migrate_v3(&json).is_err(), "{flags}");
+    }
+
+    // Both v4 keys are named.
     let json = wf(json!([task_with(
-        json!({"halt_on": "failure", "on_failure": "continue"})
+        json!({"halt_on": "failure", "on_failure": "fail", "on_rejection": "halt"})
     )]));
     let parsed = compat(&json);
     assert_eq!(
         rows(&parsed),
-        vec![row(C::V3Spelling, A, "tasks[0].halt_on")]
-    );
-    let def = built(parsed);
-    let t = task(&def.tasks[0]);
-    assert_eq!(
-        (t.on_failure, t.on_rejection),
-        (FailurePolicy::Continue, RejectionPolicy::Halt)
+        vec![row(C::ParseFailed, R, "tasks[0].halt_on")]
     );
     assert_eq!(
-        rewrites(&migrated(&json)),
-        vec![rewrite(
-            "tasks[0].halt_on",
-            "halt_on: failure",
-            "on_rejection: halt"
-        )]
+        parsed.issues[0].message,
+        "v3's `halt_on` and v4's `on_failure` and `on_rejection` on one task; write only the \
+         v4 policies"
     );
 
-    let json = wf(json!([task_with(
-        json!({"continue_on_error": true, "on_rejection": "halt"})
-    )]));
-    let def = built(compat(&json));
-    let t = task(&def.tasks[0]);
+    // A workflow's, likewise.
+    let json = json!({"id": "w", "continue_on_error": false, "on_failure": "fail",
+                      "tasks": [task_with(json!({}))]});
+    let parsed = compat(&json);
     assert_eq!(
-        (t.on_failure, t.on_rejection),
-        (FailurePolicy::Continue, RejectionPolicy::Halt)
+        rows(&parsed),
+        vec![row(C::ParseFailed, R, "continue_on_error")]
     );
     assert_eq!(
-        rewrites(&migrated(&json)),
-        vec![rewrite(
-            "tasks[0].continue_on_error",
-            "continue_on_error: true",
-            "on_failure: continue"
-        )]
+        parsed.issues[0].message,
+        "v3's `continue_on_error` and v4's `on_failure` on one workflow; write only the v4 \
+         policy"
     );
 }
 
@@ -401,23 +433,6 @@ fn an_alias_of_another_function_is_left_alone() {
 #[test]
 fn both_spellings_at_once_is_a_parse_failure_at_the_v3_key() {
     for (json, path) in [
-        (
-            json!({"id": "w", "continue_on_error": true, "on_failure": "continue",
-                   "tasks": [task_with(json!({}))]}),
-            "continue_on_error",
-        ),
-        (
-            wf(json!([task_with(
-                json!({"continue_on_error": false, "on_failure": "halt"})
-            )])),
-            "tasks[0].continue_on_error",
-        ),
-        (
-            wf(json!([task_with(
-                json!({"halt_on": "never", "on_rejection": "halt"})
-            )])),
-            "tasks[0].halt_on",
-        ),
         (
             calling(
                 "http_call",

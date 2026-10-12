@@ -26,9 +26,11 @@
 //! honoured, otherwise an `UNKNOWN_KEY`).
 //!
 //! It refuses a `continue_on_error` that is not a bool and a `halt_on` that
-//! is not `"never"` or `"failure"`, and a v3 key written beside its v4
-//! counterpart. With the reader off, every v3 key is an unknown key and
-//! Rejected.
+//! is not `"never"` or `"failure"`. It refuses a v3 key written beside a v4
+//! one, at the v3 key: on one node, any v3 policy key (`continue_on_error`,
+//! `halt_on`) beside any v4 policy key (`on_failure`, `on_rejection`), and an
+//! integration alias beside its target. With the reader off, every v3 key is
+//! an unknown key and Rejected.
 //!
 //! [`migrate_v3`] parses with the reader on and writes the definition in the
 //! v4 spelling, which parses with the reader off to an equal definition.

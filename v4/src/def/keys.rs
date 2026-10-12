@@ -81,13 +81,19 @@ const ROLLOUT_KEYS: &[&str] = &["bucket_start", "bucket_end"];
 const FUNCTION_KEYS: &[&str] = &["name", "input"];
 
 /// A workflow's v3 spellings, which the compat reader rewrites.
-const WORKFLOW_V3_KEYS: &[&str] = &["continue_on_error"];
+pub(super) const WORKFLOW_V3_KEYS: &[&str] = &["continue_on_error"];
 
 /// A task's v3 spellings, which the compat reader rewrites.
-const TASK_V3_KEYS: &[&str] = &["continue_on_error", "halt_on"];
+pub(super) const TASK_V3_KEYS: &[&str] = &["continue_on_error", "halt_on"];
 
 /// A group's v3 spelling, which the compat reader moves into its `ext`.
-const GROUP_V3_KEYS: &[&str] = &["continue_on_error"];
+pub(super) const GROUP_V3_KEYS: &[&str] = &["continue_on_error"];
+
+/// A workflow's v4 policy, which its v3 spelling becomes.
+pub(super) const WORKFLOW_POLICIES: &[&str] = &["on_failure"];
+
+/// A task's v4 policies, which its v3 spellings become.
+pub(super) const TASK_POLICIES: &[&str] = &["on_failure", "on_rejection"];
 
 /// The keys of a `publish_json` or `publish_xml` input. The compat reader
 /// moves any other into the task's `ext`.
