@@ -1,9 +1,13 @@
 //! `ExprEngine`: the v4 wrapper around one datalogic-rs engine.
 
+use super::arena::with_arena;
+use super::expr::{Evaluated, Expr, FromValue};
 use super::operators::{Family, OperatorInfo, TABLE};
 use super::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
 use crate::base::{Error, ErrorKind, Result};
-use datalogic_rs::{CustomOperator, Engine};
+use datalogic_rs::{CustomOperator, DataValue, Engine};
+use datavalue::OwnedDataValue;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -32,8 +36,6 @@ struct Inner {
     logic: Engine,
     operators: Vec<OperatorInfo>,
     secrets: Arc<Secrets>,
-    #[cfg(feature = "budget")]
-    ops_budget: Option<u64>,
 }
 
 /// Compiles and evaluates the JSONLogic a definition is written in.
@@ -86,18 +88,112 @@ impl ExprEngine {
         TEMPLATE_KEY_ESCAPE
     }
 
+    /// Compiles `raw`. An expression that reads nothing is evaluated once, here,
+    /// and kept as its `T`.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Compile`] when datalogic refuses the expression;
+    /// [`ErrorKind::Config`] when a folded constant is not a `T`.
+    pub fn compile<T: FromValue>(&self, raw: &Value) -> Result<Expr<T>> {
+        let logic = self
+            .logic()
+            .compile(raw)
+            .map_err(|e| Error::new(ErrorKind::Compile, e.to_string()))?;
+        // `is_constant`, never `is_static`: the latter is also true for a rule
+        // that failed to fold because it errors, and that error belongs at eval.
+        let constant = if logic.is_constant() {
+            let folded = with_arena(|arena| {
+                self.logic()
+                    .evaluate(&logic, DataValue::Object(&[]), arena)
+                    .map_err(|e| Error::new(ErrorKind::Eval, e.to_string()))
+                    .and_then(|v| {
+                        T::from_view(v).map_err(|why| {
+                            Error::new(
+                                ErrorKind::Config,
+                                format!("`{raw}` must be {}: {why}", T::type_name()),
+                            )
+                        })
+                    })
+            })?;
+            Some(folded)
+        } else {
+            None
+        };
+        Ok(Expr {
+            raw: raw.clone(),
+            logic,
+            constant,
+        })
+    }
+
+    /// Evaluates `expr` against `root`, an object holding the three context
+    /// roots. A folded constant is lent from `expr` and takes no arena.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Budget`] when the operation ceiling is exceeded;
+    /// [`ErrorKind::Eval`] for any other failure, including a result that is
+    /// not a `T`.
+    pub fn eval<'e, T: FromValue>(
+        &self,
+        expr: &'e Expr<T>,
+        root: &OwnedDataValue,
+    ) -> Result<Evaluated<T::Out<'e>>> {
+        if let Some(c) = &expr.constant {
+            return Ok(Evaluated {
+                value: T::lend(c),
+                ops: if cfg!(feature = "budget") {
+                    Some(0)
+                } else {
+                    None
+                },
+            });
+        }
+        with_arena(|arena| {
+            #[cfg(feature = "budget")]
+            let (view, ops) = {
+                let budget = self.logic().resolve_ops_budget(None);
+                let m = self
+                    .logic()
+                    .evaluate_metered(&expr.logic, root, arena, budget)
+                    .map_err(eval_error)?;
+                (m.value, Some(m.ops))
+            };
+            #[cfg(not(feature = "budget"))]
+            let (view, ops) = (
+                self.logic()
+                    .evaluate(&expr.logic, root, arena)
+                    .map_err(eval_error)?,
+                None,
+            );
+            let value = T::from_view(view).map_err(|why| {
+                Error::new(
+                    ErrorKind::Eval,
+                    format!("`{}` did not give {}: {why}", expr.raw, T::type_name()),
+                )
+            })?;
+            Ok(Evaluated {
+                value: T::give(value),
+                ops,
+            })
+        })
+    }
+
     /// The datalogic engine underneath.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by compile and eval"))]
     pub(crate) fn logic(&self) -> &Engine {
         &self.inner.logic
     }
+}
 
-    /// The ceiling on operations per evaluation, if one is set.
-    #[cfg(feature = "budget")]
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by eval"))]
-    pub(crate) fn ops_budget(&self) -> Option<u64> {
-        self.inner.ops_budget
-    }
+/// Classifies a datalogic evaluation failure: a spent budget is its own kind.
+fn eval_error(e: datalogic_rs::Error) -> Error {
+    let kind = if e.tag() == "BudgetExceeded" {
+        ErrorKind::Budget
+    } else {
+        ErrorKind::Eval
+    };
+    Error::new(kind, e.to_string())
 }
 
 /// Builds an [`ExprEngine`].
@@ -206,8 +302,6 @@ impl ExprEngineBuilder {
                 logic,
                 operators,
                 secrets,
-                #[cfg(feature = "budget")]
-                ops_budget: self.ops_budget,
             }),
         })
     }
@@ -440,7 +534,6 @@ mod tests {
     #[test]
     fn the_ops_budget_stops_a_map_over_three_items() {
         let e = ExprEngine::builder().ops_budget(2).build().unwrap();
-        assert_eq!(e.ops_budget(), Some(2));
         let logic = json!({"map": [[1, 2, 3], {"+": [{"var": ""}, 1]}]});
         let err = e.try_eval_json(&logic).unwrap_err();
         assert_eq!(err.tag(), "BudgetExceeded");

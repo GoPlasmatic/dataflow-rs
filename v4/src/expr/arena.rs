@@ -17,7 +17,6 @@ thread_local! {
 
 /// Runs `f` with an arena from this thread's pool, then resets it and returns
 /// it to the pool unless the pool is full or the arena grew past 4 MiB.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by ExprEngine::eval"))]
 pub(crate) fn with_arena<R>(f: impl FnOnce(&Bump) -> R) -> R {
     let mut arena = POOL
         .try_with(|pool| pool.borrow_mut().pop())
