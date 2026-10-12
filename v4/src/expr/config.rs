@@ -1,0 +1,426 @@
+//! Config fields: the types a function's `input` is made of, and the context
+//! that compiles them with every issue at its own path.
+
+use super::engine::ExprEngine;
+use super::expr::{Expr, FromValue};
+use crate::base::typo::near_miss;
+use crate::base::{AuthoredPath, ErrorKind, Issue, IssueCode, PathSeg, Severity, StepKind};
+use datavalue::OwnedDataValue;
+use serde_json::Value;
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+
+/// What a field's value is, for a field's schema and for checking a literal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ValueKind {
+    /// Any JSON.
+    Any,
+    /// A string.
+    String,
+    /// A number.
+    Number,
+    /// A boolean.
+    Bool,
+    /// An object.
+    Object,
+    /// An array.
+    Array,
+    /// A context path, rooted at `data`, `metadata` or `temp_data`.
+    Path,
+}
+
+/// What a config field is, for tooling.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+#[expect(
+    clippy::use_self,
+    reason = "the contract spells the element thunks `fn() -> FieldKind`"
+)]
+pub enum FieldKind {
+    /// A literal of the given kind, never evaluated.
+    Literal(ValueKind),
+    /// JSONLogic resolving to the given kind.
+    Expr(ValueKind),
+    /// A document with expression holes.
+    Interpolated,
+    /// A write destination.
+    Output,
+    /// A runtime-declared set of fields.
+    Templated,
+    /// An array of the element kind.
+    List(fn() -> FieldKind),
+    /// An object whose values are of the given kind.
+    Map(fn() -> FieldKind),
+    /// A nested config's fields.
+    Nested(fn() -> &'static [FieldSpec]),
+}
+
+/// One field of a config.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct FieldSpec {
+    /// The authored key.
+    pub name: Cow<'static, str>,
+    /// What the field is.
+    pub kind: FieldKind,
+    /// Is the key required?
+    pub required: bool,
+    /// Does the engine record the field's result?
+    pub records: bool,
+    /// The default, as JSON text.
+    pub default: Option<Cow<'static, str>>,
+    /// Is this the primary output?
+    pub primary: bool,
+    /// The field's doc comment.
+    pub description: Option<Cow<'static, str>>,
+}
+
+impl FieldSpec {
+    /// A runtime field: its kind is an expression, an interpolated document, a
+    /// literal or an output.
+    pub fn runtime(name: impl Into<Cow<'static, str>>, kind: FieldKind, required: bool) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            required,
+            records: false,
+            default: None,
+            primary: false,
+            description: None,
+        }
+    }
+
+    /// Sets the default, as JSON text.
+    #[must_use]
+    pub fn with_default(mut self, json: impl Into<Cow<'static, str>>) -> Self {
+        self.default = Some(json.into());
+        self
+    }
+}
+
+/// Receives every expression of a config, with its path.
+pub trait ExprVisitor {
+    /// An expression at `at`; `records` is set when the engine records its
+    /// result.
+    fn expr(&mut self, _at: &AuthoredPath, _raw: &Value, _records: bool) {}
+}
+
+/// A walk over a compiled config's expressions.
+pub struct Visit<'v> {
+    visitor: &'v mut dyn ExprVisitor,
+    path: AuthoredPath,
+    records: bool,
+}
+
+impl<'v> Visit<'v> {
+    /// A walk reporting to `visitor`, with paths below `root`.
+    pub fn new(visitor: &'v mut dyn ExprVisitor, root: AuthoredPath) -> Self {
+        Self {
+            visitor,
+            path: root,
+            records: false,
+        }
+    }
+
+    /// Runs `f` one segment deeper.
+    pub fn at(&mut self, seg: impl Into<PathSeg>, f: impl FnOnce(&mut Self)) {
+        self.path.push(seg);
+        f(self);
+        self.path.pop();
+    }
+
+    /// Runs `f` with the `records` flag ORed in, restoring it after.
+    pub fn recording(&mut self, records: bool, f: impl FnOnce(&mut Self)) {
+        let before = self.records;
+        self.records |= records;
+        f(self);
+        self.records = before;
+    }
+
+    /// Reports an expression at the current path.
+    pub fn expr(&mut self, raw: &Value) {
+        self.visitor.expr(&self.path, raw, self.records);
+    }
+}
+
+/// Compiles config fields, recording each issue at its exact authored path.
+pub struct CompileCx<'a> {
+    exprs: &'a ExprEngine,
+    issues: &'a mut Vec<Issue>,
+    path: AuthoredPath,
+    root_depth: usize,
+    step: Option<(StepKind, String)>,
+    runtime_fields: Option<&'a [FieldSpec]>,
+    rejected: usize,
+}
+
+impl<'a> CompileCx<'a> {
+    /// A context rooted at the document itself.
+    pub fn new(exprs: &'a ExprEngine, issues: &'a mut Vec<Issue>) -> Self {
+        Self {
+            exprs,
+            issues,
+            path: AuthoredPath::root(),
+            root_depth: 0,
+            step: None,
+            runtime_fields: None,
+            rejected: 0,
+        }
+    }
+
+    /// Roots the walk at `path`; a field is the first key below it.
+    #[must_use]
+    pub fn at_path(mut self, path: AuthoredPath) -> Self {
+        self.root_depth = path.segs().len();
+        self.path = path;
+        self
+    }
+
+    /// Stamps the step on every issue.
+    #[must_use]
+    pub fn for_step(mut self, kind: StepKind, id: impl Into<String>) -> Self {
+        self.step = Some((kind, id.into()));
+        self
+    }
+
+    /// The fields a plugin declared at runtime.
+    #[must_use]
+    pub fn with_runtime_fields(mut self, fields: &'a [FieldSpec]) -> Self {
+        self.runtime_fields = Some(fields);
+        self
+    }
+
+    /// The engine expressions compile with.
+    pub fn exprs(&self) -> &ExprEngine {
+        self.exprs
+    }
+
+    /// The current path.
+    pub fn path(&self) -> &AuthoredPath {
+        &self.path
+    }
+
+    /// The runtime-declared fields, if any.
+    pub fn runtime_fields(&self) -> Option<&'a [FieldSpec]> {
+        self.runtime_fields
+    }
+
+    /// Records an issue at the current path, at the code's default severity.
+    pub fn issue(&mut self, code: IssueCode, message: impl Into<String>) {
+        self.issue_as(code, code.severity(), message);
+    }
+
+    /// Records an issue at the current path with an explicit severity.
+    pub fn issue_as(&mut self, code: IssueCode, severity: Severity, message: impl Into<String>) {
+        let mut issue = Issue::new(code, self.path.clone(), message).with_severity(severity);
+        if let Some((kind, id)) = &self.step {
+            issue = issue.with_step(*kind, Some(id));
+        }
+        if let Some(PathSeg::Key(key)) = self.path.segs().get(self.root_depth) {
+            issue = issue.with_field(&**key);
+        }
+        if severity == Severity::Rejected {
+            self.rejected += 1;
+        }
+        self.issues.push(issue);
+    }
+
+    /// Runs `f` one segment deeper.
+    pub fn at<R>(&mut self, seg: impl Into<PathSeg>, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.path.push(seg);
+        let out = f(self);
+        self.path.pop();
+        out
+    }
+
+    /// How many Rejected issues this context has recorded.
+    pub fn rejected(&self) -> usize {
+        self.rejected
+    }
+
+    /// Records an unknown `key` at the current path (the caller is inside
+    /// `at(key, …)`): a Rejected `LIKELY_TYPO` naming the near key, else a
+    /// Rejected `UNKNOWN_KEY`.
+    #[doc(hidden)]
+    pub fn unknown_key(&mut self, key: &str, known: &[&str]) {
+        if let Some(near) = near_miss(key, known) {
+            self.issue_as(
+                IssueCode::LikelyTypo,
+                Severity::Rejected,
+                format!("unknown key `{key}`, did you mean `{near}`?"),
+            );
+        } else {
+            self.issue_as(
+                IssueCode::UnknownKey,
+                Severity::Rejected,
+                format!("unknown key `{key}`"),
+            );
+        }
+    }
+}
+
+/// A type a config is made of.
+pub trait ConfigField: Sized + Send + Sync + 'static {
+    /// Compiles `raw`; `None` after recording at least one issue.
+    fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self>;
+
+    /// The value when the key is absent and no default is declared. `None`
+    /// makes the field required.
+    fn absent() -> Option<Self> {
+        None
+    }
+
+    /// Reports the field's expressions.
+    fn visit(&self, _v: &mut Visit<'_>) {}
+
+    /// What the field is.
+    fn kind() -> FieldKind;
+}
+
+fn scalar<T: serde::de::DeserializeOwned>(
+    raw: &Value,
+    cx: &mut CompileCx<'_>,
+    expected: &str,
+) -> Option<T> {
+    match serde_json::from_value::<T>(raw.clone()) {
+        Ok(v) => Some(v),
+        Err(_) => {
+            cx.issue(IssueCode::InputParse, format!("expected {expected}"));
+            None
+        }
+    }
+}
+
+macro_rules! scalar_field {
+    ($($t:ty => $kind:ident, $expected:expr;)*) => {$(
+        impl ConfigField for $t {
+            fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+                scalar(raw, cx, $expected)
+            }
+            fn kind() -> FieldKind {
+                FieldKind::Literal(ValueKind::$kind)
+            }
+        }
+    )*};
+}
+
+scalar_field! {
+    bool => Bool, "a boolean";
+    String => String, "a string";
+    u8 => Number, "an unsigned integer that fits u8";
+    u16 => Number, "an unsigned integer that fits u16";
+    u32 => Number, "an unsigned integer that fits u32";
+    u64 => Number, "an unsigned integer that fits u64";
+    usize => Number, "an unsigned integer that fits usize";
+    i32 => Number, "an integer that fits i32";
+    i64 => Number, "an integer that fits i64";
+    f64 => Number, "a number";
+}
+
+impl ConfigField for OwnedDataValue {
+    fn compile(raw: &Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
+        Some(Self::from(raw))
+    }
+    fn kind() -> FieldKind {
+        FieldKind::Literal(ValueKind::Any)
+    }
+}
+
+impl ConfigField for Value {
+    fn compile(raw: &Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
+        Some(raw.clone())
+    }
+    fn kind() -> FieldKind {
+        FieldKind::Literal(ValueKind::Any)
+    }
+}
+
+impl<T: FromValue> ConfigField for Expr<T> {
+    fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+        match cx.exprs().compile::<T>(raw) {
+            Ok(expr) => Some(expr),
+            Err(error) => {
+                let code = match error.kind() {
+                    ErrorKind::Config if T::KIND == ValueKind::Path => IssueCode::InvalidPath,
+                    ErrorKind::Config => IssueCode::InputParse,
+                    _ => IssueCode::TemplateCompile,
+                };
+                cx.issue(code, error.message().to_owned());
+                None
+            }
+        }
+    }
+    fn visit(&self, v: &mut Visit<'_>) {
+        v.expr(self.raw());
+    }
+    fn kind() -> FieldKind {
+        FieldKind::Expr(T::KIND)
+    }
+}
+
+impl<T: ConfigField> ConfigField for Option<T> {
+    fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+        T::compile(raw, cx).map(Some)
+    }
+    fn absent() -> Option<Self> {
+        Some(None)
+    }
+    fn visit(&self, v: &mut Visit<'_>) {
+        if let Some(inner) = self {
+            inner.visit(v);
+        }
+    }
+    fn kind() -> FieldKind {
+        T::kind()
+    }
+}
+
+impl<T: ConfigField> ConfigField for Vec<T> {
+    fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+        let Some(items) = raw.as_array() else {
+            cx.issue(IssueCode::InputParse, "expected an array");
+            return None;
+        };
+        // Every element is compiled, so every issue is reported.
+        let compiled: Vec<Option<T>> = items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| cx.at(i, |cx| T::compile(item, cx)))
+            .collect();
+        compiled.into_iter().collect()
+    }
+    fn visit(&self, v: &mut Visit<'_>) {
+        for (i, item) in self.iter().enumerate() {
+            v.at(i, |v| item.visit(v));
+        }
+    }
+    fn kind() -> FieldKind {
+        FieldKind::List(T::kind)
+    }
+}
+
+impl<T: ConfigField> ConfigField for BTreeMap<String, T> {
+    fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+        let Some(entries) = raw.as_object() else {
+            cx.issue(IssueCode::InputParse, "expected an object");
+            return None;
+        };
+        let compiled: Vec<Option<(String, T)>> = entries
+            .iter()
+            .map(|(key, value)| {
+                cx.at(key.as_str(), |cx| T::compile(value, cx))
+                    .map(|v| (key.clone(), v))
+            })
+            .collect();
+        compiled.into_iter().collect()
+    }
+    fn visit(&self, v: &mut Visit<'_>) {
+        for (key, item) in self {
+            v.at(key.as_str(), |v| item.visit(v));
+        }
+    }
+    fn kind() -> FieldKind {
+        FieldKind::Map(T::kind)
+    }
+}

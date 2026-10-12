@@ -18,7 +18,9 @@ pub mod function;
 pub mod program;
 pub mod run;
 
-pub use crate::base::{Error, ErrorKind, Issue, Result};
+pub use crate::base::{
+    AuthoredPath, Error, ErrorKind, Issue, IssueCode, PathSeg, Result, Severity, StepKind,
+};
 pub use crate::expr::{Expr, Path};
 pub use datalogic_rs;
 pub use datavalue;

@@ -1,6 +1,7 @@
 //! Expressions: the JSONLogic surface a definition is written in.
 
 mod arena;
+mod config;
 mod engine;
 #[expect(
     clippy::module_inception,
@@ -12,6 +13,7 @@ mod path;
 mod secrets;
 mod walk;
 
+pub use config::{CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, ValueKind, Visit};
 pub use engine::{ExprEngine, ExprEngineBuilder};
 pub use expr::{Evaluated, Expr, FromValue};
 pub use operators::{Family, OperatorInfo};

@@ -6,13 +6,6 @@
 /// adjacent transposition, each cost 1). The threshold is 1 for a key of up to
 /// five characters, else 2. Ties go to the first in `known`. An exact match is
 /// not a near miss.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "used from def, the reader that classifies unknown keys"
-    )
-)]
 pub(crate) fn near_miss<'k>(key: &str, known: &[&'k str]) -> Option<&'k str> {
     let key: Vec<char> = key.chars().collect();
     let threshold = if key.len() <= 5 { 1 } else { 2 };

@@ -1,5 +1,6 @@
 //! `Expr<T>`: compiled JSONLogic that resolves to a `T`.
 
+use super::config::ValueKind;
 use super::path::Path;
 use datalogic_rs::Logic;
 use datavalue::{DataValue, OwnedDataValue};
@@ -19,6 +20,10 @@ mod sealed {
 /// string is its compact JSON), [`u64`] and [`bool`] (themselves; anything else
 /// is an error) and [`Path`] (`Cow<Path>`; a string parsed as a path).
 pub trait FromValue: Sized + Send + Sync + 'static + sealed::Sealed {
+    /// What kind of value the type is, for a field's schema.
+    #[doc(hidden)]
+    const KIND: ValueKind;
+
     /// What an evaluation hands back: a folded constant borrowed from the
     /// expression, a dynamic result owned.
     type Out<'a>;
@@ -41,6 +46,7 @@ impl sealed::Sealed for bool {}
 impl sealed::Sealed for Path {}
 
 impl FromValue for OwnedDataValue {
+    const KIND: ValueKind = ValueKind::Any;
     type Out<'a> = Cow<'a, Self>;
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         Ok(v.to_owned())
@@ -57,6 +63,7 @@ impl FromValue for OwnedDataValue {
 }
 
 impl FromValue for String {
+    const KIND: ValueKind = ValueKind::String;
     type Out<'a> = Cow<'a, str>;
     /// A string's contents; anything else as compact JSON (v3's
     /// `resolve_string`).
@@ -78,6 +85,7 @@ impl FromValue for String {
 }
 
 impl FromValue for u64 {
+    const KIND: ValueKind = ValueKind::Number;
     type Out<'a> = Self;
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
@@ -97,6 +105,7 @@ impl FromValue for u64 {
 }
 
 impl FromValue for bool {
+    const KIND: ValueKind = ValueKind::Bool;
     type Out<'a> = Self;
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
@@ -116,6 +125,7 @@ impl FromValue for bool {
 }
 
 impl FromValue for Path {
+    const KIND: ValueKind = ValueKind::Path;
     type Out<'a> = Cow<'a, Self>;
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
