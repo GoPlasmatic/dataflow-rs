@@ -6,6 +6,54 @@ use serde_json::Value;
 
 /// A function's `input`, compiled at build so a malformed one fails before any
 /// message runs. `#[derive(FunctionConfig)]` writes the implementation.
+///
+/// ```
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// use dataflow_rs::Expr;
+/// use dataflow_rs::expr::{CompileCx, ExprEngine, Output};
+/// use dataflow_rs::function::FunctionConfig;
+/// use dataflow_rs::program::IssueCode;
+/// use serde_json::json;
+///
+/// #[derive(FunctionConfig)]
+/// struct Fetch {
+///     /// The URL to fetch.
+///     #[config(records)]
+///     url: Expr<String>,
+///     #[config(default = 5000)]
+///     timeout_ms: Expr<u64>,
+///     #[output(default = "data.response")]
+///     output: Output,
+/// }
+///
+/// let engine = ExprEngine::default();
+/// let mut issues = Vec::new();
+/// let mut cx = CompileCx::new(&engine, &mut issues);
+/// let fetch = Fetch::compile(&json!({"url": {"var": "data.url"}}), &mut cx).unwrap();
+/// assert_eq!(fetch.timeout_ms.constant(), Some(&5000));
+/// assert_eq!(fetch.output.constant().unwrap().to_string(), "data.response");
+/// assert!(fetch.url.constant().is_none());
+///
+/// assert!(Fetch::compile(&json!({"uri": "x"}), &mut cx).is_none());
+/// drop(cx);
+/// let codes: Vec<IssueCode> = issues.iter().map(|i| i.code).collect();
+/// assert_eq!(codes, [IssueCode::LikelyTypo, IssueCode::InputParse]);
+/// assert_eq!(issues[1].path.to_string(), "url");
+/// ```
+///
+/// Two outputs need one of them marked `#[output(primary)]`:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// use dataflow_rs::expr::Output;
+/// use dataflow_rs::function::FunctionConfig;
+///
+/// #[derive(FunctionConfig)]
+/// struct Split {
+///     ok: Output,
+///     failed: Output,
+/// }
+/// ```
 pub trait FunctionConfig: Sized + Send + Sync + 'static {
     /// Every issue in the config, each at its exact path below the
     /// [`CompileCx`]'s root. `None` when any is Rejected.

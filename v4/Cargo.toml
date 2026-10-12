@@ -42,3 +42,5 @@ workspace = true
 
 [dev-dependencies]
 dataflow-corpus = { path = "../corpus" }
+# v3, the root package, for the differential tests that hold v4 to its rules.
+dataflow_rs_v3 = { package = "dataflow-rs", path = ".." }

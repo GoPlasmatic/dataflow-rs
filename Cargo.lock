@@ -330,6 +330,7 @@ dependencies = [
  "bumpalo",
  "chrono",
  "dataflow-corpus",
+ "dataflow-rs",
  "dataflow-rs-derive",
  "datalogic-rs",
  "datavalue-rs",
