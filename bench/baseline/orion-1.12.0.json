@@ -1,0 +1,497 @@
+{
+  "orion": {
+    "tag": "v1.12.0",
+    "commit": "9ff9b956ea74065aeae7acd142363eec77deb7c3",
+    "dataflow_rs": "3.15.0",
+    "datalogic_rs": "5.7.1"
+  },
+  "machine": {
+    "model": "Mac14,12",
+    "cpu": "Apple M2 Pro",
+    "cores": 10,
+    "memory_gb": 16,
+    "os": "macOS 27.0.1",
+    "load_avg_before": [
+      2.21,
+      3.52,
+      4.89
+    ]
+  },
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "method": {
+    "passes": 3,
+    "duration": "10s",
+    "concurrency": 50,
+    "rss": "max over 200 ms samples of the local server process; not sampled for cluster"
+  },
+  "scenarios": {
+    "baseline": {
+      "rows": {
+        "A: Health check baseline": {
+          "runs": [
+            {
+              "rps": 40641.0999,
+              "avg_ms": 1.2,
+              "p99_ms": 2.1,
+              "errors": 0
+            },
+            {
+              "rps": 42416.6043,
+              "avg_ms": 1.2,
+              "p99_ms": 2.0,
+              "errors": 0
+            },
+            {
+              "rps": 42372.0165,
+              "avg_ms": 1.2,
+              "p99_ms": 2.0,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 41809.9069,
+          "mean_avg_ms": 1.2,
+          "mean_p99_ms": 2.033333333333333,
+          "errors": 0
+        }
+      },
+      "peak_rss_kib": [
+        51264,
+        50608,
+        50928
+      ],
+      "exit_status": [
+        0,
+        0,
+        0
+      ],
+      "peak_rss_mib_max": 50.1
+    },
+    "cluster": {
+      "rows": {
+        "G: Cluster via LB (simple workflow)": {
+          "runs": [
+            {
+              "rps": 11054.101,
+              "avg_ms": 4.5,
+              "p99_ms": 12.9,
+              "errors": 0
+            },
+            {
+              "rps": 11277.3032,
+              "avg_ms": 4.4,
+              "p99_ms": 10.8,
+              "errors": 0
+            },
+            {
+              "rps": 11576.8899,
+              "avg_ms": 4.3,
+              "p99_ms": 10.8,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 11302.7647,
+          "mean_avg_ms": 4.4,
+          "mean_p99_ms": 11.5,
+          "errors": 0
+        }
+      },
+      "peak_rss_kib": [],
+      "exit_status": [
+        0,
+        0,
+        0
+      ]
+    },
+    "complex": {
+      "rows": {
+        "C: Complex workflow (4 tasks)": {
+          "runs": [
+            {
+              "rps": 5300.5316,
+              "avg_ms": 9.4,
+              "p99_ms": 17.7,
+              "errors": 0
+            },
+            {
+              "rps": 5335.8655,
+              "avg_ms": 9.3,
+              "p99_ms": 12.8,
+              "errors": 0
+            },
+            {
+              "rps": 5327.6546,
+              "avg_ms": 9.3,
+              "p99_ms": 17.2,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 5321.350566666667,
+          "mean_avg_ms": 9.333333333333334,
+          "mean_p99_ms": 15.9,
+          "errors": 0
+        }
+      },
+      "peak_rss_kib": [
+        54128,
+        54304,
+        53616
+      ],
+      "exit_status": [
+        0,
+        0,
+        0
+      ],
+      "peak_rss_mib_max": 53.0
+    },
+    "concurrency": {
+      "rows": {
+        "E: Concurrency c=1": {
+          "runs": [
+            {
+              "rps": 4669.4073,
+              "avg_ms": 0.2,
+              "p99_ms": 2.9,
+              "errors": 0
+            },
+            {
+              "rps": 4661.3516,
+              "avg_ms": 0.2,
+              "p99_ms": 2.8,
+              "errors": 0
+            },
+            {
+              "rps": 4666.9992,
+              "avg_ms": 0.2,
+              "p99_ms": 2.8,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 4665.919366666667,
+          "mean_avg_ms": 0.2,
+          "mean_p99_ms": 2.833333333333333,
+          "errors": 0
+        },
+        "E: Concurrency c=10": {
+          "runs": [
+            {
+              "rps": 5174.0315,
+              "avg_ms": 1.9,
+              "p99_ms": 35.7,
+              "errors": 0
+            },
+            {
+              "rps": 5160.5767,
+              "avg_ms": 1.9,
+              "p99_ms": 35.6,
+              "errors": 0
+            },
+            {
+              "rps": 5144.7925,
+              "avg_ms": 1.9,
+              "p99_ms": 35.4,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 5159.800233333333,
+          "mean_avg_ms": 1.9,
+          "mean_p99_ms": 35.56666666666667,
+          "errors": 0
+        },
+        "E: Concurrency c=50": {
+          "runs": [
+            {
+              "rps": 5122.2342,
+              "avg_ms": 9.7,
+              "p99_ms": 18.8,
+              "errors": 0
+            },
+            {
+              "rps": 5128.9515,
+              "avg_ms": 9.6,
+              "p99_ms": 19.0,
+              "errors": 0
+            },
+            {
+              "rps": 4886.4382,
+              "avg_ms": 10.1,
+              "p99_ms": 21.0,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 5045.874633333333,
+          "mean_avg_ms": 9.799999999999999,
+          "mean_p99_ms": 19.6,
+          "errors": 0
+        },
+        "E: Concurrency c=100": {
+          "runs": [
+            {
+              "rps": 4909.6969,
+              "avg_ms": 20.1,
+              "p99_ms": 34.8,
+              "errors": 0
+            },
+            {
+              "rps": 4970.3724,
+              "avg_ms": 19.9,
+              "p99_ms": 28.9,
+              "errors": 0
+            },
+            {
+              "rps": 4894.4266,
+              "avg_ms": 20.2,
+              "p99_ms": 37.1,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 4924.831966666667,
+          "mean_avg_ms": 20.066666666666666,
+          "mean_p99_ms": 33.6,
+          "errors": 0
+        }
+      },
+      "peak_rss_kib": [
+        60496,
+        60464,
+        61072
+      ],
+      "exit_status": [
+        0,
+        0,
+        0
+      ],
+      "peak_rss_mib_max": 59.6
+    },
+    "model": {
+      "rows": {
+        "I: Model inference (example.c4-tiny)": {
+          "runs": [
+            {
+              "rps": 5153.0787,
+              "avg_ms": 9.5,
+              "p99_ms": 13.5,
+              "errors": 0
+            },
+            {
+              "rps": 5198.523,
+              "avg_ms": 9.5,
+              "p99_ms": 13.4,
+              "errors": 0
+            },
+            {
+              "rps": 5261.2023,
+              "avg_ms": 9.4,
+              "p99_ms": 12.7,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 5204.268,
+          "mean_avg_ms": 9.466666666666667,
+          "mean_p99_ms": 13.2,
+          "errors": 0
+        }
+      },
+      "peak_rss_kib": [
+        64096,
+        63632,
+        63920
+      ],
+      "exit_status": [
+        0,
+        0,
+        0
+      ],
+      "peak_rss_mib_max": 62.6
+    },
+    "multi": {
+      "rows": {
+        "D: Loaded estate (12 channels)": {
+          "runs": [
+            {
+              "rps": 5364.7699,
+              "avg_ms": 9.2,
+              "p99_ms": 18.0,
+              "errors": 0
+            },
+            {
+              "rps": 5437.2439,
+              "avg_ms": 9.1,
+              "p99_ms": 13.4,
+              "errors": 0
+            },
+            {
+              "rps": 5408.3382,
+              "avg_ms": 9.2,
+              "p99_ms": 16.3,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 5403.450666666667,
+          "mean_avg_ms": 9.166666666666666,
+          "mean_p99_ms": 15.9,
+          "errors": 0
+        }
+      },
+      "peak_rss_kib": [
+        55616,
+        55872,
+        55200
+      ],
+      "exit_status": [
+        0,
+        0,
+        0
+      ],
+      "peak_rss_mib_max": 54.6
+    },
+    "plugin": {
+      "rows": {
+        "H: Plugin echo (test.fixture.identity)": {
+          "runs": [
+            {
+              "rps": 5216.483,
+              "avg_ms": 9.5,
+              "p99_ms": 12.9,
+              "errors": 0
+            },
+            {
+              "rps": 5263.7797,
+              "avg_ms": 9.4,
+              "p99_ms": 13.6,
+              "errors": 0
+            },
+            {
+              "rps": 5239.3864,
+              "avg_ms": 9.4,
+              "p99_ms": 13.4,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 5239.8830333333335,
+          "mean_avg_ms": 9.433333333333334,
+          "mean_p99_ms": 13.3,
+          "errors": 0
+        },
+        "H: JSONLogic echo (map)": {
+          "runs": [
+            {
+              "rps": 4865.7448,
+              "avg_ms": 10.2,
+              "p99_ms": 19.7,
+              "errors": 0
+            },
+            {
+              "rps": 4853.5363,
+              "avg_ms": 10.2,
+              "p99_ms": 17.4,
+              "errors": 0
+            },
+            {
+              "rps": 4946.853,
+              "avg_ms": 10.0,
+              "p99_ms": 18.3,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 4888.711366666666,
+          "mean_avg_ms": 10.133333333333333,
+          "mean_p99_ms": 18.466666666666665,
+          "errors": 0
+        }
+      },
+      "peak_rss_kib": [
+        67056,
+        68192,
+        68848
+      ],
+      "exit_status": [
+        0,
+        0,
+        0
+      ],
+      "peak_rss_mib_max": 67.2
+    },
+    "reload": {
+      "rows": {
+        "F: Reload under load (19x)": {
+          "runs": [
+            {
+              "rps": 5420.5367,
+              "avg_ms": 9.2,
+              "p99_ms": 13.1,
+              "errors": 0
+            },
+            {
+              "rps": 5427.7953,
+              "avg_ms": 9.2,
+              "p99_ms": 15.6,
+              "errors": 0
+            },
+            {
+              "rps": 5404.4093,
+              "avg_ms": 9.2,
+              "p99_ms": 12.9,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 5417.5804333333335,
+          "mean_avg_ms": 9.2,
+          "mean_p99_ms": 13.866666666666667,
+          "errors": 0
+        }
+      },
+      "peak_rss_kib": [
+        53936,
+        53744,
+        54944
+      ],
+      "exit_status": [
+        0,
+        0,
+        0
+      ],
+      "peak_rss_mib_max": 53.7
+    },
+    "simple": {
+      "rows": {
+        "B: Simple workflow (1 log task)": {
+          "runs": [
+            {
+              "rps": 5439.0269,
+              "avg_ms": 9.1,
+              "p99_ms": 16.8,
+              "errors": 0
+            },
+            {
+              "rps": 5396.3631,
+              "avg_ms": 9.2,
+              "p99_ms": 18.2,
+              "errors": 0
+            },
+            {
+              "rps": 5452.5227,
+              "avg_ms": 9.1,
+              "p99_ms": 17.0,
+              "errors": 0
+            }
+          ],
+          "mean_rps": 5429.304233333333,
+          "mean_avg_ms": 9.133333333333333,
+          "mean_p99_ms": 17.333333333333332,
+          "errors": 0
+        }
+      },
+      "peak_rss_kib": [
+        52928,
+        54624,
+        52768
+      ],
+      "exit_status": [
+        0,
+        0,
+        0
+      ],
+      "peak_rss_mib_max": 53.3
+    }
+  }
+}

@@ -154,6 +154,11 @@ round-robin, discards the cold round, and writes every run with the build,
 machine and method. The freeze baseline is `bench/baseline/3.15.0-freeze.json`.
 A metric's name is a contract: a port of a benchmark keeps it.
 
+Orion's baseline is `bench/baseline/orion-1.12.0.json`, from `bench/orion.sh`,
+which runs Orion's own `bench.sh` scenarios with the server's peak RSS. Its
+`cluster` brings Orion's HA stack up as its own compose project on a free
+loopback port, never 8080: `bench.sh` clears every workflow at the cluster URL.
+
 ### Branches
 
 **`main` is v4 under construction** from the freeze until 4.0.0. 3.x fixes go
