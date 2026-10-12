@@ -146,14 +146,20 @@ jobs:
         run: cargo test -p dataflow-corpus-v4 --locked
 
       # `--all-features` and the default build are the two endpoints; neither
-      # catches a family that only compiles when another one is also on.
+      # catches a family that only compiles when another one is also on. v4's
+      # list adds `tensor` (outside `all-operators`) and the `budget` knob.
       - name: Test each operator family in isolation
         run: |
           set -euo pipefail
-          for f in datetime ext-string ext-array ext-math ext-control \
+          for f in datetime ext-string ext-array ext-math ext-control ext-object \
                    error-handling all-operators; do
-            echo "::group::$f"
+            echo "::group::v3 $f"
             cargo test -p dataflow-rs --no-default-features --features "$f" --locked
+            echo "::endgroup::"
+          done
+          for f in datetime ext-string ext-array ext-math ext-control ext-object \
+                   error-handling all-operators tensor budget; do
+            echo "::group::v4 $f"
             cargo test -p dataflow-rs-v4 --no-default-features --features "$f" --locked
             echo "::endgroup::"
           done
@@ -198,6 +204,8 @@ jobs:
             --features wasm-web,all-operators -- -D warnings
           cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown \
             --all-targets -- -D warnings
+          # No `--all-targets`: v4's tests dev-depend on v3 without `wasm-web`,
+          # which wasm32 needs (uuid's randomness), so only the library builds.
           cargo clippy -p dataflow-rs-v4 --target wasm32-unknown-unknown \
             --locked -- -D warnings
 
