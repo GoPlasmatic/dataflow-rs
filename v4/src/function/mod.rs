@@ -3,12 +3,16 @@
 #[doc(hidden)]
 pub mod builtins;
 mod config;
+mod spec;
+mod templated;
 
 pub use crate::expr::{ExprVisitor, FieldKind, FieldSpec, ValueKind};
 pub use config::FunctionConfig;
 /// Derives [`FunctionConfig`](trait@FunctionConfig) (and `ConfigField`, so a
 /// derived config nests).
 pub use dataflow_rs_derive::FunctionConfig;
+pub use spec::{FunctionSpec, Reference, RetrySafety};
+pub use templated::Templated;
 
 /// What `#[derive(FunctionConfig)]` expands to names, and nothing else. Not an
 /// API: the derive emits `::dataflow_rs::function::__private::…` paths, which

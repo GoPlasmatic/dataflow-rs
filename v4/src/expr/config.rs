@@ -346,8 +346,12 @@ impl<T: FromValue> ConfigField for Expr<T> {
         match cx.exprs().compile::<T>(raw) {
             Ok(expr) => Some(expr),
             Err(error) => {
+                // `INVALID_PATH` is a literal string that is not a path; a
+                // non-string where a path goes is a type error.
                 let code = match error.kind() {
-                    ErrorKind::Config if T::KIND == ValueKind::Path => IssueCode::InvalidPath,
+                    ErrorKind::Config if T::KIND == ValueKind::Path && raw.is_string() => {
+                        IssueCode::InvalidPath
+                    }
                     ErrorKind::Config => IssueCode::InputParse,
                     _ => IssueCode::TemplateCompile,
                 };

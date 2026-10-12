@@ -342,3 +342,16 @@ fn an_index_below_the_root_carries_no_field() {
     drop(cx);
     assert_eq!(issues[0].field, None);
 }
+
+#[test]
+fn a_path_expr_over_a_non_string_is_input_parse_and_over_a_bad_string_invalid_path() {
+    let (out, issues) = compile::<Expr<Path>>(&json!(7), AuthoredPath::root());
+    assert!(out.is_none());
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].code, IssueCode::InputParse);
+
+    let (out, issues) = compile::<Expr<Path>>(&json!("rows"), AuthoredPath::root());
+    assert!(out.is_none());
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].code, IssueCode::InvalidPath);
+}
