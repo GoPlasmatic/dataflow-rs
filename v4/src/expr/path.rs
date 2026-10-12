@@ -320,7 +320,11 @@ fn kind(v: &OwnedDataValue) -> &'static str {
         OwnedDataValue::String(_) => "a string",
         OwnedDataValue::Array(_) => "an array",
         OwnedDataValue::Object(_) => "an object",
-        #[allow(unreachable_patterns)]
+        #[allow(
+            unreachable_patterns,
+            reason = "the catch-all is live only with datavalue's `tensor` feature, which \
+                      feature unification can turn on from another crate"
+        )]
         _ => "a non-array value",
     }
 }
