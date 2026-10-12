@@ -1,0 +1,19 @@
+[package]
+name = "dataflow-rs-derive"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0"
+publish = false
+description = "The derive macros behind dataflow-rs v4"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "3", default-features = false, features = ["derive", "parsing", "printing", "proc-macro"] }
+quote = "1"
+proc-macro2 = "1"
+
+[lints]
+workspace = true

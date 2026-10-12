@@ -130,6 +130,16 @@ jobs:
       - name: Run the corpus (default features)
         run: cargo test -p dataflow-corpus-v3 --locked
 
+      # v4 is built beside v3 and gets the same two default-feature steps for the
+      # same reason: `-p dataflow-rs-v4` compiles it the way its default build is
+      # delivered, while `--workspace` unifies features across members and turns
+      # every operator family back on.
+      - name: Run clippy, v4 (default features)
+        run: cargo clippy -p dataflow-rs-v4 --all-targets --locked -- -D warnings
+
+      - name: Run tests, v4 (default features)
+        run: cargo test -p dataflow-rs-v4 --locked
+
       # `--all-features` and the default build are the two endpoints; neither
       # catches a family that only compiles when another one is also on.
       - name: Test each operator family in isolation
@@ -139,6 +149,7 @@ jobs:
                    error-handling all-operators; do
             echo "::group::$f"
             cargo test -p dataflow-rs --no-default-features --features "$f" --locked
+            cargo test -p dataflow-rs-v4 --no-default-features --features "$f" --locked
             echo "::endgroup::"
           done
 
@@ -182,6 +193,8 @@ jobs:
             --features wasm-web,all-operators -- -D warnings
           cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown \
             --all-targets -- -D warnings
+          cargo clippy -p dataflow-rs-v4 --target wasm32-unknown-unknown \
+            --locked -- -D warnings
 
       # `--node` needs no browser driver; tests/web.rs is not browser-gated.
       - name: Run wasm tests

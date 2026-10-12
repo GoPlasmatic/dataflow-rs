@@ -1,0 +1,41 @@
+[package]
+name = "dataflow-rs-v4"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0"
+publish = false
+description = "dataflow-rs v4, under construction beside v3"
+
+[features]
+default = []
+datetime = ["datalogic-rs/datetime"]
+ext-string = ["datalogic-rs/ext-string"]
+ext-array = ["datalogic-rs/ext-array"]
+ext-math = ["datalogic-rs/ext-math"]
+ext-control = ["datalogic-rs/ext-control"]
+ext-object = ["datalogic-rs/ext-object"]
+error-handling = ["datalogic-rs/error-handling"]
+all-operators = [
+    "datetime",
+    "ext-string",
+    "ext-array",
+    "ext-math",
+    "ext-control",
+    "ext-object",
+    "error-handling",
+]
+tensor = ["datalogic-rs/tensor", "datavalue/tensor"]
+budget = ["datalogic-rs/budget"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+datalogic-rs = { version = "5.7", features = ["serde_json", "templating"] }
+datavalue = { package = "datavalue-rs", version = "0.3.1", features = ["serde", "serde_json"] }
+bumpalo = "3.20"
+chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+dataflow-rs-derive = { path = "../derive" }
+
+[lints]
+workspace = true

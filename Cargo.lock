@@ -315,6 +315,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "dataflow-rs-derive"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
+name = "dataflow-rs-v4"
+version = "0.0.0"
+dependencies = [
+ "bumpalo",
+ "chrono",
+ "dataflow-rs-derive",
+ "datalogic-rs",
+ "datavalue-rs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dataflow-wasm"
 version = "3.15.0"
 dependencies = [
