@@ -40,10 +40,6 @@ pub enum ErrorKind {
 }
 
 impl Error {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used from the modules that raise engine errors")
-    )]
     pub(crate) fn new(kind: ErrorKind, message: impl Into<Cow<'static, str>>) -> Self {
         Self {
             retryable: kind == ErrorKind::TimedOut,

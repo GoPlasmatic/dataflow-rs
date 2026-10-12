@@ -19,3 +19,4 @@ pub mod program;
 pub mod run;
 
 pub use crate::base::{Error, Issue, Result};
+pub use crate::expr::Path;
