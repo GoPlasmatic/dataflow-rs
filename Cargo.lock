@@ -258,6 +258,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dataflow-corpus"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dataflow-docs-tests"
 version = "0.0.0"
 dependencies = [

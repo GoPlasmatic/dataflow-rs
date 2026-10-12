@@ -1,0 +1,18 @@
+[package]
+name = "dataflow-corpus"
+# Never published, consumed only by path, so not part of the release bump.
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+license = "Apache-2.0"
+description = "The golden corpus: cases, their format, and the version-independent tools that read them. Not published."
+
+# Deliberately free of `dataflow-rs`: v3's driver lives in `corpus/v3`, and v4's
+# will live beside it, both reading the cases through this crate.
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[lints]
+workspace = true
