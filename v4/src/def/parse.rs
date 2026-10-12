@@ -35,8 +35,16 @@ pub struct ParseOptions {
     /// Whether the compat reader runs. With it on (the default), each v3
     /// spelling is rewritten and reported as a `V3_SPELLING` (see
     /// [`compat`](crate::compat)), and an unknown key takes its default
-    /// severity and moves into the owning node's `ext`. With it off, every v3
-    /// key and every unknown key is Rejected, and nothing moves.
+    /// severity and moves into the owning node's `ext`.
+    ///
+    /// With it off, nothing is rewritten and nothing moves. Every unknown key
+    /// is Rejected, and so are the v3 keys of a workflow, a task and a group
+    /// (`continue_on_error`, `halt_on`), which are unknown keys to v4. The
+    /// v3 spellings inside a task's `function` are not `parse`'s to refuse:
+    /// `validate` stays the function's name, and an integration alias or a
+    /// stray `publish_json` / `publish_xml` input key stays in its `input`,
+    /// for the function's lookup and config to refuse when the workflow is
+    /// compiled (phase 3).
     pub compat: bool,
 }
 

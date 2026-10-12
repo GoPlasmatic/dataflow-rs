@@ -29,8 +29,14 @@
 //! is not `"never"` or `"failure"`. It refuses a v3 key written beside a v4
 //! one, at the v3 key: on one node, any v3 policy key (`continue_on_error`,
 //! `halt_on`) beside any v4 policy key (`on_failure`, `on_rejection`), and an
-//! integration alias beside its target. With the reader off, every v3 key is
-//! an unknown key and Rejected.
+//! integration alias beside its target.
+//!
+//! With the reader off, nothing is rewritten. The v3 keys of a workflow, a
+//! task and a group (`continue_on_error`, `halt_on`) are unknown keys, and
+//! Rejected as every unknown key then is. `validate`, the integration aliases
+//! and a publish input's stray keys are not keys of the definition: they stay
+//! in the task's `function` as written, for the function's lookup and config
+//! to refuse when the workflow is compiled (phase 3).
 //!
 //! [`migrate_v3`] parses with the reader on and writes the definition in the
 //! v4 spelling, which parses with the reader off to an equal definition.

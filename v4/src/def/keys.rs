@@ -6,7 +6,9 @@
 //! an `UNKNOWN_KEY`. With the compat reader on, each takes its default
 //! severity, and the level's v3 spellings are near-miss candidates too; with
 //! it off, both are Rejected, nothing moves, and no v3 spelling is a
-//! candidate.
+//! candidate: a level's v3 key is then itself an unknown key. Nothing here
+//! looks inside `function.input`, so with the reader off the v3 spellings
+//! there stay for the function's config to refuse.
 
 use super::parse::Walk;
 use crate::base::typo::near_miss;
