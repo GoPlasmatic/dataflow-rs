@@ -59,13 +59,50 @@ const DELIBERATELY_REJECTED: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Files whose definitions carry misspelt keys on purpose, to pin what
-/// `LIKELY_TYPO` is reported for, as `(file, reason)`. Only these files are
-/// excused from the typo rule.
-const DELIBERATE_TYPOS: &[(&str, &str)] = &[(
-    "corpus/cases/breaks/unknown_keys.json",
-    "the break-case for unknown keys: `conditon`, `maxx`, `ass`, `bucket_strat` and `targte` are the near misses it records",
-)];
+/// The `LIKELY_TYPO` issues that are expected, as `(file, path)`: the break
+/// case for unknown keys carries `conditon`, `maxx`, `ass`, `bucket_strat` and
+/// `targte` on purpose, to pin what the rule reports. Each entry is consumed
+/// by exactly one issue, so a further typo in that file, or the case ceasing
+/// to fire one of these, fails the test.
+const DELIBERATE_TYPOS: &[(&str, &str)] = &[
+    ("corpus/cases/breaks/unknown_keys.json", "conditon"),
+    ("corpus/cases/breaks/unknown_keys.json", "tasks[0].conditon"),
+    ("corpus/cases/breaks/unknown_keys.json", "loop.maxx"),
+    (
+        "corpus/cases/breaks/unknown_keys.json",
+        "tasks[0].for_each.ass",
+    ),
+    (
+        "corpus/cases/breaks/unknown_keys.json",
+        "rollout.bucket_strat",
+    ),
+    (
+        "corpus/cases/breaks/unknown_keys.json",
+        "tasks[0].function.input.targte",
+    ),
+];
+
+/// Markdown `json` fences holding `"tasks"` that are not valid JSON and are
+/// not `...`-elided, as `(file, reason)`. Empty today; anything else fails.
+const SKIPPED_FENCES: &[(&str, &str)] = &[];
+
+/// The UI-samples normaliser notes that are expected, as substrings. Empty:
+/// every `workflows` array normalises.
+const EXPECTED_TS_SKIPS: &[&str] = &[];
+
+/// Per-source floors, set a little below today's counts (corpus 144, src 33,
+/// tests 122, examples 13, wasm 9, UI 16, docs 14), so a scanner that goes
+/// silent on one source cannot hide behind the others.
+const GROUP_FLOORS: &[(&str, usize)] = &[
+    ("json: corpus/cases", 130),
+    ("rs: src", 25),
+    ("rs: tests", 100),
+    ("rs: examples", 10),
+    ("rs: wasm", 6),
+    ("ts: ui samples", 12),
+    ("md: docs/src", 10),
+    ("md: README.md", 1),
+];
 
 /// Directories never read.
 const SKIPPED_DIRS: &[&str] = &[
@@ -141,11 +178,11 @@ fn raw_string(b: &[u8], i: usize) -> Option<(usize, usize, usize)> {
     let body_start = j + 1;
     let mut k = body_start;
     while k < b.len() {
-        if b[k] == b'"' && b[k + 1..].iter().take(hashes).all(|&c| c == b'#') {
-            let enough = b.len() >= k + 1 + hashes;
-            if enough {
-                return Some((body_start, k, k + 1 + hashes));
-            }
+        if b[k] == b'"'
+            && b.get(k + 1..k + 1 + hashes)
+                .is_some_and(|s| s.iter().all(|&c| c == b'#'))
+        {
+            return Some((body_start, k, k + 1 + hashes));
         }
         k += 1;
     }
@@ -248,7 +285,6 @@ fn parse_literal(body: &str) -> Option<Value> {
 struct Literal {
     line: usize,
     body: String,
-    json_macro: bool,
 }
 
 fn line_of(text: &str, offset: usize) -> usize {
@@ -281,7 +317,6 @@ fn rust_literals(text: &str) -> Vec<Literal> {
                     out.push(Literal {
                         line: line_of(text, i),
                         body: text[from..to].to_string(),
-                        json_macro: false,
                     });
                     i = end;
                 }
@@ -302,7 +337,6 @@ fn rust_literals(text: &str) -> Vec<Literal> {
                                 out.push(Literal {
                                     line: line_of(text, i),
                                     body: text[d + 1..end - 1].to_string(),
-                                    json_macro: true,
                                 });
                                 i = end;
                             }
@@ -322,10 +356,7 @@ fn rust_literals(text: &str) -> Vec<Literal> {
 fn rust_values(text: &str) -> Vec<(usize, Value)> {
     rust_literals(text)
         .into_iter()
-        .filter_map(|l| {
-            let _ = l.json_macro;
-            parse_literal(&l.body).map(|v| (l.line, v))
-        })
+        .filter_map(|l| parse_literal(&l.body).map(|v| (l.line, v)))
         .collect()
 }
 
@@ -574,7 +605,8 @@ fn add(
 }
 
 /// Everything the repository holds, and a note for each part not read.
-fn collect() -> (Vec<Found>, Vec<String>) {
+fn collect() -> (Vec<Found>, Vec<String>, Vec<String>) {
+    let mut problems = Vec::new();
     let mut found = Vec::new();
     let mut notes = vec![
         "excluded: docs/theme/dataflow-playground.js (samples built by string concatenation, not literals)"
@@ -660,8 +692,8 @@ fn collect() -> (Vec<Found>, Vec<String>) {
                     if body.contains("\"tasks\"") {
                         if body.contains("...") {
                             elided += 1;
-                        } else {
-                            notes.push(format!(
+                        } else if !SKIPPED_FENCES.iter().any(|(f, _)| *f == file) {
+                            problems.push(format!(
                                 "json fence with tasks that is not valid JSON: {file}:{line}"
                             ));
                         }
@@ -703,19 +735,23 @@ fn collect() -> (Vec<Found>, Vec<String>) {
         let file = rel(&ts);
         let (arrays, skipped) = ts_workflow_arrays(&text);
         for s in skipped {
-            notes.push(format!("skipped in {file}: {s}"));
+            if EXPECTED_TS_SKIPS.iter().any(|e| s.contains(e)) {
+                notes.push(format!("skipped in {file}: {s}"));
+            } else {
+                problems.push(format!("not normalised in {file}: {s}"));
+            }
         }
         for (line, v) in arrays {
             add(&mut found, &file, Some(line), "ts: ui samples", true, &v);
         }
     }
 
-    (found, notes)
+    (found, notes, problems)
 }
 
 #[test]
 fn every_definition_in_the_repository_parses_with_no_likely_typo() {
-    let (found, notes) = collect();
+    let (found, notes, problems) = collect();
 
     let mut per_group: BTreeMap<&str, usize> = BTreeMap::new();
     for f in &found {
@@ -731,6 +767,15 @@ fn every_definition_in_the_repository_parses_with_no_likely_typo() {
     }
 
     assert!(
+        problems.is_empty(),
+        "parts of the repository could not be read:\n{}",
+        problems.join("\n")
+    );
+    for (group, floor) in GROUP_FLOORS {
+        let n = per_group.get(group).copied().unwrap_or(0);
+        assert!(n >= *floor, "{group}: found {n} definitions, floor {floor}");
+    }
+    assert!(
         found.len() >= MINIMUM_DEFINITIONS,
         "the scan found {} definitions, fewer than {MINIMUM_DEFINITIONS}",
         found.len()
@@ -739,11 +784,21 @@ fn every_definition_in_the_repository_parses_with_no_likely_typo() {
     let mut typos = Vec::new();
     let mut rejected = Vec::new();
     let mut allowed = vec![false; DELIBERATELY_REJECTED.len()];
+    let mut typo_used = vec![false; DELIBERATE_TYPOS.len()];
     for f in &found {
         let parsed = parse(&f.def, ParseOptions::default());
-        let excused = DELIBERATE_TYPOS.iter().any(|(file, _)| *file == f.file);
         for issue in &parsed.issues {
-            if issue.code == IssueCode::LikelyTypo && !excused {
+            if issue.code != IssueCode::LikelyTypo {
+                continue;
+            }
+            let path = issue.path.to_string();
+            let expected = DELIBERATE_TYPOS
+                .iter()
+                .enumerate()
+                .position(|(n, (file, p))| !typo_used[n] && *file == f.file && *p == path);
+            if let Some(n) = expected {
+                typo_used[n] = true;
+            } else {
                 typos.push(format!(
                     "{}: {} at {}",
                     f.at,
@@ -786,6 +841,13 @@ fn every_definition_in_the_repository_parses_with_no_likely_typo() {
         "Rejected docs, README, example or UI definitions:\n{}",
         rejected.join("\n")
     );
+    for (n, used) in typo_used.iter().enumerate() {
+        assert!(
+            used,
+            "expected typo {:?} was not reported",
+            DELIBERATE_TYPOS[n]
+        );
+    }
     for (n, used) in allowed.iter().enumerate() {
         assert!(
             used,
@@ -882,11 +944,16 @@ mod helpers {
     #[test]
     fn raw_strings_of_any_hash_count() {
         let src = "let a = r#\"{\"a\": \"q\\\"\"}\"#; let b = r\"[1,2]\"; let c = r##\"{\"h\": \"#\\\"#\"}\"##; let d = br#\"{}\"#;";
-        let values = rust_values(src);
-        let all: Vec<_> = values.iter().map(|(_, v)| v.clone()).collect();
-        assert!(all.contains(&json!([1, 2])));
-        assert!(all.contains(&json!({"h": "#\\\"#"})) || all.iter().any(|v| v.get("h").is_some()));
-        assert!(all.iter().any(|v| v.get("a").is_some()));
+        let values: Vec<Value> = rust_values(src).into_iter().map(|(_, v)| v).collect();
+        assert_eq!(
+            values,
+            vec![
+                json!({"a": "q\""}),
+                json!([1, 2]),
+                json!({"h": "#\"#"}),
+                json!({}),
+            ]
+        );
     }
 
     #[test]
