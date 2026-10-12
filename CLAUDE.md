@@ -146,6 +146,14 @@ runs conflates the change with thermal drift: a measured -8.5% on
 alternated round-robin instead. Build both binaries first, copy them out of
 `target/`, discard the first run of each as cold, and alternate.
 
+**The gate benchmarks print one machine-readable line each**, `GATE {...}`, the
+last thing they print (`examples/shared/gate.rs`). `bench/gate.py` reads only
+that line: `build --out DIR` copies the 13 binaries out of a clean tree's
+`target/`, and `baseline --bins DIR --rounds 5 --out FILE` runs them
+round-robin, discards the cold round, and writes every run with the build,
+machine and method. The freeze baseline is `bench/baseline/3.15.0-freeze.json`.
+A metric's name is a contract: a port of a benchmark keeps it.
+
 ### Release Process
 
 Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI and
@@ -545,9 +553,22 @@ hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
 are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
 conventions.
 
-`cargo test --workspace --all-features` should report 867 passing.
-`cargo test -p dataflow-rs` (default features) should report 753. The operator
-families are `#[cfg]`-gated on both sides, so the counts legitimately differ.
+**The golden corpus** (`corpus/`, see its README) records what this engine does
+to a message, case by case: every row of the v4 feature contract, every break
+and every error code. Each `corpus/cases/<area>/<name>.json` has its recording,
+`<name>.v3.json`, beside it. `corpus/record.sh [filter]` records (default build,
+then all-features); `cargo test -p dataflow-corpus-v3` and the `--workspace
+--all-features` run check that every recording still holds, and
+`corpus/tests/coverage.rs` that every contract row has a case. A change that
+alters what a message ends up as re-records the affected cases and is read
+before it is committed; never edit a `.v3.json` by hand. The comparator is
+order-sensitive, because key order is wire data.
+
+`cargo test --workspace --all-features` should report 902 passing: the
+engine's 867 plus the corpus's 35 (its case checks are one test each way).
+`cargo test -p dataflow-rs` (default features) should report 753, and
+`cargo test -p dataflow-corpus-v3` 3. The operator families are
+`#[cfg]`-gated on both sides, so the counts legitimately differ.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and
 `with_ops_budget`'s doctest is gated too.
