@@ -140,7 +140,7 @@ futures = "0.3"
 num_cpus = "1.17"
 
 [workspace]
-members = [".", "wasm", "docs-tests", "corpus"]
+members = [".", "wasm", "docs-tests", "corpus", "corpus/v3"]
 
 # Lint policy lives here rather than only in the CI command line, so a local
 # `cargo clippy` and rust-analyzer enforce exactly what CI does. CI still passes

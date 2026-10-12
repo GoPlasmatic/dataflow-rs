@@ -1,0 +1,38 @@
+[package]
+name = "dataflow-corpus-v3"
+# Never published, consumed only by path, so not part of the release bump.
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+license = "Apache-2.0"
+description = "Records the golden corpus from dataflow-rs 3.x, and checks it still holds. Not published."
+
+# Each forwards to the dataflow-rs feature of the same name. Operator families
+# are detected at run time, not read with `cfg!`, because in a `--workspace`
+# build `wasm/` turns `all-operators` on whatever this crate asks for. Only
+# `budget` is read with `cfg!`: it adds no operator, and `with_ops_budget` is
+# only callable under it.
+[features]
+budget = ["dataflow-rs/budget"]
+tensor = ["dataflow-rs/tensor"]
+all-operators = ["dataflow-rs/all-operators"]
+datetime = ["dataflow-rs/datetime"]
+ext-string = ["dataflow-rs/ext-string"]
+ext-array = ["dataflow-rs/ext-array"]
+ext-math = ["dataflow-rs/ext-math"]
+ext-control = ["dataflow-rs/ext-control"]
+ext-object = ["dataflow-rs/ext-object"]
+error-handling = ["dataflow-rs/error-handling"]
+
+[dependencies]
+dataflow-rs = { path = "../.." }
+dataflow-corpus = { path = ".." }
+async-trait = "0.1"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+{
+  "description": "Every handler error reaches the message through one classifier: a service error's code verbatim, an empty one falling back to TASK_ERROR, and each other variant its own code.",
+  "covers": ["run.error-classifier", "code.service-verbatim", "code.TASK_ERROR", "code.HTTP_ERROR", "code.IO_ERROR", "code.UNKNOWN_ERROR", "code.FUNCTION_ERROR", "code.TIMEOUT_ERROR"],
+  "mirrors": ["src/error::service_error_code_passes_kind_through_verbatim"],
+  "workflows": [
+    {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
+      {"id": "service", "name": "service", "continue_on_error": true, "function": {"name": "script", "input": {
+        "outcome": {"error": {"variant": "service", "code": "PARTNER_DOWN", "message": "partner down", "retryable": true}}}}},
+      {"id": "service_empty", "name": "service_empty", "continue_on_error": true, "function": {"name": "script", "input": {
+        "outcome": {"error": {"variant": "service", "code": "", "message": "no code"}}}}},
+      {"id": "http", "name": "http", "continue_on_error": true, "function": {"name": "script", "input": {
+        "outcome": {"error": {"variant": "http", "status": 502, "message": "bad gateway"}}}}},
+      {"id": "io", "name": "io", "continue_on_error": true, "function": {"name": "script", "input": {
+        "outcome": {"error": {"variant": "io", "message": "disk"}}}}},
+      {"id": "unknown", "name": "unknown", "continue_on_error": true, "function": {"name": "script", "input": {
+        "outcome": {"error": {"variant": "unknown", "message": "?"}}}}},
+      {"id": "function", "name": "function", "continue_on_error": true, "function": {"name": "script", "input": {
+        "outcome": {"error": {"variant": "function", "message": "inner"}}}}},
+      {"id": "timeout", "name": "timeout", "continue_on_error": true, "function": {"name": "script", "input": {
+        "outcome": {"error": {"variant": "timeout", "message": "slow"}}}}}
+    ]}
+  ],
+  "steps": [{"run": {"message": {}}}]
+}

@@ -1,0 +1,626 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {},
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "timeout",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "service",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "service_empty",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "http",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "io",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "unknown",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "function",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "timeout",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "PARTNER_DOWN",
+              "message": "Task service error: partner down",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "service",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "TASK_ERROR",
+              "message": "Task service_empty error: no code",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "service_empty",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "HTTP_ERROR",
+              "message": "Task http error: HTTP error: 502 - bad gateway",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "http",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "IO_ERROR",
+              "message": "Task io error: IO error: disk",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "io",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "UNKNOWN_ERROR",
+              "message": "Task unknown error: Unknown error: ?",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "unknown",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "FUNCTION_ERROR",
+              "message": "Task function error: Function execution error: inner",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "function",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "TIMEOUT_ERROR",
+              "message": "Task timeout error: Timeout error: slow",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "timeout",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "service",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "service",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "service",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "PARTNER_DOWN",
+                    "message": "Task service error: partner down",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "service_empty",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "service_empty",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "service_empty",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "PARTNER_DOWN",
+                    "message": "Task service error: partner down",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task service_empty error: no code",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service_empty",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "http",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "http",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "http",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "PARTNER_DOWN",
+                    "message": "Task service error: partner down",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task service_empty error: no code",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service_empty",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "HTTP_ERROR",
+                    "message": "Task http error: HTTP error: 502 - bad gateway",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "http",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "io",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "io",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "io",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "PARTNER_DOWN",
+                    "message": "Task service error: partner down",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task service_empty error: no code",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service_empty",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "HTTP_ERROR",
+                    "message": "Task http error: HTTP error: 502 - bad gateway",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "http",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "IO_ERROR",
+                    "message": "Task io error: IO error: disk",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "io",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "unknown",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "unknown",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "unknown",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "PARTNER_DOWN",
+                    "message": "Task service error: partner down",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task service_empty error: no code",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service_empty",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "HTTP_ERROR",
+                    "message": "Task http error: HTTP error: 502 - bad gateway",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "http",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "IO_ERROR",
+                    "message": "Task io error: IO error: disk",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "io",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "UNKNOWN_ERROR",
+                    "message": "Task unknown error: Unknown error: ?",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "unknown",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "function",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "function",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "function",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "PARTNER_DOWN",
+                    "message": "Task service error: partner down",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task service_empty error: no code",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service_empty",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "HTTP_ERROR",
+                    "message": "Task http error: HTTP error: 502 - bad gateway",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "http",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "IO_ERROR",
+                    "message": "Task io error: IO error: disk",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "io",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "UNKNOWN_ERROR",
+                    "message": "Task unknown error: Unknown error: ?",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "unknown",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "FUNCTION_ERROR",
+                    "message": "Task function error: Function execution error: inner",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "function",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "timeout",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {},
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "timeout",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "timeout",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "PARTNER_DOWN",
+                    "message": "Task service error: partner down",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "TASK_ERROR",
+                    "message": "Task service_empty error: no code",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "service_empty",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "HTTP_ERROR",
+                    "message": "Task http error: HTTP error: 502 - bad gateway",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "http",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "IO_ERROR",
+                    "message": "Task io error: IO error: disk",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "io",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "UNKNOWN_ERROR",
+                    "message": "Task unknown error: Unknown error: ?",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "unknown",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "FUNCTION_ERROR",
+                    "message": "Task function error: Function execution error: inner",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "function",
+                    "timestamp": "<timestamp>"
+                  },
+                  {
+                    "code": "TIMEOUT_ERROR",
+                    "message": "Task timeout error: Timeout error: slow",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "timeout",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}

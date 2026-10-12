@@ -1,0 +1,108 @@
+{
+  "definitions": [
+    {
+      "parse": "ok",
+      "authored": [],
+      "checked": []
+    }
+  ],
+  "build": "ok",
+  "steps": [
+    {
+      "run": {
+        "outcome": "ok",
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "partial": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "PARTNER_DOWN",
+              "message": "Task t error: down",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": {
+          "outcome": "ok",
+          "steps": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "result": "executed",
+              "message": {
+                "id": "m1",
+                "payload": {},
+                "context": {
+                  "data": {
+                    "partial": true
+                  },
+                  "metadata": {
+                    "processed_at": "<timestamp>",
+                    "engine_version": "<engine_version>",
+                    "progress": {
+                      "workflow_id": "w",
+                      "task_id": "t",
+                      "status_code": 500
+                    }
+                  },
+                  "temp_data": {}
+                },
+                "audit_trail": [
+                  {
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>",
+                    "changes": [],
+                    "status": 500
+                  }
+                ],
+                "errors": [
+                  {
+                    "code": "PARTNER_DOWN",
+                    "message": "Task t error: down",
+                    "path": null,
+                    "workflow_id": "w",
+                    "task_id": "t",
+                    "timestamp": "<timestamp>"
+                  }
+                ]
+              },
+              "started_at": "<timestamp>",
+              "duration_us": "<duration>",
+              "changes": []
+            }
+          ],
+          "truncated": false,
+          "message_matches": true
+        }
+      }
+    }
+  ]
+}
