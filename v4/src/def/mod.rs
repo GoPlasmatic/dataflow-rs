@@ -27,7 +27,7 @@
 //! ```
 
 mod for_each;
-mod keys;
+pub(crate) mod keys;
 mod loops;
 mod parse;
 pub(crate) mod reader;
