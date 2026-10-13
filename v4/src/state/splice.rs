@@ -8,6 +8,7 @@
 //! `view(apply(c, w)) == splice(view(c), w)` on random trees and writes.
 
 use crate::expr::Seg;
+use crate::expr::path::MAX_PATH_SEGMENTS;
 use bumpalo::Bump;
 use datavalue::DataValue;
 
@@ -42,7 +43,7 @@ pub(crate) fn set_resolved<'a>(
     segs: &[Seg],
     value: DataValue<'a>,
 ) -> Option<(DataValue<'a>, Resolved)> {
-    if segs.len() > 64 {
+    if segs.len() > MAX_PATH_SEGMENTS {
         return None;
     }
     let (seg, rest) = segs.split_first()?;
@@ -64,6 +65,7 @@ fn created_from(r: &mut Resolved, depth: usize, segs: &[Seg]) {
     }
 }
 
+/// One level of [`set_resolved`]: writes below `node`, noting what it creates.
 fn set_in<'a>(
     arena: &'a Bump,
     node: DataValue<'a>,
@@ -163,6 +165,7 @@ pub(crate) fn remove<'a>(
     remove_in(arena, root, seg, rest)
 }
 
+/// One level of [`remove`].
 fn remove_in<'a>(
     arena: &'a Bump,
     node: DataValue<'a>,
@@ -262,6 +265,7 @@ pub(crate) fn merge_root<'a>(
     DataValue::Object(replaced(arena, slots, at, merged))
 }
 
+/// The kind of a value, for an error.
 fn kind(v: &DataValue<'_>) -> &'static str {
     match v {
         DataValue::Null => "null",
@@ -275,6 +279,7 @@ fn kind(v: &DataValue<'_>) -> &'static str {
     }
 }
 
+/// `pairs` with the value at `at` replaced.
 fn replaced<'a>(
     arena: &'a Bump,
     pairs: &'a [(&'a str, DataValue<'a>)],
@@ -290,6 +295,7 @@ fn replaced<'a>(
     })
 }
 
+/// `pairs` with `key` and `value` added at the end.
 fn appended<'a>(
     arena: &'a Bump,
     pairs: &'a [(&'a str, DataValue<'a>)],
@@ -325,7 +331,7 @@ fn without<'a, T: Copy>(arena: &'a Bump, items: &[T], at: usize) -> &'a [T] {
 /// to a bitmask rather than to a list of hops is what keeps a write free of
 /// allocation: a hop is built only when the log creates a node for it.
 pub(crate) fn resolve(root: DataValue<'_>, segs: &[Seg]) -> Option<Resolved> {
-    if segs.is_empty() || segs.len() > 64 {
+    if segs.is_empty() || segs.len() > MAX_PATH_SEGMENTS {
         return None;
     }
     let mut kinds = 0u64;
@@ -382,7 +388,9 @@ pub(crate) fn resolve(root: DataValue<'_>, segs: &[Seg]) -> Option<Resolved> {
 /// What [`resolve`] found: see there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Resolved {
+    /// Bit `i` set when segment `i` resolved to an array index.
     pub(crate) kinds: u64,
+    /// The first segment whose node the write creates, if any.
     pub(crate) created: Option<usize>,
 }
 
@@ -396,7 +404,9 @@ impl Resolved {
 /// One resolved step of a path: what the write log is keyed by.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum Hop {
+    /// A key on an object.
     Key(Box<str>),
+    /// An index on an array.
     Index(usize),
 }
 

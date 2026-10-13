@@ -7,6 +7,7 @@
 use super::random::{self, exact};
 use crate::expr::{Path, arena, path};
 use crate::state::splice;
+use crate::state::writes::fault;
 use crate::state::{RunContext, Stats, Tuning};
 use datavalue::OwnedDataValue;
 use std::borrow::Cow;
@@ -150,9 +151,9 @@ fn run(name: &str, tuning: Tuning, seed: u64, cases: usize) -> Stats {
                     Op::Tick => rc.tick(),
                     Op::Checkpoint => rc.checkpoint(),
                 }
-                // Reads that build no view: the touched paths and a few random
-                // ones. (The whole context has no `Path`; the final compare
-                // against the model covers it.)
+                // Reads that build no view: each root (the whole context, as far
+                // as a rooted `Path` reaches), the touched paths and a few
+                // random ones.
                 let mut probes: Vec<String> = touched
                     .iter()
                     .rev()
@@ -161,6 +162,7 @@ fn run(name: &str, tuning: Tuning, seed: u64, cases: usize) -> Stats {
                     .cloned()
                     .collect();
                 probes.extend((0..3).map(|_| random::rooted_path(&mut rng, &model)));
+                probes.extend(random::ROOTS.iter().map(|r| (*r).to_string()));
                 for p in probes {
                     let path = rooted(&p);
                     let (got, want) = (json(rc.get(&path)), path.get(&model).map(exact));
@@ -399,4 +401,31 @@ fn stats_report_the_view_and_the_arena() {
     }
     let stats = rc.finish();
     assert!(stats.peak_arena >= live, "{stats:?}");
+}
+
+/// A panic inside the checkpoint's `settle` or `apply` must not lose the
+/// message's context (R51): the slot holds an object with the three roots
+/// afterwards, never `null`.
+#[test]
+fn a_panic_inside_a_checkpoint_keeps_the_context() {
+    for phase in ["settle", "apply"] {
+        let mut slot = context();
+        rooted("data.kept").assign(&mut slot, OwnedDataValue::from(1));
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            let mut rc = RunContext::new(&mut slot, Tuning::default());
+            rc.edit(|e| {
+                let v = OwnedDataValue::from(2).to_arena(e.arena());
+                e.set(&rooted("data.pending"), v, None)
+            });
+            fault::arm(phase);
+            rc.checkpoint();
+        }));
+        assert!(outcome.is_err(), "{phase}: the fault fired");
+        let OwnedDataValue::Object(roots) = &slot else {
+            panic!("{phase}: the slot holds {slot:?}, not the context");
+        };
+        let names: Vec<&str> = roots.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, random::ROOTS, "{phase}");
+        assert_eq!(slot["data"]["kept"], OwnedDataValue::from(1), "{phase}");
+    }
 }

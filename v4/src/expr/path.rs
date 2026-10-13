@@ -17,6 +17,10 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// The most segments a [`Path`] holds, the root's own included (I74). The
+/// write log and the splice keep a path's resolved hops in a 64-bit mask.
+pub(crate) const MAX_PATH_SEGMENTS: usize = 64;
+
 /// One of the three context roots a path starts at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -112,6 +116,15 @@ impl FromStr for Path {
         let mut segs = vec![Seg::parse(first)];
         if let Some(rest) = rest {
             segs.extend(rest.split('.').map(Seg::parse));
+        }
+        if segs.len() > MAX_PATH_SEGMENTS {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "path `{dotted}` has {} segments; a path holds at most {MAX_PATH_SEGMENTS}",
+                    segs.len()
+                ),
+            ));
         }
         Ok(Self {
             root,
@@ -497,6 +510,18 @@ mod tests {
         }
         assert_eq!(get_dotted(&v, "a.#b").map(text), Some(r#""hash""#.into()));
         assert_eq!(get_dotted(&v, "a.rows.#1"), None);
+    }
+
+    #[test]
+    fn a_path_holds_at_most_64_segments() {
+        let deep = |n: usize| format!("data{}", ".k".repeat(n - 1));
+        let ok: Path = deep(64).parse().expect("64 segments parse");
+        assert_eq!(ok.segs().len(), 64);
+        let err = deep(65)
+            .parse::<Path>()
+            .expect_err("65 segments are refused");
+        assert_eq!(*err.kind(), ErrorKind::Config);
+        assert!(err.to_string().contains("at most 64"), "{err}");
     }
 
     #[test]

@@ -3,6 +3,7 @@
 
 use super::random;
 use crate::state::splice::Hop;
+use crate::state::writes::list::List;
 use crate::state::writes::{Dirty, Drained, OwnedAt};
 use crate::state::{Lookup, Mark, Writes};
 use datavalue::OwnedDataValue;
@@ -23,6 +24,27 @@ fn n(v: i64) -> OwnedDataValue {
 }
 fn owned(v: OwnedDataValue) -> Mark {
     Mark::Set(Some(v))
+}
+
+/// A mark as text, its owned values as JSON, so key order counts.
+fn text(m: &Mark) -> String {
+    match m {
+        Mark::Set(v) => format!("Set({:?})", v.as_ref().map(random::exact)),
+        Mark::Removed => "Removed".to_string(),
+        Mark::Appended { from, owned } => format!(
+            "Appended({from}, {:?})",
+            owned
+                .as_ref()
+                .map(|items| items.iter().map(random::exact).collect::<Vec<_>>())
+        ),
+    }
+}
+
+/// Drained marks as text, in order: paths and [`text`] of each mark.
+fn texts(d: &[Dirty]) -> Vec<String> {
+    d.iter()
+        .map(|d| format!("{:?} {}", d.at, text(&d.mark)))
+        .collect()
 }
 
 fn sorted(mut d: Vec<Dirty>) -> Vec<Dirty> {
@@ -75,11 +97,12 @@ fn the_log_follows_the_rules() {
     );
     let want = OwnedDataValue::Object(vec![("x".into(), n(1)), ("y".into(), n(2))]);
     assert_eq!(
-        w.drain().dirty,
-        vec![Dirty {
+        texts(&w.drain().dirty),
+        texts(&[Dirty {
             at: vec![k("data"), k("a")],
             mark: owned(want)
-        }]
+        }]),
+        "by JSON text, so the key order counts"
     );
     assert!(w.is_empty());
 
@@ -417,13 +440,63 @@ fn mark(rng: &mut random::Rng) -> Mark {
     }
 }
 
-/// The spike compared the trie with a flat list on these marks; with the list
-/// gone, the invariant that comparison leaned on is checked directly: reads
-/// and marks in any order never panic, the drained marks are disjoint (none
-/// lies under another), and the drain empties the log.
+/// The spike's agreement test, as written: the trie and a flat list of marks
+/// answer every lookup alike and drain the same marks and reorders.
+#[test]
+fn the_trie_and_the_list_agree_on_random_marks() {
+    let mut rng = random::Rng::new(0x7e1e);
+    for case in 0..20_000 {
+        let (mut trie, mut list) = (Writes::default(), List::default());
+        for step in 0..1 + rng.below(12) {
+            let at = hops(&mut rng);
+            if rng.chance(1, 6) {
+                trie.reorder(p(&at).at());
+                list.reorder(p(&at).at());
+            } else {
+                let m = mark(&mut rng);
+                trie.mark(p(&at).at(), m.clone());
+                list.mark(p(&at).at(), m);
+            }
+            for _ in 0..3 {
+                let probe = hops(&mut rng);
+                assert_eq!(
+                    trie.lookup(p(&probe).at()),
+                    list.lookup(p(&probe).at()),
+                    "case {case}, step {step}, {probe:?}"
+                );
+            }
+        }
+        assert_eq!(trie.is_empty(), list.is_empty(), "case {case}: emptiness");
+        let (mut tv, mut lv) = (Vec::new(), Vec::new());
+        trie.visit(&mut |at, m| tv.push(format!("{at:?} {}", text(m))));
+        list.visit(&mut |at, m| lv.push(format!("{at:?} {}", text(m))));
+        tv.sort();
+        lv.sort();
+        assert_eq!(tv, lv, "case {case}: the same visited marks");
+        // The same marks and reorders. Their order is checked where it
+        // matters, by the run-context model test: siblings may differ here
+        // for a node first touched through a deeper path, which the run
+        // context never produces for a new key.
+        let (t, l) = (trie.drain(), list.drain());
+        assert_eq!(
+            texts(&sorted(t.dirty)),
+            texts(&sorted(l.dirty)),
+            "case {case}: the same marks"
+        );
+        let (mut tr, mut lr) = (t.reorder, l.reorder);
+        tr.sort();
+        lr.sort();
+        assert_eq!(tr, lr, "case {case}: the same reorders");
+    }
+}
+
+/// Reads and marks in any order never panic; `visit` shows exactly the marks
+/// `drain` returns, in the same order; every visited mark reads as changed;
+/// the drained marks are disjoint (none lies under another); and the drain
+/// empties the log.
 #[test]
 fn random_marks_drain_disjoint_and_leave_the_log_empty() {
-    let mut rng = random::Rng::new(0x7e1e);
+    let mut rng = random::Rng::new(0x7e1f);
     for case in 0..20_000 {
         let mut w = Writes::default();
         for _ in 0..1 + rng.below(12) {
@@ -438,7 +511,27 @@ fn random_marks_drain_disjoint_and_leave_the_log_empty() {
                 let _ = w.lookup(p(&probe).at());
             }
         }
+        let mut visited = Vec::new();
+        w.visit(&mut |at, mark| {
+            visited.push(Dirty {
+                at: at.to_vec(),
+                mark: mark.clone(),
+            });
+        });
+        for v in &visited {
+            assert_ne!(
+                w.lookup(p(&v.at).at()),
+                Lookup::Clean,
+                "case {case}: {:?} is marked",
+                v.at
+            );
+        }
         let d = w.drain();
+        assert_eq!(
+            texts(&visited),
+            texts(&d.dirty),
+            "case {case}: visit shows what drain returns"
+        );
         for (a, x) in d.dirty.iter().enumerate() {
             for (b, y) in d.dirty.iter().enumerate() {
                 assert!(

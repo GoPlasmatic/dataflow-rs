@@ -28,7 +28,9 @@ use std::marker::PhantomData;
 
 /// What the run view's cell owns: the owned context and the run arena.
 pub(crate) struct Owner<'p> {
+    /// The message's context, the source of truth at every checkpoint.
     pub(crate) ctx: OwnedDataValue,
+    /// The run arena the view's spines live in.
     pub(crate) arena: Bump,
     _program: PhantomData<&'p ()>,
 }
@@ -37,6 +39,7 @@ pub(crate) struct Owner<'p> {
 pub(crate) type Root<'q> = &'q DataValue<'q>;
 
 self_cell!(
+    /// The owner and the view built over it.
     pub(crate) struct RunView<'p> {
         owner: Owner<'p>,
 
@@ -51,6 +54,7 @@ pub(crate) struct Tuning {
     /// Whether an owned write larger than the view checkpoints instead of
     /// being copied in (R56).
     pub(crate) invalidate: bool,
+    /// An owned write is large when it passes `max(invalidate_floor, live)`.
     pub(crate) invalidate_floor: usize,
     /// The garbage trigger is `max(garbage_floor, live)`.
     pub(crate) garbage_floor: usize,
@@ -69,8 +73,11 @@ impl Default for Tuning {
 /// What a run did, counted rather than timed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Stats {
+    /// Views built.
     pub(crate) views: u32,
+    /// Checkpoints taken.
     pub(crate) checkpoints: u32,
+    /// Large owned writes that checkpointed instead of being copied in.
     pub(crate) invalidations: u32,
     /// Marked paths the checkpoint converted from the view.
     pub(crate) converted: u32,
@@ -81,8 +88,11 @@ pub(crate) struct Stats {
     pub(crate) peak_arena: usize,
 }
 
+/// Where the context lives.
 enum State<'p> {
+    /// Only the owned tree exists.
     Owned(Owner<'p>),
+    /// The owned tree and a view of it, with writes pending in the log.
     Viewed(RunView<'p>),
     /// Between states, and after the context went back to its slot.
     Taken,
@@ -92,27 +102,39 @@ enum State<'p> {
 /// `&RunView`, whose `Bump` makes it `!Sync`.
 #[expect(dead_code, reason = "phase 5's host calls hold a Reader")]
 pub(crate) struct Reader<'r> {
+    /// The view's root.
     pub(crate) root: &'r DataValue<'r>,
+    /// The owned tree, current as of the last checkpoint.
     pub(crate) owned: &'r OwnedDataValue,
+    /// What changed since.
     pub(crate) log: &'r Writes,
 }
 
+/// The run context (R38): the only writer of a run. It owns the message's
+/// context for the run and puts it back when the run finishes or is dropped.
 pub(crate) struct RunContext<'m, 'p> {
     /// Where the context goes back to: the message's.
     slot: &'m mut OwnedDataValue,
+    /// The context, owned or viewed.
     state: State<'p>,
+    /// Writes since the view was built.
     log: Writes,
     /// Arena bytes in use right after the view was built: its spines.
     live: usize,
+    /// The knobs.
     tuning: Tuning,
+    /// What the run did so far.
     stats: Stats,
 }
 
 /// A write against the view, inside the cell. `'q` is the view's lifetime;
 /// anything borrowed for `'p` may go into it.
 pub(crate) struct Edit<'e, 'q, 'p> {
+    /// The cell's owner.
     owner: &'q Owner<'p>,
+    /// The view's root, replaced by each write.
     root: &'e mut Root<'q>,
+    /// Where each write is marked.
     log: &'e mut Writes,
 }
 
@@ -152,14 +174,17 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
         self.log.mark(at.prefix(i + 1), Mark::Set(leaf.map(below)));
     }
 
+    /// The cell's owner, for strings the `Program` owns.
     pub(crate) fn owner(&self) -> &'q Owner<'p> {
         self.owner
     }
 
+    /// The run arena.
     pub(crate) fn arena(&self) -> &'q Bump {
         &self.owner.arena
     }
 
+    /// The view's root by value.
     pub(crate) fn root(&self) -> DataValue<'q> {
         **self.root
     }
@@ -169,6 +194,7 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
         self.root
     }
 
+    /// The view's value at `path`, writes so far included.
     pub(crate) fn get(&self, path: &Path) -> Option<DataValue<'q>> {
         splice::get(self.root(), path.segs())
     }
@@ -309,10 +335,12 @@ impl<'m, 'p> RunContext<'m, 'p> {
         }
     }
 
+    /// What the run did so far.
     pub(crate) fn stats(&self) -> Stats {
         self.stats
     }
 
+    /// Whether a view is built now.
     pub(crate) fn has_view(&self) -> bool {
         matches!(self.state, State::Viewed(_))
     }
@@ -411,6 +439,7 @@ impl<'m, 'p> RunContext<'m, 'p> {
         }
     }
 
+    /// Removes `path`; whether something was there.
     pub(crate) fn remove(&mut self, path: &Path) -> bool {
         match &mut self.state {
             State::Owned(owner) => path::remove(&mut owner.ctx, path.segs()).is_some(),
@@ -473,12 +502,16 @@ impl<'m, 'p> RunContext<'m, 'p> {
     /// Settle the marks against the view, drop the view, reset the arena,
     /// then apply the marks and the reorders to the owned tree. The view is
     /// rebuilt at the next read.
+    ///
+    /// The context is never out of `self.state` while code that may panic
+    /// runs: `settle` runs with the view still in place, and the owner is put
+    /// back before `apply`. A panic in either leaves an owner that
+    /// `give_back` returns to the slot: after a panic in `settle`, the
+    /// context of the last checkpoint; after one in `apply`, that context
+    /// with the marks applied so far.
     pub(crate) fn checkpoint(&mut self) {
-        if !self.has_view() {
+        let State::Viewed(view) = &self.state else {
             return;
-        }
-        let State::Viewed(view) = std::mem::replace(&mut self.state, State::Taken) else {
-            unreachable!()
         };
         self.stats.peak_arena = self
             .stats
@@ -486,10 +519,16 @@ impl<'m, 'p> RunContext<'m, 'p> {
             .max(arena::used(&view.borrow_owner().arena));
         let log = &mut self.log;
         let converted = view.with_dependent(|_, root| log.settle(**root));
+        let State::Viewed(view) = std::mem::replace(&mut self.state, State::Taken) else {
+            unreachable!("the view was in place a moment ago")
+        };
         let mut owner = view.into_owner();
         owner.arena.reset();
-        self.log.apply(&mut owner.ctx);
         self.state = State::Owned(owner);
+        let State::Owned(owner) = &mut self.state else {
+            unreachable!("the owner was just put back")
+        };
+        self.log.apply(&mut owner.ctx);
         self.live = 0;
         self.stats.checkpoints += 1;
         self.stats.converted += converted;
@@ -503,6 +542,8 @@ impl<'m, 'p> RunContext<'m, 'p> {
         self.stats
     }
 
+    /// Returns the context to its slot and the arena to the pool, whatever state
+    /// the run is in.
     fn give_back(&mut self) {
         let owner = match std::mem::replace(&mut self.state, State::Taken) {
             State::Owned(owner) => owner,

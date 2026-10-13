@@ -17,6 +17,7 @@ pub(crate) fn exceeds(v: &OwnedDataValue, limit: usize) -> bool {
     !fits(v, &mut budget)
 }
 
+/// Whether `v` fits in what is left of `budget`, which it spends.
 fn fits(v: &OwnedDataValue, budget: &mut usize) -> bool {
     let cost = NODE
         + match v {

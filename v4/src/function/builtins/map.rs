@@ -181,6 +181,19 @@ mod tests {
     }
 
     #[test]
+    fn a_literal_path_over_64_segments_is_invalid_path() {
+        // I74: a `Path` holds at most 64 segments, the root's included.
+        let deep = |n: usize| format!("data{}", ".k".repeat(n - 1));
+        let (config, issues) = one(json!({"path": deep(64), "logic": 1}));
+        assert!(config.is_some() && issues.is_empty(), "{issues:?}");
+        let (config, issues) = one(json!({"path": deep(65), "logic": 1}));
+        assert!(config.is_none());
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, IssueCode::InvalidPath);
+        assert_eq!(issues[0].path.to_string(), "mappings[0].path");
+    }
+
+    #[test]
     fn a_computed_path_compiles() {
         let (config, issues) =
             one(json!({"path": {"cat": ["data.", {"var": "data.k"}]}, "logic": 1}));
