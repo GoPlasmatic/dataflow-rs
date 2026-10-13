@@ -19,8 +19,10 @@ pub use ctx::{CallInfo, Ctx};
 /// Derives [`FunctionConfig`](trait@FunctionConfig) (and `ConfigField`, so a
 /// derived config nests).
 pub use dataflow_rs_derive::FunctionConfig;
+pub(crate) use erased::BoundCall;
 pub use layer::{BoxFuture, CallLayer, Next};
 pub use outcome::Outcome;
+pub(crate) use registry::Entry;
 pub use registry::{FunctionInfo, Registry};
 pub use spec::{FunctionSpec, Reference, RetrySafety};
 pub use templated::Templated;

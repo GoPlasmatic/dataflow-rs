@@ -226,10 +226,6 @@ impl<'a> CompileCx<'a> {
     /// checks, whose path is relative to the current path. The path is
     /// prefixed with the current one, the step and the field are stamped as
     /// [`Self::issue`] stamps them, and a Rejected issue is counted.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used from program, which adopts prepare's issues")
-    )]
     pub(crate) fn adopt(&mut self, mut issue: Issue) {
         issue.path = self.path.extend(&issue.path);
         self.record(issue);

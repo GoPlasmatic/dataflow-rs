@@ -50,10 +50,6 @@ struct Inner {
 }
 
 /// What a function name resolves to.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used from program, which resolves each call site")
-)]
 pub(crate) enum Entry<'r> {
     /// One of the eight built-ins, which run inline.
     Builtin(BuiltinKind),
@@ -126,10 +122,6 @@ impl Registry {
 
     /// What `name` calls: a built-in, a host function, or nothing. v3's
     /// alias `validate` is nothing here; the compat reader rewrites it first.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used from program, which resolves each call site")
-    )]
     pub(crate) fn entry(&self, name: &str) -> Option<Entry<'_>> {
         match BuiltinKind::from_name(name) {
             Some(kind) => Some(Entry::Builtin(kind)),

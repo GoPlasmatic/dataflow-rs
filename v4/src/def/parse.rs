@@ -121,13 +121,6 @@ pub(crate) fn parse_with_rewrites(json: &Value, opts: ParseOptions) -> (Parsed, 
 /// one group deep, `loop.setup` at the top. Step ids are checked within the
 /// fragment. The steps are `Some` exactly when no issue is Rejected, and a
 /// fragment that is not an array is `PARSE_FAILED` at `root`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "used from program, whose check_steps parses a fragment"
-    )
-)]
 pub(crate) fn parse_steps(
     steps: &Value,
     root: &AuthoredPath,
@@ -161,7 +154,7 @@ pub(crate) fn parse_steps(
 
 /// Where a fragment at `root` sits: under `loop.setup` or not, and inside how
 /// many groups.
-fn fragment_place(root: &AuthoredPath) -> (bool, usize) {
+pub(super) fn fragment_place(root: &AuthoredPath) -> (bool, usize) {
     let is = |seg: &PathSeg, name: &str| matches!(seg, PathSeg::Key(key) if &**key == name);
     let lists = root.segs().iter().filter(|seg| is(seg, "tasks")).count();
     match root.segs() {

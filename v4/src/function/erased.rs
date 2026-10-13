@@ -23,10 +23,6 @@ pub(crate) trait ErasedFunction: Send + Sync {
     ///
     /// The caller roots `cx` at the task's `function.input`, stamps the step,
     /// and gives it the spec's runtime fields.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used from program, which binds each call site")
-    )]
     fn compile(
         &self,
         input: &Value,
@@ -42,13 +38,6 @@ pub(crate) trait BoundCall: Send + Sync {
     fn call<'a>(&'a self, ctx: &'a mut Ctx<'_>) -> BoxFuture<'a, Result<Outcome>>;
 
     /// Walks the config's expressions; paths are relative to the config.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "used from program, whose checks walk each call site"
-        )
-    )]
     fn visit(&self, v: &mut dyn ExprVisitor);
 }
 

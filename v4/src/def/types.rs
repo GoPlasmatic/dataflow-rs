@@ -107,6 +107,20 @@ impl WorkflowDef {
     }
 }
 
+/// The steps of a fragment that [`parse_steps`](super::parse_steps) read at
+/// `root`, as [`WorkflowDef::walk`] yields a workflow's: pre-order, each group
+/// before its members, and every step a setup step when `root` is under
+/// `loop.setup`.
+pub(crate) fn walk_steps<'d>(
+    steps: &'d [StepDef],
+    root: &AuthoredPath,
+) -> impl Iterator<Item = (AuthoredPath, StepKind, &'d StepDef)> {
+    let (setup, _) = super::parse::fragment_place(root);
+    let mut out = Vec::new();
+    collect(steps, root, setup, &mut out);
+    out.into_iter()
+}
+
 /// Appends `steps` and their members to `out`, pre-order.
 fn collect<'d>(
     steps: &'d [StepDef],

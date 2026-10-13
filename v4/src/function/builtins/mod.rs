@@ -133,10 +133,6 @@ impl BuiltinKind {
 
     /// Compiles `input` as this built-in's config at `cx`. `None` when any
     /// issue is Rejected.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by the compiler from Task 4")
-    )]
     pub(crate) fn compile(self, input: &Value, cx: &mut CompileCx<'_>) -> Option<Builtin> {
         match self {
             Self::Map => MapConfig::compile(input, cx).map(Builtin::Map),
@@ -154,10 +150,6 @@ impl BuiltinKind {
 /// A built-in call site's callee: its typed config, unboxed, which is what
 /// the runtime matches on (I42).
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used by the compiler from Task 4")
-)]
 pub(crate) enum Builtin {
     Map(MapConfig),
     Validation(ValidationConfig),
@@ -169,12 +161,12 @@ pub(crate) enum Builtin {
     PublishXml(PublishConfig),
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used by the compiler from Task 4")
-)]
 impl Builtin {
     /// Which built-in this is.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by the listing from Task 5")
+    )]
     pub(crate) fn kind(&self) -> BuiltinKind {
         match self {
             Self::Map(_) => BuiltinKind::Map,

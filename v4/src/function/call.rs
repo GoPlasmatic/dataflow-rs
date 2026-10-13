@@ -87,10 +87,6 @@ impl<'a> Prepare<'a> {
     /// What `prepare` is told about the task `task_id` of the workflow
     /// `workflow_id`, which calls the function registered as `name` with
     /// `spec`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used from program, which prepares each call site")
-    )]
     pub(crate) fn new(
         name: &'a str,
         workflow_id: &'a str,
