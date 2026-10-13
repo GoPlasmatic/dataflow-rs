@@ -61,6 +61,14 @@ impl BuiltinKind {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 
+    /// Whether no host function may take `name`: a built-in's name, or
+    /// `validate`, v3's alias for `validation`, which the compat reader
+    /// rewrites before a name is looked up, so a host function under it
+    /// could never be called.
+    pub(crate) fn reserved(name: &str) -> bool {
+        Self::from_name(name).is_some() || name == "validate"
+    }
+
     /// The name a task calls it by.
     pub(crate) fn name(self) -> &'static str {
         match self {

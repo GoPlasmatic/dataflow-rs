@@ -765,6 +765,60 @@ fn map_rows() -> Vec<Row> {
     ]
 }
 
+/// Lists of mappings v3 accepts: every `on_null` and `mode` with `logic`,
+/// under each spelling of a `false` `unset`; a removal and a `null` logic; a
+/// context root; `#` paths; computed paths.
+fn accepted_mapping_lists() -> Vec<Vec<Value>> {
+    let logic = json!({"var": "data.y"});
+    let combinations = |unset: Option<bool>| -> Vec<Value> {
+        let mut list = Vec::new();
+        for on_null in [None, Some("skip"), Some("unset")] {
+            for mode in [None, Some("set"), Some("append"), Some("extend")] {
+                let mut m = json!({"path": "data.x", "logic": logic});
+                for (key, value) in [
+                    ("unset", unset.map(Value::from)),
+                    ("on_null", on_null.map(Value::from)),
+                    ("mode", mode.map(Value::from)),
+                ] {
+                    if let Some(value) = value {
+                        m[key] = value;
+                    }
+                }
+                list.push(m);
+            }
+        }
+        list
+    };
+    vec![
+        combinations(None),
+        combinations(Some(false)),
+        vec![
+            json!({"path": "data.x", "unset": true}),
+            json!({"path": "data.x", "logic": null}),
+            json!({"path": "data", "logic": logic, "mode": "set", "on_null": "skip"}),
+        ],
+        vec![
+            json!({"path": "data.MT103.#20", "logic": logic}),
+            json!({"path": "temp_data.rows.#0", "logic": logic, "mode": "append"}),
+        ],
+        vec![
+            json!({"path": {"cat": ["data.", {"var": "data.k"}]}, "logic": logic}),
+            json!({"path": {"cat": ["data.", {"var": "data.k"}]}, "unset": true}),
+        ],
+    ]
+}
+
+#[test]
+fn map_keeps_every_mapping_v3_accepts() {
+    for list in accepted_mapping_lists() {
+        let input = json!({"mappings": list});
+        assert!(v3_accepts("map", &input), "v3 refuses {input}");
+        let (config, issues) = compile::<MapConfig>(&input);
+        let config = config.unwrap_or_else(|| panic!("{input}: {issues:?}"));
+        assert_eq!(config.mappings.len(), list.len(), "{input}");
+    }
+}
+
 fn validation_rows() -> Vec<Row> {
     use IssueCode::{InputParse, UnknownKey};
     let rule = json!({"logic": true, "message": "m"});

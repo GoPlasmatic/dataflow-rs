@@ -10,6 +10,7 @@ use dataflow_rs::program::{AuthoredPath, IssueCode, Severity};
 use dataflow_rs::{Expr, Issue};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -71,6 +72,16 @@ impl Probe {
 #[derive(Debug, FunctionConfig)]
 struct OneOut {
     out: Output,
+}
+
+/// Outputs inside an `Option`, a list and a map.
+#[derive(Debug, FunctionConfig)]
+struct Outputs {
+    maybe: Option<Output>,
+    many: Vec<Output>,
+    keyed: BTreeMap<String, Output>,
+    /// Not an output, for contrast.
+    plain: Option<Expr<String>>,
 }
 
 /// A serde field that cannot be read from `null` is required.
@@ -395,7 +406,8 @@ fn fields_carry_kind_required_records_default_and_doc() {
 
     let target = field(fields, "target");
     assert!(matches!(target.kind, FieldKind::Output));
-    assert!(!target.required && !target.records && target.primary);
+    // The engine records every output, so its field says so (break 16).
+    assert!(!target.required && target.records && target.primary);
     assert_eq!(target.default.as_deref(), Some("\"data\""));
     assert_eq!(
         target.description.as_deref(),
@@ -404,7 +416,7 @@ fn fields_carry_kind_required_records_default_and_doc() {
 
     let errors = field(fields, "errors");
     assert!(matches!(errors.kind, FieldKind::Output));
-    assert!(errors.required && !errors.primary);
+    assert!(errors.required && errors.records && !errors.primary);
     assert_eq!(errors.default, None);
 
     let source = field(fields, "source");
@@ -454,6 +466,20 @@ fn fields_carry_kind_required_records_default_and_doc() {
     let body = field(fields, "body");
     assert!(matches!(body.kind, FieldKind::Interpolated));
     assert!(!body.required);
+}
+
+#[test]
+fn a_field_holding_an_output_at_any_depth_records() {
+    let fields = Outputs::fields();
+    let records = |name: &str| field(fields, name).records;
+    // `Option` forwards its element's kind; a list and a map hold outputs.
+    assert!(matches!(field(fields, "maybe").kind, FieldKind::Output));
+    assert!(records("maybe"));
+    assert!(matches!(field(fields, "many").kind, FieldKind::List(_)));
+    assert!(records("many"));
+    assert!(matches!(field(fields, "keyed").kind, FieldKind::Map(_)));
+    assert!(records("keyed"));
+    assert!(!records("plain"));
 }
 
 #[test]

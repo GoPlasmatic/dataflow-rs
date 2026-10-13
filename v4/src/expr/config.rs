@@ -53,6 +53,20 @@ pub enum FieldKind {
     Nested(fn() -> &'static [FieldSpec]),
 }
 
+impl FieldKind {
+    /// Whether the kind is an output, or holds one at any depth of a list or
+    /// a map. The engine records every output's result whatever its field
+    /// says, so a field of such a kind records (break 16). A nested config's
+    /// own fields say so for themselves.
+    pub(crate) fn contains_output(self) -> bool {
+        match self {
+            Self::Output => true,
+            Self::List(element) | Self::Map(element) => element().contains_output(),
+            _ => false,
+        }
+    }
+}
+
 /// One field of a config.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -63,7 +77,8 @@ pub struct FieldSpec {
     pub kind: FieldKind,
     /// Is the key required?
     pub required: bool,
-    /// Does the engine record the field's result?
+    /// Does the engine record the field's result? Always for a field holding
+    /// an output.
     pub records: bool,
     /// The default, as JSON text.
     pub default: Option<Cow<'static, str>>,
@@ -75,13 +90,13 @@ pub struct FieldSpec {
 
 impl FieldSpec {
     /// A runtime field: its kind is an expression, an interpolated document, a
-    /// literal or an output.
+    /// literal or an output. It records when it holds an output.
     pub fn runtime(name: impl Into<Cow<'static, str>>, kind: FieldKind, required: bool) -> Self {
         Self {
             name: name.into(),
             kind,
             required,
-            records: false,
+            records: kind.contains_output(),
             default: None,
             primary: false,
             description: None,

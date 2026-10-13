@@ -15,13 +15,11 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // Not read: `docs/theme/dataflow-playground.js`, whose samples are built by
 // string concatenation around a JS variable, so they are not literals.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use std::collections::BTreeSet;
-
-use dataflow_rs::def::{ParseOptions, parse};
+use dataflow_rs::def::{ParseOptions, StepDef, WorkflowDef, parse};
 use dataflow_rs::expr::CompileCx;
 use dataflow_rs::function::{ExprVisitor, FieldSpec, FunctionConfig};
 use dataflow_rs::program::{CompileOptions, IssueCode, Severity};
@@ -1032,56 +1030,53 @@ impl Function for Stub {
     }
 }
 
-/// Every string `function.name` anywhere in `value`.
-fn function_names(value: &Value, out: &mut BTreeSet<String>) {
-    match value {
-        Value::Object(map) => {
-            if let Some(name) = map
-                .get("function")
-                .and_then(|f| f.get("name"))
-                .and_then(Value::as_str)
-            {
-                out.insert(name.to_string());
-            }
-            map.values().for_each(|v| function_names(v, out));
-        }
-        Value::Array(items) => items.iter().for_each(|v| function_names(v, out)),
-        _ => {}
-    }
-}
-
 #[test]
 fn every_repository_definition_compiles() {
     let (found, _notes, problems) = collect();
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 
-    let mut names = BTreeSet::new();
-    for f in &found {
-        function_names(&f.def, &mut names);
-    }
+    // The stubs' names come from the parsed definitions, where the compat
+    // reader has rewritten v3's `validate` to `validation`: a raw name could
+    // be one `register` reserves.
+    let parsed: Vec<(&Found, Option<WorkflowDef>)> = found
+        .iter()
+        .map(|f| (f, parse(&f.def, ParseOptions::default()).def))
+        .collect();
+    let names: BTreeSet<&str> = parsed
+        .iter()
+        .filter_map(|(_, def)| def.as_ref())
+        .flat_map(|def| def.walk())
+        .filter_map(|(_, _, step)| match step {
+            StepDef::Task(task) => Some(task.function.name.as_str()),
+            StepDef::Group(_) => None,
+        })
+        .collect();
     let mut registry = Registry::default();
     let builtins: BTreeSet<String> = registry
         .catalogue()
         .filter(|i| i.builtin)
         .map(|i| i.name.to_string())
         .collect();
-    for name in names.difference(&builtins) {
+    for name in names.into_iter().filter(|name| !builtins.contains(*name)) {
         registry.register(name, Stub);
     }
     let compiler = registry.compiler(CompileOptions::default());
 
     let mut per_group: BTreeMap<&str, usize> = BTreeMap::new();
     let mut compiled = 0;
+    // The one definition calling v3's `validate`: it compiles as `validation`.
+    let alias = "examples/async_migration.rs";
+    let mut alias_compiled = false;
     let mut failures = Vec::new();
     let mut used = vec![false; COMPILE_ALLOWLIST.len()];
-    for f in &found {
-        let parsed = parse(&f.def, ParseOptions::default());
-        let Some(def) = parsed.def else { continue };
+    for (f, def) in &parsed {
+        let Some(def) = def else { continue };
         let id = def.id.clone();
         *per_group.entry(&f.group).or_default() += 1;
-        let issues = match compiler.compile_one(&def) {
+        let issues = match compiler.compile_one(def) {
             Ok(c) => {
                 compiled += 1;
+                alias_compiled |= f.file == alias;
                 c.issues
             }
             Err(issues) => issues,
@@ -1116,6 +1111,7 @@ fn every_repository_definition_compiles() {
         assert!(n >= *floor, "{group}: checked {n}, floor {floor}");
     }
     assert!(compiled >= MINIMUM_DEFINITIONS);
+    assert!(alias_compiled, "{alias}'s definition does not compile");
     for (n, u) in used.iter().enumerate() {
         assert!(
             u,

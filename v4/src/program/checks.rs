@@ -25,6 +25,7 @@ use super::fingerprint::Fingerprint;
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, StepKind};
 use crate::def::{Logic, RejectionPolicy, StepDef, TaskDef, WorkflowDef};
 use crate::expr::{ExprEngine, ExprVisitor, escaped_keys, secret_refs};
+use crate::function::builtins::BuiltinKind;
 use serde_json::Value;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
@@ -360,8 +361,9 @@ fn unguarded_validation(def: &WorkflowDef, issues: &mut Vec<Issue>) {
         match step {
             StepDef::Group(group) => opening |= gates(group.condition.as_ref()),
             StepDef::Task(task) => {
-                let guarded =
-                    opening || gates(task.condition.as_ref()) || task.function.name == "filter";
+                let guarded = opening
+                    || gates(task.condition.as_ref())
+                    || BuiltinKind::from_name(&task.function.name) == Some(BuiltinKind::Filter);
                 chain.push(Link {
                     path,
                     kind,
@@ -374,7 +376,7 @@ fn unguarded_validation(def: &WorkflowDef, issues: &mut Vec<Issue>) {
     }
     for (i, link) in chain.iter().enumerate() {
         let task = link.task;
-        if task.function.name != "validation"
+        if BuiltinKind::from_name(&task.function.name) != Some(BuiltinKind::Validation)
             || task.terminal
             || task.on_rejection == RejectionPolicy::Halt
         {

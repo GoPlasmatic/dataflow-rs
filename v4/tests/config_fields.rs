@@ -2,7 +2,7 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::expr::{
-    CompileCx, ConfigField, ExprEngine, ExprVisitor, FieldKind, FieldSpec, ValueKind, Visit,
+    CompileCx, ConfigField, ExprEngine, ExprVisitor, FieldKind, FieldSpec, Output, ValueKind, Visit,
 };
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::program::{AuthoredPath, IssueCode, Severity, StepKind};
@@ -325,6 +325,9 @@ fn a_field_spec_builds() {
     assert_eq!(s.name, "limit");
     assert!(!s.required && !s.records && !s.primary);
     assert_eq!(s.default.as_deref(), Some("5"));
+    // An output records, at any depth (break 16).
+    assert!(FieldSpec::runtime("out", FieldKind::Output, false).records);
+    assert!(FieldSpec::runtime("outs", <Vec<Output>>::kind(), false).records);
 }
 
 #[test]

@@ -177,6 +177,12 @@ fn registering_any_builtin_name_panics() {
 }
 
 #[test]
+#[should_panic(expected = "`validate`")]
+fn registering_v3s_alias_validate_panics() {
+    Registry::default().register("validate", Described("shadow"));
+}
+
+#[test]
 fn registering_a_name_twice_keeps_the_second() {
     let mut registry = Registry::default();
     registry.register("fetch", Fetch);

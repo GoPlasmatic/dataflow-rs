@@ -3,7 +3,6 @@
 use super::builtins::BuiltinKind;
 use super::erased::{Erased, ErasedFunction};
 use super::{CallLayer, Function, FunctionSpec};
-use crate::def::BUILTIN_FUNCTIONS;
 use crate::expr::{ExprEngine, FieldSpec};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -75,12 +74,16 @@ impl Registry {
     ///
     /// # Panics
     ///
-    /// On a name in [`BUILTIN_FUNCTIONS`]: a built-in cannot be shadowed. A
-    /// host that registers names from data checks that list first.
+    /// On a reserved name: one in
+    /// [`BUILTIN_FUNCTIONS`](crate::def::BUILTIN_FUNCTIONS), since a built-in
+    /// cannot be shadowed, or `validate`, v3's alias for `validation`, which
+    /// the compat reader rewrites before any name is looked up. A host that
+    /// registers names from data checks those first.
     pub fn register<F: Function>(&mut self, name: &str, f: F) {
         assert!(
-            !BUILTIN_FUNCTIONS.contains(&name),
-            "cannot register `{name}`: it is a built-in function name (see def::BUILTIN_FUNCTIONS)"
+            !BuiltinKind::reserved(name),
+            "cannot register `{name}`: the name is reserved for a built-in function \
+             (see def::BUILTIN_FUNCTIONS; `validate` is v3's alias for `validation`)"
         );
         let erased: Arc<dyn ErasedFunction> = Arc::new(Erased::new(f));
         Arc::make_mut(&mut self.inner)
@@ -99,7 +102,8 @@ impl Registry {
         &self.inner.exprs
     }
 
-    /// Every function: the eight built-ins in [`BUILTIN_FUNCTIONS`] order,
+    /// Every function: the eight built-ins in
+    /// [`BUILTIN_FUNCTIONS`](crate::def::BUILTIN_FUNCTIONS) order,
     /// then the host functions by name.
     pub fn catalogue(&self) -> impl Iterator<Item = FunctionInfo<'_>> {
         let builtins = BuiltinKind::ALL
@@ -174,6 +178,7 @@ pub struct FunctionInfo<'a> {
 mod tests {
     use super::*;
     use crate::base::Result;
+    use crate::def::BUILTIN_FUNCTIONS;
     use crate::function::{BoxFuture, Ctx, Next, Outcome};
 
     struct Ping;

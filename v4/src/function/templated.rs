@@ -146,10 +146,12 @@ impl Templated {
 
     /// One runtime field, or `None` when it is absent or rejected.
     ///
-    /// An explicit `null` reads as absent, so the spec's default applies and a
-    /// required field is missing, unless the field's kind takes `null` as a
-    /// value: an expression, a document, or a literal of any JSON. That is
-    /// how a derived config's `Option` field reads it (decision I53).
+    /// An absent key takes the spec's default, and a required field with none
+    /// is missing. An explicit `null` is compiled when the field's kind takes
+    /// `null` as a value: an expression, a document, or a literal of any
+    /// JSON. On any other kind it reads as absent without the default, so a
+    /// required field is missing even when it declares one; an output alone
+    /// keeps its default, as a derived config's does (decision I53).
     fn one(
         spec: &FieldSpec,
         raw: Option<&Value>,
@@ -159,30 +161,31 @@ impl Templated {
             spec.kind,
             FieldKind::Expr(_) | FieldKind::Interpolated | FieldKind::Literal(ValueKind::Any)
         );
-        match raw.filter(|raw| takes_null || !raw.is_null()) {
-            Some(raw) => field(spec.kind, raw, cx),
-            None => {
-                if let Some(text) = &spec.default {
-                    return match serde_json::from_str::<Value>(text) {
-                        Ok(default) => field(spec.kind, &default, cx),
-                        Err(e) => {
-                            cx.issue(
-                                IssueCode::InputParse,
-                                format!("the default of `{}` is not JSON ({e})", spec.name),
-                            );
-                            None
-                        }
-                    };
-                }
-                if spec.required {
+        let default = match raw {
+            Some(raw) if takes_null || !raw.is_null() => return field(spec.kind, raw, cx),
+            // A `null` the kind has no value for: absent, with no default.
+            Some(_) if !matches!(spec.kind, FieldKind::Output) => None,
+            _ => spec.default.as_deref(),
+        };
+        if let Some(text) = default {
+            return match serde_json::from_str::<Value>(text) {
+                Ok(default) => field(spec.kind, &default, cx),
+                Err(e) => {
                     cx.issue(
                         IssueCode::InputParse,
-                        format!("missing field `{}`", spec.name),
+                        format!("the default of `{}` is not JSON ({e})", spec.name),
                     );
+                    None
                 }
-                None
-            }
+            };
         }
+        if spec.required {
+            cx.issue(
+                IssueCode::InputParse,
+                format!("missing field `{}`", spec.name),
+            );
+        }
+        None
     }
 
     fn walk(&self, v: &mut Visit<'_>) {
@@ -242,6 +245,11 @@ mod tests {
             FieldSpec::runtime("value", FieldKind::Expr(ValueKind::Any), false),
             FieldSpec::runtime("doc", FieldKind::Interpolated, false),
             FieldSpec::runtime("any", FieldKind::Literal(ValueKind::Any), false),
+            FieldSpec::runtime("dest", FieldKind::Output, false).with_default("\"data.dest\""),
+            // Required and defaulted: a host can build this through the
+            // public fields.
+            FieldSpec::runtime("both", FieldKind::Literal(ValueKind::String), true)
+                .with_default("\"fallback\""),
         ]
     }
 
@@ -270,18 +278,17 @@ mod tests {
     fn a_null_reads_as_absent_unless_the_kind_takes_null() {
         let (out, issues) = compile(&json!({
             "label": null, "mode": null, "out": null, "name": "n",
-            "value": null, "doc": null, "any": null,
+            "value": null, "doc": null, "any": null, "dest": null,
         }));
         assert!(issues.is_empty(), "{issues:?}");
         let out = out.unwrap();
-        // A literal string and an output have no null: absent, and the
-        // declared default applies.
+        // A literal string has no null: absent, and its declared default is
+        // not applied.
         assert!(get(&out, "label").is_none());
+        assert!(get(&out, "mode").is_none());
+        // An output has no null either, but keeps its default.
         assert!(get(&out, "out").is_none());
-        assert!(matches!(
-            get(&out, "mode"),
-            Some(TemplatedField::Literal(OwnedDataValue::String(s))) if s == "fast"
-        ));
+        assert!(matches!(get(&out, "dest"), Some(TemplatedField::Output(_))));
         // An expression, a document and any JSON take `null` as a value.
         assert!(matches!(
             get(&out, "value"),
@@ -305,6 +312,23 @@ mod tests {
         assert_eq!(issues[0].code, IssueCode::InputParse);
         assert_eq!(issues[0].severity, Severity::Rejected);
         assert_eq!(issues[0].path.to_string(), "tasks[0].function.input.name");
-        assert_eq!(issues[0].message, "missing field `name`");
+    }
+
+    #[test]
+    fn a_null_on_a_required_field_with_a_default_is_missing_and_absence_is_not() {
+        // An absent key takes the default.
+        let (out, issues) = compile(&json!({"name": "n"}));
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(matches!(
+            get(&out.unwrap(), "both"),
+            Some(TemplatedField::Literal(OwnedDataValue::String(s))) if s == "fallback"
+        ));
+        // An explicit `null` reads as absent with no default: missing.
+        let (out, issues) = compile(&json!({"name": "n", "both": null}));
+        assert!(out.is_none());
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert_eq!(issues[0].code, IssueCode::InputParse);
+        assert_eq!(issues[0].severity, Severity::Rejected);
+        assert_eq!(issues[0].path.to_string(), "tasks[0].function.input.both");
     }
 }

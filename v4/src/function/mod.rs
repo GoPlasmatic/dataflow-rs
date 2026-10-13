@@ -162,7 +162,8 @@ pub mod __private {
         (cx.rejected() == rejected_before).then_some(out)
     }
 
-    /// One [`FieldSpec`], as the derive declares it.
+    /// One [`FieldSpec`], as the derive declares it. A field holding an
+    /// output records whether or not it says so.
     pub fn spec(
         name: &'static str,
         kind: FieldKind,
@@ -176,7 +177,7 @@ pub mod __private {
             name: Cow::Borrowed(name),
             kind,
             required,
-            records,
+            records: records || kind.contains_output(),
             default: default.map(Cow::Borrowed),
             primary,
             description: description.map(Cow::Borrowed),
