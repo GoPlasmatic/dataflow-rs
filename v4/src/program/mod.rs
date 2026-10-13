@@ -6,6 +6,7 @@
 
 mod checks;
 mod compile;
+mod fingerprint;
 mod lower;
 mod ops;
 
@@ -14,3 +15,4 @@ pub use crate::base::{
     Severity, StepKind, TaskIx, WorkflowIx,
 };
 pub use compile::{CompileOptions, Compiled, CompiledWorkflow, Compiler, ResourceOracle};
+pub use fingerprint::{Fingerprint, ParseFingerprintError};

@@ -17,14 +17,17 @@
 //!
 //! The workflow lint is `UNGUARDED_VALIDATION`. A fragment has none.
 //!
-//! The fingerprint's classification arrives in Task 7.
+//! 4. **Fingerprint.** Each single-key object is classified by its key: an
+//!    operator of the vocabulary, data, or (an escaped key) nothing. See
+//!    [`Fingerprint`].
 
+use super::fingerprint::Fingerprint;
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, StepKind};
 use crate::def::{Logic, RejectionPolicy, StepDef, TaskDef, WorkflowDef};
 use crate::expr::{ExprEngine, ExprVisitor, escaped_keys, secret_refs};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{BTreeSet, HashMap};
 
 /// The step an expression sits in: its kind and id. `None` for the
 /// workflow's own expressions.
@@ -66,18 +69,49 @@ pub(crate) trait Hook {
 
     /// The whole workflow, after its steps. Not called for a fragment.
     fn workflow(&mut self, _def: &WorkflowDef, _issues: &mut Vec<Issue>) {}
+
+    /// The fingerprint of what the hook has seen.
+    fn fingerprint(&self) -> Fingerprint {
+        Fingerprint::of(&BTreeSet::new(), &BTreeSet::new())
+    }
 }
 
 /// The compile checks over one workflow or fragment.
 pub(crate) struct Checks<'e> {
     /// The vocabulary and secrets the rules read.
     exprs: &'e ExprEngine,
+    /// The operators the expressions use.
+    ops: BTreeSet<String>,
+    /// The data keys the expressions use.
+    data: BTreeSet<String>,
 }
 
 impl<'e> Checks<'e> {
     /// The checks against `exprs`.
     pub(crate) fn new(exprs: &'e ExprEngine) -> Self {
-        Self { exprs }
+        Self {
+            exprs,
+            ops: BTreeSet::new(),
+            data: BTreeSet::new(),
+        }
+    }
+
+    /// Rule 4: classify every single-key object below `raw`.
+    fn classify(&mut self, raw: &Value) {
+        match raw {
+            Value::Object(map) => {
+                if let Some(key) = map.keys().next().filter(|_| map.len() == 1) {
+                    if self.exprs.operators().iter().any(|op| op.name == *key) {
+                        self.ops.insert(key.clone());
+                    } else if !key.starts_with(self.exprs.escape()) {
+                        self.data.insert(key.clone());
+                    }
+                }
+                map.values().for_each(|child| self.classify(child));
+            }
+            Value::Array(items) => items.iter().for_each(|item| self.classify(item)),
+            _ => {}
+        }
     }
 
     /// Rule 1: a recorded expression reading any secret, or a literal name
@@ -161,6 +195,11 @@ impl Hook for Checks<'_> {
         self.secrets(site, raw, &mut report);
         self.template_keys(site.at, raw, &mut report);
         self.payload_vars(site.at, raw, &mut report);
+        self.classify(raw);
+    }
+
+    fn fingerprint(&self) -> Fingerprint {
+        Fingerprint::of(&self.ops, &self.data)
     }
 
     fn workflow(&mut self, def: &WorkflowDef, issues: &mut Vec<Issue>) {

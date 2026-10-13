@@ -3,6 +3,7 @@
 //! tables the ops index, and lowers each step into ops as it reaches it.
 
 use super::checks::{Below, Checks, Hook, Site, Stamp};
+use super::fingerprint::Fingerprint;
 use super::lower::Lower;
 use super::ops::{CallSite, Callee, CondKind, CondSite, FanSite, LoopSite, Op, TaskMeta};
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, Severity, StepKind};
@@ -209,6 +210,7 @@ impl Compiler {
             fans: walk.fans,
             loops: walk.loops,
             tasks: walk.tasks,
+            fingerprint: walk.hook.fingerprint(),
         };
         (workflow, walk.issues)
     }
@@ -243,12 +245,19 @@ pub struct CompiledWorkflow {
     pub(crate) fans: Vec<FanSite>,
     pub(crate) loops: Vec<LoopSite>,
     pub(crate) tasks: Vec<TaskMeta>,
+    pub(crate) fingerprint: Fingerprint,
 }
 
 impl CompiledWorkflow {
     /// The workflow's id.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// The workflow's fingerprint: the operators and data keys its
+    /// expressions use.
+    pub fn fingerprint(&self) -> Fingerprint {
+        self.fingerprint
     }
 }
 
