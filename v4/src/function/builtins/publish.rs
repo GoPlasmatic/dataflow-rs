@@ -1,7 +1,7 @@
 //! `publish_json`'s and `publish_xml`'s config: what under `data` to
 //! serialize, and where under `data` to write the text.
 
-use super::paths::DataPath;
+use super::paths::{DataPath, PublishSource};
 use crate::expr::Expr;
 use crate::function::FunctionConfig;
 
@@ -9,9 +9,11 @@ use crate::function::FunctionConfig;
 #[derive(Debug, FunctionConfig)]
 #[non_exhaustive]
 pub struct PublishConfig {
-    /// What to serialize, relative to `data`.
+    /// What to serialize, relative to `data`, with v3's fallback: a source
+    /// beginning with `data.` is also read without that prefix when
+    /// `data.<source>` is missing.
     #[config(records)]
-    pub source: DataPath,
+    pub source: PublishSource,
     /// Where the text is written, relative to `data`.
     #[config(records)]
     pub target: DataPath,

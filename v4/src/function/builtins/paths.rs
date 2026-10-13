@@ -1,8 +1,9 @@
-//! The two path fields parse and publish keep from v3 (I44): a parse source,
-//! which may name the payload, and a path written relative to `data`.
+//! The path fields parse and publish keep from v3 (I44, I56): a parse
+//! source, which may name the payload; a path written relative to `data`; and
+//! a publish source, which is one with v3's `data.` fallback.
 //!
 //! Each has one resolver, which reads a literal at compile and a computed
-//! value at run time, so the two can never disagree. Both take a string or
+//! value at run time, so the two can never disagree. Each takes a string or
 //! JSONLogic computing one: an expression that folds to anything but a string
 //! is `INPUT_PARSE`, as an `Expr<Path>` and a runtime `Expr(String)` field
 //! refuse it.
@@ -176,6 +177,81 @@ impl ConfigField for DataPath {
 
     fn visit(&self, v: &mut Visit<'_>) {
         v.expr(self.expr.raw());
+    }
+
+    fn kind() -> FieldKind {
+        FieldKind::Expr(ValueKind::String)
+    }
+}
+
+/// A publish source (I56): rooted at `data`, as a [`DataPath`] is, plus v3's
+/// fallback. A source beginning with `data.` also names the source without
+/// that prefix, read when `data.<source>` is missing: `"data.obj"` reads
+/// `data.data.obj`, else `data.obj`.
+///
+/// A literal resolves at compile; JSONLogic that does not fold resolves
+/// through `PublishSource::resolve` at run time.
+#[derive(Debug)]
+pub struct PublishSource {
+    path: DataPath,
+    fallback: Option<Path>,
+}
+
+impl PublishSource {
+    /// The primary path, when it is literal or folds, resolved at compile.
+    pub fn constant(&self) -> Option<&Path> {
+        self.path.constant()
+    }
+
+    /// The fallback, when the source is literal (or folds) and begins with
+    /// `data.`.
+    pub fn fallback(&self) -> Option<&Path> {
+        self.fallback.as_ref()
+    }
+
+    /// The expression computing the name below `data`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read by the phase 4 runtime, which resolves it")
+    )]
+    pub(crate) fn expr(&self) -> &Expr<String> {
+        self.path.expr()
+    }
+
+    /// The one resolver, for a literal at compile and a computed value at run
+    /// time: the primary path, `DataPath::resolve(s)`, and the fallback when
+    /// `s` begins with `data.`.
+    ///
+    /// The fallback is the rest of `s` read as a [`DataPath`] is, which is
+    /// where v3's lookup of the stripped name read: `data.<rest>`. A rest that
+    /// is not a path gives no fallback and no error, as v3's lookup simply
+    /// missed; none is refused today.
+    ///
+    /// # Errors
+    ///
+    /// The primary's, as `DataPath::resolve`'s.
+    pub(crate) fn resolve(s: &str) -> Result<(Path, Option<Path>)> {
+        let primary = DataPath::resolve(s)?;
+        let fallback = s
+            .strip_prefix("data.")
+            .and_then(|rest| DataPath::resolve(rest).ok());
+        Ok((primary, fallback))
+    }
+}
+
+impl ConfigField for PublishSource {
+    fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+        let (expr, resolved) = compile_path(raw, cx, Self::resolve)?;
+        let (constant, fallback) =
+            resolved.map_or((None, None), |(path, fallback)| (Some(path), fallback));
+        Some(Self {
+            path: DataPath { expr, constant },
+            fallback,
+        })
+    }
+
+    fn visit(&self, v: &mut Visit<'_>) {
+        self.path.visit(v);
     }
 
     fn kind() -> FieldKind {

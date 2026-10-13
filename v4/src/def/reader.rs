@@ -16,7 +16,6 @@
 //! | `http_call` input | `path_logic`, `body_logic`, `output` | `path`, `body`, `response_path` |
 //! | `enrich` input | `path_logic` | `path` |
 //! | `publish_kafka` input | `key_logic`, `value_logic` | `key`, `value` |
-//! | `publish_json` / `publish_xml` input | `source: "data.<x>"` | `source: "<x>"` |
 //!
 //! Each rewrite is a `V3_SPELLING` Advisory at the v3 key, and a
 //! [`Rewrite`]. Two moves are not rewrites, and are reported as the keys they
@@ -32,11 +31,6 @@
 //! - **A group's `continue_on_error`** moves into the group's `ext`, a
 //!   `GROUP_CONTINUE_ON_ERROR` when it is `true` (v3 reported it and never
 //!   honoured it) and an `UNKNOWN_KEY` otherwise.
-//!
-//! A publish `source` is written relative to `data` in v4, and v3 fell back
-//! to reading `data.<x>` as `<x>`, so a literal one under `data.` is rewritten
-//! to the rest (I56). A computed `source`, `"data"` itself and a `target` are
-//! not: `target`'s `data.t` was `data.data.t` in v3 too.
 //!
 //! The reader refuses a `continue_on_error` that is not a bool
 //! (`PARSE_FAILED`), a `halt_on` that is not `"never"` or `"failure"`
@@ -69,9 +63,7 @@ use std::collections::HashMap;
 ///   read together, so each of its rewrites names the same policies (a flag
 ///   beside a v4 policy is refused, not rewritten);
 /// - a function name or an input key is the bare name: `validate` read as
-///   `validation`, `path_logic` read as `path`;
-/// - a publish `source` is `source: value`: `source: data.obj` read as
-///   `source: obj`.
+///   `validation`, `path_logic` read as `path`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Rewrite {
@@ -483,7 +475,6 @@ impl Read {
         } else {
             &name
         });
-        let publish = name == "publish_json" || name == "publish_xml";
         for key in keys_among(&fields, &["input", "name"]) {
             if key == "name" {
                 if name == "validate" {
@@ -493,7 +484,7 @@ impl Read {
                 }
             } else if let Some(Value::Object(input)) = fields.get_mut("input") {
                 match builtin {
-                    Some(known) => self.builtin_input(obj, task, input, known, publish, step),
+                    Some(known) => self.builtin_input(obj, task, input, known, step),
                     None => self.aliases(input, &name, &at.join("input"), step),
                 }
             }
@@ -550,17 +541,15 @@ impl Read {
         }
     }
 
-    /// A built-in's input, in its keys' order (I54, I56). A key the built-in
-    /// does not know moves into the `ext` of the task at `task`, and so does
-    /// an unknown key of an object element of its nested configs; a publish
-    /// `source` under `data.` is rewritten to the rest.
+    /// A built-in's input, in its keys' order (I54). A key the built-in does
+    /// not know moves into the `ext` of the task at `task`, and so does an
+    /// unknown key of an object element of its nested configs.
     fn builtin_input(
         &mut self,
         obj: &Map<String, Value>,
         task: &AuthoredPath,
         input: &mut Map<String, Value>,
         known: BuiltinInput,
-        publish: bool,
         step: &Step,
     ) {
         let order: Vec<String> = input.keys().cloned().collect();
@@ -593,8 +582,6 @@ impl Read {
                         }
                     }
                 }
-            } else if publish && key == "source" {
-                self.publish_source(input, task, step);
             }
         }
     }
@@ -628,22 +615,6 @@ impl Read {
             value,
         };
         self.keep_in_ext(obj, task, moved, code, message, step);
-    }
-
-    /// A publish input's literal `source` under `data.`, rewritten to the
-    /// rest (I56): v4 reads the source relative to `data`, and v3 read
-    /// `data.<x>` as `<x>` when nothing else matched.
-    fn publish_source(&mut self, input: &mut Map<String, Value>, task: &AuthoredPath, step: &Step) {
-        let Some(Value::String(source)) = input.get_mut("source") else {
-            return;
-        };
-        let Some(rest) = source.strip_prefix("data.").map(str::to_string) else {
-            return;
-        };
-        let (v3, v4) = (format!("source: {source}"), format!("source: {rest}"));
-        *source = rest;
-        let path = task.join("function").join("input").join("source");
-        self.rewrite(path, v3, v4, Some(step), Some("source"));
     }
 
     /// Puts a moved key into the `ext` of the node `obj` at `node`, which the

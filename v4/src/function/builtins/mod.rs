@@ -23,7 +23,7 @@ pub use filter::{FilterConfig, RejectAction};
 pub use log::{LogConfig, LogLevel};
 pub use map::{MapConfig, MapMode, Mapping, OnNull};
 pub use parse::ParseConfig;
-pub use paths::{DataPath, ParseSource};
+pub use paths::{DataPath, ParseSource, PublishSource};
 pub use publish::PublishConfig;
 pub use validation::{Rule, ValidationConfig};
 

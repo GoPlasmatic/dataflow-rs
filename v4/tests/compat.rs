@@ -736,62 +736,6 @@ fn nested_strays_migrate_to_a_definition_that_parses_with_compat_off() {
 }
 
 #[test]
-fn a_publish_source_under_data_is_read_relative_to_data() {
-    // I56: v3 fell back to reading `data.obj` as `obj`; v4 reads the source
-    // relative to `data`, so the reader writes the rest.
-    for name in ["publish_json", "publish_xml"] {
-        let json = calling(name, json!({"source": "data.obj", "target": "out"}));
-        let parsed = compat(&json);
-        assert_eq!(
-            rows(&parsed),
-            vec![row(C::V3Spelling, A, "tasks[0].function.input.source")],
-            "{name}"
-        );
-        assert_eq!(
-            parsed.issues[0].message,
-            "`source: data.obj` is a v3 spelling, read as `source: obj`"
-        );
-        assert_eq!(parsed.issues[0].field.as_deref(), Some("source"));
-        assert_eq!(
-            task(&built(parsed).tasks[0]).function.input,
-            json!({"source": "obj", "target": "out"})
-        );
-        let m = migrated(&json);
-        assert_eq!(
-            rewrites(&m),
-            vec![rewrite(
-                "tasks[0].function.input.source",
-                "source: data.obj",
-                "source: obj"
-            )]
-        );
-        assert_eq!(strict(&m.json).def, compat(&json).def);
-    }
-
-    // Not rewritten: `data` itself, a computed source, a target, a parse
-    // source, and anything with the reader off.
-    for (name, input) in [
-        ("publish_json", json!({"source": "data", "target": "out"})),
-        (
-            "publish_json",
-            json!({"source": {"cat": ["data.", "obj"]}, "target": "out"}),
-        ),
-        (
-            "publish_json",
-            json!({"source": "obj", "target": "data.out"}),
-        ),
-        ("parse_json", json!({"source": "data.obj", "target": "out"})),
-    ] {
-        let parsed = compat(&calling(name, input.clone()));
-        assert_eq!(rows(&parsed), vec![], "{input}");
-        assert_eq!(task(&built(parsed).tasks[0]).function.input, input);
-    }
-    let input = json!({"source": "data.obj", "target": "out"});
-    let parsed = strict(&calling("publish_json", input.clone()));
-    assert_eq!(task(&built(parsed).tasks[0]).function.input, input);
-}
-
-#[test]
 fn the_four_publish_keys_stay_in_the_input() {
     let input = json!({"source": "obj", "target": "out", "pretty": true, "root_element": "doc"});
     let parsed = compat(&calling("publish_xml", input.clone()));
@@ -1321,14 +1265,20 @@ fn every_corpus_definition_migrates_to_one_that_parses_with_compat_off_to_an_equ
         assert_eq!(again.json, m.json, "{name}");
         assert!(again.rewrites.is_empty(), "{name}");
 
-        // I56: the publish case's `data.obj` source is read as `obj`.
+        // I56: the publish case's `data.obj` source is not rewritten; the
+        // config keeps v3's fallback (`PublishSource`).
         if name == "builtins/publish#0" {
-            assert!(rewrites(&m).contains(&rewrite(
-                "tasks[1].function.input.source",
-                "source: data.obj",
-                "source: obj"
-            )));
-            assert_eq!(m.json["tasks"][1]["function"]["input"]["source"], "obj");
+            assert!(
+                m.rewrites
+                    .iter()
+                    .all(|r| !r.path.to_string().ends_with(".source")),
+                "{:?}",
+                m.rewrites
+            );
+            assert_eq!(
+                m.json["tasks"][1]["function"]["input"]["source"],
+                "data.obj"
+            );
             saw_publish = true;
         }
     }

@@ -17,7 +17,6 @@
 //! | `http_call` input | `path_logic`, `body_logic`, `output` | `path`, `body`, `response_path` |
 //! | `enrich` input | `path_logic` | `path` |
 //! | `publish_kafka` input | `key_logic`, `value_logic` | `key`, `value` |
-//! | `publish_json` / `publish_xml` input | `source: "data.<x>"` | `source: "<x>"` |
 //!
 //! It moves two kinds of key into a node's `ext`, reporting each as the key
 //! it is:
@@ -37,11 +36,10 @@
 //!
 //! With the reader off, nothing is rewritten. The v3 keys of a workflow, a
 //! task and a group (`continue_on_error`, `halt_on`) are unknown keys, and
-//! Rejected as every unknown key then is. `validate`, the integration aliases,
-//! a built-in input's stray keys and a publish `source` under `data.` are not
-//! keys of the definition: they stay in the task's `function` as written, for
-//! the function's lookup and config to refuse or read when the workflow is
-//! compiled (phase 3).
+//! Rejected as every unknown key then is. `validate`, the integration aliases
+//! and a built-in input's stray keys are not keys of the definition: they stay
+//! in the task's `function` as written, for the function's lookup and config
+//! to refuse when the workflow is compiled (phase 3).
 //!
 //! [`migrate_v3`] parses with the reader on and writes the definition in the
 //! v4 spelling, which parses with the reader off to an equal definition.

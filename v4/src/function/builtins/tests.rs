@@ -6,7 +6,7 @@ use super::*;
 use crate::base::{AuthoredPath, Issue, IssueCode, Severity};
 use crate::def::keys::{PUBLISH_KEYS, builtin_input};
 use crate::def::{BUILTIN_FUNCTIONS, ParseOptions, StepDef, parse};
-use crate::expr::{CompileCx, ConfigField, ExprEngine, ExprVisitor, FieldSpec};
+use crate::expr::{CompileCx, ConfigField, ExprEngine, ExprVisitor, FieldSpec, Path};
 use crate::function::{FunctionConfig, RetrySafety};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -271,6 +271,79 @@ fn data_path_resolve_is_the_one_rule() {
     assert_eq!(DataPath::resolve("#20").unwrap().to_string(), "data.#20");
     // An empty name is the key `""` under `data`, as v3's split made it.
     assert_eq!(DataPath::resolve("").unwrap().to_string(), "data.");
+}
+
+// ---------------------------------------------------------------------------
+// `PublishSource`
+// ---------------------------------------------------------------------------
+
+/// The primary and the fallback, displayed.
+fn pair(primary: Option<&Path>, fallback: Option<&Path>) -> (Option<String>, Option<String>) {
+    (
+        primary.map(ToString::to_string),
+        fallback.map(ToString::to_string),
+    )
+}
+
+#[test]
+fn a_publish_source_keeps_v3s_data_fallback() {
+    for (raw, primary, fallback) in [
+        ("obj", "data.obj", None),
+        ("data.obj", "data.data.obj", Some("data.obj")),
+        ("data", "data.data", None),
+        ("data.a.b", "data.data.a.b", Some("data.a.b")),
+        ("metadata.x", "data.metadata.x", None),
+    ] {
+        let (source, issues) = field::<PublishSource>(&json!(raw));
+        assert!(issues.is_empty(), "{raw}: {issues:?}");
+        let source = source.unwrap();
+        let expected = (Some(primary.to_owned()), fallback.map(str::to_owned));
+        assert_eq!(
+            pair(source.constant(), source.fallback()),
+            expected,
+            "{raw}"
+        );
+        // The run resolves a computed value as the compile resolved the literal.
+        let (p, f) = PublishSource::resolve(raw).unwrap();
+        assert_eq!(pair(Some(&p), f.as_ref()), expected, "{raw}");
+        // The primary is `DataPath`'s, exactly.
+        assert_eq!(Some(&DataPath::resolve(raw).unwrap()), source.constant());
+    }
+}
+
+#[test]
+fn a_computed_publish_source_resolves_at_run_time() {
+    let raw = json!({"cat": ["data.", {"var": "data.kind"}]});
+    let (source, issues) = field::<PublishSource>(&raw);
+    assert!(issues.is_empty(), "{issues:?}");
+    let source = source.unwrap();
+    assert_eq!(pair(source.constant(), source.fallback()), (None, None));
+    assert_eq!(source.expr().raw(), &raw);
+    // What the run does with the value `data.obj`.
+    let (primary, fallback) = PublishSource::resolve("data.obj").unwrap();
+    assert_eq!(
+        pair(Some(&primary), fallback.as_ref()),
+        (
+            Some("data.data.obj".to_owned()),
+            Some("data.obj".to_owned())
+        )
+    );
+
+    // One that folds resolves at compile, fallback included.
+    let (source, _) = field::<PublishSource>(&json!({"cat": ["data.", "obj"]}));
+    let source = source.unwrap();
+    assert_eq!(
+        pair(source.constant(), source.fallback()),
+        (
+            Some("data.data.obj".to_owned()),
+            Some("data.obj".to_owned())
+        )
+    );
+
+    // As a `DataPath` refuses it, a source that is not a string.
+    let (source, issues) = field::<PublishSource>(&json!(7));
+    assert!(source.is_none());
+    assert_eq!(codes(&issues), [(IssueCode::InputParse, "f".to_owned())]);
 }
 
 // ---------------------------------------------------------------------------
@@ -861,18 +934,16 @@ fn parse_rows() -> Vec<Row> {
 }
 
 fn publish_rows() -> Vec<Row> {
-    use IssueCode::{InputParse, LikelyTypo, V3Spelling};
+    use IssueCode::{InputParse, LikelyTypo};
     vec![
         ok(json!({"source": "output", "target": "json_string"})),
         refused(json!({"target": "t"}), "source", InputParse),
         refused(json!({"source": "s"}), "target", InputParse),
         ok(json!({"source": "response.data", "target": "xmlOutput", "root_element": "Data"})),
-        // I56: read as `x`, as v3's fallback read it.
-        ok_with(
-            json!({"source": "data.x", "target": "t"}),
-            "source",
-            V3Spelling,
-        ),
+        // I56: `data.data.x`, else v3's fallback `data.x`; nothing is rewritten.
+        ok(json!({"source": "data.x", "target": "t"})),
+        // corpus/cases/builtins/publish.json's spelling.
+        ok(json!({"source": "data.obj", "target": "pretty_out", "pretty": true})),
         ok(json!({"source": "", "target": ""})),
         refused(json!({"source": null, "target": "t"}), "source", InputParse)
             .because(Why::Break15Widened),
