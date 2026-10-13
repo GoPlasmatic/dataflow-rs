@@ -2,15 +2,26 @@
 
 #[doc(hidden)]
 pub mod builtins;
+mod call;
 mod config;
+mod ctx;
+mod erased;
+mod layer;
+mod outcome;
+mod registry;
 mod spec;
 mod templated;
 
 pub use crate::expr::{ExprVisitor, FieldKind, FieldSpec, ValueKind};
+pub use call::{Function, Prepare};
 pub use config::FunctionConfig;
+pub use ctx::{CallInfo, Ctx};
 /// Derives [`FunctionConfig`](trait@FunctionConfig) (and `ConfigField`, so a
 /// derived config nests).
 pub use dataflow_rs_derive::FunctionConfig;
+pub use layer::{BoxFuture, CallLayer, Next};
+pub use outcome::Outcome;
+pub use registry::{FunctionInfo, Registry};
 pub use spec::{FunctionSpec, Reference, RetrySafety};
 pub use templated::Templated;
 

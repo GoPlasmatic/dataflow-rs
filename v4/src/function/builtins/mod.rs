@@ -33,13 +33,6 @@ use serde_json::Value;
 
 /// A built-in function, by name (I42).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "used by the registry and the compiler from Task 3"
-    )
-)]
 pub(crate) enum BuiltinKind {
     Map,
     Validation,
@@ -51,13 +44,6 @@ pub(crate) enum BuiltinKind {
     PublishXml,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "used by the registry and the compiler from Task 3"
-    )
-)]
 impl BuiltinKind {
     /// Every built-in, in `def::BUILTIN_FUNCTIONS` order.
     pub(crate) const ALL: [Self; 8] = [
@@ -147,6 +133,10 @@ impl BuiltinKind {
 
     /// Compiles `input` as this built-in's config at `cx`. `None` when any
     /// issue is Rejected.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by the compiler from Task 4")
+    )]
     pub(crate) fn compile(self, input: &Value, cx: &mut CompileCx<'_>) -> Option<Builtin> {
         match self {
             Self::Map => MapConfig::compile(input, cx).map(Builtin::Map),
