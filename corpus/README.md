@@ -32,9 +32,10 @@ the same cases through `dataflow-corpus`.
 `corpus/v4/` (`dataflow-corpus-v4`) reads the same cases through `dataflow-corpus`. In phase 3 it
 compiles every definition (`tests/definitions.rs`): v4's `parse` issues, then those of a compiler
 holding `script` and the case's operators and secrets. A definition no deviation covers must report
-what v3 recorded (`authored` and `checked`), as `(code, severity, path)`. A deviated one must report
-exactly its row of `expect::DEVIATED`, unfiltered. Nothing is skipped. Later phases extend it to
-runs.
+what v3 recorded (`authored` and `checked`), as `(code, severity, path)`. Before that comparison,
+v4's own Advisories, those of a code v3 does not have such as `V3_SPELLING`, are filtered out
+(`expect::compared`). A deviated one must report exactly its row of `expect::DEVIATED`, unfiltered.
+Nothing is skipped. Later phases extend it to runs.
 
 ## A case
 

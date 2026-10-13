@@ -963,6 +963,7 @@ mod tests {
         assert_eq!(root.field.as_deref(), Some("f"));
         assert_eq!(root.to_string(), "m [NO_TASKS]");
     }
+
     #[test]
     fn a_key_it_could_not_otherwise_print_is_quoted() {
         for (key, shown) in [
@@ -1048,12 +1049,13 @@ mod tests {
         .with_step(StepKind::Task, Some("t"))
         .with_field("a.b");
         let value = serde_json::to_value(&issue).unwrap();
-        let keys: Vec<&str> = value
+        let mut keys: Vec<&str> = value
             .as_object()
             .unwrap()
             .keys()
             .map(String::as_str)
             .collect();
+        keys.sort_unstable();
         let mut want = [
             "code",
             "severity",

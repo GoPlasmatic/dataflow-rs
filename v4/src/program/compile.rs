@@ -841,7 +841,24 @@ mod tests {
         assert_eq!(w.status, Status::Paused);
         assert_eq!(w.rollout, Some(Rollout::new(10, 60)));
         assert_eq!(w.on_failure, WorkflowFailurePolicy::Continue);
-        assert_eq!(w.ops.len(), 10, "lowered: {}", w.listing());
+
+        // The lowering: a setup step, a loop over a group holding a
+        // conditional fan-out, and a terminal task.
+        let listing = [
+            " 0 Cond workflow else->end",
+            " 1 Cond task s else->3",
+            " 2 Call s log builtin fail->end",
+            " 3 LoopInit exit->end",
+            " 4 Cond workflow else->end",
+            " 5 Cond group g else->8",
+            " 6 Cond task f else->8",
+            " 7 FanOut f echo host as=item fail->9",
+            " 8 Call m map builtin fail->9 terminal",
+            " 9 LoopNext body->4 exit->end",
+        ];
+        let expected: String = listing.iter().map(|line| format!("{line}\n")).collect();
+        assert_eq!(w.listing(), expected, "\n{}", w.listing());
+        assert_eq!(w.check_invariants(), Ok(()));
 
         // One row per task, never per group: setup first.
         let rows: Vec<_> = w

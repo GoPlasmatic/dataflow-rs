@@ -171,7 +171,7 @@ impl Builtin {
     /// Which built-in this is.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "used by the listing from Task 5")
+        expect(dead_code, reason = "only the tests ask a callee which built-in it is")
     )]
     pub(crate) fn kind(&self) -> BuiltinKind {
         match self {

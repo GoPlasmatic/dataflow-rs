@@ -112,7 +112,7 @@ impl Compiler {
 struct Inner {
     id: ProgramId,
     registry: Registry,
-    #[expect(dead_code, reason = "kept for the runtime's recompiles in phase 4")]
+    #[expect(dead_code, reason = "kept to recompile on a reload, in phase 6")]
     options: CompileOptions,
     workflows: Vec<CompiledWorkflow>,
     infos: Vec<WorkflowInfo>,

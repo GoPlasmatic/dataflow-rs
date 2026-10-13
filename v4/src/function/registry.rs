@@ -95,8 +95,8 @@ impl Registry {
     pub fn register<F: Function>(&mut self, name: &str, f: F) {
         assert!(
             !BuiltinKind::reserved(name),
-            "cannot register `{name}`: the name is reserved for a built-in function \
-             (see def::BUILTIN_FUNCTIONS; `validate` is v3's alias for `validation`)"
+            "cannot register `{name}`: the name is reserved for the built-in functions \
+             (def::BUILTIN_FUNCTIONS, and v3's alias for `validation`)"
         );
         let erased = Erased::new(f);
         let templated = TypeId::of::<F::Config>() == TypeId::of::<Templated>();

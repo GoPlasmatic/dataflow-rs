@@ -49,7 +49,7 @@ use super::keys::{
     WORKFLOW_V3_KEYS, builtin_input,
 };
 use crate::base::typo::unknown_key;
-use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, StepKind};
+use crate::base::{AuthoredPath, Issue, IssueCode, StepKind};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -556,8 +556,12 @@ impl Read {
         for key in order {
             if !known.keys.contains(&key.as_str()) {
                 if let Some(value) = take(input, &key) {
-                    let below = AuthoredPath::root().join(key.as_str());
-                    self.stray(obj, task, &below, known.keys, value, step);
+                    let at = StrayKey {
+                        key: &key,
+                        field: &key,
+                        below: AuthoredPath::root().join(key.as_str()),
+                    };
+                    self.stray(obj, task, at, known.keys, value, step);
                 }
             } else if let Some((array, element_keys)) = known.elements
                 && key == array
@@ -574,11 +578,15 @@ impl Read {
                         .collect();
                     for stray in strays {
                         if let Some(value) = take(element, &stray) {
-                            let below = AuthoredPath::root()
-                                .join(array)
-                                .join(i)
-                                .join(stray.as_str());
-                            self.stray(obj, task, &below, element_keys, value, step);
+                            let at = StrayKey {
+                                key: &stray,
+                                field: array,
+                                below: AuthoredPath::root()
+                                    .join(array)
+                                    .join(i)
+                                    .join(stray.as_str()),
+                            };
+                            self.stray(obj, task, at, element_keys, value, step);
                         }
                     }
                 }
@@ -586,31 +594,27 @@ impl Read {
         }
     }
 
-    /// A built-in input's key at `below` the input that its level does not
-    /// know (`known` are the level's keys), moved into the `ext` of the task
-    /// at `task` as `function.input` followed by `below`.
+    /// A built-in input's key that its level does not know (`known` are the
+    /// level's keys), moved into the `ext` of the task at `task` as
+    /// `function.input` followed by the key's path below the input.
     fn stray(
         &mut self,
         obj: &Map<String, Value>,
         task: &AuthoredPath,
-        below: &AuthoredPath,
+        at: StrayKey<'_>,
         known: &[&str],
         value: Value,
         step: &Step,
     ) {
-        let key_of = |seg: Option<&PathSeg>| match seg {
-            Some(PathSeg::Key(key)) => key.to_string(),
-            _ => unreachable!("a stray's path starts and ends at a key"),
-        };
-        let (key, field) = (key_of(below.segs().last()), key_of(below.segs().first()));
+        let StrayKey { key, field, below } = at;
         let input = AuthoredPath::root().join("function").join("input");
-        let name = input.extend(below).to_string();
-        let (code, message) = unknown_key(&key, known);
+        let name = input.extend(&below).to_string();
+        let (code, message) = unknown_key(key, known);
         let message = format!("{message} (kept in `ext` as `{name}`)");
         let moved = Moved {
-            key: &key,
-            path: task.extend(&input).extend(below),
-            field: Some(&field),
+            key,
+            path: task.extend(&input).extend(&below),
+            field: Some(field),
             name,
             value,
         };
@@ -647,6 +651,17 @@ impl Read {
             }
         }
     }
+}
+
+/// A built-in input's key that its level does not know.
+struct StrayKey<'k> {
+    /// The key as authored.
+    key: &'k str,
+    /// The input's field it sits in: the key itself, or the array holding
+    /// the element it sits in.
+    field: &'k str,
+    /// Its path below the input.
+    below: AuthoredPath,
 }
 
 /// A key moving into a node's `ext`.

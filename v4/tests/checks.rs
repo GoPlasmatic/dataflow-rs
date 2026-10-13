@@ -648,7 +648,8 @@ fn a_duplicate_key_rejects_the_workflow() {
     let compiled = compiler()
         .compile_one(&def(&json))
         .expect("an escaped key is an Advisory");
-    assert_eq!(compiled.issues.len(), 1);
+    let codes: Vec<C> = compiled.issues.iter().map(|i| i.code).collect();
+    assert_eq!(codes, [C::EscapedTemplateKey]);
 }
 
 // ---------------------------------------------------------------------------
@@ -810,11 +811,21 @@ fn the_unguarded_issue_names_the_next_task_and_on_rejection_halt() {
 
 #[test]
 fn a_fragment_has_no_workflow_lint() {
-    let steps = json!([validation("v"), map("m", json!(1))]);
+    // The expression checks run, so the escaped key is reported; the
+    // unguarded validation is not.
+    let steps = json!([validation("v"), map("m", json!({"$a": 1}))]);
     let issues = compiler().check_steps(&steps, "tasks");
-    assert!(
-        issues.iter().all(|i| i.code != C::UnguardedValidation),
-        "{issues:?}"
+    let rows: Vec<Row> = issues
+        .iter()
+        .map(|i| row(i.code, i.severity, &i.path.to_string()))
+        .collect();
+    assert_eq!(
+        rows,
+        [row(
+            C::EscapedTemplateKey,
+            Severity::Advisory,
+            "tasks[1].function.input.mappings[0].logic.$a"
+        )]
     );
 }
 

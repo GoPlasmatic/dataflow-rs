@@ -373,7 +373,6 @@ impl fmt::Display for Listing<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ops::Op;
     use super::*;
     use crate::base::{Result, StepKind};
     use crate::def::{ParseOptions, parse};
@@ -460,7 +459,7 @@ mod tests {
             "mappings": [{"path": "data.a", "logic": 1}]}}})
     }
 
-    /// `map(id)` with `key` set to `value`.
+    /// `map(id)` with each `(key, value)` of `extra` set on the task.
     fn map_with(id: &str, extra: &[(&str, Value)]) -> Value {
         let mut task = map(id);
         for (key, value) in extra {
@@ -613,7 +612,7 @@ mod tests {
 
     #[test]
     fn the_worked_lowering() {
-        snapshot(
+        let wf = snapshot(
             &price_batches(),
             &[
                 " 0 Cond workflow else->end",
@@ -631,6 +630,9 @@ mod tests {
                 "12 LoopNext body->3 exit->end",
             ],
         );
+        // Four `Cond`s, three rows: the workflow condition's one row serves
+        // the pre-phase and every sweep.
+        assert_eq!(wf.conds.len(), 3);
     }
 
     #[test]

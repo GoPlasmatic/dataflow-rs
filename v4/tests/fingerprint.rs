@@ -68,6 +68,10 @@ fn base() -> Value {
 
 /// The golden value. A stored fingerprint is compared against a fresh one
 /// across processes and releases, so this literal must never change.
+///
+/// It hashes exactly the operators `{"==", "var"}` and the data keys
+/// `{"result"}`. The escaped `{"$shape": 1}` contributes nothing: with
+/// `$shape` among the data keys the hash would differ.
 #[test]
 fn the_golden_fingerprint_never_changes() {
     assert_eq!(fingerprint(&base()).to_string(), "v1:fbe0013c1692ddb4");

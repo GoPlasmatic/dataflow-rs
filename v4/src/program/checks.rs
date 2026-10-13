@@ -413,7 +413,7 @@ fn unguarded_validation(def: &WorkflowDef, issues: &mut Vec<Issue>) {
         }
         let message = format!(
             "a failing rule here records status 400 and task `{}` still runs: \
-             `on_rejection` defaults to `continue`. Add `\"on_rejection\": \"halt\"` to stop \
+             `on_rejection` is `continue`. Add `\"on_rejection\": \"halt\"` to stop \
              the workflow, or gate what follows on `metadata.progress.status_code`",
             next.task.id
         );
