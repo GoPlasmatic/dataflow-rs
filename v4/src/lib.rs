@@ -16,6 +16,7 @@ pub mod compat;
 pub mod def;
 pub mod expr;
 pub mod function;
+pub mod observe;
 pub mod program;
 pub mod run;
 #[cfg_attr(
