@@ -129,7 +129,6 @@ pub(crate) struct LoopSite {
 }
 
 /// One task, as the program lists it: one row per task, never per group.
-#[cfg_attr(not(test), expect(dead_code, reason = "read by link and the runtime"))]
 pub(crate) struct TaskMeta {
     pub(crate) id: String,
     /// The registered name of the function it calls.

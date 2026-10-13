@@ -10,10 +10,6 @@ pub struct ProgramId(u64);
 
 impl ProgramId {
     /// The next unused identity.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used from program, which assigns one per build")
-    )]
     pub(crate) fn next() -> Self {
         Self(NEXT_PROGRAM.fetch_add(1, Ordering::Relaxed))
     }
@@ -30,13 +26,6 @@ pub struct WorkflowIx(u32);
 
 impl WorkflowIx {
     /// The workflow at position `index`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "used from program, which numbers what it compiles"
-        )
-    )]
     pub(crate) fn new(index: u32) -> Self {
         Self(index)
     }
@@ -53,13 +42,6 @@ pub struct TaskIx(u32);
 
 impl TaskIx {
     /// The task at position `index`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "used from program, which numbers what it compiles"
-        )
-    )]
     pub(crate) fn new(index: u32) -> Self {
         Self(index)
     }

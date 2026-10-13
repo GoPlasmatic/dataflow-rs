@@ -7,6 +7,7 @@
 mod checks;
 mod compile;
 mod fingerprint;
+mod link;
 mod lower;
 mod ops;
 
@@ -16,3 +17,4 @@ pub use crate::base::{
 };
 pub use compile::{CompileOptions, Compiled, CompiledWorkflow, Compiler, ResourceOracle};
 pub use fingerprint::{Fingerprint, ParseFingerprintError};
+pub use link::{Program, TaskInfo, WorkflowInfo};

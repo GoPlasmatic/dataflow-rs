@@ -84,8 +84,8 @@ impl Registry {
 /// ```
 #[derive(Clone)]
 pub struct Compiler {
-    registry: Registry,
-    options: CompileOptions,
+    pub(super) registry: Registry,
+    pub(super) options: CompileOptions,
 }
 
 impl Compiler {
