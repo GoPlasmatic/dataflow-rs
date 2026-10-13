@@ -6,6 +6,7 @@
 
 mod checks;
 mod compile;
+mod lower;
 mod ops;
 
 pub use crate::base::{

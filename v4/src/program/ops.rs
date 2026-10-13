@@ -11,7 +11,6 @@ use crate::function::builtins::Builtin;
 
 /// What a `Cond` op gates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(dead_code, reason = "the lowering builds ops from Task 5")]
 pub(crate) enum CondKind {
     Workflow,
     Group,
@@ -20,7 +19,6 @@ pub(crate) enum CondKind {
 
 /// One instruction. A target is an op index, and `ops.len()` is the end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(dead_code, reason = "the lowering builds ops from Task 5")]
 pub(crate) enum Op {
     Cond {
         cond: u32,

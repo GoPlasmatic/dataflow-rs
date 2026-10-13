@@ -1,13 +1,14 @@
 //! The compiler: one walk over a definition that compiles every expression
-//! and config, reports every issue at its authored path, and fills the side
-//! tables the ops index.
+//! and config, reports every issue at its authored path, fills the side
+//! tables the ops index, and lowers each step into ops as it reaches it.
 
 use super::checks::{Below, Checks, Hook, Site, Stamp};
-use super::ops::{CallSite, Callee, CondSite, FanSite, LoopSite, Op, TaskMeta};
+use super::lower::Lower;
+use super::ops::{CallSite, Callee, CondKind, CondSite, FanSite, LoopSite, Op, TaskMeta};
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, Severity, StepKind};
 use crate::def::{
-    self, ForEachDef, Logic, LoopDef, ParseOptions, Rollout, Status, StepDef, TaskDef, WorkflowDef,
-    WorkflowFailurePolicy,
+    self, ForEachDef, GroupDef, Logic, LoopDef, ParseOptions, Rollout, Status, StepDef, TaskDef,
+    WorkflowDef, WorkflowFailurePolicy,
 };
 use crate::expr::{CompileCx, Expr, Path};
 use crate::function::{Entry, FunctionSpec, Prepare, Registry};
@@ -129,9 +130,7 @@ impl Compiler {
         if let Some(steps) = parsed {
             let mut checks = Checks::new(self.registry.exprs());
             let mut walk = Walk::new(self, "", &mut checks);
-            for (at, kind, step) in def::walk_steps(&steps, &root) {
-                walk.step(&at, kind, step);
-            }
+            walk.fragment(&steps, &root);
             issues.append(&mut walk.issues);
         }
         issues
@@ -146,10 +145,16 @@ impl Compiler {
         let mut checks = Checks::new(self.registry.exprs());
         let (workflow, issues) = self.compile_with(def, &mut checks);
         if issues.iter().any(|i| i.severity == Severity::Rejected) {
-            Err(issues)
-        } else {
-            Ok(Compiled { workflow, issues })
+            return Err(issues);
         }
+        debug_assert!(
+            workflow.check_invariants().is_ok(),
+            "the lowering of `{}` broke an invariant: {:?}\n{}",
+            workflow.id,
+            workflow.check_invariants(),
+            workflow.listing(),
+        );
+        Ok(Compiled { workflow, issues })
     }
 
     /// The compile walk, calling `hook` at every expression site.
@@ -159,17 +164,34 @@ impl Compiler {
         hook: &mut dyn Hook,
     ) -> (CompiledWorkflow, Vec<Issue>) {
         let mut walk = Walk::new(self, &def.id, hook);
-        // 1. The workflow condition.
-        if let Some(raw) = &def.condition {
-            walk.cond(raw, AuthoredPath::root().join("condition"), None);
-        }
-        // 2. The loop: `over`, then its slots.
-        if let Some(config) = &def.r#loop {
-            walk.r#loop(config);
-        }
-        // 3. Each step: setup first, then the body, pre-order.
-        for (at, kind, step) in def.walk() {
-            walk.step(&at, kind, step);
+        let root = AuthoredPath::root();
+        // 1. The workflow condition: `None` when it is absent or literally
+        //    true, so it lowers to no `Cond`.
+        let cond = def
+            .condition
+            .as_ref()
+            .and_then(|raw| walk.cond(raw, root.join("condition"), None));
+        // 2. The loop: `over`, then its slots. 3. Each step: setup first, then
+        //    the body, pre-order, each lowered as the walk reaches it.
+        let body = root.join("tasks");
+        match &def.r#loop {
+            None => {
+                walk.lower.workflow_cond(cond);
+                walk.steps(&def.tasks, &body, false);
+            }
+            Some(config) => {
+                let lp = walk.r#loop(config);
+                // The pre-phase, before the first sweep: only a loop with
+                // setup or `over` has one.
+                if !config.setup.is_empty() || config.over.is_some() {
+                    walk.lower.workflow_cond(cond);
+                }
+                walk.steps(&config.setup, &root.join("loop").join("setup"), true);
+                let sweep = walk.lower.loop_init(lp);
+                walk.lower.workflow_cond(cond);
+                walk.steps(&def.tasks, &body, false);
+                walk.lower.loop_next(lp, sweep);
+            }
         }
         // 4. The workflow lint, `UNGUARDED_VALIDATION`, arrives with the
         //    checks' rules (Task 6).
@@ -181,7 +203,7 @@ impl Compiler {
             version: def.version,
             rollout: def.rollout,
             on_failure: def.on_failure,
-            ops: Vec::new(),
+            ops: walk.lower.finish(),
             conds: walk.conds,
             calls: walk.calls,
             fans: walk.fans,
@@ -246,7 +268,7 @@ impl fmt::Debug for CompiledWorkflow {
 }
 
 /// A table's next index.
-fn next(len: usize) -> u32 {
+pub(super) fn next(len: usize) -> u32 {
     u32::try_from(len).expect("a workflow holds fewer than 2^32 steps")
 }
 
@@ -258,8 +280,8 @@ fn lookup<'v>(value: &'v Value, path: &AuthoredPath) -> Option<&'v Value> {
     })
 }
 
-/// One compile's state: the issues so far, in walk order, and the side
-/// tables, in walk order.
+/// One compile's state: the issues so far, in walk order, the side tables,
+/// in walk order, and the ops so far.
 struct Walk<'w> {
     registry: &'w Registry,
     resources: Option<&'w dyn ResourceOracle>,
@@ -272,6 +294,7 @@ struct Walk<'w> {
     fans: Vec<FanSite>,
     loops: Vec<LoopSite>,
     tasks: Vec<TaskMeta>,
+    lower: Lower,
 }
 
 impl<'w> Walk<'w> {
@@ -287,6 +310,7 @@ impl<'w> Walk<'w> {
             fans: Vec::new(),
             loops: Vec::new(),
             tasks: Vec::new(),
+            lower: Lower::default(),
         }
     }
 
@@ -321,15 +345,21 @@ impl<'w> Walk<'w> {
         }
     }
 
-    /// A condition at `at`: compiled, visited as not recorded, and kept.
-    fn cond(&mut self, raw: &Logic, at: AuthoredPath, step: Stamp<'_>) {
-        if let Some(expr) = self.expr(raw, &at, false, step) {
-            self.conds.push(CondSite {
-                expr,
-                path: at,
-                step: step.map(|(_, id)| id.to_owned()),
-            });
+    /// A condition at `at`: compiled and visited as not recorded. Its row in
+    /// `conds`, or `None` when it did not compile or folds to the literal
+    /// `true`, which keeps no row and lowers to no `Cond` (I47).
+    fn cond(&mut self, raw: &Logic, at: AuthoredPath, step: Stamp<'_>) -> Option<u32> {
+        let expr = self.expr(raw, &at, false, step)?;
+        if expr.constant() == Some(&OwnedDataValue::Bool(true)) {
+            return None;
         }
+        let row = next(self.conds.len());
+        self.conds.push(CondSite {
+            expr,
+            path: at,
+            step: step.map(|(_, id)| id.to_owned()),
+        });
+        Some(row)
     }
 
     /// `dotted` as a context path, else `INVALID_PATH` at `at`. Parse has
@@ -346,7 +376,8 @@ impl<'w> Walk<'w> {
     }
 
     /// The loop's `over`, recorded, then its slots, each `temp_data.<slot>`.
-    fn r#loop(&mut self, config: &LoopDef) {
+    /// Returns its row in `loops`.
+    fn r#loop(&mut self, config: &LoopDef) -> u32 {
         let at = AuthoredPath::root().join("loop");
         let over = config
             .over
@@ -359,6 +390,7 @@ impl<'w> Walk<'w> {
         let counter = slot(&config.counter, "counter");
         let item = slot(&config.r#as, "as");
         let scratch = slot(&config.scratch, "scratch");
+        let row = next(self.loops.len());
         self.loops.push(LoopSite {
             init: config.init,
             increment: config.increment,
@@ -368,31 +400,58 @@ impl<'w> Walk<'w> {
             r#as: item,
             scratch,
         });
+        row
     }
 
-    /// One step at `at`, stamped with its kind and id.
-    fn step(&mut self, at: &AuthoredPath, kind: StepKind, step: &StepDef) {
-        match step {
-            StepDef::Group(group) => {
-                if let Some(raw) = &group.condition {
-                    self.cond(raw, at.join("condition"), Some((kind, &group.id)));
-                }
+    /// A fragment's steps at `root`, as a workflow's would be walked: lowered
+    /// with every failure to the end, and with no workflow condition or loop.
+    fn fragment(&mut self, steps: &[StepDef], root: &AuthoredPath) {
+        self.steps(steps, root, def::fragment_is_setup(root));
+    }
+
+    /// The steps of the list at `at`, pre-order: each group before its
+    /// members, every one a setup step when `setup`. This is
+    /// [`WorkflowDef::walk`]'s order.
+    fn steps(&mut self, steps: &[StepDef], at: &AuthoredPath, setup: bool) {
+        for (i, step) in steps.iter().enumerate() {
+            let at = at.join(i);
+            let kind = step.kind(setup);
+            match step {
+                StepDef::Group(group) => self.group(&at, kind, group, setup),
+                StepDef::Task(task) => self.task(&at, kind, task),
             }
-            StepDef::Task(task) => self.task(at, kind, task),
         }
     }
 
-    /// A task: its condition, its fan-out, then its call.
+    /// A group: its condition, its members, then a `Halt` when it is
+    /// terminal. A false condition jumps past the `Halt`.
+    fn group(&mut self, at: &AuthoredPath, kind: StepKind, group: &GroupDef, setup: bool) {
+        let cond = group
+            .condition
+            .as_ref()
+            .and_then(|raw| self.cond(raw, at.join("condition"), Some((kind, &group.id))));
+        let open = self.lower.open(cond, CondKind::Group);
+        self.steps(&group.tasks, &at.join("tasks"), setup);
+        if group.terminal {
+            self.lower.halt();
+        }
+        self.lower.close(open);
+    }
+
+    /// A task: its condition, its fan-out, then its call, lowered to its
+    /// `Cond` and its `Call` or `FanOut`.
     fn task(&mut self, at: &AuthoredPath, kind: StepKind, task: &TaskDef) {
         let step = (kind, task.id.as_str());
-        if let Some(raw) = &task.condition {
-            self.cond(raw, at.join("condition"), Some(step));
-        }
-        if let Some(config) = &task.for_each
-            && let Some(fan) = self.fan(config, &at.join("for_each"), step)
-        {
+        let cond = task
+            .condition
+            .as_ref()
+            .and_then(|raw| self.cond(raw, at.join("condition"), Some(step)));
+        let fan = task.for_each.as_ref().and_then(|config| {
+            let fan = self.fan(config, &at.join("for_each"), step)?;
+            let row = next(self.fans.len());
             self.fans.push(fan);
-        }
+            Some(row)
+        });
         let row = next(self.tasks.len());
         self.tasks.push(TaskMeta {
             id: task.id.clone(),
@@ -400,7 +459,8 @@ impl<'w> Walk<'w> {
             kind,
             path: at.clone(),
         });
-        if let Some(callee) = self.callee(task, at, step) {
+        let site = self.callee(task, at, step).map(|callee| {
+            let site = next(self.calls.len());
             self.calls.push(CallSite {
                 task: row,
                 callee,
@@ -408,7 +468,17 @@ impl<'w> Walk<'w> {
                 on_rejection: task.on_rejection,
                 terminal: task.terminal,
             });
+            site
+        });
+        let open = self.lower.open(cond, CondKind::Task);
+        match (site, task.for_each.is_some(), fan) {
+            (Some(site), false, _) => self.lower.call(site),
+            (Some(site), true, Some(fan)) => self.lower.fan_out(site, fan),
+            // A Rejected issue is recorded, so the workflow is never lowered
+            // for use: the task emits nothing.
+            _ => {}
         }
+        self.lower.close(open);
     }
 
     /// A fan-out at `at`: its `over`, recorded, then its bindings as paths.
@@ -654,9 +724,7 @@ mod tests {
         let compiler = compiler();
         let mut recorder = Recorder::default();
         let mut walk = Walk::new(&compiler, "", &mut recorder);
-        for (at, kind, step) in def::walk_steps(&parsed, &root) {
-            walk.step(&at, kind, step);
-        }
+        walk.fragment(&parsed, &root);
         assert!(walk.issues.is_empty(), "{:?}", walk.issues);
         let paths: Vec<_> = recorder.0.iter().map(|(at, ..)| at.as_str()).collect();
         assert_eq!(
@@ -682,7 +750,7 @@ mod tests {
         assert_eq!(w.status, Status::Paused);
         assert_eq!(w.rollout, Some(Rollout::new(10, 60)));
         assert_eq!(w.on_failure, WorkflowFailurePolicy::Continue);
-        assert!(w.ops.is_empty());
+        assert_eq!(w.ops.len(), 10, "lowered: {}", w.listing());
 
         // One row per task, never per group: setup first.
         let rows: Vec<_> = w
@@ -819,7 +887,7 @@ mod tests {
         let compiled = compiler().compile_one(&every_site()).unwrap();
         assert_eq!(
             format!("{:?}", compiled.workflow),
-            "CompiledWorkflow { id: \"w\", ops: 0, conds: 4, calls: 3, fans: 1, loops: 1, \
+            "CompiledWorkflow { id: \"w\", ops: 10, conds: 4, calls: 3, fans: 1, loops: 1, \
              tasks: 3, .. }"
         );
     }

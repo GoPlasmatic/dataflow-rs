@@ -107,18 +107,10 @@ impl WorkflowDef {
     }
 }
 
-/// The steps of a fragment that [`parse_steps`](super::parse_steps) read at
-/// `root`, as [`WorkflowDef::walk`] yields a workflow's: pre-order, each group
-/// before its members, and every step a setup step when `root` is under
-/// `loop.setup`.
-pub(crate) fn walk_steps<'d>(
-    steps: &'d [StepDef],
-    root: &AuthoredPath,
-) -> impl Iterator<Item = (AuthoredPath, StepKind, &'d StepDef)> {
-    let (setup, _) = super::parse::fragment_place(root);
-    let mut out = Vec::new();
-    collect(steps, root, setup, &mut out);
-    out.into_iter()
+/// Whether the steps of a fragment that [`parse_steps`](super::parse_steps)
+/// read at `root` are setup steps: `root` is under `loop.setup`.
+pub(crate) fn fragment_is_setup(root: &AuthoredPath) -> bool {
+    super::parse::fragment_place(root).0
 }
 
 /// Appends `steps` and their members to `out`, pre-order.
@@ -130,12 +122,7 @@ fn collect<'d>(
 ) {
     for (i, step) in steps.iter().enumerate() {
         let path = at.join(i);
-        let kind = match step {
-            _ if setup => StepKind::Setup,
-            StepDef::Task(_) => StepKind::Task,
-            StepDef::Group(_) => StepKind::Group,
-        };
-        out.push((path.clone(), kind, step));
+        out.push((path.clone(), step.kind(setup), step));
         if let StepDef::Group(group) = step {
             collect(&group.tasks, &path.join("tasks"), setup, out);
         }
@@ -160,6 +147,16 @@ impl StepDef {
         match self {
             Self::Task(task) => &task.id,
             Self::Group(group) => &group.id,
+        }
+    }
+
+    /// The kind a walk stamps on the step: [`StepKind::Setup`] for any step
+    /// in a setup list, `setup`, and otherwise its own.
+    pub(crate) fn kind(&self, setup: bool) -> StepKind {
+        match self {
+            _ if setup => StepKind::Setup,
+            Self::Task(_) => StepKind::Task,
+            Self::Group(_) => StepKind::Group,
         }
     }
 }
