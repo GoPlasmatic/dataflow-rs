@@ -11,7 +11,8 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // The declared differences are break 14 (v3 also reports a `$$` key as
 // escaped) and break 8 (v3 points at `halt_on`, v4 at `on_rejection`).
 //
-// `PAYLOAD_VAR` and break 16 are v4's own, so they are pinned directly.
+// `PAYLOAD_VAR`, break 2b and break 16 are v4's own, so they are pinned
+// directly.
 
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::def::{ParseOptions, WorkflowDef, parse};
@@ -1005,6 +1006,57 @@ fn a_secret_in_a_host_field_that_is_not_recorded_is_clean() {
             "tasks[0].function.input.token"
         )]
     );
+}
+
+// ---------------------------------------------------------------------------
+// Break 2b: a host's expression fields are checked as a built-in's are
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_host_expression_field_is_checked_as_a_builtins_is_break_2b() {
+    const CODES: &[C] = &[
+        C::EscapedTemplateKey,
+        C::DuplicateTemplateKey,
+        C::PayloadVar,
+    ];
+    for (function, field) in [("fetch", "token"), ("plugin", "token")] {
+        let at = format!("tasks[0].function.input.{field}");
+        // v3 checked a custom handler's input for unknown secrets only.
+        let json = wf(json!([task(
+            "t",
+            function,
+            json!({field: {"$a": 1, "a": 2}})
+        )]));
+        assert_eq!(
+            v4_rows(&json, CODES),
+            [
+                row(
+                    C::EscapedTemplateKey,
+                    Severity::Advisory,
+                    &format!("{at}.$a")
+                ),
+                row(
+                    C::DuplicateTemplateKey,
+                    Severity::Rejected,
+                    &format!("{at}.a")
+                ),
+            ],
+            "{function}"
+        );
+        assert!(compiler().compile_one(&def(&json)).is_err(), "{function}");
+        // A literal `payload` read is a Defect (break 9): it still compiles.
+        let json = wf(json!([task(
+            "t",
+            function,
+            json!({field: {"var": "payload.id"}})
+        )]));
+        assert_eq!(
+            v4_rows(&json, CODES),
+            [row(C::PayloadVar, Severity::Defect, &at)],
+            "{function}"
+        );
+        assert!(compiler().compile_one(&def(&json)).is_ok(), "{function}");
+    }
 }
 
 // ---------------------------------------------------------------------------

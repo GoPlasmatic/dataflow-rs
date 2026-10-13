@@ -420,6 +420,13 @@
     "v3": true
   },
   {
+    "id": "break.2b",
+    "source": "06",
+    "row": "2b",
+    "v3": false,
+    "reason": "v3 checked a custom handler's input only for unknown secrets, so no v3 case can show a host field's template keys or payload read refused; v4 pins both in v4/tests/checks.rs"
+  },
+  {
     "id": "break.3",
     "source": "06",
     "row": "3",

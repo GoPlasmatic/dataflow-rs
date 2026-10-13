@@ -108,6 +108,7 @@ mod tests {
         "break.1",
         "break.2",
         "break.2a",
+        "break.2b",
         "break.3",
         "break.4",
         "break.5",
