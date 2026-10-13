@@ -145,13 +145,21 @@ impl Templated {
     }
 
     /// One runtime field, or `None` when it is absent or rejected.
+    ///
+    /// An explicit `null` reads as absent, so the spec's default applies and a
+    /// required field is missing, unless the field's kind takes `null` as a
+    /// value: an expression, a document, or a literal of any JSON. That is
+    /// how a derived config's `Option` field reads it (decision I53).
     fn one(
         spec: &FieldSpec,
         raw: Option<&Value>,
         cx: &mut CompileCx<'_>,
     ) -> Option<TemplatedField> {
-        let output = matches!(spec.kind, FieldKind::Output);
-        match raw.filter(|raw| !(output && raw.is_null())) {
+        let takes_null = matches!(
+            spec.kind,
+            FieldKind::Expr(_) | FieldKind::Interpolated | FieldKind::Literal(ValueKind::Any)
+        );
+        match raw.filter(|raw| takes_null || !raw.is_null()) {
             Some(raw) => field(spec.kind, raw, cx),
             None => {
                 if let Some(text) = &spec.default {
@@ -213,5 +221,89 @@ impl FunctionConfig for Templated {
     }
     fn fields() -> &'static [FieldSpec] {
         &[]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::{Issue, Severity};
+    use crate::expr::ExprEngine;
+    use serde_json::json;
+
+    fn specs() -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::runtime("label", FieldKind::Literal(ValueKind::String), false),
+            FieldSpec::runtime("mode", FieldKind::Literal(ValueKind::String), false)
+                .with_default("\"fast\""),
+            FieldSpec::runtime("out", FieldKind::Output, false),
+            FieldSpec::runtime("name", FieldKind::Literal(ValueKind::String), true),
+            FieldSpec::runtime("value", FieldKind::Expr(ValueKind::Any), false),
+            FieldSpec::runtime("doc", FieldKind::Interpolated, false),
+            FieldSpec::runtime("any", FieldKind::Literal(ValueKind::Any), false),
+        ]
+    }
+
+    fn compile(input: &Value) -> (Option<Templated>, Vec<Issue>) {
+        let engine = ExprEngine::default();
+        let specs = specs();
+        let mut issues = Vec::new();
+        let out = {
+            let mut cx = CompileCx::new(&engine, &mut issues)
+                .at_path("tasks[0].function.input".parse().unwrap())
+                .with_runtime_fields(&specs);
+            <Templated as FunctionConfig>::compile(input, &mut cx)
+        };
+        (out, issues)
+    }
+
+    fn get<'t>(templated: &'t Templated, name: &str) -> Option<&'t TemplatedField> {
+        templated
+            .fields
+            .iter()
+            .find(|f| &*f.name == name)
+            .map(|f| &f.value)
+    }
+
+    #[test]
+    fn a_null_reads_as_absent_unless_the_kind_takes_null() {
+        let (out, issues) = compile(&json!({
+            "label": null, "mode": null, "out": null, "name": "n",
+            "value": null, "doc": null, "any": null,
+        }));
+        assert!(issues.is_empty(), "{issues:?}");
+        let out = out.unwrap();
+        // A literal string and an output have no null: absent, and the
+        // declared default applies.
+        assert!(get(&out, "label").is_none());
+        assert!(get(&out, "out").is_none());
+        assert!(matches!(
+            get(&out, "mode"),
+            Some(TemplatedField::Literal(OwnedDataValue::String(s))) if s == "fast"
+        ));
+        // An expression, a document and any JSON take `null` as a value.
+        assert!(matches!(
+            get(&out, "value"),
+            Some(TemplatedField::Expr(e)) if e.constant() == Some(&OwnedDataValue::Null)
+        ));
+        assert!(matches!(
+            get(&out, "doc"),
+            Some(TemplatedField::Interpolated(_))
+        ));
+        assert!(matches!(
+            get(&out, "any"),
+            Some(TemplatedField::Literal(OwnedDataValue::Null))
+        ));
+    }
+
+    #[test]
+    fn a_null_on_a_required_literal_is_a_missing_field() {
+        let (out, issues) = compile(&json!({"name": null}));
+        assert!(out.is_none());
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert_eq!(issues[0].code, IssueCode::InputParse);
+        assert_eq!(issues[0].severity, Severity::Rejected);
+        assert_eq!(issues[0].path.to_string(), "tasks[0].function.input.name");
+        assert_eq!(issues[0].message, "missing field `name`");
     }
 }

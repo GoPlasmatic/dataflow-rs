@@ -34,6 +34,11 @@ impl From<usize> for PathSeg {
 /// A path in the authored JSON: keys and indices, displayed as v3 spelled them,
 /// `tasks[1].tasks[0].id`, `function.input.mappings[3].logic`. The root displays
 /// as the empty string.
+///
+/// A key that could not otherwise be read back, one that is empty or holds a
+/// `.`, `[`, `]` or `"`, displays as a JSON string in brackets:
+/// `function.input.fields["a.b"]`, `[""]`. [`FromStr`] reads every displayed
+/// form back, and a path serializes as it displays.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AuthoredPath(Vec<PathSeg>);
 
@@ -78,10 +83,19 @@ impl AuthoredPath {
     }
 }
 
+/// Whether `key` displays quoted: bare, it would read back as something else.
+fn needs_quotes(key: &str) -> bool {
+    key.is_empty() || key.contains(['.', '[', ']', '"'])
+}
+
 impl fmt::Display for AuthoredPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (i, seg) in self.0.iter().enumerate() {
             match seg {
+                PathSeg::Key(key) if needs_quotes(key) => {
+                    let quoted = serde_json::to_string(&**key).map_err(|_| fmt::Error)?;
+                    write!(f, "[{quoted}]")?;
+                }
                 PathSeg::Key(key) if i == 0 => f.write_str(key)?,
                 PathSeg::Key(key) => write!(f, ".{key}")?,
                 PathSeg::Index(index) => write!(f, "[{index}]")?,
@@ -106,14 +120,32 @@ impl std::error::Error for ParsePathError {}
 impl FromStr for AuthoredPath {
     type Err = ParsePathError;
 
-    /// The inverse of `Display`, for keys without `.`, `[` or `]`.
+    /// The inverse of `Display`: a bare key holds no `.`, `[`, `]` or `"`, and
+    /// a bracketed one is a JSON string.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let bad = || ParsePathError(text.to_string());
         let mut path = Self::root();
         let mut rest = text;
         let mut first = true;
         while !rest.is_empty() {
-            if let Some(after) = rest.strip_prefix('[') {
+            if let Some(after) = rest.strip_prefix("[\"") {
+                // The string runs to the first `"` no backslash escapes.
+                let mut escaped = false;
+                let end = after
+                    .char_indices()
+                    .find(|&(_, c)| {
+                        let close = c == '"' && !escaped;
+                        escaped = c == '\\' && !escaped;
+                        close
+                    })
+                    .map(|(at, _)| at)
+                    .ok_or_else(bad)?;
+                // `after` starts past `["`: the closing quote is `rest[end + 2]`.
+                let literal = &rest[1..end + 3];
+                let key: String = serde_json::from_str(literal).map_err(|_| bad())?;
+                path.push(key);
+                rest = after[end + 1..].strip_prefix(']').ok_or_else(bad)?;
+            } else if let Some(after) = rest.strip_prefix('[') {
                 let end = after.find(']').ok_or_else(bad)?;
                 let index = after[..end].parse::<usize>().map_err(|_| bad())?;
                 path.push(index);
@@ -126,7 +158,7 @@ impl FromStr for AuthoredPath {
                 };
                 let end = after.find(['.', '[']).unwrap_or(after.len());
                 let key = &after[..end];
-                if key.is_empty() || key.contains(']') {
+                if needs_quotes(key) {
                     return Err(bad());
                 }
                 path.push(key);
@@ -144,7 +176,7 @@ impl serde::Serialize for AuthoredPath {
     }
 }
 
-/// What an issue is about. v3's 34 codes in v3's order, then the seven v4 adds.
+/// What an issue is about. v3's 34 codes in v3's order, then the eight v4 adds.
 ///
 /// `#[non_exhaustive]`: use [`Self::as_str`] to serialize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -323,6 +355,13 @@ pub enum IssueCode {
     ///
     /// Default severity [`Severity::Rejected`].
     InvalidPath,
+    /// A `Reference` field whose value is a literal string the host's
+    /// `ResourceOracle` does not resolve, such as a connector no deployment
+    /// declares. A computed or absent value is not checked.
+    ///
+    /// Default severity [`Severity::Defect`]: the workflow loads, then fails
+    /// every call.
+    UnresolvedReference,
 }
 
 impl IssueCode {
@@ -370,6 +409,7 @@ impl IssueCode {
             Self::OperatorInDocument => "OPERATOR_IN_DOCUMENT",
             Self::SecretInDocument => "SECRET_IN_DOCUMENT",
             Self::InvalidPath => "INVALID_PATH",
+            Self::UnresolvedReference => "UNRESOLVED_REFERENCE",
         }
     }
 
@@ -391,7 +431,10 @@ impl IssueCode {
             | Self::OperatorInDocument => Severity::Advisory,
 
             // Loads, then does not do what it says.
-            Self::MissingHandler | Self::LikelyTypo | Self::PayloadVar => Severity::Defect,
+            Self::MissingHandler
+            | Self::LikelyTypo
+            | Self::PayloadVar
+            | Self::UnresolvedReference => Severity::Defect,
 
             // Everything else never loads.
             Self::EmptyWorkflowId
@@ -494,6 +537,7 @@ impl FromStr for IssueCode {
             "OPERATOR_IN_DOCUMENT" => Ok(Self::OperatorInDocument),
             "SECRET_IN_DOCUMENT" => Ok(Self::SecretInDocument),
             "INVALID_PATH" => Ok(Self::InvalidPath),
+            "UNRESOLVED_REFERENCE" => Ok(Self::UnresolvedReference),
             _ => Err(ParseIssueCodeError(text.to_string())),
         }
     }
@@ -512,6 +556,8 @@ pub enum Severity {
 }
 
 impl Severity {
+    const ALL: [Self; 3] = [Self::Rejected, Self::Defect, Self::Advisory];
+
     /// The stable string form.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -540,8 +586,97 @@ pub enum StepKind {
     Setup,
 }
 
+impl StepKind {
+    const ALL: [Self; 3] = [Self::Task, Self::Group, Self::Setup];
+
+    /// The stable string form: `task`, `group` or `setup`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Task => "task",
+            Self::Group => "group",
+            Self::Setup => "setup",
+        }
+    }
+}
+
+/// Reads a value from the string it serializes as.
+fn from_text<'de, D, T, E>(
+    deserializer: D,
+    read: impl FnOnce(&str) -> Result<T, E>,
+) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    E: fmt::Display,
+{
+    let text = <String as serde::Deserialize>::deserialize(deserializer)?;
+    read(&text).map_err(serde::de::Error::custom)
+}
+
+/// The variant of `all` whose string is `text`.
+fn named<T: Copy>(
+    all: &[T],
+    as_str: fn(T) -> &'static str,
+    what: &str,
+    text: &str,
+) -> Result<T, String> {
+    all.iter()
+        .copied()
+        .find(|v| as_str(*v) == text)
+        .ok_or_else(|| format!("unknown {what}: {text:?}"))
+}
+
+impl<'de> serde::Deserialize<'de> for AuthoredPath {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        from_text(deserializer, str::parse)
+    }
+}
+
+impl serde::Serialize for IssueCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for IssueCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        from_text(deserializer, str::parse)
+    }
+}
+
+impl serde::Serialize for Severity {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Severity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        from_text(deserializer, |text| {
+            named(&Self::ALL, Self::as_str, "severity", text)
+        })
+    }
+}
+
+impl serde::Serialize for StepKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for StepKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        from_text(deserializer, |text| {
+            named(&Self::ALL, Self::as_str, "step kind", text)
+        })
+    }
+}
+
 /// One finding about an authored definition.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// It serializes as an object of its seven fields, under their own names: the
+/// code and severity as their strings, the path as it displays, the step kind
+/// as `task`, `group` or `setup`, and an absent part as `null`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct Issue {
     /// What it is about.
@@ -610,10 +745,11 @@ impl fmt::Display for Issue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
     use std::collections::HashSet;
 
     /// Every [`IssueCode`]; kept complete by [`ordinal`].
-    const ALL_CODES: [IssueCode; 41] = [
+    const ALL_CODES: [IssueCode; 42] = [
         IssueCode::EmptyWorkflowId,
         IssueCode::EmptyWorkflowName,
         IssueCode::NoTasks,
@@ -655,6 +791,7 @@ mod tests {
         IssueCode::OperatorInDocument,
         IssueCode::SecretInDocument,
         IssueCode::InvalidPath,
+        IssueCode::UnresolvedReference,
     ];
 
     /// A distinct index per variant, with no wildcard arm: adding a code stops
@@ -702,11 +839,13 @@ mod tests {
             IssueCode::OperatorInDocument => 38,
             IssueCode::SecretInDocument => 39,
             IssueCode::InvalidPath => 40,
+            IssueCode::UnresolvedReference => 41,
         }
     }
 
     #[test]
     fn all_codes_lists_every_variant() {
+        assert_eq!(ALL_CODES.len(), 42);
         let indices: HashSet<usize> = ALL_CODES.iter().copied().map(ordinal).collect();
         assert_eq!(indices, (0..ALL_CODES.len()).collect::<HashSet<_>>());
     }
@@ -757,9 +896,14 @@ mod tests {
         );
         assert_eq!(
             by(Severity::Defect),
-            HashSet::from(["MISSING_HANDLER", "LIKELY_TYPO", "PAYLOAD_VAR"])
+            HashSet::from([
+                "MISSING_HANDLER",
+                "LIKELY_TYPO",
+                "PAYLOAD_VAR",
+                "UNRESOLVED_REFERENCE",
+            ])
         );
-        assert_eq!(by(Severity::Rejected).len(), ALL_CODES.len() - 10);
+        assert_eq!(by(Severity::Rejected).len(), ALL_CODES.len() - 11);
         assert!(by(Severity::Rejected).contains("SECRET_IN_DOCUMENT"));
         assert!(by(Severity::Rejected).contains("INVALID_PATH"));
     }
@@ -818,5 +962,145 @@ mod tests {
         assert_eq!(root.step_id.as_deref(), Some("a"));
         assert_eq!(root.field.as_deref(), Some("f"));
         assert_eq!(root.to_string(), "m [NO_TASKS]");
+    }
+    #[test]
+    fn a_key_it_could_not_otherwise_print_is_quoted() {
+        for (key, shown) in [
+            ("a.b", r#"["a.b"]"#),
+            ("", r#"[""]"#),
+            ("x[0]", r#"["x[0]"]"#),
+            ("q\"t", r#"["q\"t"]"#),
+        ] {
+            let path = AuthoredPath::root().join(key);
+            assert_eq!(path.to_string(), shown, "{key:?}");
+            assert_eq!(shown.parse::<AuthoredPath>(), Ok(path), "{shown}");
+            let deeper = AuthoredPath::root().join("log").join(key).join(0usize);
+            let shown = format!("log{shown}[0]");
+            assert_eq!(deeper.to_string(), shown, "{key:?}");
+            assert_eq!(shown.parse::<AuthoredPath>(), Ok(deeper), "{shown}");
+        }
+    }
+
+    #[test]
+    fn a_quoted_key_round_trips_anywhere_in_a_path() {
+        let text = r#"tasks[0].function.input.fields["a.b"]"#;
+        let path: AuthoredPath = text.parse().unwrap();
+        assert_eq!(path.segs().len(), 6);
+        assert_eq!(path.segs()[5], PathSeg::Key("a.b".into()));
+        assert_eq!(path.to_string(), text);
+
+        let text = r#"["a.b"].c["]"]["\"\\"][3]"#;
+        let path: AuthoredPath = text.parse().unwrap();
+        assert_eq!(
+            path.segs(),
+            [
+                PathSeg::Key("a.b".into()),
+                PathSeg::Key("c".into()),
+                PathSeg::Key("]".into()),
+                PathSeg::Key("\"\\".into()),
+                PathSeg::Index(3),
+            ]
+        );
+        assert_eq!(path.to_string(), text);
+
+        // A key quoted when it need not be reads back, and displays bare: a
+        // backslash alone reads back unquoted.
+        let path: AuthoredPath = r#"a["b"]["\\"]"#.parse().unwrap();
+        assert_eq!(
+            path.segs(),
+            [
+                PathSeg::Key("a".into()),
+                PathSeg::Key("b".into()),
+                PathSeg::Key("\\".into()),
+            ]
+        );
+        assert_eq!(path.to_string(), r"a.b.\");
+        assert_eq!(path.to_string().parse::<AuthoredPath>(), Ok(path));
+
+        // An ordinary path displays unchanged.
+        let ordinary = AuthoredPath::root()
+            .join("tasks")
+            .join(1usize)
+            .join("function")
+            .join("input");
+        assert_eq!(ordinary.to_string(), "tasks[1].function.input");
+
+        for bad in [
+            r#"a.["b"]"#,
+            r#"a["b"#,
+            r#"a["b""#,
+            r#"a["b"x]"#,
+            r#"a[b"]"#,
+            r#"a"b"#,
+            r#"["\q"]"#,
+        ] {
+            assert!(bad.parse::<AuthoredPath>().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_issue_serializes_with_its_parts_as_strings() {
+        let issue = Issue::new(
+            IssueCode::UnknownFunction,
+            r#"tasks[0].function.input["a.b"]"#.parse().unwrap(),
+            "no function named `x`",
+        )
+        .with_step(StepKind::Task, Some("t"))
+        .with_field("a.b");
+        let value = serde_json::to_value(&issue).unwrap();
+        let keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let mut want = [
+            "code",
+            "severity",
+            "path",
+            "step_kind",
+            "step_id",
+            "field",
+            "message",
+        ];
+        want.sort_unstable();
+        assert_eq!(keys, want);
+        assert_eq!(value["code"], "UNKNOWN_FUNCTION");
+        assert_eq!(value["severity"], "REJECTED");
+        assert_eq!(value["path"], r#"tasks[0].function.input["a.b"]"#);
+        assert_eq!(value["step_kind"], "task");
+        assert_eq!(value["step_id"], "t");
+        assert_eq!(value["field"], "a.b");
+        assert_eq!(value["message"], "no function named `x`");
+        assert_eq!(serde_json::from_value::<Issue>(value).unwrap(), issue);
+
+        // The parts that are absent are `null`, and read back absent.
+        let bare = Issue::new(IssueCode::NoTasks, AuthoredPath::root(), "m");
+        let value = serde_json::to_value(&bare).unwrap();
+        assert_eq!(value["step_kind"], Value::Null);
+        assert_eq!(value["path"], "");
+        assert_eq!(serde_json::from_value::<Issue>(value).unwrap(), bare);
+    }
+
+    #[test]
+    fn the_parts_of_an_issue_read_back_from_their_strings() {
+        for kind in [StepKind::Task, StepKind::Group, StepKind::Setup] {
+            let value = serde_json::to_value(kind).unwrap();
+            assert_eq!(value, kind.as_str());
+            assert_eq!(serde_json::from_value::<StepKind>(value).unwrap(), kind);
+        }
+        for severity in [Severity::Rejected, Severity::Defect, Severity::Advisory] {
+            let value = serde_json::to_value(severity).unwrap();
+            assert_eq!(serde_json::from_value::<Severity>(value).unwrap(), severity);
+        }
+        for code in ALL_CODES {
+            let value = serde_json::to_value(code).unwrap();
+            assert_eq!(value, code.as_str());
+            assert_eq!(serde_json::from_value::<IssueCode>(value).unwrap(), code);
+        }
+        assert!(serde_json::from_value::<StepKind>(json!("Task")).is_err());
+        assert!(serde_json::from_value::<Severity>(json!("rejected")).is_err());
+        assert!(serde_json::from_value::<IssueCode>(json!("NOT_A_CODE")).is_err());
+        assert!(serde_json::from_value::<AuthoredPath>(json!("a..b")).is_err());
     }
 }

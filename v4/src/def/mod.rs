@@ -35,6 +35,14 @@ mod rollout;
 mod ser;
 mod types;
 
+#[cfg_attr(
+    not(test),
+    expect(
+        unused_imports,
+        reason = "used from program, whose check_steps parses a fragment"
+    )
+)]
+pub(crate) use parse::parse_steps;
 pub(crate) use parse::parse_with_rewrites;
 pub use parse::{ParseOptions, Parsed, parse};
 pub use rollout::{Rollout, RolloutError};

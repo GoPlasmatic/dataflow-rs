@@ -29,6 +29,18 @@ impl ProgramId {
 pub struct WorkflowIx(u32);
 
 impl WorkflowIx {
+    /// The workflow at position `index`.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "used from program, which numbers what it compiles"
+        )
+    )]
+    pub(crate) fn new(index: u32) -> Self {
+        Self(index)
+    }
+
     /// The position as a number.
     pub fn index(self) -> u32 {
         self.0
@@ -40,6 +52,18 @@ impl WorkflowIx {
 pub struct TaskIx(u32);
 
 impl TaskIx {
+    /// The task at position `index`.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "used from program, which numbers what it compiles"
+        )
+    )]
+    pub(crate) fn new(index: u32) -> Self {
+        Self(index)
+    }
+
     /// The position as a number.
     pub fn index(self) -> u32 {
         self.0
@@ -54,5 +78,12 @@ mod tests {
     fn program_ids_are_distinct() {
         assert_ne!(ProgramId::next(), ProgramId::next());
         assert!(ProgramId::next().index() > 0);
+    }
+
+    #[test]
+    fn a_position_is_its_number() {
+        assert_eq!(WorkflowIx::new(3).index(), 3);
+        assert_eq!(TaskIx::new(7).index(), 7);
+        assert!(TaskIx::new(1) < TaskIx::new(2));
     }
 }

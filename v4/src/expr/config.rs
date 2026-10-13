@@ -218,14 +218,33 @@ impl<'a> CompileCx<'a> {
 
     /// Records an issue at the current path with an explicit severity.
     pub fn issue_as(&mut self, code: IssueCode, severity: Severity, message: impl Into<String>) {
-        let mut issue = Issue::new(code, self.path.clone(), message).with_severity(severity);
+        let issue = Issue::new(code, self.path.clone(), message).with_severity(severity);
+        self.record(issue);
+    }
+
+    /// Records an issue found by another walk, such as a function's own
+    /// checks, whose path is relative to the current path. The path is
+    /// prefixed with the current one, the step and the field are stamped as
+    /// [`Self::issue`] stamps them, and a Rejected issue is counted.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used from program, which adopts prepare's issues")
+    )]
+    pub(crate) fn adopt(&mut self, mut issue: Issue) {
+        issue.path = self.path.extend(&issue.path);
+        self.record(issue);
+    }
+
+    /// Stamps the step and the field on `issue`, counts it when it is
+    /// Rejected, and records it.
+    fn record(&mut self, mut issue: Issue) {
         if let Some((kind, id)) = &self.step {
             issue = issue.with_step(*kind, Some(id));
         }
-        if let Some(PathSeg::Key(key)) = self.path.segs().get(self.root_depth) {
-            issue = issue.with_field(&**key);
+        if let Some(PathSeg::Key(key)) = issue.path.segs().get(self.root_depth) {
+            issue.field = Some(key.to_string());
         }
-        if severity == Severity::Rejected {
+        if issue.severity == Severity::Rejected {
             self.rejected += 1;
         }
         self.issues.push(issue);
@@ -440,5 +459,48 @@ impl<T: ConfigField> ConfigField for BTreeMap<String, T> {
     }
     fn kind() -> FieldKind {
         FieldKind::Map(T::kind)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adopt_puts_an_issue_below_the_current_path_with_the_step_and_field() {
+        let engine = ExprEngine::default();
+        let mut issues = Vec::new();
+        let rejected = {
+            let mut cx = CompileCx::new(&engine, &mut issues)
+                .at_path("tasks[1].function.input".parse().unwrap())
+                .for_step(StepKind::Task, "fetch");
+            assert_eq!(cx.rejected(), 0);
+            cx.adopt(Issue::new(
+                IssueCode::InputParse,
+                "connector".parse().unwrap(),
+                "no connector",
+            ));
+            // An Advisory is adopted and not counted.
+            cx.adopt(Issue::new(
+                IssueCode::UnknownKey,
+                "retries".parse().unwrap(),
+                "unknown",
+            ));
+            // The path is restored: the adopted issues did not move it.
+            assert_eq!(cx.path().to_string(), "tasks[1].function.input");
+            cx.rejected()
+        };
+        assert_eq!(rejected, 1);
+        assert_eq!(issues.len(), 2);
+        let issue = &issues[0];
+        assert_eq!(issue.code, IssueCode::InputParse);
+        assert_eq!(issue.severity, Severity::Rejected);
+        assert_eq!(issue.path.to_string(), "tasks[1].function.input.connector");
+        assert_eq!(issue.field.as_deref(), Some("connector"));
+        assert_eq!(issue.step_kind, Some(StepKind::Task));
+        assert_eq!(issue.step_id.as_deref(), Some("fetch"));
+        assert_eq!(issue.message, "no connector");
+        assert_eq!(issues[1].severity, Severity::Advisory);
+        assert_eq!(issues[1].field.as_deref(), Some("retries"));
     }
 }

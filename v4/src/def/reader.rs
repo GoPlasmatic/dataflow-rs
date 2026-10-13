@@ -91,12 +91,22 @@ pub(super) struct Read {
 
 /// Rewrites the v3 spellings in `workflow`, in place.
 pub(super) fn read(workflow: &mut Map<String, Value>) -> Read {
-    let mut reader = Read {
-        issues: Vec::new(),
-        rewrites: Vec::new(),
-        exts: HashMap::new(),
-    };
+    let mut reader = Read::new();
     reader.workflow(workflow);
+    reader
+}
+
+/// Rewrites the v3 spellings in the steps of a list at `at`, in place, as
+/// [`read`] rewrites a workflow's: under `loop.setup` when `setup` is set,
+/// inside `depth` groups.
+pub(super) fn read_steps(
+    items: &mut [Value],
+    at: &AuthoredPath,
+    setup: bool,
+    depth: usize,
+) -> Read {
+    let mut reader = Read::new();
+    reader.steps(items, at, setup, depth);
     reader
 }
 
@@ -177,6 +187,14 @@ fn mixed(v3: &str, v4: &[&str], node: &str, policies: &str) -> String {
 }
 
 impl Read {
+    fn new() -> Self {
+        Self {
+            issues: Vec::new(),
+            rewrites: Vec::new(),
+            exts: HashMap::new(),
+        }
+    }
+
     fn report(
         &mut self,
         code: IssueCode,

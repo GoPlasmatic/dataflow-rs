@@ -22,7 +22,7 @@ use super::types::{
     FunctionRef, GroupDef, Logic, NodeHeader, Spelling, StepDef, TaskDef, WorkflowDef, defaults,
 };
 use super::{MAX_GROUP_DEPTH, Rollout};
-use crate::base::{AuthoredPath, Issue, IssueCode, Severity, StepKind};
+use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, Severity, StepKind};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -112,6 +112,65 @@ pub(crate) fn parse_with_rewrites(json: &Value, opts: ParseOptions) -> (Parsed, 
     )
 }
 
+/// Reads a fragment: the steps at `root`, as [`parse`] reads a workflow's,
+/// with the compat reader when `opts` has it on and every issue under `root`.
+///
+/// A root under `loop.setup` makes setup steps. Each `tasks` key in `root` is
+/// a step list, and every one but a body's first sits inside a group, so the
+/// depth limit counts the groups above the fragment: `tasks[2].tasks` starts
+/// one group deep, `loop.setup` at the top. Step ids are checked within the
+/// fragment. The steps are `Some` exactly when no issue is Rejected, and a
+/// fragment that is not an array is `PARSE_FAILED` at `root`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "used from program, whose check_steps parses a fragment"
+    )
+)]
+pub(crate) fn parse_steps(
+    steps: &Value,
+    root: &AuthoredPath,
+    opts: ParseOptions,
+) -> (Option<Vec<StepDef>>, Vec<Issue>) {
+    let Some(items) = steps.as_array() else {
+        let issue = Issue::new(
+            IssueCode::ParseFailed,
+            root.clone(),
+            "steps must be a JSON array",
+        );
+        return (None, vec![issue]);
+    };
+    let (setup, depth) = fragment_place(root);
+    let rewritten: Value;
+    let (list, issues, exts) = if opts.compat {
+        // As `parse_with_rewrites` does: the reader rewrites a copy, and the
+        // walk reads the copy and goes on building the `ext`s it began.
+        let mut copy = items.clone();
+        let read = reader::read_steps(&mut copy, root, setup, depth);
+        rewritten = Value::Array(copy);
+        (&rewritten, read.issues, read.exts)
+    } else {
+        (steps, Vec::new(), HashMap::new())
+    };
+    let mut walk = Walk::new(opts.compat, issues, exts);
+    let steps = walk.steps(Some(list), root, setup, depth);
+    let rejected = walk.rejected();
+    ((!rejected).then_some(steps), walk.issues)
+}
+
+/// Where a fragment at `root` sits: under `loop.setup` or not, and inside how
+/// many groups.
+fn fragment_place(root: &AuthoredPath) -> (bool, usize) {
+    let is = |seg: &PathSeg, name: &str| matches!(seg, PathSeg::Key(key) if &**key == name);
+    let lists = root.segs().iter().filter(|seg| is(seg, "tasks")).count();
+    match root.segs() {
+        [first, second, ..] if is(first, "loop") && is(second, "setup") => (true, lists),
+        // The body's first list is the workflow's own `tasks`.
+        _ => (false, lists.saturating_sub(1)),
+    }
+}
+
 /// The walk over `object`, its issues following `issues`, with the `ext`s the
 /// reader began.
 fn walk(
@@ -120,15 +179,9 @@ fn walk(
     issues: Vec<Issue>,
     exts: HashMap<AuthoredPath, Ext>,
 ) -> Parsed {
-    let mut walk = Walk {
-        compat,
-        issues,
-        seen: HashMap::new(),
-        step: None,
-        exts,
-    };
+    let mut walk = Walk::new(compat, issues, exts);
     let def = walk.workflow(object);
-    let rejected = walk.issues.iter().any(|i| i.severity == Severity::Rejected);
+    let rejected = walk.rejected();
     Parsed {
         def: (!rejected).then_some(def),
         issues: walk.issues,
@@ -150,6 +203,22 @@ pub(super) struct Walk<'j> {
 }
 
 impl<'j> Walk<'j> {
+    /// A walk whose issues follow `issues`, with the `ext`s the reader began.
+    fn new(compat: bool, issues: Vec<Issue>, exts: HashMap<AuthoredPath, Ext>) -> Self {
+        Self {
+            compat,
+            issues,
+            seen: HashMap::new(),
+            step: None,
+            exts,
+        }
+    }
+
+    /// Whether any issue so far is Rejected.
+    fn rejected(&self) -> bool {
+        self.issues.iter().any(|i| i.severity == Severity::Rejected)
+    }
+
     /// Reports at the code's default severity.
     pub(super) fn report(
         &mut self,
@@ -689,4 +758,196 @@ impl NodeHeader {
 /// The value as a non-empty string, if it is one.
 fn non_empty_str(value: Option<&Value>) -> Option<&str> {
     value.and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    type Row = (IssueCode, Severity, String);
+
+    fn rows(issues: &[Issue]) -> Vec<Row> {
+        issues
+            .iter()
+            .map(|i| (i.code, i.severity, i.path.to_string()))
+            .collect()
+    }
+
+    fn row(code: IssueCode, severity: Severity, path: &str) -> Row {
+        (code, severity, path.to_string())
+    }
+
+    fn leaf(id: &str) -> Value {
+        json!({"id": id, "function": {"name": "f"}})
+    }
+
+    fn steps_at(steps: &Value, root: &str) -> (Option<Vec<StepDef>>, Vec<Issue>) {
+        crate::def::parse_steps(steps, &root.parse().unwrap(), ParseOptions::default())
+    }
+
+    /// `count` groups, each the only member of the one before, around a leaf.
+    fn nested(count: usize) -> Value {
+        let mut node = leaf("leaf");
+        for level in (0..count).rev() {
+            node = json!({"id": format!("g{level}"), "tasks": [node]});
+        }
+        json!([node])
+    }
+
+    #[test]
+    fn parse_steps_reports_under_its_root_with_the_compat_reader_first() {
+        let steps = json!([
+            {"function": {"name": "f"}},
+            {"id": "b", "continue_on_error": true, "function": {"name": "f"}},
+        ]);
+        let (def, issues) = steps_at(&steps, "tasks[2].tasks");
+        assert!(def.is_none());
+        assert_eq!(
+            rows(&issues),
+            [
+                row(
+                    IssueCode::V3Spelling,
+                    Severity::Advisory,
+                    "tasks[2].tasks[1].continue_on_error"
+                ),
+                row(
+                    IssueCode::MissingStepId,
+                    Severity::Rejected,
+                    "tasks[2].tasks[0].id"
+                ),
+            ]
+        );
+        assert_eq!(issues[0].step_kind, Some(StepKind::Task));
+        assert_eq!(issues[0].step_id.as_deref(), Some("b"));
+
+        // With the reader off, the v3 key is a Rejected unknown key.
+        let (def, issues) = parse_steps(
+            &steps,
+            &"tasks[2].tasks".parse().unwrap(),
+            ParseOptions::default().compat(false),
+        );
+        assert!(def.is_none());
+        assert!(issues.iter().all(|i| i.code != IssueCode::V3Spelling));
+        assert!(issues.iter().any(|i| i.severity == Severity::Rejected
+            && i.path.to_string() == "tasks[2].tasks[1].continue_on_error"));
+    }
+
+    #[test]
+    fn parse_steps_under_loop_setup_makes_setup_steps() {
+        let steps = json!([{"id": "g", "tasks": [{"id": "s"}]}]);
+        let (def, issues) = steps_at(&steps, "loop.setup");
+        assert!(def.is_none());
+        assert_eq!(
+            rows(&issues),
+            [row(
+                IssueCode::MissingFunction,
+                Severity::Rejected,
+                "loop.setup[0].tasks[0].function"
+            )]
+        );
+        assert_eq!(issues[0].step_kind, Some(StepKind::Setup));
+        assert_eq!(issues[0].step_id.as_deref(), Some("s"));
+    }
+
+    #[test]
+    fn parse_steps_checks_duplicate_ids_within_the_fragment() {
+        let steps = json!([leaf("a"), {"id": "g", "tasks": [leaf("a")]}]);
+        let (def, issues) = steps_at(&steps, "tasks");
+        assert!(def.is_none());
+        assert_eq!(
+            rows(&issues),
+            [row(
+                IssueCode::DuplicateStepId,
+                Severity::Rejected,
+                "tasks[1].tasks[0].id"
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_steps_counts_the_roots_groups_into_the_depth() {
+        let deepest = |root: &str, count: usize| {
+            let mut path = root.to_string();
+            for _ in 1..count {
+                path.push_str("[0].tasks");
+            }
+            path.push_str("[0]");
+            path
+        };
+        // Eight groups deep is accepted under `tasks`, and too deep one
+        // group further in.
+        let eight = nested(MAX_GROUP_DEPTH);
+        let (def, issues) = steps_at(&eight, "tasks");
+        assert!(def.is_some() && issues.is_empty(), "{issues:?}");
+        let (def, issues) = steps_at(&eight, "tasks[0].tasks");
+        assert!(def.is_none());
+        assert_eq!(
+            rows(&issues),
+            [row(
+                IssueCode::GroupTooDeep,
+                Severity::Rejected,
+                &deepest("tasks[0].tasks", MAX_GROUP_DEPTH)
+            )]
+        );
+        // Under `tasks`, the same report takes one group more.
+        let (_, issues) = steps_at(&nested(MAX_GROUP_DEPTH + 1), "tasks");
+        assert_eq!(
+            rows(&issues),
+            [row(
+                IssueCode::GroupTooDeep,
+                Severity::Rejected,
+                &deepest("tasks", MAX_GROUP_DEPTH + 1)
+            )]
+        );
+        // `loop.setup` is the top of the setup list, as `tasks` is of the body.
+        let (def, issues) = steps_at(&eight, "loop.setup");
+        assert!(def.is_some() && issues.is_empty(), "{issues:?}");
+        let (_, issues) = steps_at(&eight, "loop.setup[0].tasks");
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, IssueCode::GroupTooDeep);
+    }
+
+    #[test]
+    fn parse_steps_refuses_a_fragment_that_is_not_an_array() {
+        for steps in [json!({"id": "a"}), json!(null), json!("tasks")] {
+            let (def, issues) = steps_at(&steps, "tasks[2].tasks");
+            assert!(def.is_none());
+            assert_eq!(
+                rows(&issues),
+                [row(
+                    IssueCode::ParseFailed,
+                    Severity::Rejected,
+                    "tasks[2].tasks"
+                )]
+            );
+        }
+        let (def, issues) = steps_at(&json!([]), "tasks");
+        assert_eq!(def, Some(Vec::new()));
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn parse_steps_reads_steps_as_parse_does() {
+        // A v3 flag, a stray publish key the reader moves into `ext`, an
+        // unknown key the walk moves, and a group's `continue_on_error`.
+        let steps = json!([
+            {"id": "a", "halt_on": "failure", "function": {"name": "validate"}},
+            {"id": "p", "colour": 1, "function": {"name": "publish_json",
+                "input": {"source": "x", "target": "y", "pretty": true, "indent": 2}}},
+            {"id": "g", "continue_on_error": true, "tasks": [leaf("t")]},
+        ]);
+        let parsed = parse(
+            &json!({"id": "w", "name": "n", "tasks": steps}),
+            ParseOptions::default(),
+        );
+        let (def, issues) = steps_at(&steps, "tasks");
+        assert_eq!(issues, parsed.issues);
+        assert_eq!(def, parsed.def.map(|def| def.tasks));
+        let Some(StepDef::Task(publish)) = def.as_ref().map(|steps| &steps[1]) else {
+            panic!("expected the publish task: {def:?}");
+        };
+        assert!(publish.header.ext.contains_key("function.input.indent"));
+        assert!(publish.header.ext.contains_key("colour"));
+    }
 }

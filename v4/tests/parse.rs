@@ -1337,14 +1337,15 @@ fn two_unknown_keys_moving_to_one_ext_name_refuse_the_second() {
     let parsed = compat(&json!({
         "id": "w", "loop.maxx": 1, "loop": {"max": 3, "maxx": 2}, "tasks": [leaf("t")]
     }));
+    // Different paths, `loop` then `maxx` and one key: before phase 3 both
+    // displayed as `loop.maxx`, and the one key is now quoted (I52).
     assert_eq!(
         rows(&parsed),
         vec![
             row(C::LikelyTypo, D, "loop.maxx"),
-            row(C::ParseFailed, R, "loop.maxx"),
+            row(C::ParseFailed, R, r#"["loop.maxx"]"#),
         ]
     );
-    // Same display, different paths: `loop` then `maxx`, and one key.
     assert_eq!(parsed.issues[0].path.segs().len(), 2);
     assert_eq!(parsed.issues[1].path.segs().len(), 1);
     let message = &parsed.issues[1].message;
