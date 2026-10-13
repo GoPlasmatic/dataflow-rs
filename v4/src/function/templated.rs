@@ -191,7 +191,8 @@ impl Templated {
                 v.recording(field.records, |v| match &field.value {
                     TemplatedField::Expr(expr) => v.expr(expr.raw()),
                     TemplatedField::Path(expr) => v.expr(expr.raw()),
-                    TemplatedField::Output(output) => v.expr(output.path().raw()),
+                    // As recorded, as an `Output` always is.
+                    TemplatedField::Output(output) => output.visit(v),
                     TemplatedField::Interpolated(doc) => v.interpolated(doc),
                     TemplatedField::Literal(_) => {}
                 });

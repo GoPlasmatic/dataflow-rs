@@ -193,8 +193,8 @@ impl Compiler {
                 walk.lower.loop_next(lp, sweep);
             }
         }
-        // 4. The workflow lint, `UNGUARDED_VALIDATION`, arrives with the
-        //    checks' rules (Task 6).
+        // 4. The workflow lint, `UNGUARDED_VALIDATION`.
+        walk.hook.workflow(def, &mut walk.issues);
         let workflow = CompiledWorkflow {
             id: def.id.clone(),
             channel: def.channel.clone(),
@@ -333,7 +333,12 @@ impl<'w> Walk<'w> {
     ) -> Option<Expr> {
         match self.registry.exprs().compile::<OwnedDataValue>(&raw.0) {
             Ok(expr) => {
-                let site = Site { at, records, step };
+                let site = Site {
+                    at,
+                    records,
+                    step,
+                    field: None,
+                };
                 self.hook.expr(site, expr.raw(), &mut self.issues);
                 Some(expr)
             }
@@ -710,6 +715,48 @@ mod tests {
                 site("tasks[1].function.input.mappings[0].logic", true, task("m")),
             ]
         );
+    }
+
+    #[test]
+    fn the_compile_walk_visits_the_steps_in_def_walk_order() {
+        // `UNGUARDED_VALIDATION` reads its chain from `WorkflowDef::walk`, and
+        // everything else from the compile walk: the two orders are one.
+        // Every step has a condition, so the hook sees each step once.
+        let c = |id: &str| json!({"var": format!("data.{id}")});
+        let t = |id: &str| {
+            json!({"id": id, "condition": c(id),
+                   "function": {"name": "log", "input": {"message": "m"}}})
+        };
+        let json = json!({"id": "w", "loop": {"max": 2, "setup": [
+                t("s1"),
+                {"id": "sg", "condition": c("sg"), "tasks": [t("s2"), t("s3")]},
+            ]},
+            "tasks": [
+                {"id": "a", "condition": c("a"), "tasks": [
+                    {"id": "b", "condition": c("b"), "tasks": [t("t1")]},
+                    t("t2"),
+                    {"id": "c", "condition": c("c"), "tasks": [
+                        {"id": "d", "condition": c("d"), "tasks": [t("t3")]},
+                    ]},
+                ]},
+                t("t4"),
+            ],
+        });
+        let def = parse(&json, ParseOptions::default()).def.unwrap();
+        let mut recorder = Recorder::default();
+        let (_, issues) = compiler().compile_with(&def, &mut recorder);
+        assert!(issues.is_empty(), "{issues:?}");
+        let walked: Vec<(String, Step)> = recorder
+            .0
+            .into_iter()
+            .filter_map(|(at, _, step)| Some((at.strip_suffix(".condition")?.to_owned(), step)))
+            .collect();
+        let expected: Vec<(String, Step)> = def
+            .walk()
+            .map(|(path, kind, step)| (path.to_string(), Some((kind, step.id().to_owned()))))
+            .collect();
+        assert_eq!(walked.len(), 12);
+        assert_eq!(walked, expected);
     }
 
     #[test]

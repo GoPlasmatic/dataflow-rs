@@ -529,8 +529,9 @@ fn visit_reports_every_expression_with_its_relative_path() {
     assert_eq!(
         seen.exprs,
         [
-            ("target".into(), json!("data"), false),
-            ("errors".into(), json!("temp_data.err"), false),
+            // An `Output` is recorded without saying so (break 16).
+            ("target".into(), json!("data"), true),
+            ("errors".into(), json!("temp_data.err"), true),
             ("source".into(), json!(1), true),
             ("max_items".into(), json!(100), false),
             // `records` on `limits` is inherited by everything below it.

@@ -221,9 +221,10 @@ mod tests {
 
         let mut paths = Paths::default();
         out.bound.expect("bound").visit(&mut paths);
+        // An `Output` is recorded, whatever its field says (break 16).
         assert_eq!(
             paths.0,
-            [("url".to_owned(), true), ("output".to_owned(), false)]
+            [("url".to_owned(), true), ("output".to_owned(), true)]
         );
     }
 
