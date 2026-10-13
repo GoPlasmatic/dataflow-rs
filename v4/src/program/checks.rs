@@ -266,13 +266,19 @@ fn walk_duplicates(
 ///
 /// For datalogic's operators this is its `frames_pushed_for_child`: the body
 /// of `filter`, `map`, `all`, `some`, `none` and `reduce`, and the key of
-/// `group_by`, each at index 1, and `sort`'s key at index 2. `reduce`'s
+/// `group_by` and `distinct`, each at index 1, `sort`'s key at index 2, and
+/// `try`'s last argument when it has two or more (the catch arm). `reduce`'s
 /// initial value and `sort`'s direction are evaluated once, in the context.
 /// A host's (`custom`) operator declares no positions, so every argument
 /// after its first counts.
-fn per_element(operator: &str, custom: bool, index: usize) -> bool {
+fn per_element(operator: &str, custom: bool, index: usize, len: usize) -> bool {
     match operator {
-        "filter" | "map" | "all" | "some" | "none" | "reduce" | "group_by" if !custom => index == 1,
+        "filter" | "map" | "all" | "some" | "none" | "reduce" | "group_by" | "distinct"
+            if !custom =>
+        {
+            index == 1
+        }
+        "try" if !custom => len >= 2 && index == len - 1,
         "sort" if !custom => index == 2,
         _ => index > 0,
     }
@@ -301,7 +307,7 @@ fn walk_payload(
                     && let Some(custom) = scoping(key)
                 {
                     for (i, arg) in args.iter().enumerate() {
-                        if !per_element(key, custom, i) {
+                        if !per_element(key, custom, i, args.len()) {
                             walk_payload(arg, &at.join(key.as_str()).join(i), scoping, out);
                         }
                     }
@@ -484,7 +490,7 @@ mod tests {
 
     fn reads(raw: &Value) -> Vec<(String, String)> {
         let scoping = |name: &str| match name {
-            "map" | "reduce" | "sort" | "group_by" => Some(false),
+            "map" | "reduce" | "sort" | "group_by" | "distinct" | "try" => Some(false),
             "host_each" => Some(true),
             _ => None,
         };
@@ -533,5 +539,32 @@ mod tests {
         );
         // A multi-key object is a template, not an operator.
         assert!(reads(&json!({"var": "payload", "x": 1})).is_empty());
+    }
+
+    #[cfg(feature = "ext-array")]
+    #[test]
+    fn a_payload_read_in_distincts_key_is_not_a_payload_var() {
+        let r = |at: &str, p: &str| (at.to_owned(), p.to_owned());
+        assert!(
+            reads(&json!({"distinct": [{"var": "data.items"}, {"var": "payload.k"}]})).is_empty()
+        );
+        assert_eq!(
+            reads(&json!({"distinct": [{"var": "payload.items"}, {"var": "payload.k"}]})),
+            [r("distinct[0]", "payload.items")]
+        );
+    }
+
+    #[cfg(feature = "error-handling")]
+    #[test]
+    fn a_payload_read_in_trys_catch_arm_is_not_a_payload_var() {
+        let r = |at: &str, p: &str| (at.to_owned(), p.to_owned());
+        assert_eq!(
+            reads(&json!({"try": [{"var": "payload.a"}, {"var": "payload.b"}]})),
+            [r("try[0]", "payload.a")]
+        );
+        assert_eq!(
+            reads(&json!({"try": [{"var": "payload.a"}]})),
+            [r("try[0]", "payload.a")]
+        );
     }
 }

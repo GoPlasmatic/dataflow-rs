@@ -104,7 +104,16 @@ impl Row {
 const fn r(name: &'static str, family: Family) -> Row {
     let scoping = matches!(
         name.as_bytes(),
-        b"filter" | b"map" | b"reduce" | b"all" | b"some" | b"none" | b"sort" | b"group_by"
+        b"filter"
+            | b"map"
+            | b"reduce"
+            | b"all"
+            | b"some"
+            | b"none"
+            | b"sort"
+            | b"group_by"
+            | b"distinct"
+            | b"try"
     );
     Row {
         name,
@@ -232,7 +241,8 @@ mod tests {
         assert_eq!(
             scoping,
             [
-                "filter", "map", "reduce", "all", "some", "none", "sort", "group_by"
+                "filter", "map", "reduce", "all", "some", "none", "sort", "group_by", "distinct",
+                "try"
             ]
         );
         let non: Vec<&str> = TABLE
