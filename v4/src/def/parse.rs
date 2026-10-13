@@ -42,9 +42,9 @@ pub struct ParseOptions {
     /// (`continue_on_error`, `halt_on`), which are unknown keys to v4. The
     /// v3 spellings inside a task's `function` are not `parse`'s to refuse:
     /// `validate` stays the function's name, and an integration alias or a
-    /// stray `publish_json` / `publish_xml` input key stays in its `input`,
-    /// for the function's lookup and config to refuse when the workflow is
-    /// compiled (phase 3).
+    /// key a built-in's input does not know stays in its `input`, for the
+    /// function's lookup and config to refuse when the workflow is compiled
+    /// (phase 3).
     pub compat: bool,
 }
 

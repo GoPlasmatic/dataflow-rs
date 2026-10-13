@@ -97,9 +97,57 @@ pub(super) const WORKFLOW_POLICIES: &[&str] = &["on_failure"];
 /// A task's v4 policies, which its v3 spellings become.
 pub(super) const TASK_POLICIES: &[&str] = &["on_failure", "on_rejection"];
 
-/// The keys of a `publish_json` or `publish_xml` input. The compat reader
-/// moves any other into the task's `ext`.
-pub(super) const PUBLISH_KEYS: &[&str] = &["source", "target", "pretty", "root_element"];
+/// The keys of a `map` input.
+pub(crate) const MAP_KEYS: &[&str] = &["mappings"];
+
+/// The keys of one of `map`'s mappings.
+pub(crate) const MAPPING_KEYS: &[&str] = &["path", "logic", "unset", "on_null", "mode"];
+
+/// The keys of a `validation` input.
+pub(crate) const VALIDATION_KEYS: &[&str] = &["rules"];
+
+/// The keys of one of `validation`'s rules.
+pub(crate) const RULE_KEYS: &[&str] = &["logic", "message"];
+
+/// The keys of a `filter` input.
+pub(crate) const FILTER_KEYS: &[&str] = &["condition", "on_reject"];
+
+/// The keys of a `log` input.
+pub(crate) const LOG_KEYS: &[&str] = &["level", "message", "fields"];
+
+/// The keys of a `parse_json` or `parse_xml` input.
+pub(crate) const PARSE_KEYS: &[&str] = &["source", "target"];
+
+/// The keys of a `publish_json` or `publish_xml` input.
+pub(crate) const PUBLISH_KEYS: &[&str] = &["source", "target", "pretty", "root_element"];
+
+/// What the compat reader knows of a built-in's input (I54): its keys and,
+/// for an input holding an array of nested configs, that array's key and the
+/// keys of its elements. It moves any other key into the task's `ext`.
+///
+/// Each table equals its config's derived fields, which the built-in
+/// configs' tests check.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BuiltinInput {
+    /// The input's keys.
+    pub(crate) keys: &'static [&'static str],
+    /// The array of nested configs, and their keys.
+    pub(crate) elements: Option<(&'static str, &'static [&'static str])>,
+}
+
+/// The input of the built-in called `name`; `None` for any other name.
+pub(crate) fn builtin_input(name: &str) -> Option<BuiltinInput> {
+    let (keys, elements) = match name {
+        "map" => (MAP_KEYS, Some(("mappings", MAPPING_KEYS))),
+        "validation" => (VALIDATION_KEYS, Some(("rules", RULE_KEYS))),
+        "filter" => (FILTER_KEYS, None),
+        "log" => (LOG_KEYS, None),
+        "parse_json" | "parse_xml" => (PARSE_KEYS, None),
+        "publish_json" | "publish_xml" => (PUBLISH_KEYS, None),
+        _ => return None,
+    };
+    Some(BuiltinInput { keys, elements })
+}
 
 /// One level's table: its known keys, and the v3 spellings the compat reader
 /// takes there.

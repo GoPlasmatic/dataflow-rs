@@ -17,13 +17,17 @@
 //! | `http_call` input | `path_logic`, `body_logic`, `output` | `path`, `body`, `response_path` |
 //! | `enrich` input | `path_logic` | `path` |
 //! | `publish_kafka` input | `key_logic`, `value_logic` | `key`, `value` |
+//! | `publish_json` / `publish_xml` input | `source: "data.<x>"` | `source: "<x>"` |
 //!
 //! It moves two kinds of key into a node's `ext`, reporting each as the key
-//! it is: a `publish_json` or `publish_xml` input key other than `source`,
-//! `target`, `pretty` and `root_element` (an `UNKNOWN_KEY`, or a
-//! `LIKELY_TYPO`), and a group's `continue_on_error` (a
-//! `GROUP_CONTINUE_ON_ERROR` when `true`, which v3 reported and never
-//! honoured, otherwise an `UNKNOWN_KEY`).
+//! it is:
+//!
+//! - a key a built-in's input does not know, which v3's configs ignored, as
+//!   `function.input.<key>`, and an unknown key of a `map` mapping or a
+//!   `validation` rule, as `function.input.mappings[0].<key>` (an
+//!   `UNKNOWN_KEY`, or a `LIKELY_TYPO`);
+//! - a group's `continue_on_error` (a `GROUP_CONTINUE_ON_ERROR` when `true`,
+//!   which v3 reported and never honoured, otherwise an `UNKNOWN_KEY`).
 //!
 //! It refuses a `continue_on_error` that is not a bool and a `halt_on` that
 //! is not `"never"` or `"failure"`. It refuses a v3 key written beside a v4
@@ -33,10 +37,11 @@
 //!
 //! With the reader off, nothing is rewritten. The v3 keys of a workflow, a
 //! task and a group (`continue_on_error`, `halt_on`) are unknown keys, and
-//! Rejected as every unknown key then is. `validate`, the integration aliases
-//! and a publish input's stray keys are not keys of the definition: they stay
-//! in the task's `function` as written, for the function's lookup and config
-//! to refuse when the workflow is compiled (phase 3).
+//! Rejected as every unknown key then is. `validate`, the integration aliases,
+//! a built-in input's stray keys and a publish `source` under `data.` are not
+//! keys of the definition: they stay in the task's `function` as written, for
+//! the function's lookup and config to refuse or read when the workflow is
+//! compiled (phase 3).
 //!
 //! [`migrate_v3`] parses with the reader on and writes the definition in the
 //! v4 spelling, which parses with the reader off to an equal definition.

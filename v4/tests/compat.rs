@@ -565,6 +565,232 @@ fn a_stray_publish_input_key_moves_to_the_tasks_ext() {
     }
 }
 
+/// A minimal input each built-in's config accepts.
+fn minimal(name: &str) -> Value {
+    match name {
+        "map" => json!({"mappings": [{"path": "data.x", "logic": 1}]}),
+        "validation" | "validate" => json!({"rules": [{"logic": true, "message": "m"}]}),
+        "filter" => json!({"condition": true}),
+        "log" => json!({"message": "m"}),
+        "parse_json" | "parse_xml" => json!({"source": "payload", "target": "in"}),
+        _ => json!({"source": "obj", "target": "out"}),
+    }
+}
+
+#[test]
+fn a_stray_key_in_any_builtin_input_moves_to_the_tasks_ext() {
+    // I54: v3's configs ignored a key they did not know; `validate`'s input
+    // is `validation`'s.
+    for name in [
+        "map",
+        "validation",
+        "validate",
+        "filter",
+        "log",
+        "parse_json",
+        "parse_xml",
+        "publish_json",
+        "publish_xml",
+    ] {
+        let mut input = minimal(name);
+        input["zzz"] = json!(1);
+        let parsed = compat(&calling(name, input));
+        let issues: Vec<Row> = rows(&parsed)
+            .into_iter()
+            .filter(|(code, _, _)| *code != C::V3Spelling)
+            .collect();
+        assert_eq!(
+            issues,
+            vec![row(C::UnknownKey, A, "tasks[0].function.input.zzz")],
+            "{name}"
+        );
+        let stray = parsed
+            .issues
+            .iter()
+            .find(|i| i.code == C::UnknownKey)
+            .unwrap();
+        assert!(
+            stray
+                .message
+                .ends_with("(kept in `ext` as `function.input.zzz`)"),
+            "{}",
+            stray.message
+        );
+        assert_eq!(stray.field.as_deref(), Some("zzz"));
+        let def = built(parsed);
+        let t = task(&def.tasks[0]);
+        assert_eq!(t.function.input, minimal(name), "{name}");
+        assert_eq!(t.header.ext.get("function.input.zzz"), Some(&json!(1)));
+    }
+}
+
+#[test]
+fn an_unknown_key_of_a_mapping_or_a_rule_moves_to_the_tasks_ext() {
+    let input = json!({"aaa": 0, "mappings": [
+        {"path": "data.x", "logic": 1, "lgic": 2},
+        5,
+        {"path": "data.y", "logic": 2, "note": "n"}
+    ], "zzz": 1});
+    let parsed = compat(&calling("map", input));
+    // In document order: the input's keys as it holds them, each element's
+    // within its key.
+    assert_eq!(
+        rows(&parsed),
+        vec![
+            row(C::UnknownKey, A, "tasks[0].function.input.aaa"),
+            row(C::LikelyTypo, D, "tasks[0].function.input.mappings[0].lgic"),
+            row(C::UnknownKey, A, "tasks[0].function.input.mappings[2].note"),
+            row(C::UnknownKey, A, "tasks[0].function.input.zzz"),
+        ]
+    );
+    assert!(parsed.issues[1].message.contains("`logic`"));
+    assert!(
+        parsed.issues[1]
+            .message
+            .ends_with("(kept in `ext` as `function.input.mappings[0].lgic`)")
+    );
+    assert_eq!(parsed.issues[1].field.as_deref(), Some("mappings"));
+    let def = built(parsed);
+    let t = task(&def.tasks[0]);
+    // An element that is not an object is the config's to refuse.
+    assert_eq!(
+        t.function.input,
+        json!({"mappings": [{"path": "data.x", "logic": 1}, 5,
+                            {"path": "data.y", "logic": 2}]})
+    );
+    let ext = &t.header.ext;
+    assert_eq!(ext.len(), 4);
+    assert_eq!(ext.get("function.input.mappings[0].lgic"), Some(&json!(2)));
+    assert_eq!(
+        ext.get("function.input.mappings[2].note"),
+        Some(&json!("n"))
+    );
+
+    let parsed = compat(&calling(
+        "validation",
+        json!({"rules": [{"logic": true, "message": "m", "code": "E1"}]}),
+    ));
+    assert_eq!(
+        rows(&parsed),
+        vec![row(
+            C::UnknownKey,
+            A,
+            "tasks[0].function.input.rules[0].code"
+        )]
+    );
+    let def = built(parsed);
+    assert_eq!(
+        task(&def.tasks[0])
+            .header
+            .ext
+            .get("function.input.rules[0].code"),
+        Some(&json!("E1"))
+    );
+}
+
+#[test]
+fn a_stray_key_that_needs_quoting_is_named_as_its_path_displays() {
+    let parsed = compat(&calling("log", json!({"message": "m", "a.b": 1})));
+    assert_eq!(
+        rows(&parsed),
+        vec![row(C::UnknownKey, A, "tasks[0].function.input[\"a.b\"]")]
+    );
+    let def = built(parsed);
+    assert_eq!(
+        task(&def.tasks[0])
+            .header
+            .ext
+            .get("function.input[\"a.b\"]"),
+        Some(&json!(1))
+    );
+}
+
+#[test]
+fn without_the_reader_a_builtin_inputs_stray_keys_stay_for_its_config() {
+    let input = json!({"mappings": [{"path": "data.x", "logic": 1, "note": "n"}], "zzz": 1});
+    let parsed = strict(&calling("map", input.clone()));
+    assert_eq!(rows(&parsed), vec![]);
+    let def = built(parsed);
+    let t = task(&def.tasks[0]);
+    assert_eq!(t.function.input, input);
+    assert!(t.header.ext.is_empty());
+
+    // Nor is an input that is not an object touched with it on.
+    let parsed = compat(&calling("filter", json!([1])));
+    assert_eq!(rows(&parsed), vec![]);
+    assert_eq!(task(&built(parsed).tasks[0]).function.input, json!([1]));
+}
+
+#[test]
+fn nested_strays_migrate_to_a_definition_that_parses_with_compat_off() {
+    let json = calling(
+        "validation",
+        json!({"rules": [{"logic": true, "message": "m", "code": "E1"}], "strict": true}),
+    );
+    let m = migrated(&json);
+    // A move is not a rewrite.
+    assert_eq!(rewrites(&m), vec![]);
+    let reparsed = strict(&m.json);
+    assert_eq!(rows(&reparsed), vec![]);
+    assert_eq!(reparsed.def, compat(&json).def);
+}
+
+#[test]
+fn a_publish_source_under_data_is_read_relative_to_data() {
+    // I56: v3 fell back to reading `data.obj` as `obj`; v4 reads the source
+    // relative to `data`, so the reader writes the rest.
+    for name in ["publish_json", "publish_xml"] {
+        let json = calling(name, json!({"source": "data.obj", "target": "out"}));
+        let parsed = compat(&json);
+        assert_eq!(
+            rows(&parsed),
+            vec![row(C::V3Spelling, A, "tasks[0].function.input.source")],
+            "{name}"
+        );
+        assert_eq!(
+            parsed.issues[0].message,
+            "`source: data.obj` is a v3 spelling, read as `source: obj`"
+        );
+        assert_eq!(parsed.issues[0].field.as_deref(), Some("source"));
+        assert_eq!(
+            task(&built(parsed).tasks[0]).function.input,
+            json!({"source": "obj", "target": "out"})
+        );
+        let m = migrated(&json);
+        assert_eq!(
+            rewrites(&m),
+            vec![rewrite(
+                "tasks[0].function.input.source",
+                "source: data.obj",
+                "source: obj"
+            )]
+        );
+        assert_eq!(strict(&m.json).def, compat(&json).def);
+    }
+
+    // Not rewritten: `data` itself, a computed source, a target, a parse
+    // source, and anything with the reader off.
+    for (name, input) in [
+        ("publish_json", json!({"source": "data", "target": "out"})),
+        (
+            "publish_json",
+            json!({"source": {"cat": ["data.", "obj"]}, "target": "out"}),
+        ),
+        (
+            "publish_json",
+            json!({"source": "obj", "target": "data.out"}),
+        ),
+        ("parse_json", json!({"source": "data.obj", "target": "out"})),
+    ] {
+        let parsed = compat(&calling(name, input.clone()));
+        assert_eq!(rows(&parsed), vec![], "{input}");
+        assert_eq!(task(&built(parsed).tasks[0]).function.input, input);
+    }
+    let input = json!({"source": "data.obj", "target": "out"});
+    let parsed = strict(&calling("publish_json", input.clone()));
+    assert_eq!(task(&built(parsed).tasks[0]).function.input, input);
+}
+
 #[test]
 fn the_four_publish_keys_stay_in_the_input() {
     let input = json!({"source": "obj", "target": "out", "pretty": true, "root_element": "doc"});
@@ -1072,6 +1298,7 @@ fn writes_ext(json: &Value) -> bool {
 #[test]
 fn every_corpus_definition_migrates_to_one_that_parses_with_compat_off_to_an_equal_def() {
     let (mut migrated_count, mut refused, mut rewritten, mut with_ext) = (0, 0, 0, 0);
+    let mut saw_publish = false;
     for (name, json) in corpus_definitions() {
         let Ok(m) = migrate_v3(&json) else {
             refused += 1;
@@ -1093,7 +1320,19 @@ fn every_corpus_definition_migrates_to_one_that_parses_with_compat_off_to_an_equ
         let again = migrate_v3(&m.json).expect("a v4 definition migrates");
         assert_eq!(again.json, m.json, "{name}");
         assert!(again.rewrites.is_empty(), "{name}");
+
+        // I56: the publish case's `data.obj` source is read as `obj`.
+        if name == "builtins/publish#0" {
+            assert!(rewrites(&m).contains(&rewrite(
+                "tasks[1].function.input.source",
+                "source: data.obj",
+                "source: obj"
+            )));
+            assert_eq!(m.json["tasks"][1]["function"]["input"]["source"], "obj");
+            saw_publish = true;
+        }
     }
+    assert!(saw_publish, "builtins/publish#0 is in the corpus");
     // 143 definitions on 2026-10-12: 130 migrate, 30 of them carrying a v3
     // spelling and 7 host data; 13 are refused, each by a rule v3 refuses
     // too (an alias beside its target, a group's shape, a loop's bounds).

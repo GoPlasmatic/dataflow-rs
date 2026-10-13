@@ -16,14 +16,27 @@
 //! | `http_call` input | `path_logic`, `body_logic`, `output` | `path`, `body`, `response_path` |
 //! | `enrich` input | `path_logic` | `path` |
 //! | `publish_kafka` input | `key_logic`, `value_logic` | `key`, `value` |
+//! | `publish_json` / `publish_xml` input | `source: "data.<x>"` | `source: "<x>"` |
 //!
 //! Each rewrite is a `V3_SPELLING` Advisory at the v3 key, and a
 //! [`Rewrite`]. Two moves are not rewrites, and are reported as the keys they
-//! are: a key of a `publish_json` or `publish_xml` input other than its four
-//! moves into the task's `ext` as `function.input.<key>`, an `UNKNOWN_KEY` or
-//! a `LIKELY_TYPO`; and a group's `continue_on_error` moves into the group's
-//! `ext`, a `GROUP_CONTINUE_ON_ERROR` when it is `true` (v3 reported it and
-//! never honoured it) and an `UNKNOWN_KEY` otherwise.
+//! are:
+//!
+//! - **A key a built-in's input does not know (I54)** moves into the task's
+//!   `ext` as `function.input.<path>`, an `UNKNOWN_KEY` or a `LIKELY_TYPO`.
+//!   So does an unknown key of a `map` mapping or a `validation` rule that is
+//!   an object, as `function.input.mappings[0].<key>`. v3's configs ignored
+//!   them. The known keys are `keys.rs`'s tables, which equal the configs'
+//!   fields. An input or an element that is not an object is left for the
+//!   config to refuse.
+//! - **A group's `continue_on_error`** moves into the group's `ext`, a
+//!   `GROUP_CONTINUE_ON_ERROR` when it is `true` (v3 reported it and never
+//!   honoured it) and an `UNKNOWN_KEY` otherwise.
+//!
+//! A publish `source` is written relative to `data` in v4, and v3 fell back
+//! to reading `data.<x>` as `<x>`, so a literal one under `data.` is rewritten
+//! to the rest (I56). A computed `source`, `"data"` itself and a `target` are
+//! not: `target`'s `data.t` was `data.data.t` in v3 too.
 //!
 //! The reader refuses a `continue_on_error` that is not a bool
 //! (`PARSE_FAILED`), a `halt_on` that is not `"never"` or `"failure"`
@@ -38,11 +51,11 @@
 
 use super::MAX_GROUP_DEPTH;
 use super::keys::{
-    Ext, GROUP_V3_KEYS, PUBLISH_KEYS, TASK_POLICIES, TASK_V3_KEYS, WORKFLOW_POLICIES,
-    WORKFLOW_V3_KEYS,
+    BuiltinInput, Ext, GROUP_V3_KEYS, TASK_POLICIES, TASK_V3_KEYS, WORKFLOW_POLICIES,
+    WORKFLOW_V3_KEYS, builtin_input,
 };
 use crate::base::typo::unknown_key;
-use crate::base::{AuthoredPath, Issue, IssueCode, StepKind};
+use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, StepKind};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -56,7 +69,9 @@ use std::collections::HashMap;
 ///   read together, so each of its rewrites names the same policies (a flag
 ///   beside a v4 policy is refused, not rewritten);
 /// - a function name or an input key is the bare name: `validate` read as
-///   `validation`, `path_logic` read as `path`.
+///   `validation`, `path_logic` read as `path`;
+/// - a publish `source` is `source: value`: `source: data.obj` read as
+///   `source: obj`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Rewrite {
@@ -462,6 +477,13 @@ impl Read {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
+        // `validate`'s input is `validation`'s, whichever key comes first.
+        let builtin = builtin_input(if name == "validate" {
+            "validation"
+        } else {
+            &name
+        });
+        let publish = name == "publish_json" || name == "publish_xml";
         for key in keys_among(&fields, &["input", "name"]) {
             if key == "name" {
                 if name == "validate" {
@@ -470,13 +492,9 @@ impl Read {
                     self.rewrite(at.join("name"), v3, v4, Some(step), None);
                 }
             } else if let Some(Value::Object(input)) = fields.get_mut("input") {
-                let at = at.join("input");
-                if name == "publish_json" || name == "publish_xml" {
-                    for (key, value) in strays(input) {
-                        self.stray(obj, task, &at, key, value, step);
-                    }
-                } else {
-                    self.aliases(input, &name, &at, step);
+                match builtin {
+                    Some(known) => self.builtin_input(obj, task, input, known, publish, step),
+                    None => self.aliases(input, &name, &at.join("input"), step),
                 }
             }
         }
@@ -532,28 +550,100 @@ impl Read {
         }
     }
 
-    /// A publish input's key other than its four, moved into the `ext` of
-    /// the task at `task` as `function.input.<key>`; `at` is the input.
+    /// A built-in's input, in its keys' order (I54, I56). A key the built-in
+    /// does not know moves into the `ext` of the task at `task`, and so does
+    /// an unknown key of an object element of its nested configs; a publish
+    /// `source` under `data.` is rewritten to the rest.
+    fn builtin_input(
+        &mut self,
+        obj: &Map<String, Value>,
+        task: &AuthoredPath,
+        input: &mut Map<String, Value>,
+        known: BuiltinInput,
+        publish: bool,
+        step: &Step,
+    ) {
+        let order: Vec<String> = input.keys().cloned().collect();
+        for key in order {
+            if !known.keys.contains(&key.as_str()) {
+                if let Some(value) = take(input, &key) {
+                    let below = AuthoredPath::root().join(key.as_str());
+                    self.stray(obj, task, &below, known.keys, value, step);
+                }
+            } else if let Some((array, element_keys)) = known.elements
+                && key == array
+                && let Some(Value::Array(items)) = input.get_mut(array)
+            {
+                for (i, item) in items.iter_mut().enumerate() {
+                    let Value::Object(element) = item else {
+                        continue;
+                    };
+                    let strays: Vec<String> = element
+                        .keys()
+                        .filter(|k| !element_keys.contains(&k.as_str()))
+                        .cloned()
+                        .collect();
+                    for stray in strays {
+                        if let Some(value) = take(element, &stray) {
+                            let below = AuthoredPath::root()
+                                .join(array)
+                                .join(i)
+                                .join(stray.as_str());
+                            self.stray(obj, task, &below, element_keys, value, step);
+                        }
+                    }
+                }
+            } else if publish && key == "source" {
+                self.publish_source(input, task, step);
+            }
+        }
+    }
+
+    /// A built-in input's key at `below` the input that its level does not
+    /// know (`known` are the level's keys), moved into the `ext` of the task
+    /// at `task` as `function.input` followed by `below`.
     fn stray(
         &mut self,
         obj: &Map<String, Value>,
         task: &AuthoredPath,
-        at: &AuthoredPath,
-        key: String,
+        below: &AuthoredPath,
+        known: &[&str],
         value: Value,
         step: &Step,
     ) {
-        let name = format!("function.input.{key}");
-        let (code, message) = unknown_key(&key, PUBLISH_KEYS);
+        let key_of = |seg: Option<&PathSeg>| match seg {
+            Some(PathSeg::Key(key)) => key.to_string(),
+            _ => unreachable!("a stray's path starts and ends at a key"),
+        };
+        let (key, field) = (key_of(below.segs().last()), key_of(below.segs().first()));
+        let input = AuthoredPath::root().join("function").join("input");
+        let name = input.extend(below).to_string();
+        let (code, message) = unknown_key(&key, known);
         let message = format!("{message} (kept in `ext` as `{name}`)");
         let moved = Moved {
             key: &key,
-            path: at.join(key.as_str()),
-            field: Some(&key),
+            path: task.extend(&input).extend(below),
+            field: Some(&field),
             name,
             value,
         };
         self.keep_in_ext(obj, task, moved, code, message, step);
+    }
+
+    /// A publish input's literal `source` under `data.`, rewritten to the
+    /// rest (I56): v4 reads the source relative to `data`, and v3 read
+    /// `data.<x>` as `<x>` when nothing else matched.
+    fn publish_source(&mut self, input: &mut Map<String, Value>, task: &AuthoredPath, step: &Step) {
+        let Some(Value::String(source)) = input.get_mut("source") else {
+            return;
+        };
+        let Some(rest) = source.strip_prefix("data.").map(str::to_string) else {
+            return;
+        };
+        let (v3, v4) = (format!("source: {source}"), format!("source: {rest}"));
+        *source = rest;
+        let path = task.join("function").join("input").join("source");
+        self.rewrite(path, v3, v4, Some(step), Some("source"));
     }
 
     /// Puts a moved key into the `ext` of the node `obj` at `node`, which the
@@ -598,21 +688,4 @@ struct Moved<'k> {
     path: AuthoredPath,
     /// The config field, for a key under `function.input`.
     field: Option<&'k str>,
-}
-
-/// Takes the keys of a publish input other than its four out of it, in its
-/// order.
-fn strays(input: &mut Map<String, Value>) -> Vec<(String, Value)> {
-    if input.keys().all(|key| PUBLISH_KEYS.contains(&key.as_str())) {
-        return Vec::new();
-    }
-    let mut strays = Vec::new();
-    for (key, value) in std::mem::take(input) {
-        if PUBLISH_KEYS.contains(&key.as_str()) {
-            input.insert(key, value);
-        } else {
-            strays.push((key, value));
-        }
-    }
-    strays
 }
