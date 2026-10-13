@@ -29,11 +29,11 @@ the same cases through `dataflow-corpus`.
 
 ## v4's driver
 
-`corpus/v4/` (`dataflow-corpus-v4`) reads the same cases through `dataflow-corpus`. In phase 2 it
-checks parsing only (`tests/definitions.rs`): for every definition no deviation covers, v4's
-`parse` issues, plus the issues of compiling each `map` task's config, must equal what v3 recorded
-(`authored`, and the `GROUP_CONTINUE_ON_ERROR` and `NULL_MAPPING` issues of `checked`), as
-`(code, severity, path)`. Skips are printed with their reason. Later phases extend it to builds and
+`corpus/v4/` (`dataflow-corpus-v4`) reads the same cases through `dataflow-corpus`. In phase 3 it
+compiles every definition (`tests/definitions.rs`): v4's `parse` issues, then those of a compiler
+holding `script` and the case's operators and secrets. A definition no deviation covers must report
+what v3 recorded (`authored` and `checked`), as `(code, severity, path)`. A deviated one must report
+exactly its row of `expect::DEVIATED`, unfiltered. Nothing is skipped. Later phases extend it to
 runs.
 
 ## A case

@@ -4,11 +4,9 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // `INVALID_MAPPING` and `NULL_MAPPING` issues each side reports: code, path and
 // message, in order.
 
-use dataflow_rs::Issue;
-use dataflow_rs::expr::{CompileCx, ExprEngine};
-use dataflow_rs::function::FunctionConfig;
-use dataflow_rs::function::builtins::MapConfig;
-use dataflow_rs::program::IssueCode;
+use dataflow_rs::def::{ParseOptions, parse};
+use dataflow_rs::program::{CompileOptions, IssueCode, Severity};
+use dataflow_rs::{Issue, Registry};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 
@@ -60,14 +58,23 @@ fn workflow(mappings: &[Value]) -> Value {
     }}]})
 }
 
-fn v4_compile(mappings: &[Value]) -> (Option<MapConfig>, Vec<Issue>) {
-    let engine = ExprEngine::default();
-    let mut issues = Vec::new();
-    let config = {
-        let mut cx = CompileCx::new(&engine, &mut issues).at_path(ROOT.parse().unwrap());
-        MapConfig::compile(&json!({"mappings": mappings}), &mut cx)
-    };
-    (config, issues)
+/// Compiles the workflow of `mappings` through the compiler: whether it
+/// compiles, and its issues. Every issue must sit under [`ROOT`], so one
+/// anywhere else fails the test rather than going uncompared.
+fn v4_compile(mappings: &[Value]) -> (bool, Vec<Issue>) {
+    let parsed = parse(&workflow(mappings), ParseOptions::default());
+    assert!(parsed.issues.is_empty(), "{:?}", parsed.issues);
+    let def = parsed.def.expect("the workflow parses");
+    let issues = Registry::default()
+        .compiler(CompileOptions::default())
+        .check(&def);
+    let elsewhere: Vec<&Issue> = issues
+        .iter()
+        .filter(|i| !i.path.to_string().starts_with(ROOT))
+        .collect();
+    assert!(elsewhere.is_empty(), "issues outside {ROOT}: {elsewhere:?}");
+    let compiles = issues.iter().all(|i| i.severity != Severity::Rejected);
+    (compiles, issues)
 }
 
 /// One issue: its code, path and message.
@@ -188,9 +195,8 @@ fn null_mapping_matches_v3_issue_for_issue() {
     assert_eq!(v4_rows(&accepted), v3);
 
     // v4 accepts every mapping v3 accepts: nothing it reports is Rejected.
-    let (config, issues) = v4_compile(&accepted);
-    assert!(config.is_some(), "{issues:?}");
-    assert_eq!(config.unwrap().mappings.len(), accepted.len());
+    let (compiles, issues) = v4_compile(&accepted);
+    assert!(compiles, "{issues:?}");
 }
 
 /// v4's whole issue list over the 216, of every code, is v3's: the
@@ -212,7 +218,7 @@ fn every_issue_v4_reports_over_the_216_is_one_v3_reports() {
     expected.sort_by_key(|(index, _)| *index);
     let expected: Vec<Row> = expected.into_iter().map(|(_, row)| row).collect();
 
-    let (config, _) = v4_compile(&all);
-    assert!(config.is_none());
+    let (compiles, _) = v4_compile(&all);
+    assert!(!compiles);
     assert_eq!(v4_rows(&all), expected);
 }

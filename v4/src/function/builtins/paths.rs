@@ -144,6 +144,7 @@ pub struct DataPath {
 
 impl DataPath {
     /// The path, when it is literal or folds, resolved at compile.
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by the phase 4 runtime"))]
     pub fn constant(&self) -> Option<&Path> {
         self.constant.as_ref()
     }
@@ -199,12 +200,14 @@ pub struct PublishSource {
 
 impl PublishSource {
     /// The primary path, when it is literal or folds, resolved at compile.
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by the phase 4 runtime"))]
     pub fn constant(&self) -> Option<&Path> {
         self.path.constant()
     }
 
     /// The fallback, when the source is literal (or folds) and begins with
     /// `data.`.
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by the phase 4 runtime"))]
     pub fn fallback(&self) -> Option<&Path> {
         self.fallback.as_ref()
     }

@@ -2,6 +2,11 @@
 //! each config records, and the differential that holds what each one accepts
 //! to what v3's build accepted.
 
+use super::filter::RejectAction;
+use super::log::LogLevel;
+use super::map::Mapping;
+use super::paths::{DataPath, ParseSource, PublishSource};
+use super::validation::Rule;
 use super::*;
 use crate::base::{AuthoredPath, Issue, IssueCode, Severity};
 use crate::def::keys::{PUBLISH_KEYS, builtin_input};

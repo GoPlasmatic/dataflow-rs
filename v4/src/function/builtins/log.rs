@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 pub struct LogConfig {
     /// The level the line is emitted at: `info` by default.
     #[config(serde, default = "info")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by the phase 4 runtime"))]
     pub level: LogLevel,
     /// JSONLogic computing the line.
     #[config(records)]

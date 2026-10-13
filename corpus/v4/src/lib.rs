@@ -1,25 +1,34 @@
-//! v4's golden-corpus driver. In phase 2 it checks one thing: that v4 parses
-//! every corpus definition, or refuses it with v3's code at v3's path. Later
-//! phases extend it to builds and runs. See `corpus/README.md`.
+//! v4's golden-corpus driver. In phase 3 it checks one thing: that v4
+//! compiles every corpus definition as v3 built it, reporting v3's issues at
+//! v3's paths, and, for a definition a deviation covers, exactly what
+//! [`expect::DEVIATED`] says. Later phases extend it to runs. See
+//! `corpus/README.md`.
 //!
-//! This crate holds the reusable pieces (reading a case's definitions,
-//! normalising what v3 recorded, collecting what v4 reports);
-//! `tests/definitions.rs` is the check.
+//! This crate holds the reusable pieces (the case's compiler, reading a
+//! case's definitions, normalising what v3 recorded, collecting what v4
+//! reports); `tests/definitions.rs` is the check.
+
+pub mod expect;
+pub mod operators;
+pub mod script;
 
 use dataflow_corpus::{Case, Json};
-use dataflow_rs::def::{ParseOptions, StepDef, WorkflowDef, parse};
-use dataflow_rs::expr::{CompileCx, ExprEngine};
-use dataflow_rs::function::FunctionConfig;
-use dataflow_rs::function::builtins::MapConfig;
-use dataflow_rs::program::{AuthoredPath, IssueCode, Severity};
+use dataflow_rs::Registry;
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::def::{ParseOptions, WorkflowDef, parse};
+use dataflow_rs::expr::{ExprEngine, Secrets};
+use dataflow_rs::program::{AuthoredPath, CompileOptions, Compiler};
 use serde_json::Value;
 
 /// One issue as the corpus compares it: code, severity and absolute authored
 /// path. `path` is `None` only for v3's `PARSE_FAILED`, which had no path.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Row {
+    /// The issue's code.
     pub code: String,
+    /// The issue's severity.
     pub severity: String,
+    /// The issue's absolute authored path, as it displays.
     pub path: Option<String>,
 }
 
@@ -33,6 +42,13 @@ impl Row {
     }
 }
 
+impl From<&(&str, &str, &str)> for Row {
+    /// A row of [`expect::DEVIATED`]: `(code, severity, path)`.
+    fn from(&(code, severity, path): &(&str, &str, &str)) -> Self {
+        Self::new(code, severity, Some(path.to_owned()))
+    }
+}
+
 /// The case's raw definitions as `serde_json` values.
 pub fn definitions(case: &Case) -> Vec<Value> {
     case.workflows
@@ -41,41 +57,41 @@ pub fn definitions(case: &Case) -> Vec<Value> {
         .collect()
 }
 
-/// The codes whose issues are compared even when they are only Advisory:
-/// v3 reported them from `check_workflow` and v4 reports them from `parse`
-/// and the `map` config.
-fn always_compared(code: IssueCode) -> bool {
-    matches!(
-        code,
-        IssueCode::GroupContinueOnError | IssueCode::NullMapping
-    )
+/// The compiler a case's definitions compile with: an [`ExprEngine`] with the
+/// case's `operators` and `secrets`, and a [`Registry`] holding `script`.
+/// The case's other engine options change runs, not compiles.
+pub fn compiler(case: &Case) -> Compiler {
+    let mut exprs = ExprEngine::builder();
+    for name in &case.engine.operators {
+        exprs = match name.as_str() {
+            "shout" => exprs.operator("shout", operators::Shout),
+            other => panic!("unknown corpus operator {other}"),
+        };
+    }
+    if let Some(secrets) = &case.engine.secrets {
+        let root: Value = serde_json::from_str(&secrets.to_text()).expect("a Json is valid JSON");
+        let secrets = Secrets::new(OwnedDataValue::from(&root))
+            .unwrap_or_else(|e| panic!("a case's secrets are an object: {e}"));
+        exprs = exprs.secrets(secrets);
+    }
+    let exprs = exprs
+        .build()
+        .unwrap_or_else(|e| panic!("the case's engine builds: {e}"));
+    let mut registry = Registry::new(exprs);
+    registry.register("script", script::Script);
+    registry.compiler(CompileOptions::default())
 }
 
-/// What v4 reports for one definition: the parse's issues, plus the issues of
-/// compiling every `map` task's config. Only Rejected, Defect and the two
-/// always-compared codes are kept.
-pub fn actual(definition: &Value) -> (Option<WorkflowDef>, Vec<Row>) {
+/// What v4 reports for one definition, unfiltered: the parse's issues, then,
+/// when it parsed, the compiler's.
+pub fn actual(compiler: &Compiler, definition: &Value) -> (Option<WorkflowDef>, Vec<Row>) {
     let parsed = parse(definition, ParseOptions::default());
-    let mut issues = parsed.issues.clone();
+    let mut issues = parsed.issues;
     if let Some(def) = &parsed.def {
-        let engine = ExprEngine::default();
-        for (path, kind, step) in def.walk() {
-            let StepDef::Task(task) = step else { continue };
-            if task.function.name != "map" {
-                continue;
-            }
-            let at = path.join("function").join("input");
-            let mut cx = CompileCx::new(&engine, &mut issues)
-                .at_path(at)
-                .for_step(kind, task.id.clone());
-            MapConfig::compile(&task.function.input, &mut cx);
-        }
+        issues.extend(compiler.check(def));
     }
     let rows = issues
         .iter()
-        .filter(|i| {
-            matches!(i.severity, Severity::Rejected | Severity::Defect) || always_compared(i.code)
-        })
         .map(|i| {
             Row::new(
                 i.code.as_str(),
@@ -101,66 +117,33 @@ fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     }
 }
 
-/// The `checked` codes whose v4 rule comes in phase 3, with the built-in
-/// configs and the lints over a whole workflow. Their issues are not compared
-/// yet; the driver lists each as skipped.
-pub const PHASE_3_CODES: &[&str] = &[
-    "UNGUARDED_VALIDATION",
-    "ESCAPED_TEMPLATE_KEY",
-    "DUPLICATE_TEMPLATE_KEY",
-    "SECRET_IN_MESSAGE_WRITE",
-];
-
-/// What v3 recorded for one definition.
-#[derive(Debug, Default)]
-pub struct Expected {
-    /// The rows v4 is compared against.
-    pub rows: Vec<Row>,
-    /// The `checked` issues of a phase 3 code, not compared.
-    pub phase_3: Vec<Row>,
-    /// Any other `checked` issue: neither compared nor deferred, which the
-    /// driver fails on rather than drop.
-    pub uncovered: Vec<Row>,
-}
-
-/// What v3 recorded for one definition. Every `authored` issue is a row, and
-/// every `checked` issue coded `GROUP_CONTINUE_ON_ERROR` or `NULL_MAPPING`,
-/// its path made absolute with the authored path of its task, taken from v4's
-/// walk of `def`. The other `checked` issues are sorted into `phase_3` and
-/// `uncovered`, their paths made absolute the same way when `def` is `Some`.
-pub fn expected(record: &Json, def: Option<&WorkflowDef>) -> Expected {
-    let mut out = Expected::default();
+/// What v3 recorded for one definition: every `authored` issue, then every
+/// `checked` issue, its path made absolute with the authored path of its
+/// task, taken from v4's walk of `def`. When v4 refused the definition, a
+/// `checked` path names its step instead, and matches no v4 row.
+pub fn expected(record: &Json, def: Option<&WorkflowDef>) -> Vec<Row> {
+    let mut rows = Vec::new();
     for issue in list(record, "authored") {
-        out.rows.push(Row::new(
+        rows.push(Row::new(
             text(issue, "code").expect("an issue has a code"),
             text(issue, "severity").expect("an issue has a severity"),
             text(issue, "path").map(str::to_owned),
         ));
     }
     for issue in list(record, "checked") {
-        let code = text(issue, "code").expect("an issue has a code");
-        let compared = code == "GROUP_CONTINUE_ON_ERROR" || code == "NULL_MAPPING";
         let task_id = text(issue, "task_id").expect("a checked issue names its task");
         let relative = text(issue, "path").expect("a checked issue has a path");
         let path = match def {
             Some(def) => format!("{}.{relative}", step_path(def, task_id)),
-            None if compared => panic!("a checked issue needs a parsed definition"),
             None => format!("{relative} on step `{task_id}`"),
         };
-        let row = Row::new(
-            code,
+        rows.push(Row::new(
+            text(issue, "code").expect("an issue has a code"),
             text(issue, "severity").expect("an issue has a severity"),
             Some(path),
-        );
-        if compared {
-            out.rows.push(row);
-        } else if PHASE_3_CODES.contains(&code) {
-            out.phase_3.push(row);
-        } else {
-            out.uncovered.push(row);
-        }
+        ));
     }
-    out
+    rows
 }
 
 /// The authored path of the step with this id.

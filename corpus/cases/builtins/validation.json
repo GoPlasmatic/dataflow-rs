@@ -11,5 +11,8 @@
       {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
         {"path": "data.after", "logic": true}]}}}]}
   ],
-  "steps": [{"run": {"message": {"data": {"v": 5, "word": "not"}}}}]
+  "steps": [{"run": {"message": {"data": {"v": 5, "word": "not"}}}}],
+  "deviations": [
+    {"break": "8", "paths": ["/definitions/0/checked"], "note": "v4 reports UNGUARDED_VALIDATION at on_rejection, the v4 key, where v3 named halt_on"}
+  ]
 }

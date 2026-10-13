@@ -13,6 +13,7 @@ pub struct FilterConfig {
     pub condition: Expr,
     /// What a rejected message does: `halt` (the default) or `skip`.
     #[config(serde, default = "halt")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by the phase 4 runtime"))]
     pub on_reject: RejectAction,
 }
 

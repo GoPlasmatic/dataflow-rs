@@ -1,9 +1,8 @@
 //! The built-in functions' configs, and the dispatch over them.
 //!
-//! Public, but `#[doc(hidden)]`, so code outside the crate can compile a
-//! built-in's config: today `tests/map_vs_v3.rs`, and the v4 corpus driver
-//! next. It becomes crate-private when phase 3's `Compiler::check` replaces
-//! that use.
+//! Crate-private (I42): code outside the crate reaches a built-in's config
+//! through the `Compiler`, as `tests/map_vs_v3.rs` and the v4 corpus driver
+//! do.
 //!
 //! What each config accepts is held to v3's build by the differential in
 //! `tests.rs`. Each config's keys, and those of `map`'s mappings and
@@ -19,13 +18,12 @@ mod paths;
 mod publish;
 mod validation;
 
-pub use filter::{FilterConfig, RejectAction};
-pub use log::{LogConfig, LogLevel};
-pub use map::{MapConfig, MapMode, Mapping, OnNull};
+pub use filter::FilterConfig;
+pub use log::LogConfig;
+pub use map::MapConfig;
 pub use parse::ParseConfig;
-pub use paths::{DataPath, ParseSource, PublishSource};
 pub use publish::PublishConfig;
-pub use validation::{Rule, ValidationConfig};
+pub use validation::ValidationConfig;
 
 use crate::expr::{CompileCx, ExprVisitor, FieldSpec};
 use crate::function::{FunctionConfig, FunctionSpec};

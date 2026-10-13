@@ -1,7 +1,6 @@
 //! Functions: the typed units of work a task runs.
 
-#[doc(hidden)]
-pub mod builtins;
+pub(crate) mod builtins;
 mod call;
 mod config;
 mod ctx;
