@@ -115,7 +115,9 @@ impl Compiler {
     /// lint. A host function's `prepare` sees an empty workflow id.
     ///
     /// A `root` that is not an authored path is `PARSE_FAILED` at the empty
-    /// path, and a fragment that is not an array is `PARSE_FAILED` at `root`.
+    /// path. A root that holds no steps, one neither ending in a `tasks` key
+    /// nor `loop.setup`, is `PARSE_FAILED` at the root, and so is a fragment
+    /// that is not an array.
     pub fn check_steps(&self, steps: &Value, root: &str) -> Vec<Issue> {
         let root = match AuthoredPath::from_str(root) {
             Ok(root) => root,
@@ -127,6 +129,19 @@ impl Compiler {
                 )];
             }
         };
+        let is = |seg: &PathSeg, name: &str| matches!(seg, PathSeg::Key(key) if &**key == name);
+        let holds_steps = match root.segs() {
+            [loop_, setup] if is(loop_, "loop") && is(setup, "setup") => true,
+            [.., last] => is(last, "tasks"),
+            [] => false,
+        };
+        if !holds_steps {
+            let message = format!(
+                "`{root}` holds no steps: a fragment sits at a `tasks` list, such as `tasks` or \
+                 `tasks[2].tasks`, or at `loop.setup`"
+            );
+            return vec![Issue::new(IssueCode::ParseFailed, root, message)];
+        }
         let (parsed, mut issues) = def::parse_steps(steps, &root, ParseOptions::default());
         if let Some(steps) = parsed {
             let mut checks = Checks::new(self.registry.exprs());
@@ -197,6 +212,7 @@ impl Compiler {
         // 4. The workflow lint, `UNGUARDED_VALIDATION`.
         walk.hook.workflow(def, &mut walk.issues);
         let workflow = CompiledWorkflow {
+            registry: self.registry.clone(),
             id: def.id.clone(),
             channel: def.channel.clone(),
             priority: def.priority,
@@ -232,6 +248,9 @@ pub struct Compiled {
     expect(dead_code, reason = "the facts are read by link and the runtime")
 )]
 pub struct CompiledWorkflow {
+    /// The registry it was compiled under: [`Compiler::link`] links it under
+    /// that one only. Holding it keeps its identity from being reused.
+    pub(crate) registry: Registry,
     pub(crate) id: String,
     pub(crate) channel: String,
     pub(crate) priority: u32,

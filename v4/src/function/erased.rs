@@ -116,6 +116,7 @@ mod tests {
     use super::*;
     use crate::base::{AuthoredPath, Issue, IssueCode, Severity, StepKind};
     use crate::expr::{Expr, ExprEngine, FieldKind, Output};
+    use crate::function::Templated;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -319,7 +320,7 @@ mod tests {
     fn the_fields_are_the_runtime_fields_when_the_spec_declares_them() {
         struct Plugin;
         impl Function for Plugin {
-            type Config = FetchConfig;
+            type Config = Templated;
             fn spec(&self) -> FunctionSpec {
                 FunctionSpec::default().with_runtime_fields(vec![FieldSpec::runtime(
                     "only",
@@ -327,7 +328,7 @@ mod tests {
                     true,
                 )])
             }
-            async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &FetchConfig) -> Result<Outcome> {
+            async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &Templated) -> Result<Outcome> {
                 Ok(Outcome::Ok)
             }
         }

@@ -8,10 +8,11 @@ use dataflow_rs::def::BUILTIN_FUNCTIONS;
 use dataflow_rs::expr::{ExprEngine, Output, Secrets};
 use dataflow_rs::function::{
     BoxFuture, CallInfo, CallLayer, FieldKind, FieldSpec, FunctionConfig, FunctionSpec, Next,
-    RetrySafety, Templated, ValueKind,
+    Reference, RetrySafety, Templated, ValueKind,
 };
 use dataflow_rs::{Ctx, Expr, Function, Outcome, Registry, Result};
 use serde_json::json;
+use std::marker::PhantomData;
 
 #[derive(FunctionConfig)]
 struct FetchConfig {
@@ -180,6 +181,73 @@ fn registering_any_builtin_name_panics() {
 #[should_panic(expected = "`validate`")]
 fn registering_v3s_alias_validate_panics() {
     Registry::default().register("validate", Described("shadow"));
+}
+
+/// A host function with config `C` that says `spec` about itself.
+struct Specced<C>(FunctionSpec, PhantomData<fn() -> C>);
+
+impl<C: FunctionConfig> Function for Specced<C> {
+    type Config = C;
+
+    fn spec(&self) -> FunctionSpec {
+        self.0.clone()
+    }
+
+    async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &C) -> Result<Outcome> {
+        Ok(Outcome::Ok)
+    }
+}
+
+fn specced<C>(spec: FunctionSpec) -> Specced<C> {
+    Specced(spec, PhantomData)
+}
+
+fn referencing(field: &'static str) -> FunctionSpec {
+    FunctionSpec::default().with_references(vec![Reference::new(field, "connector")])
+}
+
+fn runtime_fields() -> FunctionSpec {
+    FunctionSpec::default().with_runtime_fields(vec![FieldSpec::runtime(
+        "connector",
+        FieldKind::Literal(ValueKind::String),
+        true,
+    )])
+}
+
+#[test]
+#[should_panic(expected = "`unparsed`")]
+fn a_reference_field_that_is_not_an_authored_path_panics() {
+    Registry::default().register(
+        "unparsed",
+        specced::<FetchConfig>(referencing("con nector[")),
+    );
+}
+
+#[test]
+#[should_panic(expected = "`dangling`")]
+fn a_reference_naming_no_field_of_the_config_panics() {
+    Registry::default().register("dangling", specced::<FetchConfig>(referencing("connector")));
+}
+
+#[test]
+#[should_panic(expected = "`not_templated`")]
+fn runtime_fields_on_a_config_that_is_not_templated_panic() {
+    Registry::default().register("not_templated", specced::<FetchConfig>(runtime_fields()));
+}
+
+#[test]
+#[should_panic(expected = "`no_fields`")]
+fn a_templated_config_without_runtime_fields_panics() {
+    Registry::default().register("no_fields", specced::<Templated>(FunctionSpec::default()));
+}
+
+#[test]
+fn a_reference_names_a_field_of_the_config_or_of_the_runtime_fields() {
+    let mut registry = Registry::default();
+    registry.register("fetch", specced::<FetchConfig>(referencing("url")));
+    let spec = runtime_fields().with_references(vec![Reference::new("connector", "connector")]);
+    registry.register("plugin", specced::<Templated>(spec));
+    assert_eq!(names(&registry), with_builtins(&["fetch", "plugin"]));
 }
 
 #[test]

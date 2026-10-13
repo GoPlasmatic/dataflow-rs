@@ -563,6 +563,22 @@ fn check_steps_refuses_a_root_that_is_not_an_authored_path() {
 }
 
 #[test]
+fn check_steps_refuses_a_root_that_holds_no_steps() {
+    let steps = json!([{"id": "a", "function": {"name": "log", "input": {"message": "m"}}}]);
+    for root in ["condition", "tasks[0]", "loop", "loop.over"] {
+        assert_eq!(
+            rows(&compiler().check_steps(&steps, root)),
+            [row(C::ParseFailed, R, root)],
+            "{root}"
+        );
+    }
+    for root in ["tasks", "tasks[1].tasks", "loop.setup"] {
+        let issues = compiler().check_steps(&steps, root);
+        assert!(issues.is_empty(), "{root}: {issues:?}");
+    }
+}
+
+#[test]
 fn a_config_that_refuses_without_an_issue_is_reported_not_dropped() {
     let issues = rejected(&compiler(), &one("silent", json!({"a": 1})));
     assert_eq!(

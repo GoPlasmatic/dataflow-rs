@@ -2,10 +2,13 @@
 
 use super::builtins::BuiltinKind;
 use super::erased::{Erased, ErasedFunction};
-use super::{CallLayer, Function, FunctionSpec};
+use super::{CallLayer, Function, FunctionSpec, Templated};
+use crate::base::{AuthoredPath, PathSeg};
 use crate::expr::{ExprEngine, FieldSpec};
+use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 
 /// Functions and layers, plus the [`ExprEngine`] they compile against.
@@ -79,13 +82,26 @@ impl Registry {
     /// cannot be shadowed, or `validate`, v3's alias for `validation`, which
     /// the compat reader rewrites before any name is looked up. A host that
     /// registers names from data checks those first.
+    ///
+    /// On a spec the function's config cannot honour, a host bug best found
+    /// once, here:
+    ///
+    /// - a [`Reference`](super::Reference) whose `field` is not an authored
+    ///   path, or does not start at a field of the config;
+    /// - [`runtime_fields`](FunctionSpec::runtime_fields) on a config that is
+    ///   not [`Templated`], which would never compile them;
+    /// - a [`Templated`] config with no `runtime_fields`, which has nothing
+    ///   to compile.
     pub fn register<F: Function>(&mut self, name: &str, f: F) {
         assert!(
             !BuiltinKind::reserved(name),
             "cannot register `{name}`: the name is reserved for a built-in function \
              (see def::BUILTIN_FUNCTIONS; `validate` is v3's alias for `validation`)"
         );
-        let erased: Arc<dyn ErasedFunction> = Arc::new(Erased::new(f));
+        let erased = Erased::new(f);
+        let templated = TypeId::of::<F::Config>() == TypeId::of::<Templated>();
+        check_spec(name, erased.spec(), erased.fields(), templated);
+        let erased: Arc<dyn ErasedFunction> = Arc::new(erased);
         Arc::make_mut(&mut self.inner)
             .hosts
             .insert(Box::from(name), erased);
@@ -95,6 +111,12 @@ impl Registry {
     /// outermost.
     pub fn layer<L: CallLayer>(&mut self, layer: L) {
         Arc::make_mut(&mut self.inner).layers.push(Arc::new(layer));
+    }
+
+    /// Whether `self` and `other` are one registry: one is a clone of the
+    /// other, and neither has registered anything since.
+    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 
     /// The engine expressions compile against.
@@ -140,6 +162,41 @@ impl Registry {
     )]
     pub(crate) fn layers(&self) -> &[Arc<dyn CallLayer>] {
         &self.inner.layers
+    }
+}
+
+/// Panics on a spec `register` refuses: runtime fields on a config that is
+/// not [`Templated`], none on one that is, or a reference that does not start
+/// at one of `fields`, the config's fields.
+fn check_spec(name: &str, spec: &FunctionSpec, fields: &[FieldSpec], templated: bool) {
+    match (templated, spec.runtime_fields.is_some()) {
+        (false, true) => panic!(
+            "cannot register `{name}`: its spec declares runtime fields, but its config is not \
+             `Templated`, so it never compiles them"
+        ),
+        (true, false) => panic!(
+            "cannot register `{name}`: its config is `Templated`, but its spec declares no \
+             runtime fields, so every compile of it fails"
+        ),
+        _ => {}
+    }
+    for reference in &spec.references {
+        let field = &reference.field;
+        let path = AuthoredPath::from_str(field).unwrap_or_else(|error| {
+            panic!(
+                "cannot register `{name}`: its reference field `{field}` is not an authored \
+                 path ({error})"
+            )
+        });
+        let names_a_field = match path.segs().first() {
+            Some(PathSeg::Key(key)) => fields.iter().any(|f| f.name == **key),
+            _ => false,
+        };
+        assert!(
+            names_a_field,
+            "cannot register `{name}`: its reference field `{field}` does not start at a field \
+             of its config"
+        );
     }
 }
 

@@ -19,6 +19,14 @@ impl Compiler {
     /// so a workflow's tasks are contiguous. Workflows sharing an id are all
     /// kept, as v3 keeps them.
     ///
+    /// # Panics
+    ///
+    /// When a workflow was compiled under another registry: its functions,
+    /// operators and secrets need not be the program's. A registry and its
+    /// clones are one registry, so every compiler made from them links the
+    /// others' workflows, until one of them registers a function or a layer,
+    /// which gives it a table of its own.
+    ///
     /// ```
     /// # extern crate dataflow_rs_v4 as dataflow_rs;
     /// use dataflow_rs::Registry;
@@ -37,17 +45,24 @@ impl Compiler {
     /// ```
     pub fn link(&self, workflows: impl IntoIterator<Item = CompiledWorkflow>) -> Program {
         let mut workflows: Vec<CompiledWorkflow> = workflows.into_iter().collect();
+        for w in &workflows {
+            assert!(
+                w.registry.ptr_eq(&self.registry),
+                "cannot link workflow `{}`: it was compiled under a different registry from \
+                 this compiler's",
+                w.id
+            );
+        }
         workflows.sort_by_key(|w| w.priority);
-        let count = workflows.len();
-        u32::try_from(count).expect("a program holds at most u32::MAX workflows");
+        let count =
+            u32::try_from(workflows.len()).expect("a program holds at most u32::MAX workflows");
 
-        let mut infos = Vec::with_capacity(count);
+        let mut infos = Vec::with_capacity(workflows.len());
         let mut tasks = Vec::new();
-        let mut task_base = Vec::with_capacity(count);
+        let mut task_base = Vec::with_capacity(workflows.len());
         let mut all = Vec::new();
         let mut by_channel: HashMap<String, Vec<WorkflowIx>> = HashMap::new();
-        for (i, w) in workflows.iter().enumerate() {
-            let ix = WorkflowIx::new(u32::try_from(i).expect("checked above"));
+        for (ix, w) in (0..count).map(WorkflowIx::new).zip(&workflows) {
             task_base
                 .push(u32::try_from(tasks.len()).expect("a program holds at most u32::MAX tasks"));
             infos.push(WorkflowInfo {
@@ -77,7 +92,6 @@ impl Compiler {
                 by_channel.entry(w.channel.clone()).or_default().push(ix);
             }
         }
-        u32::try_from(tasks.len()).expect("a program holds at most u32::MAX tasks");
 
         Program {
             inner: Arc::new(Inner {

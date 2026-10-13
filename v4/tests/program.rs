@@ -141,3 +141,19 @@ fn duplicate_ids_are_both_kept() {
     assert_eq!(ids(&program), ["same", "same"]);
     assert_eq!(program.tasks().len(), 2);
 }
+
+#[test]
+#[should_panic(expected = "`foreign`")]
+fn linking_a_workflow_compiled_under_another_registry_panics() {
+    let workflow = compile(&compiler(), &json!({"id": "foreign", "tasks": [log("t")]}));
+    let _ = compiler().link([workflow]);
+}
+
+#[test]
+fn compilers_of_one_registry_link_each_others_workflows() {
+    let registry = Registry::default();
+    let a = registry.compiler(CompileOptions::default());
+    let b = registry.compiler(CompileOptions::default());
+    let program = b.link([compile(&a, &json!({"id": "w", "tasks": [log("t")]}))]);
+    assert_eq!(ids(&program), ["w"]);
+}
