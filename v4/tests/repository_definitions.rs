@@ -19,8 +19,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use std::collections::BTreeSet;
+
 use dataflow_rs::def::{ParseOptions, parse};
-use dataflow_rs::program::{IssueCode, Severity};
+use dataflow_rs::expr::CompileCx;
+use dataflow_rs::function::{ExprVisitor, FieldSpec, FunctionConfig};
+use dataflow_rs::program::{CompileOptions, IssueCode, Severity};
+use dataflow_rs::{Ctx, Function, Outcome, Registry};
 use serde_json::Value;
 
 const MINIMUM_DEFINITIONS: usize = 150;
@@ -853,6 +858,269 @@ fn every_definition_in_the_repository_parses_with_no_likely_typo() {
             used,
             "allowlist entry {:?} matches no definition",
             DELIBERATELY_REJECTED[n]
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Every definition compiles
+// ---------------------------------------------------------------------------
+
+/// Compile findings that are expected, as `(file, workflow id, code, path,
+/// reason)`. Each is a definition v3 refuses too, a break the design numbers,
+/// or a secret the defining test declares in a store this compiler lacks.
+/// Every row must be consumed.
+const COMPILE_ALLOWLIST: &[(&str, &str, &str, &str, &str)] = &[
+    (
+        "corpus/cases/breaks/path_outside_roots.json",
+        "w",
+        "INVALID_PATH",
+        "tasks[0].function.input.mappings[0].path",
+        "break 15: a literal path outside the three roots is refused at compile; v3 wrote a new top-level key",
+    ),
+    (
+        "corpus/cases/builtins/map_mode.json",
+        "no_logic",
+        "INVALID_MAPPING",
+        "tasks[0].function.input.mappings[0].logic",
+        "v3 refuses too: a mapping needs `logic` or `unset` (recorded as a parse error)",
+    ),
+    (
+        "corpus/cases/builtins/map_mode.json",
+        "root",
+        "INVALID_MAPPING",
+        "tasks[0].function.input.mappings[0].path",
+        "v3 refuses too: a context root cannot be appended to",
+    ),
+    (
+        "corpus/cases/builtins/parse_invalid.json",
+        "no_target",
+        "INPUT_PARSE",
+        "tasks[0].function.input.target",
+        "v3 refuses too: `parse_json` config is missing `target`",
+    ),
+    (
+        "corpus/cases/expressions/dollar_escape_refused.json",
+        "w",
+        "DUPLICATE_TEMPLATE_KEY",
+        "tasks[0].function.input.mappings[0].logic.a",
+        "v3 refuses too: `$a` and `a` emit one key twice (build error)",
+    ),
+    (
+        "corpus/cases/expressions/payload_not_in_context.json",
+        "w",
+        "PAYLOAD_VAR",
+        "tasks[0].function.input.mappings[0].logic",
+        "break 9: a literal `payload` path is a Defect; v3 read null",
+    ),
+    (
+        "corpus/cases/expressions/secrets_refused.json",
+        "w",
+        "SECRET_IN_MESSAGE_WRITE",
+        "tasks[0].function.input.mappings[0].logic",
+        "v3 refuses too: a secret in a recorded expression (build error)",
+    ),
+    (
+        "tests/for_each.rs",
+        "w",
+        "SECRET_IN_MESSAGE_WRITE",
+        "tasks[0].for_each.over",
+        "v3 refuses too: its test `check_workflow_refuses_a_secret_in_over`",
+    ),
+    (
+        "tests/loop_over.rs",
+        "w",
+        "SECRET_IN_MESSAGE_WRITE",
+        "loop.over",
+        "v3 refuses too: its test pins a secret in `over` as refused",
+    ),
+    (
+        "tests/secrets.rs",
+        "w",
+        "UNKNOWN_SECRET",
+        "condition",
+        "v3 refuses too: the undeclared `nope_wf`, reported by its test",
+    ),
+    (
+        "tests/secrets.rs",
+        "w",
+        "UNKNOWN_SECRET",
+        "tasks[0].condition",
+        "v3 refuses too: the undeclared `nope_task`",
+    ),
+    (
+        "tests/secrets.rs",
+        "w",
+        "UNKNOWN_SECRET",
+        "tasks[0].function.input.rules[0].logic",
+        "v3 refuses too: the undeclared `nope_rule`",
+    ),
+    (
+        "tests/secrets.rs",
+        "w",
+        "UNKNOWN_SECRET",
+        "tasks[1].condition",
+        "v3 refuses too: the undeclared `nope_group`",
+    ),
+    (
+        "tests/secrets.rs",
+        "w",
+        "UNKNOWN_SECRET",
+        "tasks[2].function.input.condition",
+        "v3 refuses too: the undeclared `nope_filter`",
+    ),
+    (
+        "tests/secrets_isolation.rs",
+        "failing",
+        "UNKNOWN_SECRET",
+        "tasks[0].function.input.rules[0].logic",
+        "declared in that test's store; the compiler here holds no secrets",
+    ),
+    (
+        "tests/secrets_isolation.rs",
+        "w",
+        "UNKNOWN_SECRET",
+        "condition",
+        "v3 refuses too: the undeclared `nope`",
+    ),
+    (
+        "tests/secrets_isolation.rs",
+        "w",
+        "SECRET_IN_MESSAGE_WRITE",
+        "tasks[0].function.input.mappings[0].logic",
+        "v3 refuses too: a secret written by `map`",
+    ),
+    (
+        "tests/secrets_isolation.rs",
+        "leak",
+        "SECRET_IN_MESSAGE_WRITE",
+        "tasks[0].function.input.mappings[0].logic",
+        "v3 refuses too: a reload cannot smuggle in a secret write",
+    ),
+    (
+        "wasm/tests/web.rs",
+        "gated",
+        "UNKNOWN_SECRET",
+        "condition",
+        "declared by `with_secrets` in that test; `new` refuses it without a store, as here",
+    ),
+];
+
+/// A config that accepts any input and visits nothing.
+struct AcceptsAll;
+
+impl FunctionConfig for AcceptsAll {
+    fn compile(_input: &Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
+        Some(Self)
+    }
+
+    fn visit(&self, _v: &mut dyn ExprVisitor) {}
+
+    fn fields() -> &'static [FieldSpec] {
+        &[]
+    }
+}
+
+/// A host function standing in for whatever a definition calls.
+struct Stub;
+
+impl Function for Stub {
+    type Config = AcceptsAll;
+
+    async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &AcceptsAll) -> dataflow_rs::Result<Outcome> {
+        Ok(Outcome::Ok)
+    }
+}
+
+/// Every string `function.name` anywhere in `value`.
+fn function_names(value: &Value, out: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(name) = map
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(Value::as_str)
+            {
+                out.insert(name.to_string());
+            }
+            map.values().for_each(|v| function_names(v, out));
+        }
+        Value::Array(items) => items.iter().for_each(|v| function_names(v, out)),
+        _ => {}
+    }
+}
+
+#[test]
+fn every_repository_definition_compiles() {
+    let (found, _notes, problems) = collect();
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+
+    let mut names = BTreeSet::new();
+    for f in &found {
+        function_names(&f.def, &mut names);
+    }
+    let mut registry = Registry::default();
+    let builtins: BTreeSet<String> = registry
+        .catalogue()
+        .filter(|i| i.builtin)
+        .map(|i| i.name.to_string())
+        .collect();
+    for name in names.difference(&builtins) {
+        registry.register(name, Stub);
+    }
+    let compiler = registry.compiler(CompileOptions::default());
+
+    let mut per_group: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut compiled = 0;
+    let mut failures = Vec::new();
+    let mut used = vec![false; COMPILE_ALLOWLIST.len()];
+    for f in &found {
+        let parsed = parse(&f.def, ParseOptions::default());
+        let Some(def) = parsed.def else { continue };
+        let id = def.id.clone();
+        *per_group.entry(&f.group).or_default() += 1;
+        let issues = match compiler.compile_one(&def) {
+            Ok(c) => {
+                compiled += 1;
+                c.issues
+            }
+            Err(issues) => issues,
+        };
+        for issue in issues
+            .iter()
+            .filter(|i| matches!(i.severity, Severity::Rejected | Severity::Defect))
+        {
+            let path = issue.path.to_string();
+            let code = issue.code.as_str();
+            let hit = COMPILE_ALLOWLIST.iter().position(|(file, wid, c, p, _)| {
+                *file == f.file && *wid == id && *c == code && *p == path
+            });
+            match hit {
+                Some(n) => used[n] = true,
+                None => failures.push(format!("{}: workflow `{id}`: {code} at {path}", f.at)),
+            }
+        }
+    }
+
+    println!("compiled {compiled} definitions cleanly; checked per source:");
+    for (group, n) in &per_group {
+        println!("  {n:4}  {group}");
+    }
+    assert!(
+        failures.is_empty(),
+        "definitions that do not compile:\n{}",
+        failures.join("\n")
+    );
+    for (group, floor) in GROUP_FLOORS {
+        let n = per_group.get(group).copied().unwrap_or(0);
+        assert!(n >= *floor, "{group}: checked {n}, floor {floor}");
+    }
+    assert!(compiled >= MINIMUM_DEFINITIONS);
+    for (n, u) in used.iter().enumerate() {
+        assert!(
+            u,
+            "allowlist entry {:?} matches nothing",
+            COMPILE_ALLOWLIST[n]
         );
     }
 }
