@@ -218,8 +218,12 @@ impl Message {
         &self.errors
     }
 
-    /// The message as a JSON value: `{id, payload, context, audit_trail,
-    /// errors}`.
+    /// The message as a JSON value holding `id`, `payload`, `context`,
+    /// `audit_trail` and `errors`.
+    ///
+    /// A [`serde_json::Value`] does not keep key order here (the workspace
+    /// builds serde_json without `preserve_order`), so the keys come back
+    /// sorted. The wire text, in wire order, is `serde_json::to_string(&message)`.
     pub fn to_json(&self) -> Value {
         serde_json::to_value(self).expect("a message always serializes")
     }
@@ -473,6 +477,14 @@ mod tests {
         assert_eq!(m.context().data(), &OwnedDataValue::from(&json!({"a": 1})));
         assert_eq!(m.context().as_value()["data"], *m.context().data());
         assert!(m.context().metadata().is_object() && m.context().temp_data().is_object());
+    }
+
+    #[test]
+    fn to_json_holds_the_wire_content_but_not_its_order() {
+        let m = v4_msg(&json!({"b": 1, "a": 2}), &json!({"x": [1]}), &json!({}));
+        let wire = serde_json::to_string(&m).unwrap();
+        assert!(wire.starts_with(r#"{"id":"#), "{wire}");
+        assert_eq!(m.to_json(), serde_json::from_str::<Value>(&wire).unwrap());
     }
 
     #[test]
