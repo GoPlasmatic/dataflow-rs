@@ -5,9 +5,10 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // functions below. The rows are `(code, severity, path)`, in walk order.
 
 use dataflow_rs::def::{ParseOptions, WorkflowDef, parse};
-use dataflow_rs::expr::Output;
+use dataflow_rs::expr::{CompileCx, Output};
 use dataflow_rs::function::{
-    FieldKind, FieldSpec, FunctionConfig, FunctionSpec, Prepare, Reference, Templated, ValueKind,
+    ExprVisitor, FieldKind, FieldSpec, FunctionConfig, FunctionSpec, Prepare, Reference, Templated,
+    ValueKind,
 };
 use dataflow_rs::program::{
     CompileOptions, Compiler, Issue, IssueCode as C, ResourceOracle, Severity, StepKind,
@@ -133,6 +134,33 @@ impl Function for Plugin {
     }
 }
 
+/// A hand-written config that breaks its contract: it refuses every input
+/// and records no issue.
+struct Refuses;
+
+impl FunctionConfig for Refuses {
+    fn compile(_input: &Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
+        None
+    }
+
+    fn visit(&self, _v: &mut dyn ExprVisitor) {}
+
+    fn fields() -> &'static [FieldSpec] {
+        &[]
+    }
+}
+
+/// A host function whose config refuses without saying why.
+struct Silent;
+
+impl Function for Silent {
+    type Config = Refuses;
+
+    async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &Refuses) -> Result<Outcome> {
+        Ok(Outcome::Ok)
+    }
+}
+
 /// Knows only the connectors it was given.
 struct Known(&'static [&'static str]);
 
@@ -148,6 +176,7 @@ fn registry() -> Registry {
     registry.register("query", Query);
     registry.register("login", Login);
     registry.register("plugin", Plugin);
+    registry.register("silent", Silent);
     registry
 }
 
@@ -531,4 +560,36 @@ fn check_steps_refuses_a_root_that_is_not_an_authored_path() {
         rows(&compiler().check_steps(&bad_task(), "tasks[x")),
         [row(C::ParseFailed, R, "")]
     );
+}
+
+#[test]
+fn a_config_that_refuses_without_an_issue_is_reported_not_dropped() {
+    let issues = rejected(&compiler(), &one("silent", json!({"a": 1})));
+    assert_eq!(
+        rows(&issues),
+        [row(C::InputParse, R, "tasks[0].function.input")]
+    );
+    assert_eq!(stamp(&issues[0]), (Some(StepKind::Task), Some("t"), None));
+}
+
+#[test]
+fn a_config_that_reports_its_refusal_gets_no_further_issue() {
+    // A derived host config, a built-in's and a runtime-declared one each
+    // report their own issue, and nothing is added for the refusal.
+    for (name, input, field) in [
+        ("fetch", json!({}), "url"),
+        ("log", json!({}), "message"),
+        ("plugin", json!({"label": "x"}), "record"),
+    ] {
+        let issues = rejected(&compiler(), &one(name, input));
+        assert_eq!(
+            rows(&issues),
+            [row(
+                C::InputParse,
+                R,
+                &format!("tasks[0].function.input.{field}")
+            )],
+            "{name}"
+        );
+    }
 }

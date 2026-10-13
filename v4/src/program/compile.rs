@@ -469,7 +469,8 @@ impl<'w> Walk<'w> {
             let mut cx = CompileCx::new(registry.exprs(), &mut self.issues)
                 .at_path(input_at.clone())
                 .for_step(step.0, step.1);
-            match entry {
+            let before = cx.rejected();
+            let callee = match entry {
                 Entry::Builtin(kind) => kind.compile(input, &mut cx).map(Callee::Builtin),
                 Entry::Host(f) => {
                     if let Some(fields) = &f.spec().runtime_fields {
@@ -478,7 +479,16 @@ impl<'w> Walk<'w> {
                     let prepare = Prepare::new(name, self.workflow_id, step.1, f.spec());
                     f.compile(input, &mut cx, &prepare).map(Callee::Host)
                 }
+            };
+            // A hand-written config can refuse without recording why. Its
+            // task would then have no call, so the refusal is reported.
+            if callee.is_none() && cx.rejected() == before {
+                cx.issue(
+                    IssueCode::InputParse,
+                    format!("the config of `{name}` refused its input without reporting why"),
+                );
             }
+            callee
         }?;
         callee.visit(&mut Below {
             hook: &mut *self.hook,

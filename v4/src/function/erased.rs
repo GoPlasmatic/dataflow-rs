@@ -16,10 +16,10 @@ pub(crate) trait ErasedFunction: Send + Sync {
     /// else the config's own.
     fn fields(&self) -> &[FieldSpec];
 
-    /// Compiles the config at `cx` and, when it compiled, calls
-    /// [`Function::prepare`], adopting each issue it returns below `cx`'s
-    /// path. `None` when the config failed or `prepare` reported a Rejected
-    /// issue.
+    /// Compiles the config at `cx` and, when it compiled with no Rejected
+    /// issue, calls [`Function::prepare`], adopting each issue it returns
+    /// below `cx`'s path. `None` whenever anything Rejected was recorded,
+    /// by the config or by `prepare`, and whenever the config refused.
     ///
     /// The caller roots `cx` at the task's `function.input`, stamps the step,
     /// and gives it the spec's runtime fields.
@@ -76,8 +76,11 @@ impl<F: Function> ErasedFunction for Erased<F> {
         cx: &mut CompileCx<'_>,
         p: &Prepare<'_>,
     ) -> Option<Box<dyn BoundCall>> {
-        let mut cfg = <F::Config as FunctionConfig>::compile(input, cx)?;
+        // The baseline comes first, so a hand-written config that records a
+        // Rejected issue and still returns a config is not prepared or bound.
         let before = cx.rejected();
+        let mut cfg = <F::Config as FunctionConfig>::compile(input, cx)
+            .filter(|_| cx.rejected() == before)?;
         if let Err(issues) = self.f.prepare(&mut cfg, p) {
             for issue in issues {
                 cx.adopt(issue);
@@ -255,6 +258,60 @@ mod tests {
             out.issues[0].path.to_string(),
             "tasks[0].function.input.url"
         );
+    }
+
+    /// A hand-written config that breaks its contract the other way: it
+    /// records a Rejected issue and still returns a config.
+    struct Loud;
+
+    impl FunctionConfig for Loud {
+        fn compile(_input: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+            cx.issue(IssueCode::InputParse, "refused");
+            Some(Self)
+        }
+        fn visit(&self, _v: &mut dyn ExprVisitor) {}
+        fn fields() -> &'static [FieldSpec] {
+            &[]
+        }
+    }
+
+    /// Counts its `prepare` calls.
+    #[derive(Default)]
+    struct Counted {
+        prepared: AtomicUsize,
+    }
+
+    impl Function for Counted {
+        type Config = Loud;
+        fn prepare(
+            &self,
+            _cfg: &mut Loud,
+            _p: &Prepare<'_>,
+        ) -> std::result::Result<(), Vec<Issue>> {
+            self.prepared.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+        async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &Loud) -> Result<Outcome> {
+            Ok(Outcome::Ok)
+        }
+    }
+
+    #[test]
+    fn a_config_that_records_a_rejection_is_neither_prepared_nor_bound() {
+        let erased = Erased::new(Counted::default());
+        let engine = ExprEngine::default();
+        let mut issues = Vec::new();
+        let bound = {
+            let mut cx = CompileCx::new(&engine, &mut issues)
+                .at_path("tasks[0].function.input".parse().unwrap())
+                .for_step(StepKind::Task, "t");
+            let p = Prepare::new("counted", "w", "t", erased.spec());
+            erased.compile(&json!({}), &mut cx, &p)
+        };
+        assert!(bound.is_none());
+        assert_eq!(erased.f.prepared.load(Ordering::Relaxed), 0);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert_eq!(issues[0].code, IssueCode::InputParse);
     }
 
     #[test]
