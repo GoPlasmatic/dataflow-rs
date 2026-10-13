@@ -4,6 +4,7 @@
 //! (design decision I22). Every public type follows the v4 design documents.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs, missing_debug_implementations)]
 
 extern crate self as dataflow_rs;
 

@@ -4,6 +4,7 @@
 use super::erased::BoundCall;
 use super::{Ctx, Outcome};
 use crate::base::Result;
+use std::fmt;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -53,6 +54,16 @@ pub struct Next<'a> {
     run: &'a [Arc<dyn CallLayer>],
     registry: &'a [Arc<dyn CallLayer>],
     call: &'a dyn BoundCall,
+}
+
+impl fmt::Debug for Next<'_> {
+    /// How many layers of each list are left; not the layers or the call.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Next")
+            .field("run", &self.run.len())
+            .field("registry", &self.registry.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> Next<'a> {

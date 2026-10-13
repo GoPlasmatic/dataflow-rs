@@ -6,6 +6,7 @@ use super::checks::{Below, Checks, Hook, Site, Stamp};
 use super::fingerprint::Fingerprint;
 use super::lower::Lower;
 use super::ops::{CallSite, Callee, CondKind, CondSite, FanSite, LoopSite, Op, TaskMeta};
+use crate::base::typo::near_miss;
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, Severity, StepKind};
 use crate::def::{
     self, ForEachDef, GroupDef, Logic, LoopDef, ParseOptions, Rollout, Status, StepDef, TaskDef,
@@ -38,6 +39,15 @@ pub struct CompileOptions {
     /// The oracle the `Reference` fields are checked against. `None`, the
     /// default, checks nothing.
     pub resources: Option<Arc<dyn ResourceOracle>>,
+}
+
+impl fmt::Debug for CompileOptions {
+    /// Whether an oracle is set; not the oracle.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CompileOptions")
+            .field("resources", &self.resources.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl CompileOptions {
@@ -82,7 +92,7 @@ impl Registry {
 /// assert_eq!(issues[0].path.to_string(), "tasks[0].function.name");
 /// assert_eq!(compiler.check(&def), issues);
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Compiler {
     pub(super) registry: Registry,
     pub(super) options: CompileOptions,
@@ -548,7 +558,8 @@ impl<'w> Walk<'w> {
 
     /// The task's function: resolved, its config compiled at
     /// `<at>.function.input` and visited, and its references checked.
-    /// `None` when the name is unknown or the config was Rejected.
+    /// `None` when the name is unknown, which is `UNKNOWN_FUNCTION` naming
+    /// the nearest catalogue name if one is close, or the config was Rejected.
     fn callee(
         &mut self,
         task: &TaskDef,
@@ -558,10 +569,15 @@ impl<'w> Walk<'w> {
         let registry = self.registry;
         let name = &task.function.name;
         let Some(entry) = registry.entry(name) else {
+            let names: Vec<&str> = registry.catalogue().map(|f| f.name).collect();
+            let message = match near_miss(name, &names) {
+                Some(near) => format!("no function `{name}` is registered; did you mean `{near}`?"),
+                None => format!("no function `{name}` is registered"),
+            };
             let issue = Issue::new(
                 IssueCode::UnknownFunction,
                 at.join("function").join("name"),
-                format!("no function `{name}` is registered"),
+                message,
             );
             self.report(issue, Some(step));
             return None;
@@ -965,6 +981,20 @@ mod tests {
             "CompiledWorkflow { id: \"w\", ops: 10, conds: 4, calls: 3, fans: 1, loops: 1, \
              tasks: 3, .. }"
         );
+    }
+
+    #[test]
+    fn debug_shows_the_registry_and_whether_an_oracle_is_set() {
+        assert_eq!(
+            format!("{:?}", CompileOptions::default()),
+            "CompileOptions { resources: false, .. }"
+        );
+        let compiler = format!("{:?}", compiler());
+        assert!(
+            compiler.starts_with("Compiler { registry: Registry { functions: [\"map\""),
+            "{compiler}"
+        );
+        assert!(compiler.contains("\"echo\"]"), "{compiler}");
     }
 
     #[test]

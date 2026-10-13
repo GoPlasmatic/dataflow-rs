@@ -285,6 +285,17 @@ fn an_unregistered_function_is_unknown_on_its_own_task() {
 }
 
 #[test]
+fn an_unknown_function_near_a_catalogue_name_suggests_it() {
+    let issues = rejected(&compiler(), &one("mapp", json!({})));
+    assert_eq!(
+        rows(&issues),
+        [row(C::UnknownFunction, R, "tasks[0].function.name")]
+    );
+    // The hint is the feature: `mapp` names `map`.
+    assert!(issues[0].message.contains("`map`"), "{}", issues[0].message);
+}
+
+#[test]
 fn a_host_config_reports_every_issue_at_its_field() {
     let issues = rejected(&compiler(), &one("fetch", json!({"uri": "x"})));
     // A typo inside a config is Rejected (I23).

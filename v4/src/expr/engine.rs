@@ -206,6 +206,17 @@ pub struct ExprEngineBuilder {
     ops_budget: Option<u64>,
 }
 
+impl std::fmt::Debug for ExprEngineBuilder {
+    /// The custom operators' names and the secrets, redacted.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let operators: Vec<&str> = self.operators.iter().map(|(info, _)| &*info.name).collect();
+        f.debug_struct("ExprEngineBuilder")
+            .field("operators", &operators)
+            .field("secrets", &self.secrets)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ExprEngineBuilder {
     /// Registers a custom operator, neither scoping nor deterministic.
     #[must_use]

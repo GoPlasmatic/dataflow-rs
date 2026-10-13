@@ -10,6 +10,7 @@ use datavalue::OwnedDataValue;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::fmt;
 
 /// What a field's value is, for a field's schema and for checking a literal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,6 +165,16 @@ impl<'v> Visit<'v> {
     }
 }
 
+impl fmt::Debug for Visit<'_> {
+    /// The current path and `records` flag; the visitor is not shown.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Visit")
+            .field("path", &format_args!("{}", self.path))
+            .field("records", &self.records)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Compiles config fields, recording each issue at its exact authored path.
 pub struct CompileCx<'a> {
     exprs: &'a ExprEngine,
@@ -281,6 +292,19 @@ impl<'a> CompileCx<'a> {
     pub fn unknown_key(&mut self, key: &str, known: &[&str]) {
         let (code, message) = unknown_key(key, known);
         self.issue_as(code, Severity::Rejected, message);
+    }
+}
+
+impl fmt::Debug for CompileCx<'_> {
+    /// The current path, the step, and how many issues are recorded and
+    /// Rejected; not the issues or the engine.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CompileCx")
+            .field("path", &format_args!("{}", self.path))
+            .field("step", &self.step)
+            .field("issues", &self.issues.len())
+            .field("rejected", &self.rejected)
+            .finish_non_exhaustive()
     }
 }
 

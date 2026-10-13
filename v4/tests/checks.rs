@@ -917,6 +917,23 @@ fn a_var_read_per_element_by_a_scoping_operator_is_not_reported() {
     assert_eq!(paths, ["tasks[0].function.input.mappings[0].logic.map[0]"]);
 }
 
+#[test]
+fn reduces_initial_value_is_read_from_the_context_and_reported() {
+    // `reduce`'s body reads the element and the accumulator; its initial
+    // value, the third argument, is evaluated once, in the context.
+    let body = json!({"+": [{"var": "accumulator"}, {"var": "payload"}]});
+    let e = json!({"reduce": [{"var": "data.a"}, body, {"var": "payload.init"}]});
+    let json = wf(json!([map("t", e)]));
+    assert_eq!(
+        v4_rows(&json, &[C::PayloadVar]),
+        [row(
+            C::PayloadVar,
+            Severity::Defect,
+            "tasks[0].function.input.mappings[0].logic.reduce[2]"
+        )]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Break 16: a destination is recorded
 // ---------------------------------------------------------------------------

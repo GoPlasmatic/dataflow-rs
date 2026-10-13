@@ -45,7 +45,7 @@ pub mod __private {
     use std::borrow::Cow;
 
     /// One field's key and its declared default, for the compile helpers.
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct Key {
         /// The authored key.
         key: &'static str,
