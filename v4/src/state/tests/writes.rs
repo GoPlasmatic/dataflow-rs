@@ -26,6 +26,14 @@ fn owned(v: OwnedDataValue) -> Mark {
     Mark::Set(Some(v))
 }
 
+/// A lookup's verdict as text, an owned value as JSON so key order counts.
+fn lookup_text(l: Lookup<'_>) -> String {
+    match l {
+        Lookup::Owned(v) => format!("Owned({:?})", v.map(random::exact)),
+        other => format!("{other:?}"),
+    }
+}
+
 /// A mark as text, its owned values as JSON, so key order counts.
 fn text(m: &Mark) -> String {
     match m {
@@ -498,17 +506,24 @@ fn the_trie_and_the_list_agree_on_random_marks() {
 fn random_marks_drain_disjoint_and_leave_the_log_empty() {
     let mut rng = random::Rng::new(0x7e1f);
     for case in 0..20_000 {
-        let mut w = Writes::default();
+        let (mut w, mut list) = (Writes::default(), List::default());
         for _ in 0..1 + rng.below(12) {
             let at = hops(&mut rng);
             if rng.chance(1, 6) {
                 w.reorder(p(&at).at());
+                list.reorder(p(&at).at());
             } else {
-                w.mark(p(&at).at(), mark(&mut rng));
+                let m = mark(&mut rng);
+                w.mark(p(&at).at(), m.clone());
+                list.mark(p(&at).at(), m);
             }
             for _ in 0..3 {
                 let probe = hops(&mut rng);
-                let _ = w.lookup(p(&probe).at());
+                assert_eq!(
+                    lookup_text(w.lookup(p(&probe).at())),
+                    lookup_text(list.lookup(p(&probe).at())),
+                    "case {case}: the list answers {probe:?} alike"
+                );
             }
         }
         let mut visited = Vec::new();
