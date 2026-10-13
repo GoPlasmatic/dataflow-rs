@@ -344,8 +344,10 @@ dependencies = [
  "dataflow-rs-derive",
  "datalogic-rs",
  "datavalue-rs",
+ "self_cell",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

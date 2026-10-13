@@ -1,6 +1,6 @@
 //! Expressions: the JSONLogic surface a definition is written in.
 
-mod arena;
+pub(crate) mod arena;
 mod config;
 mod document;
 mod engine;
@@ -11,7 +11,7 @@ mod engine;
 mod expr;
 mod operators;
 mod output;
-mod path;
+pub(crate) mod path;
 mod secrets;
 mod walk;
 
@@ -21,6 +21,7 @@ pub use engine::{ExprEngine, ExprEngineBuilder};
 pub use expr::{Evaluated, Expr, FromValue};
 pub use operators::{Family, OperatorInfo};
 pub use output::Output;
+pub(crate) use path::Seg;
 pub use path::{Path, Root};
 pub use secrets::Secrets;
 pub use walk::{escaped_keys, secret_refs};

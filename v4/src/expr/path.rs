@@ -45,9 +45,9 @@ impl Root {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Seg {
     /// The key on an object: the raw segment with one leading `#` stripped.
-    key: Box<str>,
+    pub(crate) key: Box<str>,
     /// The index on an array: the raw segment parsed as `usize`.
-    index: Option<usize>,
+    pub(crate) index: Option<usize>,
 }
 
 impl Seg {
@@ -55,6 +55,14 @@ impl Seg {
         Self {
             key: seg_key(raw).into(),
             index: seg_index(raw),
+        }
+    }
+
+    /// The segment naming array element `i`: its key is `i`'s text.
+    pub(crate) fn index(i: usize) -> Self {
+        Self {
+            key: i.to_string().into(),
+            index: Some(i),
         }
     }
 }
@@ -130,6 +138,11 @@ impl Path {
         self.segs.len() == 1
     }
 
+    /// The segments, the root's own first.
+    pub(crate) fn segs(&self) -> &[Seg] {
+        &self.segs
+    }
+
     /// The value at the path in `context`, an object holding the three roots.
     pub fn get<'v>(&self, context: &'v OwnedDataValue) -> Option<&'v OwnedDataValue> {
         get(context, &self.segs)
@@ -192,7 +205,6 @@ fn empty(next: &Seg) -> OwnedDataValue {
 /// What writing `value` at `segs` into a new, empty container produces: the
 /// owned twin of the splice's chain, for a write marked where it starts
 /// creating.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the phase 4 writers"))]
 pub(crate) fn chain(segs: &[Seg], value: OwnedDataValue) -> OwnedDataValue {
     let Some(first) = segs.first() else {
         return value;
@@ -238,7 +250,7 @@ fn get_mut<'v>(mut v: &'v mut OwnedDataValue, segs: &[Seg]) -> Option<&'v mut Ow
 }
 
 /// v3's `set_nested_value_parts`, returning whether it wrote.
-fn set(v: &mut OwnedDataValue, segs: &[Seg], value: OwnedDataValue) -> bool {
+pub(crate) fn set(v: &mut OwnedDataValue, segs: &[Seg], value: OwnedDataValue) -> bool {
     let Some((last, parents)) = segs.split_last() else {
         return false;
     };
@@ -295,7 +307,7 @@ fn set(v: &mut OwnedDataValue, segs: &[Seg], value: OwnedDataValue) -> bool {
 
 /// v3's `remove_nested_value_parts`: an object key leaves with the order of
 /// the rest kept, an array element with the tail shifted down.
-fn remove(v: &mut OwnedDataValue, segs: &[Seg]) -> Option<OwnedDataValue> {
+pub(crate) fn remove(v: &mut OwnedDataValue, segs: &[Seg]) -> Option<OwnedDataValue> {
     let (last, parents) = segs.split_last()?;
     let parent = get_mut(v, parents)?;
     match parent {
@@ -333,7 +345,7 @@ fn kind(v: &OwnedDataValue) -> &'static str {
 /// `segs`, or create it over a missing or `null` target. `Ok(false)` when
 /// the path is unreachable, which v3 treats as success with nothing written;
 /// `Err` names the kind of any other target.
-fn append(
+pub(crate) fn append(
     v: &mut OwnedDataValue,
     segs: &[Seg],
     items: Vec<OwnedDataValue>,

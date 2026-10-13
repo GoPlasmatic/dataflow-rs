@@ -1,0 +1,529 @@
+//! The run context (R38): the only writer of a run.
+//!
+//! It holds the message's context in two parts. The owned tree is the source
+//! of truth at every checkpoint. The run view is one arena view of it,
+//! built with `view_in` at the first read, so its leaves borrow the owned
+//! tree and only its spines live in the run arena. While the view exists,
+//! the owned tree is not written: every write is spliced into the view and
+//! marked in the write log, and a checkpoint converts the marked paths,
+//! drops the view, resets the arena and applies them.
+//!
+//! The view lives in a [`self_cell`](mod@self_cell) whose owner carries the `Program`'s
+//! lifetime `'p` (I6): datalogic's `evaluate` ties the compiled `Logic` to
+//! its result, so only an expression that outlives the view's own lifetime
+//! can have its result spliced in, and the owner's `'p` is what proves that
+//! inside the cell's `for<'q>` closures.
+
+use super::size;
+use super::splice;
+use super::writes::{At, Lookup, Mark, Writes};
+use crate::expr::arena;
+use crate::expr::path;
+use crate::expr::{Path, Seg};
+use bumpalo::Bump;
+use datavalue::{DataValue, OwnedDataValue};
+use self_cell::self_cell;
+use std::borrow::Cow;
+use std::marker::PhantomData;
+
+/// What the run view's cell owns: the owned context and the run arena.
+pub(crate) struct Owner<'p> {
+    pub(crate) ctx: OwnedDataValue,
+    pub(crate) arena: Bump,
+    _program: PhantomData<&'p ()>,
+}
+
+/// The view's root. Covariant, so a reader can shorten it.
+pub(crate) type Root<'q> = &'q DataValue<'q>;
+
+self_cell!(
+    pub(crate) struct RunView<'p> {
+        owner: Owner<'p>,
+
+        #[covariant]
+        dependent: Root,
+    }
+);
+
+/// The knobs phase 0 measures. `Default` holds 05's starting values.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Tuning {
+    /// Whether an owned write larger than the view checkpoints instead of
+    /// being copied in (R56).
+    pub(crate) invalidate: bool,
+    pub(crate) invalidate_floor: usize,
+    /// The garbage trigger is `max(garbage_floor, live)`.
+    pub(crate) garbage_floor: usize,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            invalidate: true,
+            invalidate_floor: 64 << 10,
+            garbage_floor: 64 << 10,
+        }
+    }
+}
+
+/// What a run did, counted rather than timed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Stats {
+    pub(crate) views: u32,
+    pub(crate) checkpoints: u32,
+    pub(crate) invalidations: u32,
+    /// Marked paths the checkpoint converted from the view.
+    pub(crate) converted: u32,
+    /// The largest `live` seen: the view's spine bytes right after a build (I72).
+    pub(crate) live_max: usize,
+    /// The largest run-arena bytes in use seen at a tick, a checkpoint or the
+    /// finish (I72).
+    pub(crate) peak_arena: usize,
+}
+
+enum State<'p> {
+    Owned(Owner<'p>),
+    Viewed(RunView<'p>),
+    /// Between states, and after the context went back to its slot.
+    Taken,
+}
+
+/// The shared references a host call holds across its `.await` (05): never a
+/// `&RunView`, whose `Bump` makes it `!Sync`.
+#[expect(dead_code, reason = "phase 5's host calls hold a Reader")]
+pub(crate) struct Reader<'r> {
+    pub(crate) root: &'r DataValue<'r>,
+    pub(crate) owned: &'r OwnedDataValue,
+    pub(crate) log: &'r Writes,
+}
+
+pub(crate) struct RunContext<'m, 'p> {
+    /// Where the context goes back to: the message's.
+    slot: &'m mut OwnedDataValue,
+    state: State<'p>,
+    log: Writes,
+    /// Arena bytes in use right after the view was built: its spines.
+    live: usize,
+    tuning: Tuning,
+    stats: Stats,
+}
+
+/// A write against the view, inside the cell. `'q` is the view's lifetime;
+/// anything borrowed for `'p` may go into it.
+pub(crate) struct Edit<'e, 'q, 'p> {
+    owner: &'q Owner<'p>,
+    root: &'e mut Root<'q>,
+    log: &'e mut Writes,
+}
+
+impl<'q, 'p> Edit<'_, 'q, 'p> {
+    /// Mark a write that resolved to `hops` against `before`, creating from
+    /// hop `created` on, with `leaf` the owned value it put at the end of the
+    /// path, when the writer had one.
+    ///
+    /// - Nothing created: the path itself.
+    /// - Created from a hop past an array's end: the array, as appended from
+    ///   its old length, since the padding `null`s are new elements too.
+    /// - Created otherwise: the first created node, so a later removal below
+    ///   it cannot leave the created containers out of the owned tree.
+    fn mark_new(
+        &mut self,
+        before: DataValue<'q>,
+        at: At<'_>,
+        created: Option<usize>,
+        leaf: Option<OwnedDataValue>,
+    ) {
+        let Some(i) = created else {
+            return self.log.mark(at, Mark::Set(leaf));
+        };
+        let below = |v| path::chain(&at.segs()[i + 1..], v);
+        if let Some(j) = at.index(i)
+            && let Some(DataValue::Array(items)) = splice::get(before, &at.segs()[..i])
+            && j >= items.len()
+        {
+            let from = items.len();
+            let owned = leaf.map(|v| {
+                let mut tail = vec![OwnedDataValue::Null; j - from];
+                tail.push(below(v));
+                tail
+            });
+            return self.log.mark(at.prefix(i), Mark::Appended { from, owned });
+        }
+        self.log.mark(at.prefix(i + 1), Mark::Set(leaf.map(below)));
+    }
+
+    pub(crate) fn owner(&self) -> &'q Owner<'p> {
+        self.owner
+    }
+
+    pub(crate) fn arena(&self) -> &'q Bump {
+        &self.owner.arena
+    }
+
+    pub(crate) fn root(&self) -> DataValue<'q> {
+        **self.root
+    }
+
+    /// The root by reference, as `evaluate` takes it.
+    pub(crate) fn root_ref(&self) -> &'q DataValue<'q> {
+        self.root
+    }
+
+    pub(crate) fn get(&self, path: &Path) -> Option<DataValue<'q>> {
+        splice::get(self.root(), path.segs())
+    }
+
+    /// Write `value` at `path`. `owned` is the same value as an owned tree,
+    /// when the writer has one (I7). Returns whether it wrote.
+    pub(crate) fn set(
+        &mut self,
+        path: &Path,
+        value: DataValue<'q>,
+        owned: Option<OwnedDataValue>,
+    ) -> bool {
+        self.set_segs(path.segs(), value, owned)
+    }
+
+    /// [`Self::set`] at segments.
+    pub(crate) fn set_segs(
+        &mut self,
+        segs: &[Seg],
+        value: DataValue<'q>,
+        owned: Option<OwnedDataValue>,
+    ) -> bool {
+        let before = self.root();
+        let Some((after, r)) = splice::set_resolved(self.arena(), before, segs, value) else {
+            return false;
+        };
+        *self.root = self.arena().alloc(after);
+        self.mark_new(before, At::new(segs, r.kinds), r.created, owned);
+        true
+    }
+
+    /// Remove `path`. Returns whether something was there.
+    pub(crate) fn remove(&mut self, path: &Path) -> bool {
+        let before = self.root();
+        let Some(after) = splice::remove(self.arena(), before, path.segs()) else {
+            return false;
+        };
+        let r = splice::resolve(before, path.segs()).expect("an existing path resolves");
+        let at = At::new(path.segs(), r.kinds);
+        *self.root = self.arena().alloc(after);
+        // A key that comes back later moves to the end of its object, which
+        // the checkpoint's in-place assignment would not do.
+        if !at.is_index(at.len() - 1) {
+            self.log.reorder(at.prefix(at.len() - 1));
+        }
+        self.log.mark(at, Mark::Removed);
+        true
+    }
+
+    /// `map`'s append and extend. `Ok(false)` when the path is unreachable,
+    /// which v3 treats as success with nothing written.
+    pub(crate) fn append(
+        &mut self,
+        path: &Path,
+        items: &[DataValue<'q>],
+        owned: Option<Vec<OwnedDataValue>>,
+    ) -> Result<bool, &'static str> {
+        let before = self.root();
+        let existing = splice::get(before, path.segs());
+        let Some(after) = splice::append(self.arena(), before, path.segs(), items)? else {
+            return Ok(false);
+        };
+        let r = splice::resolve(before, path.segs()).expect("an append that wrote resolves");
+        let at = At::new(path.segs(), r.kinds);
+        *self.root = self.arena().alloc(after);
+        match existing {
+            Some(DataValue::Array(old)) => self.log.mark(
+                at,
+                Mark::Appended {
+                    from: old.len(),
+                    owned,
+                },
+            ),
+            // A new array, over a missing or `null` target.
+            _ => self.mark_new(before, at, r.created, owned.map(OwnedDataValue::Array)),
+        }
+        Ok(true)
+    }
+
+    /// `map`'s write to a root slot: marked as one write per key merged, or
+    /// one for the slot when it is replaced.
+    pub(crate) fn merge_root(
+        &mut self,
+        key: &str,
+        value: DataValue<'q>,
+        owned: Option<OwnedDataValue>,
+    ) {
+        let before = self.root();
+        let slot = before
+            .as_object()
+            .and_then(|slots| slots.iter().find(|(k, _)| *k == key))
+            .map(|(_, v)| *v);
+        *self.root = self
+            .arena()
+            .alloc(splice::merge_root(self.arena(), before, key, value));
+        match (slot, value) {
+            (Some(DataValue::Object(_)), DataValue::Object(new_pairs)) => {
+                let owned: Vec<Option<OwnedDataValue>> = match owned {
+                    Some(OwnedDataValue::Object(pairs)) => {
+                        pairs.into_iter().map(|(_, v)| Some(v)).collect()
+                    }
+                    _ => vec![None; new_pairs.len()],
+                };
+                for ((k, _), v) in new_pairs.iter().zip(owned) {
+                    let segs = [key_seg(key), key_seg(k)];
+                    self.log.mark(At::new(&segs, 0), Mark::Set(v));
+                }
+            }
+            _ => self.log.mark(At::new(&[key_seg(key)], 0), Mark::Set(owned)),
+        }
+    }
+}
+
+/// A segment that is always an object key.
+fn key_seg(key: &str) -> Seg {
+    Seg {
+        key: key.into(),
+        index: None,
+    }
+}
+
+impl<'m, 'p> RunContext<'m, 'p> {
+    /// Take the context out of `slot` for the run; it goes back when the run
+    /// finishes or is dropped.
+    pub(crate) fn new(slot: &'m mut OwnedDataValue, tuning: Tuning) -> Self {
+        let ctx = std::mem::take(slot);
+        Self {
+            slot,
+            state: State::Owned(Owner {
+                ctx,
+                arena: arena::take(),
+                _program: PhantomData,
+            }),
+            log: Writes::default(),
+            live: 0,
+            tuning,
+            stats: Stats::default(),
+        }
+    }
+
+    pub(crate) fn stats(&self) -> Stats {
+        self.stats
+    }
+
+    pub(crate) fn has_view(&self) -> bool {
+        matches!(self.state, State::Viewed(_))
+    }
+
+    /// The view, built now if there is none (R56: at the first read).
+    fn view(&mut self) -> &mut RunView<'p> {
+        if let State::Owned(_) = self.state {
+            let State::Owned(owner) = std::mem::replace(&mut self.state, State::Taken) else {
+                unreachable!()
+            };
+            let view = RunView::new(owner, |o| o.arena.alloc(o.ctx.view_in(&o.arena)));
+            self.live = arena::used(&view.borrow_owner().arena);
+            self.stats.live_max = self.stats.live_max.max(self.live);
+            self.stats.views += 1;
+            self.state = State::Viewed(view);
+        }
+        match &mut self.state {
+            State::Viewed(view) => view,
+            _ => unreachable!("a run context is not used after its context went back"),
+        }
+    }
+
+    /// Read against the view. `f` may evaluate any `&'p` expression; what it
+    /// returns cannot borrow the view.
+    pub(crate) fn read<R>(&mut self, f: impl for<'q> FnOnce(&'q Owner<'p>, Root<'q>) -> R) -> R {
+        self.view().with_dependent(|owner, root| f(owner, root))
+    }
+
+    /// Write against the view, building it first.
+    pub(crate) fn edit<R>(&mut self, f: impl for<'e, 'q> FnOnce(&mut Edit<'e, 'q, 'p>) -> R) -> R {
+        self.view();
+        let State::Viewed(view) = &mut self.state else {
+            unreachable!()
+        };
+        let log = &mut self.log;
+        view.with_dependent_mut(|owner, root| f(&mut Edit { owner, root, log }))
+    }
+
+    /// An owned write: a parse result, an applied overlay, a binding. With no
+    /// view it assigns the owned tree. With a view, a value over the threshold
+    /// checkpoints and assigns the owned tree (R56), and anything smaller is
+    /// copied in, spliced and marked with its owned value.
+    pub(crate) fn set(
+        &mut self,
+        path: &Path,
+        value: OwnedDataValue,
+        size_hint: Option<usize>,
+    ) -> bool {
+        self.set_segs(path.segs(), value, size_hint)
+    }
+
+    /// [`Self::set`] at segments: how an applied overlay writes, with no
+    /// dotted path to build.
+    pub(crate) fn set_segs(
+        &mut self,
+        segs: &[Seg],
+        value: OwnedDataValue,
+        size_hint: Option<usize>,
+    ) -> bool {
+        if self.has_view() {
+            let limit = self.live.max(self.tuning.invalidate_floor);
+            let large = match size_hint {
+                Some(n) => n > limit,
+                None => size::exceeds(&value, limit),
+            };
+            if !(self.tuning.invalidate && large) {
+                return self.edit(|e| {
+                    let av = value.to_arena(e.arena());
+                    e.set_segs(segs, av, Some(value))
+                });
+            }
+            self.checkpoint();
+            self.stats.invalidations += 1;
+        }
+        match &mut self.state {
+            State::Owned(owner) => path::set(&mut owner.ctx, segs, value),
+            _ => unreachable!(),
+        }
+    }
+
+    /// A write the engine makes after every task, such as the progress write:
+    /// built owned when there is no view, or straight into the view from
+    /// strings the `Program` owns, converting nothing until a checkpoint.
+    pub(crate) fn engine_set(
+        &mut self,
+        path: &Path,
+        owned: impl FnOnce() -> OwnedDataValue,
+        view: impl for<'q> FnOnce(&'q Owner<'p>) -> DataValue<'q>,
+    ) -> bool {
+        match &mut self.state {
+            State::Owned(owner) => path.assign(&mut owner.ctx, owned()),
+            _ => self.edit(|e| {
+                let value = view(e.owner());
+                e.set(path, value, None)
+            }),
+        }
+    }
+
+    pub(crate) fn remove(&mut self, path: &Path) -> bool {
+        match &mut self.state {
+            State::Owned(owner) => path::remove(&mut owner.ctx, path.segs()).is_some(),
+            _ => self.edit(|e| e.remove(path)),
+        }
+    }
+
+    /// The value at `path`: borrowed from the owned tree unless the log says
+    /// it changed, else converted from the view (R55).
+    pub(crate) fn get(&self, path: &Path) -> Option<Cow<'_, OwnedDataValue>> {
+        match &self.state {
+            State::Owned(owner) => path.get(&owner.ctx).map(Cow::Borrowed),
+            State::Viewed(view) => {
+                let owner = view.borrow_owner();
+                if self.log.is_empty() {
+                    return path.get(&owner.ctx).map(Cow::Borrowed);
+                }
+                let root = **view.borrow_dependent();
+                let r = splice::resolve(root, path.segs())?;
+                match self.log.lookup(At::new(path.segs(), r.kinds)) {
+                    Lookup::Clean => path.get(&owner.ctx).map(Cow::Borrowed),
+                    Lookup::Owned(v) => v.map(Cow::Borrowed),
+                    Lookup::Dirty => {
+                        splice::get(root, path.segs()).map(|v| Cow::Owned(v.to_owned()))
+                    }
+                }
+            }
+            State::Taken => unreachable!("a run context is not used after its context went back"),
+        }
+    }
+
+    /// What a host call holds across its `.await`. Builds the view first.
+    #[expect(dead_code, reason = "phase 5's host calls take a Reader")]
+    pub(crate) fn reader(&mut self) -> Reader<'_> {
+        self.view();
+        let State::Viewed(view) = &self.state else {
+            unreachable!()
+        };
+        Reader {
+            root: view.borrow_dependent(),
+            owned: &view.borrow_owner().ctx,
+            log: &self.log,
+        }
+    }
+
+    /// At an op boundary: checkpoint once the arena's garbage passes
+    /// `max(garbage_floor, live)`, so a rebuild, which costs about `live`,
+    /// runs only after at least that much garbage.
+    pub(crate) fn tick(&mut self) {
+        if let State::Viewed(view) = &self.state {
+            let used = arena::used(&view.borrow_owner().arena);
+            self.stats.peak_arena = self.stats.peak_arena.max(used);
+            let garbage = used.saturating_sub(self.live);
+            if garbage > self.live.max(self.tuning.garbage_floor) {
+                self.checkpoint();
+            }
+        }
+    }
+
+    /// Settle the marks against the view, drop the view, reset the arena,
+    /// then apply the marks and the reorders to the owned tree. The view is
+    /// rebuilt at the next read.
+    pub(crate) fn checkpoint(&mut self) {
+        if !self.has_view() {
+            return;
+        }
+        let State::Viewed(view) = std::mem::replace(&mut self.state, State::Taken) else {
+            unreachable!()
+        };
+        self.stats.peak_arena = self
+            .stats
+            .peak_arena
+            .max(arena::used(&view.borrow_owner().arena));
+        let log = &mut self.log;
+        let converted = view.with_dependent(|_, root| log.settle(**root));
+        let mut owner = view.into_owner();
+        owner.arena.reset();
+        self.log.apply(&mut owner.ctx);
+        self.state = State::Owned(owner);
+        self.live = 0;
+        self.stats.checkpoints += 1;
+        self.stats.converted += converted;
+    }
+
+    /// The last checkpoint; the context goes back to its slot and the arena
+    /// to the pool.
+    pub(crate) fn finish(mut self) -> Stats {
+        self.checkpoint();
+        self.give_back();
+        self.stats
+    }
+
+    fn give_back(&mut self) {
+        let owner = match std::mem::replace(&mut self.state, State::Taken) {
+            State::Owned(owner) => owner,
+            State::Viewed(view) => view.into_owner(),
+            State::Taken => return,
+        };
+        *self.slot = owner.ctx;
+        arena::give(owner.arena);
+    }
+}
+
+impl Drop for RunContext<'_, '_> {
+    /// A run dropped early, by a host's `select!` or a dropped request, still
+    /// leaves every write made so far in the message. Not while panicking
+    /// (R51): a checkpoint runs the same code the panic may have come from,
+    /// and a second panic during unwinding aborts the process. The message
+    /// then keeps the last checkpoint.
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            self.checkpoint();
+        }
+        self.give_back();
+    }
+}

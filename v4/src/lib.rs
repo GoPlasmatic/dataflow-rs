@@ -18,6 +18,11 @@ pub mod expr;
 pub mod function;
 pub mod program;
 pub mod run;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the runtime uses it from Task 4")
+)]
+mod state;
 
 pub use crate::base::{Error, Issue, Result};
 pub use crate::def::WorkflowDef;
