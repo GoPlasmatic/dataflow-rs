@@ -178,12 +178,18 @@ instead.
 **v4 is built beside v3, not in place of it,** until phase 7: in `v4/`
 (`dataflow-rs-v4`, library `dataflow_rs_v4`) and `derive/`
 (`dataflow-rs-derive`), with `corpus/v4` (`dataflow-corpus-v4`) as its corpus
-driver. The reason is 08's phase 4 fallback, which ships phases 2 and 3 as a
+driver, which parses and compiles every corpus definition and holds each to
+v3's issues or to its declared deviation. The reason is 08's phase 4 fallback, which ships phases 2 and 3 as a
 layer over v3: v3's root crate must keep building on `main`, with its tests,
 examples, docs-tests, wasm and `corpus/v3`.
 
 `v4/` follows the design documents (`design-v4/`, untracked), not this file's
 v3 rulebook: everything under "Code Structure" below describes v3's `src/`.
+
+`v4/src/lib.rs` warns on `missing_docs` and `missing_debug_implementations`,
+and CI's `-D warnings` makes both errors: every public item in v4 needs a doc
+comment and every public type a `Debug` impl (a manual one with
+`finish_non_exhaustive()` where a field is not `Debug`).
 
 The derive emits `::dataflow_rs::` paths. v4 itself says
 `extern crate self as dataflow_rs`, every test in `v4/tests/` starts with
@@ -614,11 +620,11 @@ alters what a message ends up as re-records the affected cases and is read
 before it is committed; never edit a `.v3.json` by hand. The comparator is
 order-sensitive, because key order is wire data.
 
-`cargo test --workspace --all-features` should report 1200 passing: the
+`cargo test --workspace --all-features` should report 1365 passing: the
 engine's 867 plus the corpus's 35 (its case checks are one test each way),
-v4's 296 and v4's corpus driver's 2. `cargo test -p dataflow-rs` (default
+v4's 458 and v4's corpus driver's 5. `cargo test -p dataflow-rs` (default
 features) should report 753, `cargo test -p dataflow-corpus-v3` 3,
-`cargo test -p dataflow-rs-v4` 285 and `cargo test -p dataflow-corpus-v4` 2.
+`cargo test -p dataflow-rs-v4` 447 and `cargo test -p dataflow-corpus-v4` 5.
 The operator families are `#[cfg]`-gated on both sides, so the counts
 legitimately differ.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
