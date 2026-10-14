@@ -1,6 +1,7 @@
-//! The write log (R55): what changed since the view was built, keyed by
-//! resolved [`Hop`]s, so the checkpoint can bring the owned tree up to date by
-//! converting only the paths that changed.
+//! The write log (R55): what changed since the view was built, in a trie
+//! keyed by resolved segments, each a key's name or an array index, so the
+//! checkpoint can bring the owned tree up to date by converting only the
+//! paths that changed.
 //!
 //! A marked node subsumes everything below it, so the marks the checkpoint
 //! applies are disjoint and their values need no ordering rule. Key order
@@ -14,7 +15,9 @@
 //!
 //! A write reaches the log as an [`At`]: the path's own segments and which of
 //! them resolved to an array index. Nothing is allocated to ask the log about
-//! a path; a [`Hop`] is built only when the log keeps a new node.
+//! a path; a node is added, and a key's name copied into the log's one string
+//! of names, only when the log keeps a new one. The tests read the marks back
+//! as resolved hops.
 
 #[cfg(test)]
 use super::splice::Hop;

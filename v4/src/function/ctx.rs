@@ -287,9 +287,11 @@ impl<'r> Ctx<'r> {
         self.cancel
     }
 
-    /// The value at `path` as this call sees it: its own writes, over the
-    /// run's context. Borrowed unless only the run's view or this call's
-    /// writes below `path` know it, when it is converted.
+    /// The value at `path` as this call sees it: its own writes, over a
+    /// fan-out element's bindings, over the run's context. Borrowed unless
+    /// it must be put together, when it is converted: a value only the run's
+    /// view knows, or one with this call's writes or a binding below `path`,
+    /// such as `temp_data` while `temp_data.p` is bound.
     pub fn get(&self, path: &Path) -> Option<Cow<'_, OwnedDataValue>> {
         self.find(path).map(Filled::into_cow)
     }
