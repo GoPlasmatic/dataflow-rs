@@ -95,14 +95,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // -- Sample payload: pacs.008-shaped, ~80 fields, 4-5 levels deep ---------
     // Convert to `OwnedDataValue` ONCE at startup and share via `Arc`. v4's
-    // `Message::new` takes the payload by value, so per-message construction
-    // clones it (v3 bumped a refcount); no serde_json walk either way.
+    // `Message::new` takes an `Arc`, so per-message construction
+    // shares the `Arc` (a refcount bump, as v3); no serde_json walk either way.
     let sample_payload_json = iso20022::payload();
     let sample_payload: Arc<OwnedDataValue> = Arc::new(OwnedDataValue::from(&sample_payload_json));
 
     // Check the workload once before timing it: one that silently does less
     // than it says still reports a plausible number.
-    let mut checked = Message::new((*sample_payload).clone());
+    let mut checked = Message::new(Arc::clone(&sample_payload));
     engine.run(&mut checked).await.into_result().unwrap();
     iso20022::check(&checked);
 
@@ -114,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let engine = engine.clone();
             let payload = Arc::clone(&sample_payload);
             tokio::spawn(async move {
-                let mut message = Message::new((*payload).clone());
+                let mut message = Message::new(payload);
                 engine.run(&mut message).await.into_result().unwrap();
             })
         })
@@ -140,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let payload = Arc::clone(&sample_payload);
         handles.push(tokio::spawn(async move {
             let msg_start = Instant::now();
-            let mut message = Message::new((*payload).clone());
+            let mut message = Message::new(payload);
             engine.run(&mut message).await.into_result().unwrap();
             msg_start.elapsed()
         }));

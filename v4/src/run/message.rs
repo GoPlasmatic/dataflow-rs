@@ -121,7 +121,7 @@ impl Context {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
     id: String,
-    payload: OwnedDataValue,
+    payload: Arc<OwnedDataValue>,
     context: Context,
     audit: Vec<AuditEntry>,
     errors: Vec<ErrorRecord>,
@@ -154,21 +154,24 @@ pub(crate) struct Parts<'a> {
 }
 
 impl Message {
-    /// A message with a fresh UUID v7 id, as v3.
-    pub fn new(payload: OwnedDataValue) -> Self {
+    /// A message with a fresh UUID v7 id, as v3. A payload passed as an
+    /// `Arc` is shared, not copied: messages built from one `Arc` hold one
+    /// payload.
+    pub fn new(payload: impl Into<Arc<OwnedDataValue>>) -> Self {
         Self::from_parts(payload, OwnedDataValue::Null, OwnedDataValue::Null)
     }
 
     /// A message seeded with `data` and `metadata`. A seed that is not an
-    /// object is ignored, as v3.
+    /// object is ignored, as v3. A payload passed as an `Arc` is shared, not
+    /// copied.
     pub fn from_parts(
-        payload: OwnedDataValue,
+        payload: impl Into<Arc<OwnedDataValue>>,
         data: OwnedDataValue,
         metadata: OwnedDataValue,
     ) -> Self {
         Self {
             id: uuid::Uuid::now_v7().to_string(),
-            payload,
+            payload: payload.into(),
             context: Context::new(data, metadata),
             audit: Vec::new(),
             errors: Vec::new(),
