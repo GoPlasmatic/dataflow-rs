@@ -179,7 +179,8 @@ instead.
 (`dataflow-rs-v4`, library `dataflow_rs_v4`) and `derive/`
 (`dataflow-rs-derive`), with `corpus/v4` (`dataflow-corpus-v4`) as its corpus
 driver, which parses and compiles every corpus definition and holds each to
-v3's issues or to its declared deviation. The reason is 08's phase 4 fallback, which ships phases 2 and 3 as a
+v3's issues or to its declared deviation, and runs every built-in case against
+v3's recording or a declared `RUN_DEVIATED` row. The reason is 08's phase 4 fallback, which ships phases 2 and 3 as a
 layer over v3: v3's root crate must keep building on `main`, with its tests,
 examples, docs-tests, wasm and `corpus/v3`.
 
@@ -197,6 +198,15 @@ The derive emits `::dataflow_rs::` paths. v4 itself says
 dependency (`dataflow-rs = { package = "dataflow-rs-v4", … }`, as `corpus/v4`
 does).
 
+**v4 runs built-in workflows** (phase 4): `Engine::builder()` (or
+`Engine::new(program, config)`), then `engine.run_with(&mut message, &opts)`,
+which returns a `Run` on every outcome. The eight built-ins run inline on the
+crate-private `SyncFunction`, through one interpreter over the compiled ops
+and one recorder. After the run-start stamps, every context write goes through
+`state::RunContext`: one arena view, a write log, and checkpoints. A host
+function call or a `for_each` stops the run with a `Config` error until phase
+5 builds them.
+
 v4's own checks, beside the workspace-wide ones above:
 
 ```bash
@@ -209,6 +219,28 @@ for f in datetime ext-string ext-array ext-math ext-control ext-object \
   cargo test -p dataflow-rs-v4 --no-default-features --features "$f"
 done
 ```
+
+**`cargo test -p dataflow-rs-v4` must stay under a minute, rebuild
+included.** The run-context model test runs once, in the default build, at
+150 sequences per tuning; `DATAFLOW_V4_DEEP=1 cargo test -p dataflow-rs-v4
+--lib state::` runs its full 2,000 (about a minute on its own). Run it after
+any change under `v4/src/state/`.
+
+**The gate compares v4 with v3** through ports of the eight sync benchmarks,
+`v4/examples/v4_<name>.rs`, which keep each v3 benchmark's workload, startup
+check, `GATE` name and metric names:
+
+```bash
+python3 bench/gate.py build --out /tmp/gate/v3        # v3's examples
+python3 bench/gate.py build --v4 --out /tmp/gate/v4
+python3 bench/gate.py compare --a /tmp/gate/v3 --b /tmp/gate/v4 --rounds 5
+```
+
+`compare` alternates the two builds within each round and judges each metric
+on the median of its per-round ratios, with noise `max(3%, half the IQR)`. It
+also reports instructions retired (`/usr/bin/time -l`), which separate load
+from work on a busy machine; they move with codegen too, so attribute a
+change to one item only with a same-binary toggle.
 
 ### Release Process
 
@@ -620,11 +652,11 @@ alters what a message ends up as re-records the affected cases and is read
 before it is committed; never edit a `.v3.json` by hand. The comparator is
 order-sensitive, because key order is wire data.
 
-`cargo test --workspace --all-features` should report 1365 passing: the
+`cargo test --workspace --all-features` should report 1510 passing: the
 engine's 867 plus the corpus's 35 (its case checks are one test each way),
-v4's 458 and v4's corpus driver's 5. `cargo test -p dataflow-rs` (default
+v4's 600 and v4's corpus driver's 8. `cargo test -p dataflow-rs` (default
 features) should report 753, `cargo test -p dataflow-corpus-v3` 3,
-`cargo test -p dataflow-rs-v4` 447 and `cargo test -p dataflow-corpus-v4` 5.
+`cargo test -p dataflow-rs-v4` 588 and `cargo test -p dataflow-corpus-v4` 8.
 The operator families are `#[cfg]`-gated on both sides, so the counts
 legitimately differ.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
