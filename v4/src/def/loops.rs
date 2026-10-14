@@ -42,6 +42,40 @@ pub(super) fn over_literal_problem(over: &Value) -> Option<String> {
     ))
 }
 
+/// The loop's bound rules (I78), each broken one as `(code, path, message)`,
+/// in v3's order: an `increment` below 1, then a `max` at or below `init`.
+/// `parse` checks what it read, an unreadable `increment` or `max` as `None`;
+/// the compile walk checks the definition it is handed again, since a host
+/// may edit one after `parse`, and a loop that never advances never ends.
+pub(crate) fn bound_issues(
+    init: i64,
+    increment: Option<i64>,
+    max: Option<i64>,
+) -> impl Iterator<Item = (IssueCode, AuthoredPath, String)> {
+    let at = AuthoredPath::root().join("loop");
+    let increment = increment.filter(|&i| i < 1).map(|increment| {
+        (
+            IssueCode::LoopIncrementTooSmall,
+            at.join("increment"),
+            format!(
+                "loop increment must be >= 1, got {increment} (a non-advancing counter would \
+                 never reach max)"
+            ),
+        )
+    });
+    let bound = max.filter(|&max| max <= init).map(|max| {
+        (
+            IssueCode::LoopBoundEmpty,
+            at.join("max"),
+            format!(
+                "loop max ({max}) must be greater than init ({init}) — the bound is half-open, \
+                 so this could never run a sweep"
+            ),
+        )
+    });
+    increment.into_iter().chain(bound)
+}
+
 impl<'j> Walk<'j> {
     /// Rule 5, then rule 6: the loop's own rules and unknown keys, then the
     /// steps of its `setup`.
@@ -58,31 +92,10 @@ impl<'j> Walk<'j> {
         let init = self.optional_integer(config, &at, "init");
         let increment = self.optional_integer(config, &at, "increment");
 
-        if let Some(Some(increment)) = increment
-            && increment < 1
-        {
-            self.report(
-                IssueCode::LoopIncrementTooSmall,
-                at.join("increment"),
-                format!(
-                    "loop increment must be >= 1, got {increment} (a non-advancing counter \
-                     would never reach max)"
-                ),
-            );
-        }
         // v3 bounds an unreadable `init` at its default.
         let init_or_default = init.flatten().unwrap_or(defaults::INIT);
-        if let Some(max) = max
-            && max <= init_or_default
-        {
-            self.report(
-                IssueCode::LoopBoundEmpty,
-                at.join("max"),
-                format!(
-                    "loop max ({max}) must be greater than init ({init_or_default}) — the bound \
-                     is half-open, so this could never run a sweep"
-                ),
-            );
+        for (code, path, message) in bound_issues(init_or_default, increment.flatten(), max) {
+            self.report(code, path, message);
         }
 
         let counter = self.slot(config, &at, "counter", IssueCode::LoopCounterInvalid);

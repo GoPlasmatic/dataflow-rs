@@ -414,10 +414,19 @@ impl<'w> Walk<'w> {
         }
     }
 
-    /// The loop's `over`, recorded, then its slots, each `temp_data.<slot>`.
-    /// Returns its row in `loops`.
+    /// The loop's bounds, checked again (I78), then its `over`, recorded,
+    /// then its slots, each `temp_data.<slot>`. Returns its row in `loops`.
+    ///
+    /// `parse` refuses a loop that never advances or never sweeps, but a host
+    /// may edit a parsed definition, and the interpreter's termination rests
+    /// on `increment >= 1`.
     fn r#loop(&mut self, config: &LoopDef) -> u32 {
         let at = AuthoredPath::root().join("loop");
+        for (code, path, message) in
+            def::bound_issues(config.init, Some(config.increment), Some(config.max))
+        {
+            self.report(Issue::new(code, path, message), None);
+        }
         let over = config
             .over
             .as_ref()
@@ -984,6 +993,84 @@ mod tests {
         assert!(lp.r#as.is_none() && lp.scratch.is_none());
         assert!(compiled.workflow.conds.is_empty());
         assert!(compiled.workflow.fans.is_empty());
+    }
+
+    /// An `echo` task.
+    fn echo_task() -> Value {
+        json!({"id": "t", "function": {"name": "echo", "input": {"text": "a"}}})
+    }
+
+    /// A counter loop from `0` to `3`, parsed, then edited by `edit`, as a
+    /// host may edit a parsed definition: the issues `compile_one` rejects
+    /// it with, as `(code, severity, path, message)`.
+    fn edited_loop(edit: impl FnOnce(&mut LoopDef)) -> Vec<(IssueCode, Severity, String, String)> {
+        let json = json!({"id": "w", "loop": {"counter": "i", "max": 3}, "tasks": [echo_task()]});
+        let mut def = parse(&json, ParseOptions::default()).def.unwrap();
+        edit(def.r#loop.as_mut().unwrap());
+        compiler()
+            .compile_one(&def)
+            .expect_err("compile refuses the edited loop")
+            .into_iter()
+            .map(|i| (i.code, i.severity, i.path.to_string(), i.message))
+            .collect()
+    }
+
+    /// What `parse` reports for `json`'s loop, as `edited_loop` lists it.
+    fn parse_issues(json: &Value) -> Vec<(IssueCode, Severity, String, String)> {
+        parse(json, ParseOptions::default())
+            .issues
+            .into_iter()
+            .map(|i| (i.code, i.severity, i.path.to_string(), i.message))
+            .collect()
+    }
+
+    #[test]
+    fn compile_refuses_an_edited_loop_increment_below_one() {
+        // I78: `increment = 0` would never advance, so the loop would never end.
+        for increment in [0, -2] {
+            let issues = edited_loop(|lp| lp.increment = increment);
+            assert_eq!(
+                issues,
+                [(
+                    IssueCode::LoopIncrementTooSmall,
+                    Severity::Rejected,
+                    "loop.increment".to_owned(),
+                    format!(
+                        "loop increment must be >= 1, got {increment} (a non-advancing counter \
+                         would never reach max)"
+                    ),
+                )]
+            );
+            // The code, path and message `parse` gives the authored spelling.
+            let authored = json!({"id": "w", "loop": {"max": 3, "increment": increment},
+                "tasks": [echo_task()]});
+            assert_eq!(parse_issues(&authored), issues);
+        }
+    }
+
+    #[test]
+    fn compile_refuses_an_edited_loop_bound_at_or_below_init() {
+        for (init, max) in [(0, 0), (2, 1)] {
+            let issues = edited_loop(|lp| {
+                lp.init = init;
+                lp.max = max;
+            });
+            assert_eq!(
+                issues,
+                [(
+                    IssueCode::LoopBoundEmpty,
+                    Severity::Rejected,
+                    "loop.max".to_owned(),
+                    format!(
+                        "loop max ({max}) must be greater than init ({init}) — the bound is \
+                         half-open, so this could never run a sweep"
+                    ),
+                )]
+            );
+            let authored =
+                json!({"id": "w", "loop": {"init": init, "max": max}, "tasks": [echo_task()]});
+            assert_eq!(parse_issues(&authored), issues);
+        }
     }
 
     #[test]

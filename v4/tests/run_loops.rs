@@ -10,7 +10,8 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 #[path = "support/vs_v3.rs"]
 mod vs_v3;
 
-use dataflow_rs::def::{ParseOptions, parse};
+use dataflow_rs::def::{LoopDef, ParseOptions, parse};
+use dataflow_rs::program::Severity;
 use dataflow_rs::run::{RunStatus, Selection, WorkflowExit};
 use dataflow_rs::{Engine, Message, Run as Report, RunOptions};
 use datavalue::OwnedDataValue;
@@ -710,14 +711,15 @@ async fn a_long_loop_checkpoints_and_stays_within_the_arena_bound() {
     );
 }
 
-#[tokio::test]
-async fn a_counter_only_loop_that_never_reaches_its_condition_ran() {
-    // Parse refuses `max <= init` (LOOP_BOUND_EMPTY), so only a definition
-    // edited after parse can reach this. The workflow's `LoopInit` writes the
-    // counter and exits before the condition after it is ever evaluated: the
-    // workflow is `Ran` (no condition refused it) with no sweep. v3 writes the
-    // same counter, and its `Ok(false)` ("never admitted") is dropped by its
-    // driver.
+/// An edit a host makes to a parsed loop.
+type Edit = fn(&mut LoopDef);
+
+#[test]
+fn an_edited_loop_that_could_never_sweep_or_end_is_refused() {
+    // I78: parse refuses `max <= init` and `increment < 1`, and so does
+    // compile, for a definition a host edits after parse. Without that, a
+    // counter-only loop starting out of bounds would never reach its
+    // condition, and one that never advances would never end.
     let json = with(
         looping(
             "w",
@@ -727,17 +729,29 @@ async fn a_counter_only_loop_that_never_reaches_its_condition_ran() {
         ),
         &[("condition", json!({"==": [var("data.go"), true]}))],
     );
-    let mut def = parse(&json, ParseOptions::default())
-        .def
-        .expect("the definition parses");
-    def.r#loop.as_mut().expect("a loop").max = 2;
-    let e = Engine::builder().workflow(def).build().unwrap();
-    let mut m = message(json!({"go": true}));
-    let report = e.run(&mut m).await;
-    assert_eq!(considered(&report), [ran("w", 0, WorkflowExit::Completed)]);
-    assert_eq!(report.matched(), 1);
-    assert_eq!(m.to_json()["context"]["temp_data"], json!({"i": 2}));
-    assert!(m.audit().is_empty());
+    let edits: [(Edit, &str, &str); 2] = [
+        (|lp| lp.max = lp.init, "LOOP_BOUND_EMPTY", "loop.max"),
+        (
+            |lp| lp.increment = 0,
+            "LOOP_INCREMENT_TOO_SMALL",
+            "loop.increment",
+        ),
+    ];
+    for (edit, code, path) in edits {
+        let mut def = parse(&json, ParseOptions::default())
+            .def
+            .expect("the definition parses");
+        edit(def.r#loop.as_mut().expect("a loop"));
+        let issues = Engine::builder()
+            .workflow(def)
+            .build()
+            .expect_err("the builder refuses the edited loop");
+        let refused: Vec<_> = issues
+            .iter()
+            .map(|i| (i.code.as_str(), i.severity, i.path.to_string()))
+            .collect();
+        assert_eq!(refused, [(code, Severity::Rejected, path.to_owned())]);
+    }
 }
 
 #[test]

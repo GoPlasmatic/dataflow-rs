@@ -127,9 +127,7 @@ fn not_yet() -> Error {
 /// it: false gives `SkippedByCondition`, and an evaluation error
 /// `ConditionFailed`, which jumps as a false one does. A later evaluation,
 /// which ends a loop, records nothing. So a workflow without a condition is
-/// `Ran` when it starts, and so is a counter-only loop whose first counter is
-/// out of bounds, whose condition, after its `LoopInit`, is never evaluated.
-/// A group's or a task's condition only jumps.
+/// `Ran` when it starts. A group's or a task's condition only jumps.
 ///
 /// A workflow without a loop begins its one sweep when it starts, and a loop
 /// each sweep its `LoopInit` or `LoopNext` enters. A workflow condition that
