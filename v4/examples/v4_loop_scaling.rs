@@ -3,18 +3,24 @@
 //! v4's port of v3's `loop_scaling`, a row of the v4 performance gate: the
 //! shape of #66 to #69, from Orion#371. A turn loop runs 1000 sweeps over a
 //! large context and appends one entry to a log every sweep, so the context
-//! grows as the loop runs. Each sweep observes (a `map`), decides (a `map`),
-//! then steps (a `map` that updates the score and appends to `data.log`).
+//! grows as the loop runs. Each sweep observes (a `map`), decides, then steps
+//! (a `map` that updates the score and appends to `data.log`).
 //!
 //! In 3.15 every sweep converts the whole context into the arena again, once
 //! per sync stretch, so a sweep pays for the context's bytes. v4 keeps one
 //! view of the context for the whole run and splices each write into it, so
 //! the gate requires this row to be faster.
 //!
-//! This port runs the "by map" variant only; phase 5 adds "by handler", when
-//! a host handler can be registered. It runs at 250 and 1000 sweeps, and the
-//! per-sweep figure at 1000 over the one at 250 shows whether a sweep pays
-//! for the log: 1.0x means it does not.
+//! The decide step is measured two ways:
+//!
+//! - **by map:** the whole sweep runs inline;
+//! - **by handler:** a host function evaluates two `Expr` fields against the
+//!   run's view and writes the decision through an `Output`, as Orion's
+//!   `model_infer` does once per seat. The sweep then has an `.await` in it,
+//!   which in 3.15 splits it into two stretches, each converting the context.
+//!
+//! Each runs at 250 and 1000 sweeps. The per-sweep figure at 1000 over the one
+//! at 250 shows whether a sweep pays for the log: 1.0x means it does not.
 //!
 //! It also reports the run's arena (I72): `arena.live_bytes` and
 //! `arena.peak_bytes`, the largest view spine and the largest bytes in use
@@ -23,8 +29,13 @@
 //!
 //! Run with: `cargo run -p dataflow-rs-v4 --example v4_loop_scaling --release`
 
+// The derive emits `::dataflow_rs::` paths.
+extern crate dataflow_rs_v4 as dataflow_rs;
+
 use dataflow_rs_v4::datavalue::OwnedDataValue;
-use dataflow_rs_v4::{Engine, Message};
+use dataflow_rs_v4::expr::Output;
+use dataflow_rs_v4::function::FunctionConfig;
+use dataflow_rs_v4::{Ctx, Engine, Expr, Function, Message, Outcome, Result};
 use serde_json::{Value, json};
 use std::time::Instant;
 
@@ -43,21 +54,54 @@ const CONFIGS: &[(u64, usize)] = &[(250, 40), (1000, 10)];
 /// larger, plus 64 KiB for one operation's garbage.
 const FLOOR: usize = 64 * 1024;
 
-/// The decision the decide step makes, so the check can recompute the score.
+/// The decide step's config, compiled once at build: two fields, and the
+/// literal output folded to a path.
+#[derive(FunctionConfig)]
+struct DecideConfig {
+    seat: Expr<u64>,
+    turn: Expr<u64>,
+    output: Output,
+}
+
+/// The decide step as a host function: two fields evaluated against the
+/// run's view, one write.
+struct Decide;
+
+impl Function for Decide {
+    type Config = DecideConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &DecideConfig) -> Result<Outcome> {
+        let seat = ctx.eval(&cfg.seat)?;
+        let turn = ctx.eval(&cfg.turn)?;
+        let action = json!({ "seat": seat, "delta": delta(seat, turn) });
+        ctx.emit(&cfg.output, OwnedDataValue::from(&action))?;
+        Ok(Outcome::Ok)
+    }
+}
+
+/// The decision both variants make, so both produce the same message.
 fn delta(seat: u64, turn: u64) -> u64 {
     (seat * 7 + turn) % 5
 }
 
-fn workflow(sweeps: u64) -> Value {
-    let decide = json!({ "id": "decide", "name": "Decide", "function": { "name": "map", "input": {
-        "mappings": [{ "path": "temp_data.action", "logic": {
+fn workflow(sweeps: u64, by_handler: bool) -> Value {
+    let decide = if by_handler {
+        json!({ "id": "decide", "name": "Decide", "function": { "name": "decide", "input": {
             "seat": { "var": "temp_data.obs.seat" },
-            "delta": { "%": [
-                { "+": [{ "*": [{ "var": "temp_data.obs.seat" }, 7] }, { "var": "temp_data.turn" }] },
-                5
-            ]}
-        }}]
-    }}});
+            "turn": { "var": "temp_data.turn" },
+            "output": "temp_data.action"
+        }}})
+    } else {
+        json!({ "id": "decide", "name": "Decide", "function": { "name": "map", "input": {
+            "mappings": [{ "path": "temp_data.action", "logic": {
+                "seat": { "var": "temp_data.obs.seat" },
+                "delta": { "%": [
+                    { "+": [{ "*": [{ "var": "temp_data.obs.seat" }, 7] }, { "var": "temp_data.turn" }] },
+                    5
+                ]}
+            }}]
+        }}})
+    };
     json!({
         "id": "turns",
         "name": "Turn loop",
@@ -89,11 +133,14 @@ fn workflow(sweeps: u64) -> Value {
     })
 }
 
-fn engine(sweeps: u64) -> Engine {
-    Engine::builder()
-        .workflow_json(&workflow(sweeps))
-        .build()
-        .expect("the engine builds")
+fn engine(sweeps: u64, by_handler: bool) -> Engine {
+    let builder = Engine::builder().workflow_json(&workflow(sweeps, by_handler));
+    let builder = if by_handler {
+        builder.register("decide", Decide)
+    } else {
+        builder
+    };
+    builder.build().expect("the engine builds")
 }
 
 fn message(base: &OwnedDataValue) -> Message {
@@ -180,36 +227,42 @@ async fn main() {
     let mut arena = Arena::default();
     let mut gate = gate::Gate::new("loop_scaling");
     for &(sweeps, messages) in CONFIGS {
-        let engine = engine(sweeps);
-        arena = arena.max(check(&engine, &base, sweeps).await);
+        for by_handler in [false, true] {
+            let engine = engine(sweeps, by_handler);
+            arena = arena.max(check(&engine, &base, sweeps).await);
 
-        let mut samples = bench::Samples::with_capacity(messages);
-        for _ in 0..messages {
-            let mut message = message(&base);
-            let start = Instant::now();
-            let run = engine.run(&mut message).await;
-            samples.push(start.elapsed());
-            arena = arena.max(Arena::of(&run, sweeps));
-            run.into_result().expect("the loop runs");
+            let mut samples = bench::Samples::with_capacity(messages);
+            for _ in 0..messages {
+                let mut message = message(&base);
+                let start = Instant::now();
+                let run = engine.run(&mut message).await;
+                samples.push(start.elapsed());
+                arena = arena.max(Arena::of(&run, sweeps));
+                run.into_result().expect("the loop runs");
+            }
+            let how = if by_handler { "handler" } else { "map" };
+            let label = format!("{sweeps:>4} sweeps, decide by {how}");
+            let row = samples.row(&label, sweeps as usize, "sweep");
+            gate.row(&format!("sweeps={sweeps}.{how}"), row, "µs/sweep");
+            means.push((sweeps, by_handler, row.0));
         }
-        let label = format!("{sweeps:>4} sweeps, decide by map");
-        let row = samples.row(&label, sweeps as usize, "sweep");
-        gate.row(&format!("sweeps={sweeps}.map"), row, "µs/sweep");
-        means.push((sweeps, row.0));
     }
 
     println!();
-    let mean_at = |sweeps: u64| {
-        means
-            .iter()
-            .find(|row| row.0 == sweeps)
-            .map(|row| row.1)
-            .expect("both sizes ran")
-    };
-    println!(
-        "Growth, decide by map    : µs/sweep at 1000 over 250 = {:.2}x",
-        mean_at(1000) / mean_at(250)
-    );
+    for by_handler in [false, true] {
+        let mean_at = |sweeps: u64| {
+            means
+                .iter()
+                .find(|row| row.0 == sweeps && row.1 == by_handler)
+                .map(|row| row.2)
+                .expect("both sizes ran")
+        };
+        let how = if by_handler { "handler" } else { "map" };
+        println!(
+            "Growth, decide by {how:<7}: µs/sweep at 1000 over 250 = {:.2}x",
+            mean_at(1000) / mean_at(250)
+        );
+    }
     println!(
         "Arena: live {} bytes, peak {} bytes (bound {} bytes)",
         arena.live,
