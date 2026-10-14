@@ -19,6 +19,7 @@ mod parse;
 mod paths;
 mod publish;
 mod validation;
+mod xml;
 
 pub use filter::FilterConfig;
 pub use log::LogConfig;
@@ -148,26 +149,33 @@ impl BuiltinKind {
             Self::Validation => ValidationConfig::compile(input, cx).map(Builtin::Validation),
             Self::Filter => FilterConfig::compile(input, cx).map(Builtin::Filter),
             Self::Log => LogConfig::compile(input, cx).map(Builtin::Log),
-            Self::ParseJson => ParseConfig::compile(input, cx).map(Builtin::ParseJson),
-            Self::ParseXml => ParseConfig::compile(input, cx).map(Builtin::ParseXml),
-            Self::PublishJson => PublishConfig::compile(input, cx).map(Builtin::PublishJson),
-            Self::PublishXml => PublishConfig::compile(input, cx).map(Builtin::PublishXml),
+            Self::ParseJson => {
+                ParseConfig::compile(input, cx).map(|c| Builtin::ParseJson(c.into()))
+            }
+            Self::ParseXml => ParseConfig::compile(input, cx).map(|c| Builtin::ParseXml(c.into())),
+            Self::PublishJson => {
+                PublishConfig::compile(input, cx).map(|c| Builtin::PublishJson(c.into()))
+            }
+            Self::PublishXml => {
+                PublishConfig::compile(input, cx).map(|c| Builtin::PublishXml(c.into()))
+            }
         }
     }
 }
 
-/// A built-in call site's callee: its typed config, unboxed, which is what
-/// the runtime matches on (I42).
+/// A built-in call site's callee: its typed config, which is what the
+/// runtime matches on (I42). The four parse and publish configs are boxed
+/// (I71) so a call site fits in 256 bytes; the hot ones stay inline.
 #[derive(Debug)]
 pub(crate) enum Builtin {
     Map(MapConfig),
     Validation(ValidationConfig),
     Filter(FilterConfig),
     Log(LogConfig),
-    ParseJson(ParseConfig),
-    ParseXml(ParseConfig),
-    PublishJson(PublishConfig),
-    PublishXml(PublishConfig),
+    ParseJson(Box<ParseConfig>),
+    ParseXml(Box<ParseConfig>),
+    PublishJson(Box<PublishConfig>),
+    PublishXml(Box<PublishConfig>),
 }
 
 impl Builtin {
@@ -198,13 +206,13 @@ impl Builtin {
     pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         match self {
             Self::Map(c) => c.call(cx),
-            Self::Validation(_)
-            | Self::Filter(_)
-            | Self::Log(_)
-            | Self::ParseJson(_)
-            | Self::ParseXml(_)
-            | Self::PublishJson(_)
-            | Self::PublishXml(_) => unreachable!("Task 5"),
+            Self::Validation(c) => c.call(cx),
+            Self::Filter(c) => c.call(cx),
+            Self::Log(c) => c.call(cx),
+            Self::ParseJson(c) => c.json(cx),
+            Self::ParseXml(c) => c.xml(cx),
+            Self::PublishJson(c) => c.json(cx),
+            Self::PublishXml(c) => c.xml(cx),
         }
     }
 

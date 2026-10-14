@@ -10,8 +10,10 @@
 
 use crate::base::{IssueCode, Result};
 use crate::expr::{CompileCx, ConfigField, Expr, FieldKind, Path, ValueKind, Visit};
+use crate::function::SyncCtx;
 use datavalue::OwnedDataValue;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::str::FromStr;
 
 /// Compiles a path field: its expression and, when the expression folds, its
@@ -60,36 +62,27 @@ fn folds_to_string(raw: &Value, cx: &CompileCx<'_>) -> bool {
         .is_ok_and(|expr| matches!(expr.constant(), Some(OwnedDataValue::String(_))))
 }
 
-/// Where `parse_json` and `parse_xml` read from (I44).
-///
-/// A literal string resolves at compile through `ParseSource::literal`:
-/// `"payload"`, `"payload.<path>"`, or a context path. Anything else compiles
-/// as JSONLogic computing that string, which resolves through the same
-/// function at run time, so a computed source can name the payload too.
-#[derive(Debug)]
+/// Where a parse reads from, resolved: the one form the runtime reads.
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
-pub enum ParseSource {
+pub enum ParseFrom {
     /// `"payload"`: the whole payload.
     Payload,
     /// `"payload.<path>"`: `<path>` split by [`Path`]'s segment rules and held
     /// under the `data` root, which stands for the payload.
     PayloadPath(Path),
-    /// Any other literal: a context path.
+    /// Any other name: a context path.
     Context(Path),
-    /// JSONLogic computing the source's name. One that folds keeps its
-    /// expression, and its constant has been checked by
-    /// `ParseSource::literal`.
-    Computed(Expr<String>),
 }
 
-impl ParseSource {
+impl ParseFrom {
     /// The one resolver: `"payload"`, `"payload.<path>"`, or a context path.
     ///
     /// # Errors
     ///
     /// A name that is none of those, such as `extra.x`, whose root is not
     /// `data`, `metadata` or `temp_data`.
-    pub(crate) fn literal(s: &str) -> Result<Self> {
+    pub(crate) fn parse(s: &str) -> Result<Self> {
         if s == "payload" {
             return Ok(Self::Payload);
         }
@@ -98,30 +91,79 @@ impl ParseSource {
         }
         Path::from_str(s).map(Self::Context)
     }
+
+    /// The name it was parsed from, as a message names the source.
+    pub(crate) fn text(&self) -> String {
+        match self {
+            Self::Payload => "payload".to_owned(),
+            Self::PayloadPath(path) => {
+                let dotted = path.dotted();
+                format!("payload.{}", dotted.strip_prefix("data.").unwrap_or(dotted))
+            }
+            Self::Context(path) => path.dotted().to_string(),
+        }
+    }
+}
+
+/// Where `parse_json` and `parse_xml` read from (I44).
+///
+/// A literal string resolves at compile through `ParseFrom::parse`, and so
+/// does JSONLogic that folds (I71). Anything else compiles as JSONLogic
+/// computing that string, which resolves through the same function at run
+/// time, so a computed source can name the payload too.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ParseSource {
+    /// A literal string, resolved at compile. Its `visit` rebuilds the text.
+    Literal(ParseFrom),
+    /// JSONLogic that folded, resolved at compile and never again. It keeps
+    /// the authored JSON, which `visit` reports.
+    Folded {
+        /// The authored JSONLogic.
+        raw: Value,
+        /// What it folded to.
+        from: ParseFrom,
+    },
+    /// JSONLogic computing the source's name, resolved per call.
+    Computed(Expr<String>),
+}
+
+impl ParseSource {
+    /// The one resolver for a literal and a computed value.
+    ///
+    /// # Errors
+    ///
+    /// The evaluation's, or a computed name that is no source.
+    pub(crate) fn resolve<'p>(
+        &'p self,
+        cx: &mut SyncCtx<'_, '_, 'p>,
+    ) -> Result<Cow<'p, ParseFrom>> {
+        match self {
+            Self::Literal(from) | Self::Folded { from, .. } => Ok(Cow::Borrowed(from)),
+            Self::Computed(expr) => ParseFrom::parse(&cx.eval(expr)?).map(Cow::Owned),
+        }
+    }
 }
 
 impl ConfigField for ParseSource {
     fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
-        let (expr, literal) = compile_path(raw, cx, Self::literal)?;
-        match literal {
-            // A literal string is its resolved source; JSONLogic, folded or
-            // not, keeps its expression for the walks that read it.
-            Some(source) if raw.is_string() => Some(source),
-            _ => Some(Self::Computed(expr)),
-        }
+        let (expr, resolved) = compile_path(raw, cx, ParseFrom::parse)?;
+        Some(match resolved {
+            Some(from) if raw.is_string() => Self::Literal(from),
+            Some(from) => Self::Folded {
+                raw: raw.clone(),
+                from,
+            },
+            None => Self::Computed(expr),
+        })
     }
 
     /// Reports the authored JSON. A literal is rebuilt from its resolved
     /// form, which keeps the text it was parsed from.
     fn visit(&self, v: &mut Visit<'_>) {
         match self {
-            Self::Payload => v.expr(&Value::from("payload")),
-            Self::PayloadPath(path) => {
-                let dotted = path.to_string();
-                let rest = dotted.strip_prefix("data.").unwrap_or(&dotted);
-                v.expr(&Value::from(format!("payload.{rest}")));
-            }
-            Self::Context(path) => v.expr(&Value::from(path.to_string())),
+            Self::Literal(from) => v.expr(&Value::from(from.text())),
+            Self::Folded { raw, .. } => v.expr(raw),
             Self::Computed(expr) => v.expr(expr.raw()),
         }
     }
@@ -144,18 +186,31 @@ pub struct DataPath {
 
 impl DataPath {
     /// The path, when it is literal or folds, resolved at compile.
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by the phase 4 runtime"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the runtime reads the field; the tests read this")
+    )]
     pub fn constant(&self) -> Option<&Path> {
         self.constant.as_ref()
     }
 
     /// The expression computing the name below `data`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the phase 4 runtime, which resolves it")
-    )]
+    #[cfg(test)]
     pub(crate) fn expr(&self) -> &Expr<String> {
         &self.expr
+    }
+
+    /// The path for this call: the one resolved at compile, or the computed
+    /// name through [`Self::resolve`].
+    ///
+    /// # Errors
+    ///
+    /// The evaluation's.
+    pub(crate) fn path<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Cow<'p, Path>> {
+        match &self.constant {
+            Some(path) => Ok(Cow::Borrowed(path)),
+            None => Self::resolve(&cx.eval(&self.expr)?).map(Cow::Owned),
+        }
     }
 
     /// The one resolver, for a literal at compile and a computed value at run
@@ -200,25 +255,50 @@ pub struct PublishSource {
 
 impl PublishSource {
     /// The primary path, when it is literal or folds, resolved at compile.
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by the phase 4 runtime"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the runtime reads the field; the tests read this")
+    )]
     pub fn constant(&self) -> Option<&Path> {
         self.path.constant()
     }
 
     /// The fallback, when the source is literal (or folds) and begins with
     /// `data.`.
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by the phase 4 runtime"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the runtime reads the field; the tests read this")
+    )]
     pub fn fallback(&self) -> Option<&Path> {
         self.fallback.as_ref()
     }
 
     /// The expression computing the name below `data`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the phase 4 runtime, which resolves it")
-    )]
+    #[cfg(test)]
     pub(crate) fn expr(&self) -> &Expr<String> {
         self.path.expr()
+    }
+
+    /// The primary path and the fallback for this call: the ones resolved at
+    /// compile, or the computed name through [`Self::resolve`].
+    ///
+    /// # Errors
+    ///
+    /// The evaluation's.
+    pub(crate) fn paths<'p>(
+        &'p self,
+        cx: &mut SyncCtx<'_, '_, 'p>,
+    ) -> Result<(Cow<'p, Path>, Option<Cow<'p, Path>>)> {
+        match &self.path.constant {
+            Some(path) => Ok((
+                Cow::Borrowed(path),
+                self.fallback.as_ref().map(Cow::Borrowed),
+            )),
+            None => {
+                let (path, fallback) = Self::resolve(&cx.eval(&self.path.expr)?)?;
+                Ok((Cow::Owned(path), fallback.map(Cow::Owned)))
+            }
+        }
     }
 
     /// The one resolver, for a literal at compile and a computed value at run
@@ -259,5 +339,84 @@ impl ConfigField for PublishSource {
 
     fn kind() -> FieldKind {
         FieldKind::Expr(ValueKind::String)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::expr::ExprEngine;
+    use serde_json::json;
+
+    /// Compiles `raw` as one field `T`, with no issue.
+    fn field<T: ConfigField>(raw: &Value) -> T {
+        let engine = ExprEngine::default();
+        let mut issues = Vec::new();
+        let value = {
+            let mut cx = CompileCx::new(&engine, &mut issues);
+            T::compile(raw, &mut cx)
+        };
+        assert!(issues.is_empty(), "{raw}: {issues:?}");
+        value.expect("compiles")
+    }
+
+    /// What `visit` reports for `field`.
+    fn reported(field: &impl ConfigField) -> Vec<Value> {
+        struct Seen(Vec<Value>);
+        impl crate::expr::ExprVisitor for Seen {
+            fn expr(&mut self, _: &crate::base::AuthoredPath, raw: &Value, _: bool) {
+                self.0.push(raw.clone());
+            }
+        }
+        let mut seen = Seen(Vec::new());
+        field.visit(&mut Visit::new(
+            &mut seen,
+            crate::base::AuthoredPath::root(),
+        ));
+        seen.0
+    }
+
+    #[test]
+    fn a_folded_computed_path_resolves_at_compile() {
+        // JSONLogic that folds; none of it reads the message.
+        let source = json!({"cat": ["payload.", "x.y"]});
+        let parse = field::<ParseSource>(&source);
+        assert!(
+            matches!(
+                &parse,
+                ParseSource::Folded { raw, from: ParseFrom::PayloadPath(p) }
+                    if raw == &source && p.to_string() == "data.x.y"
+            ),
+            "{parse:?}"
+        );
+        assert_eq!(reported(&parse), [source]);
+
+        let target = json!({"cat": ["or", "ders"]});
+        let data = field::<DataPath>(&target);
+        assert_eq!(
+            data.constant().map(ToString::to_string).as_deref(),
+            Some("data.orders")
+        );
+        assert_eq!(reported(&data), [target]);
+
+        let origin = json!({"cat": ["data.", "obj"]});
+        let publish = field::<PublishSource>(&origin);
+        assert_eq!(
+            publish.constant().map(ToString::to_string).as_deref(),
+            Some("data.data.obj")
+        );
+        assert_eq!(
+            publish.fallback().map(ToString::to_string).as_deref(),
+            Some("data.obj")
+        );
+        assert_eq!(reported(&publish), [origin]);
+
+        // One that reads the message is not folded, and stays computed.
+        let computed = json!({"cat": ["payload.", {"var": "data.k"}]});
+        let parse = field::<ParseSource>(&computed);
+        assert!(matches!(parse, ParseSource::Computed(_)), "{parse:?}");
+        assert_eq!(reported(&parse), std::slice::from_ref(&computed));
+        assert!(field::<DataPath>(&computed).constant().is_none());
+        assert!(field::<PublishSource>(&computed).constant().is_none());
     }
 }

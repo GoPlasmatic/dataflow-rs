@@ -266,3 +266,115 @@ pub(crate) fn v4(
         .unwrap_or_else(|| panic!("v4 compiles {function} with {input}"))
         .run(payload, context, capture)
 }
+
+/// Runs `function` with `input` on both sides, with and without change
+/// capture, asserts each pair agrees, and returns v4's observation (with
+/// capture on) for the checks that name what it must be.
+pub(crate) async fn same(
+    function: &str,
+    input: &Value,
+    payload: &Value,
+    context: &Value,
+) -> Observed {
+    let mut observed = None;
+    for capture in [true, false] {
+        let mut expected = v3(function, input, payload, context, capture).await;
+        let actual = v4(function, input, payload, context, capture);
+        // v3's `parse_xml` and `publish_*` return their `Change` whether or not
+        // capture is on (only `map` and `parse_json` honour it). v4 records
+        // changes under capture only (I67), so with capture off the one
+        // difference allowed is v3's changes, and v4's must be empty.
+        if !capture && ["parse_xml", "publish_json", "publish_xml"].contains(&function) {
+            expected.changes = "[]".to_owned();
+        }
+        assert_eq!(
+            actual, expected,
+            "{function} {input} over {context} (payload {payload}, capture {capture})"
+        );
+        observed.get_or_insert(actual);
+    }
+    observed.expect("two runs")
+}
+
+/// The `dataflow::log` lines a run emits, on v3 and on v4.
+pub(crate) mod logs {
+    use super::{Observed, V3Task, V4Task, v3_task, v4_task};
+    use log::{Level, LevelFilter, Log, Metadata, Record};
+    use serde_json::Value;
+    use std::sync::{Mutex, Once};
+
+    /// The target the `log` built-in emits under.
+    const TARGET: &str = "dataflow::log";
+
+    /// The level captured, and the lines so far. `None` enables nothing.
+    static STATE: Mutex<(Option<Level>, Vec<String>)> = Mutex::new((None, Vec::new()));
+    /// The one global logger, installed once.
+    static INSTALL: Once = Once::new();
+    /// One capture at a time: the logger is global.
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+    static CAPTURE: Capture = Capture;
+
+    struct Capture;
+
+    impl Log for Capture {
+        fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+            metadata.target() == TARGET
+                && STATE
+                    .lock()
+                    .expect("the log state")
+                    .0
+                    .is_some_and(|level| metadata.level() <= level)
+        }
+
+        fn log(&self, record: &Record<'_>) {
+            if self.enabled(record.metadata()) {
+                STATE.lock().expect("the log state").1.push(format!(
+                    "{}: {}",
+                    record.level(),
+                    record.args()
+                ));
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    /// Runs `run` with `dataflow::log` captured up to `level`; the lines it
+    /// emitted, as `LEVEL: text`.
+    fn capture<R>(level: Level, run: impl FnOnce() -> R) -> (R, Vec<String>) {
+        let _alone = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        INSTALL.call_once(|| {
+            log::set_logger(&CAPTURE).expect("no other logger is installed");
+            log::set_max_level(LevelFilter::Trace);
+        });
+        {
+            let mut state = STATE.lock().expect("the log state");
+            *state = (Some(level), Vec::new());
+        }
+        let result = run();
+        let mut state = STATE.lock().expect("the log state");
+        state.0 = None;
+        (result, std::mem::take(&mut state.1))
+    }
+
+    /// One `log` task on v3 and on v4 under a logger at `level`: what each
+    /// observed and logged.
+    pub(crate) fn both(
+        level: Level,
+        input: &Value,
+        context: &Value,
+    ) -> ((Observed, Vec<String>), (Observed, Vec<String>)) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a runtime");
+        let v3: V3Task = v3_task("log", input).expect("v3 builds log");
+        let v4: V4Task = v4_task("log", input).expect("v4 compiles log");
+        let on_v3 = capture(level, || {
+            runtime.block_on(v3.run(&Value::Null, context, true))
+        });
+        let on_v4 = capture(level, || v4.run(&Value::Null, context, true));
+        (on_v3, on_v4)
+    }
+}

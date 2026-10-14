@@ -345,6 +345,7 @@ dependencies = [
  "datalogic-rs",
  "datavalue-rs",
  "log",
+ "quick-xml",
  "self_cell",
  "serde",
  "serde_json",

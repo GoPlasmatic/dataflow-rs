@@ -36,7 +36,6 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     /// The expression engine the program was compiled with.
     pub(crate) exprs: &'p ExprEngine,
     /// The message's payload.
-    #[cfg_attr(test, expect(dead_code, reason = "Task 5's parse built-ins read it"))]
     pub(crate) payload: &'c OwnedDataValue,
     /// The workflow's id.
     pub(crate) workflow_id: &'p str,

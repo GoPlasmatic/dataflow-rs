@@ -75,13 +75,8 @@ pub(crate) struct CallSite {
     pub(crate) terminal: bool,
 }
 
-/// What a call site calls (I42): a built-in's typed config, unboxed, or a
-/// host function bound to its config.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "I42: a built-in's config is held inline, so a built-in call is a match with no \
-              pointer to follow"
-)]
+/// What a call site calls (I42): a built-in's typed config (the parse and
+/// publish ones boxed, I71), or a host function bound to its config.
 pub(crate) enum Callee {
     Builtin(Builtin),
     Host(Box<dyn BoundCall>),
@@ -135,4 +130,17 @@ pub(crate) struct TaskMeta {
     pub(crate) function: String,
     pub(crate) kind: StepKind,
     pub(crate) path: AuthoredPath,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn call_site_fits_in_256_bytes() {
+        // I71: the parse and publish configs are boxed so the hot built-ins
+        // can stay inline.
+        let size = std::mem::size_of::<CallSite>();
+        assert!(size <= 256, "a call site is {size} bytes");
+    }
 }

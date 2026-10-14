@@ -5,7 +5,7 @@
 use super::filter::RejectAction;
 use super::log::LogLevel;
 use super::map::Mapping;
-use super::paths::{DataPath, ParseSource, PublishSource};
+use super::paths::{DataPath, ParseFrom, ParseSource, PublishSource};
 use super::validation::Rule;
 use super::*;
 use crate::base::{AuthoredPath, Issue, IssueCode, Severity};
@@ -356,11 +356,19 @@ fn a_computed_publish_source_resolves_at_run_time() {
 // ---------------------------------------------------------------------------
 
 /// The variant, and its path where it has one.
+fn shape_from(from: &ParseFrom) -> String {
+    match from {
+        ParseFrom::Payload => "Payload".to_owned(),
+        ParseFrom::PayloadPath(p) => format!("PayloadPath({p})"),
+        ParseFrom::Context(p) => format!("Context({p})"),
+    }
+}
+
+/// [`shape_from`] for a literal; a folded or computed source says so.
 fn shape(source: &ParseSource) -> String {
     match source {
-        ParseSource::Payload => "Payload".to_owned(),
-        ParseSource::PayloadPath(p) => format!("PayloadPath({p})"),
-        ParseSource::Context(p) => format!("Context({p})"),
+        ParseSource::Literal(from) => shape_from(from),
+        ParseSource::Folded { raw, from } => format!("Folded({raw}: {})", shape_from(from)),
         ParseSource::Computed(e) => format!("Computed({})", e.raw()),
     }
 }
@@ -395,19 +403,20 @@ fn a_parse_source_outside_the_roots_is_invalid_path() {
 }
 
 #[test]
-fn a_computed_parse_source_is_computed() {
+fn a_computed_parse_source_is_computed_unless_it_folds() {
     let raw = json!({"cat": ["data.batches.", {"var": "temp_data.i"}]});
     let (source, issues) = field::<ParseSource>(&raw);
     assert!(issues.is_empty(), "{issues:?}");
     let source = source.unwrap();
     assert!(matches!(&source, ParseSource::Computed(e) if e.raw() == &raw));
 
-    // One that folds keeps its expression, and is checked at compile by the
-    // resolver the run uses: a constant that is not a string, or names no
-    // source, is refused as `Expr<Path>` refuses it.
-    let (source, issues) = field::<ParseSource>(&json!({"cat": ["pay", "load"]}));
+    // One that folds is resolved at compile (I71), by the resolver the run
+    // uses: a constant that is not a string, or names no source, is refused
+    // as `Expr<Path>` refuses it.
+    let folds = json!({"cat": ["pay", "load"]});
+    let (source, issues) = field::<ParseSource>(&folds);
     assert!(issues.is_empty(), "{issues:?}");
-    assert!(matches!(source, Some(ParseSource::Computed(_))));
+    assert_eq!(shape(&source.unwrap()), format!("Folded({folds}: Payload)"));
     for bad in [
         json!({"cat": ["ext", "ra.x"]}),
         json!(7),
@@ -442,7 +451,7 @@ fn the_run_resolves_a_name_as_the_compile_resolves_a_literal() {
     ] {
         let (compiled, _) = field::<ParseSource>(&json!(name));
         let compiled = compiled.as_ref().map(shape);
-        let resolved = ParseSource::literal(name).ok().as_ref().map(shape);
+        let resolved = ParseFrom::parse(name).ok().as_ref().map(shape_from);
         assert_eq!(compiled, resolved, "{name}");
     }
 }
