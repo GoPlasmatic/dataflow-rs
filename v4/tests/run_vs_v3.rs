@@ -448,17 +448,20 @@ async fn linear_workflows_match_v3() {
 /// The progress write updates a progress object of exactly its three keys in
 /// place, with no view and with one, as v3's `overwrite_progress_in_place`
 /// does: the same wire text as v3 over every seeded shape, with ids that grow
-/// and shrink. No-view writes come before the first view and after a large
-/// owned write, which checkpoints mid-run, the last one in a second workflow.
+/// and shrink. No-view writes come before the first view and after each large
+/// owned write, which checkpoints mid-run, the last two in later workflows.
 /// Each `snap` copies the progress the write before it left, which a later
 /// write would otherwise overwrite.
 ///
-/// `map`s shape the progress object before writes made with a view: in the
-/// first workflow, shapes replaced by a fresh object; in the third, which
-/// runs on one view throughout, three keys in an order neither alphabetical
-/// (as `json!` seeds are) nor fresh, values that are not the ids' strings or
-/// the status's integer, a key removed and written again, every value
-/// already the write's, and a status that changes.
+/// `map`s shape the progress object before writes made with a view. In the
+/// first workflow, shapes replaced by a fresh object. In the second, values
+/// that are not the ids' strings or the status's integer, and a status that
+/// changes: several values change, so the object is marked as a whole. The
+/// third runs on one view to the end, and each of its writes changes one
+/// value, marked at its key, so only those marks bring the owned tree up to
+/// date: three keys in an order neither alphabetical (as `json!` seeds are)
+/// nor fresh, a key removed and written again, and every value already the
+/// write's.
 #[tokio::test]
 async fn progress_written_in_place_matches_v3() {
     let parse = |id: &str, source: &str, target: &str| {
@@ -504,26 +507,9 @@ async fn progress_written_in_place_matches_v3() {
             "second_workflow",
             1,
             &[],
-            vec![parse("bigger", "payload.bigger", "bigger"), snap("snap3")],
-        ),
-        // One view throughout, and every shape made key by key, so each
-        // write is marked at its own keys, and the finish's checkpoint
-        // brings the owned tree up to date from those marks alone.
-        workflow(
-            "shaped",
-            2,
-            &[],
             vec![
-                // Fresh order, workflow_id moved last: task_id,
-                // status_code, workflow_id.
-                shape(
-                    "reordered",
-                    json!([
-                        {"path": at("workflow_id"), "unset": true},
-                        {"path": at("workflow_id"), "logic": "w0"}
-                    ]),
-                ),
-                snap("snap7"),
+                parse("bigger", "payload.bigger", "bigger"),
+                snap("snap3"),
                 shape(
                     "odd_values",
                     json!([
@@ -532,7 +518,28 @@ async fn progress_written_in_place_matches_v3() {
                         {"path": at("status_code"), "logic": 200.5}
                     ]),
                 ),
+                snap("snap7"),
+                requires_ok("rejects"),
                 snap("snap8"),
+            ],
+        ),
+        workflow(
+            "shaped",
+            2,
+            &[],
+            vec![
+                parse("biggest", "payload.biggest", "biggest"),
+                // workflow_id moved last, its value kept: task_id,
+                // status_code, workflow_id.
+                shape(
+                    "reordered",
+                    json!([
+                        {"path": "temp_data.kept", "logic": {"var": at("workflow_id")}},
+                        {"path": at("workflow_id"), "unset": true},
+                        {"path": at("workflow_id"), "logic": {"var": "temp_data.kept"}}
+                    ]),
+                ),
+                snap("snap9"),
                 shape(
                     "readded",
                     json!([
@@ -540,13 +547,11 @@ async fn progress_written_in_place_matches_v3() {
                         {"path": at("task_id"), "logic": "back"}
                     ]),
                 ),
-                snap("snap9"),
+                snap("snap10"),
                 shape(
                     "settled",
                     json!([{"path": at("task_id"), "logic": "settled"}]),
                 ),
-                snap("snap10"),
-                requires_ok("rejects"),
                 snap("snap11"),
             ],
         ),
@@ -556,6 +561,7 @@ async fn progress_written_in_place_matches_v3() {
         "small": {"x": 1},
         "big": (0..5_000).collect::<Vec<_>>(),
         "bigger": (0..20_000).collect::<Vec<_>>(),
+        "biggest": (0..30_000).collect::<Vec<_>>(),
     });
     let mut runs = Vec::new();
     for progress in [
@@ -586,7 +592,7 @@ async fn progress_written_in_place_matches_v3() {
         );
         assert_eq!(
             report.arena_stats().views,
-            3,
+            4,
             "each large write dropped the view"
         );
     }

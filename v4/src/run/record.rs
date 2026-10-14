@@ -206,11 +206,12 @@ fn unchanged(old: DataValue<'_>, new: DataValue<'_>) -> bool {
 }
 
 /// [`overwrite_in_place`] against the view: an object [`in_place`] accepts
-/// keeps its keys and their order and takes the values that differ, and the
-/// write log marks only those, so the checkpoint assigns them where they
-/// are. A value already equal, as the workflow id and the status usually
-/// are, is neither written nor marked. `false` for anything else, which the
-/// caller replaces.
+/// keeps its keys and their order and takes the values that differ. A value
+/// already equal, as the workflow id and the status usually are, is neither
+/// written nor marked, and when one value changes, as the task id alone
+/// usually does, the checkpoint assigns it alone, where it is
+/// (`Edit::overwrite`). `false` for anything else, which the caller
+/// replaces.
 fn overwrite_in_view<'p>(
     rc: &mut RunContext<'_, 'p>,
     workflow: &'p str,

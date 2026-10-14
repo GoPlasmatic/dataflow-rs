@@ -234,10 +234,14 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
     /// writing nothing, when `object` holds no object or `values` declines
     /// it.
     ///
-    /// Each new value is marked at its own key's path, so the checkpoint
-    /// assigns those keys and nothing else, where they are, and never
-    /// converts the object. Unless a key comes twice: the owned tree assigns
-    /// a key's first pair only, so the object is then marked as a whole.
+    /// One new value is marked at its own key's path, so the checkpoint
+    /// assigns that key alone, where it is, and never converts the object.
+    /// Several are marked as one write of the object, which the checkpoint
+    /// converts: a walk of the log per changed key, repeated at every write,
+    /// costs more than that conversion once a run writes the object several
+    /// times before its checkpoint, as the multi-workflow port does. A key
+    /// that comes twice is marked as the object too, since the owned tree
+    /// assigns a key's first pair only.
     pub(crate) fn overwrite<'v, const N: usize>(
         &mut self,
         object: &Path,
@@ -272,18 +276,17 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
         };
         debug_assert_eq!(r.created, None, "the object was there");
         *self.root = arena.alloc(after);
-        let each_once = (1..N).all(|i| pairs[..i].iter().all(|(k, _)| *k != pairs[i].0));
-        if each_once {
-            for (leaf, value) in &values {
-                if value.is_some() {
-                    self.log
-                        .mark(At::new(leaf.segs(), r.kinds), Mark::Set(None));
-                }
-            }
-        } else {
-            self.log
-                .mark(At::new(object.segs(), r.kinds), Mark::Set(None));
-        }
+        let mut changed = values.iter().filter(|(_, value)| value.is_some());
+        let leaf = match (changed.next(), changed.next()) {
+            (Some((leaf, _)), None) => Some(leaf),
+            _ => None,
+        };
+        let each_once = || (1..N).all(|i| pairs[..i].iter().all(|(k, _)| *k != pairs[i].0));
+        let at = match leaf {
+            Some(leaf) if each_once() => leaf.segs(),
+            _ => object.segs(),
+        };
+        self.log.mark(At::new(at, r.kinds), Mark::Set(None));
         true
     }
 
