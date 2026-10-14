@@ -248,18 +248,23 @@ fn the_run_matches_the_model() {
     // Sequences per tuning. Was 2_000 (about 90 s in a debug build); 150 keeps
     // the test near 4 s, and the seeds (`0x1000 + i`) are unchanged, so the
     // first 150 sequences are the same ones as before.
-    const SEQUENCES: usize = 150;
+    // `DATAFLOW_V4_DEEP=1 cargo test -p dataflow-rs-v4 --lib state::` runs the
+    // full 2_000, with the original thresholds; the phase's Task 8 and final
+    // review run it once.
+    let deep = random::deep();
+    let (sequences, floor, invalidations) = if deep {
+        (2_000, 1000, 50)
+    } else {
+        (150, 75, 3)
+    };
     for (i, (name, tuning)) in tunings().into_iter().enumerate() {
-        let stats = run(name, tuning, 0x1000 + i as u64, SEQUENCES);
+        let stats = run(name, tuning, 0x1000 + i as u64, sequences);
         assert!(
-            stats.checkpoints > (SEQUENCES / 2) as _ && stats.views > (SEQUENCES / 2) as _,
+            stats.checkpoints > floor && stats.views > floor,
             "{name}: {stats:?}"
         );
         if tuning.invalidate {
-            assert!(
-                stats.invalidations > (SEQUENCES / 40) as _,
-                "{name}: {stats:?}"
-            );
+            assert!(stats.invalidations > invalidations, "{name}: {stats:?}");
         }
     }
 }

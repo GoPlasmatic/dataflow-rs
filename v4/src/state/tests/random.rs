@@ -249,3 +249,9 @@ pub fn owned_merge_root(context: &mut OwnedDataValue, key: &str, value: OwnedDat
         (slot, value) => *slot = value,
     }
 }
+
+/// Whether `DATAFLOW_V4_DEEP` is set (to anything): the model test then runs
+/// its full sequence count.
+pub fn deep() -> bool {
+    std::env::var_os("DATAFLOW_V4_DEEP").is_some()
+}
