@@ -3,7 +3,9 @@
 //! paths, and, for a definition a deviation covers, exactly what
 //! [`expect::DEVIATED`] says. Phase 4's: v4 runs every case that needs only
 //! the built-ins as v3 recorded it, and, at a deviated path, exactly what
-//! [`expect::RUN_DEVIATED`] says. See `corpus/README.md`.
+//! [`expect::RUN_DEVIATED`] says. Phase 5's: the same for every case calling
+//! `script` or fanning out, reloads and the ops budget included. See
+//! `corpus/README.md`.
 //!
 //! This crate holds the reusable pieces (the case's compiler, reading a
 //! case's definitions, normalising what v3 recorded, collecting what v4
@@ -62,10 +64,17 @@ pub fn definitions(case: &Case) -> Vec<Value> {
 }
 
 /// The compiler a case's definitions compile with: an [`ExprEngine`] with the
-/// case's `operators` and `secrets`, and a [`Registry`] holding `script`.
-/// The case's other engine options change runs, not compiles.
+/// case's `operators`, `secrets` and, on a `budget` build, `ops_budget`, and
+/// a [`Registry`] holding `script`. A build without `budget` ignores the
+/// ceiling: such a build compiles a budget case's definitions, and never
+/// runs its steps, which `requires` the feature (`run::run_case` holds it
+/// to that). The case's other engine options change runs, not compiles.
 pub fn compiler(case: &Case) -> Compiler {
     let mut exprs = ExprEngine::builder();
+    #[cfg(feature = "budget")]
+    if let Some(ops) = case.engine.ops_budget {
+        exprs = exprs.ops_budget(ops);
+    }
     for name in &case.engine.operators {
         exprs = match name.as_str() {
             "shout" => exprs.operator("shout", operators::Shout),

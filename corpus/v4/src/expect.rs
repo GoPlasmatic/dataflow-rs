@@ -244,14 +244,41 @@ pub type RunDeviated = (&'static str, &'static str, &'static str);
 /// [`MISSING`]. A path under the trace needs no row until phase 6 compares
 /// traces.
 ///
+/// - `breaks/handler_writes_then_err` and `run/failing_run_trace` (break 1):
+///   the write of a call that returns `Err` is dropped, so `data.partial` is
+///   missing. The failed call's audit entry has no `Change`s, as v3's had.
+/// - `/build` of `breaks/path_outside_roots` (break 15),
+///   `builtins/integration_configs` and `builtins/pre39_spellings` (break 3),
+///   and `expressions/host_config_stray_key` (break 2a): v4's build error
+///   names every Rejected issue.
 /// - `breaks/name_required` (break 6): both unnamed definitions parse, so
 ///   all four workflows run, in definition order, and each appends.
+/// - `fan_out/over_shapes` (break 4, I91): the non-array `over` is the
+///   task's record with `LOGIC_ERROR` and a logic evaluation error's text,
+///   where v3 recorded a `TASK_ERROR` "Task error".
 /// - `loop/over_shapes` (break 4, I61): the non-array `over` is one record
 ///   with `LOGIC_ERROR` and the loop's own message, where v3 wrapped a
 ///   `WORKFLOW_ERROR`.
+/// - Every other `errors/<n>` row (break 4): the `WORKFLOW_ERROR` record v3
+///   added after a task's own when the workflow stopped the run or stepped
+///   past the failure is not written; the task's record carries the
+///   workflow id.
 /// - `schema/status_without_channel` (break 7): only the Active workflow
 ///   runs without a channel.
 pub const RUN_DEVIATED: &[RunDeviated] = &[
+    (
+        "breaks/handler_writes_then_err",
+        "/steps/0/run/message/context/data/partial",
+        MISSING,
+    ),
+    (
+        "breaks/handler_writes_then_err",
+        "/steps/0/run/message/audit_trail",
+        r#"[
+            {"workflow_id": "w", "task_id": "t", "timestamp": "<timestamp>",
+             "changes": [], "status": 500}
+        ]"#,
+    ),
     (
         "breaks/name_required",
         "/steps/0/run/message/context/data/order",
@@ -276,6 +303,45 @@ pub const RUN_DEVIATED: &[RunDeviated] = &[
         ]"#,
     ),
     (
+        "breaks/path_outside_roots",
+        "/build",
+        r#"{"error": {"code": "REJECTED",
+            "message": "INVALID_PATH at tasks[0].function.input.mappings[0].path"}}"#,
+    ),
+    (
+        "builtins/integration_configs",
+        "/build",
+        r#"{"error": {"code": "REJECTED",
+            "message": "UNKNOWN_FUNCTION at tasks[0].function.name; UNKNOWN_FUNCTION at tasks[1].function.name; UNKNOWN_FUNCTION at tasks[2].function.name"}}"#,
+    ),
+    (
+        "builtins/pre39_spellings",
+        "/build",
+        r#"{"error": {"code": "REJECTED",
+            "message": "UNKNOWN_FUNCTION at tasks[0].function.name; UNKNOWN_FUNCTION at tasks[1].function.name; UNKNOWN_FUNCTION at tasks[2].function.name"}}"#,
+    ),
+    (
+        "expressions/host_config_stray_key",
+        "/build",
+        r#"{"error": {"code": "REJECTED",
+            "message": "UNKNOWN_KEY at tasks[0].function.input.colour"}}"#,
+    ),
+    (
+        "fan_out/over_shapes",
+        "/steps/0/run/message/errors/0/code",
+        r#""LOGIC_ERROR""#,
+    ),
+    (
+        "fan_out/over_shapes",
+        "/steps/0/run/message/errors/0/message",
+        r#""Task t error: Logic evaluation error: Task t: for_each.over must evaluate to an array, got a string""#,
+    ),
+    (
+        "loop/continue_on_error_next_sweep",
+        "/steps/0/run/message/errors/1",
+        MISSING,
+    ),
+    (
         "loop/over_shapes",
         "/steps/0/run/message/errors/0/code",
         r#""LOGIC_ERROR""#,
@@ -284,6 +350,51 @@ pub const RUN_DEVIATED: &[RunDeviated] = &[
         "loop/over_shapes",
         "/steps/0/run/message/errors/0/message",
         r#""Workflow not_array: loop.over must evaluate to an array, got a string""#,
+    ),
+    (
+        "loop/setup_error_continues",
+        "/steps/0/run/message/errors/1",
+        MISSING,
+    ),
+    (
+        "loop/setup_error_stops",
+        "/steps/0/run/message/errors/1",
+        MISSING,
+    ),
+    (
+        "run/continue_on_error_scope",
+        "/steps/0/run/message/errors/3",
+        MISSING,
+    ),
+    (
+        "run/error_channels",
+        "/steps/0/run/message/errors/1",
+        MISSING,
+    ),
+    (
+        "run/failing_run_trace",
+        "/steps/0/run/message/context/data/partial",
+        MISSING,
+    ),
+    (
+        "run/failing_run_trace",
+        "/steps/0/run/message/errors/1",
+        MISSING,
+    ),
+    (
+        "run/terminal_after_classification",
+        "/steps/0/run/message/errors/1",
+        MISSING,
+    ),
+    (
+        "run/terminal_after_classification",
+        "/steps/2/run/message/errors/1",
+        MISSING,
+    ),
+    (
+        "schema/group_continue_on_error",
+        "/steps/0/run/message/errors/1",
+        MISSING,
     ),
     (
         "schema/status_without_channel",

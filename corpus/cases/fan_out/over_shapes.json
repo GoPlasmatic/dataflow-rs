@@ -16,5 +16,9 @@
       {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
         {"path": "data.after_ran", "logic": true}]}}}]}
   ],
-  "steps": [{"run": {"message": {"data": {"empty": [], "scalar": "x"}}}}]
+  "steps": [{"run": {"message": {"data": {"empty": [], "scalar": "x"}}}}],
+  "deviations": [
+    {"break": "4", "paths": ["/steps/0/run/message/errors/0/code", "/steps/0/run/message/errors/0/message", "/steps/0/run/trace"],
+     "note": "v4 records the non-array over as the evaluation failure it is: LOGIC_ERROR, \"Logic evaluation error: ...\", where v3 wrapped it as a task error, TASK_ERROR (I91)"}
+  ]
 }

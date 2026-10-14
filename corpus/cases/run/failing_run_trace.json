@@ -17,6 +17,10 @@
     {"break": "5", "paths": ["/steps/0/run/trace"],
      "note": "v4's trace is the initial context plus each step's changes, with no snapshots, and records the failing step"},
     {"break": "13", "paths": ["/steps/0/run/trace"],
-     "note": "The UI 4.0 debugger renders this failing run from v4's trace"}
+     "note": "The UI 4.0 debugger renders this failing run from v4's trace"},
+    {"break": "1", "paths": ["/steps/0/run/message/context/data/partial"],
+     "note": "v4 drops a host function's writes when it returns Err"},
+    {"break": "4", "paths": ["/steps/0/run/message/errors/1"],
+     "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"}
   ]
 }

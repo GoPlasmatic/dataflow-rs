@@ -13,5 +13,9 @@
       {"id": "stops", "name": "stops", "function": {"name": "script", "input": {"outcome": {"status": 503}}}},
       {"id": "never", "name": "never", "function": {"name": "map", "input": {"mappings": [{"path": "data.never", "logic": true}]}}}]}
   ],
-  "steps": [{"run": {"message": {}}}]
+  "steps": [{"run": {"message": {}}}],
+  "deviations": [
+    {"break": "4", "paths": ["/steps/0/run/message/errors/3"],
+     "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"}
+  ]
 }
