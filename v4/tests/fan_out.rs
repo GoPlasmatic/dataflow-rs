@@ -853,6 +853,59 @@ async fn max_concurrency_bounds_calls_in_flight() {
 }
 
 #[tokio::test]
+async fn no_call_starts_after_one_that_stops_the_fan_out() {
+    // An element stops new calls when it halts, or fails the task: an `Err`
+    // or a 5xx under `on_failure: fail`. A rejection, or a failure the task
+    // continues past, stops nothing. The calls in flight finish: at two in
+    // flight, `b` is running when `a` halts, and `c` never starts.
+    let err = json!({"error": {"code": "PARTNER_DOWN", "message": "down"}});
+    for (max, flags, first, called) in [
+        (1, json!({}), json!("halt"), vec![0]),
+        (1, json!({}), json!({"status": 503}), vec![0]),
+        (1, json!({}), err.clone(), vec![0]),
+        (
+            1,
+            json!({"continue_on_error": true}),
+            json!({"status": 503}),
+            vec![0, 1, 2],
+        ),
+        (1, json!({"continue_on_error": true}), err, vec![0, 1, 2]),
+        (
+            1,
+            json!({"halt_on": "failure"}),
+            json!({"status": 404}),
+            vec![0, 1, 2],
+        ),
+        (2, json!({}), json!("halt"), vec![0, 1]),
+    ] {
+        let extra: Vec<(&str, Value)> = flags
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect();
+        let echo = Echo::default();
+        let finished = Arc::clone(&echo.finished);
+        let e = v4_engine_with(&fanning(concurrent(max), &extra), |b| {
+            b.register("echo", echo)
+        })
+        .unwrap();
+        let ps = json!([{"id": "a", "o": first}, {"id": "b", "y": 2}, {"id": "c"}]);
+        let mut m = Message::from_parts(
+            OwnedDataValue::Null,
+            OwnedDataValue::from(&json!({"ps": ps})),
+            OwnedDataValue::Null,
+        );
+        e.run(&mut m).await;
+        assert_eq!(
+            *finished.lock().unwrap(),
+            called,
+            "max_concurrency {max}, {flags}, {first}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn elements_writing_under_one_new_parent_both_land() {
     // `data.prices` is absent before the fan-out: each call creates it with
     // its own key, and both keys land, as v3's replayed `Change`s do.
