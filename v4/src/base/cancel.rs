@@ -48,8 +48,11 @@ impl CancelToken {
         Self::default()
     }
 
-    /// Cancels this token, its clones and every child made from them, and
-    /// wakes every task awaiting [`cancelled`](Self::cancelled) on them.
+    /// Cancels this token, its clones and every child made from them.
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        doc = "Every task awaiting [`cancelled`](Self::cancelled) on them is woken."
+    )]
     pub fn cancel(&self) {
         self.inner.flag.store(true, Ordering::Release);
         #[cfg(not(target_arch = "wasm32"))]
