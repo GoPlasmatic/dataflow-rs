@@ -9,12 +9,9 @@ mod splice;
 mod tests;
 mod writes;
 
-pub(crate) use run::{Edit, RunContext, Stats};
+pub(crate) use run::{Edit, RunContext, Stats, Tuning};
 pub(crate) use splice::kind;
-// What only the tests name from outside `state` so far: the engine picks a
-// run's tuning from Task 6. `Owner`, `Reader` and `At` are re-exported by the
-// first code outside `state` that names them.
-#[cfg(test)]
-pub(crate) use run::Tuning;
+// What only the tests name from outside `state` so far. `Owner`, `Reader` and
+// `At` are re-exported by the first code outside `state` that names them.
 #[cfg(test)]
 pub(crate) use writes::{Lookup, Mark, Writes};

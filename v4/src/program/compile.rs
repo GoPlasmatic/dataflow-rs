@@ -253,10 +253,6 @@ pub struct Compiled {
 }
 
 /// One workflow, compiled and immutable. `Send + Sync`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the facts are read by link and the runtime")
-)]
 pub struct CompiledWorkflow {
     /// The registry it was compiled under: [`Compiler::link`] links it under
     /// that one only. Holding it keeps its identity from being reused.

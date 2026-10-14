@@ -38,10 +38,6 @@ pub struct Run {
 }
 
 impl Run {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the engine uses it from Task 6")
-    )]
     pub(crate) fn new(
         program: Program,
         status: RunStatus,

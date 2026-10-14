@@ -199,10 +199,6 @@ impl Builtin {
 
     /// One call: a match over the eight configs, each through its
     /// [`SyncFunction`] (I42).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the engine calls a built-in from Task 6")
-    )]
     pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         match self {
             Self::Map(c) => c.call(cx),

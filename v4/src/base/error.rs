@@ -121,7 +121,6 @@ impl Error {
     /// variant `kind` corresponds to (I77), which the recorder wraps as
     /// "Task {id} error: {text}". A kind v3 has no variant for, and a service
     /// error (v3's display is the bare message), give the message alone.
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 6's recorder writes it"))]
     pub(crate) fn record_text(&self) -> Cow<'_, str> {
         let prefix = match &self.kind {
             ErrorKind::Eval => "Logic evaluation error: ",

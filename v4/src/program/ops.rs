@@ -62,10 +62,6 @@ pub(crate) struct CondSite {
 }
 
 /// One task's call: what it calls and what its outcome does.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the lowering and the runtime")
-)]
 pub(crate) struct CallSite {
     /// The task's row in `tasks`.
     pub(crate) task: u32,

@@ -26,10 +26,6 @@ pub(crate) trait SyncFunction {
 /// `'p` is the program's: the config, the expression engine and the ids live
 /// as long as it does, so a result evaluated from the config can be spliced
 /// into the view.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the engine builds one per call from Task 6")
-)]
 pub(crate) struct SyncCtx<'c, 'm, 'p> {
     /// The run context: the view to read, the writes to make.
     pub(crate) rc: &'c mut RunContext<'m, 'p>,
@@ -62,13 +58,6 @@ impl std::fmt::Debug for SyncCtx<'_, '_, '_> {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the built-ins of Task 5 and the engine of Task 6 call them"
-    )
-)]
 impl<'p> SyncCtx<'_, '_, 'p> {
     /// Read-only evaluation against the view, in a pooled arena; a folded
     /// constant is lent.
@@ -94,27 +83,7 @@ impl<'p> SyncCtx<'_, '_, 'p> {
     /// A condition: only a literal `true` passes; the error is returned for
     /// the caller to classify.
     pub(crate) fn test(&mut self, expr: &Expr) -> Result<bool> {
-        if let Some(c) = expr.constant() {
-            return Ok(matches!(c, OwnedDataValue::Bool(true)));
-        }
-        let exprs = self.exprs;
-        self.rc.read(|_, root| {
-            with_arena(|arena| {
-                exprs
-                    .eval_in(expr.logic(), root, arena)
-                    .map(|v| matches!(v, DataValue::Bool(true)))
-            })
-        })
-    }
-
-    /// A record carrying this task's ids and the run's timestamp, as v3
-    /// fills them.
-    pub(crate) fn record(&self, code: &str, message: String) -> ErrorRecord {
-        let mut record = ErrorRecord::new(code, message);
-        record.workflow_id = Some(self.workflow_id.to_owned());
-        record.task_id = Some(self.task_id.to_owned());
-        record.timestamp = Some(self.now.to_owned());
-        record
+        test(self.rc, self.exprs, expr)
     }
 
     /// Push a `Change` when `capture` is on.
@@ -134,6 +103,39 @@ impl<'p> SyncCtx<'_, '_, 'p> {
             });
         }
     }
+}
+
+/// Tests a condition against the view, in a pooled arena, so nothing it
+/// allocates stays in the run arena: only a literal `true` passes, as v3's
+/// `evaluate_condition`. The error is returned for the caller to classify.
+/// A folded constant reads no view.
+pub(crate) fn test(rc: &mut RunContext<'_, '_>, exprs: &ExprEngine, expr: &Expr) -> Result<bool> {
+    if let Some(c) = expr.constant() {
+        return Ok(matches!(c, OwnedDataValue::Bool(true)));
+    }
+    rc.read(|_, root| {
+        with_arena(|arena| {
+            exprs
+                .eval_in(expr.logic(), root, arena)
+                .map(|v| matches!(v, DataValue::Bool(true)))
+        })
+    })
+}
+
+/// An error record carrying a task's ids and the run's timestamp, as v3 fills
+/// them: what a built-in records, and what the recorder records for it.
+pub(crate) fn task_record(
+    code: &str,
+    message: String,
+    workflow_id: &str,
+    task_id: &str,
+    now: &str,
+) -> ErrorRecord {
+    let mut record = ErrorRecord::new(code, message);
+    record.workflow_id = Some(workflow_id.to_owned());
+    record.task_id = Some(task_id.to_owned());
+    record.timestamp = Some(now.to_owned());
+    record
 }
 
 #[cfg(test)]
@@ -223,14 +225,12 @@ mod tests {
     }
 
     #[test]
-    fn record_carries_the_ids_and_the_runs_timestamp() {
-        with_cx(true, |cx| {
-            let record = cx.record("X_FAILED", "it failed".into());
-            assert_eq!(
-                serde_json::to_string(&record).unwrap(),
-                r#"{"code":"X_FAILED","message":"it failed","path":null,"workflow_id":"w","task_id":"t","timestamp":"2026-10-14T00:00:00+00:00"}"#
-            );
-        });
+    fn task_record_carries_the_ids_and_the_runs_timestamp() {
+        let record = task_record("X_FAILED", "it failed".into(), "w", "t", NOW);
+        assert_eq!(
+            serde_json::to_string(&record).unwrap(),
+            r#"{"code":"X_FAILED","message":"it failed","path":null,"workflow_id":"w","task_id":"t","timestamp":"2026-10-14T00:00:00+00:00"}"#
+        );
     }
 
     #[test]

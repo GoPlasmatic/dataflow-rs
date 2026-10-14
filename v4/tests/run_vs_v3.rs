@@ -1,0 +1,571 @@
+extern crate dataflow_rs_v4 as dataflow_rs;
+
+// The engine against v3 over workflows without loops: groups, nested and
+// terminal groups, task, group and workflow conditions, every built-in, every
+// policy combination, and workflows chained through `metadata.progress`. Each
+// set of workflows is built once on each side and run over several messages;
+// what is compared is each message's wire text and the outcome's code.
+//
+// The text is normalised as the corpus normalises it: `processed_at`,
+// `engine_version` and the audit and error timestamps. One more difference
+// is removed, and it is break 4: v3 records a `WORKFLOW_ERROR` wrapper for a
+// workflow whose failure stops it or is stepped past (`continue_on_error` on
+// the workflow), and v4 records none. v3's `WORKFLOW_ERROR` records are
+// dropped before comparing.
+//
+// Only Active workflows appear without a channel: v3 also runs Paused ones
+// there, which break 7 removes.
+
+use dataflow_corpus::json::Json;
+use dataflow_corpus::normalise;
+use dataflow_rs::run::{AuditMode, RunStatus};
+use dataflow_rs::{Engine, Message, RunOptions};
+use datavalue::OwnedDataValue;
+use serde_json::{Value, json};
+
+/// One run: the message's seeds and the run's options.
+#[derive(Clone, Default)]
+struct Run {
+    payload: Value,
+    data: Value,
+    metadata: Value,
+    channel: Option<&'static str>,
+    bucket: Option<u8>,
+    audit: Option<usize>,
+}
+
+fn data(data: Value) -> Run {
+    Run {
+        data,
+        ..Run::default()
+    }
+}
+
+/// Adds `name` (its id) to the workflow and to every task that lacks one:
+/// v3 requires it on both (break 6), and a group needs none.
+fn named(mut workflow: Value) -> Value {
+    fn name(node: &mut Value) {
+        if node.get("name").is_none() {
+            node["name"] = node["id"].clone();
+        }
+    }
+    fn steps(node: &mut Value) {
+        if let Some(Value::Array(tasks)) = node.get_mut("tasks") {
+            for step in tasks {
+                if step.get("function").is_some() {
+                    name(step);
+                } else {
+                    steps(step);
+                }
+            }
+        }
+    }
+    name(&mut workflow);
+    steps(&mut workflow);
+    workflow
+}
+
+/// A `map` task appending `item` at `data.order`, so the order tasks ran in
+/// is in the message.
+fn mark(id: &str) -> Value {
+    json!({"id": id, "function": {"name": "map", "input": {
+        "mappings": [{"path": "data.order", "logic": id, "mode": "append"}]}}})
+}
+
+fn with(mut node: Value, extra: &[(&str, Value)]) -> Value {
+    for (key, value) in extra {
+        node[*key] = value.clone();
+    }
+    node
+}
+
+fn workflow(id: &str, priority: u32, extra: &[(&str, Value)], tasks: Vec<Value>) -> Value {
+    with(
+        json!({"id": id, "priority": priority, "tasks": tasks}),
+        extra,
+    )
+}
+
+/// `validation`: 400 unless `data.ok` is `true`.
+fn requires_ok(id: &str) -> Value {
+    json!({"id": id, "function": {"name": "validation", "input": {"rules": [
+        {"logic": {"==": [{"var": "data.ok"}, true]}, "message": "not ok"}]}}})
+}
+
+/// `map`: 500 over a string at `data.s`, 200 over an array.
+fn appends(id: &str) -> Value {
+    json!({"id": id, "function": {"name": "map", "input": {
+        "mappings": [{"path": "data.s", "logic": id, "mode": "append"}]}}})
+}
+
+/// `parse_xml`: `Err` unless `data.xml` is a document.
+fn parses_xml(id: &str) -> Value {
+    json!({"id": id, "function": {"name": "parse_xml", "input": {
+        "source": "data.xml", "target": "doc"}}})
+}
+
+/// Every combination of the three failures being on or off.
+fn failure_grid() -> Vec<Run> {
+    let mut runs = Vec::new();
+    for bits in 0..8 {
+        runs.push(data(json!({
+            "ok": bits & 1 == 0,
+            "s": if bits & 2 == 0 { json!([]) } else { json!("str") },
+            "xml": if bits & 4 == 0 { "<a>1</a>" } else { "<a>" },
+        })));
+    }
+    runs
+}
+
+/// Groups: nested, terminal, conditional and not, and task conditions.
+fn groups() -> (Vec<Value>, Vec<Run>) {
+    let cond = |key: &str| json!({"var": format!("data.{key}")});
+    let workflows = vec![
+        workflow(
+            "w",
+            0,
+            &[],
+            vec![
+                json!({"id": "A", "condition": cond("a"), "tasks": [
+                    mark("t1"),
+                    {"id": "B", "condition": cond("b"), "terminal": true, "tasks": [
+                        mark("t2"),
+                        with(mark("t3"), &[("condition", cond("t3"))]),
+                    ]},
+                    mark("t4"),
+                ]}),
+                with(mark("t5"), &[("condition", cond("t5"))]),
+                json!({"id": "C", "condition": cond("c"), "terminal": true, "tasks": [
+                    {"id": "D", "condition": cond("d"), "tasks": [mark("t6")]},
+                ]}),
+                mark("t7"),
+                // A group whose condition fails to evaluate is false.
+                json!({"id": "E", "condition": {"/": [1, {"var": "data.zero"}]}, "tasks": [
+                    mark("t8")]}),
+                mark("t9"),
+                // So is a task's.
+                with(
+                    mark("t10"),
+                    &[("condition", json!({"/": [1, {"var": "data.zero"}]}))],
+                ),
+                mark("t11"),
+            ],
+        ),
+        workflow("w2", 1, &[], vec![mark("u1")]),
+    ];
+    let mut runs = Vec::new();
+    for bits in 0..64u32 {
+        let flag = |i: u32| bits & (1 << i) != 0;
+        runs.push(data(json!({
+            "a": flag(0), "b": flag(1), "t3": flag(2), "t5": flag(3), "c": flag(4),
+            "d": flag(5), "zero": 0,
+        })));
+    }
+    // Truthy is not `true`.
+    runs.push(data(json!({"a": 1, "b": "yes", "c": [1], "zero": 0})));
+    (workflows, runs)
+}
+
+/// Every built-in, in one workflow, over messages that make each succeed
+/// and fail.
+fn builtins() -> (Vec<Value>, Vec<Run>) {
+    let task = |id: &str, name: &str, input: Value| json!({"id": id, "continue_on_error": true, "function": {"name": name, "input": input}});
+    let workflows = vec![workflow(
+        "w",
+        0,
+        &[],
+        vec![
+            task(
+                "parse",
+                "parse_json",
+                json!({"source": "payload", "target": "input"}),
+            ),
+            task(
+                "parse_inner",
+                "parse_json",
+                json!({"source": "payload.inner", "target": "inner"}),
+            ),
+            task(
+                "xml",
+                "parse_xml",
+                json!({"source": "data.xml", "target": "doc"}),
+            ),
+            task(
+                "map",
+                "map",
+                json!({"mappings": [
+                    {"path": "data.total", "logic": {"+": [{"var": "data.input.a"}, {"var": "data.input.b"}]}},
+                    {"path": "temp_data.seen", "logic": {"var": "data.input"}},
+                    {"path": "metadata.flag", "logic": true},
+                    {"path": "data.input.b", "unset": true},
+                    {"path": "data.list", "logic": {"var": "data.total"}, "mode": "append"},
+                    {"path": "data.maybe", "logic": {"if": [{"var": "data.input.a"}, "set", null]}},
+                ]}),
+            ),
+            task(
+                "validate",
+                "validation",
+                json!({"rules": [
+                    {"logic": {">": [{"var": "data.total"}, 0]}, "message": "total must be positive"},
+                    {"logic": {"==": [{"var": "data.input.kind"}, "order"]},
+                     "message": {"cat": ["bad kind: ", {"var": "data.input.kind"}]}},
+                    {"logic": {"/": [1, {"var": "data.zero"}]}, "message": "never"},
+                ]}),
+            ),
+            task(
+                "log",
+                "log",
+                json!({"level": "info", "message": {"cat": ["total ", {"var": "data.total"}]}}),
+            ),
+            task(
+                "gate",
+                "filter",
+                json!({"condition": {">": [{"var": "data.total"}, 1]}, "on_reject": "skip"}),
+            ),
+            task(
+                "json",
+                "publish_json",
+                json!({"source": "input", "target": "out_json"}),
+            ),
+            task(
+                "pretty",
+                "publish_json",
+                json!({"source": "data.input", "target": "out_pretty", "pretty": true}),
+            ),
+            task(
+                "missing",
+                "publish_json",
+                json!({"source": "absent", "target": "out_missing"}),
+            ),
+            task(
+                "xml_out",
+                "publish_xml",
+                json!({"source": "input", "target": "out_xml", "root_element": "doc"}),
+            ),
+            task(
+                "stop",
+                "filter",
+                json!({"condition": {"var": "data.go_on"}}),
+            ),
+            mark("after_stop"),
+        ],
+    )];
+    let run = |payload: Value, data: Value| Run {
+        payload,
+        data,
+        ..Run::default()
+    };
+    let runs = vec![
+        run(
+            json!({"a": 1, "b": 2, "kind": "order", "inner": {"x": [1, 2]}}),
+            json!({"xml": "<a><b>1</b></a>", "zero": 0, "go_on": true}),
+        ),
+        run(
+            json!({"a": 0, "b": 0, "kind": "refund"}),
+            json!({"xml": "<a>", "zero": 0}),
+        ),
+        run(
+            json!("{\"a\": 2, \"b\": 3}"),
+            json!({"xml": 5, "list": "not a list", "zero": 1}),
+        ),
+        run(Value::Null, json!({})),
+    ];
+    // A seeded progress: v3 keeps the key order of one with exactly its three
+    // keys and replaces any other. `parse_json` runs first and reads no view,
+    // so the first progress write is an owned one.
+    let mut runs = runs;
+    for progress in [
+        json!({"workflow_id": "x", "task_id": "y", "status_code": 1}),
+        json!({"task_id": "y", "status_code": 1, "workflow_id": "x", "extra": 0}),
+        json!({"task_id": "y", "status_code": 1, "other": "x"}),
+        json!(["not", "an", "object"]),
+    ] {
+        runs.push(Run {
+            payload: json!({"a": 1, "b": 2}),
+            metadata: json!({"progress": progress}),
+            ..Run::default()
+        });
+    }
+    (workflows, runs)
+}
+
+/// Every policy combination: the four v3 flag combinations on the tasks,
+/// each with and without `terminal`, under both workflow policies.
+fn policies() -> Vec<(Vec<Value>, Vec<Run>)> {
+    let mut sets = Vec::new();
+    for continue_on_error in [false, true] {
+        for halt_on in [false, true] {
+            for terminal in [false, true] {
+                for workflow_continues in [false, true] {
+                    let flags = |mut task: Value| {
+                        if continue_on_error {
+                            task["continue_on_error"] = json!(true);
+                        }
+                        if halt_on {
+                            task["halt_on"] = json!("failure");
+                        }
+                        task
+                    };
+                    let mut middle = flags(appends("m"));
+                    if terminal {
+                        middle["terminal"] = json!(true);
+                    }
+                    let workflows = vec![
+                        workflow(
+                            "w",
+                            0,
+                            &[("continue_on_error", json!(workflow_continues))],
+                            vec![
+                                flags(requires_ok("v")),
+                                mark("after_v"),
+                                middle,
+                                mark("after_m"),
+                                flags(parses_xml("x")),
+                                mark("after_x"),
+                            ],
+                        ),
+                        workflow("w2", 1, &[], vec![mark("next")]),
+                    ];
+                    sets.push((workflows, failure_grid()));
+                }
+            }
+        }
+    }
+    sets
+}
+
+/// Workflows chained through `metadata.progress`, with workflow conditions
+/// that pass, fail, error, and read the previous workflow's last task.
+fn chained() -> (Vec<Value>, Vec<Run>) {
+    let progress = |key: &str| json!({"var": format!("metadata.progress.{key}")});
+    let workflows = vec![
+        workflow(
+            "first",
+            0,
+            &[("continue_on_error", json!(true))],
+            vec![
+                mark("f1"),
+                with(
+                    requires_ok("check"),
+                    &[("condition", json!({"var": "data.check"}))],
+                ),
+                with(
+                    appends("risky"),
+                    &[("condition", json!({"var": "data.risky"}))],
+                ),
+            ],
+        ),
+        workflow(
+            "after_ok",
+            1,
+            &[(
+                "condition",
+                json!({"and": [
+                    {"==": [progress("workflow_id"), "first"]},
+                    {"==": [progress("status_code"), 200]},
+                ]}),
+            )],
+            vec![mark("ok1")],
+        ),
+        workflow(
+            "after_reject",
+            2,
+            &[("condition", json!({"==": [progress("status_code"), 400]}))],
+            vec![mark("rej1")],
+        ),
+        workflow(
+            "after_failure",
+            3,
+            &[("condition", json!({"==": [progress("status_code"), 500]}))],
+            vec![mark("fail1")],
+        ),
+        workflow(
+            "broken",
+            4,
+            &[("condition", json!({"/": [1, {"var": "data.zero"}]}))],
+            vec![mark("never")],
+        ),
+        workflow(
+            "last",
+            5,
+            &[(
+                "condition",
+                json!({"in": [progress("task_id"), ["ok1", "rej1", "fail1"]]}),
+            )],
+            vec![mark("end")],
+        ),
+    ];
+    let mut runs = Vec::new();
+    for check in [false, true] {
+        for risky in [false, true] {
+            for ok in [false, true] {
+                for s in [json!([]), json!("str")] {
+                    runs.push(data(json!({
+                        "check": check, "risky": risky, "ok": ok, "s": s, "zero": 0
+                    })));
+                }
+            }
+        }
+    }
+    // Seeded progress is not reset at run start (I63).
+    runs.push(Run {
+        data: json!({"zero": 0}),
+        metadata: json!({"progress": {"workflow_id": "x", "task_id": "y", "status_code": 1}}),
+        ..Run::default()
+    });
+    (workflows, runs)
+}
+
+/// Channels, rollouts and statuses, and an audit mode.
+fn selection() -> (Vec<Value>, Vec<Run>) {
+    let rollout = |start: u8, end: u8| json!({"bucket_start": start, "bucket_end": end});
+    let workflows = vec![
+        workflow(
+            "o1",
+            0,
+            &[("channel", json!("orders")), ("rollout", rollout(0, 50))],
+            vec![mark("o1")],
+        ),
+        workflow(
+            "o2",
+            1,
+            &[("channel", json!("orders")), ("rollout", rollout(50, 100))],
+            vec![mark("o2")],
+        ),
+        workflow(
+            "paused",
+            2,
+            &[("channel", json!("orders")), ("status", json!("paused"))],
+            vec![mark("paused")],
+        ),
+        workflow(
+            "p1",
+            3,
+            &[("channel", json!("payments"))],
+            vec![mark("p1"), mark("p2"), mark("p3")],
+        ),
+    ];
+    let mut runs = Vec::new();
+    for channel in [Some("orders"), Some("payments"), Some("nowhere")] {
+        for bucket in [None, Some(0), Some(49), Some(50), Some(99)] {
+            runs.push(Run {
+                channel,
+                bucket,
+                ..Run::default()
+            });
+        }
+    }
+    for audit in [0, 1, 2, 5] {
+        runs.push(Run {
+            channel: Some("payments"),
+            audit: Some(audit),
+            ..Run::default()
+        });
+    }
+    (workflows, runs)
+}
+
+/// v3's build of `workflows`, run over `run`: the normalised wire text,
+/// `WORKFLOW_ERROR` records dropped (break 4), and the outcome's code.
+async fn on_v3(engine: &dataflow_rs_v3::Engine, run: &Run) -> (String, String) {
+    let mut builder = dataflow_rs_v3::Message::builder()
+        .id("m")
+        .payload_json(&run.payload)
+        .data_json(&run.data)
+        .metadata_json(&run.metadata);
+    if let Some(bucket) = run.bucket {
+        builder = builder.routing_bucket(bucket);
+    }
+    if let Some(n) = run.audit {
+        builder = builder.audit_mode(dataflow_rs_v3::AuditMode::Last(n));
+    }
+    let mut message = builder.build();
+    let result = match run.channel {
+        Some(channel) => {
+            engine
+                .process_message_for_channel(channel, &mut message)
+                .await
+        }
+        None => engine.process_message(&mut message).await,
+    };
+    let code = match result {
+        Ok(()) => "ok".to_owned(),
+        Err(e) => dataflow_rs_v3::ErrorInfo::new(None, None, e).code,
+    };
+    (normalised(&message, true), code)
+}
+
+async fn on_v4(engine: &Engine, run: &Run) -> (String, String) {
+    let mut message = Message::from_parts(
+        OwnedDataValue::from(&run.payload),
+        OwnedDataValue::from(&run.data),
+        OwnedDataValue::from(&run.metadata),
+    )
+    .with_id("m");
+    let mut opts = RunOptions::default();
+    if let Some(channel) = run.channel {
+        opts = opts.channel(channel);
+    }
+    if let Some(bucket) = run.bucket {
+        opts = opts.routing_bucket(bucket);
+    }
+    if let Some(n) = run.audit {
+        opts = opts.audit(AuditMode::Last(n));
+    }
+    let result = engine.run_with(&mut message, &opts).await;
+    let code = match result.status() {
+        RunStatus::Stopped(e) => e.code().to_owned(),
+        _ => "ok".to_owned(),
+    };
+    (normalised(&message, false), code)
+}
+
+/// The wire text, normalised; without `WORKFLOW_ERROR` records when `v3`.
+fn normalised(message: &impl serde::Serialize, v3: bool) -> String {
+    let text = serde_json::to_string(message).expect("a message serializes");
+    let mut json = Json::from_text(&text).expect("a message parses");
+    if v3 && let Some(Json::Array(errors)) = json.get_mut("errors") {
+        errors.retain(|e| e.get("code") != Some(&Json::str("WORKFLOW_ERROR")));
+    }
+    normalise::message(&mut json, None);
+    json.to_text()
+}
+
+#[tokio::test]
+async fn linear_workflows_match_v3() {
+    let mut sets = vec![groups(), builtins(), chained(), selection()];
+    sets.extend(policies());
+    let mut compared = 0;
+    for (i, (workflows, runs)) in sets.into_iter().enumerate() {
+        let workflows: Vec<Value> = workflows.into_iter().map(named).collect();
+        let v3 = dataflow_rs_v3::Engine::builder()
+            .with_workflows(
+                workflows
+                    .iter()
+                    .map(|w| {
+                        dataflow_rs_v3::Workflow::from_json(&w.to_string())
+                            .unwrap_or_else(|e| panic!("v3 parses set {i}: {e}"))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .build()
+            .unwrap_or_else(|e| panic!("v3 builds set {i}: {e}"));
+        let v4 = workflows
+            .iter()
+            .fold(Engine::builder(), |b, w| b.workflow_json(w))
+            .build()
+            .unwrap_or_else(|issues| panic!("v4 builds set {i}: {issues:?}"));
+        for run in &runs {
+            let expected = on_v3(&v3, run).await;
+            let actual = on_v4(&v4, run).await;
+            assert_eq!(
+                actual, expected,
+                "set {i}, run over payload {} data {} metadata {} (channel {:?}, bucket {:?}, \
+                 audit {:?})",
+                run.payload, run.data, run.metadata, run.channel, run.bucket, run.audit
+            );
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, 237, "every run is compared");
+}

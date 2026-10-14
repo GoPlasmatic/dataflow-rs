@@ -2,9 +2,9 @@
 //!
 //! v3 runs the task as a one-task workflow through its engine; v4 calls the
 //! compiled call site's [`Builtin::call`] over a [`RunContext`], with no
-//! engine (Task 6 builds it), so this side stands in for the recorder: the
-//! status, the `TASK_STATUS_ERROR` of a 5xx and the record of an `Err`, as
-//! v3's `handle_task_result` makes them.
+//! engine, so this side stands in for the recorder: the status, the
+//! `TASK_STATUS_ERROR` of a 5xx and the record of an `Err` come from the
+//! engine's own [`decide`] and [`task_record`], so the two cannot drift.
 //!
 //! What is compared is serialized JSON text, so key order counts. The
 //! engine's own writes, `metadata.processed_at`, `metadata.engine_version`
@@ -14,8 +14,9 @@
 use super::Builtin;
 use crate::base::{Change, ErrorRecord};
 use crate::def::{ParseOptions, parse};
-use crate::function::{Outcome, Registry, SyncCtx};
+use crate::function::{Registry, SyncCtx, task_record};
 use crate::program::{Callee, CompileOptions, Compiled};
+use crate::run::policy::decide;
 use crate::state::{RunContext, Tuning};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
@@ -209,7 +210,9 @@ impl V4Task {
         }
     }
 
-    /// One call over `rc`, with the buffers the recorder reads.
+    /// One call over `rc`, with the buffers the recorder reads, and the
+    /// record the recorder adds. Its status, `None` for a skip, and the code
+    /// of an `Err`.
     pub(crate) fn call<'p>(
         &'p self,
         rc: &mut RunContext<'_, 'p>,
@@ -217,34 +220,26 @@ impl V4Task {
         capture: bool,
         changes: &mut Vec<Change>,
         errors: &mut Vec<ErrorRecord>,
-    ) -> crate::Result<Outcome> {
+    ) -> (Option<u16>, Option<String>) {
         let workflow = &self.compiled.workflow;
-        let mut cx = SyncCtx {
+        let (workflow_id, task_id) = (&workflow.id, &workflow.tasks[0].id);
+        let outcome = self.builtin().call(&mut SyncCtx {
             rc,
             exprs: workflow.registry.exprs(),
             payload,
-            workflow_id: &workflow.id,
-            task_id: &workflow.tasks[0].id,
+            workflow_id,
+            task_id,
             capture,
             changes,
-            errors,
+            errors: &mut *errors,
             now: NOW,
-        };
-        let outcome = self.builtin().call(&mut cx);
-        // The recorder's record, as v3's `handle_task_result` pushes it.
-        let record = match &outcome {
-            Ok(Outcome::Status(s)) if *s >= 500 => Some(cx.record(
-                "TASK_STATUS_ERROR",
-                format!("Task {} returned status {s}", cx.task_id),
-            )),
-            Err(e) => Some(cx.record(
-                e.code(),
-                format!("Task {} error: {}", cx.task_id, e.record_text()),
-            )),
-            Ok(_) => None,
-        };
-        cx.errors.extend(record);
-        outcome
+        });
+        let error_code = outcome.as_ref().err().map(|e| e.code().to_owned());
+        let decision = decide(&workflow.calls[0], task_id, outcome);
+        if let Some((code, message)) = decision.record {
+            errors.push(task_record(&code, message, workflow_id, task_id, NOW));
+        }
+        (decision.status, error_code)
     }
 
     /// Runs the task over `context` (and `payload`).
@@ -253,24 +248,14 @@ impl V4Task {
         let mut slot = seed(context);
         let mut changes = Vec::new();
         let mut errors = Vec::new();
-        let outcome = {
+        let (status, error_code) = {
             let mut rc = RunContext::new(&mut slot, Tuning::default());
-            let outcome = self.call(&mut rc, &payload, capture, &mut changes, &mut errors);
+            let called = self.call(&mut rc, &payload, capture, &mut changes, &mut errors);
             rc.finish();
-            outcome
-        };
-        let (status, error_code) = match &outcome {
-            Ok(Outcome::Ok) => (Some(200), None),
-            Ok(Outcome::Status(s)) => (Some(*s), None),
-            Ok(Outcome::Halt) => (Some(299), None),
-            Ok(Outcome::Skip) => (None, None),
-            Err(e) => (Some(500), Some(e.code().to_owned())),
+            called
         };
         // A skip and an `Err` record no changes, as v3's recorder drops them.
-        if !matches!(
-            outcome,
-            Ok(Outcome::Ok | Outcome::Status(_) | Outcome::Halt)
-        ) {
+        if status.is_none() || error_code.is_some() {
             changes.clear();
         }
         for error in &mut errors {

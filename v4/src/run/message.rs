@@ -141,11 +141,11 @@ impl Serialize for Message {
 
 /// The parts a run borrows separately (05: only `run` holds a `&mut Message`).
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the engine uses it from Task 6")
-)]
 pub(crate) struct Parts<'a> {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "phase 6's observer events carry the message id")
+    )]
     pub(crate) id: &'a str,
     pub(crate) payload: &'a OwnedDataValue,
     pub(crate) context: &'a mut OwnedDataValue,
@@ -228,10 +228,6 @@ impl Message {
         serde_json::to_value(self).expect("a message always serializes")
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the engine uses it from Task 6")
-    )]
     pub(crate) fn parts(&mut self) -> Parts<'_> {
         let Self {
             id,
@@ -252,10 +248,6 @@ impl Message {
 
 /// Appends `entry` under `mode`, trimming `Last(n)` in v3's batches: the Vec
 /// holds up to `2n` entries until [`finish_audit`].
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the engine uses it from Task 6")
-)]
 pub(crate) fn record_audit(audit: &mut Vec<AuditEntry>, mode: AuditMode, entry: AuditEntry) {
     match mode {
         AuditMode::Full => audit.push(entry),
@@ -271,10 +263,6 @@ pub(crate) fn record_audit(audit: &mut Vec<AuditEntry>, mode: AuditMode, entry: 
 }
 
 /// Trims `Last(n)` to exactly `n`: the message no longer carries the mode.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the engine uses it from Task 6")
-)]
 pub(crate) fn finish_audit(audit: &mut Vec<AuditEntry>, mode: AuditMode) {
     match mode {
         AuditMode::Full => {}

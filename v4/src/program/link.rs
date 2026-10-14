@@ -58,13 +58,16 @@ impl Compiler {
             u32::try_from(workflows.len()).expect("a program holds at most u32::MAX workflows");
 
         let mut infos = Vec::with_capacity(workflows.len());
+        let mut workflow_ids = Vec::with_capacity(workflows.len());
         let mut tasks = Vec::new();
+        let mut task_ids = Vec::new();
         let mut task_base = Vec::with_capacity(workflows.len());
         let mut all = Vec::new();
         let mut by_channel: HashMap<String, Vec<WorkflowIx>> = HashMap::new();
         for (ix, w) in (0..count).map(WorkflowIx::new).zip(&workflows) {
             task_base
                 .push(u32::try_from(tasks.len()).expect("a program holds at most u32::MAX tasks"));
+            workflow_ids.push(Arc::from(w.id.as_str()));
             infos.push(WorkflowInfo {
                 ix,
                 id: w.id.clone(),
@@ -78,6 +81,7 @@ impl Compiler {
                 let task = TaskIx::new(
                     u32::try_from(tasks.len()).expect("a program holds at most u32::MAX tasks"),
                 );
+                task_ids.push(Arc::from(meta.id.as_str()));
                 tasks.push(TaskInfo {
                     ix: task,
                     id: meta.id.clone(),
@@ -100,7 +104,9 @@ impl Compiler {
                 options: self.options.clone(),
                 workflows,
                 infos,
+                workflow_ids,
                 tasks,
+                task_ids,
                 task_base,
                 all,
                 by_channel,
@@ -112,11 +118,15 @@ impl Compiler {
 struct Inner {
     id: ProgramId,
     registry: Registry,
-    #[expect(dead_code, reason = "kept to recompile on a reload, in phase 6")]
+    /// What the program was compiled with, for [`Engine::compiler`](crate::run::Engine::compiler).
     options: CompileOptions,
     workflows: Vec<CompiledWorkflow>,
     infos: Vec<WorkflowInfo>,
+    /// Each workflow's id, shared by the audit entries a run records.
+    workflow_ids: Vec<Arc<str>>,
     tasks: Vec<TaskInfo>,
+    /// Each task's id, indexed by [`TaskIx`], shared likewise.
+    task_ids: Vec<Arc<str>>,
     task_base: Vec<u32>,
     /// Every Active workflow, in `WorkflowIx` order.
     all: Vec<WorkflowIx>,
@@ -165,20 +175,12 @@ impl Program {
     }
 
     /// The compiled workflow at `ix`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the runtime in phase 4")
-    )]
     pub(crate) fn compiled(&self, ix: WorkflowIx) -> &CompiledWorkflow {
         &self.inner.workflows[ix.index() as usize]
     }
 
     /// The Active workflows, in `WorkflowIx` order: those on `channel`, or
     /// every one for `None`. An unknown channel has none.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the runtime in phase 4")
-    )]
     pub(crate) fn active(&self, channel: Option<&str>) -> &[WorkflowIx] {
         match channel {
             None => &self.inner.all,
@@ -187,12 +189,24 @@ impl Program {
     }
 
     /// The `TaskIx` of the workflow's first task.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the runtime in phase 4")
-    )]
     pub(crate) fn task_base(&self, ix: WorkflowIx) -> u32 {
         self.inner.task_base[ix.index() as usize]
+    }
+
+    /// The workflow's id and its tasks' ids, by task row, as the shared
+    /// strings an audit entry holds: cloning one is a count, not a copy.
+    pub(crate) fn ids(&self, ix: WorkflowIx) -> (&Arc<str>, &[Arc<str>]) {
+        let base = self.task_base(ix) as usize;
+        let count = self.compiled(ix).tasks.len();
+        (
+            &self.inner.workflow_ids[ix.index() as usize],
+            &self.inner.task_ids[base..base + count],
+        )
+    }
+
+    /// The options the program was compiled with.
+    pub(crate) fn options(&self) -> &CompileOptions {
+        &self.inner.options
     }
 }
 

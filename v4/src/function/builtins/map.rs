@@ -868,7 +868,7 @@ mod tests {
                 &mut changes,
                 &mut errors,
             );
-            assert!(matches!(outcome, Ok(Outcome::Ok)), "{outcome:?}");
+            assert_eq!(outcome, (Some(200), None));
             let stats = rc.stats();
             let used = rc.read(|owner, _| arena::used(&owner.arena));
             rc.finish();
@@ -938,7 +938,7 @@ mod tests {
                 &mut changes,
                 &mut errors,
             );
-            assert!(matches!(outcome, Ok(Outcome::Ok)), "{outcome:?}");
+            assert_eq!(outcome, (Some(200), None));
             // Under capture the mark holds the owned value the change was
             // built from; without it, only the view knows the value.
             for path in ["data.a", "temp_data.k", "data.list"] {
