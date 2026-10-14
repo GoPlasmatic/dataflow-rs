@@ -21,8 +21,7 @@ dataflow-rs = { package = "dataflow-rs-v4", path = "../../v4" }
 # The `log` built-in's lines, captured for a case with `engine.logs`.
 log = "0.4"
 serde_json = "1.0"
-
-[dev-dependencies]
+# `script` yields through `tokio::task::yield_now`, as v3's does.
 tokio = { version = "1", features = ["rt", "macros"] }
 
 [lints]
