@@ -62,8 +62,12 @@ impl Function for Parent {
     async fn call(&self, ctx: &mut Ctx<'_>, _: &()) -> Result<Outcome> {
         let token = ctx.cancel().map(CancelToken::child);
         let mut opts = RunOptions::default();
-        opts.deadline = ctx.deadline();
-        opts.cancel = token.as_ref();
+        if let Some(deadline) = ctx.deadline() {
+            opts = opts.deadline(deadline);
+        }
+        if let Some(token) = &token {
+            opts = opts.cancel(token);
+        }
         let child = self.nested.run_with(&mut message(), &opts).await;
         let saw = (
             ctx.deadline(),
