@@ -62,3 +62,4 @@ tokio = { version = "1", features = ["full", "test-util"] }
 # The gate's ports (`examples/v4_*.rs`), at the versions v3's examples use.
 futures = "0.3"
 env_logger = "0.11"
+num_cpus = "1.17"

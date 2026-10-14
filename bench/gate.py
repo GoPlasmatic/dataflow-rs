@@ -8,9 +8,9 @@ this reads only that line.
         Build every example in release from a clean tree, copy the 13 gate
         binaries out of target/, and write DIR/build.json (commit, rustc, date).
         With --v4, build `cargo build --release -p dataflow-rs-v4 --examples`
-        instead and copy the eight sync ports, target/release/examples/v4_<name>,
-        to DIR/<name>: a v4 directory then holds the names a v3 one does, and
-        `compare` reads the two alike.
+        instead and copy the ports v4 has (V4_BENCHES),
+        target/release/examples/v4_<name>, to DIR/<name>: a v4 directory then
+        holds the names a v3 one does, and `compare` reads the two alike.
 
     gate.py baseline --bins DIR --rounds N --out FILE [--only a,b]
         Run the binaries round-robin for N + 1 rounds, discard round 0 as
@@ -29,9 +29,12 @@ this reads only that line.
         (FASTER_ROWS) reads faster when the median ratio is below 1 - noise
         and NOT FASTER otherwise, but only when A's build.json says v3 and B's
         says v4; between two builds of one engine every row is judged
-        better / not slower / WORSE. A metric only one side reports is listed
-        as such and not judged. Exit status is 1 if any verdict is WORSE or
-        NOT FASTER.
+        better / not slower / WORSE. A bench may judge its metrics apart
+        (METRIC_RULES): a metric takes the rule of the first prefix of its
+        name listed there, else its bench's, and an "info" metric prints its
+        medians and ratio with no verdict and never fails the gate. A metric
+        only one side reports is listed as such and not judged. Exit status is
+        1 if any verdict is WORSE or NOT FASTER.
 
 Both commands run every binary under `/usr/bin/time -l` and keep, for every
 run, the instructions retired and cycles elapsed it prints (macOS). `compare`
@@ -66,8 +69,8 @@ BENCHES = [
 ]
 
 
-# The eight sync benchmarks v4 ports in phase 4 (`v4/examples/v4_<name>.rs`),
-# in BENCHES order. The other five need host handlers, which v4 gets later.
+# The benchmarks v4 ports (`v4/examples/v4_<name>.rs`), in BENCHES order: the
+# eight sync ones of phase 4, then phase 5's host-call rows as they land.
 V4_BENCHES = [
     "realistic_benchmark",
     "benchmark",
@@ -75,12 +78,24 @@ V4_BENCHES = [
     "micro_aggregate_bench",
     "micro_subtree_write_bench",
     "micro_multiworkflow_bench",
+    "async_handler_benchmark",
     "map_performance_test",
     "loop_scaling",
+    "large_context_handler",
 ]
 
 # The rows whose gate is "Faster" rather than "Not slower" (design 06).
 FASTER_ROWS = {"loop_scaling"}
+
+# Per-metric rules, for a bench whose metrics are not all judged alike (I95):
+# a metric takes the rule of the first prefix of its name listed under its
+# bench, else its bench's. "faster" is FASTER_ROWS' rule for one metric;
+# "info" reports the metric without a verdict. `large_context_handler`'s
+# write-only floor is judged where it is gated, by
+# `async_handler_benchmark.marginal`.
+METRIC_RULES = {
+    "large_context_handler": {"with_view": "faster", "per_field": "faster", "write_only": "info"},
+}
 
 # The smallest noise `compare` allows, in percent.
 NOISE_FLOOR_PCT = 3.0
@@ -250,6 +265,15 @@ def half_iqr_pct(ratios):
     return (q3 - q1) / 2 * 100
 
 
+def rule(name, metric):
+    """The rule `metric` of bench `name` is judged by: "faster", "not slower"
+    or "info" (METRIC_RULES, else the bench's)."""
+    for prefix, judged in METRIC_RULES.get(name, {}).items():
+        if metric.startswith(prefix):
+            return judged
+    return "faster" if name in FASTER_ROWS else "not slower"
+
+
 def verdict(faster_row, median_ratio, noise_pct):
     """B against A from the median of the per-round ratios (I80)."""
     noise = noise_pct / 100
@@ -327,9 +351,13 @@ def compare(args):
             median_ratio = statistics.median(ratios)
             half_iqr = half_iqr_pct(ratios)
             noise = max(NOISE_FLOOR_PCT, half_iqr)
-            faster = faster_rules and name in FASTER_ROWS
+            judged = rule(name, metric)
+            if judged == "info":
+                said = "info"
+            else:
+                said = verdict(faster_rules and judged == "faster", median_ratio, noise)
             row.update(
-                unit=ma["unit"], better=ma["better"], verdict=verdict(faster, median_ratio, noise),
+                unit=ma["unit"], better=ma["better"], verdict=said,
                 ratios=ratios, median_ratio=median_ratio, half_iqr_pct=half_iqr, noise_pct=noise,
                 a={"runs": va, "median": statistics.median(va)},
                 b={"runs": vb, "median": statistics.median(vb)},
@@ -379,6 +407,7 @@ def compare(args):
                 "order": names,
                 "statistic": "median of the per-round ratios B/A, inverted where higher is better (I80)",
                 "noise": f"max({NOISE_FLOOR_PCT:g}%, half the inter-quartile range of the ratios)",
+                "rules": {"faster_rows": sorted(FASTER_ROWS), "metric_rules": METRIC_RULES},
                 "counters": f"{TIME} -l, informational",
             },
             "rows": rows,

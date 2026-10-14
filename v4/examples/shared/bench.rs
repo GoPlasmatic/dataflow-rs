@@ -1,5 +1,5 @@
 //! Measurement helpers for v4's ports of the performance gate's benchmarks: v3's
-//! `examples/shared/bench.rs` less `spawned`, which no port of this phase uses.
+//! `examples/shared/bench.rs`, with `spawned` over `Engine::run`.
 //!
 //! Not an example: a benchmark pulls it in with
 //! `#[path = "shared/bench.rs"] mod bench;`, and no single benchmark uses all
@@ -7,8 +7,12 @@
 
 #![allow(dead_code)]
 
+use dataflow_rs_v4::datavalue::OwnedDataValue;
+use dataflow_rs_v4::{Engine, Message};
+use futures::future::join_all;
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// Latencies, one per message, summarised as the three figures the gate
 /// compares: the mean, P50 and P99.
@@ -42,6 +46,40 @@ impl Samples {
         println!("{label:<36} mean {mean:>10.2}   p50 {p50:>10.2}   p99 {p99:>10.2}   µs/{unit}");
         (mean, p50, p99)
     }
+}
+
+/// Runs `warmup` untimed messages, then `total` timed ones, each in its own
+/// tokio task, as `realistic_benchmark` does. Returns the latencies and the
+/// throughput in messages per second.
+pub async fn spawned(
+    engine: &Engine,
+    payload: &Arc<OwnedDataValue>,
+    warmup: usize,
+    total: usize,
+) -> (Samples, f64) {
+    let spawn = |count: usize| {
+        (0..count)
+            .map(|_| {
+                let engine = engine.clone();
+                let payload = Arc::clone(payload);
+                tokio::spawn(async move {
+                    let start = Instant::now();
+                    let mut message = Message::new(payload);
+                    engine.run(&mut message).await.into_result().unwrap();
+                    start.elapsed()
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    join_all(spawn(warmup)).await;
+
+    let mut samples = Samples::with_capacity(total);
+    let start = Instant::now();
+    for latency in join_all(spawn(total)).await {
+        samples.push(latency.expect("a benchmark task panicked"));
+    }
+    let throughput = total as f64 / start.elapsed().as_secs_f64();
+    (samples, throughput)
 }
 
 /// One catalogue record: about 200 bytes of JSON in 14 nodes.
