@@ -148,7 +148,14 @@ mod tests {
         let input = json!({"level": "warn", "message": broken, "fields": {"x": broken}});
         let (v3, v4) = both(Level::Warn, &input, &context());
         assert_eq!(v4, v3);
-        assert_eq!(v4.1, ["WARN: <eval error> [x=<eval error>]"]);
+        assert_eq!(
+            v4.1,
+            [
+                "ERROR: Log: Failed to evaluate expression",
+                "ERROR: Log: Failed to evaluate expression",
+                "WARN: <eval error> [x=<eval error>]"
+            ]
+        );
         assert_eq!(v4.0.status, Some(200));
     }
 

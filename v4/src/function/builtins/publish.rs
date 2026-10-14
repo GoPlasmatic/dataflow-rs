@@ -118,9 +118,9 @@ fn write(cx: &mut SyncCtx<'_, '_, '_>, target: &Path, text: String) {
 
 #[cfg(test)]
 mod tests {
-    use crate::expr::Path;
-    use crate::function::builtins::differential::{Observed, same, v4_task};
-    use crate::state::{RunContext, Tuning};
+    use crate::function::builtins::differential::{
+        Observed, same, v3_context_text, v4_context_text,
+    };
     use datavalue::OwnedDataValue;
     use serde_json::{Value, json};
 
@@ -156,39 +156,25 @@ mod tests {
         );
     }
 
-    /// The text `publish_json` writes at `data.out` from `{"z": 1, "a": 2}`,
-    /// built from JSON text so the keys stay in that order.
-    fn published(pretty: bool) -> String {
-        let task = v4_task(
-            "publish_json",
-            &json!({"source": "obj", "target": "out", "pretty": pretty}),
-        )
-        .expect("compiles");
-        let mut slot = OwnedDataValue::from_json(
-            r#"{"data":{"obj":{"z":1,"a":2}},"metadata":{},"temp_data":{}}"#,
-        )
-        .expect("JSON");
-        let mut rc = RunContext::new(&mut slot, Tuning::default());
-        task.call(
-            &mut rc,
-            &OwnedDataValue::Null,
-            false,
-            &mut Vec::new(),
-            &mut Vec::new(),
-        )
-        .expect("publishes");
-        rc.finish();
-        let out: Path = "data.out".parse().expect("a path");
-        match out.get(&slot) {
-            Some(OwnedDataValue::String(text)) => text.clone(),
-            other => panic!("{other:?}"),
+    #[tokio::test]
+    async fn compact_keeps_the_sources_key_order_and_pretty_sorts_the_keys() {
+        // Built from JSON text so the keys stay out of order; v3 decides the text.
+        let text = r#"{"data":{"obj":{"z":1,"a":{"y":2,"b":[3,{"q":1,"c":2}]}}},"metadata":{},"temp_data":{}}"#;
+        let context = || OwnedDataValue::from_json(text).expect("JSON");
+        for pretty in [false, true] {
+            let input = json!({"source": "obj", "target": "out", "pretty": pretty});
+            let v3 = v3_context_text("publish_json", &input, context()).await;
+            let v4 = v4_context_text("publish_json", &input, context());
+            assert_eq!(v4, v3, "pretty {pretty}");
         }
-    }
-
-    #[test]
-    fn compact_keeps_the_sources_key_order_and_pretty_sorts_the_keys() {
-        assert_eq!(published(false), r#"{"z":1,"a":2}"#);
-        assert_eq!(published(true), "{\n  \"a\": 2,\n  \"z\": 1\n}");
+        // Compact is in the source's order, pretty is sorted: the two differ.
+        let compact = json!({"source": "obj", "target": "out"});
+        let pretty = json!({"source": "obj", "target": "out", "pretty": true});
+        assert_ne!(
+            v4_context_text("publish_json", &compact, context()),
+            v4_context_text("publish_json", &pretty, context())
+        );
+        assert!(v4_context_text("publish_json", &compact, context()).contains(r#"\"z\":1,\"a\""#));
     }
 
     #[tokio::test]
@@ -290,6 +276,56 @@ mod tests {
             )
             .await;
             assert!(observed.context.contains('1'), "{}", observed.context);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_remainder_publishes_the_whole_of_data_as_in_v3() {
+        let context = json!({"data": {"e": "", "d": "data.", "k": 1, "o": {"x": 1}}});
+        for function in ["publish_json", "publish_xml"] {
+            for source in [
+                json!(""),
+                json!("data."),
+                json!({"cat": ["data.", ""]}),
+                json!({"var": "data.e"}),
+                json!({"cat": ["data.", {"var": "data.e"}]}),
+                json!({"var": "data.d"}),
+            ] {
+                let input = json!({"source": source, "target": "out"});
+                let observed = same(function, &input, &Value::Null, &context).await;
+                assert_eq!(observed.status, Some(200), "{function} {source}");
+            }
+        }
+        // A key named `""` wins over the whole of `data`, as in v3's first step.
+        let context = json!({"data": {"": {"only": 1}, "k": 2}});
+        let input = json!({"source": "", "target": "out"});
+        same("publish_json", &input, &Value::Null, &context).await;
+    }
+
+    #[tokio::test]
+    async fn a_computed_parameter_that_fails_to_evaluate_records_v3s_text() {
+        let context = json!({"data": {"word": "abc", "obj": {"a": 1}}});
+        let broken = json!({"+": [{"var": "data.word"}, "x"]});
+        for (function, input) in [
+            ("publish_json", json!({"source": broken, "target": "out"})),
+            ("publish_json", json!({"source": "obj", "target": broken})),
+            ("publish_xml", json!({"source": broken, "target": "out"})),
+            ("publish_xml", json!({"source": "obj", "target": broken})),
+            (
+                "publish_xml",
+                json!({"source": "obj", "target": "out", "root_element": broken}),
+            ),
+        ] {
+            let observed = same(function, &input, &Value::Null, &context).await;
+            assert_eq!(observed.status, Some(500), "{function} {input}");
+            assert_eq!(observed.error_code.as_deref(), Some("LOGIC_ERROR"));
+            assert!(
+                observed
+                    .errors
+                    .contains("Task t error: Logic evaluation error: "),
+                "{}",
+                observed.errors
+            );
         }
     }
 }

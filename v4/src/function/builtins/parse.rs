@@ -312,4 +312,68 @@ mod tests {
             );
         }
     }
+
+    #[tokio::test]
+    async fn an_empty_remainder_names_its_root_as_in_v3() {
+        // `get_nested_value(x, "")` is `x`: `payload.` is the payload, `data.` is `data`.
+        let context = json!({"data": {"e": "", "p": "payload.", "d": "data.", "k": 1}});
+        for source in [
+            json!("payload."),
+            json!("data."),
+            json!({"cat": ["payload.", ""]}),
+            json!({"cat": ["data.", ""]}),
+            json!({"cat": ["payload.", {"var": "data.e"}]}),
+            json!({"cat": ["data.", {"var": "data.e"}]}),
+            json!({"var": "data.p"}),
+            json!({"var": "data.d"}),
+        ] {
+            let input = json!({"source": source, "target": "out"});
+            let observed = same("parse_json", &input, &payload(), &context).await;
+            assert_eq!(observed.status, Some(200), "{source}");
+        }
+        let whole = same(
+            "parse_json",
+            &json!({"source": "data.", "target": "out"}),
+            &payload(),
+            &context,
+        )
+        .await;
+        assert!(
+            whole.context.contains(r#""out":{"d":"data.""#),
+            "{}",
+            whole.context
+        );
+        // And for XML.
+        let context = json!({"data": {"e": ""}});
+        for source in [
+            json!("payload."),
+            json!({"cat": ["payload.", {"var": "data.e"}]}),
+        ] {
+            let input = json!({"source": source, "target": "out"});
+            same("parse_xml", &input, &json!("<a>1</a>"), &context).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_computed_parameter_that_fails_to_evaluate_records_v3s_text() {
+        let context = json!({"data": {"word": "abc"}});
+        let broken = json!({"+": [{"var": "data.word"}, "x"]});
+        for input in [
+            json!({"source": broken, "target": "out"}),
+            json!({"source": "payload", "target": broken}),
+        ] {
+            for function in ["parse_json", "parse_xml"] {
+                let observed = same(function, &input, &json!("<a>1</a>"), &context).await;
+                assert_eq!(observed.status, Some(500), "{function} {input}");
+                assert_eq!(observed.error_code.as_deref(), Some("LOGIC_ERROR"));
+                assert!(
+                    observed
+                        .errors
+                        .contains("Task t error: Logic evaluation error: "),
+                    "{}",
+                    observed.errors
+                );
+            }
+        }
+    }
 }

@@ -137,6 +137,38 @@ impl V3Task {
     }
 }
 
+/// v3's context text after one task over `context` as it is, so a tree whose
+/// keys are not sorted (a `serde_json::Value` always sorts them) can be used.
+pub(crate) async fn v3_context_text(
+    function: &str,
+    input: &Value,
+    context: OwnedDataValue,
+) -> String {
+    let task = v3_task(function, input).unwrap_or_else(|| panic!("v3 builds {function}"));
+    let mut message = dataflow_rs_v3::Message::builder().build();
+    message.context = context;
+    let _ = task.engine.process_message(&mut message).await;
+    context_text(message.context)
+}
+
+/// [`v3_context_text`]'s v4 twin: the context text after one call.
+pub(crate) fn v4_context_text(function: &str, input: &Value, context: OwnedDataValue) -> String {
+    let task = v4_task(function, input).unwrap_or_else(|| panic!("v4 compiles {function}"));
+    let mut slot = context;
+    {
+        let mut rc = RunContext::new(&mut slot, Tuning::default());
+        let _ = task.call(
+            &mut rc,
+            &OwnedDataValue::Null,
+            false,
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
+        rc.finish();
+    }
+    context_text(slot)
+}
+
 /// Run `function` with `input` over `context` (and `payload`) on v3, as a
 /// one-task workflow.
 pub(crate) async fn v3(
@@ -205,7 +237,10 @@ impl V4Task {
                 "TASK_STATUS_ERROR",
                 format!("Task {} returned status {s}", cx.task_id),
             )),
-            Err(e) => Some(cx.record(e.code(), format!("Task {} error: {e}", cx.task_id))),
+            Err(e) => Some(cx.record(
+                e.code(),
+                format!("Task {} error: {}", cx.task_id, e.record_text()),
+            )),
             Ok(_) => None,
         };
         cx.errors.extend(record);
@@ -306,6 +341,9 @@ pub(crate) mod logs {
     /// The target the `log` built-in emits under.
     const TARGET: &str = "dataflow::log";
 
+    /// What the built-in logs, on its own target, when an expression fails.
+    const FAILED: &str = "Log: Failed to evaluate expression";
+
     /// The level captured, and the lines so far. `None` enables nothing.
     static STATE: Mutex<(Option<Level>, Vec<String>)> = Mutex::new((None, Vec::new()));
     /// The one global logger, installed once.
@@ -318,22 +356,33 @@ pub(crate) mod logs {
 
     impl Log for Capture {
         fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-            metadata.target() == TARGET
-                && STATE
-                    .lock()
-                    .expect("the log state")
-                    .0
-                    .is_some_and(|level| metadata.level() <= level)
+            let level = STATE.lock().expect("the log state").0;
+            // The `dataflow::log` lines up to the level, and any `error`: the
+            // built-in reports a failing expression on its own module's
+            // target, which `log` below keeps only for that one line.
+            level.is_some_and(|level| {
+                if metadata.target() == TARGET {
+                    metadata.level() <= level
+                } else {
+                    metadata.level() == Level::Error
+                }
+            })
         }
 
         fn log(&self, record: &Record<'_>) {
-            if self.enabled(record.metadata()) {
-                STATE.lock().expect("the log state").1.push(format!(
-                    "{}: {}",
-                    record.level(),
-                    record.args()
-                ));
+            if !self.enabled(record.metadata()) {
+                return;
             }
+            let line = if record.target() == TARGET {
+                format!("{}: {}", record.level(), record.args())
+            } else if record.args().to_string().starts_with(FAILED) {
+                // The error's debug text differs between v3 and v4, so the
+                // line is kept without it: that one fired is what counts.
+                format!("{}: {FAILED}", record.level())
+            } else {
+                return;
+            };
+            STATE.lock().expect("the log state").1.push(line);
         }
 
         fn flush(&self) {}

@@ -83,8 +83,12 @@ impl ParseFrom {
     /// A name that is none of those, such as `extra.x`, whose root is not
     /// `data`, `metadata` or `temp_data`.
     pub(crate) fn parse(s: &str) -> Result<Self> {
-        if s == "payload" {
+        // v3's empty remainder names the root it follows: `get_nested_value(x, "")` is `x`.
+        if s == "payload" || s == "payload." {
             return Ok(Self::Payload);
+        }
+        if s == "data." {
+            return Path::from_str("data").map(Self::Context);
         }
         if let Some(rest) = s.strip_prefix("payload.") {
             return Path::from_str(&format!("data.{rest}")).map(Self::PayloadPath);
@@ -315,9 +319,15 @@ impl PublishSource {
     /// The primary's, as `DataPath::resolve`'s.
     pub(crate) fn resolve(s: &str) -> Result<(Path, Option<Path>)> {
         let primary = DataPath::resolve(s)?;
-        let fallback = s
-            .strip_prefix("data.")
-            .and_then(|rest| DataPath::resolve(rest).ok());
+        // v3's empty remainder is `data` itself (`get_nested_value(data, "")`),
+        // so a source of `""` or `"data."` falls back to the whole of `data`.
+        let root = || Path::from_str("data").ok();
+        let fallback = match s.strip_prefix("data.") {
+            _ if s.is_empty() => root(),
+            Some("") => root(),
+            Some(rest) => DataPath::resolve(rest).ok(),
+            None => None,
+        };
         Ok((primary, fallback))
     }
 }

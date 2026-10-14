@@ -116,6 +116,28 @@ impl Error {
     }
 }
 
+impl Error {
+    /// The text of this error's record: what v3's `Display` prints for the
+    /// variant `kind` corresponds to (I77), which the recorder wraps as
+    /// "Task {id} error: {text}". A kind v3 has no variant for, and a service
+    /// error (v3's display is the bare message), give the message alone.
+    #[cfg_attr(not(test), expect(dead_code, reason = "Task 6's recorder writes it"))]
+    pub(crate) fn record_text(&self) -> Cow<'_, str> {
+        let prefix = match &self.kind {
+            ErrorKind::Eval => "Logic evaluation error: ",
+            ErrorKind::Parse => "Deserialization error: ",
+            ErrorKind::TimedOut => "Timeout error: ",
+            ErrorKind::FunctionNotFound => "Function not found: ",
+            ErrorKind::Budget
+            | ErrorKind::Config
+            | ErrorKind::Compile
+            | ErrorKind::Cancelled
+            | ErrorKind::Service { .. } => return Cow::Borrowed(&self.message),
+        };
+        Cow::Owned(format!("{prefix}{}", self.message))
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)
@@ -202,6 +224,34 @@ impl From<&Error> for ErrorRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dataflow_rs_v3::DataflowError as V3;
+
+    #[test]
+    fn record_text_is_what_v3_displays_for_the_variant_it_corresponds_to() {
+        let m = "the message";
+        for (kind, v3) in [
+            (ErrorKind::Eval, V3::LogicEvaluation(m.into())),
+            (ErrorKind::Budget, V3::BudgetExceeded(m.into())),
+            (ErrorKind::Parse, V3::Deserialization(m.into())),
+            (ErrorKind::TimedOut, V3::Timeout(m.into())),
+            (ErrorKind::FunctionNotFound, V3::FunctionNotFound(m.into())),
+            (
+                ErrorKind::Service { code: "X".into() },
+                V3::service("X", m).build(),
+            ),
+        ] {
+            let expected = v3.to_string();
+            assert_eq!(
+                Error::new(kind.clone(), m).record_text(),
+                expected,
+                "{kind:?}"
+            );
+        }
+        // v3 has no variant for these: the message alone.
+        for kind in [ErrorKind::Config, ErrorKind::Compile, ErrorKind::Cancelled] {
+            assert_eq!(Error::new(kind, m).record_text(), m);
+        }
+    }
 
     fn kinds() -> Vec<(ErrorKind, &'static str)> {
         vec![
