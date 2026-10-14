@@ -10,10 +10,10 @@ pub enum RunStatus {
     Completed,
     /// Every considered workflow finished, but the message holds error records.
     CompletedWithErrors,
-    /// A workflow stopped the run with this error. An error of kind
-    /// `TimedOut` or `Cancelled` a function returned, a child run's
-    /// propagated, stops the run here: only the run's own limits give the
-    /// two statuses below.
+    /// A workflow stopped the run with this error. A function's `Err` of
+    /// kind `TimedOut` or `Cancelled`, such as a child run's propagated,
+    /// ends the run here when its task's policies stop the run: only the
+    /// run's own limits give the two statuses below.
     Stopped(Error),
     /// The run's deadline passed: at a check between ops or at a sweep, or
     /// while a call it then cut short ran.
