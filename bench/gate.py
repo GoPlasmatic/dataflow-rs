@@ -20,20 +20,29 @@ this reads only that line.
     gate.py compare --a DIR --b DIR --rounds N [--only a,b] [--out FILE]
         Run the binaries of both directories round-robin for N + 1 rounds
         (the order within a pair alternates), discard round 0 as cold, and judge
-        each metric on medians. B is worse when it is worse than A by more than
-        the noise, max(3%, A's spread, B's spread), spread being
-        (max - min) / mean over the kept rounds; better when it is better by
-        more than the noise; "not slower" otherwise. A row whose gate is
-        "Faster" (FASTER_ROWS) reads faster / NOT FASTER instead of
-        better / not slower / WORSE, but only when A's build.json says v3 and
-        B's says v4; between two builds of one engine every row is judged
+        each metric on its paired per-round ratios (I80, amending I70): in each
+        kept round the ratio B/A, inverted for a metric where higher is
+        better, so that a ratio above 1 always means B is worse. The noise is
+        max(3%, half the inter-quartile range of the ratios). B is WORSE when
+        the median ratio is above 1 + noise, better when it is below
+        1 - noise, and "not slower" otherwise. A row whose gate is "Faster"
+        (FASTER_ROWS) reads faster when the median ratio is below 1 - noise
+        and NOT FASTER otherwise, but only when A's build.json says v3 and B's
+        says v4; between two builds of one engine every row is judged
         better / not slower / WORSE. A metric only one side reports is listed
         as such and not judged. Exit status is 1 if any verdict is WORSE or
         NOT FASTER.
+
+Both commands run every binary under `/usr/bin/time -l` and keep, for every
+run, the instructions retired and cycles elapsed it prints (macOS). `compare`
+reports each benchmark's median per-round ratio of instructions retired, B/A,
+beside its verdicts: the work the code does, which neither load nor code
+layout moves. It is informational, never a verdict.
 """
 import argparse
 import datetime
 import json
+import math
 import os
 import shutil
 import statistics
@@ -75,6 +84,12 @@ FASTER_ROWS = {"loop_scaling"}
 
 # The smallest noise `compare` allows, in percent.
 NOISE_FLOOR_PCT = 3.0
+
+# What `/usr/bin/time -l` prints about the run's process, by the key a run
+# keeps it under. macOS only: elsewhere, or where it prints none, a run has no
+# counters.
+TIME = "/usr/bin/time"
+COUNTERS = {"instructions retired": "instructions", "cycles elapsed": "cycles"}
 
 
 def sh(*cmd, cwd=None):
@@ -124,11 +139,26 @@ def gate_line(name, stdout):
     sys.exit(f"{name} printed no GATE line")
 
 
+def counters(stderr):
+    """The counters `/usr/bin/time -l` printed, the last of each: it prints
+    them after anything the benchmark wrote to stderr."""
+    found = {}
+    for line in stderr.splitlines():
+        value, _, label = line.strip().partition(" ")
+        key = COUNTERS.get(label.strip())
+        if key and value.isdigit():
+            found[key] = int(value)
+    return found
+
+
 def run_once(bins, name):
-    done = subprocess.run([os.path.join(bins, name)], capture_output=True, text=True)
+    """One run: its GATE metrics and its counters (empty where unavailable)."""
+    path = os.path.join(bins, name)
+    timed = sys.platform == "darwin" and os.access(TIME, os.X_OK)
+    done = subprocess.run([TIME, "-l", path] if timed else [path], capture_output=True, text=True)
     if done.returncode != 0:
         sys.exit(f"{name} exited {done.returncode}:\n{done.stderr[-2000:]}")
-    return gate_line(name, done.stdout)
+    return gate_line(name, done.stdout), (counters(done.stderr) if timed else {})
 
 
 def machine(load_before):
@@ -157,13 +187,15 @@ def baseline(args):
 
     load_before = os.getloadavg()
     runs = {name: [] for name in names}
+    work = {name: [] for name in names}
     for round_no in range(args.rounds + 1):
         for name in names:
-            metrics = run_once(args.bins, name)
+            metrics, counted = run_once(args.bins, name)
             label = "cold, discarded" if round_no == 0 else f"round {round_no}/{args.rounds}"
             print(f"{label:>16}  {name}", file=sys.stderr, flush=True)
             if round_no > 0:
                 runs[name].append(metrics)
+                work[name].append(counted)
 
     benches = {}
     for name in names:
@@ -177,15 +209,16 @@ def baseline(args):
                 "runs": values,
                 "mean": mean,
                 "median": statistics.median(values),
-                "spread_pct": (max(values) - min(values)) / abs(mean) * 100 if mean else 0.0,
+                "spread_pct": spread_pct(values),
             }
         benches[name] = table
 
     out = {
         "build": build_info,
         "machine": machine(load_before),
-        "method": {"rounds": args.rounds, "discarded_rounds": 1, "order": names},
+        "method": {"rounds": args.rounds, "discarded_rounds": 1, "order": names, "counters": f"{TIME} -l"},
         "benches": benches,
+        "counters": {name: {key: [c.get(key) for c in work[name]] for key in COUNTERS.values()} for name in names},
     }
     with open(args.out, "w") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
@@ -200,17 +233,33 @@ def spread_pct(values):
     return (max(values) - min(values)) / abs(mean) * 100 if mean else 0.0
 
 
-def verdict(better, faster_row, a_median, b_median, noise_pct):
-    """B against A: (verdict, delta %). `better` is the metric's direction."""
-    delta = (b_median - a_median) / abs(a_median) * 100 if a_median else 0.0
-    gain = -delta if better == "lower" else delta  # positive when B is better
+def ratio(better, a, b):
+    """One round's B against A, oriented so that above 1 means B is worse:
+    B/A where lower is better, A/B where higher is."""
+    num, den = (b, a) if better == "lower" else (a, b)
+    if den == 0:
+        return 1.0 if num == 0 else math.inf
+    return num / den
+
+
+def half_iqr_pct(ratios):
+    """Half the inter-quartile range of `ratios`, in percent."""
+    if len(ratios) < 2:
+        return 0.0
+    q1, _, q3 = statistics.quantiles(ratios, n=4, method="inclusive")
+    return (q3 - q1) / 2 * 100
+
+
+def verdict(faster_row, median_ratio, noise_pct):
+    """B against A from the median of the per-round ratios (I80)."""
+    noise = noise_pct / 100
     if faster_row:
-        return ("faster" if gain > noise_pct else "NOT FASTER"), delta
-    if gain > noise_pct:
-        return "better", delta
-    if gain < -noise_pct:
-        return "WORSE", delta
-    return "not slower", delta
+        return "faster" if median_ratio < 1 - noise else "NOT FASTER"
+    if median_ratio > 1 + noise:
+        return "WORSE"
+    if median_ratio < 1 - noise:
+        return "better"
+    return "not slower"
 
 
 def compare(args):
@@ -235,63 +284,89 @@ def compare(args):
 
     load_before = os.getloadavg()
     dirs = {"a": args.a, "b": args.b}
+    # Per bench and side, one entry per kept round, in round order, so the
+    # i-th runs of A and B are a pair.
     runs = {name: {"a": [], "b": []} for name in names}
     for round_no in range(args.rounds + 1):
         # Which side goes first alternates, so neither owns the cooler slot.
         order = ("a", "b") if round_no % 2 == 0 else ("b", "a")
         for name in names:
             for side in order:
-                metrics = run_once(dirs[side], name)
+                metrics, counted = run_once(dirs[side], name)
                 if round_no > 0:
-                    runs[name][side].append(metrics)
+                    runs[name][side].append({"metrics": {m["name"]: m for m in metrics}, "counters": counted})
             label = "cold, discarded" if round_no == 0 else f"round {round_no}/{args.rounds}"
             print(f"{label:>16}  {name}", file=sys.stderr, flush=True)
 
-    def series(side_runs):
-        out = {}
-        for run in side_runs:
-            for m in run:
-                out.setdefault(m["name"], {"unit": m["unit"], "better": m["better"], "runs": []})["runs"].append(m["value"])
-        return out
-
-    rows = []
+    rows, work = [], {}
     for name in names:
-        a, b = series(runs[name]["a"]), series(runs[name]["b"])
-        for metric in list(a) + [m for m in b if m not in a]:
+        pairs = list(zip(runs[name]["a"], runs[name]["b"]))
+        a_names = [m for r in runs[name]["a"] for m in r["metrics"]]
+        b_names = [m for r in runs[name]["b"] for m in r["metrics"]]
+        for metric in dict.fromkeys(a_names + b_names):
             row = {"bench": name, "metric": metric}
-            ra, rb = a.get(metric), b.get(metric)
-            if ra is None or rb is None:
-                side, only = ("B", rb) if ra is None else ("A", ra)
-                row.update(verdict=f"only in {side}", unit=only["unit"], better=only["better"],
-                           **{("a" if ra else "b"): {"runs": only["runs"], "median": statistics.median(only["runs"])}})
+            in_a, in_b = metric in a_names, metric in b_names
+            if not (in_a and in_b):
+                side, key = ("A", "a") if in_a else ("B", "b")
+                found = [r["metrics"][metric] for r in runs[name][key] if metric in r["metrics"]]
+                values = [m["value"] for m in found]
+                row.update(verdict=f"only in {side}", unit=found[0]["unit"], better=found[0]["better"],
+                           **{key: {"runs": values, "median": statistics.median(values)}})
                 rows.append(row)
                 continue
-            am, bm = statistics.median(ra["runs"]), statistics.median(rb["runs"])
-            sa, sb = spread_pct(ra["runs"]), spread_pct(rb["runs"])
-            noise = max(NOISE_FLOOR_PCT, sa, sb)
-            if (ra["better"], ra["unit"]) != (rb["better"], rb["unit"]):
+            paired = [(ra["metrics"][metric], rb["metrics"][metric]) for ra, rb in pairs
+                      if metric in ra["metrics"] and metric in rb["metrics"]]
+            ma, mb = paired[0]
+            if (ma["better"], ma["unit"]) != (mb["better"], mb["unit"]):
                 sys.exit(
-                    f"{name} {metric}: A reports {ra['better']}/{ra['unit']} and B "
-                    f"{rb['better']}/{rb['unit']}; a metric's name is a contract"
+                    f"{name} {metric}: A reports {ma['better']}/{ma['unit']} and B "
+                    f"{mb['better']}/{mb['unit']}; a metric's name is a contract"
                 )
+            va, vb = [a["value"] for a, _ in paired], [b["value"] for _, b in paired]
+            ratios = [ratio(ma["better"], a, b) for a, b in zip(va, vb)]
+            median_ratio = statistics.median(ratios)
+            half_iqr = half_iqr_pct(ratios)
+            noise = max(NOISE_FLOOR_PCT, half_iqr)
             faster = faster_rules and name in FASTER_ROWS
-            v, delta = verdict(ra["better"], faster, am, bm, noise)
             row.update(
-                unit=ra["unit"], better=ra["better"], verdict=v, delta_pct=delta, noise_pct=noise,
-                a={"runs": ra["runs"], "median": am, "spread_pct": sa},
-                b={"runs": rb["runs"], "median": bm, "spread_pct": sb},
+                unit=ma["unit"], better=ma["better"], verdict=verdict(faster, median_ratio, noise),
+                ratios=ratios, median_ratio=median_ratio, half_iqr_pct=half_iqr, noise_pct=noise,
+                a={"runs": va, "median": statistics.median(va)},
+                b={"runs": vb, "median": statistics.median(vb)},
             )
             rows.append(row)
+        # The work each side did: every counter of every run, and for
+        # instructions retired the median per-round ratio B/A.
+        work[name] = {
+            key: {side: [r["counters"].get(key) for r in runs[name][side]] for side in ("a", "b")}
+            for key in COUNTERS.values()
+        }
+        counted = [(ra["counters"]["instructions"], rb["counters"]["instructions"]) for ra, rb in pairs
+                   if "instructions" in ra["counters"] and "instructions" in rb["counters"]]
+        if counted:
+            ratios = [b / a for a, b in counted]
+            work[name]["instructions"].update(ratios=ratios, median_ratio=statistics.median(ratios))
 
-    print(f"{'bench':<26} {'metric':<28} {'A median':>13} {'B median':>13} {'delta':>8} {'noise':>7}  verdict")
-    for row in rows:
-        a, b = row.get("a"), row.get("b")
-        cell = lambda side: f"{side['median']:>13.2f}" if side else f"{'-':>13}"
-        if "delta_pct" in row:
-            tail = f"{row['delta_pct']:>+7.1f}% {row['noise_pct']:>6.1f}%"
-        else:
-            tail = f"{'-':>8} {'-':>7}"
-        print(f"{row['bench']:<26} {row['metric']:<28} {cell(a)} {cell(b)} {tail}  {row['verdict']}")
+    def cell(v, whole=False):
+        return f"{v:>14.0f}" if whole or abs(v) >= 1e9 else f"{v:>14.2f}"
+
+    print(f"{'bench':<26} {'metric':<28} {'A median':>14} {'B median':>14} {'ratio':>7} {'noise':>6}  verdict")
+    for name in names:
+        for row in (r for r in rows if r["bench"] == name):
+            a, b = row.get("a"), row.get("b")
+            ca = cell(a["median"]) if a else f"{'-':>14}"
+            cb = cell(b["median"]) if b else f"{'-':>14}"
+            if "median_ratio" in row:
+                tail = f"{row['median_ratio']:>7.3f} {row['noise_pct']:>5.1f}%"
+            else:
+                tail = f"{'-':>7} {'-':>6}"
+            print(f"{row['bench']:<26} {row['metric']:<28} {ca} {cb} {tail}  {row['verdict']}")
+        instructions = work[name]["instructions"]
+        if "median_ratio" in instructions:
+            a = statistics.median(v for v in instructions["a"] if v is not None)
+            b = statistics.median(v for v in instructions["b"] if v is not None)
+            tail = f"{instructions['median_ratio']:>7.3f} {'-':>6}"
+            print(f"{name:<26} {'instructions retired':<28} {cell(a, True)} {cell(b, True)} {tail}  (informational)")
 
     if args.out:
         out = {
@@ -302,10 +377,12 @@ def compare(args):
                 "rounds": args.rounds,
                 "discarded_rounds": 1,
                 "order": names,
-                "statistic": "median",
-                "noise": f"max({NOISE_FLOOR_PCT:g}%, spread A, spread B), spread = (max - min) / mean",
+                "statistic": "median of the per-round ratios B/A, inverted where higher is better (I80)",
+                "noise": f"max({NOISE_FLOOR_PCT:g}%, half the inter-quartile range of the ratios)",
+                "counters": f"{TIME} -l, informational",
             },
             "rows": rows,
+            "work": work,
         }
         with open(args.out, "w") as f:
             json.dump(out, f, indent=2, ensure_ascii=False)
