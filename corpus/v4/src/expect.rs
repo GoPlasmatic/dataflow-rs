@@ -252,7 +252,8 @@ pub type RunDeviated = (&'static str, &'static str, &'static str);
 ///
 /// - `breaks/handler_writes_then_err` and `run/failing_run_trace` (break 1):
 ///   the write of a call that returns `Err` is dropped, so `data.partial` is
-///   missing. The failed call's audit entry has no `Change`s, as v3's had.
+///   missing. The failed call's audit entry is not deviated: it has no
+///   `Change`s, as v3's had.
 /// - `/build` of `breaks/path_outside_roots` (break 15),
 ///   `builtins/integration_configs` and `builtins/pre39_spellings` (break 3),
 ///   and `expressions/host_config_stray_key` (break 2a): v4's build error
@@ -276,14 +277,6 @@ pub const RUN_DEVIATED: &[RunDeviated] = &[
         "breaks/handler_writes_then_err",
         "/steps/0/run/message/context/data/partial",
         MISSING,
-    ),
-    (
-        "breaks/handler_writes_then_err",
-        "/steps/0/run/message/audit_trail",
-        r#"[
-            {"workflow_id": "w", "task_id": "t", "timestamp": "<timestamp>",
-             "changes": [], "status": 500}
-        ]"#,
     ),
     (
         "breaks/name_required",

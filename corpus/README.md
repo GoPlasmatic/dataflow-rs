@@ -70,7 +70,8 @@ The record is compared with `compare::diff`, ignoring:
 - every path a deviation covers.
 
 At each deviated path, v4's value must be exactly its row of `expect::RUN_DEVIATED`, so a deviation
-says what v4 does, not only that it differs. These counts are pinned:
+says what v4 does, not only that it differs. A deviated path where v4's value is v3's fails as
+stale: the deviation would declare a difference that is not there. These counts are pinned:
 
 | Count | Default build | `--all-features` |
 | --- | --- | --- |
@@ -78,7 +79,7 @@ says what v4 does, not only that it differs. These counts are pinned:
 | Cases with no build | 10 | 10 |
 | Cases waiting for phase 6 | 1 | 1 |
 | Cases needing features this build has the other way | 2 | 1 |
-| Deviated pointers, each held to its `RUN_DEVIATED` row | 25 | 25 |
+| Deviated pointers, each held to its `RUN_DEVIATED` row | 24 | 24 |
 
 `expressions/budget` runs only on a `budget` build. Exactly one of `families_on` and `families_off`
 runs in each build.

@@ -35,7 +35,7 @@ const PHASE_6: usize = 1;
 const OTHER_BUILD: usize = if cfg!(feature = "budget") { 1 } else { 2 };
 /// Deviated pointers held to their row of `expect::RUN_DEVIATED`, one row
 /// each: none is in a case one build skips.
-const RUN_DEVIATED_ROWS: usize = 25;
+const RUN_DEVIATED_ROWS: usize = 24;
 
 /// What the run comparison never compares, beyond v3's `IGNORED`: the run
 /// outcome's message, which is v4's wording (I62), and the trace, which is
@@ -114,6 +114,8 @@ struct Counts {
 
 /// Holds v4's JSON at every pointer `patterns` name in `expected` (v3's) or
 /// `actual` (v4's) to its row of `RUN_DEVIATED`, counting each row it uses.
+/// A pointer at which v4's JSON is v3's is stale: the deviation declares a
+/// difference that is not there, and would hide one that came back.
 fn check_deviated(
     name: &str,
     patterns: &[&str],
@@ -141,6 +143,15 @@ fn check_deviated(
             let got = actual
                 .pointer(&pointer)
                 .map_or(MISSING.to_owned(), Json::to_text);
+            let v3 = expected
+                .pointer(&pointer)
+                .map_or(MISSING.to_owned(), Json::to_text);
+            if got == v3 {
+                failures.push(format!(
+                    "{name}: {pointer} is deviated, and v4 records there what v3 recorded: \
+                     the deviation is stale\n  v3 and v4: {got}"
+                ));
+            }
             let row = RUN_DEVIATED
                 .iter()
                 .position(|(n, p, _)| *n == name && *p == pointer);

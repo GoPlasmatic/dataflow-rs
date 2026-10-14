@@ -10,7 +10,7 @@
   "steps": [{"run": {"message": {}}}],
   "deviations": [
     {"break": "1",
-     "paths": ["/steps/0/run/message/context/data/partial", "/steps/0/run/message/audit_trail", "/steps/0/run/trace"],
+     "paths": ["/steps/0/run/message/context/data/partial", "/steps/0/run/trace"],
      "note": "v4 drops a host function's writes when it returns Err"}
   ]
 }
