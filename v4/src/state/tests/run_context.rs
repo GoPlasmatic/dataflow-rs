@@ -77,7 +77,8 @@ fn run(name: &str, tuning: Tuning, seed: u64, cases: usize) -> Stats {
         let mut touched: Vec<String> = Vec::new();
         {
             let mut rc = RunContext::new(&mut slot, tuning);
-            for step in 0..1 + rng.below(60) {
+            let steps = 1 + rng.below(60);
+            for step in 0..steps {
                 let op = op(&mut rng, &model);
                 let at = format!("{name}: case {case}, step {step}, {op:?}");
                 match op {
@@ -151,9 +152,10 @@ fn run(name: &str, tuning: Tuning, seed: u64, cases: usize) -> Stats {
                     Op::Tick => rc.tick(),
                     Op::Checkpoint => rc.checkpoint(),
                 }
-                // Reads that build no view: each root (the whole context, as far
-                // as a rooted `Path` reaches), the touched paths and a few
-                // random ones.
+                // Reads that build no view: the touched paths and a few random
+                // ones every step, and each root (the whole context, as far as a
+                // rooted `Path` reaches) every 10th step and at the last, since
+                // converting whole roots is what makes this test slow.
                 let mut probes: Vec<String> = touched
                     .iter()
                     .rev()
@@ -162,7 +164,9 @@ fn run(name: &str, tuning: Tuning, seed: u64, cases: usize) -> Stats {
                     .cloned()
                     .collect();
                 probes.extend((0..3).map(|_| random::rooted_path(&mut rng, &model)));
-                probes.extend(random::ROOTS.iter().map(|r| (*r).to_string()));
+                if step % 10 == 0 || step + 1 == steps {
+                    probes.extend(random::ROOTS.iter().map(|r| (*r).to_string()));
+                }
                 for p in probes {
                     let path = rooted(&p);
                     let (got, want) = (json(rc.get(&path)), path.get(&model).map(exact));
@@ -226,15 +230,36 @@ fn tunings() -> [(&'static str, Tuning); 4] {
 }
 
 #[test]
+#[cfg_attr(
+    any(
+        feature = "datetime",
+        feature = "ext-string",
+        feature = "ext-array",
+        feature = "ext-math",
+        feature = "ext-control",
+        feature = "ext-object",
+        feature = "error-handling",
+        feature = "tensor",
+        feature = "budget"
+    ),
+    ignore = "state is feature-independent; this runs in the default build"
+)]
 fn the_run_matches_the_model() {
+    // Sequences per tuning. Was 2_000 (about 90 s in a debug build); 150 keeps
+    // the test near 4 s, and the seeds (`0x1000 + i`) are unchanged, so the
+    // first 150 sequences are the same ones as before.
+    const SEQUENCES: usize = 150;
     for (i, (name, tuning)) in tunings().into_iter().enumerate() {
-        let stats = run(name, tuning, 0x1000 + i as u64, 2_000);
+        let stats = run(name, tuning, 0x1000 + i as u64, SEQUENCES);
         assert!(
-            stats.checkpoints > 1000 && stats.views > 1000,
+            stats.checkpoints > (SEQUENCES / 2) as _ && stats.views > (SEQUENCES / 2) as _,
             "{name}: {stats:?}"
         );
         if tuning.invalidate {
-            assert!(stats.invalidations > 50, "{name}: {stats:?}");
+            assert!(
+                stats.invalidations > (SEQUENCES / 40) as _,
+                "{name}: {stats:?}"
+            );
         }
     }
 }
