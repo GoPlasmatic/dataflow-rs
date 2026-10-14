@@ -16,11 +16,15 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// A layer on the [`Registry`](super::Registry) wraps every host call of
 /// every run. The built-ins run inline and are never wrapped. A layer calls
 /// [`Next::run`] to go on, or answers without calling it.
+/// [`testing::call`](super::testing::call) runs one call inside the layers
+/// it is given:
 ///
 /// ```
 /// # extern crate dataflow_rs_v4 as dataflow_rs;
-/// use dataflow_rs::function::{BoxFuture, CallLayer, Next};
-/// use dataflow_rs::{Ctx, Outcome, Registry, Result};
+/// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+/// use dataflow_rs::function::{BoxFuture, CallLayer, Next, testing};
+/// use dataflow_rs::{Ctx, Function, Outcome, Registry, Result};
+/// use serde_json::json;
 ///
 /// /// Turns any `5xx` into a `503`.
 /// struct Unavailable;
@@ -42,6 +46,21 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 ///
 /// let mut registry = Registry::default();
 /// registry.layer(Unavailable);
+///
+/// /// Fails every call with a `500`.
+/// struct Down;
+///
+/// impl Function for Down {
+///     type Config = ();
+///
+///     async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+///         Ok(Outcome::Status(500))
+///     }
+/// }
+///
+/// let called = testing::call(Down, json!({})).layer(Unavailable).await;
+/// assert_eq!(called.outcome.unwrap(), Outcome::Status(503));
+/// # });
 /// ```
 pub trait CallLayer: Send + Sync + 'static {
     /// Wraps one call. `next` is the rest of the chain.

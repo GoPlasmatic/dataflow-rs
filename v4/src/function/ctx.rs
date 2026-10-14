@@ -54,7 +54,51 @@ pub struct CallInfo<'a> {
 /// view in an arena borrowed from a pool for that evaluation only. `Ctx`
 /// holds no arena, so it is `Send` and `Sync`. A host never builds one: the
 /// engine hands it to [`Function::call`](super::Function::call) and to each
-/// [`CallLayer`](super::CallLayer).
+/// [`CallLayer`](super::CallLayer), and [`testing::call`](super::testing::call)
+/// to one call outside a run:
+///
+/// ```
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+/// use dataflow_rs::datavalue::OwnedDataValue;
+/// use dataflow_rs::function::testing::{self, Write};
+/// use dataflow_rs::run::Change;
+/// use dataflow_rs::{Ctx, Function, Message, Outcome, Path, Result};
+/// use serde_json::json;
+///
+/// /// Counts visits at `data.visits`, and drops the stale `data.cache`.
+/// struct Visit;
+///
+/// impl Function for Visit {
+///     type Config = ();
+///
+///     async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+///         let visits: Path = "data.visits".parse()?;
+///         let seen = ctx.get(&visits).and_then(|v| v.as_i64()).unwrap_or(0);
+///         ctx.set(&visits, OwnedDataValue::from(&json!(seen + 1)))?;
+///         // The call reads its own write at once; the message, once the
+///         // call returns `Ok`.
+///         assert_eq!(ctx.get(&visits).and_then(|v| v.as_i64()), Some(seen + 1));
+///         ctx.remove(&"data.cache".parse()?)?;
+///         Ok(Outcome::Ok)
+///     }
+/// }
+///
+/// let dv = |v: serde_json::Value| OwnedDataValue::from(&v);
+/// let data = dv(json!({"visits": 1, "cache": "stale"}));
+/// let called = testing::call(Visit, json!({}))
+///     .message(Message::from_parts(OwnedDataValue::Null, data, OwnedDataValue::Null))
+///     .await;
+/// let visits: Path = "data.visits".parse().unwrap();
+/// assert_eq!(called.writes[0], (visits, Write::Set(dv(json!(2)))));
+/// assert_eq!(called.writes[1].1, Write::Removed);
+/// assert_eq!(
+///     called.changes[0],
+///     Change::write("data.visits", dv(json!(1)), dv(json!(2)))
+/// );
+/// assert_eq!(called.message.context().data(), &dv(json!({"visits": 2})));
+/// # });
+/// ```
 pub struct Ctx<'r> {
     /// The run's view, the owned tree and the run's log.
     reader: Reader<'r>,

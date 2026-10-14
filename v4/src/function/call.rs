@@ -8,13 +8,17 @@ use crate::base::{Issue, Result};
 /// task run.
 ///
 /// `call` returns a `Send` future, so an implementation may be written with
-/// `async fn`:
+/// `async fn`. [`testing::call`](super::testing::call) runs one call of it
+/// outside any workflow:
 ///
 /// ```
 /// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+/// use dataflow_rs::datavalue::OwnedDataValue;
 /// use dataflow_rs::expr::Output;
-/// use dataflow_rs::function::{FunctionConfig, FunctionSpec};
+/// use dataflow_rs::function::{FunctionConfig, FunctionSpec, testing};
 /// use dataflow_rs::{Ctx, Expr, Function, Outcome, Registry, Result};
+/// use serde_json::json;
 ///
 /// #[derive(FunctionConfig)]
 /// struct FetchConfig {
@@ -32,13 +36,23 @@ use crate::base::{Issue, Result};
 ///         FunctionSpec::default().with_category("io")
 ///     }
 ///
-///     async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &FetchConfig) -> Result<Outcome> {
+///     async fn call(&self, ctx: &mut Ctx<'_>, cfg: &FetchConfig) -> Result<Outcome> {
+///         let url = ctx.eval(&cfg.url)?;
+///         // A real fetch awaits its response here.
+///         let response = OwnedDataValue::from(&json!({"url": &*url, "status": 200}));
+///         ctx.emit(&cfg.output, response)?;
 ///         Ok(Outcome::Ok)
 ///     }
 /// }
 ///
 /// let mut registry = Registry::default();
 /// registry.register("fetch", Fetch);
+///
+/// let called = testing::call(Fetch, json!({"url": "https://example.com"})).await;
+/// assert_eq!(called.outcome.unwrap(), Outcome::Ok);
+/// let status = called.message.context().get(&"data.response.status".parse().unwrap());
+/// assert_eq!(status, Some(&OwnedDataValue::from(&json!(200))));
+/// # });
 /// ```
 pub trait Function: Send + Sync + 'static {
     /// The function's `input`, compiled at build.
