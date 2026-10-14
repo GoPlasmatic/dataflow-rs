@@ -11,7 +11,7 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // returns what `outcome` names.
 
 use dataflow_rs::expr::Output;
-use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next};
+use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next, layers};
 use dataflow_rs::run::{ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
 use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result, Run, RunOptions};
 use datavalue::OwnedDataValue;
@@ -960,5 +960,72 @@ async fn emit_default_writes_the_primary_output_and_fails_without_one() {
             "CONFIG_ERROR".to_owned(),
             "Task none error: `none` has no primary output".to_owned()
         )]
+    );
+}
+
+/// One output, with a default.
+#[derive(FunctionConfig)]
+struct AnswerConfig {
+    #[output(default = "data.answer")]
+    out: Output,
+}
+
+/// Writes, logs that it ran, and fails.
+struct Fails(Shared);
+
+impl Function for Fails {
+    type Config = AnswerConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &AnswerConfig) -> Result<Outcome> {
+        self.0.lock().unwrap().events.push("fails".to_owned());
+        ctx.set(&"data.partial".parse()?, true.into())?;
+        Err(Error::service("PARTNER_DOWN", "down"))
+    }
+}
+
+#[tokio::test]
+async fn an_answering_layer_writes_the_primary_output_and_the_function_never_runs() {
+    let seen = Shared::default();
+    let e = Engine::builder()
+        .register("fails", Fails(Arc::clone(&seen)))
+        .register("probe", Probe(Arc::clone(&seen)))
+        .layer(Named("registry", Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![
+                json!({"id": "f", "function": {"name": "fails", "input": {}}}),
+                probe("p", json!([]), json!({"data.b": 1}), json!("ok")),
+            ],
+        ))
+        .build()
+        .unwrap();
+    // A dry run answers `fails` and passes every other call on.
+    let answer = layers::Answer::new(|info| {
+        (info.function == "fails").then(|| OwnedDataValue::from("answered"))
+    });
+    assert_eq!(format!("{answer:?}"), "Answer { .. }");
+    let run_layers: Vec<Arc<dyn CallLayer>> = vec![Arc::new(answer)];
+    let mut m = message(json!({}));
+    let run = e
+        .run_with(&mut m, &RunOptions::default().layers(&run_layers))
+        .await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(data(&m), json!({"answer": "answered", "b": 1}));
+    assert_eq!(audit(&m), [entry("w", "f", 200), entry("w", "p", 200)]);
+    assert_eq!(
+        changes(&m, "f"),
+        json!([{"path": "data.answer", "old_value": null, "new_value": "answered"}])
+    );
+    assert!(m.errors().is_empty());
+    // Neither the registry's layer nor the function ran for the answered
+    // call; the probe went through both.
+    assert_eq!(
+        seen.lock().unwrap().events,
+        ["registry", "function", "registry"]
     );
 }

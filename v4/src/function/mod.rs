@@ -6,6 +6,7 @@ mod config;
 mod ctx;
 mod erased;
 mod layer;
+pub mod layers;
 mod outcome;
 mod overlay;
 mod registry;
