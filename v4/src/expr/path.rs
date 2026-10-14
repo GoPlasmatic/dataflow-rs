@@ -117,8 +117,9 @@ fn seg_index(raw: &str) -> Option<usize> {
 pub struct Path {
     root: Root,
     /// The root's own segment first, then the segments below it: the chain the
-    /// functions below run over the context.
-    segs: Box<[Seg]>,
+    /// functions below run over the context. Shared, so a clone allocates
+    /// nothing: a host call's overlay keeps one for each write.
+    segs: Arc<[Seg]>,
     dotted: Arc<str>,
 }
 
