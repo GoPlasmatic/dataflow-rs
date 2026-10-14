@@ -98,10 +98,8 @@ impl Function for Echo {
     type Config = EchoConfig;
 
     async fn call(&self, ctx: &mut Ctx<'_>, cfg: &EchoConfig) -> Result<Outcome> {
-        // The literal target is lent, not evaluated. Task 3's `Ctx::emit`
-        // replaces these two lines.
-        let target = ctx.eval(cfg.target.path())?;
-        ctx.set(&target, OwnedDataValue::String(cfg.value.clone()))?;
+        // The literal target is lent, not evaluated.
+        ctx.emit(&cfg.target, OwnedDataValue::String(cfg.value.clone()))?;
         Ok(Outcome::Ok)
     }
 }

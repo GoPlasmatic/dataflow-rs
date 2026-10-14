@@ -22,6 +22,7 @@
 extern crate dataflow_rs_v4 as dataflow_rs;
 
 use dataflow_rs_v4::datavalue::OwnedDataValue;
+use dataflow_rs_v4::expr::Output;
 use dataflow_rs_v4::function::FunctionConfig;
 use dataflow_rs_v4::{Ctx, Engine, Expr, Function, Message, Outcome, Path, Result};
 use serde_json::{Value, json};
@@ -36,6 +37,8 @@ const CONTEXT_BYTES: usize = 2 * 1024 * 1024;
 const CALLS: usize = 1000;
 const MESSAGES: usize = 5;
 
+/// The five fields, and where every mode writes: v3's literal `data.out`,
+/// folded to a path at build.
 #[derive(FunctionConfig)]
 struct Fields {
     order_id: Expr<String>,
@@ -43,6 +46,8 @@ struct Fields {
     tenant: Expr<String>,
     qty: Expr<u64>,
     tier: Expr<String>,
+    #[output(default = "data.out")]
+    target: Output,
 }
 
 #[derive(Clone, Copy)]
@@ -58,11 +63,7 @@ const MODES: &[(&str, Mode)] = &[
     ("with_view", Mode::WithView),
 ];
 
-struct Resolve {
-    mode: Mode,
-    /// Where every mode writes, parsed once.
-    out: Path,
-}
+struct Resolve(Mode);
 
 /// What every mode writes.
 fn output(order_id: &str, url: &str, tenant: &str, qty: u64, tier: &str) -> OwnedDataValue {
@@ -85,7 +86,7 @@ impl Function for Resolve {
     type Config = Fields;
 
     async fn call(&self, ctx: &mut Ctx<'_>, f: &Fields) -> Result<Outcome> {
-        let out = match self.mode {
+        let out = match self.0 {
             Mode::WriteOnly => output(
                 "ORD-42",
                 "https://api.example.com/orders/ORD-42/lines",
@@ -103,7 +104,7 @@ impl Function for Resolve {
                 &ctx.eval(&f.tier)?,
             ),
         };
-        ctx.set(&self.out, out)?;
+        ctx.emit(&f.target, out)?;
         Ok(Outcome::Ok)
     }
 }
@@ -147,13 +148,7 @@ async fn main() {
     for &(name, mode) in MODES {
         let engine = Engine::builder()
             .workflow_json(&workflow(name))
-            .register(
-                name,
-                Resolve {
-                    mode,
-                    out: out.clone(),
-                },
-            )
+            .register(name, Resolve(mode))
             .build()
             .expect("the engine builds");
 

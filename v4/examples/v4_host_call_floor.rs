@@ -85,8 +85,7 @@ fn payload() -> OwnedDataValue {
     }))
 }
 
-/// v4's echo: one write through the call's overlay. Task 3's `Ctx::emit`
-/// replaces the two lines.
+/// v4's echo: one write through the call's overlay.
 #[derive(FunctionConfig)]
 struct EchoConfig {
     #[output(default = "data.echoed")]
@@ -100,8 +99,7 @@ impl Function for Echo {
     type Config = EchoConfig;
 
     async fn call(&self, ctx: &mut Ctx<'_>, cfg: &EchoConfig) -> dataflow_rs_v4::Result<Outcome> {
-        let target = ctx.eval(cfg.target.path())?;
-        ctx.set(&target, OwnedDataValue::String(cfg.value.clone()))?;
+        ctx.emit(&cfg.target, OwnedDataValue::String(cfg.value.clone()))?;
         Ok(Outcome::Ok)
     }
 }
