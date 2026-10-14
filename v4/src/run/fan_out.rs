@@ -19,10 +19,16 @@
 //! decided under [`Policy::per_element`], which cannot halt; the task's own
 //! `terminal`, `on_rejection: halt` and `on_failure: halt` apply once, after
 //! the fold.
+//!
+//! Each element's call checks the run's limits as it starts and, natively,
+//! races them (I92). Once one is cut short, the calls in flight are dropped
+//! and nothing is folded, the finished elements included: the task is
+//! recorded once, with no element, as a call cut short is, and the run
+//! stops.
 
 use super::host::{Invoked, Layers, invoke, keep_records};
 use super::interp::{Over, RunEnv, elements};
-use super::policy::{Decision, Flow, Policy, decide};
+use super::policy::{self, Decision, Flow, Policy, decide};
 use super::record::{self, Stamp, TaskIds};
 use crate::base::{Change, ErrorRecord, TaskIx};
 use crate::def::{FailurePolicy, RejectionPolicy};
@@ -59,6 +65,7 @@ impl Element {
             changes,
             errors,
             collected,
+            ..
         } = invoked;
         Self {
             index,
@@ -162,6 +169,9 @@ pub(crate) async fn fan_out<'p>(
     let n = items.len();
     let per_element = policy.per_element();
     let mut finished: Vec<Option<Element>> = (0..n).map(|_| None).collect();
+    // The error of the first call the run's limits cut short: the fan-out
+    // folds nothing then.
+    let mut cut = None;
     {
         // The reader is taken in its own statement and every call holds a
         // copy: nothing writes to the run until the last call has finished.
@@ -183,8 +193,8 @@ pub(crate) async fn fan_out<'p>(
                 element_index: None,
             },
             primary: bound.primary_output(),
-            deadline: None,
-            cancel: None,
+            deadline: env.limits.deadline,
+            cancel: env.limits.cancel,
             capture: env.capture,
         };
         let layers = Layers {
@@ -204,12 +214,23 @@ pub(crate) async fn fan_out<'p>(
             let Some((index, invoked)) = in_flight.next().await else {
                 break;
             };
+            if invoked.cut_short {
+                // Dropping `in_flight` drops the calls still running.
+                cut = Some(invoked.result.expect_err("a call cut short is an `Err`"));
+                break;
+            }
             let element = Element::new(index, invoked, per_element, ids.task);
             stop |= element.stops();
             finished[index] = Some(element);
         }
     }
     drop(items);
+    if let Some(e) = cut {
+        let decision = policy::cut_short(ids.task, e);
+        let stamp = Stamp::sweep(env);
+        record::record(rc, env, ids, stamp, decision.status, decision.record);
+        return decision.flow;
+    }
 
     // One slot per element, so an element that failed or never ran is a
     // `null` at its own index. Written by the engine: no `Change`.

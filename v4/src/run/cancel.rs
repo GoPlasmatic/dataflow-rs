@@ -5,7 +5,8 @@
 //! element's start, at every sweep, and every 64 ops, and only when one is
 //! set: a run with neither never reads the clock. The token is checked
 //! first. A stop between ops or at a sweep records nothing on the message;
-//! the [`Run`](super::Run) says why.
+//! the [`Run`](super::Run) says why. Natively a host call also [`race`]s
+//! them, one timer per call; on wasm only the checks run.
 
 use crate::base::{CancelToken, Error, ErrorKind, Instant, Result};
 
@@ -37,6 +38,21 @@ impl Stop {
             Self::TimedOut => Error::new(ErrorKind::TimedOut, "the run's deadline passed"),
         }
     }
+
+    /// The error of a call to `function` this stop cut short, recorded on
+    /// its task.
+    pub(crate) fn during(self, function: &str) -> Error {
+        match self {
+            Self::Cancelled => Error::new(
+                ErrorKind::Cancelled,
+                format!("the run was cancelled during `{function}`"),
+            ),
+            Self::TimedOut => Error::new(
+                ErrorKind::TimedOut,
+                format!("the run's deadline passed during `{function}`"),
+            ),
+        }
+    }
 }
 
 impl Limits<'_> {
@@ -63,6 +79,52 @@ impl Limits<'_> {
     pub(crate) fn check(&self) -> Result<()> {
         self.stop().map_or(Ok(()), |stop| Err(stop.error()))
     }
+}
+
+/// `call` run to its end, unless the run's token or deadline ends it
+/// first, when `call` is dropped and the stop says which.
+///
+/// Natively, with a limit set, `call` races the token's
+/// [`cancelled`](CancelToken::cancelled) and a timer at the deadline, one
+/// timer per call, created only once `call` is pending. The race is
+/// `biased`: `call` is polled first, so a call that finishes in the poll a
+/// limit fires in wins; then the token, as [`Limits::stop`] reads it first.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn race<F: Future>(
+    call: F,
+    limits: Limits<'_>,
+) -> std::result::Result<F::Output, Stop> {
+    if !limits.is_set() {
+        return Ok(call.await);
+    }
+    let cancelled = async {
+        match limits.cancel {
+            Some(token) => token.cancelled().await,
+            None => std::future::pending().await,
+        }
+    };
+    let timer = async {
+        match limits.deadline {
+            Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        biased;
+        output = call => Ok(output),
+        () = cancelled => Err(Stop::Cancelled),
+        () = timer => Err(Stop::TimedOut),
+    }
+}
+
+/// On wasm nothing races: `call` runs to its end, and the checks around it
+/// are the only ones.
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn race<F: Future>(
+    call: F,
+    _limits: Limits<'_>,
+) -> std::result::Result<F::Output, Stop> {
+    Ok(call.await)
 }
 
 /// The time a deadline is compared with.

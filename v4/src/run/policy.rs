@@ -157,6 +157,30 @@ pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> 
     }
 }
 
+/// What a call the run's deadline or token cut short records and does
+/// (I92): what an `Err` from the function records, a 500 and `error`'s
+/// record, whatever the task's policies, and then the run stops.
+pub(crate) fn cut_short(task_id: &str, error: Error) -> Decision {
+    let fails = Policy {
+        on_failure: FailurePolicy::Fail,
+        on_rejection: RejectionPolicy::Continue,
+        terminal: false,
+    };
+    let Decision {
+        status,
+        record,
+        flow,
+    } = decide(fails, task_id, Err(error));
+    let Flow::Fail(error) = flow else {
+        unreachable!("an `Err` under `on_failure: fail` fails")
+    };
+    Decision {
+        status,
+        record,
+        flow: Flow::Stop(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

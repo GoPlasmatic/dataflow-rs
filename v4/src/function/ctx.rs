@@ -231,7 +231,8 @@ impl<'r> Ctx<'r> {
         self.exprs.secrets().get(name)
     }
 
-    /// When the run must end, if it has a deadline.
+    /// When the run must end, if it has a deadline: a run this function
+    /// starts passes it on, or an earlier one (R60).
     pub fn deadline(&self) -> Option<Instant> {
         self.deadline
     }

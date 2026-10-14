@@ -8,9 +8,15 @@
 //! (break 1). The records the call added are kept either way. Then the
 //! recorder runs as for a built-in.
 //!
+//! The run's limits are checked before each call and, natively, raced
+//! against it (I92). A call they cut short is dropped and settles as an
+//! `Err` of kind `TimedOut` or `Cancelled` does, its writes dropped and its
+//! records kept; then the run stops, whatever the task's policies.
+//!
 //! A fan-out's elements are host calls too: [`invoke`] is the one call, and
 //! [`fan_out`](super::fan_out::fan_out) settles and records each element.
 
+use super::cancel::{Limits, race};
 use super::interp::RunEnv;
 use super::policy::{self, Flow};
 use super::record::{self, Stamp, TaskIds};
@@ -45,21 +51,42 @@ pub(crate) struct Invoked {
     /// What the call saw at `collect` when it returned `Ok`: a fan-out
     /// element's result (I91).
     pub(crate) collected: Option<OwnedDataValue>,
+    /// Whether the run's deadline or token cut the call short: `result` is
+    /// then the `Err` that stops the run.
+    pub(crate) cut_short: bool,
 }
 
-/// One call through the layers: the `Ctx` built from `start`, the chain
-/// run, the value at `collect` read as the call sees it once it returned
-/// `Ok`, the `Ctx` settled.
+/// One call through the layers: the `Ctx` built from `start`, the run's
+/// limits checked, the chain run and, natively, raced against them, the
+/// value at `collect` read as the call sees it once it returned `Ok`, the
+/// `Ctx` settled. A call the limits cut short, before it starts or while it
+/// runs, gives `Err` of kind `TimedOut` or `Cancelled`, naming the function.
 pub(crate) async fn invoke<'r>(
     start: CallStart<'r>,
     bound: &'r dyn BoundCall,
     layers: Layers<'r>,
     collect: Option<&Path>,
 ) -> Invoked {
+    let limits = Limits {
+        deadline: start.deadline,
+        cancel: start.cancel,
+    };
+    let function = start.info.function;
     let mut ctx = Ctx::new(start);
-    let result = Next::new(layers.run, layers.registry, bound)
-        .run(&mut ctx)
-        .await;
+    let ran = match limits.stop() {
+        Some(stop) => Err(stop),
+        None => {
+            race(
+                Next::new(layers.run, layers.registry, bound).run(&mut ctx),
+                limits,
+            )
+            .await
+        }
+    };
+    let (result, cut_short) = match ran {
+        Ok(result) => (result, false),
+        Err(stop) => (Err(stop.during(function)), true),
+    };
     let collected = match collect {
         Some(path) if result.is_ok() => ctx.get(path).map(Cow::into_owned),
         _ => None,
@@ -71,6 +98,7 @@ pub(crate) async fn invoke<'r>(
         changes,
         errors,
         collected,
+        cut_short,
     }
 }
 
@@ -98,6 +126,8 @@ pub(crate) fn keep_records(
 ///
 /// The records the call added go to the message first, as given, with the
 /// run's timestamp when they carry none (I96); the recorder's own follows.
+/// A call the run's limits cut short is recorded as an `Err`, and then
+/// stops the run.
 pub(crate) async fn call_host<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
@@ -115,6 +145,7 @@ pub(crate) async fn call_host<'p>(
         overlay,
         changes,
         errors,
+        cut_short,
         ..
     } = {
         let reader = rc.reader();
@@ -135,8 +166,8 @@ pub(crate) async fn call_host<'p>(
                 element_index: None,
             },
             primary: bound.primary_output(),
-            deadline: None,
-            cancel: None,
+            deadline: env.limits.deadline,
+            cancel: env.limits.cancel,
             capture: env.capture,
         };
         let layers = Layers {
@@ -150,7 +181,10 @@ pub(crate) async fn call_host<'p>(
         env.changes = changes;
     }
     keep_records(env, errors, None);
-    let decision = policy::decide(site.policy(), ids.task, result);
+    let decision = match result {
+        Err(e) if cut_short => policy::cut_short(ids.task, e),
+        result => policy::decide(site.policy(), ids.task, result),
+    };
     let stamp = Stamp::sweep(env);
     record::record(rc, env, ids, stamp, decision.status, decision.record);
     decision.flow
