@@ -15,7 +15,7 @@
 //! inside the cell's `for<'q>` closures.
 
 use super::size;
-use super::splice;
+use super::splice::{self, Resolved};
 use super::writes::{At, Lookup, Mark, Writes};
 use crate::expr::arena;
 use crate::expr::path;
@@ -117,12 +117,20 @@ impl<'r> Reader<'r> {
         if self.log.is_empty() {
             return path.get(self.owned).map(Cow::Borrowed);
         }
-        let root = *self.root;
-        let r = splice::resolve(root, path.segs())?;
+        let r = splice::resolve(*self.root, path.segs())?;
+        self.get_resolved(path, r)
+    }
+
+    /// [`Self::get`] for a path already resolved against the view, as a
+    /// host call's first write resolves it.
+    pub(crate) fn get_resolved(self, path: &Path, r: Resolved) -> Option<Cow<'r, OwnedDataValue>> {
+        if self.log.is_empty() {
+            return path.get(self.owned).map(Cow::Borrowed);
+        }
         match self.log.lookup(At::new(path.segs(), r.kinds)) {
             Lookup::Clean => path.get(self.owned).map(Cow::Borrowed),
             Lookup::Owned(v) => v.map(Cow::Borrowed),
-            Lookup::Dirty => splice::get(root, path.segs()).map(|v| Cow::Owned(v.to_owned())),
+            Lookup::Dirty => splice::get(*self.root, path.segs()).map(|v| Cow::Owned(v.to_owned())),
         }
     }
 }

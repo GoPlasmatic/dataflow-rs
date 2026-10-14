@@ -57,7 +57,15 @@ impl Overlay {
     /// its own writes. Whether the call's own root takes it, by `Path::set`'s
     /// rules, is settled here, against `base` and the writes before it.
     pub(crate) fn set(&mut self, base: DataValue<'_>, path: &Path, value: OwnedDataValue) {
-        let write = if self.lands(base, path.segs()) {
+        let lands = self.lands(base, path.segs());
+        self.push(path, value, lands);
+    }
+
+    /// Writes `value` at `path` where the caller has settled whether the
+    /// call's own root takes it: `Ctx`'s first write learns it in the walk
+    /// that reads the old value.
+    pub(crate) fn push(&mut self, path: &Path, value: OwnedDataValue, lands: bool) {
+        let write = if lands {
             Write::Set(value)
         } else {
             Write::Blocked(value)

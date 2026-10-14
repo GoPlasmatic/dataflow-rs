@@ -315,13 +315,29 @@ impl<'r> Ctx<'r> {
     /// root and `value` is not an object (R52).
     pub fn set(&mut self, path: &Path, value: OwnedDataValue) -> Result<()> {
         path.check_set(&value)?;
+        // A first write with no binding is resolved against the run's view
+        // once: the walk says whether the write lands, and whether anything
+        // is there to record as the old value.
+        let first = (self.overlay.is_empty() && self.binding.is_none())
+            .then(|| splice::resolve(*self.reader.root, path.segs()));
         if self.capture {
-            let old_value = self.get(path).map_or(OwnedDataValue::Null, Cow::into_owned);
+            let old_value = match first {
+                // Below a scalar, or creating the node at the path or above
+                // it: nothing is there, or a `null` element, read as `null`.
+                Some(None) => None,
+                Some(Some(r)) if r.created.is_some() => None,
+                Some(Some(r)) => self.reader.get_resolved(path, r),
+                None => self.get(path),
+            };
             self.changes.push(Change::write(
                 Arc::clone(path.dotted()),
-                old_value,
+                old_value.map_or(OwnedDataValue::Null, Cow::into_owned),
                 value.clone(),
             ));
+        }
+        if let Some(resolved) = first {
+            self.overlay.push(path, value, resolved.is_some());
+            return Ok(());
         }
         let Self {
             reader,
@@ -549,6 +565,83 @@ mod tests {
         overlay.apply(&mut rc);
         rc.finish();
         assert_eq!(Value::from(&slot)["data"], json!({"list": [2]}));
+    }
+
+    /// What each call recorded and wrote, when each of `writes` is made by a
+    /// call of its own, as its first write or, with `after_another`, after
+    /// a write elsewhere: the two ways `Ctx::set` reads the old value. The
+    /// run has written `data.run` into its view, so its log holds it.
+    fn first_writes(writes: &[&str], after_another: bool) -> (Vec<Value>, String) {
+        let context = json!({"data": {"kept": {"k": 1}, "list": [1, null], "s": "scalar"},
+            "metadata": {}, "temp_data": {}});
+        let exprs = ExprEngine::default();
+        let payload = OwnedDataValue::Null;
+        let mut slot = OwnedDataValue::from(&context);
+        let mut rc = RunContext::new(&mut slot, Tuning::default());
+        rc.read(|_, _| ());
+        rc.set(&parse("data.run"), OwnedDataValue::from(7), None);
+        let mut olds = Vec::new();
+        let mut overlays = Vec::new();
+        for dotted in writes {
+            let mut ctx = Ctx::new(CallStart {
+                reader: rc.reader(),
+                binding: None,
+                payload: &payload,
+                exprs: &exprs,
+                info: info(),
+                primary: None,
+                deadline: None,
+                cancel: None,
+                capture: true,
+            });
+            if after_another {
+                ctx.set(&parse("temp_data.other"), OwnedDataValue::from(0))
+                    .unwrap();
+            }
+            ctx.set(&parse(dotted), OwnedDataValue::from("w")).unwrap();
+            let (overlay, changes, _) = ctx.settle();
+            olds.push(serde_json::to_value(&changes.last().unwrap().old_value).unwrap());
+            overlays.push(overlay);
+        }
+        for overlay in overlays {
+            overlay.apply(&mut rc);
+        }
+        rc.finish();
+        let data = parse("data").get(&slot).map(serde_json::to_string);
+        (olds, data.unwrap().unwrap())
+    }
+
+    #[test]
+    fn a_first_write_reads_what_was_there_as_a_later_write_does() {
+        // In the run's log, in the owned tree, missing below a missing key, a
+        // `null` element and below it, and below a scalar, where nothing lands.
+        // Settled in order, the write below `list.1` finds the string the
+        // write before it put there, and lands nowhere.
+        let writes = [
+            "data.run",
+            "data.kept.k",
+            "data.absent.x",
+            "data.list.1",
+            "data.list.1.x",
+            "data.s.below",
+        ];
+        let (first, data) = first_writes(&writes, false);
+        assert_eq!(
+            first,
+            vec![
+                json!(7),
+                json!(1),
+                json!(null),
+                json!(null),
+                json!(null),
+                json!(null)
+            ]
+        );
+        assert_eq!(first_writes(&writes, true), (first, data.clone()));
+        assert_eq!(
+            data,
+            r#"{"kept":{"k":"w"},"list":[1,"w"],"s":"scalar","run":"w","absent":{"x":"w"}}"#
+        );
     }
 
     /// One call's writes: `(path, Some(value))`, or `(path, None)` for a
