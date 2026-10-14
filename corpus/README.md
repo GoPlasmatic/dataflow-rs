@@ -17,15 +17,16 @@ it. v3 is the oracle: a recording is what v3 did, never what someone expected it
   - the datalogic-rs version;
   - the toolchain.
 
-## The two crates
+## The three crates
 
 | Crate | What it holds |
 | --- | --- |
 | `corpus/` (`dataflow-corpus`) | The case format, an order-preserving JSON value, normalisation, the comparator, v3's path rules, trace replay, and the coverage tests. It does not depend on dataflow-rs |
 | `corpus/v3/` (`dataflow-corpus-v3`) | v3's driver, which runs a case and records it. Also the `script` host function, the observer recorder, the log capture, `record`, and the green test |
+| `corpus/v4/` (`dataflow-corpus-v4`) | v4's driver, which holds v4 to the recordings: `script` ported to v4's `Function`, the declared deviations (`expect`), the definitions check and the runs check |
 
-When v4 replaces v3's API on `main`, `corpus/v3` stays on `v3-maintenance`, and a v4 driver reads
-the same cases through `dataflow-corpus`.
+When v4 replaces v3's API on `main`, `corpus/v3` stays on `v3-maintenance`, and `corpus/v4` goes on
+reading the same cases through `dataflow-corpus`.
 
 ## v4's driver
 
@@ -50,9 +51,9 @@ deviations covering it. Nothing is skipped.
   cover `/steps` too.
 - **The budget.** On a `budget` build, the case's compiler applies `engine.ops_budget`. A case that
   sets one must require `budget`, so it never runs without its ceiling.
-- **The skip rule.** A case whose engine has an observer or an error context waits for phase 6
-  (`run::waits_for`). That is the one rule. A case whose `requires` this build does not satisfy is
-  skipped too.
+- **The skip rules.** A case whose engine has an observer or an error context waits for phase 6
+  (`run::waits_for`); that is the one rule tied to a phase. A case whose `requires` this build does
+  not satisfy is skipped too.
 - **A run step** runs on a fresh message with its channel, bucket, `capture_changes` and
   `audit_mode`. It records `{outcome, message, logs}` as v3's driver does, normalised the same way.
   The outcome is `"ok"` for a run that completed, with or without error records. `script` is v3's,
@@ -189,7 +190,7 @@ ignores them; v4's ignores those paths and nothing else.
 `requires`. CI runs the corpus in two builds:
 
 - **all-features,** through `cargo test --workspace --all-features`;
-- **default,** through `cargo test -p dataflow-corpus-v3`.
+- **default,** through `cargo test -p dataflow-corpus-v3` and `cargo test -p dataflow-corpus-v4`.
 
 A case must run in one of them, so it never needs features both on and off.
 
