@@ -1,7 +1,7 @@
 extern crate dataflow_rs_v4 as dataflow_rs;
 
 use dataflow_rs::expr::{CompileCx, ConfigField, ExprEngine, ExprVisitor, FieldKind, Visit};
-use dataflow_rs::expr::{Interpolated, Output};
+use dataflow_rs::expr::{Interpolated, Output, Rendered};
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::program::{AuthoredPath, IssueCode, Severity};
 use dataflow_rs::{Ctx, Engine, Expr, Function, Message, Outcome, Result};
@@ -245,6 +245,8 @@ fn interpolated_is_send_and_sync() {
     fn assert<T: Send + Sync + std::fmt::Debug>() {}
     assert::<Interpolated>();
     assert::<Output>();
+    // A host may hold a rendered document across an `.await`.
+    assert::<Rendered<'static>>();
 }
 
 // Rendering, end to end: a host function renders its document through
