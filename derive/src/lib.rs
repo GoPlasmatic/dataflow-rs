@@ -334,10 +334,11 @@ fn is_option_of_output(ty: &Type) -> bool {
     }
     match &last.arguments {
         PathArguments::AngleBracketed(args) => {
-            matches!(
-                args.args.iter().collect::<Vec<_>>().as_slice(),
-                [GenericArgument::Type(inner)] if is_output_type(inner)
-            )
+            args.args.len() == 1
+                && matches!(
+                    args.args.first(),
+                    Some(GenericArgument::Type(inner)) if is_output_type(inner)
+                )
         }
         _ => false,
     }
