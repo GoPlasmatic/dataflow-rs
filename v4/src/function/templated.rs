@@ -61,8 +61,28 @@ impl TemplatedField {
     }
 }
 
+/// What makes `specs` break the derive's rule for outputs, if anything:
+/// of several `Output` fields, exactly one is marked
+/// [`primary`](FieldSpec::primary). [`Registry::register`](super::Registry::register)
+/// refuses a `Templated` function whose runtime fields break it, as the
+/// derive refuses such a struct at expansion.
+pub(super) fn primary_problem(specs: &[FieldSpec]) -> Option<String> {
+    let (outputs, primaries) = specs
+        .iter()
+        .filter(|spec| matches!(spec.kind, FieldKind::Output))
+        .fold((0, 0), |(n, p), spec| {
+            (n + 1, p + usize::from(spec.primary))
+        });
+    (outputs > 1 && primaries != 1).then(|| {
+        format!(
+            "its runtime fields hold {outputs} outputs, {primaries} of them primary: mark \
+             exactly one of them `primary`"
+        )
+    })
+}
+
 /// The name of the primary output among `specs`: the only `Output` field,
-/// or, of several, the first marked primary.
+/// or, of several, the one marked primary, which `register` makes sure of.
 fn primary_name(specs: &[FieldSpec]) -> Option<&str> {
     let is_output = |spec: &&FieldSpec| matches!(spec.kind, FieldKind::Output);
     let mut outputs = specs.iter().filter(is_output);

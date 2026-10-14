@@ -2,6 +2,7 @@
 
 use super::builtins::BuiltinKind;
 use super::erased::{Erased, ErasedFunction};
+use super::templated::primary_problem;
 use super::{CallLayer, Function, FunctionSpec, Templated};
 use crate::base::{AuthoredPath, PathSeg};
 use crate::expr::{ExprEngine, FieldSpec};
@@ -92,7 +93,11 @@ impl Registry {
     /// - [`runtime_fields`](FunctionSpec::runtime_fields) on a config that is
     ///   not [`Templated`], which would never compile them;
     /// - a [`Templated`] config with no `runtime_fields`, which has nothing
-    ///   to compile.
+    ///   to compile;
+    /// - `runtime_fields` holding several outputs without exactly one marked
+    ///   [`primary`](FieldSpec::primary), which `#[derive(FunctionConfig)]`
+    ///   refuses at expansion: no output, or a guess, would be the one
+    ///   [`Ctx::emit_default`](crate::Ctx::emit_default) writes through.
     pub fn register<F: Function>(&mut self, name: &str, f: F) {
         assert!(
             !BuiltinKind::reserved(name),
@@ -163,8 +168,9 @@ impl Registry {
 }
 
 /// Panics on a spec `register` refuses: runtime fields on a config that is
-/// not [`Templated`], none on one that is, or a reference that does not start
-/// at one of `fields`, the config's fields.
+/// not [`Templated`], none on one that is, several outputs among them
+/// without exactly one primary, or a reference that does not start at one of
+/// `fields`, the config's fields.
 fn check_spec(name: &str, spec: &FunctionSpec, fields: &[FieldSpec], templated: bool) {
     match (templated, spec.runtime_fields.is_some()) {
         (false, true) => panic!(
@@ -176,6 +182,9 @@ fn check_spec(name: &str, spec: &FunctionSpec, fields: &[FieldSpec], templated: 
              runtime fields, so every compile of it fails"
         ),
         _ => {}
+    }
+    if let Some(problem) = spec.runtime_fields.as_deref().and_then(primary_problem) {
+        panic!("cannot register `{name}`: {problem}");
     }
     for reference in &spec.references {
         let field = &reference.field;

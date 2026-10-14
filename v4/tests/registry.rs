@@ -241,6 +241,49 @@ fn a_templated_config_without_runtime_fields_panics() {
     Registry::default().register("no_fields", specced::<Templated>(FunctionSpec::default()));
 }
 
+/// Runtime fields holding the outputs `names`, those in `primary` marked
+/// primary.
+fn outputs(names: &[&'static str], primary: &[&str]) -> FunctionSpec {
+    let fields = names
+        .iter()
+        .map(|&name| {
+            let mut field = FieldSpec::runtime(name, FieldKind::Output, false);
+            field.primary = primary.contains(&name);
+            field
+        })
+        .collect();
+    FunctionSpec::default().with_runtime_fields(fields)
+}
+
+#[test]
+#[should_panic(
+    expected = "cannot register `unmarked`: its runtime fields hold 2 outputs, 0 of \
+                           them primary: mark exactly one of them `primary`"
+)]
+fn several_runtime_outputs_none_primary_panic() {
+    Registry::default().register("unmarked", specced::<Templated>(outputs(&["a", "b"], &[])));
+}
+
+#[test]
+#[should_panic(
+    expected = "cannot register `twice`: its runtime fields hold 3 outputs, 2 of \
+                           them primary: mark exactly one of them `primary`"
+)]
+fn several_runtime_outputs_more_than_one_primary_panic() {
+    let spec = outputs(&["a", "b", "c"], &["a", "c"]);
+    Registry::default().register("twice", specced::<Templated>(spec));
+}
+
+#[test]
+fn runtime_outputs_register_with_one_primary_or_alone() {
+    // The derive's rule: several outputs mark exactly one, and a lone
+    // output is the primary without saying so.
+    let mut registry = Registry::default();
+    registry.register("marked", specced::<Templated>(outputs(&["a", "b"], &["b"])));
+    registry.register("lone", specced::<Templated>(outputs(&["a"], &[])));
+    assert_eq!(names(&registry), with_builtins(&["lone", "marked"]));
+}
+
 #[test]
 fn a_reference_names_a_field_of_the_config_or_of_the_runtime_fields() {
     let mut registry = Registry::default();
