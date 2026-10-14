@@ -282,7 +282,11 @@ pub(crate) fn get_dotted<'v>(v: &'v OwnedDataValue, dotted: &str) -> Option<&'v 
         .try_fold(v, |v, raw| hop(v, seg_key(raw), seg_index(raw)))
 }
 
-fn get_mut<'v>(mut v: &'v mut OwnedDataValue, segs: &[Seg]) -> Option<&'v mut OwnedDataValue> {
+/// [`get`], mutably.
+pub(crate) fn get_mut<'v>(
+    mut v: &'v mut OwnedDataValue,
+    segs: &[Seg],
+) -> Option<&'v mut OwnedDataValue> {
     for seg in segs {
         v = match v {
             OwnedDataValue::Object(pairs) => {

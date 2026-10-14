@@ -435,6 +435,22 @@ impl<'m, 'p> RunContext<'m, 'p> {
         }
     }
 
+    /// An engine write that updates the owned value at `path` in place,
+    /// reusing what it holds: with no view, `update` gets the value there
+    /// and says whether it updated it. `false`, with nothing written, when a
+    /// view exists, nothing is at `path` or `update` declined, and the caller
+    /// writes through [`Self::engine_set`] instead.
+    pub(crate) fn engine_update(
+        &mut self,
+        path: &Path,
+        update: impl FnOnce(&mut OwnedDataValue) -> bool,
+    ) -> bool {
+        match &mut self.state {
+            State::Owned(owner) => path::get_mut(&mut owner.ctx, path.segs()).is_some_and(update),
+            _ => false,
+        }
+    }
+
     /// Removes `path`; whether something was there.
     #[cfg_attr(
         not(test),

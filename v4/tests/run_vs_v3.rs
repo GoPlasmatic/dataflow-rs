@@ -444,3 +444,123 @@ async fn linear_workflows_match_v3() {
     }
     assert_eq!(compared, 237, "every run is compared");
 }
+
+/// The progress write with no view updates a progress object of exactly its
+/// three keys in place, as v3's `overwrite_progress_in_place` does: the same
+/// wire text as v3 over every seeded shape, with ids that grow and shrink.
+/// No-view writes come before the first view and after a large owned write,
+/// which checkpoints mid-run, the last one in a second workflow. Each
+/// `snap` copies the progress a no-view write left, which a later write
+/// would otherwise overwrite.
+#[tokio::test]
+async fn progress_written_in_place_matches_v3() {
+    let parse = |id: &str, source: &str, target: &str| {
+        json!({"id": id, "function": {"name": "parse_json",
+            "input": {"source": source, "target": target}}})
+    };
+    let snap = |id: &str| {
+        json!({"id": id, "function": {"name": "map", "input": {"mappings": [
+            {"path": format!("data.{id}"), "logic": {"var": "metadata.progress"}}]}}})
+    };
+    let workflows = vec![
+        workflow(
+            "w",
+            0,
+            &[],
+            vec![
+                parse("p", "payload.small", "a"),
+                parse("a_much_longer_task_id", "payload.small", "b"),
+                parse("q", "payload.small", "c"),
+                snap("snap1"),
+                parse("big", "payload.big", "big"),
+                parse("after_big", "payload.small", "d"),
+                snap("snap2"),
+            ],
+        ),
+        workflow(
+            "second_workflow",
+            1,
+            &[],
+            vec![parse("bigger", "payload.bigger", "bigger"), snap("snap3")],
+        ),
+    ];
+    // Each large value is past what the view holds when it is written.
+    let payload = json!({
+        "small": {"x": 1},
+        "big": (0..5_000).collect::<Vec<_>>(),
+        "bigger": (0..20_000).collect::<Vec<_>>(),
+    });
+    let mut runs = Vec::new();
+    for progress in [
+        None,
+        Some(json!({"workflow_id": "x", "task_id": "y", "status_code": 1})),
+        Some(json!({"status_code": 1, "task_id": "a_long_seeded_task", "workflow_id": "x"})),
+        Some(json!({"task_id": 5, "workflow_id": null, "status_code": "s"})),
+        Some(json!({"task_id": "y", "status_code": 1, "workflow_id": "x", "extra": 0})),
+        Some(json!({"task_id": "y", "status_code": 1})),
+        Some(json!({"task_id": "y", "status_code": 1, "other": "x"})),
+        Some(json!("not an object")),
+    ] {
+        runs.push(Run {
+            payload: payload.clone(),
+            metadata: progress.map_or_else(|| json!({}), |p| json!({"progress": p})),
+            ..Run::default()
+        });
+    }
+    let v3 = v3_engine(&workflows).expect("v3 builds");
+    let v4 = v4_engine(&workflows).expect("v4 builds");
+    for run in &runs {
+        let (text, code, report) = on_v4(&v4, run).await;
+        assert_eq!(
+            (text, code),
+            on_v3(&v3, run).await,
+            "seeded {}",
+            run.metadata
+        );
+        assert_eq!(
+            report.arena_stats().views,
+            3,
+            "each large write dropped the view"
+        );
+    }
+}
+
+/// An audit mode that keeps nothing builds no entry, and the message is v3's
+/// under it, and v4's own `Full` message with an empty audit trail: every
+/// built-in, its changes and errors, and chained workflows.
+#[tokio::test]
+async fn audit_modes_that_keep_nothing_match_v3() {
+    let mut compared = 0;
+    for (workflows, runs) in [builtins(), chained()] {
+        let v3 = v3_engine(&workflows).expect("v3 builds");
+        let v4 = v4_engine(&workflows).expect("v4 builds");
+        for full in runs {
+            let mut kept: Value =
+                serde_json::from_str(&on_v4(&v4, &full).await.0).expect("wire text is JSON");
+            kept["audit_trail"] = json!([]);
+            let off = Run {
+                audit_off: true,
+                ..full.clone()
+            };
+            let last_0 = Run {
+                audit: Some(0),
+                ..full.clone()
+            };
+            for run in [off, last_0] {
+                let (text, code, _) = on_v4(&v4, &run).await;
+                let label = format!(
+                    "payload {} data {} (off {}, audit {:?})",
+                    run.payload, run.data, run.audit_off, run.audit
+                );
+                assert_eq!(
+                    serde_json::from_str::<Value>(&text).expect("wire text is JSON"),
+                    kept,
+                    "{label}: only the audit trail differs from Full"
+                );
+                assert_eq!((text, code), on_v3(&v3, &run).await, "{label}");
+                compared += 1;
+            }
+        }
+    }
+    assert_eq!(compared, 2 * (8 + 17), "every run is compared");
+}

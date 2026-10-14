@@ -25,6 +25,8 @@ pub struct Run {
     pub channel: Option<&'static str>,
     pub bucket: Option<u8>,
     pub audit: Option<usize>,
+    /// `AuditMode::Off`, over `audit`.
+    pub audit_off: bool,
 }
 
 /// A run over `data`.
@@ -100,6 +102,9 @@ pub async fn on_v3(engine: &dataflow_rs_v3::Engine, run: &Run) -> (String, Strin
     if let Some(n) = run.audit {
         builder = builder.audit_mode(dataflow_rs_v3::AuditMode::Last(n));
     }
+    if run.audit_off {
+        builder = builder.audit_mode(dataflow_rs_v3::AuditMode::Off);
+    }
     let mut message = builder.build();
     let result = match run.channel {
         Some(channel) => {
@@ -134,6 +139,9 @@ pub async fn on_v4(engine: &Engine, run: &Run) -> (String, String, dataflow_rs::
     }
     if let Some(n) = run.audit {
         opts = opts.audit(AuditMode::Last(n));
+    }
+    if run.audit_off {
+        opts = opts.audit(AuditMode::Off);
     }
     let report = engine.run_with(&mut message, &opts).await;
     let code = match report.status() {

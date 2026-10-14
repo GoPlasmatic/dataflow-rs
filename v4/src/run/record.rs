@@ -10,7 +10,7 @@
 //! and nothing else (I61): [`workflow_failure`].
 
 use super::interp::RunEnv;
-use super::message::{AuditEntry, record_audit};
+use super::message::{AuditEntry, keeps_entries, record_audit};
 use crate::base::{Error, ErrorRecord};
 use crate::expr::Path;
 use crate::function::task_record;
@@ -47,19 +47,24 @@ pub(crate) fn record<'p>(
         env.changes.clear();
         return;
     };
-    record_audit(
-        env.audit,
-        env.mode,
-        AuditEntry {
-            workflow_id: Arc::clone(ids.workflow),
-            task_id: Arc::clone(ids.task),
-            timestamp: env.now,
-            changes: std::mem::take(&mut env.changes),
-            status: usize::from(status),
-            loop_counter: env.frame.loop_counter,
-            element_index: None,
-        },
-    );
+    // A mode that keeps nothing builds no entry for `record_audit` to drop.
+    if keeps_entries(env.mode) {
+        record_audit(
+            env.audit,
+            env.mode,
+            AuditEntry {
+                workflow_id: Arc::clone(ids.workflow),
+                task_id: Arc::clone(ids.task),
+                timestamp: env.now,
+                changes: std::mem::take(&mut env.changes),
+                status: usize::from(status),
+                loop_counter: env.frame.loop_counter,
+                element_index: None,
+            },
+        );
+    } else {
+        env.changes.clear();
+    }
     write_progress(rc, ids.workflow, ids.task, status);
     if let Some((code, message)) = record {
         let (workflow, task) = (&**ids.workflow, &**ids.task);
@@ -110,49 +115,85 @@ impl Key {
 /// their order; anything else it replaces with a fresh object in this order.
 const FRESH: [Key; 3] = [Key::Workflow, Key::Task, Key::Status];
 
-/// The order of `keys`, by v3's rule.
-fn order<'k>(keys: impl ExactSizeIterator<Item = &'k str>) -> [Key; 3] {
+/// The keys of an object v3 overwrites in place, in its order: exactly
+/// three, each one of the three. `None` for any other object.
+fn in_place<'k>(keys: impl ExactSizeIterator<Item = &'k str>) -> Option<[Key; 3]> {
     if keys.len() != 3 {
-        return FRESH;
+        return None;
     }
     let mut order = FRESH;
     for (slot, key) in order.iter_mut().zip(keys) {
-        match Key::of(key) {
-            Some(key) => *slot = key,
-            None => return FRESH,
-        }
+        *slot = Key::of(key)?;
     }
-    order
+    Some(order)
 }
 
 /// The key order the progress write keeps: read from the view when there is
-/// one, which builds nothing, and from the owned tree otherwise.
+/// one, which builds nothing. With no view it is [`FRESH`], since
+/// [`overwrite_in_place`] already took every object whose order is not.
 fn current_order(rc: &mut RunContext<'_, '_>) -> [Key; 3] {
-    if rc.has_view() {
-        rc.read(|_, root| {
-            let progress = root
-                .as_object()
-                .and_then(|roots| roots.iter().find(|(k, _)| *k == "metadata"))
-                .and_then(|(_, metadata)| metadata.as_object())
-                .and_then(|keys| keys.iter().find(|(k, _)| *k == "progress"));
-            match progress.and_then(|(_, p)| p.as_object()) {
-                Some(pairs) => order(pairs.iter().map(|(k, _)| *k)),
-                None => FRESH,
-            }
-        })
-    } else {
-        match rc.get(&PROGRESS).as_deref() {
-            Some(OwnedDataValue::Object(pairs)) => order(pairs.iter().map(|(k, _)| k.as_str())),
-            _ => FRESH,
+    if !rc.has_view() {
+        return FRESH;
+    }
+    rc.read(|_, root| {
+        let progress = root
+            .as_object()
+            .and_then(|roots| roots.iter().find(|(k, _)| *k == "metadata"))
+            .and_then(|(_, metadata)| metadata.as_object())
+            .and_then(|keys| keys.iter().find(|(k, _)| *k == "progress"));
+        progress
+            .and_then(|(_, p)| p.as_object())
+            .and_then(|pairs| in_place(pairs.iter().map(|(k, _)| *k)))
+            .unwrap_or(FRESH)
+    })
+}
+
+/// v3's `overwrite_progress_in_place`: an object [`in_place`] accepts takes
+/// the three values where they are, reusing its strings' buffers, so its
+/// keys keep their order and nothing is allocated once the ids fit. `false`
+/// for anything else, which the caller replaces.
+fn overwrite_in_place(slot: &mut OwnedDataValue, workflow: &str, task: &str, status: u16) -> bool {
+    let OwnedDataValue::Object(pairs) = slot else {
+        return false;
+    };
+    let Some(order) = in_place(pairs.iter().map(|(k, _)| k.as_str())) else {
+        return false;
+    };
+    for ((_, value), key) in pairs.iter_mut().zip(order) {
+        match key {
+            Key::Workflow => overwrite_str(value, workflow),
+            Key::Task => overwrite_str(value, task),
+            Key::Status => *value = OwnedDataValue::from(status),
         }
+    }
+    true
+}
+
+/// A leaf set to the string `text`, in its own buffer when it holds a
+/// string: v3's `overwrite_str_in_place`.
+fn overwrite_str(slot: &mut OwnedDataValue, text: &str) {
+    match slot {
+        OwnedDataValue::String(s) => {
+            if s != text {
+                s.clear();
+                s.push_str(text);
+            }
+        }
+        _ => *slot = OwnedDataValue::String(text.to_owned()),
     }
 }
 
-/// The progress write, `{workflow_id, task_id, status_code}` in the order
-/// [`current_order`] gives: owned when no view exists, otherwise spliced into
-/// the view from the program's strings, converting nothing until a
-/// checkpoint.
+/// The progress write, `{workflow_id, task_id, status_code}`. With no view
+/// it updates an existing progress object in place when v3 would
+/// ([`overwrite_in_place`]) and otherwise writes a fresh one; with a view it
+/// splices one from the program's strings in the order [`current_order`]
+/// gives, converting nothing until a checkpoint, which converts it.
 fn write_progress<'p>(rc: &mut RunContext<'_, 'p>, workflow: &'p str, task: &'p str, status: u16) {
+    if rc.engine_update(&PROGRESS, |slot| {
+        overwrite_in_place(slot, workflow, task, status)
+    }) {
+        return;
+    }
     let order = current_order(rc);
     rc.engine_set(
         &PROGRESS,
@@ -184,4 +225,69 @@ fn write_progress<'p>(rc: &mut RunContext<'_, 'p>, workflow: &'p str, task: &'p 
             )
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Tuning;
+
+    fn text(v: &OwnedDataValue) -> String {
+        serde_json::to_string(v).unwrap()
+    }
+
+    /// A context with `progress` (JSON text, its key order kept) seeded.
+    fn context(progress: &str) -> OwnedDataValue {
+        let text =
+            format!(r#"{{"data":{{}},"metadata":{{"progress":{progress}}},"temp_data":{{}}}}"#);
+        serde_json::from_str(&text).unwrap()
+    }
+
+    /// The buffer of the string at `metadata.progress.<key>`.
+    fn buffer(ctx: &OwnedDataValue, key: &str) -> *const u8 {
+        match &ctx["metadata"]["progress"][key] {
+            OwnedDataValue::String(s) => s.as_ptr(),
+            other => panic!("{key} holds {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_no_view_a_progress_of_its_three_keys_is_updated_where_it_is() {
+        let mut ctx = context(r#"{"task_id":"a_long_task","status_code":1,"workflow_id":"wf"}"#);
+        let before = (buffer(&ctx, "task_id"), buffer(&ctx, "workflow_id"));
+        let mut rc = RunContext::new(&mut ctx, Tuning::default());
+        write_progress(&mut rc, "wf", "t", 200);
+        assert!(!rc.has_view(), "the write built no view");
+        rc.finish();
+        assert_eq!(
+            text(&ctx["metadata"]["progress"]),
+            r#"{"task_id":"t","status_code":200,"workflow_id":"wf"}"#,
+            "the keys keep their order"
+        );
+        assert_eq!(
+            (buffer(&ctx, "task_id"), buffer(&ctx, "workflow_id")),
+            before,
+            "both ids were written into the strings already there"
+        );
+    }
+
+    #[test]
+    fn any_other_progress_is_replaced_in_the_fresh_order() {
+        for seeded in [
+            r#"{"task_id":"y","status_code":1}"#,
+            r#"{"task_id":"y","status_code":1,"other":0}"#,
+            r#"{"task_id":"y","status_code":1,"workflow_id":"x","extra":0}"#,
+            "[1,2,3]",
+        ] {
+            let mut ctx = context(seeded);
+            let mut rc = RunContext::new(&mut ctx, Tuning::default());
+            write_progress(&mut rc, "wf", "t", 200);
+            rc.finish();
+            assert_eq!(
+                text(&ctx["metadata"]["progress"]),
+                r#"{"workflow_id":"wf","task_id":"t","status_code":200}"#,
+                "{seeded}"
+            );
+        }
+    }
 }

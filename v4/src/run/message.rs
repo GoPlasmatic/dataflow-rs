@@ -253,6 +253,12 @@ impl Message {
     }
 }
 
+/// Whether `mode` keeps any entry: `Off` and `Last(0)` keep none, so the
+/// recorder builds none.
+pub(crate) fn keeps_entries(mode: AuditMode) -> bool {
+    !matches!(mode, AuditMode::Off | AuditMode::Last(0))
+}
+
 /// Appends `entry` under `mode`, trimming `Last(n)` in v3's batches: the Vec
 /// holds up to `2n` entries until [`finish_audit`].
 pub(crate) fn record_audit(audit: &mut Vec<AuditEntry>, mode: AuditMode, entry: AuditEntry) {
