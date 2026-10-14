@@ -445,13 +445,20 @@ async fn linear_workflows_match_v3() {
     assert_eq!(compared, 237, "every run is compared");
 }
 
-/// The progress write with no view updates a progress object of exactly its
-/// three keys in place, as v3's `overwrite_progress_in_place` does: the same
-/// wire text as v3 over every seeded shape, with ids that grow and shrink.
-/// No-view writes come before the first view and after a large owned write,
-/// which checkpoints mid-run, the last one in a second workflow. Each
-/// `snap` copies the progress a no-view write left, which a later write
-/// would otherwise overwrite.
+/// The progress write updates a progress object of exactly its three keys in
+/// place, with no view and with one, as v3's `overwrite_progress_in_place`
+/// does: the same wire text as v3 over every seeded shape, with ids that grow
+/// and shrink. No-view writes come before the first view and after a large
+/// owned write, which checkpoints mid-run, the last one in a second workflow.
+/// Each `snap` copies the progress the write before it left, which a later
+/// write would otherwise overwrite.
+///
+/// `map`s shape the progress object before writes made with a view: in the
+/// first workflow, shapes replaced by a fresh object; in the third, which
+/// runs on one view throughout, three keys in an order neither alphabetical
+/// (as `json!` seeds are) nor fresh, values that are not the ids' strings or
+/// the status's integer, a key removed and written again, every value
+/// already the write's, and a status that changes.
 #[tokio::test]
 async fn progress_written_in_place_matches_v3() {
     let parse = |id: &str, source: &str, target: &str| {
@@ -462,6 +469,8 @@ async fn progress_written_in_place_matches_v3() {
         json!({"id": id, "function": {"name": "map", "input": {"mappings": [
             {"path": format!("data.{id}"), "logic": {"var": "metadata.progress"}}]}}})
     };
+    let shape = |id: &str, mappings: Value| json!({"id": id, "function": {"name": "map", "input": {"mappings": mappings}}});
+    let at = |key: &str| format!("metadata.progress.{key}");
     let workflows = vec![
         workflow(
             "w",
@@ -472,6 +481,20 @@ async fn progress_written_in_place_matches_v3() {
                 parse("a_much_longer_task_id", "payload.small", "b"),
                 parse("q", "payload.small", "c"),
                 snap("snap1"),
+                // With a view: shapes replaced by a fresh object. The
+                // checkpoint `big` takes brings the owned tree up to date.
+                shape("four_keys", json!([{"path": at("extra"), "logic": 0}])),
+                snap("snap4"),
+                shape(
+                    "two_keys",
+                    json!([{"path": at("workflow_id"), "unset": true}]),
+                ),
+                snap("snap5"),
+                shape(
+                    "not_an_object",
+                    json!([{"path": "metadata.progress", "logic": "x"}]),
+                ),
+                snap("snap6"),
                 parse("big", "payload.big", "big"),
                 parse("after_big", "payload.small", "d"),
                 snap("snap2"),
@@ -482,6 +505,50 @@ async fn progress_written_in_place_matches_v3() {
             1,
             &[],
             vec![parse("bigger", "payload.bigger", "bigger"), snap("snap3")],
+        ),
+        // One view throughout, and every shape made key by key, so each
+        // write is marked at its own keys, and the finish's checkpoint
+        // brings the owned tree up to date from those marks alone.
+        workflow(
+            "shaped",
+            2,
+            &[],
+            vec![
+                // Fresh order, workflow_id moved last: task_id,
+                // status_code, workflow_id.
+                shape(
+                    "reordered",
+                    json!([
+                        {"path": at("workflow_id"), "unset": true},
+                        {"path": at("workflow_id"), "logic": "w0"}
+                    ]),
+                ),
+                snap("snap7"),
+                shape(
+                    "odd_values",
+                    json!([
+                        {"path": at("task_id"), "logic": 5},
+                        {"path": at("workflow_id"), "logic": [1]},
+                        {"path": at("status_code"), "logic": 200.5}
+                    ]),
+                ),
+                snap("snap8"),
+                shape(
+                    "readded",
+                    json!([
+                        {"path": at("task_id"), "unset": true},
+                        {"path": at("task_id"), "logic": "back"}
+                    ]),
+                ),
+                snap("snap9"),
+                shape(
+                    "settled",
+                    json!([{"path": at("task_id"), "logic": "settled"}]),
+                ),
+                snap("snap10"),
+                requires_ok("rejects"),
+                snap("snap11"),
+            ],
         ),
     ];
     // Each large value is past what the view holds when it is written.

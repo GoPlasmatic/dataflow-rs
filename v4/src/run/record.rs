@@ -108,11 +108,39 @@ impl Key {
             Self::Status => "status_code",
         }
     }
+
+    /// `metadata.progress.<key>`: where the view's in-place update marks
+    /// this key's value.
+    fn leaf(self) -> &'static Path {
+        fn parse(key: Key) -> Path {
+            format!("metadata.progress.{}", key.name())
+                .parse()
+                .expect("a progress key is a path")
+        }
+        static WORKFLOW: LazyLock<Path> = LazyLock::new(|| parse(Key::Workflow));
+        static TASK: LazyLock<Path> = LazyLock::new(|| parse(Key::Task));
+        static STATUS: LazyLock<Path> = LazyLock::new(|| parse(Key::Status));
+        match self {
+            Self::Workflow => &WORKFLOW,
+            Self::Task => &TASK,
+            Self::Status => &STATUS,
+        }
+    }
+
+    /// The value this key takes, borrowed from the program.
+    fn value<'p>(self, workflow: &'p str, task: &'p str, status: u16) -> DataValue<'p> {
+        match self {
+            Self::Workflow => DataValue::String(workflow),
+            Self::Task => DataValue::String(task),
+            Self::Status => DataValue::Number(NumberValue::Integer(i64::from(status))),
+        }
+    }
 }
 
-/// The key order a progress write keeps. v3 overwrites a progress object of
-/// exactly three keys, each one of the three, in place, so its keys keep
-/// their order; anything else it replaces with a fresh object in this order.
+/// The key order of a fresh progress object. v3 overwrites a progress
+/// object of exactly three keys, each one of the three, in place, so its
+/// keys keep their order; anything else it replaces with a fresh object in
+/// this order.
 const FRESH: [Key; 3] = [Key::Workflow, Key::Task, Key::Status];
 
 /// The keys of an object v3 overwrites in place, in its order: exactly
@@ -126,26 +154,6 @@ fn in_place<'k>(keys: impl ExactSizeIterator<Item = &'k str>) -> Option<[Key; 3]
         *slot = Key::of(key)?;
     }
     Some(order)
-}
-
-/// The key order the progress write keeps: read from the view when there is
-/// one, which builds nothing. With no view it is [`FRESH`], since
-/// [`overwrite_in_place`] already took every object whose order is not.
-fn current_order(rc: &mut RunContext<'_, '_>) -> [Key; 3] {
-    if !rc.has_view() {
-        return FRESH;
-    }
-    rc.read(|_, root| {
-        let progress = root
-            .as_object()
-            .and_then(|roots| roots.iter().find(|(k, _)| *k == "metadata"))
-            .and_then(|(_, metadata)| metadata.as_object())
-            .and_then(|keys| keys.iter().find(|(k, _)| *k == "progress"));
-        progress
-            .and_then(|(_, p)| p.as_object())
-            .and_then(|pairs| in_place(pairs.iter().map(|(k, _)| *k)))
-            .unwrap_or(FRESH)
-    })
 }
 
 /// v3's `overwrite_progress_in_place`: an object [`in_place`] accepts takes
@@ -183,23 +191,67 @@ fn overwrite_str(slot: &mut OwnedDataValue, text: &str) {
     }
 }
 
-/// The progress write, `{workflow_id, task_id, status_code}`. With no view
-/// it updates an existing progress object in place when v3 would
-/// ([`overwrite_in_place`]) and otherwise writes a fresh one; with a view it
-/// splices one from the program's strings in the order [`current_order`]
-/// gives, converting nothing until a checkpoint, which converts it.
+/// Whether the view's `old` already is `new`, exactly: a string of the same
+/// text, or the same integer. A float of an integer's value is not it, since
+/// v3 writes the integer over it.
+fn unchanged(old: DataValue<'_>, new: DataValue<'_>) -> bool {
+    match (old, new) {
+        (DataValue::String(a), DataValue::String(b)) => a == b,
+        (
+            DataValue::Number(NumberValue::Integer(a)),
+            DataValue::Number(NumberValue::Integer(b)),
+        ) => a == b,
+        _ => false,
+    }
+}
+
+/// [`overwrite_in_place`] against the view: an object [`in_place`] accepts
+/// keeps its keys and their order and takes the values that differ, and the
+/// write log marks only those, so the checkpoint assigns them where they
+/// are. A value already equal, as the workflow id and the status usually
+/// are, is neither written nor marked. `false` for anything else, which the
+/// caller replaces.
+fn overwrite_in_view<'p>(
+    rc: &mut RunContext<'_, 'p>,
+    workflow: &'p str,
+    task: &'p str,
+    status: u16,
+) -> bool {
+    rc.edit(|e| {
+        e.overwrite(&PROGRESS, |pairs| {
+            let order = in_place(pairs.iter().map(|(k, _)| *k))?;
+            Some(std::array::from_fn::<_, 3, _>(|i| {
+                let new = order[i].value(workflow, task, status);
+                (
+                    order[i].leaf(),
+                    (!unchanged(pairs[i].1, new)).then_some(new),
+                )
+            }))
+        })
+    })
+}
+
+/// The progress write, `{workflow_id, task_id, status_code}`, by v3's rule
+/// on both sides of the view: a progress object of exactly its three keys is
+/// updated in place ([`overwrite_in_place`] with no view,
+/// [`overwrite_in_view`] with one), and anything else is replaced by a fresh
+/// object in the [`FRESH`] order: built owned with no view, and with one
+/// spliced from the program's strings, converting nothing until a
+/// checkpoint, which converts it.
 fn write_progress<'p>(rc: &mut RunContext<'_, 'p>, workflow: &'p str, task: &'p str, status: u16) {
     if rc.engine_update(&PROGRESS, |slot| {
         overwrite_in_place(slot, workflow, task, status)
     }) {
         return;
     }
-    let order = current_order(rc);
+    if rc.has_view() && overwrite_in_view(rc, workflow, task, status) {
+        return;
+    }
     rc.engine_set(
         &PROGRESS,
         || {
             OwnedDataValue::Object(
-                order
+                FRESH
                     .iter()
                     .map(|key| {
                         let value = match key {
@@ -213,16 +265,9 @@ fn write_progress<'p>(rc: &mut RunContext<'_, 'p>, workflow: &'p str, task: &'p 
             )
         },
         |owner| {
-            let value = |key: Key| match key {
-                Key::Workflow => DataValue::String(workflow),
-                Key::Task => DataValue::String(task),
-                Key::Status => DataValue::Number(NumberValue::Integer(i64::from(status))),
-            };
-            DataValue::Object(
-                owner
-                    .arena
-                    .alloc_slice_copy(&order.map(|key| (key.name(), value(key)))),
-            )
+            DataValue::Object(owner.arena.alloc_slice_copy(
+                &FRESH.map(|key| (key.name(), key.value(workflow, task, status))),
+            ))
         },
     );
 }
@@ -269,6 +314,86 @@ mod tests {
             before,
             "both ids were written into the strings already there"
         );
+    }
+
+    /// The buffer of the progress object's pairs.
+    fn pairs(ctx: &OwnedDataValue) -> *const (String, OwnedDataValue) {
+        match &ctx["metadata"]["progress"] {
+            OwnedDataValue::Object(pairs) => pairs.as_ptr(),
+            other => panic!("progress holds {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_a_view_a_progress_of_its_three_keys_is_updated_where_it_is() {
+        let mut ctx = context(r#"{"task_id":"a_long_task","status_code":200,"workflow_id":"wf"}"#);
+        let before = (pairs(&ctx), buffer(&ctx, "workflow_id"));
+        let mut rc = RunContext::new(&mut ctx, Tuning::default());
+        rc.read(|_, _| ());
+        write_progress(&mut rc, "wf", "t", 200);
+        let stats = rc.finish();
+        assert_eq!(
+            text(&ctx["metadata"]["progress"]),
+            r#"{"task_id":"t","status_code":200,"workflow_id":"wf"}"#,
+            "the keys keep their order"
+        );
+        assert_eq!(stats.converted, 1, "only the task id changed: {stats:?}");
+        assert_eq!(
+            (pairs(&ctx), buffer(&ctx, "workflow_id")),
+            before,
+            "the object and the id that did not change stayed where they were"
+        );
+
+        // The same write again finds every value already there.
+        let mut rc = RunContext::new(&mut ctx, Tuning::default());
+        rc.read(|_, _| ());
+        write_progress(&mut rc, "wf", "t", 200);
+        assert!(
+            matches!(rc.get(&PROGRESS), Some(Cow::Borrowed(_))),
+            "nothing was marked"
+        );
+        assert_eq!(rc.finish().converted, 0);
+    }
+
+    #[test]
+    fn with_a_view_the_progress_write_leaves_what_it_leaves_without_one() {
+        // A key that comes twice is overwritten twice, as v3's loop over the
+        // pairs does, and the object is then marked as a whole.
+        for seeded in [
+            r#"{"workflow_id":"wf","task_id":"t0","status_code":200}"#,
+            r#"{"status_code":1,"workflow_id":"w0","task_id":"t"}"#,
+            r#"{"task_id":5,"workflow_id":null,"status_code":"s"}"#,
+            r#"{"task_id":"t","status_code":200.5,"workflow_id":"wf"}"#,
+            r#"{"task_id":"y","task_id":"z","status_code":1}"#,
+            r#"{"task_id":"y","status_code":1}"#,
+            r#"{"task_id":"y","status_code":1,"other":0}"#,
+            r#"{"task_id":"y","status_code":1,"workflow_id":"x","extra":0}"#,
+            "[1,2,3]",
+            "null",
+        ] {
+            let run = |viewed: bool| {
+                let mut ctx = context(seeded);
+                let mut rc = RunContext::new(&mut ctx, Tuning::default());
+                let mut seen = Vec::new();
+                for (workflow, task, status) in [
+                    ("wf", "t", 200),
+                    ("wf", "a_longer_task", 404),
+                    ("w2", "a_longer_task", 404),
+                    ("w2", "a_longer_task", 404),
+                ] {
+                    if viewed {
+                        rc.read(|_, _| ());
+                    }
+                    write_progress(&mut rc, workflow, task, status);
+                    seen.push(text(&rc.get(&PROGRESS).expect("a progress was written")));
+                }
+                assert_eq!(rc.has_view(), viewed);
+                rc.finish();
+                seen.push(text(&ctx["metadata"]["progress"]));
+                seen
+            };
+            assert_eq!(run(true), run(false), "{seeded}");
+        }
     }
 
     #[test]

@@ -226,6 +226,67 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
         true
     }
 
+    /// Overwrites values of the small object at `object` where they are, so
+    /// it keeps its keys and their order, as an owned in-place update keeps
+    /// them. `values` gets the object's pairs and gives one entry per pair,
+    /// in the object's order: the path of the pair's key (`object` and that
+    /// key) and its new value, or `None` to keep the value there. `false`,
+    /// writing nothing, when `object` holds no object or `values` declines
+    /// it.
+    ///
+    /// Each new value is marked at its own key's path, so the checkpoint
+    /// assigns those keys and nothing else, where they are, and never
+    /// converts the object. Unless a key comes twice: the owned tree assigns
+    /// a key's first pair only, so the object is then marked as a whole.
+    pub(crate) fn overwrite<'v, const N: usize>(
+        &mut self,
+        object: &Path,
+        values: impl FnOnce(
+            &'q [(&'q str, DataValue<'q>)],
+        ) -> Option<[(&'v Path, Option<DataValue<'q>>); N]>,
+    ) -> bool {
+        let before = self.root();
+        let Some(DataValue::Object(pairs)) = splice::get(before, object.segs()) else {
+            return false;
+        };
+        let Some(values) = values(pairs) else {
+            return false;
+        };
+        debug_assert!(
+            pairs.len() == N
+                && pairs.iter().zip(&values).all(|((k, _), (leaf, _))| {
+                    matches!(leaf.segs().split_last(),
+                        Some((last, parent)) if parent == object.segs() && *last.key == **k)
+                }),
+            "`values` names the object's keys, in its order"
+        );
+        if values.iter().all(|(_, value)| value.is_none()) {
+            return true;
+        }
+        let arena = self.arena();
+        let updated = DataValue::Object(
+            arena.alloc_slice_fill_with(N, |i| (pairs[i].0, values[i].1.unwrap_or(pairs[i].1))),
+        );
+        let Some((after, r)) = splice::set_resolved(arena, before, object.segs(), updated) else {
+            unreachable!("an object in the view takes a write")
+        };
+        debug_assert_eq!(r.created, None, "the object was there");
+        *self.root = arena.alloc(after);
+        let each_once = (1..N).all(|i| pairs[..i].iter().all(|(k, _)| *k != pairs[i].0));
+        if each_once {
+            for (leaf, value) in &values {
+                if value.is_some() {
+                    self.log
+                        .mark(At::new(leaf.segs(), r.kinds), Mark::Set(None));
+                }
+            }
+        } else {
+            self.log
+                .mark(At::new(object.segs(), r.kinds), Mark::Set(None));
+        }
+        true
+    }
+
     /// Remove `path`. Returns whether something was there.
     pub(crate) fn remove(&mut self, path: &Path) -> bool {
         let before = self.root();
