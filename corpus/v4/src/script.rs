@@ -228,3 +228,39 @@ fn unknown(v: &Value) -> Error {
     );
     Error::service(code, text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dataflow_rs::function::testing;
+    use serde_json::json;
+
+    /// The paths of the issues compiling `set` reports.
+    fn refused(set: Value) -> Vec<String> {
+        match testing::config::<ScriptConfig>(json!({ "set": set })) {
+            Ok(_) => Vec::new(),
+            Err(issues) => issues
+                .iter()
+                .map(|i| format!("{} at {}", i.code.as_str(), i.path))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_write_names_exactly_one_of_value_get_and_raw() {
+        let one = json!([
+            {"path": "data.a", "value": {"var": "data.x"}},
+            {"path": "data.b", "get": "data.x"},
+            {"path": "data.c", "raw": {"kept": true}}
+        ]);
+        assert!(refused(one).is_empty());
+        let none_or_two = json!([
+            {"path": "data.a"},
+            {"path": "data.b", "value": 1, "raw": 1}
+        ]);
+        assert_eq!(
+            refused(none_or_two),
+            ["INPUT_PARSE at set[0]", "INPUT_PARSE at set[1]"]
+        );
+    }
+}
