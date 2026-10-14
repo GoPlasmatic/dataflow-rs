@@ -587,3 +587,53 @@ fn a_nested_config_visits_below_its_parent_path() {
         ]
     );
 }
+
+/// The constant path of `config`'s primary output, if it has one.
+fn primary<C: FunctionConfig>(config: &C) -> Option<String> {
+    config
+        .primary_output()
+        .map(|out| out.constant().expect("a literal output").to_string())
+}
+
+#[test]
+fn primary_output_is_the_single_output_or_the_marked_one() {
+    // Two outputs: the one marked `#[output(primary)]`.
+    let (probe, issues) = compile::<Probe>(&valid());
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(primary(&probe.unwrap()).as_deref(), Some("data"));
+    // One output: it, unmarked.
+    let (one, _) = compile::<OneOut>(&json!({"out": "data.r"}));
+    assert_eq!(primary(&one.unwrap()).as_deref(), Some("data.r"));
+    // No `Output` field: none, even with outputs in an option, a list and a
+    // map, none of which is marked.
+    let (limits, _) = compile::<Limits>(&json!({}));
+    assert_eq!(primary(&limits.unwrap()), None);
+    let (outputs, issues) = compile::<Outputs>(&json!({
+        "maybe": "data.m", "many": ["data.a"], "keyed": {"k": "data.k"}}));
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(primary(&outputs.unwrap()), None);
+    // A hand-written config has none unless it says so.
+    assert_eq!(primary(&()), None);
+}
+
+/// An optional primary output beside a required one.
+#[derive(Debug, FunctionConfig)]
+struct MaybeOut {
+    #[output(primary)]
+    maybe: Option<Output>,
+    always: Output,
+}
+
+#[test]
+fn an_option_output_primary_is_as_ref() {
+    let (cfg, issues) = compile::<MaybeOut>(&json!({"always": "data.a"}));
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(primary(&cfg.unwrap()), None, "absent: no primary output");
+    let (cfg, _) = compile::<MaybeOut>(&json!({"maybe": "data.m", "always": "data.a"}));
+    let cfg = cfg.unwrap();
+    assert_eq!(primary(&cfg).as_deref(), Some("data.m"));
+    assert!(std::ptr::eq(
+        cfg.primary_output().unwrap(),
+        cfg.maybe.as_ref().unwrap()
+    ));
+}

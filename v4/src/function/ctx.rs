@@ -1,7 +1,9 @@
 //! `Ctx`: a function's view of one call, and the static facts about it.
 
 use super::overlay::Overlay;
-use crate::base::{CancelToken, Change, ErrorRecord, ProgramId, Result, TaskIx, WorkflowIx};
+use crate::base::{
+    CancelToken, Change, Error, ErrorKind, ErrorRecord, ProgramId, Result, TaskIx, WorkflowIx,
+};
 use crate::expr::arena::with_arena;
 use crate::expr::path;
 use crate::expr::{Expr, ExprEngine, Filled, FromValue, Interpolated, Output, Path, Rendered, Seg};
@@ -61,8 +63,7 @@ pub struct Ctx<'r> {
     payload: &'r OwnedDataValue,
     exprs: &'r ExprEngine,
     info: CallInfo<'r>,
-    /// The callee's primary output.
-    #[expect(dead_code, reason = "Task 3's `emit_default` writes through it")]
+    /// The callee's primary output, which `emit_default` writes through.
     primary: Option<&'r Output>,
     deadline: Option<Instant>,
     cancel: Option<&'r CancelToken>,
@@ -368,6 +369,40 @@ impl<'r> Ctx<'r> {
         } = self;
         with_base(*reader, *binding, |base| overlay.set(base, path, value));
         Ok(())
+    }
+
+    /// Writes `value` through `out`, as [`Self::set`] does: at its path
+    /// when it is literal, else at the path it evaluates to now, against the
+    /// context as this call sees it.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::eval`]'s, when `out` is computed and does not give a path;
+    /// [`Self::set`]'s.
+    pub fn emit(&mut self, out: &Output, value: OwnedDataValue) -> Result<()> {
+        let path = match out.constant() {
+            Some(path) => Cow::Borrowed(path),
+            None => self.eval(out.path())?,
+        };
+        self.set(&path, value)
+    }
+
+    /// [`Self::emit`] through the function's primary output, the one its
+    /// config's [`FunctionConfig::primary_output`](super::FunctionConfig::primary_output)
+    /// names.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Config`] when the config has no primary output, or
+    /// leaves an optional one unset; [`Self::emit`]'s.
+    pub fn emit_default(&mut self, value: OwnedDataValue) -> Result<()> {
+        let Some(out) = self.primary else {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!("`{}` has no primary output", self.info.function),
+            ));
+        };
+        self.emit(out, value)
     }
 
     /// Removes the value at `path`, recording the removal under capture.

@@ -39,7 +39,7 @@ pub mod __private {
     pub use super::config::FunctionConfig;
     pub use crate::base::AuthoredPath;
     pub use crate::expr::{
-        CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, ValueKind, Visit,
+        CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, Output, ValueKind, Visit,
     };
     pub use serde_json::Value;
     pub use std::sync::OnceLock;

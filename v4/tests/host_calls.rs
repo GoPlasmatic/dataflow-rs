@@ -10,6 +10,7 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // `writes` in key order, then evaluates `reads`, logging what it saw, then
 // returns what `outcome` names.
 
+use dataflow_rs::expr::Output;
 use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next};
 use dataflow_rs::run::{ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
 use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result, Run, RunOptions};
@@ -17,6 +18,7 @@ use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
 /// The probe's config.
@@ -829,4 +831,134 @@ fn the_run_future_is_send_with_a_host_call_and_layers() {
     let opts = RunOptions::default().layers(&run_layers);
     let mut m = message(json!({}));
     assert_send(&e.run_with(&mut m, &opts));
+}
+
+/// Two outputs, the literal one primary.
+#[derive(FunctionConfig)]
+struct EmitConfig {
+    #[output(primary)]
+    literal: Output,
+    computed: Output,
+    value: Expr,
+}
+
+/// Emits `value` through `literal`, then through `computed`.
+struct Emit;
+
+impl Function for Emit {
+    type Config = EmitConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &EmitConfig) -> Result<Outcome> {
+        let value = ctx.eval(&cfg.value)?.into_owned();
+        ctx.emit(&cfg.literal, value.clone())?;
+        ctx.emit(&cfg.computed, value)?;
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn emit_writes_through_a_literal_and_a_computed_output() {
+    // The computed output is evaluated when it is emitted through, against
+    // the context as the call sees it: after its first write.
+    let e = Engine::builder()
+        .register("emit", Emit)
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "emit", "input": {
+                "literal": "data.lit",
+                "computed": {"cat": ["data.", {"var": "data.lit"}]},
+                "value": {"var": "data.v"}}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({"v": "dyn"}));
+    let run = e.run(&mut m).await;
+    assert!(matches!(run.status(), RunStatus::Completed));
+    assert_eq!(data(&m), json!({"v": "dyn", "lit": "dyn", "dyn": "dyn"}));
+    assert_eq!(
+        changes(&m, "t"),
+        json!([
+            {"path": "data.lit", "old_value": null, "new_value": "dyn"},
+            {"path": "data.dyn", "old_value": null, "new_value": "dyn"}
+        ])
+    );
+}
+
+/// Two outputs, one marked primary.
+#[derive(FunctionConfig)]
+struct TwoOutputs {
+    #[output(primary)]
+    main: Output,
+    side: Output,
+}
+
+/// One output: the primary without saying so.
+#[derive(FunctionConfig)]
+struct OneOutput {
+    out: Output,
+}
+
+/// Emits its own name through its config's primary output.
+struct EmitDefault<C>(PhantomData<fn() -> C>);
+
+impl<C> EmitDefault<C> {
+    fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<C: FunctionConfig> Function for EmitDefault<C> {
+    type Config = C;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &C) -> Result<Outcome> {
+        let name = OwnedDataValue::from(ctx.info().function);
+        ctx.emit_default(name)?;
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn emit_default_writes_the_primary_output_and_fails_without_one() {
+    let task =
+        |name: &str, input: Value| json!({"id": name, "function": {"name": name, "input": input}});
+    let e = Engine::builder()
+        .register("two", EmitDefault::<TwoOutputs>::new())
+        .register("one", EmitDefault::<OneOutput>::new())
+        // `()` is hand-written and has no output.
+        .register("none", EmitDefault::<()>::new())
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![
+                task("two", json!({"main": "data.main", "side": "data.side"})),
+                task("one", json!({"out": "data.one"})),
+                task("none", json!({})),
+                map("after", "data.after", true.into()),
+            ],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({}));
+    let run = e.run(&mut m).await;
+    assert_eq!(data(&m), json!({"main": "two", "one": "one"}));
+    assert_eq!(
+        audit(&m),
+        [
+            entry("w", "two", 200),
+            entry("w", "one", 200),
+            entry("w", "none", 500)
+        ]
+    );
+    let RunStatus::Stopped(error) = run.status() else {
+        panic!("{:?}", run.status());
+    };
+    assert_eq!(error.kind(), &ErrorKind::Config);
+    assert_eq!(
+        errors(&m),
+        [(
+            "CONFIG_ERROR".to_owned(),
+            "Task none error: `none` has no primary output".to_owned()
+        )]
+    );
 }

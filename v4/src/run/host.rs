@@ -97,7 +97,7 @@ pub(crate) async fn call_host<'p>(
                 loop_counter: env.frame.loop_counter,
                 element_index: None,
             },
-            primary: None,
+            primary: bound.primary_output(),
             deadline: None,
             cancel: None,
             capture: env.capture,

@@ -3,7 +3,7 @@
 
 use super::{BoxFuture, Ctx, Function, FunctionConfig, FunctionSpec, Outcome, Prepare};
 use crate::base::Result;
-use crate::expr::{CompileCx, ExprVisitor, FieldSpec};
+use crate::expr::{CompileCx, ExprVisitor, FieldSpec, Output};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -39,6 +39,10 @@ pub(crate) trait BoundCall: Send + Sync {
 
     /// Walks the config's expressions; paths are relative to the config.
     fn visit(&self, v: &mut dyn ExprVisitor);
+
+    /// The config's primary output, which `Ctx::emit_default` writes
+    /// through.
+    fn primary_output(&self) -> Option<&Output>;
 }
 
 /// A registered function with the spec it gave at `register`.
@@ -108,6 +112,10 @@ impl<F: Function> BoundCall for Bound<F> {
 
     fn visit(&self, v: &mut dyn ExprVisitor) {
         self.cfg.visit(v);
+    }
+
+    fn primary_output(&self) -> Option<&Output> {
+        self.cfg.primary_output()
     }
 }
 

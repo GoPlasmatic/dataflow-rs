@@ -1,7 +1,7 @@
 //! `FunctionConfig`: a function's input, compiled once at build.
 
 use crate::base::IssueCode;
-use crate::expr::{CompileCx, ExprVisitor, FieldSpec};
+use crate::expr::{CompileCx, ExprVisitor, FieldSpec, Output};
 use serde_json::Value;
 
 /// A function's `input`, compiled at build so a malformed one fails before any
@@ -51,6 +51,22 @@ use serde_json::Value;
 /// #[derive(FunctionConfig)]
 /// struct Split {
 ///     ok: Output,
+///     failed: Output,
+/// }
+/// ```
+///
+/// The primary output, marked or the only one, is an `Output` or an
+/// `Option<Output>`, since `primary_output` lends it:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// use dataflow_rs::expr::Output;
+/// use dataflow_rs::function::FunctionConfig;
+///
+/// #[derive(FunctionConfig)]
+/// struct Fan {
+///     #[output(primary)]
+///     many: Vec<Output>,
 ///     failed: Output,
 /// }
 /// ```
@@ -134,6 +150,15 @@ pub trait FunctionConfig: Sized + Send + Sync + 'static {
 
     /// The config's fields, for tooling.
     fn fields() -> &'static [FieldSpec];
+
+    /// The output [`Ctx::emit_default`](crate::Ctx::emit_default) writes
+    /// through, and an answering layer answers with: the derive returns the
+    /// field marked `#[output(primary)]`, or the only output when there is
+    /// one (`None` for an `Option<Output>` the input did not set). A
+    /// hand-written config has none unless it says so.
+    fn primary_output(&self) -> Option<&Output> {
+        None
+    }
 }
 
 /// The config of a function that takes no input: `{}` or `null`.

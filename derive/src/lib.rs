@@ -10,8 +10,8 @@ use quote::{format_ident, quote};
 use syn::ext::IdentExt;
 use syn::parse::ParseStream;
 use syn::{
-    Attribute, Data, DeriveInput, Error, Expr, ExprLit, Fields, Ident, Lit, LitStr, Meta, Path,
-    Result, Token, Type,
+    Attribute, Data, DeriveInput, Error, Expr, ExprLit, Fields, GenericArgument, Ident, Lit,
+    LitStr, Meta, Path, PathArguments, Result, Token, Type,
 };
 
 /// Derives `FunctionConfig` for a function's typed configuration, and
@@ -34,6 +34,10 @@ use syn::{
 ///
 /// A field is an output when it carries `#[output(...)]` or its type's last
 /// path segment is `Output`. A field's doc comment is its description.
+///
+/// The primary output, the one marked or the only one, is what
+/// `FunctionConfig::primary_output` returns, so its type is `Output` or
+/// `Option<Output>`; any other is refused.
 #[proc_macro_derive(FunctionConfig, attributes(config, output))]
 pub fn derive_function_config(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as DeriveInput);
@@ -112,8 +116,31 @@ fn expand(input: &DeriveInput) -> Result<TokenStream2> {
             f.primary = true;
         }
     }
+    let primary = fields
+        .iter()
+        .find(|f| f.primary)
+        .map(|f| primary_shape(f).map(|optional| (f.ident, optional)))
+        .transpose()?;
 
-    Ok(generate(name, check.as_ref(), &fields))
+    Ok(generate(name, check.as_ref(), &fields, primary))
+}
+
+/// Whether the primary output `f` is an `Option<Output>` rather than an
+/// `Output`; an error for any other type.
+fn primary_shape(f: &Field<'_>) -> Result<bool> {
+    if is_output_type(f.ty) {
+        Ok(false)
+    } else if is_option_of_output(f.ty) {
+        Ok(true)
+    } else {
+        Err(Error::new_spanned(
+            f.ty,
+            format!(
+                "the primary output `{}` must be an `Output` or an `Option<Output>`",
+                f.ident.unraw()
+            ),
+        ))
+    }
 }
 
 fn not_a_struct(input: &DeriveInput) -> Error {
@@ -294,6 +321,28 @@ fn is_output_type(ty: &Type) -> bool {
     }
 }
 
+/// Is the type an `Option` of a type whose last path segment is `Output`?
+fn is_option_of_output(ty: &Type) -> bool {
+    let Type::Path(path) = ty else {
+        return false;
+    };
+    let Some(last) = path.path.segments.last() else {
+        return false;
+    };
+    if path.qself.is_some() || last.ident != "Option" {
+        return false;
+    }
+    match &last.arguments {
+        PathArguments::AngleBracketed(args) => {
+            matches!(
+                args.args.iter().collect::<Vec<_>>().as_slice(),
+                [GenericArgument::Type(inner)] if is_output_type(inner)
+            )
+        }
+        _ => false,
+    }
+}
+
 /// A `default = <literal>` as JSON text: a string, an integer or float
 /// (optionally negative), or a bool.
 fn literal_json(input: ParseStream<'_>) -> Result<String> {
@@ -364,7 +413,14 @@ fn option<T: quote::ToTokens>(value: Option<T>) -> TokenStream2 {
     }
 }
 
-fn generate(name: &Ident, check: Option<&Path>, fields: &[Field<'_>]) -> TokenStream2 {
+/// The expansion. `primary` is the primary output's field, and whether it is
+/// an `Option<Output>`.
+fn generate(
+    name: &Ident,
+    check: Option<&Path>,
+    fields: &[Field<'_>],
+    primary: Option<(&Ident, bool)>,
+) -> TokenStream2 {
     let p = quote!(::dataflow_rs::function::__private);
     let keys: Vec<&str> = fields.iter().map(|f| f.key.as_str()).collect();
     let vars: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("__f{i}")).collect();
@@ -437,6 +493,19 @@ fn generate(name: &Ident, check: Option<&Path>, fields: &[Field<'_>]) -> TokenSt
         }
     });
 
+    let primary_output = primary.map(|(ident, optional)| {
+        let output = if optional {
+            quote!(::core::option::Option::as_ref(&self.#ident))
+        } else {
+            quote!(::core::option::Option::Some(&self.#ident))
+        };
+        quote! {
+            fn primary_output(&self) -> ::core::option::Option<&#p::Output> {
+                #output
+            }
+        }
+    });
+
     quote! {
         #[automatically_derived]
         impl #p::FunctionConfig for #name {
@@ -465,6 +534,8 @@ fn generate(name: &Ident, check: Option<&Path>, fields: &[Field<'_>]) -> TokenSt
                     #p::OnceLock::new();
                 FIELDS.get_or_init(|| ::std::vec![#(#specs),*])
             }
+
+            #primary_output
         }
 
         #[automatically_derived]
@@ -484,5 +555,61 @@ fn generate(name: &Ident, check: Option<&Path>, fields: &[Field<'_>]) -> TokenSt
                 #p::FieldKind::Nested(<Self as #p::FunctionConfig>::fields)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the derive says about `input`, which it must refuse.
+    fn refused(input: TokenStream2) -> String {
+        let input: DeriveInput = syn::parse2(input).expect("a struct");
+        expand(&input).expect_err("refused").to_string()
+    }
+
+    fn expands(input: TokenStream2) -> bool {
+        let input: DeriveInput = syn::parse2(input).expect("a struct");
+        expand(&input).is_ok()
+    }
+
+    #[test]
+    fn a_primary_output_of_another_type_is_an_expansion_error() {
+        // Marked primary.
+        assert_eq!(
+            refused(quote! {
+                struct Many {
+                    #[output(primary)]
+                    many: Vec<Output>,
+                    other: Output,
+                }
+            }),
+            "the primary output `many` must be an `Output` or an `Option<Output>`"
+        );
+        // The lone output, primary without saying so.
+        assert_eq!(
+            refused(quote! {
+                struct Keyed {
+                    #[output(default = "data.k")]
+                    r#keyed: std::collections::BTreeMap<String, Output>,
+                }
+            }),
+            "the primary output `keyed` must be an `Output` or an `Option<Output>`"
+        );
+        // An `Output`, however it is spelled, and an `Option` of one expand.
+        assert!(expands(quote! {
+            struct Spelled {
+                #[output(primary)]
+                a: ::dataflow_rs::expr::Output,
+                b: Output,
+            }
+        }));
+        assert!(expands(quote! {
+            struct Optional {
+                #[output(primary)]
+                a: core::option::Option<Output>,
+                b: Output,
+            }
+        }));
     }
 }
