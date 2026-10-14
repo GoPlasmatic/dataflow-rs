@@ -30,6 +30,9 @@ pub(crate) enum Flow {
     Halt,
     /// The failure goes to the workflow's `on_failure`.
     Fail(Error),
+    /// The run ends, whatever the policies: its deadline passed or its
+    /// token was cancelled (I92).
+    Stop(Error),
 }
 
 /// What one completed call records and does.
@@ -196,7 +199,7 @@ mod tests {
             Flow::Next => Shape::Next,
             Flow::Halt => Shape::Halt,
             Flow::Fail(e) => Shape::Fail(e.code().to_owned(), e.message().to_owned()),
-            Flow::Jump(_) => panic!("decide never jumps"),
+            Flow::Jump(_) | Flow::Stop(_) => panic!("decide never jumps or stops"),
         }
     }
 

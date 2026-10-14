@@ -1,6 +1,7 @@
 //! Runs: executing a program over a message.
 
 mod builder;
+mod cancel;
 mod engine;
 mod fan_out;
 mod host;

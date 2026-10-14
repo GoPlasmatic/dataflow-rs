@@ -1,6 +1,7 @@
 //! The options of one run.
 
 use super::message::AuditMode;
+use crate::base::{CancelToken, Instant};
 use crate::function::CallLayer;
 use std::fmt;
 use std::sync::Arc;
@@ -17,6 +18,22 @@ pub struct RunOptions<'a> {
     pub capture_changes: bool,
     /// Which audit entries the message keeps. `Full` by default.
     pub audit: AuditMode,
+    /// When the run must end; `None` by default. It is checked at every
+    /// host call, every fan-out element's start, every sweep and every 64
+    /// ops. Natively each host call also races it, on a Tokio timer, so a
+    /// run with a deadline is polled inside a Tokio runtime with its time
+    /// driver enabled. A call it cuts short is recorded as `TIMEOUT_ERROR`
+    /// on its task; either way the run ends [`TimedOut`].
+    ///
+    /// [`TimedOut`]: crate::observe::RunStatus::TimedOut
+    pub deadline: Option<Instant>,
+    /// A token that cancels the run when it, or an ancestor, is cancelled;
+    /// `None` by default. It is checked and raced where the deadline is,
+    /// and first. A call it cuts short is recorded as `CANCELLED` on its
+    /// task; either way the run ends [`Cancelled`].
+    ///
+    /// [`Cancelled`]: crate::observe::RunStatus::Cancelled
+    pub cancel: Option<&'a CancelToken>,
     /// Layers around every host call of this run, outside the registry's;
     /// the first is the outermost. None by default.
     pub layers: &'a [Arc<dyn CallLayer>],
@@ -29,6 +46,8 @@ impl Default for RunOptions<'_> {
             routing_bucket: None,
             capture_changes: true,
             audit: AuditMode::Full,
+            deadline: None,
+            cancel: None,
             layers: &[],
         }
     }
@@ -42,6 +61,8 @@ impl fmt::Debug for RunOptions<'_> {
             .field("routing_bucket", &self.routing_bucket)
             .field("capture_changes", &self.capture_changes)
             .field("audit", &self.audit)
+            .field("deadline", &self.deadline)
+            .field("cancel", &self.cancel)
             .field("layers", &self.layers.len())
             .finish()
     }
@@ -76,6 +97,21 @@ impl<'a> RunOptions<'a> {
         self
     }
 
+    /// Ends the run at `deadline`, as the `deadline` field says.
+    #[must_use]
+    pub fn deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Cancels the run when `token` is cancelled, as the `cancel` field
+    /// says.
+    #[must_use]
+    pub fn cancel(mut self, token: &'a CancelToken) -> Self {
+        self.cancel = Some(token);
+        self
+    }
+
     /// Wraps every host call of the run in `layers`, outside the registry's
     /// layers; the first is the outermost.
     #[must_use]
@@ -96,13 +132,16 @@ mod tests {
         assert_eq!(o.audit, AuditMode::Full);
         assert_eq!(o.channel, None);
         assert_eq!(o.routing_bucket, None);
+        assert!(o.deadline.is_none() && o.cancel.is_none());
         assert!(o.layers.is_empty());
         let layers: Vec<Arc<dyn CallLayer>> = vec![Arc::new(Pass)];
+        let token = CancelToken::new();
         let o = o
             .channel("c")
             .routing_bucket(7)
             .capture_changes(false)
             .audit(AuditMode::Off)
+            .cancel(&token)
             .layers(&layers);
         assert_eq!((o.channel, o.routing_bucket), (Some("c"), Some(7)));
         assert!(!o.capture_changes);
@@ -110,8 +149,10 @@ mod tests {
         assert_eq!(o.layers.len(), 1);
         assert_eq!(
             format!("{o:?}"),
-            r#"RunOptions { channel: Some("c"), routing_bucket: Some(7), capture_changes: false, audit: Off, layers: 1 }"#
+            r#"RunOptions { channel: Some("c"), routing_bucket: Some(7), capture_changes: false, audit: Off, deadline: None, cancel: Some(CancelToken { cancelled: false, .. }), layers: 1 }"#
         );
+        let at = Instant::now();
+        assert_eq!(o.deadline(at).deadline, Some(at));
     }
 
     /// A layer that goes straight on.

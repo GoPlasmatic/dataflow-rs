@@ -1,10 +1,12 @@
 //! The engine: a [`Program`] and its config, run over messages.
 
 use super::builder::EngineBuilder;
+use super::cancel::Limits;
 use super::interp::{Exit, Frame, RunEnv, run_workflow};
 use super::message::{Message, finish_audit, keeps_entries};
 use super::options::RunOptions;
 use super::report::{Record, Run};
+use crate::base::ErrorKind;
 use crate::expr::Path;
 use crate::observe::{RunStatus, Selection, WorkflowExit};
 use crate::program::{Compiler, Program};
@@ -99,7 +101,8 @@ impl Engine {
     /// before any workflow runs. A workflow whose rollout does not admit
     /// `opts.routing_bucket` is skipped; no bucket is admitted by every
     /// rollout. A workflow that stops the run ends it, and the [`Run`] says
-    /// how.
+    /// how: [`TimedOut`](RunStatus::TimedOut) once `opts.deadline` passed,
+    /// [`Cancelled`](RunStatus::Cancelled) once `opts.cancel` was cancelled.
     pub async fn run_with(&self, msg: &mut Message, opts: &RunOptions<'_>) -> Run {
         let program = &self.inner.program;
         let now = Utc::now();
@@ -114,6 +117,12 @@ impl Engine {
         let capture = opts.capture_changes && keeps_entries(opts.audit);
         let mut records = Vec::with_capacity(active.len());
         let mut stopped = None;
+        let limits = Limits {
+            deadline: opts.deadline,
+            cancel: opts.cancel,
+        };
+        // Every 64th op of the run checks the limits, across workflows.
+        let mut ops = 0;
         for &ix in active {
             let wf = program.compiled(ix);
             if let (Some(rollout), Some(bucket)) = (wf.rollout, opts.routing_bucket)
@@ -134,6 +143,8 @@ impl Engine {
                 task_base: program.task_base(ix),
                 channel: opts.channel,
                 layers: opts.layers,
+                limits,
+                ops,
                 exprs: program.registry().exprs(),
                 payload: parts.payload,
                 errors: &mut *parts.errors,
@@ -149,6 +160,7 @@ impl Engine {
                 frame: Frame::default(),
             };
             let (exit, selection) = run_workflow(&mut rc, wf, &mut env).await;
+            ops = env.ops;
             let ran = matches!(selection, Selection::Ran);
             let (exit, stop) = match exit {
                 Exit::Completed => (WorkflowExit::Completed, None),
@@ -170,6 +182,8 @@ impl Engine {
         let stats = rc.finish();
         finish_audit(parts.audit, opts.audit);
         let status = match stopped {
+            Some(e) if *e.kind() == ErrorKind::TimedOut => RunStatus::TimedOut,
+            Some(e) if *e.kind() == ErrorKind::Cancelled => RunStatus::Cancelled,
             Some(e) => RunStatus::Stopped(e),
             None if !parts.errors.is_empty() => RunStatus::CompletedWithErrors,
             None => RunStatus::Completed,

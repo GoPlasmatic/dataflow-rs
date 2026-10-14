@@ -264,7 +264,7 @@ pub(crate) async fn fan_out<'p>(
         record::record(rc, env, ids, stamp, decision.status, decision.record);
         rc.tick();
         match decision.flow {
-            Flow::Fail(e) => return Flow::Fail(e),
+            flow @ (Flow::Fail(_) | Flow::Stop(_)) => return flow,
             Flow::Halt => {
                 halted = true;
                 break;

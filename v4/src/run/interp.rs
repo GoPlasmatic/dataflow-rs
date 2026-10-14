@@ -13,7 +13,11 @@
 //! and falls into the first sweep; `LoopNext` advances the counter and does
 //! the same, jumping back to the sweep's first op. The engine owns the
 //! counter: it lives in the [`Frame`], and the context only gets a copy.
+//!
+//! The run's [`Limits`] are checked every 64 ops and as each sweep starts,
+//! when one is set; a stop there ends the run with nothing recorded.
 
+use super::cancel::Limits;
 use super::fan_out::fan_out;
 use super::host::call_host;
 use super::message::{AuditEntry, AuditMode};
@@ -88,6 +92,11 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) channel: Option<&'r str>,
     /// The run's layers, outermost first, around every host call.
     pub(crate) layers: &'r [Arc<dyn CallLayer>],
+    /// The run's deadline and token.
+    pub(crate) limits: Limits<'r>,
+    /// The ops the run has begun while a limit is set, across its
+    /// workflows: every 64th checks the limits.
+    pub(crate) ops: u32,
     /// The expression engine the program was compiled with.
     pub(crate) exprs: &'p ExprEngine,
     /// The message's payload.
@@ -114,6 +123,24 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) failed: bool,
     /// The current workflow's loop frame.
     pub(crate) frame: Frame,
+}
+
+/// How many ops run between two checks of the limits.
+const CHECK_EVERY: u32 = 64;
+
+impl RunEnv<'_, '_> {
+    /// At an op boundary: the run context's checkpoint when due, then, with
+    /// a limit set, the limits at every 64th op.
+    fn tick(&mut self, rc: &mut RunContext<'_, '_>) -> Result<(), Error> {
+        rc.tick();
+        if self.limits.is_set() {
+            self.ops = self.ops.wrapping_add(1);
+            if self.ops.is_multiple_of(CHECK_EVERY) {
+                self.limits.check()?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Where a failure `on_failure: continue` steps past goes from `op`.
@@ -161,7 +188,9 @@ pub(crate) async fn run_workflow<'p>(
     env.frame.sweeps = u32::from(wf.loops.is_empty());
     let mut pc = 0;
     while let Some(&op) = wf.ops.get(pc) {
-        rc.tick();
+        if let Err(e) = env.tick(rc) {
+            return (Exit::Stopped(e), selection);
+        }
         let flow = match op {
             Op::Cond {
                 cond,
@@ -215,6 +244,7 @@ pub(crate) async fn run_workflow<'p>(
             Flow::Next => pc + 1,
             Flow::Jump(to) => to as usize,
             Flow::Halt => return (Exit::Halted, selection),
+            Flow::Stop(e) => return (Exit::Stopped(e), selection),
             Flow::Fail(e) => match wf.on_failure {
                 WorkflowFailurePolicy::Continue => {
                     env.failed = true;
@@ -253,7 +283,7 @@ fn loop_init<'p>(
         }
     }
     env.frame.counter = site.init;
-    enter(rc, &mut env.frame, site, Flow::Next, exit_to)
+    enter(rc, env, site, Flow::Next, exit_to)
 }
 
 /// `LoopNext`: the counter advanced by the increment, then the next sweep at
@@ -267,21 +297,23 @@ fn loop_next<'p>(
     exit_to: u32,
 ) -> Flow {
     env.frame.counter = env.frame.counter.saturating_add(site.increment);
-    enter(rc, &mut env.frame, site, Flow::Jump(body_to), exit_to)
+    enter(rc, env, site, Flow::Jump(body_to), exit_to)
 }
 
 /// The sweep at the frame's counter, in 05's order: the counter written,
 /// then the bounds, `counter < max` and `counter < len(over)`, then in bounds
-/// `over[counter]` moved into `as` and `{}` into `scratch`, before the
-/// sweep's condition. Out of bounds the loop exits, leaving the first counter
-/// past them in the context. None of these writes records a `Change`.
+/// the run's limits, then `over[counter]` moved into `as` and `{}` into
+/// `scratch`, before the sweep's condition. Out of bounds the loop exits,
+/// leaving the first counter past them in the context; past a limit the run
+/// stops, the sweep not begun. None of these writes records a `Change`.
 fn enter<'p>(
     rc: &mut RunContext<'_, 'p>,
-    frame: &mut Frame,
+    env: &mut RunEnv<'_, 'p>,
     site: &'p LoopSite,
     sweep: Flow,
     exit_to: u32,
 ) -> Flow {
+    let frame = &mut env.frame;
     let counter = frame.counter;
     if let Some(path) = &site.counter {
         rc.engine_set(
@@ -293,10 +325,17 @@ fn enter<'p>(
     if counter >= site.max {
         return Flow::Jump(exit_to);
     }
-    if let Some(items) = &mut frame.items {
-        let Some(item) = usize::try_from(counter).ok().and_then(|i| items.get_mut(i)) else {
-            return Flow::Jump(exit_to);
-        };
+    let item = match &mut frame.items {
+        None => None,
+        Some(items) => match usize::try_from(counter).ok().and_then(|i| items.get_mut(i)) {
+            Some(item) => Some(item),
+            None => return Flow::Jump(exit_to),
+        },
+    };
+    if let Err(e) = env.limits.check() {
+        return Flow::Stop(e);
+    }
+    if let Some(item) = item {
         // Moved, not cloned: `increment >= 1` visits no element twice.
         let item = std::mem::take(item);
         if let Some(path) = &site.r#as {
