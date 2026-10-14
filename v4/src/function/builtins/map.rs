@@ -158,10 +158,6 @@ impl SyncFunction for MapConfig {
     /// Each mapping in order, each against the view as the ones before it
     /// left it. A failing mapping is logged and the rest still run; the call
     /// is then `Status(500)`, as v3's.
-    ///
-    /// Between mappings the run may checkpoint, as it may between ops: no
-    /// mapping holds the view past its own edit, so one task with many
-    /// mappings cannot grow the run arena without bound.
     fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let mut failed = false;
         // Most mappings record one change: sized once, as v3's
@@ -169,10 +165,7 @@ impl SyncFunction for MapConfig {
         if cx.capture {
             cx.changes.reserve(self.mappings.len());
         }
-        for (i, mapping) in self.mappings.iter().enumerate() {
-            if i > 0 {
-                cx.rc.tick();
-            }
+        for mapping in &self.mappings {
             let (exprs, capture, changes) = (cx.exprs, cx.capture, &mut *cx.changes);
             failed |= !cx.rc.edit(|e| {
                 mapping.apply(&mut Writer {
@@ -925,44 +918,6 @@ mod tests {
             per_hundred * 10 < live,
             "{per_hundred} bytes per write, {live} live"
         );
-    }
-
-    #[tokio::test]
-    async fn one_task_with_many_mappings_checkpoints_between_them() {
-        // Each write into `data.wide` copies its 1,000-key spine into the run
-        // arena, so the garbage passes the trigger every few mappings.
-        let wide: serde_json::Map<String, Value> =
-            (0..1_000).map(|i| (format!("k{i}"), json!(i))).collect();
-        let context = json!({"data": {"wide": wide}});
-        let mappings: Vec<Value> = (0..40)
-            .map(|i| {
-                let key = format!("data.wide.k{}", i * 7);
-                json!({"path": key, "logic": {"+": [{"var": key}, {"var": "data.wide.k1"}]}})
-            })
-            .collect();
-        // The message is v3's, with capture on and off.
-        let got = both(json!(mappings), &context).await;
-        assert!(got.context.contains(r#""k273":274"#), "{:.80}", got.context);
-        // And the call checkpointed between its mappings, keeping the arena
-        // to I72's bound: two views and one mapping's garbage.
-        let task = v4_task("map", &json!({"mappings": mappings})).unwrap();
-        let mut slot = seed(&context);
-        let (mut changes, mut errors) = (Vec::new(), Vec::new());
-        let mut rc = RunContext::new(&mut slot, Tuning::default());
-        let outcome = task.call(
-            &mut rc,
-            &OwnedDataValue::Null,
-            true,
-            &mut changes,
-            &mut errors,
-        );
-        assert_eq!(outcome, (Some(200), None));
-        let stats = rc.stats();
-        assert!(stats.checkpoints > 1, "{stats:?}");
-        let bound = 2 * stats.live_max.max(64 << 10) + (64 << 10);
-        assert!(stats.peak_arena <= bound, "over {bound}: {stats:?}");
-        rc.finish();
-        assert_eq!(changes.len(), 40);
     }
 
     #[test]
