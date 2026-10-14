@@ -179,10 +179,12 @@ instead.
 (`dataflow-rs-v4`, library `dataflow_rs_v4`) and `derive/`
 (`dataflow-rs-derive`), with `corpus/v4` (`dataflow-corpus-v4`) as its corpus
 driver, which parses and compiles every corpus definition and holds each to
-v3's issues or to its declared deviation, and runs every built-in case against
-v3's recording or a declared `RUN_DEVIATED` row. The reason is 08's phase 4 fallback, which ships phases 2 and 3 as a
-layer over v3: v3's root crate must keep building on `main`, with its tests,
-examples, docs-tests, wasm and `corpus/v3`.
+v3's issues or to its declared deviation, and runs every built-in and phase-5
+case against v3's recording or a declared `RUN_DEVIATED` row; only a case that
+needs an observer or an error context waits, for phase 6. The reason is 08's
+phase 4 fallback, which ships phases 2 and 3 as a layer over v3: v3's root
+crate must keep building on `main`, with its tests, examples, docs-tests, wasm
+and `corpus/v3`.
 
 `v4/` follows the design documents (`design-v4/`, untracked), not this file's
 v3 rulebook: everything under "Code Structure" below describes v3's `src/`.
@@ -203,9 +205,25 @@ does).
 which returns a `Run` on every outcome. The eight built-ins run inline on the
 crate-private `SyncFunction`, through one interpreter over the compiled ops
 and one recorder. After the run-start stamps, every context write goes through
-`state::RunContext`: one arena view, a write log, and checkpoints. A host
-function call or a `for_each` stops the run with a `Config` error until phase
-5 builds them.
+`state::RunContext`: one arena view, a write log, and checkpoints.
+
+**v4 runs host functions and fan-outs** (phase 5). A host `Function` gets a
+`Ctx` over the run view; its writes go to a per-call overlay, the list of its
+writes, which the settle replays at their own paths, in order, and drops
+whole when the call returns `Err`. Layers wrap a call at registry scope
+(`EngineBuilder::layer`) and at run scope (`RunOptions::layers`). A
+`for_each` runs its calls under `FuturesUnordered`, each over its element's
+bindings, and folds them in element order at every `max_concurrency`.
+`RunOptions::deadline` and `cancel` (a `CancelToken`) are checked at every
+host call, fan-out element and sweep, and every 64th op; natively a host call
+also races them, so a deadline needs a Tokio runtime with its time driver.
+Only the run's own limits end it `TimedOut` or `Cancelled`: a function's own
+`TimedOut` or `Cancelled` error, a child run's included, ends it `Stopped`
+when its task's policies stop the run. `function::testing::call(f, input)`
+runs one function through the real compile, overlay and layers. Message ids
+come from a thread-local UUID v7 context: ordered per thread, but not across
+threads within one millisecond. Phase 6 adds observers, the trace, the error
+context and `observed_run`.
 
 v4's own checks, beside the workspace-wide ones above:
 
@@ -224,11 +242,16 @@ done
 included.** The run-context model test runs once, in the default build, at
 150 sequences per tuning; `DATAFLOW_V4_DEEP=1 cargo test -p dataflow-rs-v4
 --lib state::` runs its full 2,000 (about a minute on its own). Run it after
-any change under `v4/src/state/`.
+any change under `v4/src/state/`. Time the suite like for like, in a scratch
+worktree with its own target directory: in the repository's `target/`, macOS
+scans each newly linked test binary on its first launch, which can add
+minutes.
 
-**The gate compares v4 with v3** through ports of the eight sync benchmarks,
-`v4/examples/v4_<name>.rs`, which keep each v3 benchmark's workload, startup
-check, `GATE` name and metric names:
+**The gate compares v4 with v3** through twelve ports,
+`v4/examples/v4_<name>.rs`: the eight sync benchmarks and phase 5's four
+host-call rows (`async_handler_benchmark`, `large_context_handler`,
+`fan_out`, `orion_connector`). Each keeps its v3 benchmark's workload, startup
+check, `GATE` name and metric names; `observed_run` waits for phase 6:
 
 ```bash
 python3 bench/gate.py build --out /tmp/gate/v3        # v3's examples
@@ -241,6 +264,16 @@ on the median of its per-round ratios, with noise `max(3%, half the IQR)`. It
 also reports instructions retired (`/usr/bin/time -l`), which separate load
 from work on a busy machine; they move with codegen too, so attribute a
 change to one item only with a same-binary toggle.
+
+`host_call_floor` is the self-judged floor row: a v4-only example that runs
+v3 and v4 in one binary on one thread, in interleaved rounds. `build --v4`
+copies it and `compare` runs it from B only. Its `call.ratio`, a whole
+message with one host call, must be not slower; `sync.ratio` and
+`floor.ratio` are reported. A few metrics are reported without a verdict
+(`METRIC_RULES`: `async_handler_benchmark.marginal`,
+`large_context_handler.write_only`). On this machine the 3% noise floor holds
+for one-thread rows only: two copies of one binary read the spawned rows'
+means and p99s up to about 5% apart at five rounds.
 
 ### Release Process
 
@@ -652,13 +685,14 @@ alters what a message ends up as re-records the affected cases and is read
 before it is committed; never edit a `.v3.json` by hand. The comparator is
 order-sensitive, because key order is wire data.
 
-`cargo test --workspace --all-features` should report 1510 passing: the
+`cargo test --workspace --all-features` should report 1617 passing: the
 engine's 867 plus the corpus's 35 (its case checks are one test each way),
-v4's 600 and v4's corpus driver's 8. `cargo test -p dataflow-rs` (default
-features) should report 753, `cargo test -p dataflow-corpus-v3` 3,
-`cargo test -p dataflow-rs-v4` 588 and `cargo test -p dataflow-corpus-v4` 8.
-The operator families are `#[cfg]`-gated on both sides, so the counts
-legitimately differ.
+v4's 703, the derive's 2 and v4's corpus driver's 10.
+`cargo test -p dataflow-rs` (default features) should report 753,
+`cargo test -p dataflow-corpus-v3` 3, `cargo test -p dataflow-rs-v4` 691 and
+`cargo test -p dataflow-corpus-v4` 10. The operator families are
+`#[cfg]`-gated on both sides, so the counts legitimately differ: v4 reports
+701 under `--no-default-features --features all-operators`.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and
 `with_ops_budget`'s doctest is gated too.
