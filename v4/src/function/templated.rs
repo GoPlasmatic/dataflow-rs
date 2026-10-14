@@ -1,9 +1,9 @@
 //! `Templated`: the config of a plugin function whose fields are declared at
 //! runtime.
 
-use super::FunctionConfig;
+use super::{Ctx, FunctionConfig};
 use crate::base::AuthoredPath;
-use crate::base::IssueCode;
+use crate::base::{IssueCode, Result};
 use crate::expr::{
     CompileCx, ConfigField, Expr, ExprVisitor, FieldKind, FieldSpec, Interpolated, Output, Path,
     ValueKind, Visit,
@@ -14,7 +14,6 @@ use std::str::FromStr;
 
 /// One compiled runtime field.
 #[derive(Debug)]
-#[allow(dead_code, reason = "a literal is read by Task 3's `Templated::get`")]
 enum TemplatedField {
     Expr(Expr<OwnedDataValue>),
     /// An `Expr(ValueKind::Path)` field, compiled as the derive's `Expr<Path>`
@@ -36,9 +35,46 @@ struct Field {
 
 /// A plugin function's config: the fields its manifest declared, compiled by
 /// their kinds. The fields come from the [`CompileCx`]'s runtime fields.
+///
+/// A call reads them by name with [`Templated::get`], or all at once with
+/// [`Templated::resolved`]. Its primary output is the only `Output` field the
+/// manifest declares, or, of several, the one marked
+/// [`primary`](FieldSpec::primary).
 #[derive(Debug)]
 pub struct Templated {
+    /// The fields the input set, in declaration order.
     fields: Vec<Field>,
+    /// The primary output's position in `fields`, when the input set it.
+    primary: Option<usize>,
+}
+
+impl TemplatedField {
+    /// The field's value for one call.
+    fn resolve(&self, ctx: &Ctx<'_>) -> Result<OwnedDataValue> {
+        Ok(match self {
+            Self::Expr(expr) => ctx.eval(expr)?.into_owned(),
+            Self::Path(expr) => OwnedDataValue::String(ctx.eval(expr)?.to_string()),
+            Self::Interpolated(doc) => ctx.render(doc).to_owned(),
+            Self::Literal(value) => value.clone(),
+            Self::Output(out) => OwnedDataValue::String(ctx.eval(out.path())?.to_string()),
+        })
+    }
+}
+
+/// The name of the primary output among `specs`: the only `Output` field,
+/// or, of several, the first marked primary.
+fn primary_name(specs: &[FieldSpec]) -> Option<&str> {
+    let is_output = |spec: &&FieldSpec| matches!(spec.kind, FieldKind::Output);
+    let mut outputs = specs.iter().filter(is_output);
+    let first = outputs.next()?;
+    if outputs.next().is_none() {
+        return Some(&first.name);
+    }
+    specs
+        .iter()
+        .filter(is_output)
+        .find(|spec| spec.primary)
+        .map(|spec| &*spec.name)
 }
 
 fn raw_fits(kind: ValueKind, raw: &Value) -> bool {
@@ -141,7 +177,40 @@ impl Templated {
                 }
             });
         }
-        (cx.rejected() == before).then_some(Self { fields })
+        let primary = primary_name(specs)
+            .and_then(|name| fields.iter().position(|field| &*field.name == name));
+        (cx.rejected() == before).then_some(Self { fields, primary })
+    }
+
+    /// The field `name`'s value for this call: an expression evaluated, a
+    /// document rendered then owned, a literal cloned, an output's or a
+    /// path's destination as a string. `None` for a field the input did not
+    /// set, and for a name no field has.
+    ///
+    /// # Errors
+    ///
+    /// [`Ctx::eval`]'s, for an expression, a path or an output.
+    pub fn get(&self, ctx: &Ctx<'_>, name: &str) -> Result<Option<OwnedDataValue>> {
+        self.fields
+            .iter()
+            .find(|field| &*field.name == name)
+            .map(|field| field.value.resolve(ctx))
+            .transpose()
+    }
+
+    /// Every field the input set, each as [`Self::get`] gives it, as an
+    /// object in declaration order.
+    ///
+    /// # Errors
+    ///
+    /// The first field's that fails, as [`Self::get`]'s.
+    pub fn resolved(&self, ctx: &Ctx<'_>) -> Result<OwnedDataValue> {
+        let entries = self
+            .fields
+            .iter()
+            .map(|field| Ok((field.name.to_string(), field.value.resolve(ctx)?)))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(OwnedDataValue::Object(entries))
     }
 
     /// One runtime field, or `None` when it is absent or rejected.
@@ -226,6 +295,13 @@ impl FunctionConfig for Templated {
     fn fields() -> &'static [FieldSpec] {
         &[]
     }
+
+    fn primary_output(&self) -> Option<&Output> {
+        match &self.fields[self.primary?].value {
+            TemplatedField::Output(out) => Some(out),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -302,6 +378,34 @@ mod tests {
             get(&out, "any"),
             Some(TemplatedField::Literal(OwnedDataValue::Null))
         ));
+    }
+
+    #[test]
+    fn the_primary_output_is_the_only_output_or_the_marked_one() {
+        let primary = |specs: &[FieldSpec], input: &Value| {
+            let engine = ExprEngine::default();
+            let mut issues = Vec::new();
+            let mut cx = CompileCx::new(&engine, &mut issues).with_runtime_fields(specs);
+            let templated = <Templated as FunctionConfig>::compile(input, &mut cx).unwrap();
+            templated
+                .primary_output()
+                .map(|out| out.constant().unwrap().to_string())
+        };
+        let input = json!({"name": "n", "out": "data.out"});
+        // Two outputs, `out` and `dest`, neither marked: none.
+        assert_eq!(primary(&specs(), &input), None);
+        // One of them marked: it, whether the input set it or its default did.
+        let mut marked = specs();
+        marked
+            .iter_mut()
+            .find(|s| s.name == "dest")
+            .unwrap()
+            .primary = true;
+        assert_eq!(primary(&marked, &input).as_deref(), Some("data.dest"));
+        // The only output, unmarked; none when the input leaves it unset.
+        let one: Vec<FieldSpec> = specs().into_iter().filter(|s| s.name != "dest").collect();
+        assert_eq!(primary(&one, &input).as_deref(), Some("data.out"));
+        assert_eq!(primary(&one, &json!({"name": "n"})), None);
     }
 
     #[test]

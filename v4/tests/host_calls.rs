@@ -10,10 +10,14 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // `writes` in key order, then evaluates `reads`, logging what it saw, then
 // returns what `outcome` names.
 
-use dataflow_rs::expr::Output;
-use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next, layers};
+use dataflow_rs::expr::{FieldKind, FieldSpec, Output, ValueKind};
+use dataflow_rs::function::{
+    BoxFuture, CallLayer, FunctionConfig, FunctionSpec, Next, Templated, layers,
+};
 use dataflow_rs::run::{ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
-use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result, Run, RunOptions};
+use dataflow_rs::{
+    Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Result, Run, RunOptions,
+};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::borrow::Cow;
@@ -1028,4 +1032,87 @@ async fn an_answering_layer_writes_the_primary_output_and_the_function_never_run
         seen.lock().unwrap().events,
         ["registry", "function", "registry"]
     );
+}
+
+/// What a templated function read of its config, one entry per call.
+type Templates = Arc<Mutex<Vec<(Vec<(&'static str, Option<Value>)>, Value)>>>;
+
+/// A plugin function: its fields are declared at runtime. Each call reads
+/// every field by name, then the whole config, which it emits through its
+/// primary output.
+struct Plugin(Templates);
+
+impl Function for Plugin {
+    type Config = Templated;
+
+    fn spec(&self) -> FunctionSpec {
+        FunctionSpec::default().with_runtime_fields(vec![
+            FieldSpec::runtime("expr", FieldKind::Expr(ValueKind::Any), true),
+            FieldSpec::runtime("doc", FieldKind::Interpolated, true),
+            FieldSpec::runtime("lit", FieldKind::Literal(ValueKind::String), true),
+            FieldSpec::runtime("unset", FieldKind::Literal(ValueKind::String), false),
+            FieldSpec::runtime("out", FieldKind::Output, true),
+        ])
+    }
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &Templated) -> Result<Outcome> {
+        let mut got = Vec::new();
+        for name in ["expr", "doc", "lit", "out", "unset", "undeclared"] {
+            got.push((name, cfg.get(ctx, name)?.map(|v| Value::from(&v))));
+        }
+        let resolved = cfg.resolved(ctx)?;
+        self.0.lock().unwrap().push((got, Value::from(&resolved)));
+        ctx.emit_default(resolved)?;
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn a_templated_config_reads_its_fields_per_call() {
+    let seen = Templates::default();
+    let e = Engine::builder()
+        .register("plugin", Plugin(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[("loop", json!({"counter": "i", "max": 2}))],
+            vec![json!({"id": "t", "function": {"name": "plugin", "input": {
+                "expr": {"+": [{"var": "temp_data.i"}, 10]},
+                "doc": {"$n": {"var": "temp_data.i"}, "k": "v"},
+                "lit": "label",
+                "out": {"cat": ["data.out_", {"var": "temp_data.i"}]}}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    // Each call: an expression evaluated, a document rendered, a literal,
+    // an output's path, and nothing for a field the input did not set or a
+    // name no field has.
+    let call = |i: i64| {
+        let got = vec![
+            ("expr", Some(json!(i + 10))),
+            ("doc", Some(json!({"$n": i, "k": "v"}))),
+            ("lit", Some(json!("label"))),
+            ("out", Some(json!(format!("data.out_{i}")))),
+            ("unset", None),
+            ("undeclared", None),
+        ];
+        let resolved = json!({"expr": i + 10, "doc": {"$n": i, "k": "v"}, "lit": "label",
+            "out": format!("data.out_{i}")});
+        (got, resolved)
+    };
+    assert_eq!(*seen.lock().unwrap(), [call(0), call(1)]);
+    // `resolved` keeps the declaration order, and the single `Output` field
+    // is the primary output each call emitted through.
+    let out: Path = "data.out_1".parse().unwrap();
+    assert_eq!(
+        serde_json::to_string(m.context().get(&out).unwrap()).unwrap(),
+        r#"{"expr":11,"doc":{"$n":1,"k":"v"},"lit":"label","out":"data.out_1"}"#
+    );
+    assert_eq!(data(&m), json!({"out_0": call(0).1, "out_1": call(1).1}));
 }
