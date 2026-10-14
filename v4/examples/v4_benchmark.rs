@@ -74,6 +74,8 @@ fn cpus() -> usize {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
     println!("ASYNC ENGINE BENCHMARK (Tokio Multi-threaded Runtime)");
     println!("=====================================================");
     println!("Total messages: {}", TOTAL_MESSAGES);

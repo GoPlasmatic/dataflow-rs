@@ -25,6 +25,8 @@ this reads only that line.
         (max - min) / mean over the kept rounds; better when it is better by
         more than the noise; "not slower" otherwise. A row whose gate is
         "Faster" (FASTER_ROWS) reads faster / NOT FASTER instead of
+        better / not slower / WORSE, but only when A's build.json says v3 and
+        B's says v4; between two builds of one engine every row is judged
         better / not slower / WORSE. A metric only one side reports is listed
         as such and not judged. Exit status is 1 if any verdict is WORSE or
         NOT FASTER.
@@ -227,6 +229,10 @@ def compare(args):
         with open(os.path.join(d, "build.json")) as f:
             builds[side] = json.load(f)
 
+    # The "Faster" rule is v3 against v4; between two builds of one engine
+    # (a tuning comparison) every row is judged better / not slower / WORSE.
+    faster_rules = builds["a"].get("engine") == "v3" and builds["b"].get("engine") == "v4"
+
     load_before = os.getloadavg()
     dirs = {"a": args.a, "b": args.b}
     runs = {name: {"a": [], "b": []} for name in names}
@@ -263,7 +269,13 @@ def compare(args):
             am, bm = statistics.median(ra["runs"]), statistics.median(rb["runs"])
             sa, sb = spread_pct(ra["runs"]), spread_pct(rb["runs"])
             noise = max(NOISE_FLOOR_PCT, sa, sb)
-            v, delta = verdict(ra["better"], name in FASTER_ROWS, am, bm, noise)
+            if (ra["better"], ra["unit"]) != (rb["better"], rb["unit"]):
+                sys.exit(
+                    f"{name} {metric}: A reports {ra['better']}/{ra['unit']} and B "
+                    f"{rb['better']}/{rb['unit']}; a metric's name is a contract"
+                )
+            faster = faster_rules and name in FASTER_ROWS
+            v, delta = verdict(ra["better"], faster, am, bm, noise)
             row.update(
                 unit=ra["unit"], better=ra["better"], verdict=v, delta_pct=delta, noise_pct=noise,
                 a={"runs": ra["runs"], "median": am, "spread_pct": sa},

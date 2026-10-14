@@ -385,6 +385,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn messages_built_from_one_arc_share_its_payload() {
+        let payload = Arc::new(OwnedDataValue::from(&json!({"a": [1, 2, 3]})));
+        let a = Message::new(Arc::clone(&payload));
+        let b = Message::from_parts(
+            Arc::clone(&payload),
+            OwnedDataValue::Null,
+            OwnedDataValue::Null,
+        );
+        assert_eq!(Arc::strong_count(&payload), 3);
+        assert!(std::ptr::eq(a.payload(), b.payload()));
+        assert!(std::ptr::eq(a.payload(), &*payload));
+    }
+
     fn entry(task: &str) -> AuditEntry {
         AuditEntry {
             workflow_id: Arc::from("w"),

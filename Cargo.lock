@@ -346,6 +346,7 @@ dependencies = [
  "dataflow-rs-derive",
  "datalogic-rs",
  "datavalue-rs",
+ "env_logger",
  "futures",
  "log",
  "quick-xml",

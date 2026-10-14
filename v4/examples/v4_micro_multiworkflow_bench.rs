@@ -57,9 +57,17 @@ const NUM_STAGES: usize = 5;
 
 /// JSON for a `map` + `validation` pair operating on stage `i`: reads the heavy
 /// `data.input.*` (loaded once by the parse task) and writes a small
-/// `data.stage{i}.*` subtree (a distinct `refresh_for_path` slot per stage).
-/// v3 spelled the mapping paths `stage{i}.*` and read them as `data.stage{i}.*`;
-/// v4 refuses a path that does not start at a root, so the port spells `data.`.
+/// subtree `stage{i}` (a distinct `refresh_for_path` slot per stage).
+///
+/// v3's benchmark writes OUTSIDE `data`: its `map` roots an unprefixed path
+/// `stage{i}.id` at the whole context, so the write lands at the top-level
+/// key `context.stage{i}`, while its rules read `data.stage{i}.*` and so fail
+/// on every message (5 tasks at status 400, 10 `VALIDATION_ERROR` records).
+/// That is a defect in v3's benchmark (reported to the owner), but it is the
+/// work the gate's baseline measures. v4 refuses a path outside the three
+/// roots, so the port reproduces that work through `temp_data.stage{i}.*`, a
+/// root no rule reads, and keeps the rules reading `data.stage{i}.*` so the
+/// same 10 fail.
 fn stage_tasks_json(i: usize) -> String {
     format!(
         r#"
@@ -70,12 +78,12 @@ fn stage_tasks_json(i: usize) -> String {
                     "name": "map",
                     "input": {{
                         "mappings": [
-                            {{ "path": "data.stage{i}.id",     "logic": {{ "var": "data.input.id" }} }},
-                            {{ "path": "data.stage{i}.name",   "logic": {{ "var": "data.input.party.name" }} }},
-                            {{ "path": "data.stage{i}.amount", "logic": {{ "var": "data.input.amount.value" }} }},
-                            {{ "path": "data.stage{i}.ccy",    "logic": {{ "var": "data.input.amount.currency" }} }},
-                            {{ "path": "data.stage{i}.adj",    "logic": {{ "+": [ {{ "var": "data.input.amount.value" }}, {i} ] }} }},
-                            {{ "path": "data.stage{i}.flag",   "logic": {{ ">": [ {{ "var": "data.input.amount.value" }}, 0 ] }} }}
+                            {{ "path": "temp_data.stage{i}.id",     "logic": {{ "var": "data.input.id" }} }},
+                            {{ "path": "temp_data.stage{i}.name",   "logic": {{ "var": "data.input.party.name" }} }},
+                            {{ "path": "temp_data.stage{i}.amount", "logic": {{ "var": "data.input.amount.value" }} }},
+                            {{ "path": "temp_data.stage{i}.ccy",    "logic": {{ "var": "data.input.amount.currency" }} }},
+                            {{ "path": "temp_data.stage{i}.adj",    "logic": {{ "+": [ {{ "var": "data.input.amount.value" }}, {i} ] }} }},
+                            {{ "path": "temp_data.stage{i}.flag",   "logic": {{ ">": [ {{ "var": "data.input.amount.value" }}, 0 ] }} }}
                         ]
                     }}
                 }}
@@ -199,12 +207,31 @@ async fn time_engine(label: &str, engine: &Engine, payload: &Value, expected_aud
             "[{label}] expected {expected_audit} audit entries, got {} — chain did not fully execute",
             m.audit().len()
         );
-        let data = Value::from(m.context().data());
+        // What v3's benchmark produces: the maps write, the rules (which read
+        // `data.stage{i}`) all fail.
+        let temp = Value::from(m.context().temp_data());
         assert_eq!(
-            data[format!("stage{}", NUM_STAGES - 1)]["amount"],
+            temp[format!("stage{}", NUM_STAGES - 1)]["amount"],
             json!(250),
             "[{label}] the last stage's mappings did not write"
         );
+        assert_eq!(
+            m.errors().len(),
+            2 * NUM_STAGES,
+            "[{label}] expected one VALIDATION_ERROR per rule, got {:?}",
+            m.errors()
+        );
+        assert!(
+            m.errors().iter().all(|e| e.code == "VALIDATION_ERROR"),
+            "[{label}] errors: {:?}",
+            m.errors()
+        );
+        let rejected = m
+            .audit()
+            .iter()
+            .filter(|a| a.task_id.starts_with("validate_") && a.status == 400)
+            .count();
+        assert_eq!(rejected, NUM_STAGES, "[{label}] validation tasks at 400");
     }
 
     for _ in 0..WARMUP {

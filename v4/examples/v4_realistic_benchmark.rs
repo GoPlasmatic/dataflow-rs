@@ -75,6 +75,8 @@ fn cpus() -> usize {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
     println!("REALISTIC ENGINE BENCHMARK (ISO 20022 -> SwiftMT-shaped workload)");
     println!("=================================================================");
     println!("Total messages: {}", TOTAL_MESSAGES);
