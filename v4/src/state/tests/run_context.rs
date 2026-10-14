@@ -386,6 +386,45 @@ fn a_read_borrows_unless_the_path_changed() {
     rc.finish();
 }
 
+/// A wide object whose keys were removed and written again takes the view's
+/// key order back at the checkpoint: each key written again moves last, in
+/// the order it came back, and a key only removed is gone.
+#[test]
+fn a_wide_object_takes_the_views_key_order_back() {
+    const WIDE: usize = 1_000;
+    let mut slot = context();
+    let keys = (0..WIDE)
+        .map(|i| (format!("k{i}"), OwnedDataValue::from(i)))
+        .collect();
+    rooted("data.wide").assign(&mut slot, OwnedDataValue::Object(keys));
+    let mut rc = RunContext::new(&mut slot, Tuning::default());
+    rc.read(|_, _| ());
+    for key in ["k500", "k10", "k999"] {
+        assert!(rc.remove(&rooted(&format!("data.wide.{key}"))), "{key}");
+    }
+    for key in ["k10", "k500"] {
+        rc.set(
+            &rooted(&format!("data.wide.{key}")),
+            OwnedDataValue::from(key),
+            None,
+        );
+    }
+    assert!(rc.has_view(), "both writes were copied into the view");
+    rc.finish();
+    let OwnedDataValue::Object(pairs) = &slot["data"]["wide"] else {
+        panic!("data.wide is an object");
+    };
+    let order: Vec<&str> = pairs.iter().map(|(k, _)| k.as_str()).collect();
+    let mut want: Vec<String> = (0..WIDE)
+        .filter(|i| ![10, 500, 999].contains(i))
+        .map(|i| format!("k{i}"))
+        .collect();
+    want.extend(["k10".to_owned(), "k500".to_owned()]);
+    assert_eq!(order, want);
+    assert_eq!(slot["data"]["wide"]["k500"], OwnedDataValue::from("k500"));
+    assert_eq!(slot["data"]["wide"]["k11"], OwnedDataValue::from(11));
+}
+
 /// Keys that share a hash, written, read and removed through the whole run
 /// context: each keeps its own value across a checkpoint.
 #[test]

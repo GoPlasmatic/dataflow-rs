@@ -21,6 +21,7 @@ use crate::expr::Seg;
 use crate::expr::path;
 use crate::expr::path::MAX_PATH_SEGMENTS;
 use datavalue::{DataValue, OwnedDataValue};
+use std::collections::HashMap;
 
 /// A path as the log sees it: the segments as written, and which of them
 /// resolved to an array index (bit `i` of `kinds`). Copy, borrowed, free.
@@ -381,12 +382,37 @@ fn owned_child<'v>(v: &'v mut OwnedDataValue, key: KeyRef<'_>) -> Option<&'v mut
     }
 }
 
-/// Reorder an owned object's keys to `order`, the view's.
+/// Reorder an owned object's keys to `order`, the view's, at O(keys): each
+/// key's rank is its first place in `order`, from a map built once, and a
+/// counting sort places every pair at its rank. A key `order` lacks goes
+/// last, and pairs that share a rank keep their order.
 fn reorder_keys(v: &mut OwnedDataValue, order: &[Box<str>]) {
-    if let OwnedDataValue::Object(pairs) = v {
-        let rank = |k: &str| order.iter().position(|o| **o == *k).unwrap_or(usize::MAX);
-        pairs.sort_by_cached_key(|(k, _)| rank(k));
+    let OwnedDataValue::Object(pairs) = v else {
+        return;
+    };
+    let mut first = HashMap::with_capacity(order.len());
+    for (i, key) in order.iter().enumerate() {
+        first.entry(&**key).or_insert(i);
     }
+    let ranks: Vec<usize> = pairs
+        .iter()
+        .map(|(k, _)| first.get(k.as_str()).copied().unwrap_or(order.len()))
+        .collect();
+    // `next[r]`: where the next pair of rank `r` goes.
+    let mut next = vec![0; order.len() + 2];
+    for &r in &ranks {
+        next[r + 1] += 1;
+    }
+    for r in 1..next.len() {
+        next[r] += next[r - 1];
+    }
+    let mut placed: Vec<Option<(String, OwnedDataValue)>> = Vec::new();
+    placed.resize_with(pairs.len(), || None);
+    for (pair, r) in pairs.drain(..).zip(ranks) {
+        placed[next[r]] = Some(pair);
+        next[r] += 1;
+    }
+    pairs.extend(placed.into_iter().flatten());
 }
 
 /// A view object's key order.
