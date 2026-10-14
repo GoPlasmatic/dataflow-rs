@@ -15,3 +15,7 @@ pub use issue::{
     AuthoredPath, Issue, IssueCode, ParseIssueCodeError, ParsePathError, PathSeg, Severity,
     StepKind,
 };
+// The clock a deadline is read on, named by `run::Instant` and by
+// `Ctx::deadline`: the one line phase 7's wasm track changes to
+// `web_time::Instant`, the same type on native targets (I86).
+pub use std::time::Instant;

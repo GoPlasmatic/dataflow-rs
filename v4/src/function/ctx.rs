@@ -2,7 +2,8 @@
 
 use super::overlay::Overlay;
 use crate::base::{
-    CancelToken, Change, Error, ErrorKind, ErrorRecord, ProgramId, Result, TaskIx, WorkflowIx,
+    CancelToken, Change, Error, ErrorKind, ErrorRecord, Instant, ProgramId, Result, TaskIx,
+    WorkflowIx,
 };
 use crate::expr::arena::with_arena;
 use crate::expr::path;
@@ -13,7 +14,6 @@ use datavalue::{DataValue, OwnedDataValue};
 use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
-use std::time::Instant;
 
 /// Static facts about one call: where it sits in the program, and which
 /// iteration it is.

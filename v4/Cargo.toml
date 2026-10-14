@@ -50,6 +50,9 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 # Native-only: a thread-local PRNG instead of one `getrandom` per id, as v3 does.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 uuid = { version = "1.26", default-features = false, features = ["fast-rng"] }
+# Native-only: a host call's race against the run's deadline and token (I92),
+# with the timer, the token's `Notify` and `select!`. On wasm only the checks run.
+tokio = { version = "1", default-features = false, features = ["time", "sync", "macros"] }
 
 [lints]
 workspace = true

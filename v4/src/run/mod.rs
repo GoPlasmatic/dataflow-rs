@@ -11,6 +11,9 @@ pub(crate) mod policy;
 mod record;
 mod report;
 
+/// The clock a deadline is read on: `std::time::Instant` until phase 7's wasm
+/// track makes it `web_time::Instant`, the same type on native targets (I86).
+pub use crate::base::Instant;
 pub use crate::base::{CancelToken, Change, Error, ErrorKind, ErrorRecord, Result};
 pub use crate::observe::{RunStatus, Selection, WorkflowExit, WorkflowRecord};
 pub use builder::EngineBuilder;
@@ -20,6 +23,3 @@ pub use options::RunOptions;
 #[doc(hidden)]
 pub use report::ArenaStats;
 pub use report::Run;
-/// The clock a deadline is read on: `std::time::Instant` until phase 7's wasm
-/// track makes it `web_time::Instant`, the same type on native targets (I86).
-pub use std::time::Instant;

@@ -4,6 +4,8 @@
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use {std::pin::Pin, std::pin::pin, tokio::sync::Notify};
 
 /// A cancellation flag. Clones share one flag; a [`child`](Self::child) has
 /// its own, and is cancelled when it or any ancestor is.
@@ -34,6 +36,10 @@ pub struct CancelToken {
 struct Inner {
     flag: AtomicBool,
     parent: Option<Arc<Self>>,
+    /// The tasks awaiting [`CancelToken::cancelled`] on this token, woken by
+    /// its `cancel`. A child's waiters wait on every ancestor's too.
+    #[cfg(not(target_arch = "wasm32"))]
+    waiters: Notify,
 }
 
 impl CancelToken {
@@ -42,9 +48,12 @@ impl CancelToken {
         Self::default()
     }
 
-    /// Cancels this token, its clones and every child made from them.
+    /// Cancels this token, its clones and every child made from them, and
+    /// wakes every task awaiting [`cancelled`](Self::cancelled) on them.
     pub fn cancel(&self) {
         self.inner.flag.store(true, Ordering::Release);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.inner.waiters.notify_waiters();
     }
 
     /// Whether this token or any of its ancestors was cancelled.
@@ -65,11 +74,46 @@ impl CancelToken {
     pub fn child(&self) -> Self {
         Self {
             inner: Arc::new(Inner {
-                flag: AtomicBool::new(false),
                 parent: Some(Arc::clone(&self.inner)),
+                ..Inner::default()
             }),
         }
     }
+
+    /// Resolves once this token or any of its ancestors is cancelled, at
+    /// once if one already is: for a host's own races, such as a
+    /// `tokio::select!` between its I/O and the run's token. Native targets
+    /// only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn cancelled(&self) {
+        tripped(&self.inner).await;
+    }
+}
+
+/// Resolves once `inner`'s flag or an ancestor's is set. It registers on
+/// `inner`'s waiters before it reads the flag, so a `cancel` between the two
+/// still wakes it, and awaits the parent's the same way, boxed: a chain of
+/// children has no fixed depth.
+#[cfg(not(target_arch = "wasm32"))]
+async fn tripped(inner: &Inner) {
+    let mut own = pin!(inner.waiters.notified());
+    own.as_mut().enable();
+    if inner.flag.load(Ordering::Acquire) {
+        return;
+    }
+    match &inner.parent {
+        None => own.await,
+        Some(parent) => {
+            futures_util::future::select(own, boxed(parent)).await;
+        }
+    }
+}
+
+/// [`tripped`] for an ancestor, boxed to a named type so the recursion has
+/// one.
+#[cfg(not(target_arch = "wasm32"))]
+fn boxed(inner: &Inner) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+    Box::pin(tripped(inner))
 }
 
 impl fmt::Debug for CancelToken {
@@ -106,6 +150,29 @@ mod tests {
         root.cancel();
         assert!(child.is_cancelled() && sibling.is_cancelled());
         assert!(root.child().is_cancelled(), "a child of a cancelled token");
+    }
+
+    /// Polls `future` once, with a waker that does nothing.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn poll_once<F: Future>(future: Pin<&mut F>) -> bool {
+        let waker = std::task::Waker::noop();
+        future
+            .poll(&mut std::task::Context::from_waker(waker))
+            .is_ready()
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn cancelled_is_pending_until_the_token_or_an_ancestor_is_cancelled() {
+        let root = CancelToken::new();
+        let child = root.child();
+        let mut on_child = pin!(child.cancelled());
+        let mut on_root = pin!(root.cancelled());
+        assert!(!poll_once(on_child.as_mut()) && !poll_once(on_root.as_mut()));
+        root.cancel();
+        assert!(poll_once(on_child.as_mut()) && poll_once(on_root.as_mut()));
+        // Already cancelled: ready at the first poll.
+        assert!(poll_once(pin!(child.child().cancelled())));
     }
 
     #[test]
