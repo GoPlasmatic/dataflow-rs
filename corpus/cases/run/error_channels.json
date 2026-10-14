@@ -14,7 +14,9 @@
   ],
   "steps": [{"run": {"message": {}}}],
   "deviations": [
-    {"break": "4", "paths": ["/steps/0/run/message/errors/1", "/steps/0/run/trace"],
-     "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"}
+    {"break": "4", "paths": ["/steps/0/run/message/errors/1"],
+     "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"},
+    {"break": "5", "paths": ["/steps/0/run/trace"],
+     "note": "v4's trace records the failing step, which v3's trace does not hold"}
   ]
 }
