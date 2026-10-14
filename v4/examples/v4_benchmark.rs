@@ -1,0 +1,291 @@
+//! # Async Throughput Benchmark
+//!
+//! This benchmark demonstrates the performance of the async dataflow-rs engine
+//! using Tokio's multi-threaded runtime. It measures throughput and latency
+//! percentiles when processing messages concurrently.
+//!
+//! This is v4's port of v3's `benchmark`: the same definition, message count
+//! and concurrency, run through `dataflow-rs-v4`.
+//!
+//! Run with: `cargo run -p dataflow-rs-v4 --example v4_benchmark --release`
+
+use dataflow_rs_v4::datavalue::OwnedDataValue;
+use dataflow_rs_v4::{Engine, Message};
+use futures::future::join_all;
+use serde_json::{Value, json};
+use std::time::{Duration, Instant};
+
+#[path = "../../examples/shared/gate.rs"]
+mod gate;
+
+const TOTAL_MESSAGES: usize = 1_000_000;
+const WARMUP_MESSAGES: usize = 10_000;
+
+/// Stores latency measurements for analysis
+struct LatencyStats {
+    measurements: Vec<Duration>,
+}
+
+impl LatencyStats {
+    fn new() -> Self {
+        Self {
+            measurements: Vec::with_capacity(TOTAL_MESSAGES),
+        }
+    }
+
+    fn add(&mut self, duration: Duration) {
+        self.measurements.push(duration);
+    }
+
+    fn calculate_percentiles(&mut self) -> (Duration, Duration, Duration, Duration, Duration) {
+        self.measurements.sort_unstable();
+        let len = self.measurements.len();
+        if len == 0 {
+            return (
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+            );
+        }
+
+        let p50 = self.measurements[len * 50 / 100];
+        let p90 = self.measurements[len * 90 / 100];
+        let p95 = self.measurements[len * 95 / 100];
+        let p99 = self.measurements[len * 99 / 100];
+        let p999 = self.measurements[std::cmp::min(len * 999 / 1000, len - 1)];
+
+        (p50, p90, p95, p99, p999)
+    }
+
+    fn calculate_average(&self) -> Duration {
+        if self.measurements.is_empty() {
+            return Duration::ZERO;
+        }
+        let sum: Duration = self.measurements.iter().sum();
+        sum / self.measurements.len() as u32
+    }
+}
+
+fn cpus() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("ASYNC ENGINE BENCHMARK (Tokio Multi-threaded Runtime)");
+    println!("=====================================================");
+    println!("Total messages: {}", TOTAL_MESSAGES);
+    println!("CPU cores: {}", cpus());
+    println!("Tokio worker threads: {}", cpus());
+    println!();
+
+    // Create workflow
+    let workflow_json = r#"
+    {
+        "id": "benchmark_workflow",
+        "name": "Benchmark Workflow",
+        "tasks": [
+            {
+                "id": "load_payload",
+                "name": "Parse Payload",
+                "function": {
+                    "name": "parse_json",
+                    "input": { "source": "payload", "target": "input" }
+                }
+            },
+            {
+                "id": "transform_data",
+                "name": "Transform Data",
+                "function": {
+                    "name": "map",
+                    "input": {
+                        "mappings": [
+                            {
+                                "path": "data.user.id",
+                                "logic": { "var": "data.input.id" }
+                            },
+                            {
+                                "path": "data.user.name",
+                                "logic": { "var": "data.input.name" }
+                            },
+                            {
+                                "path": "data.user.email",
+                                "logic": { "var": "data.input.email" }
+                            },
+                            {
+                                "path": "data.user.age",
+                                "logic": { "+": [{ "var": "data.input.age" }, 1] }
+                            },
+                            {
+                                "path": "data.user.status",
+                                "logic": {
+                                    "if": [
+                                        { ">": [{ "var": "data.input.age" }, 18] },
+                                        "adult",
+                                        "minor"
+                                    ]
+                                }
+                            },
+                            {
+                                "path": "data.calculations.total",
+                                "logic": {
+                                    "*": [
+                                        { "+": [{ "var": "data.input.age" }, 10] },
+                                        { "/": [{ "var": "data.input.id" }, 100] }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            {
+                "id": "validate_data",
+                "name": "Validate Data",
+                "function": {
+                    "name": "validation",
+                    "input": {
+                        "rules": [
+                            {
+                                "path": "data.user.id",
+                                "logic": { "!!": { "var": "data.user.id" } },
+                                "message": "User ID is required"
+                            },
+                            {
+                                "path": "data.user.email",
+                                "logic": { "!!": { "var": "data.user.email" } },
+                                "message": "User email is required"
+                            },
+                            {
+                                "path": "data.calculations.total",
+                                "logic": { ">": [{ "var": "data.calculations.total" }, 0] },
+                                "message": "Total must be positive"
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+    "#;
+
+    let workflow: Value = serde_json::from_str(workflow_json)?;
+    let engine = Engine::builder()
+        .workflow_json(&workflow)
+        .build()
+        .expect("the engine builds");
+
+    // The raw inbound document; the parse_json task loads it at `data.input`.
+    let sample_data = json!({
+        "id": 12345,
+        "name": "John Doe",
+        "email": "john.doe@example.com",
+        "age": 25,
+        "department": "Engineering"
+    });
+
+    // Sanity-check once: the workflow must actually compute (payload.* var
+    // references or unprefixed write paths would silently null-skip every
+    // mapping and fail every validation without erroring the run).
+    {
+        let mut message = Message::from_json(&sample_data);
+        engine.run(&mut message).await.into_result()?;
+        let data = Value::from(message.context().data());
+        assert!(
+            data["user"]["id"].as_i64() == Some(12345) && message.errors().is_empty(),
+            "workload is not computing: data={data}, errors={:?}",
+            message.errors()
+        );
+    }
+
+    // Warmup phase
+    println!("Running warmup ({} messages)...", WARMUP_MESSAGES);
+    let warmup_start = Instant::now();
+    let warmup_handles: Vec<_> = (0..WARMUP_MESSAGES)
+        .map(|_| {
+            let engine = engine.clone();
+            let data = sample_data.clone();
+            tokio::spawn(async move {
+                let mut message = Message::from_json(&data);
+                engine.run(&mut message).await.into_result().unwrap();
+            })
+        })
+        .collect();
+
+    join_all(warmup_handles).await;
+    println!("Warmup completed in {:?}\n", warmup_start.elapsed());
+
+    // Benchmark different concurrency levels
+    println!(
+        "Configuration | Messages | Concurrency | Throughput (msg/s) | Avg (μs) | P50 (μs) | P90 (μs) | P95 (μs) | P99 (μs) | P99.9 (μs)"
+    );
+    println!(
+        "--------------|----------|-------------|-------------------|----------|----------|----------|----------|----------|------------"
+    );
+
+    let mut latency_stats = LatencyStats::new();
+
+    let benchmark_start = Instant::now();
+    let mut handles = Vec::with_capacity(TOTAL_MESSAGES);
+
+    for i in 0..TOTAL_MESSAGES {
+        let engine = engine.clone();
+        let data = sample_data.clone();
+
+        let handle = tokio::spawn(async move {
+            let msg_start = Instant::now();
+
+            // v3 builds the message from the payload, then replaces its
+            // `metadata`; v4 seeds `metadata` at construction.
+            let mut message = Message::from_parts(
+                OwnedDataValue::from(&data),
+                OwnedDataValue::Null,
+                OwnedDataValue::from(&json!({ "iteration": i })),
+            );
+
+            engine.run(&mut message).await.into_result().unwrap();
+
+            msg_start.elapsed()
+        });
+
+        handles.push(handle);
+    }
+
+    // Collect all results
+    let latencies = join_all(handles).await;
+    for duration in latencies.into_iter().flatten() {
+        latency_stats.add(duration);
+    }
+
+    let total_time = benchmark_start.elapsed();
+    let throughput = TOTAL_MESSAGES as f64 / total_time.as_secs_f64();
+    let avg = latency_stats.calculate_average();
+    let (p50, p90, p95, p99, p999) = latency_stats.calculate_percentiles();
+
+    println!(
+        "{:^13} | {:^8} | {:^11} | {:^17.0} | {:^8.0} | {:^8.0} | {:^8.0} | {:^8.0} | {:^8.0} | {:^10.0}",
+        "Async",
+        TOTAL_MESSAGES,
+        "Unlimited",
+        throughput,
+        avg.as_micros(),
+        p50.as_micros(),
+        p90.as_micros(),
+        p95.as_micros(),
+        p99.as_micros(),
+        p999.as_micros()
+    );
+
+    println!("\n✅ Benchmark complete!");
+
+    let micros = |d: Duration| d.as_secs_f64() * 1e6;
+    gate::Gate::new("benchmark")
+        .higher("throughput", throughput, "msg/s")
+        .lower("mean", micros(avg), "µs")
+        .lower("p99", micros(p99), "µs")
+        .emit();
+
+    Ok(())
+}

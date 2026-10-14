@@ -346,6 +346,7 @@ dependencies = [
  "dataflow-rs-derive",
  "datalogic-rs",
  "datavalue-rs",
+ "futures",
  "log",
  "quick-xml",
  "self_cell",

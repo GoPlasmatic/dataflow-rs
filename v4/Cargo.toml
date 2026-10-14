@@ -55,3 +55,5 @@ dataflow-corpus = { path = "../corpus" }
 # v3, the root package, for the differential tests that hold v4 to its rules.
 dataflow_rs_v3 = { package = "dataflow-rs", path = ".." }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+# The gate's ports (`examples/v4_*.rs`), at the versions v3's examples use.
+futures = "0.3"
