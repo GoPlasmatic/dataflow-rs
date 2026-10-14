@@ -32,8 +32,9 @@ use syn::{
 /// | `#[output(primary)]` | output | Required on exactly one output when there are several |
 /// | `#[config(check = path)]` | struct | `fn(&Self, &mut CompileCx<'_>)`, called only when every field compiled |
 ///
-/// A field is an output when it carries `#[output(...)]` or its type's last
-/// path segment is `Output`. A field's doc comment is its description.
+/// A field is an output when it carries `#[output(...)]`, or its type's last
+/// path segment is `Output`, or it is an `Option` of such a type. A field's
+/// doc comment is its description.
 ///
 /// The primary output, the one marked or the only one, is what
 /// `FunctionConfig::primary_output` returns, so its type is `Output` or
@@ -281,7 +282,7 @@ fn parse_field(field: &syn::Field) -> Result<Field<'_>> {
              `#[config(records)]`",
         ));
     }
-    f.output = output_attr || (!f.serde && is_output_type(f.ty));
+    f.output = output_attr || (!f.serde && (is_output_type(f.ty) || is_option_of_output(f.ty)));
     let lines: Vec<&str> = docs
         .iter()
         .flat_map(|doc| doc.lines())
@@ -610,6 +611,35 @@ mod tests {
                 #[output(primary)]
                 a: core::option::Option<Output>,
                 b: Output,
+            }
+        }));
+    }
+
+    #[test]
+    fn an_option_of_an_output_counts_as_an_output() {
+        // Beside an `Output`, unmarked: two outputs, neither primary.
+        assert_eq!(
+            refused(quote! {
+                struct Two {
+                    out: Output,
+                    maybe: Option<Output>,
+                }
+            }),
+            "`Two` has 2 outputs: mark exactly one of them `#[output(primary)]`"
+        );
+        // Alone, unmarked: the primary.
+        assert!(expands(quote! {
+            struct Lone {
+                url: Expr<String>,
+                maybe: Option<Output>,
+            }
+        }));
+        // A `#[config(serde)]` field is read with serde, never an output.
+        assert!(expands(quote! {
+            struct Serde {
+                out: Output,
+                #[config(serde)]
+                maybe: Option<Output>,
             }
         }));
     }

@@ -604,14 +604,16 @@ fn primary_output_is_the_single_output_or_the_marked_one() {
     // One output: it, unmarked.
     let (one, _) = compile::<OneOut>(&json!({"out": "data.r"}));
     assert_eq!(primary(&one.unwrap()).as_deref(), Some("data.r"));
-    // No `Output` field: none, even with outputs in an option, a list and a
-    // map, none of which is marked.
+    // No output field: none.
     let (limits, _) = compile::<Limits>(&json!({}));
     assert_eq!(primary(&limits.unwrap()), None);
+    // Outputs in a list and a map are not outputs themselves; the one in an
+    // option is, and the only one, so it is the primary.
     let (outputs, issues) = compile::<Outputs>(&json!({
         "maybe": "data.m", "many": ["data.a"], "keyed": {"k": "data.k"}}));
     assert!(issues.is_empty(), "{issues:?}");
-    assert_eq!(primary(&outputs.unwrap()), None);
+    assert_eq!(primary(&outputs.unwrap()).as_deref(), Some("data.m"));
+    assert!(field(Outputs::fields(), "maybe").primary);
     // A hand-written config has none unless it says so.
     assert_eq!(primary(&()), None);
 }
@@ -636,4 +638,30 @@ fn an_option_output_primary_is_as_ref() {
         cfg.primary_output().unwrap(),
         cfg.maybe.as_ref().unwrap()
     ));
+}
+
+/// A lone optional output, unmarked: the primary, as a lone `Output` is.
+#[derive(Debug, FunctionConfig)]
+struct LoneMaybe {
+    url: Expr<String>,
+    output: Option<Output>,
+}
+
+#[test]
+fn a_lone_option_output_is_the_primary_without_saying_so() {
+    assert!(field(LoneMaybe::fields(), "output").primary);
+    let (cfg, issues) = compile::<LoneMaybe>(&json!({"url": "u", "output": "data.r"}));
+    assert!(issues.is_empty(), "{issues:?}");
+    let cfg = cfg.unwrap();
+    assert_eq!(primary(&cfg).as_deref(), Some("data.r"));
+    assert!(std::ptr::eq(
+        cfg.primary_output().unwrap(),
+        cfg.output.as_ref().unwrap()
+    ));
+    // Unset, or `null`: no primary output for this input.
+    for input in [json!({"url": "u"}), json!({"url": "u", "output": null})] {
+        let (cfg, issues) = compile::<LoneMaybe>(&input);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(primary(&cfg.unwrap()), None, "{input}");
+    }
 }
