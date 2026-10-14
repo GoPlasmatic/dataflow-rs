@@ -36,6 +36,15 @@ this reads only that line.
         only one side reports is listed as such and not judged. Exit status is
         1 if any verdict is WORSE or NOT FASTER.
 
+        A self-judged bench (SELF_JUDGED) compares v3 and v4 inside its own
+        process and has no v3 binary: `build --v4` copies it, and `compare`
+        runs it from B only, once per round, and lists its rows in the same
+        table. Its judged metric is already a ratio, v4 over v3, so the
+        verdict reads that value directly: over the kept rounds, WORSE when
+        its median exceeds 1 + noise and better below 1 - noise, the noise
+        being max(3%, half the inter-quartile range of the values). Its
+        other metrics are info.
+
 Both commands run every binary under `/usr/bin/time -l` and keep, for every
 run, the instructions retired and cycles elapsed it prints (macOS). `compare`
 reports each benchmark's median per-round ratio of instructions retired, B/A,
@@ -70,7 +79,8 @@ BENCHES = [
 
 
 # The benchmarks v4 ports (`v4/examples/v4_<name>.rs`), in BENCHES order: the
-# eight sync ones of phase 4, then phase 5's host-call rows as they land.
+# eight sync ones of phase 4, then phase 5's host-call rows as they land, with
+# the self-judged `host_call_floor` beside the row whose floor it gates.
 V4_BENCHES = [
     "realistic_benchmark",
     "benchmark",
@@ -79,6 +89,7 @@ V4_BENCHES = [
     "micro_subtree_write_bench",
     "micro_multiworkflow_bench",
     "async_handler_benchmark",
+    "host_call_floor",
     "map_performance_test",
     "loop_scaling",
     "large_context_handler",
@@ -90,11 +101,23 @@ FASTER_ROWS = {"loop_scaling"}
 # Per-metric rules, for a bench whose metrics are not all judged alike (I95):
 # a metric takes the rule of the first prefix of its name listed under its
 # bench, else its bench's. "faster" is FASTER_ROWS' rule for one metric;
-# "info" reports the metric without a verdict. `large_context_handler`'s
-# write-only floor is judged where it is gated, by
-# `async_handler_benchmark.marginal`.
+# "info" reports the metric without a verdict. A host call's own floor is
+# judged by `host_call_floor` (SELF_JUDGED): `large_context_handler`'s
+# write-only floor and `async_handler_benchmark.marginal`, a difference of two
+# latency means under a spawn burst whose noise ran 29% to 66%, are reported
+# without a verdict.
 METRIC_RULES = {
+    "async_handler_benchmark": {"marginal": "info"},
     "large_context_handler": {"with_view": "faster", "per_field": "faster", "write_only": "info"},
+}
+
+# Benches that compare v3 and v4 inside one process (v4 binaries only), with
+# the one metric each judges and its rule; their other metrics are info.
+# `host_call_floor` runs `async_handler_benchmark`'s two messages on both
+# engines on one thread, in interleaved rounds: `call.ratio` is v4 over v3 for
+# a message with the host call.
+SELF_JUDGED = {
+    "host_call_floor": {"call.ratio": "not slower"},
 }
 
 # The smallest noise `compare` allows, in percent.
@@ -194,7 +217,7 @@ def machine(load_before):
 
 def baseline(args):
     names = args.only.split(",") if args.only else BENCHES
-    unknown = [n for n in names if n not in BENCHES]
+    unknown = [n for n in names if n not in BENCHES and n not in SELF_JUDGED]
     if unknown:
         sys.exit(f"not gate benchmarks: {unknown}")
     with open(os.path.join(args.bins, "build.json")) as f:
@@ -286,17 +309,39 @@ def verdict(faster_row, median_ratio, noise_pct):
     return "not slower"
 
 
+def sides(name):
+    """The directories a bench runs from: both, or B alone when it is
+    self-judged."""
+    return ("b",) if name in SELF_JUDGED else ("a", "b")
+
+
+def self_judged_row(name, metric, values, unit, better):
+    """A self-judged bench's row: its judged metric's verdict read off the
+    values themselves (ratios, v4 over v3), any other metric info."""
+    median = statistics.median(values)
+    noise = max(NOISE_FLOOR_PCT, half_iqr_pct(values))
+    judged = SELF_JUDGED[name].get(metric)
+    row = {"bench": name, "metric": metric, "unit": unit, "better": better,
+           "b": {"runs": values, "median": median}, "self_judged": True}
+    if unit == "ratio":
+        row.update(median_ratio=median, half_iqr_pct=half_iqr_pct(values), noise_pct=noise)
+    row["verdict"] = verdict(False, median, noise) if judged == "not slower" else "info"
+    return row
+
+
 def compare(args):
     names = args.only.split(",") if args.only else None
-    available = [n for n in BENCHES if all(os.path.exists(os.path.join(d, n)) for d in (args.a, args.b))]
+    dirs = {"a": args.a, "b": args.b}
+    available = [n for n in BENCHES + list(SELF_JUDGED)
+                 if all(os.path.exists(os.path.join(dirs[s], n)) for s in sides(n))]
     if names is None:
         names = available
-    unknown = [n for n in names if n not in BENCHES]
+    unknown = [n for n in names if n not in BENCHES and n not in SELF_JUDGED]
     if unknown:
         sys.exit(f"not gate benchmarks: {unknown}")
     missing = [n for n in names if n not in available]
     if missing:
-        sys.exit(f"not built in both directories: {missing}")
+        sys.exit(f"not built where they run (both directories, or B for a self-judged bench): {missing}")
     builds = {}
     for side, d in (("a", args.a), ("b", args.b)):
         with open(os.path.join(d, "build.json")) as f:
@@ -307,7 +352,6 @@ def compare(args):
     faster_rules = builds["a"].get("engine") == "v3" and builds["b"].get("engine") == "v4"
 
     load_before = os.getloadavg()
-    dirs = {"a": args.a, "b": args.b}
     # Per bench and side, one entry per kept round, in round order, so the
     # i-th runs of A and B are a pair.
     runs = {name: {"a": [], "b": []} for name in names}
@@ -315,7 +359,7 @@ def compare(args):
         # Which side goes first alternates, so neither owns the cooler slot.
         order = ("a", "b") if round_no % 2 == 0 else ("b", "a")
         for name in names:
-            for side in order:
+            for side in (s for s in order if s in sides(name)):
                 metrics, counted = run_once(dirs[side], name)
                 if round_no > 0:
                     runs[name][side].append({"metrics": {m["name"]: m for m in metrics}, "counters": counted})
@@ -324,6 +368,14 @@ def compare(args):
 
     rows, work = [], {}
     for name in names:
+        if name in SELF_JUDGED:
+            for metric in dict.fromkeys(m for r in runs[name]["b"] for m in r["metrics"]):
+                found = [r["metrics"][metric] for r in runs[name]["b"] if metric in r["metrics"]]
+                rows.append(self_judged_row(name, metric, [m["value"] for m in found],
+                                            found[0]["unit"], found[0]["better"]))
+            work[name] = {key: {"b": [r["counters"].get(key) for r in runs[name]["b"]]}
+                          for key in COUNTERS.values()}
+            continue
         pairs = list(zip(runs[name]["a"], runs[name]["b"]))
         a_names = [m for r in runs[name]["a"] for m in r["metrics"]]
         b_names = [m for r in runs[name]["b"] for m in r["metrics"]]
@@ -390,6 +442,8 @@ def compare(args):
                 tail = f"{'-':>7} {'-':>6}"
             print(f"{row['bench']:<26} {row['metric']:<28} {ca} {cb} {tail}  {row['verdict']}")
         instructions = work[name]["instructions"]
+        if name in SELF_JUDGED:
+            continue
         if "median_ratio" in instructions:
             a = statistics.median(v for v in instructions["a"] if v is not None)
             b = statistics.median(v for v in instructions["b"] if v is not None)
@@ -407,7 +461,8 @@ def compare(args):
                 "order": names,
                 "statistic": "median of the per-round ratios B/A, inverted where higher is better (I80)",
                 "noise": f"max({NOISE_FLOOR_PCT:g}%, half the inter-quartile range of the ratios)",
-                "rules": {"faster_rows": sorted(FASTER_ROWS), "metric_rules": METRIC_RULES},
+                "rules": {"faster_rows": sorted(FASTER_ROWS), "metric_rules": METRIC_RULES,
+                          "self_judged": SELF_JUDGED},
                 "counters": f"{TIME} -l, informational",
             },
             "rows": rows,
