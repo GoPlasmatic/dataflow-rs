@@ -908,6 +908,13 @@ struct OneOutput {
     out: Output,
 }
 
+/// One optional output: the primary without saying so, when the input sets
+/// it.
+#[derive(FunctionConfig)]
+struct MaybeOutput {
+    out: Option<Output>,
+}
+
 /// Emits its own name through its config's primary output.
 struct EmitDefault<C>(PhantomData<fn() -> C>);
 
@@ -934,6 +941,7 @@ async fn emit_default_writes_the_primary_output_and_fails_without_one() {
     let e = Engine::builder()
         .register("two", EmitDefault::<TwoOutputs>::new())
         .register("one", EmitDefault::<OneOutput>::new())
+        .register("maybe", EmitDefault::<MaybeOutput>::new())
         // `()` is hand-written and has no output.
         .register("none", EmitDefault::<()>::new())
         .workflow_json(&workflow(
@@ -942,6 +950,7 @@ async fn emit_default_writes_the_primary_output_and_fails_without_one() {
             vec![
                 task("two", json!({"main": "data.main", "side": "data.side"})),
                 task("one", json!({"out": "data.one"})),
+                task("maybe", json!({"out": "data.maybe"})),
                 task("none", json!({})),
                 map("after", "data.after", true.into()),
             ],
@@ -950,12 +959,16 @@ async fn emit_default_writes_the_primary_output_and_fails_without_one() {
         .unwrap();
     let mut m = message(json!({}));
     let run = e.run(&mut m).await;
-    assert_eq!(data(&m), json!({"main": "two", "one": "one"}));
+    assert_eq!(
+        data(&m),
+        json!({"main": "two", "one": "one", "maybe": "maybe"})
+    );
     assert_eq!(
         audit(&m),
         [
             entry("w", "two", 200),
             entry("w", "one", 200),
+            entry("w", "maybe", 200),
             entry("w", "none", 500)
         ]
     );
@@ -968,6 +981,22 @@ async fn emit_default_writes_the_primary_output_and_fails_without_one() {
         [(
             "CONFIG_ERROR".to_owned(),
             "Task none error: `none` has no primary output".to_owned()
+        )]
+    );
+
+    // An optional primary output the input left unset is named.
+    let e = Engine::builder()
+        .register("maybe", EmitDefault::<MaybeOutput>::new())
+        .workflow_json(&workflow("w", &[], vec![task("maybe", json!({}))]))
+        .build()
+        .unwrap();
+    let mut m = message(json!({}));
+    e.run(&mut m).await;
+    assert_eq!(
+        errors(&m),
+        [(
+            "CONFIG_ERROR".to_owned(),
+            "Task maybe error: `maybe`'s primary output `out` is not set".to_owned()
         )]
     );
 }

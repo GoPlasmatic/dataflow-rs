@@ -65,7 +65,7 @@ pub(crate) fn call_start<'c, 'r: 'c, 'p: 'c>(
             loop_counter: env.frame.loop_counter,
             element_index: None,
         },
-        primary: bound.primary_output(),
+        primary: bound.primary(),
         deadline: env.limits.deadline,
         cancel: env.limits.cancel,
         capture: env.capture,

@@ -263,7 +263,7 @@ impl<F: Function> Call<F> {
                     loop_counter: None,
                     element_index: None,
                 },
-                primary: bound.primary_output(),
+                primary: bound.primary(),
                 deadline: None,
                 cancel: None,
                 capture,

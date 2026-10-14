@@ -108,7 +108,7 @@ pub struct Ctx<'r> {
     exprs: &'r ExprEngine,
     info: CallInfo<'r>,
     /// The callee's primary output, which `emit_default` writes through.
-    primary: Option<&'r Output>,
+    primary: Primary<'r>,
     deadline: Option<Instant>,
     cancel: Option<&'r CancelToken>,
     /// Whether `set` and `remove` record `Change`s (I67).
@@ -137,13 +137,25 @@ pub(crate) struct CallStart<'r> {
     /// The call's static facts.
     pub(crate) info: CallInfo<'r>,
     /// The callee's primary output.
-    pub(crate) primary: Option<&'r Output>,
+    pub(crate) primary: Primary<'r>,
     /// When the run must end.
     pub(crate) deadline: Option<Instant>,
     /// The run's cancellation token.
     pub(crate) cancel: Option<&'r CancelToken>,
     /// Whether the call records its `Change`s.
     pub(crate) capture: bool,
+}
+
+/// A call's primary output, as [`Ctx::emit_default`] writes through it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Primary<'r> {
+    /// The config declares none.
+    Undeclared,
+    /// The config's primary output, the field named, which the input left
+    /// unset: an `Option<Output>`.
+    Unset(&'r str),
+    /// The config's primary output, as the call site set it.
+    Set(&'r Output),
 }
 
 /// A fan-out element's bindings: `temp_data.<as>` holds the element and
@@ -445,15 +457,20 @@ impl<'r> Ctx<'r> {
     /// # Errors
     ///
     /// [`ErrorKind::Config`] when the config has no primary output, or
-    /// leaves an optional one unset; [`Self::emit`]'s.
+    /// leaves an optional one unset, which the error names; [`Self::emit`]'s.
     pub fn emit_default(&mut self, value: OwnedDataValue) -> Result<()> {
-        let Some(out) = self.primary else {
-            return Err(Error::new(
+        let function = self.info.function;
+        match self.primary {
+            Primary::Set(out) => self.emit(out, value),
+            Primary::Unset(field) => Err(Error::new(
                 ErrorKind::Config,
-                format!("`{}` has no primary output", self.info.function),
-            ));
-        };
-        self.emit(out, value)
+                format!("`{function}`'s primary output `{field}` is not set"),
+            )),
+            Primary::Undeclared => Err(Error::new(
+                ErrorKind::Config,
+                format!("`{function}` has no primary output"),
+            )),
+        }
     }
 
     /// Removes the value at `path`, recording the removal under capture.
@@ -525,7 +542,7 @@ pub(crate) mod testing {
             payload: &payload,
             exprs: &exprs,
             info,
-            primary: None,
+            primary: Primary::Undeclared,
             deadline: None,
             cancel: None,
             capture: true,
@@ -645,7 +662,7 @@ mod tests {
             payload: &payload,
             exprs: &exprs,
             info: info(),
-            primary: None,
+            primary: Primary::Undeclared,
             deadline: None,
             cancel: None,
             capture: false,
@@ -696,7 +713,7 @@ mod tests {
                 payload: &payload,
                 exprs: &exprs,
                 info: info(),
-                primary: None,
+                primary: Primary::Undeclared,
                 deadline: None,
                 cancel: None,
                 capture: true,
@@ -771,7 +788,7 @@ mod tests {
                 payload: &payload,
                 exprs: &exprs,
                 info: info(),
-                primary: None,
+                primary: Primary::Undeclared,
                 deadline: None,
                 cancel: None,
                 capture: true,
@@ -909,7 +926,7 @@ mod tests {
                 payload: &payload,
                 exprs: &exprs,
                 info: info(),
-                primary: None,
+                primary: Primary::Undeclared,
                 deadline: None,
                 cancel: None,
                 capture: true,
@@ -971,7 +988,7 @@ mod tests {
             payload: &payload,
             exprs: &exprs,
             info: info(),
-            primary: None,
+            primary: Primary::Undeclared,
             deadline: None,
             cancel: None,
             capture: true,

@@ -1,10 +1,14 @@
 //! A host function, erased once at `register`, and a host call site's
 //! callee, bound once at compile (I42).
 
-use super::{BoxFuture, Ctx, Function, FunctionConfig, FunctionSpec, Outcome, Prepare};
+use super::templated::primary_name;
+use super::{
+    BoxFuture, Ctx, Function, FunctionConfig, FunctionSpec, Outcome, Prepare, Primary, Templated,
+};
 use crate::base::Result;
-use crate::expr::{CompileCx, ExprVisitor, FieldSpec, Output};
+use crate::expr::{CompileCx, ExprVisitor, FieldKind, FieldSpec};
 use serde_json::Value;
+use std::any::TypeId;
 use std::sync::Arc;
 
 /// A registry entry: one host function, erased.
@@ -41,8 +45,8 @@ pub(crate) trait BoundCall: Send + Sync {
     fn visit(&self, v: &mut dyn ExprVisitor);
 
     /// The config's primary output, which `Ctx::emit_default` writes
-    /// through.
-    fn primary_output(&self) -> Option<&Output>;
+    /// through, or why there is none.
+    fn primary(&self) -> Primary<'_>;
 }
 
 /// A registered function with the spec it gave at `register`.
@@ -94,8 +98,27 @@ impl<F: Function> ErasedFunction for Erased<F> {
             Box::new(Bound {
                 f: Arc::clone(&self.f),
                 cfg,
+                primary_field: self.primary_field().map(Box::from),
             }) as Box<dyn BoundCall>
         })
+    }
+}
+
+impl<F: Function> Erased<F> {
+    /// The field the config's primary output is, when its fields say: a
+    /// `Templated` config's by its own rule, the only `Output` field or the
+    /// one marked primary; any other's, the `Output` field marked primary,
+    /// as the derive marks it. Only names the field in `emit_default`'s
+    /// error when the input left it unset.
+    fn primary_field(&self) -> Option<&str> {
+        let fields = self.fields();
+        if TypeId::of::<F::Config>() == TypeId::of::<Templated>() {
+            return primary_name(fields);
+        }
+        fields
+            .iter()
+            .find(|f| f.primary && matches!(f.kind, FieldKind::Output))
+            .map(|f| &*f.name)
     }
 }
 
@@ -103,6 +126,8 @@ impl<F: Function> ErasedFunction for Erased<F> {
 struct Bound<F: Function> {
     f: Arc<F>,
     cfg: F::Config,
+    /// The field the primary output is, when the config's fields say.
+    primary_field: Option<Box<str>>,
 }
 
 impl<F: Function> BoundCall for Bound<F> {
@@ -114,8 +139,12 @@ impl<F: Function> BoundCall for Bound<F> {
         self.cfg.visit(v);
     }
 
-    fn primary_output(&self) -> Option<&Output> {
-        self.cfg.primary_output()
+    fn primary(&self) -> Primary<'_> {
+        match (self.cfg.primary_output(), &self.primary_field) {
+            (Some(out), _) => Primary::Set(out),
+            (None, Some(field)) => Primary::Unset(field),
+            (None, None) => Primary::Undeclared,
+        }
     }
 }
 

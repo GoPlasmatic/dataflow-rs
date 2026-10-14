@@ -83,7 +83,7 @@ pub(super) fn primary_problem(specs: &[FieldSpec]) -> Option<String> {
 
 /// The name of the primary output among `specs`: the only `Output` field,
 /// or, of several, the one marked primary, which `register` makes sure of.
-fn primary_name(specs: &[FieldSpec]) -> Option<&str> {
+pub(super) fn primary_name(specs: &[FieldSpec]) -> Option<&str> {
     let is_output = |spec: &&FieldSpec| matches!(spec.kind, FieldKind::Output);
     let mut outputs = specs.iter().filter(is_output);
     let first = outputs.next()?;

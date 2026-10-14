@@ -18,7 +18,7 @@ pub mod testing;
 pub use crate::expr::{ExprVisitor, FieldKind, FieldSpec, Rendered, ValueKind};
 pub use call::{Function, Prepare};
 pub use config::FunctionConfig;
-pub(crate) use ctx::{Binding, CallStart};
+pub(crate) use ctx::{Binding, CallStart, Primary};
 pub use ctx::{CallInfo, Ctx};
 /// Derives [`FunctionConfig`](trait@FunctionConfig) (and `ConfigField`, so a
 /// derived config nests).
