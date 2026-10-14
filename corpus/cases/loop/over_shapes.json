@@ -143,5 +143,16 @@
         }
       }
     }
+  ],
+  "deviations": [
+    {
+      "break": "4",
+      "paths": [
+        "/steps/0/run/message/errors/0/code",
+        "/steps/0/run/message/errors/0/message",
+        "/steps/0/run/trace"
+      ],
+      "note": "v4 records no WORKFLOW_ERROR: the non-array over is one record with the evaluation's own code, LOGIC_ERROR, the workflow id and no task id, and its message is the loop's own (I61)"
+    }
   ]
 }

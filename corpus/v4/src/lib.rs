@@ -1,15 +1,19 @@
-//! v4's golden-corpus driver. In phase 3 it checks one thing: that v4
-//! compiles every corpus definition as v3 built it, reporting v3's issues at
-//! v3's paths, and, for a definition a deviation covers, exactly what
-//! [`expect::DEVIATED`] says. Later phases extend it to runs. See
-//! `corpus/README.md`.
+//! v4's golden-corpus driver. It checks two things. Phase 3's: v4 compiles
+//! every corpus definition as v3 built it, reporting v3's issues at v3's
+//! paths, and, for a definition a deviation covers, exactly what
+//! [`expect::DEVIATED`] says. Phase 4's: v4 runs every case that needs only
+//! the built-ins as v3 recorded it, and, at a deviated path, exactly what
+//! [`expect::RUN_DEVIATED`] says. See `corpus/README.md`.
 //!
 //! This crate holds the reusable pieces (the case's compiler, reading a
 //! case's definitions, normalising what v3 recorded, collecting what v4
-//! reports); `tests/definitions.rs` is the check.
+//! reports, running a case's steps); `tests/definitions.rs` and
+//! `tests/runs.rs` are the checks.
 
 pub mod expect;
+pub mod logs;
 pub mod operators;
+pub mod run;
 pub mod script;
 
 use dataflow_corpus::{Case, Json};

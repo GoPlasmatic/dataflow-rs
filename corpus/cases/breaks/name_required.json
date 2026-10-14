@@ -109,7 +109,9 @@
       "paths": [
         "/definitions/0",
         "/definitions/1",
-        "/steps/0/run"
+        "/steps/0/run/message/context/data/order",
+        "/steps/0/run/message/audit_trail",
+        "/steps/0/run/trace"
       ],
       "note": "name is optional on every node in v4, so both definitions parse and run"
     }

@@ -8,12 +8,22 @@ publish = false
 license = "Apache-2.0"
 description = "Checks dataflow-rs v4 against the golden corpus. Not published."
 
+# `budget` adds no operator, so the driver reads it from this feature, which
+# forwards to v4's; the operator families are read from v4's engine.
+[features]
+budget = ["dataflow-rs/budget"]
+
 [dependencies]
 dataflow-corpus = { path = ".." }
 # Named `dataflow-rs-v4`, imported as `dataflow_rs`, so this driver reads as it
 # will once v4 replaces v3 on `main`.
 dataflow-rs = { package = "dataflow-rs-v4", path = "../../v4" }
+# The `log` built-in's lines, captured for a case with `engine.logs`.
+log = "0.4"
 serde_json = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
 
 [lints]
 workspace = true

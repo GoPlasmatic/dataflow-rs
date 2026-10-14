@@ -1,6 +1,6 @@
 //! What the driver holds v4 to beyond v3's recording: which v4 issues are
-//! compared against it, and what v4 reports for each definition a deviation
-//! covers.
+//! compared against it, what v4 reports for each definition a deviation
+//! covers, and what v4's run records at each path a deviation covers.
 
 use crate::Row;
 
@@ -232,6 +232,83 @@ pub const DEVIATED: &[Deviated] = &[
         )],
     ),
 ];
+
+/// One deviated run path: (case, JSON pointer into the run record, v4's JSON
+/// there).
+pub type RunDeviated = (&'static str, &'static str, &'static str);
+
+/// What v4 records at every deviated path of a run step (I69), as JSON
+/// (whitespace is not compared). A deviation path with `*` is expanded to
+/// every pointer it names in v3's recording or in v4's record, and each needs
+/// its row here. A pointer v4's record does not reach is written
+/// [`MISSING`]. A path under the trace needs no row until phase 6 compares
+/// traces.
+///
+/// - `breaks/name_required` (break 6): both unnamed definitions parse, so
+///   all four workflows run, in definition order, and each appends.
+/// - `loop/over_shapes` (break 4, I61): the non-array `over` is one record
+///   with `LOGIC_ERROR` and the loop's own message, where v3 wrapped a
+///   `WORKFLOW_ERROR`.
+/// - `schema/status_without_channel` (break 7): only the Active workflow
+///   runs without a channel.
+pub const RUN_DEVIATED: &[RunDeviated] = &[
+    (
+        "breaks/name_required",
+        "/steps/0/run/message/context/data/order",
+        r#"["no_workflow_name", "no_task_name", "no_group_name", "named"]"#,
+    ),
+    (
+        "breaks/name_required",
+        "/steps/0/run/message/audit_trail",
+        r#"[
+            {"workflow_id": "no_workflow_name", "task_id": "t", "timestamp": "<timestamp>",
+             "changes": [{"path": "data.order.0", "old_value": null, "new_value": "no_workflow_name"}],
+             "status": 200},
+            {"workflow_id": "no_task_name", "task_id": "t", "timestamp": "<timestamp>",
+             "changes": [{"path": "data.order.1", "old_value": null, "new_value": "no_task_name"}],
+             "status": 200},
+            {"workflow_id": "no_group_name", "task_id": "t", "timestamp": "<timestamp>",
+             "changes": [{"path": "data.order.2", "old_value": null, "new_value": "no_group_name"}],
+             "status": 200},
+            {"workflow_id": "named", "task_id": "t", "timestamp": "<timestamp>",
+             "changes": [{"path": "data.order.3", "old_value": null, "new_value": "named"}],
+             "status": 200}
+        ]"#,
+    ),
+    (
+        "loop/over_shapes",
+        "/steps/0/run/message/errors/0/code",
+        r#""LOGIC_ERROR""#,
+    ),
+    (
+        "loop/over_shapes",
+        "/steps/0/run/message/errors/0/message",
+        r#""Workflow not_array: loop.over must evaluate to an array, got a string""#,
+    ),
+    (
+        "schema/status_without_channel",
+        "/steps/0/run/message/context/data/order",
+        r#"["active"]"#,
+    ),
+    (
+        "schema/status_without_channel",
+        "/steps/0/run/message/context/metadata/progress",
+        r#"{"workflow_id": "active", "task_id": "t", "status_code": 200}"#,
+    ),
+    (
+        "schema/status_without_channel",
+        "/steps/0/run/message/audit_trail",
+        r#"[
+            {"workflow_id": "active", "task_id": "t", "timestamp": "<timestamp>",
+             "changes": [{"path": "data.order.0", "old_value": null, "new_value": "active"}],
+             "status": 200}
+        ]"#,
+    ),
+];
+
+/// The JSON of a [`RUN_DEVIATED`] row whose pointer v4's record does not
+/// reach.
+pub const MISSING: &str = "<missing>";
 
 #[cfg(test)]
 mod tests {

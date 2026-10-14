@@ -284,7 +284,9 @@ version = "0.0.0"
 dependencies = [
  "dataflow-corpus",
  "dataflow-rs-v4",
+ "log",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

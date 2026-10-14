@@ -29,13 +29,35 @@ the same cases through `dataflow-corpus`.
 
 ## v4's driver
 
-`corpus/v4/` (`dataflow-corpus-v4`) reads the same cases through `dataflow-corpus`. In phase 3 it
-compiles every definition (`tests/definitions.rs`): v4's `parse` issues, then those of a compiler
-holding `script` and the case's operators and secrets. A definition no deviation covers must report
-what v3 recorded (`authored` and `checked`), as `(code, severity, path)`. Before that comparison,
-v4's own Advisories, those of a code v3 does not have such as `V3_SPELLING`, are filtered out
-(`expect::compared`). A deviated one must report exactly its row of `expect::DEVIATED`, unfiltered.
-Nothing is skipped. Later phases extend it to runs.
+`corpus/v4/` (`dataflow-corpus-v4`) reads the same cases through `dataflow-corpus`. It makes two
+checks.
+
+**Definitions** (`tests/definitions.rs`, phase 3). It compiles every definition: v4's `parse` issues,
+then those of a compiler holding `script` and the case's operators and secrets. A definition no
+deviation covers must report what v3 recorded (`authored` and `checked`), as
+`(code, severity, path)`. Before that comparison, v4's own Advisories, those of a code v3 does not
+have such as `V3_SPELLING`, are filtered out (`expect::compared`). A deviated one must report
+exactly its row of `expect::DEVIATED`, unfiltered. Nothing is skipped.
+
+**Runs** (`tests/runs.rs`, from phase 4). `run::run_case` builds the case and runs its steps:
+
+- **The build.** Each definition is parsed and compiled on its own. One v4 refuses is left out
+  when v3's `parse` refused it too, as v3's driver left it out; the definitions check holds the two
+  refusals together. Any other refusal means there is no engine: v3's build must have failed too,
+  or a deviation must cover `/build`, and no step is compared.
+- **The skip rule.** A case whose steps need what a later phase builds is skipped, by a rule read
+  from the definitions left in (`run::waits_for`): a task calling a function that is not a built-in
+  (`script`), or carrying `for_each`, waits for phase 5; an observer, an error context or a reload
+  waits for phase 6. A case whose `requires` this build does not satisfy is skipped too.
+- **The run.** Each run step runs on a fresh message with its channel, bucket, `capture_changes`
+  and `audit_mode`, and records `{outcome, message, logs}` as v3's driver does, normalised the same
+  way. The outcome is `"ok"` for a run that completed, with or without error records.
+
+The record is compared with `compare::diff`, ignoring `IGNORED`, the run outcome's message (v4's
+`Error` has its own wording; its code and `retryable` are compared), the trace (phase 6's) and
+every path a deviation covers. At each deviated path, v4's value must be exactly its row of
+`expect::RUN_DEVIATED`, so a deviation says what v4 does, not only that it differs. The counts of
+cases run, with no build, skipped for each phase and skipped for this build are pinned.
 
 ## A case
 
