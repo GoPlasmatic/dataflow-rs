@@ -10,13 +10,13 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // `writes` in key order, then evaluates `reads`, logging what it saw, then
 // returns what `outcome` names.
 
-use dataflow_rs::expr::{FieldKind, FieldSpec, Output, ValueKind};
+use dataflow_rs::expr::{ExprEngine, FieldKind, FieldSpec, Output, Secrets, ValueKind};
 use dataflow_rs::function::{
     BoxFuture, CallLayer, FunctionConfig, FunctionSpec, Next, Templated, layers,
 };
 use dataflow_rs::run::{ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
 use dataflow_rs::{
-    Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Result, Run, RunOptions,
+    Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Registry, Result, Run, RunOptions,
 };
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
@@ -550,6 +550,11 @@ async fn a_skip_keeps_the_writes_and_records_nothing() {
         json!({"a": 1, "skipper_wrote": true, "seen": "m1"})
     );
     assert_eq!(audit(&m), [entry("w", "m1", 200), entry("w", "m2", 200)]);
+    // The skipper's `Change` is no one's: the next entry holds its own only.
+    assert_eq!(
+        changes(&m, "m2"),
+        json!([{"path": "data.seen", "old_value": null, "new_value": "m1"}])
+    );
     assert!(m.errors().is_empty());
     assert!(matches!(run.status(), RunStatus::Completed));
 }
@@ -1115,4 +1120,143 @@ async fn a_templated_config_reads_its_fields_per_call() {
         r#"{"expr":11,"doc":{"$n":1,"k":"v"},"lit":"label","out":"data.out_1"}"#
     );
     assert_eq!(data(&m), json!({"out_0": call(0).1, "out_1": call(1).1}));
+}
+
+#[tokio::test]
+async fn a_call_without_capture_writes_as_it_does_with_and_records_no_change() {
+    // `Ctx::set` and `Ctx::remove` under `capture_changes(false)`: the same
+    // writes land, a removal of nothing is still nothing, and the entry has
+    // no `Change`.
+    let (e, _) = engine(&[workflow(
+        "w",
+        &[],
+        vec![probe(
+            "p",
+            json!([]),
+            json!({
+                "-data.gone": null,
+                "-data.absent": null,
+                "data.a": 1,
+                "data.b": {"var": "data.a"}
+            }),
+            json!("ok"),
+        )],
+    )]);
+    let run_with = |capture: bool| {
+        let e = &e;
+        async move {
+            let mut m = message(json!({"gone": "x", "kept": true}));
+            let opts = RunOptions::default().capture_changes(capture);
+            let run = e.run_with(&mut m, &opts).await;
+            assert!(matches!(run.status(), RunStatus::Completed));
+            m
+        }
+    };
+    let on = run_with(true).await;
+    let off = run_with(false).await;
+    assert_eq!(data(&off), json!({"kept": true, "a": 1, "b": 1}));
+    assert_eq!(data(&off), data(&on));
+    assert_eq!(audit(&off), [entry("w", "p", 200)]);
+    assert_eq!(changes(&off, "p"), json!([]));
+    assert_eq!(
+        changes(&on, "p"),
+        json!([
+            {"path": "data.gone", "old_value": "x", "new_value": null, "removed": true},
+            {"path": "data.a", "old_value": null, "new_value": 1},
+            {"path": "data.b", "old_value": null, "new_value": 1}
+        ])
+    );
+}
+
+#[tokio::test]
+async fn a_host_halt_keeps_its_writes_and_halts_the_workflow() {
+    // `Outcome::Halt` is an `Ok`: the writes land, the entry records 299,
+    // and the workflow halts while the next one runs.
+    let (e, _) = engine(&[
+        workflow(
+            "w",
+            &[],
+            vec![
+                probe("h", json!([]), json!({"data.h": true}), json!("halt")),
+                map("after", "data.after", true.into()),
+            ],
+        ),
+        workflow(
+            "w2",
+            &[("priority", json!(1))],
+            vec![map("next", "data.next", true.into())],
+        ),
+    ]);
+    let mut m = message(json!({}));
+    let run = e.run(&mut m).await;
+    assert_eq!(data(&m), json!({"h": true, "next": true}));
+    assert_eq!(audit(&m), [entry("w", "h", 299), entry("w2", "next", 200)]);
+    assert_eq!(
+        changes(&m, "h"),
+        json!([{"path": "data.h", "old_value": null, "new_value": true}])
+    );
+    assert_eq!(
+        exits(&run),
+        [Some(WorkflowExit::Halted), Some(WorkflowExit::Completed)]
+    );
+    assert!(m.errors().is_empty());
+    assert!(matches!(run.status(), RunStatus::Completed));
+}
+
+/// What `Peek` saw: the payload, and two secrets by name.
+type Peeked = Arc<Mutex<Vec<(Value, Option<Value>, Option<Value>)>>>;
+
+/// Reads the payload and the store's secrets, and copies the payload's
+/// order id into `data`.
+struct Peek(Peeked);
+
+impl Function for Peek {
+    type Config = ();
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+        let payload = Value::from(ctx.payload());
+        let key = ctx.secret("api.key").map(Value::from);
+        let absent = ctx.secret("api.absent").map(Value::from);
+        let order = OwnedDataValue::from(&payload["order_id"]);
+        self.0.lock().unwrap().push((payload, key, absent));
+        ctx.set(&"data.order_id".parse()?, order)?;
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn a_host_reads_the_payload_and_the_engines_secrets() {
+    let secrets =
+        Secrets::new(OwnedDataValue::from(&json!({"api": {"key": "s3cr3t"}}))).expect("an object");
+    let exprs = ExprEngine::builder()
+        .secrets(secrets)
+        .build()
+        .expect("the expression engine builds");
+    let seen = Peeked::default();
+    let e = Engine::builder()
+        .registry(Registry::new(exprs))
+        .register("peek", Peek(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "peek"}})],
+        ))
+        .build()
+        .unwrap();
+    let payload = json!({"order_id": "ORD-7"});
+    let mut m = Message::from_parts(
+        OwnedDataValue::from(&payload),
+        OwnedDataValue::from(&json!({})),
+        OwnedDataValue::Null,
+    );
+    let run = e.run(&mut m).await;
+    assert!(matches!(run.status(), RunStatus::Completed));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [(payload, Some(json!("s3cr3t")), None)]
+    );
+    assert_eq!(data(&m), json!({"order_id": "ORD-7"}));
+    // What the function did with the secret is its own; the engine wrote
+    // it nowhere.
+    assert!(!m.to_json().to_string().contains("s3cr3t"));
 }
