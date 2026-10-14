@@ -68,10 +68,6 @@ impl fmt::Debug for Next<'_> {
 
 impl<'a> Next<'a> {
     /// The chain of `run`'s layers, then `registry`'s, around `call`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by the runtime, which starts each host call")
-    )]
     pub(crate) fn new(
         run: &'a [Arc<dyn CallLayer>],
         registry: &'a [Arc<dyn CallLayer>],
@@ -105,6 +101,7 @@ mod tests {
     use super::*;
     use crate::base::{ProgramId, TaskIx, WorkflowIx};
     use crate::expr::{CompileCx, ExprEngine};
+    use crate::function::ctx::testing::with_ctx;
     use crate::function::registry::Entry;
     use crate::function::{CallInfo, Function, Prepare, Registry};
     use serde_json::json;
@@ -213,9 +210,11 @@ mod tests {
             Arc::new(Named("run-outer", Arc::clone(&log))),
             Arc::new(Named("run-inner", Arc::clone(&log))),
         ];
-        let mut ctx = Ctx::new(info());
         let next = Next::new(&run, registry.layers(), &*call);
-        assert_eq!(ready(next.run(&mut ctx)).unwrap(), Outcome::Status(201));
+        let outcome = with_ctx(&json!({}), info(), None, |mut ctx| {
+            ready(next.run(&mut ctx))
+        });
+        assert_eq!(outcome.unwrap(), Outcome::Status(201));
         assert_eq!(
             *log.lock().unwrap(),
             [
@@ -236,9 +235,11 @@ mod tests {
     fn with_no_layers_the_function_is_called() {
         let log = Log::default();
         let (_, call) = bound(&log);
-        let mut ctx = Ctx::new(info());
         let next = Next::new(&[], &[], &*call);
-        assert_eq!(ready(next.run(&mut ctx)).unwrap(), Outcome::Status(201));
+        let outcome = with_ctx(&json!({}), info(), None, |mut ctx| {
+            ready(next.run(&mut ctx))
+        });
+        assert_eq!(outcome.unwrap(), Outcome::Status(201));
         assert_eq!(*log.lock().unwrap(), ["function"]);
     }
 
@@ -247,9 +248,11 @@ mod tests {
         let log = Log::default();
         let (registry, call) = bound(&log);
         let run: Vec<Arc<dyn CallLayer>> = vec![Arc::new(Answer(Arc::clone(&log)))];
-        let mut ctx = Ctx::new(info());
         let next = Next::new(&run, registry.layers(), &*call);
-        assert_eq!(ready(next.run(&mut ctx)).unwrap(), Outcome::Skip);
+        let outcome = with_ctx(&json!({}), info(), None, |mut ctx| {
+            ready(next.run(&mut ctx))
+        });
+        assert_eq!(outcome.unwrap(), Outcome::Skip);
         assert_eq!(*log.lock().unwrap(), ["answer"]);
     }
 }

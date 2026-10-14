@@ -100,7 +100,7 @@ enum State<'p> {
 
 /// The shared references a host call holds across its `.await` (05): never a
 /// `&RunView`, whose `Bump` makes it `!Sync`.
-#[expect(dead_code, reason = "phase 5's host calls hold a Reader")]
+#[derive(Clone, Copy)]
 pub(crate) struct Reader<'r> {
     /// The view's root.
     pub(crate) root: &'r DataValue<'r>,
@@ -108,6 +108,23 @@ pub(crate) struct Reader<'r> {
     pub(crate) owned: &'r OwnedDataValue,
     /// What changed since.
     pub(crate) log: &'r Writes,
+}
+
+impl<'r> Reader<'r> {
+    /// The value at `path`: borrowed from the owned tree unless the log says
+    /// it changed, else converted from the view (R55).
+    pub(crate) fn get(self, path: &Path) -> Option<Cow<'r, OwnedDataValue>> {
+        if self.log.is_empty() {
+            return path.get(self.owned).map(Cow::Borrowed);
+        }
+        let root = *self.root;
+        let r = splice::resolve(root, path.segs())?;
+        match self.log.lookup(At::new(path.segs(), r.kinds)) {
+            Lookup::Clean => path.get(self.owned).map(Cow::Borrowed),
+            Lookup::Owned(v) => v.map(Cow::Borrowed),
+            Lookup::Dirty => splice::get(root, path.segs()).map(|v| Cow::Owned(v.to_owned())),
+        }
+    }
 }
 
 /// The run context (R38): the only writer of a run. It owns the message's
@@ -292,12 +309,17 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
 
     /// Remove `path`. Returns whether something was there.
     pub(crate) fn remove(&mut self, path: &Path) -> bool {
+        self.remove_segs(path.segs())
+    }
+
+    /// [`Self::remove`] at segments.
+    pub(crate) fn remove_segs(&mut self, segs: &[Seg]) -> bool {
         let before = self.root();
-        let Some(after) = splice::remove(self.arena(), before, path.segs()) else {
+        let Some(after) = splice::remove(self.arena(), before, segs) else {
             return false;
         };
-        let r = splice::resolve(before, path.segs()).expect("an existing path resolves");
-        let at = At::new(path.segs(), r.kinds);
+        let r = splice::resolve(before, segs).expect("an existing path resolves");
+        let at = At::new(segs, r.kinds);
         *self.root = self.arena().alloc(after);
         // A key that comes back later moves to the end of its object, which
         // the checkpoint's in-place assignment would not do.
@@ -515,15 +537,12 @@ impl<'m, 'p> RunContext<'m, 'p> {
         }
     }
 
-    /// Removes `path`; whether something was there.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "phase 5's host calls remove through it")
-    )]
-    pub(crate) fn remove(&mut self, path: &Path) -> bool {
+    /// Removes the value at `segs`, as a host call's applied overlay does;
+    /// whether something was there.
+    pub(crate) fn remove_segs(&mut self, segs: &[Seg]) -> bool {
         match &mut self.state {
-            State::Owned(owner) => path::remove(&mut owner.ctx, path.segs()).is_some(),
-            _ => self.edit(|e| e.remove(path)),
+            State::Owned(owner) => path::remove(&mut owner.ctx, segs).is_some(),
+            _ => self.edit(|e| e.remove_segs(segs)),
         }
     }
 
@@ -532,32 +551,22 @@ impl<'m, 'p> RunContext<'m, 'p> {
     pub(crate) fn get(&self, path: &Path) -> Option<Cow<'_, OwnedDataValue>> {
         match &self.state {
             State::Owned(owner) => path.get(&owner.ctx).map(Cow::Borrowed),
-            State::Viewed(view) => {
-                let owner = view.borrow_owner();
-                if self.log.is_empty() {
-                    return path.get(&owner.ctx).map(Cow::Borrowed);
-                }
-                let root = **view.borrow_dependent();
-                let r = splice::resolve(root, path.segs())?;
-                match self.log.lookup(At::new(path.segs(), r.kinds)) {
-                    Lookup::Clean => path.get(&owner.ctx).map(Cow::Borrowed),
-                    Lookup::Owned(v) => v.map(Cow::Borrowed),
-                    Lookup::Dirty => {
-                        splice::get(root, path.segs()).map(|v| Cow::Owned(v.to_owned()))
-                    }
-                }
-            }
+            State::Viewed(view) => self.reader_of(view).get(path),
             State::Taken => unreachable!("a run context is not used after its context went back"),
         }
     }
 
     /// What a host call holds across its `.await`. Builds the view first.
-    #[expect(dead_code, reason = "phase 5's host calls take a Reader")]
     pub(crate) fn reader(&mut self) -> Reader<'_> {
         self.view();
         let State::Viewed(view) = &self.state else {
             unreachable!()
         };
+        self.reader_of(view)
+    }
+
+    /// The reader over `view`, which is this context's.
+    fn reader_of<'r>(&'r self, view: &'r RunView<'p>) -> Reader<'r> {
         Reader {
             root: view.borrow_dependent(),
             owned: &view.borrow_owner().ctx,

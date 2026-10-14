@@ -4,7 +4,7 @@
 use super::engine::{Engine, EngineConfig};
 use crate::base::Issue;
 use crate::def::{ParseOptions, WorkflowDef, parse};
-use crate::function::{Function, Registry};
+use crate::function::{CallLayer, Function, Registry};
 use crate::program::CompileOptions;
 use serde_json::Value;
 use std::fmt;
@@ -68,6 +68,14 @@ impl EngineBuilder {
     #[must_use]
     pub fn register<F: Function>(mut self, name: &str, f: F) -> Self {
         self.registry.register(name, f);
+        self
+    }
+
+    /// Adds a layer around every host call on the registry, as
+    /// [`Registry::layer`]: the first added is the outermost (I97).
+    #[must_use]
+    pub fn layer<L: CallLayer>(mut self, l: L) -> Self {
+        self.registry.layer(l);
         self
     }
 

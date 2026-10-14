@@ -156,10 +156,6 @@ impl Registry {
     }
 
     /// The registry's layers, outermost first.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by the runtime, which starts each host call")
-    )]
     pub(crate) fn layers(&self) -> &[Arc<dyn CallLayer>] {
         &self.inner.layers
     }

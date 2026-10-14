@@ -43,6 +43,9 @@ uuid = { version = "1.26", default-features = false, features = ["v7", "std"] }
 log = "0.4"
 # `parse_xml` and `publish_xml`, at v3's requirement.
 quick-xml = { version = "0.42", features = ["serialize"] }
+# A fan-out's bounded concurrent calls (`FuturesUnordered`), without spawning,
+# so the calls may borrow the run view and run on wasm. At v3's requirement.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
 # Native-only: a thread-local PRNG instead of one `getrandom` per id, as v3 does.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

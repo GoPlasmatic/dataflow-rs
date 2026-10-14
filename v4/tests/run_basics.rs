@@ -863,9 +863,9 @@ async fn with_program_keeps_the_config() {
 }
 
 #[tokio::test]
-async fn a_host_call_stops_the_run_until_phase_5() {
-    // I65: phase 5 runs host functions; until then a call to one stops the
-    // run, after the tasks before it.
+async fn the_i65_stop_is_gone() {
+    // Phase 4 stopped the run at a host call (I65); phase 5 runs it, between
+    // the tasks around it, and records it as a built-in.
     let e = Engine::builder()
         .register("query", Query)
         .workflow_json(&workflow(
@@ -881,11 +881,23 @@ async fn a_host_call_stops_the_run_until_phase_5() {
         .unwrap();
     let mut m = message(json!({}));
     let run = e.run(&mut m).await;
-    let RunStatus::Stopped(error) = run.status() else {
-        panic!("{:?}", run.status());
-    };
-    assert_eq!(error.kind(), &ErrorKind::Config);
-    assert_eq!(audit(&m), [entry("w", "before", 200)]);
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(
+        audit(&m),
+        [
+            entry("w", "before", 200),
+            entry("w", "t", 200),
+            entry("w", "after", 200)
+        ]
+    );
+    assert_eq!(
+        json_of(&m)["context"]["data"]["order"],
+        json!(["before", "after"])
+    );
     assert!(m.errors().is_empty());
 }
 

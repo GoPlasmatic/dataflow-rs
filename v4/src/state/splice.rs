@@ -416,7 +416,6 @@ pub(crate) enum Hop {
     Index(usize),
 }
 
-#[cfg(test)]
 impl Hop {
     /// The segment that addresses exactly this hop: a key never reads as an
     /// index, and an index is spelled in decimal.
@@ -428,8 +427,8 @@ impl Hop {
     }
 }
 
-/// The segments that address `hops` exactly.
-#[cfg(test)]
+/// The segments that address `hops` exactly: how a host call's overlay,
+/// keyed by hops, is spliced and applied.
 pub(crate) fn segs_of(hops: &[Hop]) -> Vec<Seg> {
     hops.iter().map(Hop::to_seg).collect()
 }

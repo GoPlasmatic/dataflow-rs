@@ -1,10 +1,11 @@
 //! The interpreter: one `async fn` over a workflow's ops (05). Nothing else
 //! interprets steps.
 //!
-//! A built-in runs inline with no `.await`; only host calls and fan-outs will
-//! await, from phase 5 (I65). Every completed call goes through
-//! [`decide`](super::policy::decide), the one definition of failed, rejected
-//! and halted, and then [`record`](super::record::record).
+//! A built-in runs inline with no `.await`; a host call awaits through
+//! [`call_host`](super::host::call_host), and a fan-out will from Task 4.
+//! Every completed call goes through [`decide`](super::policy::decide), the
+//! one definition of failed, rejected and halted, and then
+//! [`record`](super::record::record).
 //!
 //! A loop is two ops, in 05's order. `LoopInit` evaluates `over` once, writes
 //! the counter's `init`, checks the bounds, and in bounds writes the bindings
@@ -12,15 +13,16 @@
 //! the same, jumping back to the sweep's first op. The engine owns the
 //! counter: it lives in the [`Frame`], and the context only gets a copy.
 
+use super::host::call_host;
 use super::message::{AuditEntry, AuditMode};
 use super::policy::{self, Flow};
 use super::record::{self, TaskIds};
-use crate::base::{Change, Error, ErrorKind, ErrorRecord};
+use crate::base::{Change, Error, ErrorKind, ErrorRecord, ProgramId, WorkflowIx};
 use crate::def::WorkflowFailurePolicy;
 use crate::expr::path::kind;
 use crate::expr::{Expr, ExprEngine};
 use crate::function::builtins::Builtin;
-use crate::function::{SyncCtx, eval, test};
+use crate::function::{CallLayer, SyncCtx, eval, test};
 use crate::observe::Selection;
 use crate::program::{CallSite, Callee, CompiledWorkflow, CondKind, LoopSite, Op};
 use crate::state::RunContext;
@@ -73,6 +75,16 @@ impl Frame {
 /// run's facts and the message's other parts, and the current workflow's
 /// failure flag and loop frame.
 pub(crate) struct RunEnv<'r, 'p> {
+    /// The program's identity, for a host call's `CallInfo`.
+    pub(crate) program: ProgramId,
+    /// The current workflow's position in the program.
+    pub(crate) workflow_ix: WorkflowIx,
+    /// The program's `TaskIx` of the current workflow's first task.
+    pub(crate) task_base: u32,
+    /// The channel the run was started on.
+    pub(crate) channel: Option<&'r str>,
+    /// The run's layers, outermost first, around every host call.
+    pub(crate) layers: &'r [Arc<dyn CallLayer>],
     /// The expression engine the program was compiled with.
     pub(crate) exprs: &'p ExprEngine,
     /// The message's payload.
@@ -112,12 +124,9 @@ fn fail_to(op: Op) -> u32 {
     }
 }
 
-/// I65: until phase 5, a host call or a fan-out stops the run.
+/// I65: until Task 4 of phase 5, a fan-out stops the run.
 fn not_yet() -> Error {
-    Error::new(
-        ErrorKind::Config,
-        "host functions and fan-outs run from phase 5",
-    )
+    Error::new(ErrorKind::Config, "fan-outs run from phase 5")
 }
 
 /// Runs one workflow's ops over the run context: how they ended, and the
@@ -176,7 +185,7 @@ pub(crate) async fn run_workflow<'p>(
                 let site = &wf.calls[site as usize];
                 match &site.callee {
                     Callee::Builtin(builtin) => call(rc, env, wf, site, builtin),
-                    Callee::Host(_) => return (Exit::Stopped(not_yet()), selection),
+                    Callee::Host(bound) => call_host(rc, env, wf, site, &**bound).await,
                 }
             }
             Op::FanOut { .. } => return (Exit::Stopped(not_yet()), selection),

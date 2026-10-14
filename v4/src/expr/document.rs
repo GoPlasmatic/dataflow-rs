@@ -55,7 +55,7 @@ impl Interpolated {
     /// the three roots; a missing hole takes its default.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "the renderer of phase 5 is its caller")
+        expect(dead_code, reason = "Task 3's renderer is its caller")
     )]
     pub(crate) fn resolve_owned(&self, context: &OwnedDataValue) -> OwnedDataValue {
         self.node.resolve(&self.holes, context)

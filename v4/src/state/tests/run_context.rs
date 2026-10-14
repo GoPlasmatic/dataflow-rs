@@ -118,7 +118,7 @@ fn run(name: &str, tuning: Tuning, seed: u64, cases: usize) -> Stats {
                     Op::Remove(p) => {
                         let path = rooted(&p);
                         assert_eq!(
-                            rc.remove(&path),
+                            rc.remove_segs(path.segs()),
                             path::remove(&mut model, path.segs()).is_some(),
                             "{at}"
                         );
@@ -400,7 +400,10 @@ fn a_wide_object_takes_the_views_key_order_back() {
     let mut rc = RunContext::new(&mut slot, Tuning::default());
     rc.read(|_, _| ());
     for key in ["k500", "k10", "k999"] {
-        assert!(rc.remove(&rooted(&format!("data.wide.{key}"))), "{key}");
+        assert!(
+            rc.remove_segs(rooted(&format!("data.wide.{key}")).segs()),
+            "{key}"
+        );
     }
     for key in ["k10", "k500"] {
         rc.set(
@@ -445,7 +448,7 @@ fn keys_that_share_a_hash_keep_their_own_values() {
     rc.checkpoint();
     // The view again, so the removal is marked beside its twin.
     rc.read(|_, _| ());
-    rc.remove(&rooted("data.costarring"));
+    rc.remove_segs(rooted("data.costarring").segs());
     assert_eq!(read(&rc, "data.costarring"), None);
     assert_eq!(read(&rc, "data.liquid"), Some("2".into()));
     rc.finish();

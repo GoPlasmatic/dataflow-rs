@@ -88,7 +88,6 @@ impl Seg {
     }
 
     /// The segment naming array element `i`: its key is `i`'s text.
-    #[cfg(test)]
     pub(crate) fn index(i: usize) -> Self {
         let key = i.to_string();
         Self {
@@ -197,29 +196,41 @@ impl Path {
     /// Assigns `value` at the path. At a root it replaces the root and accepts
     /// only an object. A hop that cannot continue writes nothing and is `Ok`.
     pub fn set(&self, context: &mut OwnedDataValue, value: OwnedDataValue) -> Result<()> {
-        if self.is_root() && !matches!(value, OwnedDataValue::Object(_)) {
-            return Err(Error::new(
-                ErrorKind::Config,
-                format!(
-                    "`{}` is a root and takes only an object, not {}",
-                    self.dotted,
-                    kind(&value)
-                ),
-            ));
-        }
+        self.check_set(&value)?;
         self.assign(context, value);
         Ok(())
     }
 
     /// Removes the value at the path and returns it. A root cannot be removed.
     pub fn remove(&self, context: &mut OwnedDataValue) -> Result<Option<OwnedDataValue>> {
+        self.check_remove()?;
+        Ok(remove(context, &self.segs))
+    }
+
+    /// R52 for a write of `value` here: a root takes only an object.
+    pub(crate) fn check_set(&self, value: &OwnedDataValue) -> Result<()> {
+        if self.is_root() && !matches!(value, OwnedDataValue::Object(_)) {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "`{}` is a root and takes only an object, not {}",
+                    self.dotted,
+                    kind(value)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// R52 for a removal here: a root cannot be removed.
+    pub(crate) fn check_remove(&self) -> Result<()> {
         if self.is_root() {
             return Err(Error::new(
                 ErrorKind::Config,
                 format!("`{}` is a root and cannot be removed", self.dotted),
             ));
         }
-        Ok(remove(context, &self.segs))
+        Ok(())
     }
 
     /// Assigns `value` at the path, reporting whether it wrote.

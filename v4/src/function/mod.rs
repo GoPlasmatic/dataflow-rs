@@ -7,6 +7,7 @@ mod ctx;
 mod erased;
 mod layer;
 mod outcome;
+mod overlay;
 mod registry;
 mod spec;
 mod sync;
@@ -15,6 +16,7 @@ mod templated;
 pub use crate::expr::{ExprVisitor, FieldKind, FieldSpec, ValueKind};
 pub use call::{Function, Prepare};
 pub use config::FunctionConfig;
+pub(crate) use ctx::CallStart;
 pub use ctx::{CallInfo, Ctx};
 /// Derives [`FunctionConfig`](trait@FunctionConfig) (and `ConfigField`, so a
 /// derived config nests).
@@ -22,6 +24,7 @@ pub use dataflow_rs_derive::FunctionConfig;
 pub(crate) use erased::BoundCall;
 pub use layer::{BoxFuture, CallLayer, Next};
 pub use outcome::Outcome;
+pub(crate) use overlay::Overlay;
 pub(crate) use registry::Entry;
 pub use registry::{FunctionInfo, Registry};
 pub use spec::{FunctionSpec, Reference, RetrySafety};

@@ -129,6 +129,11 @@ impl Engine {
             }
             let (workflow_id, task_ids) = program.ids(ix);
             let mut env = RunEnv {
+                program: program.id(),
+                workflow_ix: ix,
+                task_base: program.task_base(ix),
+                channel: opts.channel,
+                layers: opts.layers,
                 exprs: program.registry().exprs(),
                 payload: parts.payload,
                 errors: &mut *parts.errors,

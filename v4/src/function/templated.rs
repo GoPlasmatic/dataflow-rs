@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 /// One compiled runtime field.
 #[derive(Debug)]
-#[allow(dead_code, reason = "a literal is read by phase 5's `get`")]
+#[allow(dead_code, reason = "a literal is read by Task 3's `Templated::get`")]
 enum TemplatedField {
     Expr(Expr<OwnedDataValue>),
     /// An `Expr(ValueKind::Path)` field, compiled as the derive's `Expr<Path>`

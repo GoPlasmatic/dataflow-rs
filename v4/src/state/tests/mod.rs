@@ -2,7 +2,7 @@
 //! the write log's rules, and the run context against a model of the owned
 //! tree. Seeds and case counts are phase 0's.
 
-mod random;
+pub(crate) mod random;
 mod run_context;
 mod splice_property;
 mod writes;

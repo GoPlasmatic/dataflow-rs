@@ -348,6 +348,7 @@ dependencies = [
  "datavalue-rs",
  "env_logger",
  "futures",
+ "futures-util",
  "log",
  "quick-xml",
  "self_cell",

@@ -643,7 +643,7 @@ impl Writes {
 
     /// Every topmost mark under `n`, with its path built: for `visit`, which
     /// only a call's small overlay uses.
-    fn each(&self, n: u32, at: &mut Vec<Hop>, f: &mut dyn FnMut(&[Hop], &Node)) {
+    fn each<'s>(&'s self, n: u32, at: &mut Vec<Hop>, f: &mut dyn FnMut(&[Hop], &'s Node)) {
         let node = &self.nodes[n as usize];
         if node.mark.is_some() || node.reorder {
             f(at, node);
@@ -719,9 +719,9 @@ impl Writes {
     }
 
     /// Every topmost mark, without draining: how a call's reads see its own
-    /// overlay.
-    #[cfg_attr(not(test), expect(dead_code, reason = "phase 5's call overlay"))]
-    pub(crate) fn visit(&self, f: &mut dyn FnMut(&[Hop], &Mark)) {
+    /// overlay. A mark is lent for as long as the log, so its value can be
+    /// viewed rather than copied.
+    pub(crate) fn visit<'s>(&'s self, f: &mut dyn FnMut(&[Hop], &'s Mark)) {
         self.each(0, &mut Vec::new(), &mut |at, node| {
             if let Some(mark) = &node.mark {
                 f(at, mark);
@@ -751,10 +751,6 @@ impl Writes {
     }
 
     /// The topmost marks and the reorders, leaving the log empty.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "phase 5's call overlay drains its marks")
-    )]
     pub(crate) fn drain(&mut self) -> Drained {
         // Marks are moved out, never cloned: an overlay's are the call's
         // written values.
