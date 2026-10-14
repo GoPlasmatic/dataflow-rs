@@ -33,8 +33,6 @@ use dataflow_rs_v4::expr::Output;
 use dataflow_rs_v4::function::FunctionConfig;
 use dataflow_rs_v4::{Ctx, Function, Outcome};
 use serde_json::{Value, json};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -104,8 +102,7 @@ impl Function for Echo {
     }
 }
 
-/// v3's echo, `async_handler_benchmark`'s `EchoHandler`, written as
-/// `async_trait` expands it, since the macro is not a dependency here.
+/// v3's echo, `async_handler_benchmark`'s `EchoHandler`.
 #[derive(serde::Deserialize)]
 struct EchoInput {
     target: String,
@@ -114,31 +111,17 @@ struct EchoInput {
 
 struct V3Echo;
 
+#[async_trait::async_trait]
 impl dataflow_rs_v3::AsyncFunctionHandler for V3Echo {
     type Input = EchoInput;
 
-    fn execute<'life0, 'life1, 'life2, 'life3, 'async_trait>(
-        &'life0 self,
-        ctx: &'life1 mut dataflow_rs_v3::TaskContext<'life2>,
-        input: &'life3 EchoInput,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = dataflow_rs_v3::Result<dataflow_rs_v3::TaskOutcome>>
-                + Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        'life3: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move {
-            ctx.set(&input.target, OwnedDataValue::String(input.value.clone()));
-            Ok(dataflow_rs_v3::TaskOutcome::Success)
-        })
+    async fn execute(
+        &self,
+        ctx: &mut dataflow_rs_v3::TaskContext<'_>,
+        input: &EchoInput,
+    ) -> dataflow_rs_v3::Result<dataflow_rs_v3::TaskOutcome> {
+        ctx.set(&input.target, OwnedDataValue::String(input.value.clone()));
+        Ok(dataflow_rs_v3::TaskOutcome::Success)
     }
 }
 
