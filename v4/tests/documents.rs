@@ -419,6 +419,21 @@ async fn rendered_to_owned_equals_the_serialized_tree() {
 }
 
 #[tokio::test]
+async fn an_integer_above_i64_max_keeps_its_digits_on_the_wire_only() {
+    // `OwnedDataValue` holds it as a float, so `to_owned` writes one, as
+    // its doc says; the `Rendered` writes the literal's digits.
+    let doc = json!({"a": {"var": "data.x"}, "z": 18_446_744_073_709_551_615_u64});
+    let (rendering, _) = rendered(
+        vec![render_task(&doc, &json!({}))],
+        Value::Null,
+        json!({"x": 1}),
+    )
+    .await;
+    assert_eq!(rendering.wire, r#"{"a":1,"z":18446744073709551615}"#);
+    assert_eq!(rendering.owned, r#"{"a":1,"z":1.8446744073709552e+19}"#);
+}
+
+#[tokio::test]
 async fn a_payload_hole_yields_its_default() {
     // The payload is never in the context: the hole is compiled with its
     // `PAYLOAD_VAR` Defect and always yields its default, `null` without one.

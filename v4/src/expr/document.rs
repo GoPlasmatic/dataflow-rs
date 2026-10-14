@@ -42,7 +42,9 @@ enum Node {
 }
 
 impl Interpolated {
-    /// The document as authored.
+    /// The document as authored, as a `serde_json::Value`: its objects'
+    /// keys in that type's order, sorted unless the build turns on
+    /// serde_json's `preserve_order`.
     pub fn raw(&self) -> &Value {
         &self.raw
     }
@@ -137,6 +139,11 @@ pub struct Rendered<'s> {
 
 impl Rendered<'_> {
     /// The document as a tree, each hole's value copied in.
+    ///
+    /// It serializes as the `Rendered` does, but for one value: an integer
+    /// literal above `i64::MAX`, which `OwnedDataValue` holds as a float. So
+    /// `18446744073709551615` is written with its digits by the `Rendered`
+    /// and as `1.8446744073709552e+19` by this tree.
     pub fn to_owned(&self) -> OwnedDataValue {
         self.doc.node.to_owned_value(&self.filled)
     }
@@ -150,7 +157,10 @@ impl Rendered<'_> {
 
 impl Serialize for Rendered<'_> {
     /// The skeleton with each hole's value in place: a literal subtree as
-    /// authored, objects and arrays entry by entry.
+    /// its `serde_json::Value` holds it, objects and arrays entry by entry.
+    /// An object's keys, a literal's or not, come out in `serde_json::Value`'s
+    /// order: sorted, unless the build turns on serde_json's
+    /// `preserve_order`, when they are as authored.
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         At {
             node: &self.doc.node,
