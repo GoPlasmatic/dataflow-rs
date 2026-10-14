@@ -59,13 +59,15 @@ deviations covering it. Nothing is skipped.
   its records are v3's.
 - **A reload step** parses, compiles and links its definitions through the case's compiler, then
   swaps the engine's program (`Engine::with_program`). It records `"ok"`, or the error of a refused
-  build, whose message is not compared.
+  build, whose code and message are not compared: v4's code is `REJECTED`, v3's its own error's. A
+  reload one engine refuses and the other accepts is still a difference.
 
 The record is compared with `compare::diff`, ignoring:
 
 - `IGNORED`;
 - the run outcome's message (v4's `Error` has its own wording; its code and `retryable` are
   compared);
+- a refused reload's code;
 - the trace (phase 6's);
 - every path a deviation covers.
 

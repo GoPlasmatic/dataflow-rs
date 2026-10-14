@@ -8,8 +8,8 @@
 //! left it out. A case whose steps wait for phase 6 (`run::waits_for`), or
 //! whose `requires` this build does not satisfy, is counted and skipped. Every
 //! other case's `build` and `steps` are compared with v3's recording, ignoring
-//! v3's `IGNORED`, the run outcome's message (I62), the trace (phase 6) and
-//! every path a deviation covers. At each of those, v4's JSON must be
+//! v3's `IGNORED`, the run outcome's message (I62), a refused reload's code,
+//! the trace (phase 6) and every path a deviation covers. At each of those, v4's JSON must be
 //! `expect::RUN_DEVIATED`'s. The counts are pinned, so nothing drops out
 //! silently.
 
@@ -38,9 +38,15 @@ const OTHER_BUILD: usize = if cfg!(feature = "budget") { 1 } else { 2 };
 const RUN_DEVIATED_ROWS: usize = 24;
 
 /// What the run comparison never compares, beyond v3's `IGNORED`: the run
-/// outcome's message, which is v4's wording (I62), and the trace, which is
-/// phase 6's.
-const RUN_IGNORED: &[&str] = &["/steps/*/run/outcome/error/message", "/steps/*/run/trace"];
+/// outcome's message, which is v4's wording (I62); a refused reload's code,
+/// v3's own error's where v4's is `REJECTED`, whose message `IGNORED` already
+/// skips (a reload refused against one accepted is still compared); and the
+/// trace, which is phase 6's.
+const RUN_IGNORED: &[&str] = &[
+    "/steps/*/run/outcome/error/message",
+    "/steps/*/reload/error/code",
+    "/steps/*/run/trace",
+];
 
 /// Whether `pointer`, or a pointer above it, is one the run comparison
 /// ignores.
@@ -324,5 +330,7 @@ fn a_pattern_expands_to_every_pointer_it_names() {
 fn a_pointer_below_an_ignored_one_is_ignored() {
     assert!(under_ignored("/steps/0/run/trace", RUN_IGNORED));
     assert!(under_ignored("/steps/3/run/trace/steps/0", RUN_IGNORED));
+    assert!(under_ignored("/steps/1/reload/error/code", RUN_IGNORED));
+    assert!(!under_ignored("/steps/1/reload", RUN_IGNORED));
     assert!(!under_ignored("/steps/0/run/message", RUN_IGNORED));
 }
