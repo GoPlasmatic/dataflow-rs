@@ -19,7 +19,7 @@ use super::splice::{self, Resolved};
 use super::writes::{At, Lookup, Mark, Writes};
 use crate::expr::arena;
 use crate::expr::path;
-use crate::expr::{Path, Seg};
+use crate::expr::{Filled, Path, Seg};
 use bumpalo::Bump;
 use datavalue::{DataValue, OwnedDataValue};
 use self_cell::self_cell;
@@ -114,23 +114,35 @@ impl<'r> Reader<'r> {
     /// The value at `path`: borrowed from the owned tree unless the log says
     /// it changed, else converted from the view (R55).
     pub(crate) fn get(self, path: &Path) -> Option<Cow<'r, OwnedDataValue>> {
-        if self.log.is_empty() {
-            return path.get(self.owned).map(Cow::Borrowed);
-        }
-        let r = splice::resolve(*self.root, path.segs())?;
-        self.get_resolved(path, r)
+        self.find(path).map(Filled::into_cow)
     }
 
     /// [`Self::get`] for a path already resolved against the view, as a
     /// host call's first write resolves it.
     pub(crate) fn get_resolved(self, path: &Path, r: Resolved) -> Option<Cow<'r, OwnedDataValue>> {
+        self.find_resolved(path, r).map(Filled::into_cow)
+    }
+
+    /// Where the value at `path` is, lent from wherever it is: the owned
+    /// tree unless the log says it changed, else the log's owned value, else
+    /// the view, which `render` serializes as it is.
+    pub(crate) fn find(self, path: &Path) -> Option<Filled<'r>> {
         if self.log.is_empty() {
-            return path.get(self.owned).map(Cow::Borrowed);
+            return path.get(self.owned).map(Filled::lent);
+        }
+        let r = splice::resolve(*self.root, path.segs())?;
+        self.find_resolved(path, r)
+    }
+
+    /// [`Self::find`] for a path already resolved against the view.
+    fn find_resolved(self, path: &Path, r: Resolved) -> Option<Filled<'r>> {
+        if self.log.is_empty() {
+            return path.get(self.owned).map(Filled::lent);
         }
         match self.log.lookup(At::new(path.segs(), r.kinds)) {
-            Lookup::Clean => path.get(self.owned).map(Cow::Borrowed),
-            Lookup::Owned(v) => v.map(Cow::Borrowed),
-            Lookup::Dirty => splice::get(*self.root, path.segs()).map(|v| Cow::Owned(v.to_owned())),
+            Lookup::Clean => path.get(self.owned).map(Filled::lent),
+            Lookup::Owned(v) => v.map(Filled::lent),
+            Lookup::Dirty => splice::get(*self.root, path.segs()).map(Filled::View),
         }
     }
 }

@@ -4,8 +4,10 @@ use super::config::{CompileCx, ConfigField, FieldKind, Visit};
 use super::engine::ExprEngine;
 use super::path::Path;
 use crate::base::{Issue, IssueCode, Severity};
-use datavalue::OwnedDataValue;
+use datavalue::{DataValue, OwnedDataValue};
+use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
 
@@ -51,14 +53,17 @@ impl Interpolated {
         self.holes.iter().filter_map(|h| h.path.as_ref())
     }
 
-    /// The document with every hole filled from `context`, an object holding
-    /// the three roots; a missing hole takes its default.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 3's renderer is its caller")
-    )]
-    pub(crate) fn resolve_owned(&self, context: &OwnedDataValue) -> OwnedDataValue {
-        self.node.resolve(&self.holes, context)
+    /// The document with each hole filled by `fill`, called once per hole in
+    /// document order. Nothing is copied: the skeleton is this document's,
+    /// and each hole holds what `fill` lent it.
+    pub(crate) fn render_with<'s>(
+        &'s self,
+        fill: impl FnMut(&'s Hole) -> Filled<'s>,
+    ) -> Rendered<'s> {
+        Rendered {
+            doc: self,
+            filled: self.holes.iter().map(fill).collect(),
+        }
     }
 }
 
@@ -70,27 +75,153 @@ impl fmt::Debug for Interpolated {
     }
 }
 
-impl Node {
-    fn resolve(&self, holes: &[Hole], context: &OwnedDataValue) -> OwnedDataValue {
+/// One hole's value, borrowed where it can be.
+pub(crate) enum Filled<'s> {
+    /// An owned value: lent from the owned tree, a log or an overlay, or
+    /// converted when only a spliced root knew it.
+    Owned(Cow<'s, OwnedDataValue>),
+    /// A value of the run's view, lent.
+    View(DataValue<'s>),
+    /// Nothing was there: the hole's default.
+    Default(&'s OwnedDataValue),
+}
+
+impl<'s> Filled<'s> {
+    /// An owned value, lent.
+    pub(crate) fn lent(value: &'s OwnedDataValue) -> Self {
+        Self::Owned(Cow::Borrowed(value))
+    }
+
+    /// The value as an owned one: lent unless it is a view, which is
+    /// converted.
+    pub(crate) fn into_cow(self) -> Cow<'s, OwnedDataValue> {
         match self {
-            Self::Literal(v) => OwnedDataValue::from(v),
-            Self::Hole(i) => {
-                let hole = &holes[*i];
-                hole.path
-                    .as_ref()
-                    .and_then(|p| p.get(context))
-                    .cloned()
-                    .unwrap_or_else(|| hole.default.clone())
+            Self::Owned(value) => value,
+            Self::View(view) => Cow::Owned(view.to_owned()),
+            Self::Default(value) => Cow::Borrowed(value),
+        }
+    }
+
+    fn to_owned_value(&self) -> OwnedDataValue {
+        match self {
+            Self::Owned(value) => value.as_ref().clone(),
+            Self::View(view) => view.to_owned(),
+            Self::Default(value) => (*value).clone(),
+        }
+    }
+}
+
+impl Serialize for Filled<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Owned(value) => value.serialize(s),
+            Self::View(view) => view.serialize(s),
+            Self::Default(value) => value.serialize(s),
+        }
+    }
+}
+
+/// An [`Interpolated`] document with its holes resolved, borrowed from the
+/// compiled document and the context the call sees (R54).
+///
+/// Made by [`Ctx::render`](crate::function::Ctx::render). Each hole was
+/// looked up once, when it was made; serializing writes the document's
+/// skeleton with each hole's value in place, straight into the serializer
+/// (BSON, SQL parameters, JWT claims, JSON), and builds no tree.
+/// [`Rendered::to_owned`] builds one for the caller that needs it.
+pub struct Rendered<'s> {
+    doc: &'s Interpolated,
+    /// Each hole's value, in the document's hole order.
+    filled: Vec<Filled<'s>>,
+}
+
+impl Rendered<'_> {
+    /// The document as a tree, each hole's value copied in.
+    pub fn to_owned(&self) -> OwnedDataValue {
+        self.doc.node.to_owned_value(&self.filled)
+    }
+
+    /// Each hole's value, in hole order.
+    #[cfg(test)]
+    pub(crate) fn filled(&self) -> &[Filled<'_>] {
+        &self.filled
+    }
+}
+
+impl Serialize for Rendered<'_> {
+    /// The skeleton with each hole's value in place: a literal subtree as
+    /// authored, objects and arrays entry by entry.
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        At {
+            node: &self.doc.node,
+            filled: &self.filled,
+        }
+        .serialize(s)
+    }
+}
+
+impl fmt::Debug for Rendered<'_> {
+    /// The document as authored and how many holes it filled; never their
+    /// values.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Rendered")
+            .field("raw", &self.doc.raw)
+            .field("holes", &self.filled.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// One node of a rendered document, for its serialization.
+struct At<'r, 's> {
+    node: &'r Node,
+    filled: &'r [Filled<'s>],
+}
+
+impl Serialize for At<'_, '_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let at = |node| Self {
+            node,
+            filled: self.filled,
+        };
+        match self.node {
+            Node::Literal(value) => value.serialize(s),
+            Node::Hole(i) => self.filled[*i].serialize(s),
+            Node::Object(children) => {
+                let mut map = s.serialize_map(Some(children.len()))?;
+                for (key, node) in children {
+                    map.serialize_entry(key, &at(node))?;
+                }
+                map.end()
             }
+            Node::Array(children) => {
+                let mut seq = s.serialize_seq(Some(children.len()))?;
+                for node in children {
+                    seq.serialize_element(&at(node))?;
+                }
+                seq.end()
+            }
+        }
+    }
+}
+
+impl Node {
+    /// The node as a tree, the holes' values from `filled`.
+    fn to_owned_value(&self, filled: &[Filled<'_>]) -> OwnedDataValue {
+        match self {
+            Self::Literal(value) => OwnedDataValue::from(value),
+            Self::Hole(i) => filled[*i].to_owned_value(),
             Self::Object(children) => OwnedDataValue::Object(
                 children
                     .iter()
-                    .map(|(k, n)| (k.clone(), n.resolve(holes, context)))
+                    .map(|(key, node)| (key.clone(), node.to_owned_value(filled)))
                     .collect(),
             ),
-            Self::Array(children) => {
-                OwnedDataValue::Array(children.iter().map(|n| n.resolve(holes, context)).collect())
-            }
+            Self::Array(children) => OwnedDataValue::Array(
+                children
+                    .iter()
+                    .map(|node| node.to_owned_value(filled))
+                    .collect(),
+            ),
         }
     }
 }
@@ -261,6 +392,21 @@ mod tests {
         OwnedDataValue::from(&v)
     }
 
+    /// `doc` rendered over `context`, an object holding the three roots,
+    /// each hole lent from it, a missing one its default; serialized, after
+    /// checking that the tree `to_owned` builds serializes the same.
+    fn render(doc: &Interpolated, context: &OwnedDataValue) -> String {
+        let rendered = doc.render_with(|hole| {
+            hole.path
+                .as_ref()
+                .and_then(|p| p.get(context))
+                .map_or(Filled::Default(&hole.default), Filled::lent)
+        });
+        let wire = serde_json::to_string(&rendered).unwrap();
+        assert_eq!(rendered.to_owned().to_json_string(), wire);
+        wire
+    }
+
     #[test]
     fn mongo_write_resolves_with_dollar_keys_intact() {
         let raw = json!({
@@ -277,7 +423,7 @@ mod tests {
             "metadata": {"timestamp": "2026-01-01"},
             "temp_data": {}
         }));
-        let out = doc(&raw).resolve_owned(&c).to_json_string();
+        let out = render(&doc(&raw), &c);
         assert_eq!(
             out,
             r#"{"filter":{"_id":{"$oid":"abc"}},"update":{"$set":{"deleted":false,"payload":{"n":1,"object":{"id":"abc"}},"updated_at":{"$date":"2026-01-01"}}},"upsert":true}"#
@@ -288,14 +434,14 @@ mod tests {
     fn a_missing_hole_takes_its_default_or_null() {
         let c = ctx(json!({"data": {}, "metadata": {}, "temp_data": {}}));
         let d = doc(&json!({"a": {"var": ["data.x", 7]}, "b": {"var": "data.y"}}));
-        assert_eq!(d.resolve_owned(&c).to_json_string(), r#"{"a":7,"b":null}"#);
+        assert_eq!(render(&d, &c), r#"{"a":7,"b":null}"#);
     }
 
     #[test]
     fn a_payload_hole_always_yields_its_default() {
         let c = ctx(json!({"data": {"x": 1}, "metadata": {}, "temp_data": {}}));
         let d = doc(&json!({"a": {"var": ["payload.x", "d"]}}));
-        assert_eq!(d.resolve_owned(&c).to_json_string(), r#"{"a":"d"}"#);
+        assert_eq!(render(&d, &c), r#"{"a":"d"}"#);
     }
 
     #[test]
@@ -319,7 +465,7 @@ mod tests {
             "h": {"var": ["data.missing", {"var": "data.x"}]}
         }));
         assert_eq!(
-            d.resolve_owned(&c).to_json_string(),
+            render(&d, &c),
             r#"{"h":{"var":"data.x"},"v":{"val":["data","x"]}}"#
         );
     }
@@ -328,6 +474,6 @@ mod tests {
     fn holes_inside_arrays_are_filled() {
         let c = ctx(json!({"data": {"x": 5}, "metadata": {}, "temp_data": {}}));
         let d = doc(&json!([1, {"var": "data.x"}]));
-        assert_eq!(d.resolve_owned(&c).to_json_string(), "[1,5]");
+        assert_eq!(render(&d, &c), "[1,5]");
     }
 }

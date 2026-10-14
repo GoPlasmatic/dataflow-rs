@@ -4,7 +4,7 @@ use super::overlay::Overlay;
 use crate::base::{CancelToken, Change, ErrorRecord, ProgramId, Result, TaskIx, WorkflowIx};
 use crate::expr::arena::with_arena;
 use crate::expr::path;
-use crate::expr::{Expr, ExprEngine, FromValue, Output, Path, Seg};
+use crate::expr::{Expr, ExprEngine, Filled, FromValue, Interpolated, Output, Path, Rendered, Seg};
 use crate::state::{Lookup, Reader, splice};
 use bumpalo::Bump;
 use datavalue::{DataValue, OwnedDataValue};
@@ -241,20 +241,41 @@ impl<'r> Ctx<'r> {
     /// run's context. Borrowed unless only the run's view or this call's
     /// writes below `path` know it, when it is converted.
     pub fn get(&self, path: &Path) -> Option<Cow<'_, OwnedDataValue>> {
+        self.find(path).map(Filled::into_cow)
+    }
+
+    /// Where the value at `path` is, as this call sees it, lent from
+    /// wherever it is: the call's writes, the binding, then the run's log,
+    /// owned tree or view. Only a value the call wrote below `path` is
+    /// converted, off the root `eval` sees.
+    fn find(&self, path: &Path) -> Option<Filled<'_>> {
         match self.overlay.lookup(path) {
             Lookup::Clean => {}
-            Lookup::Owned(v) => return v.map(Cow::Borrowed),
-            // Written below: read off the root `eval` sees.
+            Lookup::Owned(v) => return v.map(Filled::lent),
             Lookup::Dirty => {
                 return with_arena(|arena| {
-                    splice::get(*self.root_in(arena), path.segs()).map(|v| Cow::Owned(v.to_owned()))
+                    splice::get(*self.root_in(arena), path.segs())
+                        .map(|v| Filled::Owned(Cow::Owned(v.to_owned())))
                 });
             }
         }
         if let Some(found) = self.binding.and_then(|b| b.get(path, *self.reader.root)) {
-            return found;
+            return found.map(Filled::Owned);
         }
-        self.reader.get(path)
+        self.reader.find(path)
+    }
+
+    /// `doc` with each hole looked up once, as [`Self::get`] would, and
+    /// lent where it was found; a hole that finds nothing yields its
+    /// default. No tree is built (R54): the [`Rendered`] serializes the
+    /// document's skeleton with each value in place.
+    pub fn render<'s>(&'s self, doc: &'s Interpolated) -> Rendered<'s> {
+        doc.render_with(|hole| {
+            hole.path
+                .as_ref()
+                .and_then(|path| self.find(path))
+                .unwrap_or(Filled::Default(&hole.default))
+        })
     }
 
     /// Whether this call sees a value at `path`, converting none.
@@ -737,6 +758,89 @@ mod tests {
                 "settled in order: {calls:?}"
             );
         }
+    }
+
+    #[test]
+    fn render_lends_each_hole_from_where_it_is_and_builds_no_tree() {
+        // R54: only a value the call wrote below a hole is converted.
+        let context = json!({"data": {"order": {"customer": "C", "qty": 3}},
+            "metadata": {}, "temp_data": {}});
+        let exprs = ExprEngine::default();
+        let payload = OwnedDataValue::Null;
+        let mut slot = OwnedDataValue::from(&context);
+        let mut rc = RunContext::new(&mut slot, Tuning::default());
+        rc.read(|_, _| ());
+        // The run writes one value with its owned copy, as `map` does under
+        // capture, and one into the view only, as the progress write does.
+        rc.set(
+            &parse("data.order.since"),
+            OwnedDataValue::from("2026"),
+            None,
+        );
+        let progress = parse("metadata.progress");
+        rc.edit(|e| {
+            e.set(
+                &progress,
+                OwnedDataValue::from("p").to_arena(e.arena()),
+                None,
+            )
+        });
+        let mut ctx = Ctx::new(CallStart {
+            reader: rc.reader(),
+            binding: None,
+            payload: &payload,
+            exprs: &exprs,
+            info: info(),
+            primary: None,
+            deadline: None,
+            cancel: None,
+            capture: true,
+        });
+        ctx.set(&parse("temp_data.mine"), OwnedDataValue::from(1))
+            .unwrap();
+        ctx.set(&parse("temp_data.box.k"), OwnedDataValue::from(2))
+            .unwrap();
+        let doc = exprs
+            .interpolated(&json!([
+                {"var": "temp_data.mine"},
+                {"var": "temp_data.box"},
+                {"var": "data.order.since"},
+                {"var": "metadata.progress"},
+                {"var": "data.order"},
+                {"var": "data.order.customer"},
+                {"var": ["data.absent", "d"]},
+                {"var": ["payload.x", "p"]}
+            ]))
+            .unwrap();
+        let rendered = ctx.render(&doc);
+        let kinds: Vec<&str> = rendered
+            .filled()
+            .iter()
+            .map(|filled| match filled {
+                Filled::Owned(Cow::Borrowed(_)) => "lent",
+                Filled::Owned(Cow::Owned(_)) => "converted",
+                Filled::View(_) => "view",
+                Filled::Default(_) => "default",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "lent",      // the call's own write
+                "converted", // written below by the call
+                "lent",      // the run's log, its owned copy
+                "view",      // the run's log, the view alone
+                "view",      // above a write in the run's log
+                "lent",      // the owned tree
+                "default",   // nothing there
+                "default"    // the payload, never in the context
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(&rendered).unwrap(),
+            json!([1, {"k": 2}, "2026", "p",
+                {"customer": "C", "qty": 3, "since": "2026"}, "C", "d", "p"])
+        );
     }
 
     #[test]

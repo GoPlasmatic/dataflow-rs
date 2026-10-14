@@ -13,7 +13,7 @@ mod spec;
 mod sync;
 mod templated;
 
-pub use crate::expr::{ExprVisitor, FieldKind, FieldSpec, ValueKind};
+pub use crate::expr::{ExprVisitor, FieldKind, FieldSpec, Rendered, ValueKind};
 pub use call::{Function, Prepare};
 pub use config::FunctionConfig;
 pub(crate) use ctx::CallStart;

@@ -16,7 +16,8 @@ mod secrets;
 mod walk;
 
 pub use config::{CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, ValueKind, Visit};
-pub use document::Interpolated;
+pub(crate) use document::Filled;
+pub use document::{Interpolated, Rendered};
 pub use engine::{ExprEngine, ExprEngineBuilder};
 pub use expr::{Evaluated, Expr, FromValue};
 pub use operators::{Family, OperatorInfo};

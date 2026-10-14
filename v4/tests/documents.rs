@@ -2,9 +2,14 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 
 use dataflow_rs::expr::{CompileCx, ConfigField, ExprEngine, ExprVisitor, FieldKind, Visit};
 use dataflow_rs::expr::{Interpolated, Output};
+use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::program::{AuthoredPath, IssueCode, Severity};
+use dataflow_rs::{Ctx, Engine, Expr, Function, Message, Outcome, Result};
 use dataflow_rs::{Issue, Path};
+use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 fn mongo_write() -> Value {
     json!({
@@ -240,4 +245,187 @@ fn interpolated_is_send_and_sync() {
     fn assert<T: Send + Sync + std::fmt::Debug>() {}
     assert::<Interpolated>();
     assert::<Output>();
+}
+
+// Rendering, end to end: a host function renders its document through
+// `Ctx::render` and keeps what it serialized to, and what `to_owned` gave.
+
+/// What one `render` gave: the `Rendered` serialized, and its `to_owned`
+/// tree serialized.
+#[derive(Clone, Debug, PartialEq)]
+struct Rendering {
+    wire: String,
+    owned: String,
+}
+
+/// The renderer's config: its document, and what it writes first, so some
+/// holes read the call's own writes.
+#[derive(FunctionConfig)]
+struct RenderConfig {
+    doc: Interpolated,
+    #[config(default_json = "{}")]
+    writes: BTreeMap<String, Expr>,
+}
+
+/// Writes `writes` in key order, then renders `doc`.
+struct Render(Arc<Mutex<Vec<Rendering>>>);
+
+impl Function for Render {
+    type Config = RenderConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &RenderConfig) -> Result<Outcome> {
+        for (path, expr) in &cfg.writes {
+            let value = ctx.eval(expr)?.into_owned();
+            ctx.set(&path.parse()?, value)?;
+        }
+        let rendered = ctx.render(&cfg.doc);
+        let rendering = Rendering {
+            wire: serde_json::to_string(&rendered).unwrap(),
+            owned: serde_json::to_string(&rendered.to_owned()).unwrap(),
+        };
+        self.0.lock().unwrap().push(rendering);
+        Ok(Outcome::Ok)
+    }
+}
+
+/// Runs `tasks`, the last a `render` task, over a message with `payload` and
+/// `data`; what the renderer gave, and the message after.
+async fn rendered(tasks: Vec<Value>, payload: Value, data: Value) -> (Rendering, Message) {
+    let seen = Arc::default();
+    let engine = Engine::builder()
+        .register("render", Render(Arc::clone(&seen)))
+        .workflow_json(&json!({"id": "w", "tasks": tasks}))
+        .build()
+        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"));
+    let mut m = Message::from_parts(
+        OwnedDataValue::from(&payload),
+        OwnedDataValue::from(&data),
+        OwnedDataValue::Null,
+    );
+    let run = engine.run(&mut m).await;
+    assert!(run.into_result().is_ok(), "the run completes");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "one render");
+    (seen[0].clone(), m)
+}
+
+fn render_task(doc: &Value, writes: &Value) -> Value {
+    json!({"id": "r", "function": {"name": "render", "input": {"doc": doc, "writes": writes}}})
+}
+
+/// Orion's `resolve_value`: walk the document, fold every `var` against the
+/// context, clone the rest. Serialized after, as Orion does.
+fn fold(doc: &Value, context: &Value) -> Value {
+    match doc {
+        Value::Object(o) if o.len() == 1 && o.contains_key("var") => {
+            let (path, default) = match &o["var"] {
+                Value::String(p) => (p.as_str(), Value::Null),
+                Value::Array(a) => (
+                    a[0].as_str().unwrap(),
+                    a.get(1).cloned().unwrap_or(Value::Null),
+                ),
+                other => panic!("a hole's argument: {other}"),
+            };
+            path.split('.')
+                .try_fold(context, |v, k| v.get(k))
+                .cloned()
+                .unwrap_or(default)
+        }
+        Value::Object(o) => Value::Object(
+            o.iter()
+                .map(|(k, v)| (k.clone(), fold(v, context)))
+                .collect(),
+        ),
+        Value::Array(a) => Value::Array(a.iter().map(|v| fold(v, context)).collect()),
+        other => other.clone(),
+    }
+}
+
+/// An Orion-shaped Mongo filter. Its holes read the run's view above the
+/// `map`'s write, that write itself, the owned tree, the call's own write,
+/// and two paths nothing holds, one with a default.
+fn orion_filter() -> Value {
+    json!({
+        "customer_id": {"var": "data.order.customer"},
+        "created_at": {"$gte": {"$date": {"var": "data.order.since"}}},
+        "order": {"var": "data.order"},
+        "items": [{"var": "data.order.qty"}, {"sku": {"var": ["data.order.sku", "none"]}}],
+        "tenant": {"var": "temp_data.tenant"},
+        "status": {"$in": ["open", "pending"]},
+        "missing": {"var": "data.nope"}
+    })
+}
+
+async fn orion_rendering() -> (Rendering, Message) {
+    let since = json!({"id": "m", "function": {"name": "map", "input": {
+        "mappings": [{"path": "data.order.since", "logic": "2026-01-01"}]}}});
+    rendered(
+        vec![
+            since,
+            render_task(&orion_filter(), &json!({"temp_data.tenant": "acme"})),
+        ],
+        Value::Null,
+        json!({"order": {"customer": "CUST-1042", "qty": 3, "region": "eu"}}),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn rendered_matches_orions_fold_then_serialize() {
+    let (rendering, m) = orion_rendering().await;
+    // The call saw the context the message ends with: the renderer's write
+    // landed, and nothing ran after it.
+    let context = m.to_json()["context"].clone();
+    let want = serde_json::to_string(&fold(&orion_filter(), &context)).unwrap();
+    assert_eq!(rendering.wire, want);
+    assert_eq!(
+        serde_json::from_str::<Value>(&rendering.wire).unwrap(),
+        json!({
+            "created_at": {"$gte": {"$date": "2026-01-01"}},
+            "customer_id": "CUST-1042",
+            "items": [3, {"sku": "none"}],
+            "missing": null,
+            "order": {"customer": "CUST-1042", "qty": 3, "region": "eu", "since": "2026-01-01"},
+            "status": {"$in": ["open", "pending"]},
+            "tenant": "acme"
+        })
+    );
+}
+
+#[tokio::test]
+async fn rendered_keeps_dollar_keys_and_hole_order() {
+    let doc = json!({
+        "$and": [{"a": {"var": "data.y"}}, {"b": {"var": "data.x"}}],
+        "$or": {"$$raw": {"var": "data.z"}, "$eq": [{"var": "data.x"}, {"var": "data.y"}]}
+    });
+    let (rendering, _) = rendered(
+        vec![render_task(&doc, &json!({}))],
+        Value::Null,
+        json!({"x": 1, "y": 2, "z": "zed"}),
+    )
+    .await;
+    assert_eq!(
+        rendering.wire,
+        r#"{"$and":[{"a":2},{"b":1}],"$or":{"$$raw":"zed","$eq":[1,2]}}"#
+    );
+}
+
+#[tokio::test]
+async fn rendered_to_owned_equals_the_serialized_tree() {
+    let (rendering, _) = orion_rendering().await;
+    assert_eq!(rendering.owned, rendering.wire);
+}
+
+#[tokio::test]
+async fn a_payload_hole_yields_its_default() {
+    // The payload is never in the context: the hole is compiled with its
+    // `PAYLOAD_VAR` Defect and always yields its default, `null` without one.
+    let doc = json!({"a": {"var": ["payload.x", "d"]}, "b": {"var": "payload.x"}, "c": {"var": "data.x"}});
+    let (rendering, _) = rendered(
+        vec![render_task(&doc, &json!({}))],
+        json!({"x": "from the payload"}),
+        json!({"x": "from data"}),
+    )
+    .await;
+    assert_eq!(rendering.wire, r#"{"a":"d","b":null,"c":"from data"}"#);
 }
