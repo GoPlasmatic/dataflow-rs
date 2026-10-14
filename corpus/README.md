@@ -37,27 +37,51 @@ then those of a compiler holding `script` and the case's operators and secrets. 
 deviation covers must report what v3 recorded (`authored` and `checked`), as
 `(code, severity, path)`. Before that comparison, v4's own Advisories, those of a code v3 does not
 have such as `V3_SPELLING`, are filtered out (`expect::compared`). A deviated one must report
-exactly its row of `expect::DEVIATED`, unfiltered. Nothing is skipped.
+exactly its row of `expect::DEVIATED`, unfiltered, and the row must name exactly the breaks of the
+deviations covering it. Nothing is skipped.
 
 **Runs** (`tests/runs.rs`, from phase 4). `run::run_case` builds the case and runs its steps:
 
 - **The build.** Each definition is parsed and compiled on its own. One v4 refuses is left out
   when v3's `parse` refused it too, as v3's driver left it out; the definitions check holds the two
   refusals together. Any other refusal means there is no engine: v3's build must have failed too,
-  or a deviation must cover `/build`, and no step is compared.
-- **The skip rule.** A case whose steps need what a later phase builds is skipped, by a rule read
-  from the definitions left in (`run::waits_for`): a task calling a function that is not a built-in
-  (`script`), or carrying `for_each`, waits for phase 5; an observer, an error context or a reload
-  waits for phase 6. A case whose `requires` this build does not satisfy is skipped too.
-- **The run.** Each run step runs on a fresh message with its channel, bucket, `capture_changes`
-  and `audit_mode`, and records `{outcome, message, logs}` as v3's driver does, normalised the same
-  way. The outcome is `"ok"` for a run that completed, with or without error records.
+  or a deviation must cover `/build`, where v4's build error must be its row of
+  `expect::RUN_DEVIATED`. No step is compared.
+- **The budget.** On a `budget` build, the case's compiler applies `engine.ops_budget`. A case that
+  sets one must require `budget`, so it never runs without its ceiling.
+- **The skip rule.** A case whose engine has an observer or an error context waits for phase 6
+  (`run::waits_for`). That is the one rule. A case whose `requires` this build does not satisfy is
+  skipped too.
+- **A run step** runs on a fresh message with its channel, bucket, `capture_changes` and
+  `audit_mode`. It records `{outcome, message, logs}` as v3's driver does, normalised the same way.
+  The outcome is `"ok"` for a run that completed, with or without error records. `script` is v3's,
+  ported to `Function` (`src/script.rs`). Each error it returns carries v3's code and v3's text, so
+  its records are v3's.
+- **A reload step** parses, compiles and links its definitions through the case's compiler, then
+  swaps the engine's program (`Engine::with_program`). It records `"ok"`, or the error of a refused
+  build, whose message is not compared.
 
-The record is compared with `compare::diff`, ignoring `IGNORED`, the run outcome's message (v4's
-`Error` has its own wording; its code and `retryable` are compared), the trace (phase 6's) and
-every path a deviation covers. At each deviated path, v4's value must be exactly its row of
-`expect::RUN_DEVIATED`, so a deviation says what v4 does, not only that it differs. The counts of
-cases run, with no build, skipped for each phase and skipped for this build are pinned.
+The record is compared with `compare::diff`, ignoring:
+
+- `IGNORED`;
+- the run outcome's message (v4's `Error` has its own wording; its code and `retryable` are
+  compared);
+- the trace (phase 6's);
+- every path a deviation covers.
+
+At each deviated path, v4's value must be exactly its row of `expect::RUN_DEVIATED`, so a deviation
+says what v4 does, not only that it differs. These counts are pinned:
+
+| Count | Default build | `--all-features` |
+| --- | --- | --- |
+| Cases run and compared | 70 | 71 |
+| Cases with no build | 10 | 10 |
+| Cases waiting for phase 6 | 1 | 1 |
+| Cases needing features this build has the other way | 2 | 1 |
+| Deviated pointers, each held to its `RUN_DEVIATED` row | 25 | 25 |
+
+`expressions/budget` runs only on a `budget` build. Exactly one of `families_on` and `families_off`
+runs in each build.
 
 ## A case
 
