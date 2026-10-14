@@ -9,11 +9,12 @@ mod splice;
 mod tests;
 mod writes;
 
-#[expect(unused_imports, reason = "Tasks 4 and 5 import them")]
-pub(crate) use run::{Edit, Owner, Reader};
-#[cfg_attr(not(test), expect(unused_imports, reason = "Task 4 imports them"))]
-pub(crate) use run::{RunContext, Stats, Tuning};
-#[expect(unused_imports, reason = "Task 4 imports it")]
-pub(crate) use writes::At;
-#[cfg_attr(not(test), expect(unused_imports, reason = "Task 4 imports them"))]
+pub(crate) use run::{Edit, RunContext, Stats};
+pub(crate) use splice::kind;
+// What only the tests name from outside `state` so far: the engine picks a
+// run's tuning from Task 6. `Owner`, `Reader` and `At` are re-exported by the
+// first code outside `state` that names them.
+#[cfg(test)]
+pub(crate) use run::Tuning;
+#[cfg(test)]
 pub(crate) use writes::{Lookup, Mark, Writes};

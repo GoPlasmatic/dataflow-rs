@@ -10,6 +10,8 @@
 //! moves any other key into the task's `ext` before a config compiles, as v3
 //! ignored them (I54), and the tests hold the two to one set.
 
+#[cfg(test)]
+pub(crate) mod differential;
 mod filter;
 mod log;
 mod map;
@@ -25,8 +27,9 @@ pub use parse::ParseConfig;
 pub use publish::PublishConfig;
 pub use validation::ValidationConfig;
 
+use crate::base::Result;
 use crate::expr::{CompileCx, ExprVisitor, FieldSpec};
-use crate::function::{FunctionConfig, FunctionSpec};
+use crate::function::{FunctionConfig, FunctionSpec, Outcome, SyncCtx, SyncFunction};
 use serde_json::Value;
 
 /// A built-in function, by name (I42).
@@ -183,6 +186,25 @@ impl Builtin {
             Self::ParseXml(_) => BuiltinKind::ParseXml,
             Self::PublishJson(_) => BuiltinKind::PublishJson,
             Self::PublishXml(_) => BuiltinKind::PublishXml,
+        }
+    }
+
+    /// One call: a match over the eight configs, each through its
+    /// [`SyncFunction`] (I42).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine calls a built-in from Task 6")
+    )]
+    pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
+        match self {
+            Self::Map(c) => c.call(cx),
+            Self::Validation(_)
+            | Self::Filter(_)
+            | Self::Log(_)
+            | Self::ParseJson(_)
+            | Self::ParseXml(_)
+            | Self::PublishJson(_)
+            | Self::PublishXml(_) => unreachable!("Task 5"),
         }
     }
 

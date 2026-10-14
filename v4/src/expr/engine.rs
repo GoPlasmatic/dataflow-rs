@@ -5,7 +5,8 @@ use super::expr::{Evaluated, Expr, FromValue};
 use super::operators::{Family, OperatorInfo, TABLE};
 use super::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
 use crate::base::{Error, ErrorKind, Result};
-use datalogic_rs::{CustomOperator, DataValue, Engine};
+use bumpalo::Bump;
+use datalogic_rs::{CustomOperator, DataValue, Engine, Logic};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -168,17 +169,31 @@ impl ExprEngine {
                     .map_err(eval_error)?,
                 None,
             );
-            let value = T::from_view(view).map_err(|why| {
-                Error::new(
-                    ErrorKind::Eval,
-                    format!("`{}` did not give {}: {why}", expr.raw, T::type_name()),
-                )
-            })?;
             Ok(Evaluated {
-                value: T::give(value),
+                value: T::give(expr.convert(view)?),
                 ops,
             })
         })
+    }
+
+    /// Evaluates `logic` against a view root, allocating in `arena`: how a
+    /// built-in reads the run view, and how `map` evaluates in the run arena
+    /// so its result splices without a copy.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Budget`] when the operation ceiling is exceeded;
+    /// [`ErrorKind::Eval`] for any other failure (the classifier
+    /// [`Self::eval`] uses).
+    pub(crate) fn eval_in<'a>(
+        &self,
+        logic: &'a Logic,
+        root: &'a DataValue<'a>,
+        arena: &'a Bump,
+    ) -> Result<&'a DataValue<'a>> {
+        self.logic()
+            .evaluate(logic, root, arena)
+            .map_err(eval_error)
     }
 
     /// The datalogic engine underneath.

@@ -344,6 +344,7 @@ dependencies = [
  "dataflow-rs-derive",
  "datalogic-rs",
  "datavalue-rs",
+ "log",
  "self_cell",
  "serde",
  "serde_json",

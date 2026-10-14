@@ -319,6 +319,10 @@ fn key_seg(key: &str) -> Seg {
 impl<'m, 'p> RunContext<'m, 'p> {
     /// Take the context out of `slot` for the run; it goes back when the run
     /// finishes or is dropped.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine builds a run's context from Task 6")
+    )]
     pub(crate) fn new(slot: &'m mut OwnedDataValue, tuning: Tuning) -> Self {
         let ctx = std::mem::take(slot);
         Self {
@@ -336,6 +340,13 @@ impl<'m, 'p> RunContext<'m, 'p> {
     }
 
     /// What the run did so far.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the engine reports a run's arena stats from Task 6"
+        )
+    )]
     pub(crate) fn stats(&self) -> Stats {
         self.stats
     }
@@ -383,6 +394,10 @@ impl<'m, 'p> RunContext<'m, 'p> {
     /// view it assigns the owned tree. With a view, a value over the threshold
     /// checkpoints and assigns the owned tree (R56), and anything smaller is
     /// copied in, spliced and marked with its owned value.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Task 5's parse built-ins write owned values")
+    )]
     pub(crate) fn set(
         &mut self,
         path: &Path,
@@ -424,6 +439,10 @@ impl<'m, 'p> RunContext<'m, 'p> {
     /// A write the engine makes after every task, such as the progress write:
     /// built owned when there is no view, or straight into the view from
     /// strings the `Program` owns, converting nothing until a checkpoint.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine writes the progress from Task 6")
+    )]
     pub(crate) fn engine_set(
         &mut self,
         path: &Path,
@@ -440,6 +459,10 @@ impl<'m, 'p> RunContext<'m, 'p> {
     }
 
     /// Removes `path`; whether something was there.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "phase 5's host calls remove through it")
+    )]
     pub(crate) fn remove(&mut self, path: &Path) -> bool {
         match &mut self.state {
             State::Owned(owner) => path::remove(&mut owner.ctx, path.segs()).is_some(),
@@ -449,6 +472,13 @@ impl<'m, 'p> RunContext<'m, 'p> {
 
     /// The value at `path`: borrowed from the owned tree unless the log says
     /// it changed, else converted from the view (R55).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Task 5's parse and publish built-ins read their source"
+        )
+    )]
     pub(crate) fn get(&self, path: &Path) -> Option<Cow<'_, OwnedDataValue>> {
         match &self.state {
             State::Owned(owner) => path.get(&owner.ctx).map(Cow::Borrowed),
@@ -488,6 +518,13 @@ impl<'m, 'p> RunContext<'m, 'p> {
     /// At an op boundary: checkpoint once the arena's garbage passes
     /// `max(garbage_floor, live)`, so a rebuild, which costs about `live`,
     /// runs only after at least that much garbage.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the interpreter ticks at every op boundary from Task 7"
+        )
+    )]
     pub(crate) fn tick(&mut self) {
         if let State::Viewed(view) = &self.state {
             let used = arena::used(&view.borrow_owner().arena);
@@ -536,6 +573,10 @@ impl<'m, 'p> RunContext<'m, 'p> {
 
     /// The last checkpoint; the context goes back to its slot and the arena
     /// to the pool.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine finishes a run from Task 6")
+    )]
     pub(crate) fn finish(mut self) -> Stats {
         self.checkpoint();
         self.give_back();

@@ -9,6 +9,7 @@ mod layer;
 mod outcome;
 mod registry;
 mod spec;
+mod sync;
 mod templated;
 
 pub use crate::expr::{ExprVisitor, FieldKind, FieldSpec, ValueKind};
@@ -24,6 +25,7 @@ pub use outcome::Outcome;
 pub(crate) use registry::Entry;
 pub use registry::{FunctionInfo, Registry};
 pub use spec::{FunctionSpec, Reference, RetrySafety};
+pub(crate) use sync::{SyncCtx, SyncFunction};
 pub use templated::Templated;
 
 /// What `#[derive(FunctionConfig)]` expands to names, and nothing else. Not an

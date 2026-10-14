@@ -63,6 +63,7 @@ impl Seg {
     }
 
     /// The segment naming array element `i`: its key is `i`'s text.
+    #[cfg(test)]
     pub(crate) fn index(i: usize) -> Self {
         Self {
             key: i.to_string().into(),
@@ -154,6 +155,11 @@ impl Path {
     /// The segments, the root's own first.
     pub(crate) fn segs(&self) -> &[Seg] {
         &self.segs
+    }
+
+    /// The dotted spelling, shared: what a `Change` records as its path.
+    pub(crate) fn dotted(&self) -> &Arc<str> {
+        &self.dotted
     }
 
     /// The value at the path in `context`, an object holding the three roots.

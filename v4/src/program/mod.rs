@@ -18,3 +18,8 @@ pub use crate::base::{
 pub use compile::{CompileOptions, Compiled, CompiledWorkflow, Compiler, ResourceOracle};
 pub use fingerprint::{Fingerprint, ParseFingerprintError};
 pub use link::{Program, TaskInfo, WorkflowInfo};
+#[cfg_attr(
+    not(test),
+    expect(unused_imports, reason = "the engine matches on a callee from Task 6")
+)]
+pub(crate) use ops::Callee;

@@ -2,6 +2,7 @@
 
 use super::config::ValueKind;
 use super::path::Path;
+use crate::base::{Error, ErrorKind};
 use datalogic_rs::Logic;
 use datavalue::{DataValue, OwnedDataValue};
 use serde_json::Value;
@@ -175,6 +176,22 @@ impl<T: FromValue> Expr<T> {
     /// The authored JSON.
     pub fn raw(&self) -> &Value {
         &self.raw
+    }
+
+    /// The compiled logic, for an evaluation against the run view.
+    pub(crate) fn logic(&self) -> &Logic {
+        &self.logic
+    }
+
+    /// An evaluation's result as a `T`, or the [`ErrorKind::Eval`] error
+    /// naming this expression.
+    pub(crate) fn convert(&self, view: &DataValue<'_>) -> crate::Result<T> {
+        T::from_view(view).map_err(|why| {
+            Error::new(
+                ErrorKind::Eval,
+                format!("`{}` did not give {}: {why}", self.raw, T::type_name()),
+            )
+        })
     }
 }
 

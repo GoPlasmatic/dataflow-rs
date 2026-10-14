@@ -265,8 +265,8 @@ pub(crate) fn merge_root<'a>(
     DataValue::Object(replaced(arena, slots, at, merged))
 }
 
-/// The kind of a value, for an error.
-fn kind(v: &DataValue<'_>) -> &'static str {
+/// The kind of a value, for an error: v3's `describe_kind`.
+pub(crate) fn kind(v: &DataValue<'_>) -> &'static str {
     match v {
         DataValue::Null => "null",
         DataValue::Bool(_) => "a boolean",
@@ -394,8 +394,9 @@ pub(crate) struct Resolved {
     pub(crate) created: Option<usize>,
 }
 
+#[cfg(test)]
 impl Resolved {
-    /// The hops, built: for tests and for the rare caller that keeps them.
+    /// The hops, built: for the tests.
     pub(crate) fn hops(&self, segs: &[Seg]) -> Vec<Hop> {
         super::writes::At::new(segs, self.kinds).to_hops()
     }
@@ -410,6 +411,7 @@ pub(crate) enum Hop {
     Index(usize),
 }
 
+#[cfg(test)]
 impl Hop {
     /// The segment that addresses exactly this hop: a key never reads as an
     /// index, and an index is spelled in decimal.
@@ -425,6 +427,7 @@ impl Hop {
 }
 
 /// The segments that address `hops` exactly.
+#[cfg(test)]
 pub(crate) fn segs_of(hops: &[Hop]) -> Vec<Seg> {
     hops.iter().map(Hop::to_seg).collect()
 }

@@ -92,6 +92,7 @@ impl<'a> At<'a> {
     }
 
     /// Segment `i` as the hop the log keys by.
+    #[cfg(test)]
     pub(crate) fn hop(&self, i: usize) -> Hop {
         match self.index(i) {
             Some(j) => Hop::Index(j),
@@ -100,12 +101,14 @@ impl<'a> At<'a> {
     }
 
     /// Every segment as a hop.
+    #[cfg(test)]
     pub(crate) fn to_hops(self) -> Vec<Hop> {
         (0..self.len()).map(|i| self.hop(i)).collect()
     }
 }
 
 /// Hops with their segments, for a caller that holds them: tests.
+#[cfg(test)]
 pub(crate) struct OwnedAt {
     /// The segments, each spelled so it resolves as its hop does.
     segs: Vec<Seg>,
@@ -113,6 +116,7 @@ pub(crate) struct OwnedAt {
     kinds: u64,
 }
 
+#[cfg(test)]
 impl OwnedAt {
     /// The borrowed form the log is asked with.
     pub(crate) fn at(&self) -> At<'_> {
@@ -120,6 +124,7 @@ impl OwnedAt {
     }
 }
 
+#[cfg(test)]
 impl From<&[Hop]> for OwnedAt {
     fn from(hops: &[Hop]) -> Self {
         let kinds = hops
@@ -698,6 +703,10 @@ impl Writes {
     }
 
     /// The topmost marks and the reorders, leaving the log empty.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "phase 5's call overlay drains its marks")
+    )]
     pub(crate) fn drain(&mut self) -> Drained {
         // Marks are moved out, never cloned: an overlay's are the call's
         // written values.

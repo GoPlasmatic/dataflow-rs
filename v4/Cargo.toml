@@ -38,6 +38,8 @@ self_cell = "1.3"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 dataflow-rs-derive = { path = "../derive" }
 uuid = { version = "1.26", default-features = false, features = ["v7", "std"] }
+# The `log` built-in's target, and `map`'s failing-mapping lines (I73).
+log = "0.4"
 
 # Native-only: a thread-local PRNG instead of one `getrandom` per id, as v3 does.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
