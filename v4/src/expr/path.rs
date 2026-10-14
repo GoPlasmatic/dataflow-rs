@@ -88,7 +88,6 @@ impl Seg {
     }
 
     /// The segment naming array element `i`: its key is `i`'s text.
-    #[cfg(test)]
     pub(crate) fn index(i: usize) -> Self {
         let key = i.to_string();
         Self {
@@ -188,6 +187,22 @@ impl Path {
     /// The dotted spelling, shared: what a `Change` records as its path.
     pub(crate) fn dotted(&self) -> &Arc<str> {
         &self.dotted
+    }
+
+    /// The path to element `index` of the array at this path: what
+    /// `{self}.{index}` parses to, built from these segments and one more
+    /// rather than re-parsed. `None` when this path already holds the most
+    /// segments a path can.
+    pub(crate) fn index_child(&self, index: usize) -> Option<Self> {
+        if self.segs.len() >= MAX_PATH_SEGMENTS {
+            return None;
+        }
+        let segs = self.segs.iter().cloned().chain([Seg::index(index)]);
+        Some(Self {
+            root: self.root,
+            segs: segs.collect(),
+            dotted: Arc::from(format!("{}.{index}", self.dotted)),
+        })
     }
 
     /// The value at the path in `context`, an object holding the three roots.
@@ -576,6 +591,20 @@ mod tests {
             .expect_err("65 segments are refused");
         assert_eq!(*err.kind(), ErrorKind::Config);
         assert!(err.to_string().contains("at most 64"), "{err}");
+    }
+
+    #[test]
+    fn an_index_child_is_its_dotted_spelling_parsed() {
+        for (parent, index) in [("data.rs", 0), ("temp_data.a.#b.2", 17), ("metadata", 3)] {
+            let child = path(parent).index_child(index).expect("room for the index");
+            assert_eq!(child, path(&format!("{parent}.{index}")));
+            assert_eq!(child.segs().last().unwrap().index, Some(index));
+        }
+        // A path at the most segments has no room for one more.
+        let deep = format!("data{}", ".k".repeat(63));
+        assert!(path(&deep).index_child(0).is_none());
+        let roomy = format!("data{}", ".k".repeat(62));
+        assert_eq!(path(&roomy).index_child(0).unwrap().segs().len(), 64);
     }
 
     #[test]

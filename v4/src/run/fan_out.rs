@@ -117,9 +117,9 @@ async fn call_element<'r>(
 }
 
 /// `into`'s slot for element `index`, the path its `Change` names, as v3's.
-/// `None` only for an `into` at the deepest path a `Path` holds.
-fn slot(into: &Path, index: usize) -> Option<Path> {
-    format!("{into}.{index}").parse().ok()
+fn slot(into: &Path, index: usize) -> Path {
+    into.index_child(index)
+        .expect("the compiler leaves room below `into` for an index")
 }
 
 /// One `FanOut` op: `over`, the calls, `into` pre-filled, the fold in
@@ -250,7 +250,7 @@ pub(crate) async fn fan_out<'p>(
         }
         let status = decision.status.unwrap_or_default();
         let failed_here = status >= 400;
-        if let Some(slot) = fan.into.as_ref().and_then(|into| slot(into, index)) {
+        if let Some(slot) = fan.into.as_ref().map(|into| slot(into, index)) {
             let value = match collected {
                 Some(value) if !failed_here => value,
                 _ => OwnedDataValue::Null,

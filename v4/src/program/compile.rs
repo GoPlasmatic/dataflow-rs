@@ -12,6 +12,7 @@ use crate::def::{
     self, ForEachDef, GroupDef, Logic, LoopDef, ParseOptions, Rollout, Status, StepDef, TaskDef,
     WorkflowDef, WorkflowFailurePolicy,
 };
+use crate::expr::path::MAX_PATH_SEGMENTS;
 use crate::expr::{CompileCx, Expr, Path};
 use crate::function::{Entry, FunctionSpec, Prepare, Registry};
 use datavalue::OwnedDataValue;
@@ -530,7 +531,8 @@ impl<'w> Walk<'w> {
     }
 
     /// A fan-out at `at`: its rules, checked again, then its `over`,
-    /// recorded, then its bindings as paths.
+    /// recorded, then its bindings as paths, `into` with room for the
+    /// index each element's result lands at.
     ///
     /// `parse` refuses a fan-out that breaks a rule, but a host may edit a
     /// parsed definition, and the interpreter trusts them: no call starts
@@ -558,7 +560,18 @@ impl<'w> Walk<'w> {
                 .and_then(|path| self.path(path, at.join(key), Some(step)))
         };
         let collect = context(&config.collect, "collect");
-        let into = context(&config.into, "into");
+        let into = context(&config.into, "into").and_then(|into| {
+            if into.index_child(0).is_some() {
+                return Some(into);
+            }
+            let message = format!(
+                "path `{into}` has {MAX_PATH_SEGMENTS} segments, and each element's result \
+                 lands one segment below it; a path holds at most {MAX_PATH_SEGMENTS}"
+            );
+            let issue = Issue::new(IssueCode::InvalidPath, at.join("into"), message);
+            self.report(issue, Some(step));
+            None
+        });
         let (over, (item, index)) = over.zip(bound)?;
         Some(FanSite {
             over,
@@ -1151,6 +1164,44 @@ mod tests {
                 task["for_each"][key] = value.clone();
             }
             assert_eq!(parse_issues(&json!({"id": "w", "tasks": [task]})), issues);
+        }
+    }
+
+    #[test]
+    fn compile_refuses_an_into_with_no_room_for_an_index() {
+        // Each element's result lands at `into.<index>`, one segment below
+        // `into`, and a path holds at most 64.
+        for (depth, refused) in [(64, true), (63, false)] {
+            let into = format!("data{}", ".k".repeat(depth - 1));
+            let mut task = echo_task();
+            task["for_each"] = json!({"over": {"var": "data.items"}, "as": "item",
+                "collect": "temp_data.r", "into": into});
+            let def = parse(
+                &json!({"id": "w", "tasks": [task]}),
+                ParseOptions::default(),
+            )
+            .def
+            .unwrap();
+            let issues = compiler().compile_one(&def).err().unwrap_or_default();
+            let issues: Vec<_> = issues
+                .into_iter()
+                .map(|i| (i.code, i.path.to_string(), i.message))
+                .collect();
+            if refused {
+                assert_eq!(
+                    issues,
+                    [(
+                        IssueCode::InvalidPath,
+                        "tasks[0].for_each.into".to_owned(),
+                        format!(
+                            "path `{into}` has 64 segments, and each element's result lands \
+                             one segment below it; a path holds at most 64"
+                        ),
+                    )]
+                );
+            } else {
+                assert!(issues.is_empty(), "{issues:?}");
+            }
         }
     }
 
