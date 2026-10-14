@@ -28,11 +28,11 @@
 //! task is recorded once, with no element, as a call cut short is, and the
 //! run stops.
 
-use super::host::{Invoked, Layers, invoke, keep_records};
+use super::host::{Invoked, Layers, call_start, invoke, keep_records};
 use super::interp::{Over, RunEnv, elements};
 use super::policy::{self, Decision, Flow, Policy, decide};
 use super::record::{self, Stamp, TaskIds};
-use crate::base::{Change, ErrorRecord, TaskIx};
+use crate::base::{Change, ErrorRecord};
 use crate::def::{FailurePolicy, RejectionPolicy};
 use crate::expr::Path;
 use crate::function::{Binding, BoundCall, CallInfo, CallStart, Outcome, Overlay};
@@ -178,31 +178,7 @@ pub(crate) async fn fan_out<'p>(
         // The reader is taken in its own statement and every call holds a
         // copy: nothing writes to the run until the last call has finished.
         let reader = rc.reader();
-        let start = CallStart {
-            reader,
-            binding: None,
-            payload: env.payload,
-            exprs: env.exprs,
-            info: CallInfo {
-                program: env.program,
-                workflow: env.workflow_ix,
-                task: TaskIx::new(env.task_base + site.task),
-                function: &task.function,
-                workflow_id: &wf.id,
-                task_id: &task.id,
-                channel: env.channel,
-                loop_counter: env.frame.loop_counter,
-                element_index: None,
-            },
-            primary: bound.primary_output(),
-            deadline: env.limits.deadline,
-            cancel: env.limits.cancel,
-            capture: env.capture,
-        };
-        let layers = Layers {
-            run: env.layers,
-            registry: wf.registry.layers(),
-        };
+        let (start, layers) = call_start(env, reader, wf, site, bound);
         let mut pending = items.iter().enumerate();
         let mut in_flight = FuturesUnordered::new();
         let mut stop = false;

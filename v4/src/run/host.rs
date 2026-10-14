@@ -24,7 +24,7 @@ use crate::base::{Change, ErrorRecord, Result, TaskIx};
 use crate::expr::Path;
 use crate::function::{BoundCall, CallInfo, CallLayer, CallStart, Ctx, Next, Outcome, Overlay};
 use crate::program::{CallSite, CompiledWorkflow};
-use crate::state::RunContext;
+use crate::state::{Reader, RunContext};
 use datavalue::OwnedDataValue;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -36,6 +36,45 @@ pub(crate) struct Layers<'a> {
     pub(crate) run: &'a [Arc<dyn CallLayer>],
     /// The registry's layers, outermost first.
     pub(crate) registry: &'a [Arc<dyn CallLayer>],
+}
+
+/// What a call at `site` starts from, over `reader`: its [`CallStart`],
+/// with no binding and no element, and its [`Layers`]. A fan-out copies
+/// both for each element. Nothing returned borrows `env`.
+pub(crate) fn call_start<'c, 'r: 'c, 'p: 'c>(
+    env: &RunEnv<'r, 'p>,
+    reader: Reader<'c>,
+    wf: &'c CompiledWorkflow,
+    site: &CallSite,
+    bound: &'c dyn BoundCall,
+) -> (CallStart<'c>, Layers<'c>) {
+    let task = &wf.tasks[site.task as usize];
+    let start = CallStart {
+        reader,
+        binding: None,
+        payload: env.payload,
+        exprs: env.exprs,
+        info: CallInfo {
+            program: env.program,
+            workflow: env.workflow_ix,
+            task: TaskIx::new(env.task_base + site.task),
+            function: &task.function,
+            workflow_id: &wf.id,
+            task_id: &task.id,
+            channel: env.channel,
+            loop_counter: env.frame.loop_counter,
+            element_index: None,
+        },
+        primary: bound.primary_output(),
+        deadline: env.limits.deadline,
+        cancel: env.limits.cancel,
+        capture: env.capture,
+    };
+    let layers = Layers {
+        run: env.layers,
+        registry: wf.registry.layers(),
+    };
+    (start, layers)
 }
 
 /// What one call left: its result, and what it wrote and recorded.
@@ -146,7 +185,6 @@ pub(crate) async fn call_host<'p>(
     site: &'p CallSite,
     bound: &'p dyn BoundCall,
 ) -> Flow {
-    let task = &wf.tasks[site.task as usize];
     let ids = TaskIds {
         workflow: env.workflow_id,
         task: &env.task_ids[site.task as usize],
@@ -160,31 +198,7 @@ pub(crate) async fn call_host<'p>(
         ..
     } = {
         let reader = rc.reader();
-        let start = CallStart {
-            reader,
-            binding: None,
-            payload: env.payload,
-            exprs: env.exprs,
-            info: CallInfo {
-                program: env.program,
-                workflow: env.workflow_ix,
-                task: TaskIx::new(env.task_base + site.task),
-                function: &task.function,
-                workflow_id: &wf.id,
-                task_id: &task.id,
-                channel: env.channel,
-                loop_counter: env.frame.loop_counter,
-                element_index: None,
-            },
-            primary: bound.primary_output(),
-            deadline: env.limits.deadline,
-            cancel: env.limits.cancel,
-            capture: env.capture,
-        };
-        let layers = Layers {
-            run: env.layers,
-            registry: wf.registry.layers(),
-        };
+        let (start, layers) = call_start(env, reader, wf, site, bound);
         invoke(start, bound, layers, None).await
     };
     if result.is_ok() {
