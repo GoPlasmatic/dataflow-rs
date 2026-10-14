@@ -385,11 +385,14 @@ async fn a_finished_call_wins_over_a_simultaneous_deadline() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_fan_out_cut_short_folds_nothing() {
+async fn a_fan_out_cut_short_folds_nothing_and_keeps_its_calls_records() {
     // Cut by an element's race: of three elements in flight, two finish and
     // the second outlasts the deadline. Nothing is folded, the finished
-    // elements' writes, records and results included. The task is recorded
-    // once, with no element, as a call cut short is, and the run stops.
+    // elements' writes and results included; the records every call that
+    // returned added are kept, in element order, each stamped with its
+    // element, as a single call cut short keeps its own (I96). The task is
+    // recorded once, with no element, as a call cut short is, and the run
+    // stops.
     let raced = [workflow(
         "w",
         vec![
@@ -398,9 +401,10 @@ async fn a_fan_out_cut_short_folds_nothing() {
         ],
     )];
     // Cut at an element's start: one at a time, the first sleeps to the
-    // deadline and finishes; the second's check cuts it before it runs.
+    // deadline and finishes; the second's check cuts it before it runs, so
+    // it added nothing.
     let checked = [workflow("w", vec![fan(json!([1000, 0]), 1)])];
-    for workflows in [&raced[..], &checked[..]] {
+    for (workflows, noted) in [(&raced[..], &[0, 1, 2][..]), (&checked[..], &[0][..])] {
         let e = engine(workflows);
         let mut m = message();
         let run = e
@@ -412,10 +416,23 @@ async fn a_fan_out_cut_short_folds_nothing() {
             run.status()
         );
         assert_eq!(audit(&m), [("t".to_owned(), 500, None)]);
-        assert_eq!(errors(&m), [timed_out("t")]);
+        let mut expected: Vec<_> = noted
+            .iter()
+            .map(|&i| (error("NOTED", "began"), Some(i)))
+            .collect();
+        expected.push((timed_out("t"), None));
+        assert_eq!(elements(&m), expected);
         assert_eq!(data(&m), json!({"input": 1}));
         assert_eq!(considered(&run), [("w", 1, Some(WorkflowExit::Stopped))]);
     }
+}
+
+/// `((code, message), element)` of each error record.
+fn elements(m: &Message) -> Vec<((String, String), Option<usize>)> {
+    m.errors()
+        .iter()
+        .map(|e| ((e.code.clone(), e.message.clone()), e.element_index))
+        .collect()
 }
 
 #[tokio::test(start_paused = true)]

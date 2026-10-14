@@ -22,9 +22,11 @@
 //!
 //! Each element's call checks the run's limits as it starts and, natively,
 //! races them (I92). Once one is cut short, the calls in flight are dropped
-//! and nothing is folded, the finished elements included: the task is
-//! recorded once, with no element, as a call cut short is, and the run
-//! stops.
+//! and nothing is folded, the finished elements included. The records each
+//! call that returned added are kept, in element order and stamped with
+//! their element, as a single call cut short keeps its own (I96); then the
+//! task is recorded once, with no element, as a call cut short is, and the
+//! run stops.
 
 use super::host::{Invoked, Layers, invoke, keep_records};
 use super::interp::{Over, RunEnv, elements};
@@ -169,8 +171,8 @@ pub(crate) async fn fan_out<'p>(
     let n = items.len();
     let per_element = policy.per_element();
     let mut finished: Vec<Option<Element>> = (0..n).map(|_| None).collect();
-    // The error of the first call the run's limits cut short: the fan-out
-    // folds nothing then.
+    // The first call the run's limits cut short: its index, the records it
+    // added and its error. The fan-out folds nothing then.
     let mut cut = None;
     {
         // The reader is taken in its own statement and every call holds a
@@ -216,7 +218,8 @@ pub(crate) async fn fan_out<'p>(
             };
             if invoked.cut_short {
                 // Dropping `in_flight` drops the calls still running.
-                cut = Some(invoked.result.expect_err("a call cut short is an `Err`"));
+                let error = invoked.result.expect_err("a call cut short is an `Err`");
+                cut = Some((index, invoked.errors, error));
                 break;
             }
             let element = Element::new(index, invoked, per_element, ids.task);
@@ -225,7 +228,17 @@ pub(crate) async fn fan_out<'p>(
         }
     }
     drop(items);
-    if let Some(e) = cut {
+    if let Some((index, errors, e)) = cut {
+        let mut kept: Vec<_> = finished
+            .into_iter()
+            .flatten()
+            .map(|element| (element.index, element.errors))
+            .collect();
+        kept.push((index, errors));
+        kept.sort_unstable_by_key(|&(index, _)| index);
+        for (index, errors) in kept {
+            keep_records(env, errors, Some(index));
+        }
         let decision = policy::cut_short(ids.task, e);
         let stamp = Stamp::sweep(env);
         record::record(rc, env, ids, stamp, decision.status, decision.record);
