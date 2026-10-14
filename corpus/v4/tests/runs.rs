@@ -4,7 +4,7 @@
 //! A case in which v4 refuses a definition v3's `parse` accepted has no
 //! engine: v3's build must have failed too, or a deviation must cover
 //! `/build`, whose `expect::RUN_DEVIATED` row v4's build error must match,
-//! and no step is compared. One both refused is left out, as v3's driver
+//! and `/steps`, when v3 recorded any, since no step is compared. One both refused is left out, as v3's driver
 //! left it out. A case whose steps wait for phase 6 (`run::waits_for`), or
 //! whose `requires` this build does not satisfy, is counted and skipped. Every
 //! other case's `build` and `steps` are compared with v3's recording, ignoring
@@ -107,6 +107,25 @@ fn run_paths(case: &Case) -> Vec<&str> {
 /// Whether some deviation of `case` covers `/build`.
 fn covers_build(case: &Case) -> bool {
     run_paths(case).contains(&"/build")
+}
+
+/// Why a case v4 has no build for fails, beyond its `/build` row: v3 built
+/// and no deviation covers `/build`; or v3 built and `ran` steps, none of
+/// which is compared, and no deviation covers `/steps`.
+fn unexplained_no_build(name: &str, case: &Case, v3_built: bool, ran: bool) -> Vec<String> {
+    let mut failures = Vec::new();
+    if v3_built && !covers_build(case) {
+        failures.push(format!(
+            "{name}: v4 has no build where v3 built, and no deviation covers /build"
+        ));
+    }
+    if v3_built && ran && !run_paths(case).contains(&"/steps") {
+        failures.push(format!(
+            "{name}: v4 has no build, so none of the steps v3 recorded is compared, and no \
+             deviation covers /steps"
+        ));
+    }
+    failures
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -227,12 +246,15 @@ async fn v4_runs_every_case_as_v3_recorded_it() {
                     &mut used,
                     &mut failures,
                 );
-            } else if v3_built {
-                failures.push(format!(
-                    "{name}: v4 has no build where v3 built, and no deviation covers /build\n  v4: {}",
-                    actual.get("build").map_or_else(String::new, Json::to_text)
-                ));
             }
+            let ran =
+                matches!(recording.get("steps"), Some(Json::Array(steps)) if !steps.is_empty());
+            let v4 = actual.get("build").map_or_else(String::new, Json::to_text);
+            failures.extend(
+                unexplained_no_build(&name, &case, v3_built, ran)
+                    .into_iter()
+                    .map(|failure| format!("{failure}\n  v4: {v4}")),
+            );
             continue;
         }
         if !v3_built && !covers_build(&case) {
@@ -309,6 +331,41 @@ async fn v4_runs_every_case_as_v3_recorded_it() {
             other_build: OTHER_BUILD,
             run_deviated: RUN_DEVIATED_ROWS,
         }
+    );
+}
+
+/// A case with one workflow and one run step, deviating at `paths` under
+/// break 15.
+fn case_deviating(paths: &[&str]) -> Case {
+    let deviation = serde_json::json!({"break": "15", "paths": paths, "note": "n"});
+    serde_json::from_value(serde_json::json!({
+        "description": "d", "covers": [], "workflows": [{"id": "w"}],
+        "steps": [{"run": {"message": {}}}], "deviations": [deviation],
+    }))
+    .unwrap()
+}
+
+#[test]
+fn no_build_where_v3_built_and_ran_needs_build_and_steps_deviated() {
+    let both = case_deviating(&["/build", "/steps"]);
+    assert!(unexplained_no_build("c", &both, true, true).is_empty());
+    // v3's steps go uncompared: a deviation must say so.
+    let build_only = case_deviating(&["/build"]);
+    assert_eq!(
+        unexplained_no_build("c", &build_only, true, true),
+        [
+            "c: v4 has no build, so none of the steps v3 recorded is compared, and no deviation \
+          covers /steps"
+        ]
+    );
+    // Nothing to explain where v3 refused the build too, or recorded no
+    // step.
+    assert!(unexplained_no_build("c", &build_only, false, false).is_empty());
+    assert!(unexplained_no_build("c", &build_only, true, false).is_empty());
+    let neither = case_deviating(&["/definitions"]);
+    assert_eq!(
+        unexplained_no_build("c", &neither, true, false),
+        ["c: v4 has no build where v3 built, and no deviation covers /build"]
     );
 }
 

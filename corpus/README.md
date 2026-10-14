@@ -46,7 +46,8 @@ deviations covering it. Nothing is skipped.
   when v3's `parse` refused it too, as v3's driver left it out; the definitions check holds the two
   refusals together. Any other refusal means there is no engine: v3's build must have failed too,
   or a deviation must cover `/build`, where v4's build error must be its row of
-  `expect::RUN_DEVIATED`. No step is compared.
+  `expect::RUN_DEVIATED`. No step is compared, so where v3 built and ran steps, a deviation must
+  cover `/steps` too.
 - **The budget.** On a `budget` build, the case's compiler applies `engine.ops_budget`. A case that
   sets one must require `budget`, so it never runs without its ceiling.
 - **The skip rule.** A case whose engine has an observer or an error context waits for phase 6
