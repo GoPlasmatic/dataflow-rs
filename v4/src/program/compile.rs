@@ -1109,25 +1109,23 @@ mod tests {
     fn compile_refuses_an_edited_fan_out_the_parser_would_refuse() {
         // `max_concurrency: 0` would start no call, and an `into` or a
         // `collect` at a root would replace the root with an array.
-        let concurrency = |fan: &mut ForEachDef| fan.max_concurrency = 0;
-        let into = |fan: &mut ForEachDef| fan.into = Some("data".to_owned());
-        let collect = |fan: &mut ForEachDef| fan.collect = Some("temp_data".to_owned());
-        let cases: [(&dyn Fn(&mut ForEachDef), Value, &str, &str); 3] = [
+        type Edit = fn(&mut ForEachDef);
+        let cases: [(Edit, Value, &str, &str); 3] = [
             (
-                &concurrency,
+                |fan| fan.max_concurrency = 0,
                 json!({"max_concurrency": 0}),
                 "max_concurrency",
                 "for_each max_concurrency must be at least 1",
             ),
             (
-                &into,
+                |fan| fan.into = Some("data".to_owned()),
                 json!({"into": "data"}),
                 "into",
                 "for_each into must be a context path below data, metadata or temp_data, \
                  got \"data\"",
             ),
             (
-                &collect,
+                |fan| fan.collect = Some("temp_data".to_owned()),
                 json!({"collect": "temp_data"}),
                 "collect",
                 "for_each collect must be a context path below data, metadata or temp_data, \
