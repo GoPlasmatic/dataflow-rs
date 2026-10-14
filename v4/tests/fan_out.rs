@@ -17,7 +17,9 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // `temp_data.by_eval` from its `by_eval` expression. It records `WARNED`
 // when the element says `warn`, and returns what `o` names: `"success"` (the
 // default), `"skip"`, `"halt"`, `{"status": n}`, or `{"error": {"code": c,
-// "message": m}}`, a service error.
+// "message": m}}`, a service error. Outside a fan-out it reads its asks from
+// the same slot, and the index is `null`. v4's alone also removes the paths
+// `rm` lists, after the writes: v3's `TaskContext` cannot remove.
 
 #[path = "support/vs_v3.rs"]
 mod vs_v3;
@@ -44,6 +46,7 @@ enum Wanted {
 struct Asks {
     yields: u64,
     writes: Vec<(String, Value)>,
+    removes: Vec<String>,
     appends: Vec<(String, Value)>,
     inc: Option<String>,
     warn: bool,
@@ -83,6 +86,16 @@ fn asks(item: &Value) -> Asks {
     Asks {
         yields: item.get("y").and_then(Value::as_u64).unwrap_or(0),
         writes: pairs("w"),
+        removes: item
+            .get("rm")
+            .and_then(Value::as_array)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .map(|path| path.as_str().unwrap().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default(),
         appends: pairs("a"),
         inc: item.get("inc").and_then(Value::as_str).map(str::to_owned),
         warn: item.get("warn") == Some(&json!(true)),
@@ -129,8 +142,9 @@ mod v3_twin {
         ) -> Result<TaskOutcome> {
             let item_path = format!("temp_data.{}", input.bound);
             let index = get(ctx, &format!("{item_path}_index"));
-            assert_eq!(ctx.element_index().map(|i| json!(i)), Some(index.clone()));
+            assert_eq!(ctx.element_index().map_or(Value::Null, |i| json!(i)), index);
             let asks = asks(&get(ctx, &item_path));
+            assert!(asks.removes.is_empty(), "v3's `TaskContext` cannot remove");
             for _ in 0..asks.yields {
                 tokio::task::yield_now().await;
             }
@@ -203,8 +217,8 @@ impl Echo {
         let item_path = format!("temp_data.{}", cfg.bound);
         let index = get(ctx, &format!("{item_path}_index"))?;
         assert_eq!(
-            ctx.info().element_index.map(|i| json!(i)),
-            Some(index.clone()),
+            ctx.info().element_index.map_or(Value::Null, |i| json!(i)),
+            index,
             "the call's info and the binding agree"
         );
         let asks = asks(&get(ctx, &item_path)?);
@@ -213,6 +227,9 @@ impl Echo {
         }
         for (path, value) in &asks.writes {
             set(ctx, path, value)?;
+        }
+        for path in &asks.removes {
+            ctx.remove(&path.parse()?)?;
         }
         for (path, value) in &asks.appends {
             let mut list = match get(ctx, path)? {
@@ -266,6 +283,12 @@ fn fan(for_each: Value, extra: &[(&str, Value)]) -> Value {
         task[*key] = value.clone();
     }
     task
+}
+
+/// `echo` as a plain host call `id`, its asks at `temp_data.<bound>`.
+fn call(id: &str, bound: &str) -> Value {
+    json!({"id": id, "function": {"name": "echo", "input": {
+        "bound": bound, "by_eval": {"var": format!("temp_data.{bound}")}}}})
 }
 
 /// `map` setting `data.<id>_ran`: the workflow got this far.
@@ -455,6 +478,124 @@ async fn capture_changes_off_keeps_the_entries_and_the_results() {
             .iter()
             .all(|e| e["changes"] == json!([])),
         "no change captured, but every entry kept"
+    );
+}
+
+#[tokio::test]
+async fn a_host_call_and_a_fan_out_keep_what_the_audit_mode_keeps() {
+    // A host call, a fan-out of three and a `map`: six entries in full.
+    // `Off` keeps none and captures no change; `Last(n)` keeps the last `n`,
+    // each with its changes, cutting across the elements' entries.
+    let workflows = [workflow(
+        "w",
+        vec![
+            seed(
+                "temp_data.h",
+                json!({"id": "h", "w": [["data.h", 1]], "warn": true}),
+            ),
+            call("h", "h"),
+            fan(collect_into(), &[]),
+            mark("after"),
+        ],
+        &[],
+    )];
+    // `[task, element, changes]` of each entry kept.
+    let kept_by = |m: &Value| -> Value {
+        m["audit_trail"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                let changes = e["changes"].as_array().unwrap().len();
+                json!([e["task_id"], e["element_index"], changes])
+            })
+            .collect()
+    };
+    for (audit_off, audit, kept) in [
+        (true, None, json!([])),
+        (false, Some(2), json!([["t", 2, 3], ["after", null, 1]])),
+        (
+            false,
+            Some(4),
+            json!([["t", 0, 3], ["t", 1, 3], ["t", 2, 3], ["after", null, 1]]),
+        ),
+    ] {
+        let run = Run {
+            audit_off,
+            audit,
+            ..over(ab(3))
+        };
+        let (m, code, _) = same(&workflows, &run).await;
+        assert_eq!(code, "ok");
+        assert_eq!(kept_by(&m), kept, "audit_off {audit_off}, Last({audit:?})");
+        // Whatever the entries keep, the writes, the results and the
+        // records land.
+        assert_eq!(m["context"]["data"]["h"], json!(1));
+        assert_eq!(m["context"]["data"]["outs"][2], json!({"id": 2, "i": 2}));
+        assert_eq!(records(&m), [("WARNED".to_owned(), Value::Null)]);
+    }
+}
+
+#[tokio::test]
+async fn an_element_removes_over_the_runs_view_and_the_removal_is_replayed() {
+    // v3's `TaskContext` cannot remove, so this holds v4 to v3's fold rule
+    // as written (`remove_nested_value` for each removed `Change`, in
+    // element order) rather than to a twin. Each call removes over the
+    // run's view and its own binding, isolated: element 1 still sees
+    // `data.gone`, and records its removal, which removes nothing when
+    // replayed after element 0's. A removal below the binding is seen by
+    // its own call and recorded, and replays onto nothing; a removal of
+    // nothing records nothing.
+    let ps = json!([
+        {"id": "a", "w": [["data.keep.z", 3]], "rm": ["data.gone"]},
+        {"id": "b", "rm": ["data.gone", "data.keep.x"]},
+        {"id": "c", "rm": ["temp_data.p.id"]},
+        {"id": "d", "rm": ["data.never"]},
+    ]);
+    let e = v4_engine_with(&fanning(collect_into(), &[]), |b| {
+        b.register("echo", Echo::default())
+    })
+    .unwrap();
+    let run = data(json!({"ps": ps, "gone": 1, "keep": {"x": 1, "y": 2}}));
+    let (m, code, _) = on_v4(&e, &run).await;
+    let m: Value = serde_json::from_str(&m).unwrap();
+    assert_eq!(code, "ok");
+    let data = &m["context"]["data"];
+    assert!(data.get("gone").is_none());
+    assert_eq!(data["keep"], json!({"y": 2, "z": 3}));
+    assert_eq!(
+        data["outs"],
+        json!([{"id": "a", "i": 0}, {"id": "b", "i": 1}, {"id": null, "i": 2}, {"id": "d", "i": 3}])
+    );
+    let temp = &m["context"]["temp_data"];
+    assert!(temp.get("p").is_none() && temp.get("p_index").is_none());
+    let removals: Vec<Vec<Value>> = m["audit_trail"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["task_id"] == "t")
+        .map(|e| {
+            e["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|c| c["removed"] == json!(true))
+                .cloned()
+                .collect()
+        })
+        .collect();
+    let removal = |path: &str, old: Value| json!({"path": path, "old_value": old, "new_value": null, "removed": true});
+    assert_eq!(
+        removals,
+        [
+            vec![removal("data.gone", json!(1))],
+            vec![
+                removal("data.gone", json!(1)),
+                removal("data.keep.x", json!(1))
+            ],
+            vec![removal("temp_data.p.id", json!("c"))],
+            vec![],
+        ]
     );
 }
 
