@@ -1,16 +1,22 @@
 //! A host call's overlay: the writes one call makes, kept apart from the run
 //! until the call settles (05, "A host `Function`").
 //!
-//! As built it is the run log's trie, [`Writes`] (I87: Task 2 measures a
-//! plain list against it), behind the operations [`Ctx`](super::Ctx) uses,
-//! so a change of structure touches this file only.
+//! It holds the call's writes twice, behind the operations
+//! [`Ctx`](super::Ctx) uses, so a change of structure touches this file
+//! only (I87).
 //!
-//! The run log may hold a mark with no value, which its view supplies at the
-//! checkpoint. An overlay has no view of its own, so every mark it makes owns
-//! its value. A write is resolved against the call's own root, the base with
-//! the overlay spliced on (I87), and marked where it starts creating, with
-//! what it creates. Three writes the trie cannot hold by value at their own
-//! path are marked as a write of the container they change:
+//! The settle replays the writes as the call made them, in order, each at
+//! its own path, against the context as it stands when it runs. So overlays
+//! planned over one base compose, as v3's fold replays each element's
+//! `Change`s: an overlay applied after another's writes lands on them.
+//!
+//! Reads go through an index, the run log's trie, [`Writes`]. The run log
+//! may hold a mark with no value, which its view supplies at the checkpoint.
+//! An overlay has no view of its own, so every mark it makes owns its value.
+//! A write is resolved against the call's own root, the base with the index
+//! spliced on (I87), and marked where it starts creating, with what it
+//! creates. Three writes the trie cannot hold by value at their own path are
+//! marked as a write of the container they change:
 //!
 //! - an element written past an array's end, which pads the array with
 //!   `null`s no node stands for;
@@ -18,8 +24,9 @@
 //! - a key written again after this call removed it, which moves to the end
 //!   of its object.
 //!
-//! So the marks stay disjoint and owned, and splicing or applying them in
-//! the trie's order is the writes applied in the order they were made.
+//! So the marks stay disjoint and owned, and splicing them in the trie's
+//! order is the call's own root. Those container marks are planned against
+//! the call's base, which is why the settle never replays them.
 
 use crate::expr::arena::with_arena;
 use crate::expr::path;
@@ -31,7 +38,23 @@ use datavalue::{DataValue, OwnedDataValue};
 
 /// The writes of one call, in the order they were made.
 #[derive(Debug, Default)]
-pub(crate) struct Overlay(Writes);
+pub(crate) struct Overlay {
+    /// What the call's reads see: the writes resolved against its own root.
+    index: Writes,
+    /// The writes as the call made them, in order: what the settle replays.
+    writes: Vec<(Path, Write)>,
+}
+
+/// One write a call made, at the path it named.
+#[derive(Debug)]
+pub(crate) enum Write {
+    /// A value written. Replayed even when the call's own root could not
+    /// take it, since the context may take it when the settle runs, as v3
+    /// replays every `Change`.
+    Set(OwnedDataValue),
+    /// A value the call saw, removed.
+    Removed,
+}
 
 /// Where a write is marked, and with what: the path's resolved kinds, how
 /// many of its segments the mark sits at, and the mark.
@@ -40,16 +63,18 @@ type Planned = (u64, usize, Mark);
 impl Overlay {
     /// Whether the call has written nothing.
     pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.writes.is_empty()
     }
 
     /// Writes `value` at `path` over `base`, the root the call reads beneath
-    /// its own writes. A write that cannot land, below a scalar, does
-    /// nothing, as `Path::set` does.
+    /// its own writes. A write that cannot land, below a scalar, changes
+    /// nothing the call reads, as `Path::set` writes nothing, and is still
+    /// replayed by the settle.
     pub(crate) fn set(&mut self, base: DataValue<'_>, path: &Path, value: OwnedDataValue) {
+        self.writes.push((path.clone(), Write::Set(value.clone())));
         let segs = path.segs();
         if let Some((kinds, len, mark)) = self.over(base, |o, root| o.plan_set(root, segs, value)) {
-            self.0.mark(At::new(&segs[..len], kinds), mark);
+            self.index.mark(At::new(&segs[..len], kinds), mark);
         }
     }
 
@@ -57,7 +82,8 @@ impl Overlay {
     pub(crate) fn remove(&mut self, base: DataValue<'_>, path: &Path) {
         let segs = path.segs();
         if let Some((kinds, len, mark)) = self.over(base, |o, root| o.plan_remove(root, segs)) {
-            self.0.mark(At::new(&segs[..len], kinds), mark);
+            self.index.mark(At::new(&segs[..len], kinds), mark);
+            self.writes.push((path.clone(), Write::Removed));
         }
     }
 
@@ -66,10 +92,10 @@ impl Overlay {
     /// splices, or `Clean` when the overlay has nothing at, above or below
     /// it, and the base answers.
     pub(crate) fn lookup<'o>(&'o self, base: DataValue<'_>, path: &Path) -> Lookup<'o> {
-        if self.is_empty() {
+        if self.index.is_empty() {
             return Lookup::Clean;
         }
-        self.0
+        self.index
             .lookup(At::new(path.segs(), kinds(base, path.segs())))
     }
 
@@ -77,7 +103,7 @@ impl Overlay {
     /// are viewed, not copied.
     pub(crate) fn splice_onto<'a>(&'a self, root: DataValue<'a>, arena: &'a Bump) -> DataValue<'a> {
         let mut root = root;
-        self.0.visit(&mut |hops, mark| {
+        self.index.visit(&mut |hops, mark| {
             let segs = splice::segs_of(hops);
             root = match mark {
                 Mark::Set(Some(value)) => {
@@ -96,25 +122,18 @@ impl Overlay {
         root
     }
 
-    /// Applies every write, in order, through `rc`, whose view is the base
-    /// the call read. A write is not recorded again: the call recorded it.
-    pub(crate) fn apply(mut self, rc: &mut RunContext<'_, '_>) {
-        if self.is_empty() {
-            return;
-        }
-        let drained = self.0.drain();
-        debug_assert!(drained.reorder.is_empty(), "an overlay flags no reorder");
-        for dirty in drained.dirty {
-            let segs = splice::segs_of(&dirty.at);
-            match dirty.mark {
-                Mark::Set(Some(value)) => {
-                    rc.set_segs(&segs, value, None);
+    /// Replays every write through `rc`, in the order the call made them,
+    /// each at its own path, against the context as it stands: one that no
+    /// longer lands writes nothing. A write is not recorded again: the call
+    /// recorded it.
+    pub(crate) fn apply(self, rc: &mut RunContext<'_, '_>) {
+        for (path, write) in self.writes {
+            match write {
+                Write::Set(value) => {
+                    rc.set_segs(path.segs(), value, None);
                 }
-                Mark::Removed => {
-                    rc.remove_segs(&segs);
-                }
-                Mark::Set(None) | Mark::Appended { .. } => {
-                    unreachable!("an overlay's marks own their values")
+                Write::Removed => {
+                    rc.remove_segs(path.segs());
                 }
             }
         }
@@ -123,7 +142,7 @@ impl Overlay {
     /// `f` with the call's own root: `base` while nothing is written, else
     /// `base` with the overlay spliced on, in a pooled arena.
     fn over<R>(&self, base: DataValue<'_>, f: impl FnOnce(&Self, DataValue<'_>) -> R) -> R {
-        if self.is_empty() {
+        if self.index.is_empty() {
             return f(self, base);
         }
         with_arena(|arena| f(self, self.splice_onto(base, arena)))
@@ -183,8 +202,8 @@ impl Overlay {
     /// is gone, and holds no value for its object, under which a missing key
     /// is merely new.
     fn removed_here(&self, at: At<'_>) -> bool {
-        matches!(self.0.lookup(at), Lookup::Owned(None))
-            && !matches!(self.0.lookup(at.prefix(at.len() - 1)), Lookup::Owned(_))
+        matches!(self.index.lookup(at), Lookup::Owned(None))
+            && !matches!(self.index.lookup(at.prefix(at.len() - 1)), Lookup::Owned(_))
     }
 }
 
@@ -294,6 +313,80 @@ mod tests {
                 random::exact(&model),
                 "case {case}: applied"
             );
+        }
+    }
+
+    /// One write or removal a call makes over `own`, its own root, by
+    /// `Ctx`'s rules: a root takes only an object and is never removed, and
+    /// a removal is made only where the call sees a value. `None` when the
+    /// draw is none of these.
+    fn draw(rng: &mut Rng, own: &OwnedDataValue) -> Option<(Path, Option<OwnedDataValue>)> {
+        let path = random::rooted_path(rng, own).parse::<Path>().ok()?;
+        if rng.chance(1, 3) {
+            (!path.is_root() && path.get(own).is_some()).then_some((path, None))
+        } else {
+            let value = random::value(rng);
+            path.check_set(&value)
+                .is_ok()
+                .then_some((path, Some(value)))
+        }
+    }
+
+    /// `path` written with `value`, or removed, in an owned context: what
+    /// `Ctx::set` and `Ctx::remove` mean.
+    fn write(context: &mut OwnedDataValue, path: &Path, value: Option<&OwnedDataValue>) {
+        match value {
+            Some(value) => {
+                path.assign(context, value.clone());
+            }
+            None => {
+                path::remove(context, path.segs());
+            }
+        }
+    }
+
+    /// Two or three calls each plan their writes over one base, as a
+    /// fan-out's elements do, and their overlays are applied in call order
+    /// through one run context. That must equal every call's writes applied
+    /// in that order to one context: each write replayed at its own path,
+    /// against the context as it stands, as v3's fold replays each
+    /// element's `Change`s.
+    #[test]
+    fn overlays_planned_over_one_base_compose_in_order() {
+        let mut rng = Rng::new(0xc0_4405_e0f1);
+        for case in 0..1500 {
+            let owned = random::rooted_tree(&mut rng, 3);
+            let arena = Bump::new();
+            let base = owned.view_in(&arena);
+            let mut sequential = owned.clone();
+            let mut overlays = Vec::new();
+            for _ in 0..2 + rng.below(2) {
+                let mut overlay = Overlay::default();
+                let mut own = owned.clone();
+                for _ in 0..1 + rng.below(5) {
+                    let Some((path, value)) = draw(&mut rng, &own) else {
+                        continue;
+                    };
+                    write(&mut own, &path, value.as_ref());
+                    write(&mut sequential, &path, value.as_ref());
+                    match value {
+                        Some(value) => overlay.set(base, &path, value),
+                        None => overlay.remove(base, &path),
+                    }
+                }
+                overlays.push(overlay);
+            }
+            let mut slot = owned.clone();
+            let mut rc = RunContext::new(&mut slot, Tuning::default());
+            if rng.chance(1, 2) {
+                rc.read(|_, _| ());
+            }
+            for overlay in overlays {
+                overlay.apply(&mut rc);
+            }
+            rc.finish();
+            let (got, want) = (random::exact(&slot), random::exact(&sequential));
+            assert!(got == want, "case {case}: {}", random::diff(&got, &want));
         }
     }
 

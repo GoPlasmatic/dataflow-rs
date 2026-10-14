@@ -172,6 +172,7 @@ pub(crate) enum Lookup<'l> {
 }
 
 /// One topmost marked path and what the checkpoint must do there.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Dirty {
     /// Where the mark sits.
@@ -182,6 +183,7 @@ pub(crate) struct Dirty {
 
 /// Everything the checkpoint applies: the marks, in the order their paths
 /// were first marked, then the objects whose key order must follow the view.
+#[cfg(test)]
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Drained {
     /// The topmost marks.
@@ -750,10 +752,10 @@ impl Writes {
         }
     }
 
-    /// The topmost marks and the reorders, leaving the log empty.
+    /// The topmost marks and the reorders, leaving the log empty: what the
+    /// tests read the log's marks through.
+    #[cfg(test)]
     pub(crate) fn drain(&mut self) -> Drained {
-        // Marks are moved out, never cloned: an overlay's are the call's
-        // written values.
         fn walk(log: &mut Writes, n: u32, at: &mut Vec<Hop>, out: &mut Drained) {
             if let Some(mark) = log.nodes[n as usize].mark.take() {
                 return out.dirty.push(Dirty {

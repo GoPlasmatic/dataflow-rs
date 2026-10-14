@@ -412,6 +412,7 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::with_ctx;
     use super::*;
+    use crate::state::{RunContext, Tuning};
     use serde_json::{Value, json};
 
     fn send_sync<T: Send + Sync>() {}
@@ -492,11 +493,113 @@ mod tests {
             assert_eq!(get(&ctx, "data.s"), Some(json!("scalar")));
             ctx.settle()
         });
-        assert!(overlay.is_empty() && errors.is_empty());
+        assert!(errors.is_empty());
+        // The write is kept for the settle, which replays it where the
+        // context may take it, as v3 replays a `Change`; here it cannot.
+        let mut slot = OwnedDataValue::from(&context);
+        let mut rc = RunContext::new(&mut slot, Tuning::default());
+        overlay.apply(&mut rc);
+        rc.finish();
+        assert_eq!(Value::from(&slot), context);
         assert_eq!(
             serde_json::to_value(&changes).unwrap(),
             json!([{"path": "data.s.below", "old_value": null, "new_value": 1}])
         );
+    }
+
+    /// One call's writes: `(path, Some(value))`, or `(path, None)` for a
+    /// removal.
+    type Call<'a> = Vec<(&'a str, Option<Value>)>;
+
+    /// The run context over `context` after each call's writes are made
+    /// through a `Ctx` of its own over the run's one view, and the overlays
+    /// applied in call order, as a fan-out's elements settle. Wire text.
+    fn settled(context: &Value, calls: &[Call<'_>]) -> String {
+        let exprs = ExprEngine::default();
+        let payload = OwnedDataValue::Null;
+        let mut slot = OwnedDataValue::from(context);
+        let mut rc = RunContext::new(&mut slot, Tuning::default());
+        let mut overlays = Vec::new();
+        for writes in calls {
+            let mut ctx = Ctx::new(CallStart {
+                reader: rc.reader(),
+                binding: None,
+                payload: &payload,
+                exprs: &exprs,
+                info: info(),
+                primary: None,
+                deadline: None,
+                cancel: None,
+                capture: true,
+            });
+            for (dotted, value) in writes {
+                match value {
+                    Some(value) => ctx.set(&parse(dotted), OwnedDataValue::from(value)),
+                    None => ctx.remove(&parse(dotted)),
+                }
+                .unwrap();
+            }
+            overlays.push(ctx.settle().0);
+        }
+        for overlay in overlays {
+            overlay.apply(&mut rc);
+        }
+        rc.finish();
+        serde_json::to_string(&slot).unwrap()
+    }
+
+    /// Calls planned over one base, then settled in order, end as one call
+    /// making all their writes in that order would: each write lands at its
+    /// own path on the writes before it. Two keys under a parent neither
+    /// call's base has, then the three cases a write of a whole container
+    /// would lose: padding, an element's removal, a key written after its
+    /// removal.
+    #[test]
+    fn calls_settled_in_order_end_as_one_call_making_their_writes() {
+        // The data root before, each call's writes, and the data root after
+        // as wire text: key order is part of what is checked.
+        let cases: [(Value, Vec<Call<'_>>, &str); 4] = [
+            (
+                json!({}),
+                vec![
+                    vec![("data.prices.a", Some(json!(1)))],
+                    vec![("data.prices.b", Some(json!(2)))],
+                ],
+                r#"{"prices":{"a":1,"b":2}}"#,
+            ),
+            (
+                json!({"list": [1, 2]}),
+                vec![
+                    vec![("data.list.4", Some(json!(5)))],
+                    vec![("data.list.3", Some(json!(4)))],
+                ],
+                r#"{"list":[1,2,null,4,5]}"#,
+            ),
+            (
+                json!({"list": [1, 2, 3]}),
+                vec![vec![("data.list.0", None)], vec![("data.list.2", None)]],
+                r#"{"list":[2,3]}"#,
+            ),
+            (
+                json!({"a": 1, "b": 2}),
+                vec![
+                    vec![("data.b", Some(json!(5)))],
+                    vec![("data.a", None), ("data.a", Some(json!(3)))],
+                ],
+                r#"{"b":5,"a":3}"#,
+            ),
+        ];
+        for (data, calls, want) in cases {
+            let context = json!({"data": data, "metadata": {}, "temp_data": {}});
+            let want = format!(r#"{{"data":{want},"metadata":{{}},"temp_data":{{}}}}"#);
+            let one_call = vec![calls.concat()];
+            assert_eq!(settled(&context, &one_call), want, "one call: {calls:?}");
+            assert_eq!(
+                settled(&context, &calls),
+                want,
+                "settled in order: {calls:?}"
+            );
+        }
     }
 
     #[test]
