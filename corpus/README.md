@@ -127,7 +127,8 @@ are refused.
 - an `outcome` template, evaluated last: `"success"`, `"skip"`, `"halt"`, `{"status": n}`, or
   `{"error": {"variant", "code", "message", "status", "retryable"}}`.
 
-See `v3/src/script.rs`. v4 ports exactly this function to replay the corpus.
+See `v3/src/script.rs`. v4 ports this function to replay the corpus (`v4/src/script.rs`), with
+four differences its module doc lists: one is break 2a, and no case exercises the other three.
 
 ## Recording
 

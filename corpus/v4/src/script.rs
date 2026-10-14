@@ -12,6 +12,22 @@
 //! An error `outcome` is v3's variant as a service error carrying v3's code
 //! and v3's `Display` text, so the record the engine writes, "Task {id}
 //! error: {text}", is byte-equal to v3's.
+//!
+//! It differs from v3's `script` in four ways:
+//!
+//! - an unknown key is refused, as every derived v4 config refuses one,
+//!   where v3's serde accepted it: break 2a, which
+//!   `expressions/host_config_stray_key` declares;
+//! - a write naming none, or more than one, of `value`, `get` and `raw` is
+//!   refused at compile, where v3 failed the call with `VALIDATION_ERROR`;
+//! - `yields` is an `Expr<u64>`, so a value that is not a `u64` is an `Eval`
+//!   error, where v3 read it as 0;
+//! - `"raw": null` is present, a write of `null`, where v3's serde read it as
+//!   absent and so failed the call.
+//!
+//! No case exercises the last three. A case that does would meet a
+//! difference of this port, not of the engine, and must not declare it as a
+//! deviation.
 
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::expr::CompileCx;
