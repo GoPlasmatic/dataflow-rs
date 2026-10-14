@@ -155,10 +155,19 @@ pub(crate) struct Parts<'a> {
     pub(crate) errors: &'a mut Vec<ErrorRecord>,
 }
 
+thread_local! {
+    /// The v7 context a thread's message ids are made with. One per thread,
+    /// so making an id takes no lock: uuid's process-wide context (v3's
+    /// `Uuid::now_v7`) serialises every message's construction across a
+    /// host's worker threads behind one mutex.
+    static IDS: uuid::ContextV7 = const { uuid::ContextV7::new() };
+}
+
 impl Message {
-    /// A message with a fresh UUID v7 id, as v3. A payload passed as an
-    /// `Arc` is shared, not copied: messages built from one `Arc` hold one
-    /// payload.
+    /// A message with a fresh UUID v7 id, as v3. Ids made on one thread sort
+    /// in the order they were made; ids made in the same millisecond on two
+    /// threads are distinct but not ordered. A payload passed as an `Arc` is
+    /// shared, not copied: messages built from one `Arc` hold one payload.
     pub fn new(payload: impl Into<Arc<OwnedDataValue>>) -> Self {
         Self::from_parts(payload, OwnedDataValue::Null, OwnedDataValue::Null)
     }
@@ -174,7 +183,10 @@ impl Message {
         // Encoded into a buffer, not `to_string`, which formats through
         // `Display`: the same lowercase hyphenated text.
         let mut id = [0u8; uuid::fmt::Hyphenated::LENGTH];
-        let id = String::from(&*uuid::Uuid::now_v7().hyphenated().encode_lower(&mut id));
+        let uuid = uuid::Uuid::new_v7(uuid::Timestamp::now(
+            uuid::timestamp::context::ThreadLocalContext::new(&IDS),
+        ));
+        let id = String::from(&*uuid.hyphenated().encode_lower(&mut id));
         Self {
             id,
             payload: payload.into(),
@@ -404,6 +416,32 @@ mod tests {
             Message::from_json(&json!({"a": 1})).payload(),
             &OwnedDataValue::from(&json!({"a": 1}))
         );
+    }
+
+    #[test]
+    fn ids_made_on_one_thread_sort_in_the_order_they_were_made() {
+        let ids: Vec<String> = (0..10_000)
+            .map(|_| Message::new(OwnedDataValue::Null).id().to_owned())
+            .collect();
+        assert!(ids.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn ids_made_on_several_threads_are_distinct() {
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    (0..10_000)
+                        .map(|_| Message::new(OwnedDataValue::Null).id().to_owned())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        let ids: std::collections::HashSet<String> = threads
+            .into_iter()
+            .flat_map(|t| t.join().unwrap())
+            .collect();
+        assert_eq!(ids.len(), 40_000);
     }
 
     #[test]

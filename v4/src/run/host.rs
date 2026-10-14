@@ -100,44 +100,47 @@ pub(crate) struct Invoked {
 /// value at `collect` read as the call sees it once it returned `Ok`, the
 /// `Ctx` settled. A call the limits cut short, before it starts or while it
 /// runs, gives `Err` of kind `TimedOut` or `Cancelled`, naming the function.
-pub(crate) async fn invoke<'r>(
+///
+/// The future holds the `Ctx` and not `start` beside it, and the race is
+/// boxed, made only when a limit is set: the run's future, which a host
+/// spawns once per message, carries neither the timer's state nor a second
+/// copy of the call's start.
+pub(crate) fn invoke<'r>(
     start: CallStart<'r>,
     bound: &'r dyn BoundCall,
     layers: Layers<'r>,
     collect: Option<&Path>,
-) -> Invoked {
+) -> impl Future<Output = Invoked> {
     let limits = Limits {
         deadline: start.deadline,
         cancel: start.cancel,
     };
     let function = start.info.function;
     let mut ctx = Ctx::new(start);
-    let ran = match limits.stop() {
-        Some(stop) => Err(stop),
-        None => {
-            race(
-                Next::new(layers.run, layers.registry, bound).run(&mut ctx),
-                limits,
-            )
-            .await
+    async move {
+        let chain = Next::new(layers.run, layers.registry, bound);
+        let ran = match limits.stop() {
+            Some(stop) => Err(stop),
+            None if !limits.is_set() => Ok(chain.run(&mut ctx).await),
+            None => Box::pin(race(chain.run(&mut ctx), limits)).await,
+        };
+        let (result, cut_short) = match ran {
+            Ok(result) => (result, false),
+            Err(stop) => (Err(stop.during(function)), true),
+        };
+        let collected = match collect {
+            Some(path) if result.is_ok() => ctx.get(path).map(Cow::into_owned),
+            _ => None,
+        };
+        let (overlay, changes, errors) = ctx.settle();
+        Invoked {
+            result,
+            overlay,
+            changes,
+            errors,
+            collected,
+            cut_short,
         }
-    };
-    let (result, cut_short) = match ran {
-        Ok(result) => (result, false),
-        Err(stop) => (Err(stop.during(function)), true),
-    };
-    let collected = match collect {
-        Some(path) if result.is_ok() => ctx.get(path).map(Cow::into_owned),
-        _ => None,
-    };
-    let (overlay, changes, errors) = ctx.settle();
-    Invoked {
-        result,
-        overlay,
-        changes,
-        errors,
-        collected,
-        cut_short,
     }
 }
 

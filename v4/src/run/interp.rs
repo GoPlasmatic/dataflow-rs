@@ -238,7 +238,9 @@ pub(crate) async fn run_workflow<'p>(
                     let task = &wf.tasks[site.task as usize].id;
                     return (Exit::Stopped(builtin_fan_out(task)), selection);
                 };
-                fan_out(rc, env, wf, site, &wf.fans[fan as usize], &**bound).await
+                // Boxed: a fan-out's state stays out of the run's future,
+                // which a host spawns once per message.
+                Box::pin(fan_out(rc, env, wf, site, &wf.fans[fan as usize], &**bound)).await
             }
             Op::LoopInit { lp, exit_to } => loop_init(rc, env, &wf.loops[lp as usize], exit_to),
             Op::LoopNext {
