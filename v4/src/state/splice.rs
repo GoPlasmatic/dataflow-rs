@@ -407,7 +407,8 @@ impl Resolved {
     }
 }
 
-/// One resolved step of a path: what the write log is keyed by.
+/// One resolved step of a path: what the tests read the write log's keys as.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum Hop {
     /// A key on an object.
@@ -416,6 +417,7 @@ pub(crate) enum Hop {
     Index(usize),
 }
 
+#[cfg(test)]
 impl Hop {
     /// The segment that addresses exactly this hop: a key never reads as an
     /// index, and an index is spelled in decimal.
@@ -427,8 +429,8 @@ impl Hop {
     }
 }
 
-/// The segments that address `hops` exactly: how a host call's overlay,
-/// keyed by hops, is spliced and applied.
+/// The segments that address `hops` exactly.
+#[cfg(test)]
 pub(crate) fn segs_of(hops: &[Hop]) -> Vec<Seg> {
     hops.iter().map(Hop::to_seg).collect()
 }

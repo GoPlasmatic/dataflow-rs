@@ -88,6 +88,7 @@ impl Seg {
     }
 
     /// The segment naming array element `i`: its key is `i`'s text.
+    #[cfg(test)]
     pub(crate) fn index(i: usize) -> Self {
         let key = i.to_string();
         Self {

@@ -11,5 +11,8 @@ mod writes;
 
 pub(crate) use run::{Edit, Reader, RunContext, Stats, Tuning};
 pub(crate) use splice::kind;
-// `Owner` is re-exported by the first code outside `state` that names it.
-pub(crate) use writes::{At, Lookup, Mark, Writes};
+pub(crate) use writes::Lookup;
+// What only the tests name from outside `writes` so far. `Owner` and `At` are
+// re-exported by the first code outside `state` that names them.
+#[cfg(test)]
+pub(crate) use writes::{Mark, Writes};

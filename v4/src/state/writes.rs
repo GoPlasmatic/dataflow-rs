@@ -16,6 +16,7 @@
 //! them resolved to an array index. Nothing is allocated to ask the log about
 //! a path; a [`Hop`] is built only when the log keeps a new node.
 
+#[cfg(test)]
 use super::splice::Hop;
 use crate::expr::Seg;
 use crate::expr::path;
@@ -643,9 +644,9 @@ impl Writes {
         node.last = NONE;
     }
 
-    /// Every topmost mark under `n`, with its path built: for `visit`, which
-    /// only a call's small overlay uses.
-    fn each<'s>(&'s self, n: u32, at: &mut Vec<Hop>, f: &mut dyn FnMut(&[Hop], &'s Node)) {
+    /// Every topmost mark under `n`, with its path built: for `visit`.
+    #[cfg(test)]
+    fn each(&self, n: u32, at: &mut Vec<Hop>, f: &mut dyn FnMut(&[Hop], &Node)) {
         let node = &self.nodes[n as usize];
         if node.mark.is_some() || node.reorder {
             f(at, node);
@@ -663,6 +664,7 @@ impl Writes {
     }
 
     /// The hop a node's key names.
+    #[cfg(test)]
     fn hop(&self, key: Key) -> Hop {
         match key {
             Key::Name { start, len, .. } => Hop::Key(self.name(start, len).into()),
@@ -720,10 +722,10 @@ impl Writes {
         }
     }
 
-    /// Every topmost mark, without draining: how a call's reads see its own
-    /// overlay. A mark is lent for as long as the log, so its value can be
-    /// viewed rather than copied.
-    pub(crate) fn visit<'s>(&'s self, f: &mut dyn FnMut(&[Hop], &'s Mark)) {
+    /// Every topmost mark, without draining: what the tests read the log's
+    /// marks through.
+    #[cfg(test)]
+    pub(crate) fn visit(&self, f: &mut dyn FnMut(&[Hop], &Mark)) {
         self.each(0, &mut Vec::new(), &mut |at, node| {
             if let Some(mark) = &node.mark {
                 f(at, mark);

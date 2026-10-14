@@ -241,26 +241,33 @@ impl<'r> Ctx<'r> {
     /// run's context. Borrowed unless only the run's view or this call's
     /// writes below `path` know it, when it is converted.
     pub fn get(&self, path: &Path) -> Option<Cow<'_, OwnedDataValue>> {
-        if !self.overlay.is_empty() {
-            let written = with_base(self.reader, self.binding, |base| {
-                match self.overlay.lookup(base, path) {
-                    Lookup::Clean => None,
-                    Lookup::Owned(v) => Some(v.map(Cow::Borrowed)),
-                    // Written below: read off the root `eval` sees.
-                    Lookup::Dirty => Some(with_arena(|arena| {
-                        splice::get(*self.root_in(arena), path.segs())
-                            .map(|v| Cow::Owned(v.to_owned()))
-                    })),
-                }
-            });
-            if let Some(found) = written {
-                return found;
+        match self.overlay.lookup(path) {
+            Lookup::Clean => {}
+            Lookup::Owned(v) => return v.map(Cow::Borrowed),
+            // Written below: read off the root `eval` sees.
+            Lookup::Dirty => {
+                return with_arena(|arena| {
+                    splice::get(*self.root_in(arena), path.segs()).map(|v| Cow::Owned(v.to_owned()))
+                });
             }
         }
         if let Some(found) = self.binding.and_then(|b| b.get(path, *self.reader.root)) {
             return found;
         }
         self.reader.get(path)
+    }
+
+    /// Whether this call sees a value at `path`, converting none.
+    fn holds(&self, path: &Path) -> bool {
+        match self.overlay.lookup(path) {
+            Lookup::Owned(v) => v.is_some(),
+            Lookup::Dirty => {
+                with_arena(|arena| splice::get(*self.root_in(arena), path.segs()).is_some())
+            }
+            Lookup::Clean => with_base(self.reader, self.binding, |base| {
+                splice::get(base, path.segs()).is_some()
+            }),
+        }
     }
 
     /// Evaluates `expr` against the context as this call sees it. A folded
@@ -335,21 +342,16 @@ impl<'r> Ctx<'r> {
     /// root (R52).
     pub fn remove(&mut self, path: &Path) -> Result<()> {
         path.check_remove()?;
-        let old_value = match self.get(path) {
-            None => return Ok(()),
-            Some(old) => self.capture.then(|| old.into_owned()),
-        };
-        if let Some(old_value) = old_value {
+        if self.capture {
+            let Some(old_value) = self.get(path).map(Cow::into_owned) else {
+                return Ok(());
+            };
             self.changes
                 .push(Change::removal(Arc::clone(path.dotted()), old_value));
+        } else if !self.holds(path) {
+            return Ok(());
         }
-        let Self {
-            reader,
-            binding,
-            overlay,
-            ..
-        } = self;
-        with_base(*reader, *binding, |base| overlay.remove(base, path));
+        self.overlay.remove(path);
         Ok(())
     }
 
@@ -505,6 +507,48 @@ mod tests {
             serde_json::to_value(&changes).unwrap(),
             json!([{"path": "data.s.below", "old_value": null, "new_value": 1}])
         );
+    }
+
+    #[test]
+    fn a_removal_without_capture_removes_what_the_call_sees_and_records_nothing() {
+        let context = json!({"data": {"a": 1, "list": [1, 2]}, "metadata": {}, "temp_data": {}});
+        let exprs = ExprEngine::default();
+        let payload = OwnedDataValue::Null;
+        let mut slot = OwnedDataValue::from(&context);
+        let mut rc = RunContext::new(&mut slot, Tuning::default());
+        let mut ctx = Ctx::new(CallStart {
+            reader: rc.reader(),
+            binding: None,
+            payload: &payload,
+            exprs: &exprs,
+            info: info(),
+            primary: None,
+            deadline: None,
+            cancel: None,
+            capture: false,
+        });
+        // A value of the run's, one the call wrote, nothing, and an element
+        // the call's own removal moved: after it, `list.1` holds nothing.
+        for (dotted, write) in [
+            ("data.a", None),
+            ("data.b", Some(2)),
+            ("data.b", None),
+            ("data.absent", None),
+            ("data.list.0", None),
+            ("data.list.1", None),
+        ] {
+            match write {
+                Some(n) => ctx.set(&parse(dotted), OwnedDataValue::from(n)),
+                None => ctx.remove(&parse(dotted)),
+            }
+            .unwrap();
+        }
+        assert_eq!(get(&ctx, "data"), Some(json!({"list": [2]})));
+        let (overlay, changes, errors) = ctx.settle();
+        assert!(changes.is_empty() && errors.is_empty());
+        overlay.apply(&mut rc);
+        rc.finish();
+        assert_eq!(Value::from(&slot)["data"], json!({"list": [2]}));
     }
 
     /// One call's writes: `(path, Some(value))`, or `(path, None)` for a
