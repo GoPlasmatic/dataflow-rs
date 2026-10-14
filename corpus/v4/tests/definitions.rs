@@ -81,13 +81,18 @@ fn v4_compiles_every_corpus_definition_as_v3_built_it() {
                     Some(at) => {
                         used[at] += 1;
                         let (_, _, allowed, rows) = DEVIATED[at];
-                        let allowed: Vec<&str> = allowed.split(", ").collect();
-                        match breaks.iter().find(|b| !allowed.contains(b)) {
-                            Some(b) => Some(format!(
+                        if let Some(b) = breaks.iter().find(|b| !allowed.contains(b)) {
+                            Some(format!(
                                 "deviated by break {b}, which its expect::DEVIATED row does \
                                  not name"
-                            )),
-                            None => compare(&rows.iter().map(Row::from).collect::<Vec<_>>(), &got),
+                            ))
+                        } else if let Some(b) = allowed.iter().find(|b| !breaks.contains(b)) {
+                            Some(format!(
+                                "its expect::DEVIATED row names break {b}, which no deviation \
+                                 covering it declares"
+                            ))
+                        } else {
+                            compare(&rows.iter().map(Row::from).collect::<Vec<_>>(), &got)
                         }
                     }
                 }

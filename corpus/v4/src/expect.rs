@@ -54,8 +54,14 @@ pub fn compared(row: &Row) -> bool {
 pub type Reported = (&'static str, &'static str, &'static str);
 
 /// One deviated definition: (case, definition index, the breaks that allow
-/// it, and every issue v4 reports for it).
-pub type Deviated = (&'static str, usize, &'static str, &'static [Reported]);
+/// it, and every issue v4 reports for it). The breaks are exactly those of
+/// the case's deviations covering the definition, in any order.
+pub type Deviated = (
+    &'static str,
+    usize,
+    &'static [&'static str],
+    &'static [Reported],
+);
 
 /// Every definition a deviation covers, and everything v4 reports for it,
 /// unfiltered, each issue in the order v4 reports them.
@@ -65,12 +71,12 @@ pub type Deviated = (&'static str, usize, &'static str, &'static [Reported]);
 /// `v4/tests/repository_definitions.rs`, the UI's `path` in `v4/tests/parse.rs`,
 /// and both spellings at once in `v4/tests/compat.rs`.
 pub const DEVIATED: &[Deviated] = &[
-    ("breaks/name_required", 0, "6", &[]),
-    ("breaks/name_required", 1, "6", &[]),
+    ("breaks/name_required", 0, &["6"], &[]),
+    ("breaks/name_required", 1, &["6"], &[]),
     (
         "breaks/path_outside_roots",
         0,
-        "15",
+        &["15"],
         &[(
             "INVALID_PATH",
             "REJECTED",
@@ -80,7 +86,7 @@ pub const DEVIATED: &[Deviated] = &[
     (
         "breaks/unknown_keys",
         0,
-        "2",
+        &["2"],
         &[
             ("LIKELY_TYPO", "DEFECT", "conditon"),
             ("UNKNOWN_KEY", "ADVISORY", "path"),
@@ -89,37 +95,37 @@ pub const DEVIATED: &[Deviated] = &[
     (
         "breaks/unknown_keys",
         1,
-        "2",
+        &["2"],
         &[("LIKELY_TYPO", "DEFECT", "tasks[0].conditon")],
     ),
     (
         "breaks/unknown_keys",
         2,
-        "2",
+        &["2"],
         &[("LIKELY_TYPO", "DEFECT", "loop.maxx")],
     ),
     (
         "breaks/unknown_keys",
         3,
-        "2",
+        &["2"],
         &[("LIKELY_TYPO", "DEFECT", "tasks[0].for_each.ass")],
     ),
     (
         "breaks/unknown_keys",
         4,
-        "2",
+        &["2"],
         &[("LIKELY_TYPO", "DEFECT", "rollout.bucket_strat")],
     ),
     (
         "breaks/unknown_keys",
         5,
-        "2",
+        &["2"],
         &[("LIKELY_TYPO", "DEFECT", "tasks[0].function.input.targte")],
     ),
     (
         "builtins/integration_configs",
         0,
-        "3, 10",
+        &["3", "10"],
         &[
             ("V3_SPELLING", "ADVISORY", "continue_on_error"),
             ("V3_SPELLING", "ADVISORY", "tasks[0].continue_on_error"),
@@ -133,13 +139,13 @@ pub const DEVIATED: &[Deviated] = &[
     (
         "builtins/integration_configs",
         1,
-        "3, 10",
+        &["3", "10"],
         &[("UNKNOWN_FUNCTION", "REJECTED", "tasks[0].function.name")],
     ),
     (
         "builtins/pre39_spellings",
         0,
-        "8, 3",
+        &["8", "3"],
         &[
             ("V3_SPELLING", "ADVISORY", "continue_on_error"),
             ("V3_SPELLING", "ADVISORY", "tasks[0].continue_on_error"),
@@ -179,7 +185,7 @@ pub const DEVIATED: &[Deviated] = &[
     (
         "builtins/pre39_spellings",
         1,
-        "8",
+        &["8"],
         &[(
             "PARSE_FAILED",
             "REJECTED",
@@ -189,19 +195,19 @@ pub const DEVIATED: &[Deviated] = &[
     (
         "builtins/validate_alias",
         0,
-        "8",
+        &["8"],
         &[("V3_SPELLING", "ADVISORY", "tasks[0].function.name")],
     ),
     (
         "builtins/validation",
         0,
-        "8",
+        &["8"],
         &[("UNGUARDED_VALIDATION", "ADVISORY", "tasks[0].on_rejection")],
     ),
     (
         "expressions/dollar_escape",
         0,
-        "14",
+        &["14"],
         &[
             (
                 "ESCAPED_TEMPLATE_KEY",
@@ -218,13 +224,13 @@ pub const DEVIATED: &[Deviated] = &[
     (
         "expressions/host_config_stray_key",
         0,
-        "2a",
+        &["2a"],
         &[("UNKNOWN_KEY", "REJECTED", "tasks[0].function.input.colour")],
     ),
     (
         "expressions/payload_not_in_context",
         0,
-        "9",
+        &["9"],
         &[(
             "PAYLOAD_VAR",
             "DEFECT",

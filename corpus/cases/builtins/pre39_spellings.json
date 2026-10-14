@@ -17,6 +17,6 @@
   "steps": [{"run": {"message": {"data": {"id": 7, "obj": {"a": 1}}}}}],
   "deviations": [
     {"break": "8", "paths": ["/definitions/0/authored", "/definitions/1"], "note": "v4's compat reader rewrites each alias with an Advisory"},
-    {"break": "3", "paths": ["/build", "/steps"], "note": "no handler is registered, which v4 reports at compile"}
+    {"break": "3", "paths": ["/definitions/0/checked", "/build", "/steps"], "note": "no handler is registered, which v4 reports at compile"}
   ]
 }
