@@ -8,7 +8,8 @@ this reads only that line.
         Build every example in release from a clean tree, copy the 13 gate
         binaries out of target/, and write DIR/build.json (commit, rustc, date).
         With --v4, build `cargo build --release -p dataflow-rs-v4 --examples`
-        instead and copy the ports v4 has (V4_BENCHES),
+        instead and copy the ports v4 has (V4_BENCHES: twelve, every bench
+        but `observed_run`, and the self-judged `host_call_floor`),
         target/release/examples/v4_<name>, to DIR/<name>: a v4 directory then
         holds the names a v3 one does, and `compare` reads the two alike.
 
@@ -26,13 +27,17 @@ this reads only that line.
         max(3%, half the inter-quartile range of the ratios). B is WORSE when
         the median ratio is above 1 + noise, better when it is below
         1 - noise, and "not slower" otherwise. A row whose gate is "Faster"
-        (FASTER_ROWS) reads faster when the median ratio is below 1 - noise
-        and NOT FASTER otherwise, but only when A's build.json says v3 and B's
-        says v4; between two builds of one engine every row is judged
-        better / not slower / WORSE. A bench may judge its metrics apart
-        (METRIC_RULES): a metric takes the rule of the first prefix of its
-        name listed there, else its bench's, and an "info" metric prints its
-        medians and ratio with no verdict and never fails the gate. A metric
+        (FASTER_ROWS: every metric of `loop_scaling`, its `map` and `handler`
+        rows alike, and of `fan_out`) reads faster when the median ratio is
+        below 1 - noise and NOT FASTER otherwise, but only when A's build.json
+        says v3 and B's says v4; between two builds of one engine every row is
+        judged better / not slower / WORSE. A bench may judge its metrics
+        apart (METRIC_RULES): a metric takes the rule of the first prefix of
+        its name listed there, else its bench's, and an "info" metric prints
+        its medians and ratio with no verdict and never fails the gate
+        (`large_context_handler`'s `with_view` and `per_field` are "faster",
+        its `write_only` and `async_handler_benchmark.marginal` info). Every
+        other bench, `orion_connector` among them, is "not slower". A metric
         only one side reports is listed as such and not judged. Exit status is
         1 if any verdict is WORSE or NOT FASTER.
 
@@ -79,8 +84,9 @@ BENCHES = [
 
 
 # The benchmarks v4 ports (`v4/examples/v4_<name>.rs`), in BENCHES order: the
-# eight sync ones of phase 4, then phase 5's host-call rows as they land, with
-# the self-judged `host_call_floor` beside the row whose floor it gates.
+# eight sync ones of phase 4 and phase 5's four host-call rows, twelve ports,
+# with the self-judged `host_call_floor` beside the row whose floor it gates.
+# `observed_run` waits for phase 6's observer.
 V4_BENCHES = [
     "realistic_benchmark",
     "benchmark",
@@ -93,10 +99,15 @@ V4_BENCHES = [
     "map_performance_test",
     "loop_scaling",
     "large_context_handler",
+    "fan_out",
+    "orion_connector",
 ]
 
-# The rows whose gate is "Faster" rather than "Not slower" (design 06).
-FASTER_ROWS = {"loop_scaling"}
+# The rows whose gate is "Faster" rather than "Not slower" (design 06), every
+# metric of each: `loop_scaling`'s `handler` rows with its `map` ones (I95),
+# and `fan_out`. `orion_connector` is "not slower", as every bench not listed
+# here or in METRIC_RULES.
+FASTER_ROWS = {"loop_scaling", "fan_out"}
 
 # Per-metric rules, for a bench whose metrics are not all judged alike (I95):
 # a metric takes the rule of the first prefix of its name listed under its
