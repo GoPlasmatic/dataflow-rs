@@ -105,10 +105,6 @@ pub(crate) struct FanSite {
 }
 
 /// A workflow's loop. Each slot is a `temp_data` path.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the lowering and the runtime")
-)]
 pub(crate) struct LoopSite {
     pub(crate) init: i64,
     pub(crate) increment: i64,

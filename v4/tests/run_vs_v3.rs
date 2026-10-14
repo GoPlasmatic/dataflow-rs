@@ -4,66 +4,17 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // terminal groups, task, group and workflow conditions, every built-in, every
 // policy combination, and workflows chained through `metadata.progress`. Each
 // set of workflows is built once on each side and run over several messages;
-// what is compared is each message's wire text and the outcome's code.
-//
-// The text is normalised as the corpus normalises it: `processed_at`,
-// `engine_version` and the audit and error timestamps. One more difference
-// is removed, and it is break 4: v3 records a `WORKFLOW_ERROR` wrapper for a
-// workflow whose failure stops it or is stepped past (`continue_on_error` on
-// the workflow), and v4 records none. v3's `WORKFLOW_ERROR` records are
-// dropped before comparing.
+// what is compared is each message's wire text and the outcome's code, as
+// `support/vs_v3.rs` normalises them (break 4's `WORKFLOW_ERROR` dropped).
 //
 // Only Active workflows appear without a channel: v3 also runs Paused ones
 // there, which break 7 removes.
 
-use dataflow_corpus::json::Json;
-use dataflow_corpus::normalise;
-use dataflow_rs::run::{AuditMode, RunStatus};
-use dataflow_rs::{Engine, Message, RunOptions};
-use datavalue::OwnedDataValue;
+#[path = "support/vs_v3.rs"]
+mod vs_v3;
+
 use serde_json::{Value, json};
-
-/// One run: the message's seeds and the run's options.
-#[derive(Clone, Default)]
-struct Run {
-    payload: Value,
-    data: Value,
-    metadata: Value,
-    channel: Option<&'static str>,
-    bucket: Option<u8>,
-    audit: Option<usize>,
-}
-
-fn data(data: Value) -> Run {
-    Run {
-        data,
-        ..Run::default()
-    }
-}
-
-/// Adds `name` (its id) to the workflow and to every task that lacks one:
-/// v3 requires it on both (break 6), and a group needs none.
-fn named(mut workflow: Value) -> Value {
-    fn name(node: &mut Value) {
-        if node.get("name").is_none() {
-            node["name"] = node["id"].clone();
-        }
-    }
-    fn steps(node: &mut Value) {
-        if let Some(Value::Array(tasks)) = node.get_mut("tasks") {
-            for step in tasks {
-                if step.get("function").is_some() {
-                    name(step);
-                } else {
-                    steps(step);
-                }
-            }
-        }
-    }
-    name(&mut workflow);
-    steps(&mut workflow);
-    workflow
-}
+use vs_v3::{Run, data, on_v3, on_v4, v3_engine, v4_engine};
 
 /// A `map` task appending `item` at `data.order`, so the order tasks ran in
 /// is in the message.
@@ -465,104 +416,28 @@ fn selection() -> (Vec<Value>, Vec<Run>) {
     (workflows, runs)
 }
 
-/// v3's build of `workflows`, run over `run`: the normalised wire text,
-/// `WORKFLOW_ERROR` records dropped (break 4), and the outcome's code.
-async fn on_v3(engine: &dataflow_rs_v3::Engine, run: &Run) -> (String, String) {
-    let mut builder = dataflow_rs_v3::Message::builder()
-        .id("m")
-        .payload_json(&run.payload)
-        .data_json(&run.data)
-        .metadata_json(&run.metadata);
-    if let Some(bucket) = run.bucket {
-        builder = builder.routing_bucket(bucket);
-    }
-    if let Some(n) = run.audit {
-        builder = builder.audit_mode(dataflow_rs_v3::AuditMode::Last(n));
-    }
-    let mut message = builder.build();
-    let result = match run.channel {
-        Some(channel) => {
-            engine
-                .process_message_for_channel(channel, &mut message)
-                .await
-        }
-        None => engine.process_message(&mut message).await,
-    };
-    let code = match result {
-        Ok(()) => "ok".to_owned(),
-        Err(e) => dataflow_rs_v3::ErrorInfo::new(None, None, e).code,
-    };
-    (normalised(&message, true), code)
-}
-
-async fn on_v4(engine: &Engine, run: &Run) -> (String, String) {
-    let mut message = Message::from_parts(
-        OwnedDataValue::from(&run.payload),
-        OwnedDataValue::from(&run.data),
-        OwnedDataValue::from(&run.metadata),
-    )
-    .with_id("m");
-    let mut opts = RunOptions::default();
-    if let Some(channel) = run.channel {
-        opts = opts.channel(channel);
-    }
-    if let Some(bucket) = run.bucket {
-        opts = opts.routing_bucket(bucket);
-    }
-    if let Some(n) = run.audit {
-        opts = opts.audit(AuditMode::Last(n));
-    }
-    let result = engine.run_with(&mut message, &opts).await;
-    let code = match result.status() {
-        RunStatus::Stopped(e) => e.code().to_owned(),
-        _ => "ok".to_owned(),
-    };
-    (normalised(&message, false), code)
-}
-
-/// The wire text, normalised; without `WORKFLOW_ERROR` records when `v3`.
-fn normalised(message: &impl serde::Serialize, v3: bool) -> String {
-    let text = serde_json::to_string(message).expect("a message serializes");
-    let mut json = Json::from_text(&text).expect("a message parses");
-    if v3 && let Some(Json::Array(errors)) = json.get_mut("errors") {
-        errors.retain(|e| e.get("code") != Some(&Json::str("WORKFLOW_ERROR")));
-    }
-    normalise::message(&mut json, None);
-    json.to_text()
-}
-
 #[tokio::test]
 async fn linear_workflows_match_v3() {
     let mut sets = vec![groups(), builtins(), chained(), selection()];
     sets.extend(policies());
     let mut compared = 0;
     for (i, (workflows, runs)) in sets.into_iter().enumerate() {
-        let workflows: Vec<Value> = workflows.into_iter().map(named).collect();
-        let v3 = dataflow_rs_v3::Engine::builder()
-            .with_workflows(
-                workflows
-                    .iter()
-                    .map(|w| {
-                        dataflow_rs_v3::Workflow::from_json(&w.to_string())
-                            .unwrap_or_else(|e| panic!("v3 parses set {i}: {e}"))
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .build()
-            .unwrap_or_else(|e| panic!("v3 builds set {i}: {e}"));
-        let v4 = workflows
-            .iter()
-            .fold(Engine::builder(), |b, w| b.workflow_json(w))
-            .build()
-            .unwrap_or_else(|issues| panic!("v4 builds set {i}: {issues:?}"));
+        let v3 = v3_engine(&workflows).unwrap_or_else(|e| panic!("v3 builds set {i}: {e}"));
+        let v4 = v4_engine(&workflows).unwrap_or_else(|e| panic!("v4 builds set {i}: {e}"));
         for run in &runs {
             let expected = on_v3(&v3, run).await;
-            let actual = on_v4(&v4, run).await;
+            let (text, code, _) = on_v4(&v4, run).await;
             assert_eq!(
-                actual, expected,
+                (text, code),
+                expected,
                 "set {i}, run over payload {} data {} metadata {} (channel {:?}, bucket {:?}, \
                  audit {:?})",
-                run.payload, run.data, run.metadata, run.channel, run.bucket, run.audit
+                run.payload,
+                run.data,
+                run.metadata,
+                run.channel,
+                run.bucket,
+                run.audit
             );
             compared += 1;
         }

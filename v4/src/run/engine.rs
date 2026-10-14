@@ -144,14 +144,10 @@ impl Engine {
                 changes: Vec::new(),
                 workflow_id,
                 task_ids,
-                selection: None,
                 failed: false,
                 frame: Frame::default(),
             };
-            let exit = run_workflow(&mut rc, wf, &mut env).await;
-            // Without a loop, the selection is always known by the end: a
-            // workflow condition is the first op.
-            let selection = env.selection.take().unwrap_or(Selection::Ran);
+            let (exit, selection) = run_workflow(&mut rc, wf, &mut env).await;
             let ran = matches!(selection, Selection::Ran);
             let (exit, stop) = match exit {
                 Exit::Completed => (WorkflowExit::Completed, None),

@@ -56,7 +56,8 @@ pub struct WorkflowRecord<'r> {
     pub index: WorkflowIx,
     /// Whether it was selected.
     pub selection: &'r Selection,
-    /// The sweeps begun: one for a workflow without a loop that ran.
+    /// The sweeps begun: one for a workflow without a loop that ran, and for
+    /// a loop each sweep its condition admitted.
     pub sweeps: u32,
     /// How it ended; `None` when it did not run.
     pub exit: Option<WorkflowExit>,

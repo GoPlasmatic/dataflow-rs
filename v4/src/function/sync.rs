@@ -68,16 +68,7 @@ impl<'p> SyncCtx<'_, '_, 'p> {
     /// operation ceiling is exceeded; [`ErrorKind::Eval`](crate::base::ErrorKind::Eval)
     /// for any other failure, including a result that is not a `T`.
     pub(crate) fn eval<'e, T: FromValue>(&mut self, expr: &'e Expr<T>) -> Result<T::Out<'e>> {
-        if let Some(c) = expr.constant() {
-            return Ok(T::lend(c));
-        }
-        let exprs = self.exprs;
-        self.rc.read(|_, root| {
-            with_arena(|arena| {
-                let view = exprs.eval_in(expr.logic(), root, arena)?;
-                expr.convert(view).map(T::give)
-            })
-        })
+        eval(self.rc, self.exprs, expr)
     }
 
     /// A condition: only a literal `true` passes; the error is returned for
@@ -103,6 +94,25 @@ impl<'p> SyncCtx<'_, '_, 'p> {
             });
         }
     }
+}
+
+/// Evaluates `expr` against the view, in a pooled arena, so nothing it
+/// allocates stays in the run arena: [`SyncCtx::eval`], for the engine's own
+/// reads, such as `loop.over`. A folded constant is lent and reads no view.
+pub(crate) fn eval<'e, T: FromValue>(
+    rc: &mut RunContext<'_, '_>,
+    exprs: &ExprEngine,
+    expr: &'e Expr<T>,
+) -> Result<T::Out<'e>> {
+    if let Some(c) = expr.constant() {
+        return Ok(T::lend(c));
+    }
+    rc.read(|_, root| {
+        with_arena(|arena| {
+            let view = exprs.eval_in(expr.logic(), root, arena)?;
+            expr.convert(view).map(T::give)
+        })
+    })
 }
 
 /// Tests a condition against the view, in a pooled arena, so nothing it

@@ -5,9 +5,13 @@
 //! sweep's `loop_counter`), then the progress write, then the error record, if
 //! any, with the workflow and task ids and the run's timestamp. A `Skip`
 //! records nothing. This is v3's `handle_task_result`, in its order.
+//!
+//! A workflow's own failure, which no task made, records one error record
+//! and nothing else (I61): [`workflow_failure`].
 
 use super::interp::RunEnv;
 use super::message::{AuditEntry, record_audit};
+use crate::base::{Error, ErrorRecord};
 use crate::expr::Path;
 use crate::function::task_record;
 use crate::state::RunContext;
@@ -62,6 +66,16 @@ pub(crate) fn record<'p>(
         env.errors
             .push(task_record(&code, message, workflow, task, env.now_text));
     }
+}
+
+/// Records a workflow's own failure (I61), whatever its policy: one record
+/// with the error's code and message, the workflow's id, no task id, and the
+/// run's timestamp. No audit entry and no progress write: no task completed.
+pub(crate) fn workflow_failure(env: &mut RunEnv<'_, '_>, error: &Error) {
+    let mut record = ErrorRecord::from(error);
+    record.workflow_id = Some(env.workflow_id.to_string());
+    record.timestamp = Some(env.now_text.to_owned());
+    env.errors.push(record);
 }
 
 /// One of the progress object's keys.

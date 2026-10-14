@@ -25,7 +25,7 @@ pub use outcome::Outcome;
 pub(crate) use registry::Entry;
 pub use registry::{FunctionInfo, Registry};
 pub use spec::{FunctionSpec, Reference, RetrySafety};
-pub(crate) use sync::{SyncCtx, SyncFunction, task_record, test};
+pub(crate) use sync::{SyncCtx, SyncFunction, eval, task_record, test};
 pub use templated::Templated;
 
 /// What `#[derive(FunctionConfig)]` expands to names, and nothing else. Not an

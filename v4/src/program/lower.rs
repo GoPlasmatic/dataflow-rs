@@ -221,7 +221,9 @@ impl CompiledWorkflow {
     /// - every condition is named by at least one `Cond`;
     /// - every call site and every task row is named by exactly one `Call` or
     ///   `FanOut`;
-    /// - every `LoopInit` comes before its `LoopNext`.
+    /// - a loop has at most one `LoopInit` and at most one `LoopNext`, and
+    ///   its `LoopInit` comes before its `LoopNext`, which goes back to the
+    ///   op after the `LoopInit`, where every sweep starts.
     pub(crate) fn check_invariants(&self) -> Result<(), String> {
         let end = self.ops.len();
         let mut conds = vec![false; self.conds.len()];
@@ -246,14 +248,31 @@ impl CompiledWorkflow {
                 }
                 Op::LoopInit { lp, .. } => {
                     let lp = in_range(pc, "loop", lp, inits.len())?;
+                    if let Some(first) = inits[lp] {
+                        return Err(format!(
+                            "op {pc} is loop {lp}'s second LoopInit, after op {first}"
+                        ));
+                    }
                     inits[lp] = Some(pc);
                     None
                 }
-                Op::LoopNext { lp, .. } => {
+                Op::LoopNext { lp, body_to, .. } => {
                     let lp = in_range(pc, "loop", lp, nexts.len())?;
-                    if inits[lp].is_none() {
+                    if let Some(first) = nexts[lp] {
+                        return Err(format!(
+                            "op {pc} is loop {lp}'s second LoopNext, after op {first}"
+                        ));
+                    }
+                    let Some(init) = inits[lp] else {
                         return Err(format!(
                             "op {pc} is loop {lp}'s LoopNext, before its LoopInit"
+                        ));
+                    };
+                    let sweep = init + 1;
+                    if body_to as usize != sweep {
+                        return Err(format!(
+                            "op {pc} is loop {lp}'s LoopNext and goes back to {body_to}, not to \
+                             {sweep}, the op after its LoopInit"
                         ));
                     }
                     nexts[lp] = Some(pc);
@@ -724,5 +743,150 @@ mod tests {
             },
         ];
         assert!(wf.check_invariants().is_err());
+    }
+
+    /// `wf` with its ops replaced by `ops` breaks an invariant, and the
+    /// first one `check_invariants` names says `needle`.
+    #[track_caller]
+    fn refuses(mut wf: CompiledWorkflow, ops: Vec<Op>, needle: &str) {
+        wf.ops = ops;
+        let error = wf
+            .check_invariants()
+            .expect_err("the ops break an invariant");
+        assert!(error.contains(needle), "{error:?} does not say {needle:?}");
+    }
+
+    /// `0 LoopInit exit->end`, `1 Call a fail->2`, `2 LoopNext body->1
+    /// exit->end`.
+    fn a_loop() -> CompiledWorkflow {
+        snapshot(
+            &json!({"id": "w", "loop": {"counter": "i", "max": 3}, "tasks": [map("a")]}),
+            &[
+                " 0 LoopInit exit->end",
+                " 1 Call a map builtin fail->2",
+                " 2 LoopNext body->1 exit->end",
+            ],
+        )
+    }
+
+    #[test]
+    fn check_invariants_refuses_a_second_loop_init() {
+        refuses(
+            a_loop(),
+            vec![
+                Op::LoopInit { lp: 0, exit_to: 4 },
+                Op::LoopInit { lp: 0, exit_to: 4 },
+                Op::Call {
+                    site: 0,
+                    fail_to: 3,
+                },
+                Op::LoopNext {
+                    lp: 0,
+                    body_to: 2,
+                    exit_to: 4,
+                },
+            ],
+            "op 1 is loop 0's second LoopInit",
+        );
+    }
+
+    #[test]
+    fn check_invariants_refuses_a_second_loop_next() {
+        refuses(
+            a_loop(),
+            vec![
+                Op::LoopInit { lp: 0, exit_to: 4 },
+                Op::Call {
+                    site: 0,
+                    fail_to: 2,
+                },
+                Op::LoopNext {
+                    lp: 0,
+                    body_to: 1,
+                    exit_to: 4,
+                },
+                Op::LoopNext {
+                    lp: 0,
+                    body_to: 1,
+                    exit_to: 4,
+                },
+            ],
+            "op 3 is loop 0's second LoopNext",
+        );
+    }
+
+    #[test]
+    fn check_invariants_refuses_a_loop_next_whose_body_is_out_of_range() {
+        // A sweep starts at the op after the `LoopInit`: before it, or past
+        // the `LoopNext`, is out of range.
+        for body_to in [0, 2, 3] {
+            refuses(
+                a_loop(),
+                vec![
+                    Op::LoopInit { lp: 0, exit_to: 3 },
+                    Op::Call {
+                        site: 0,
+                        fail_to: 2,
+                    },
+                    Op::LoopNext {
+                        lp: 0,
+                        body_to,
+                        exit_to: 3,
+                    },
+                ],
+                &format!("op 2 is loop 0's LoopNext and goes back to {body_to}, not to 1"),
+            );
+        }
+    }
+
+    #[test]
+    fn check_invariants_refuses_a_loop_op_whose_row_is_missing() {
+        let call = Op::Call {
+            site: 0,
+            fail_to: 2,
+        };
+        refuses(
+            a_loop(),
+            vec![
+                Op::LoopInit { lp: 1, exit_to: 3 },
+                call,
+                Op::LoopNext {
+                    lp: 0,
+                    body_to: 1,
+                    exit_to: 3,
+                },
+            ],
+            "op 0 names loop row 1, and there are 1",
+        );
+        refuses(
+            a_loop(),
+            vec![
+                Op::LoopInit { lp: 0, exit_to: 3 },
+                call,
+                Op::LoopNext {
+                    lp: 1,
+                    body_to: 1,
+                    exit_to: 3,
+                },
+            ],
+            "op 2 names loop row 1, and there are 1",
+        );
+    }
+
+    #[test]
+    fn check_invariants_refuses_a_fan_out_whose_row_is_missing() {
+        let wf = compile(&json!({"id": "w", "tasks": [
+            {"id": "f", "for_each": {"over": [1, 2], "as": "x"},
+             "function": {"name": "echo", "input": {"value": "x"}}},
+        ]}));
+        refuses(
+            wf,
+            vec![Op::FanOut {
+                site: 0,
+                fan: 1,
+                fail_to: 1,
+            }],
+            "op 0 names fan-out row 1, and there are 1",
+        );
     }
 }

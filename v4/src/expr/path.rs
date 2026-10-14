@@ -342,8 +342,8 @@ pub(crate) fn remove(v: &mut OwnedDataValue, segs: &[Seg]) -> Option<OwnedDataVa
     }
 }
 
-/// The kind of a value, for an error.
-fn kind(v: &OwnedDataValue) -> &'static str {
+/// The kind of a value, for an error: v3's `describe_kind`.
+pub(crate) fn kind(v: &OwnedDataValue) -> &'static str {
     match v {
         OwnedDataValue::Null => "null",
         OwnedDataValue::Bool(_) => "a boolean",
