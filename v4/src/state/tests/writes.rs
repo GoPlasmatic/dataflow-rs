@@ -591,3 +591,24 @@ fn random_marks_drain_disjoint_and_leave_the_log_empty() {
         assert!(w.is_empty(), "case {case}: the drain empties the log");
     }
 }
+
+#[test]
+fn a_log_that_grew_past_its_caps_is_not_pooled() {
+    // A huge computed key, then the drop: its name storage leaves with it.
+    let huge = "k".repeat(100 << 10);
+    let mut w = Writes::default();
+    w.mark(p(&[k("data"), k(&huge)]).at(), owned(n(1)));
+    drop(w);
+    assert!(
+        crate::state::writes::pooled()
+            .iter()
+            .all(|&(_, names)| names < huge.len()),
+        "{:?}",
+        crate::state::writes::pooled()
+    );
+    // A small one is pooled, unless the pool is full already.
+    let mut w = Writes::default();
+    w.mark(p(&[k("data"), k("small")]).at(), owned(n(1)));
+    drop(w);
+    assert!(!crate::state::writes::pooled().is_empty());
+}

@@ -9,10 +9,10 @@ use crate::program::CompileOptions;
 use serde_json::Value;
 use std::fmt;
 
-/// A definition given to the builder: parsed, or refused by `parse` with its
-/// issues.
+/// A definition given to the builder: parsed, with the issues its parse
+/// reported, which a rejection keeps, or refused by `parse` with its issues.
 enum Pending {
-    Parsed(Box<WorkflowDef>),
+    Parsed(Box<WorkflowDef>, Vec<Issue>),
     Refused(Vec<Issue>),
 }
 
@@ -88,18 +88,20 @@ impl EngineBuilder {
     /// Adds a parsed definition.
     #[must_use]
     pub fn workflow(mut self, def: WorkflowDef) -> Self {
-        self.pending.push(Pending::Parsed(Box::new(def)));
+        self.pending
+            .push(Pending::Parsed(Box::new(def), Vec::new()));
         self
     }
 
     /// Adds a definition to parse with [`ParseOptions::default`], the compat
     /// reader on. One `parse` refuses makes [`build`](Self::build) fail with
-    /// its parse issues.
+    /// its parse issues, and one it reads but the compile rejects with its
+    /// parse issues, then its compile issues.
     #[must_use]
     pub fn workflow_json(mut self, raw: &Value) -> Self {
         let parsed = parse(raw, ParseOptions::default());
         self.pending.push(match parsed.def {
-            Some(def) => Pending::Parsed(Box::new(def)),
+            Some(def) => Pending::Parsed(Box::new(def), parsed.issues),
             None => Pending::Refused(parsed.issues),
         });
         self
@@ -111,7 +113,8 @@ impl EngineBuilder {
     ///
     /// Every issue of every definition that `parse` or
     /// [`compile_one`](crate::program::Compiler::compile_one) rejected, in
-    /// input order. On success the other issues are dropped: a host that
+    /// input order (I68), a rejected definition's parse issues before its
+    /// compile issues. On success the other issues are dropped: a host that
     /// wants them calls [`Compiler::check`](crate::program::Compiler::check).
     pub fn build(self) -> std::result::Result<Engine, Vec<Issue>> {
         let compiler = self.registry.compiler(self.options);
@@ -119,9 +122,12 @@ impl EngineBuilder {
         let mut rejected = Vec::new();
         for pending in self.pending {
             match pending {
-                Pending::Parsed(def) => match compiler.compile_one(&def) {
+                Pending::Parsed(def, mut parsed) => match compiler.compile_one(&def) {
                     Ok(compiled) => workflows.push(compiled.workflow),
-                    Err(mut issues) => rejected.append(&mut issues),
+                    Err(mut issues) => {
+                        rejected.append(&mut parsed);
+                        rejected.append(&mut issues);
+                    }
                 },
                 Pending::Refused(mut issues) => rejected.append(&mut issues),
             }

@@ -29,6 +29,7 @@ tensor = ["datalogic-rs/tensor", "datavalue/tensor"]
 budget = ["datalogic-rs/budget"]
 
 [dependencies]
+# `rc`: serde's impls for `Arc<str>`, which ids and change paths are held as.
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 datalogic-rs = { version = "5.7", features = ["serde_json", "templating"] }

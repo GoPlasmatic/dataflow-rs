@@ -787,6 +787,25 @@ fn build_fails_with_every_rejected_issue() {
     assert!(Engine::builder().workflow_json(&advised).build().is_ok());
 }
 
+#[test]
+fn build_keeps_a_rejected_definitions_parse_issues_first() {
+    // I68: a definition its parse reads, with issues, and its compile
+    // rejects: a v3 spelling, a near-miss key, and an unknown function.
+    let raw = json!({"id": "w", "tasks": [{"id": "t", "continue_on_error": true, "conditon": true,
+        "function": {"name": "fetch"}}]});
+    let parsed = parse(&raw, ParseOptions::default());
+    let def = parsed.def.expect("the parse reads it");
+    assert!(!parsed.issues.is_empty());
+    let compile = dataflow_rs::Registry::default()
+        .compiler(CompileOptions::default())
+        .check(&def);
+    assert!(compile.iter().any(|i| i.code == IssueCode::UnknownFunction));
+    let issues = Engine::builder().workflow_json(&raw).build().unwrap_err();
+    let mut expected = parsed.issues;
+    expected.extend(compile);
+    assert_eq!(issues, expected);
+}
+
 #[tokio::test]
 async fn engine_compiler_uses_the_programs_registry_and_options() {
     let e = Engine::builder()

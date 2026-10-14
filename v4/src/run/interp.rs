@@ -139,9 +139,9 @@ pub(crate) async fn run_workflow<'p>(
     env: &mut RunEnv<'_, 'p>,
 ) -> (Exit, Selection) {
     let mut selection = Selection::Ran;
-    // The workflow's condition is compiled first, so it is the first row
-    // when it has one; a group's or task's names its step.
-    let mut unjudged = wf.conds.first().is_some_and(|c| c.step.is_none());
+    // Only a workflow condition's `Cond` judges the selection, and only the
+    // first one evaluated.
+    let mut unjudged = true;
     env.frame.sweeps = u32::from(wf.loops.is_empty());
     let mut pc = 0;
     while let Some(&op) = wf.ops.get(pc) {

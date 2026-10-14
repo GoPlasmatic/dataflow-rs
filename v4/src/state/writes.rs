@@ -499,9 +499,12 @@ pub(crate) struct Writes {
 }
 
 /// Logs kept per thread.
-const TRIE_POOL: usize = 16;
-/// A log whose node storage grew past this is not pooled.
-const TRIE_NODES_CAP: usize = 4096;
+const WRITES_POOLED: usize = 16;
+/// A log whose node storage grew past this many nodes is not pooled.
+const WRITES_NODES_CAP: usize = 4096;
+/// A log whose name storage grew past this many bytes is not pooled, so one
+/// huge computed key does not stay with the thread.
+const WRITES_NAMES_CAP: usize = 64 << 10;
 
 thread_local! {
     /// Storage of logs that were dropped, reused by the next.
@@ -515,15 +518,15 @@ impl Default for Writes {
             .ok()
             .flatten()
             .unwrap_or_default();
-        let mut trie = Self { nodes, names };
-        trie.reset();
-        trie
+        let mut log = Self { nodes, names };
+        log.reset();
+        log
     }
 }
 
 impl Drop for Writes {
     fn drop(&mut self) {
-        if self.nodes.capacity() > TRIE_NODES_CAP {
+        if self.nodes.capacity() > WRITES_NODES_CAP || self.names.capacity() > WRITES_NAMES_CAP {
             return;
         }
         let mut nodes = std::mem::take(&mut self.nodes);
@@ -532,11 +535,23 @@ impl Drop for Writes {
         names.clear();
         let _ = WRITES_POOL.try_with(|p| {
             let mut p = p.borrow_mut();
-            if p.len() < TRIE_POOL {
+            if p.len() < WRITES_POOLED {
                 p.push((nodes, names));
             }
         });
     }
+}
+
+/// The capacities, nodes and name bytes, of the storage this thread's pool
+/// holds: for the test of what is pooled.
+#[cfg(test)]
+pub(super) fn pooled() -> Vec<(usize, usize)> {
+    WRITES_POOL.with(|p| {
+        p.borrow()
+            .iter()
+            .map(|(nodes, names)| (nodes.capacity(), names.capacity()))
+            .collect()
+    })
 }
 
 impl Writes {
@@ -743,22 +758,22 @@ impl Writes {
     pub(crate) fn drain(&mut self) -> Drained {
         // Marks are moved out, never cloned: an overlay's are the call's
         // written values.
-        fn walk(trie: &mut Writes, n: u32, at: &mut Vec<Hop>, out: &mut Drained) {
-            if let Some(mark) = trie.nodes[n as usize].mark.take() {
+        fn walk(log: &mut Writes, n: u32, at: &mut Vec<Hop>, out: &mut Drained) {
+            if let Some(mark) = log.nodes[n as usize].mark.take() {
                 return out.dirty.push(Dirty {
                     at: at.clone(),
                     mark,
                 });
             }
-            if trie.nodes[n as usize].reorder {
+            if log.nodes[n as usize].reorder {
                 out.reorder.push(at.clone());
             }
-            let mut c = trie.nodes[n as usize].first;
+            let mut c = log.nodes[n as usize].first;
             while c != NONE {
-                at.push(trie.hop(trie.nodes[c as usize].key));
-                walk(trie, c, at, out);
+                at.push(log.hop(log.nodes[c as usize].key));
+                walk(log, c, at, out);
                 at.pop();
-                c = trie.nodes[c as usize].next;
+                c = log.nodes[c as usize].next;
             }
         }
         let mut out = Drained::default();
@@ -897,7 +912,7 @@ pub(super) mod list {
                 let depth = path.len();
                 return absorb(above, at, depth, new);
             }
-            // An array element's removal rewrites the array (as `Trie::mark`).
+            // An array element's removal rewrites the array (as `Writes::mark`).
             if removes_an_element(at, &new) {
                 return self.mark(at.prefix(at.len() - 1), Mark::Set(None));
             }

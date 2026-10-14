@@ -44,7 +44,9 @@ pub enum AuditMode {
     Off,
 }
 
-/// `{data, metadata, temp_data}`, always three objects, in that order.
+/// `{data, metadata, temp_data}`: always these three keys, in that order.
+/// Each root starts as an object, and a `map` to a root of a value that is
+/// not an object replaces it, as v3's does.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Context {
     root: OwnedDataValue,
@@ -254,7 +256,8 @@ impl Message {
 }
 
 /// Whether `mode` keeps any entry: `Off` and `Last(0)` keep none, so the
-/// recorder builds none.
+/// engine records no changes under them (I67) and the recorder builds no
+/// entry.
 pub(crate) fn keeps_entries(mode: AuditMode) -> bool {
     !matches!(mode, AuditMode::Off | AuditMode::Last(0))
 }

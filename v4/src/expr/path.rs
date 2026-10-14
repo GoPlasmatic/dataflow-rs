@@ -227,8 +227,9 @@ impl Path {
         set(context, &self.segs, value)
     }
 
-    /// `map`'s append and extend at the path.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by the phase 4 writers"))]
+    /// `map`'s append and extend at the path: the tests' owned reference for
+    /// the splice's.
+    #[cfg(test)]
     pub(crate) fn append(
         &self,
         context: &mut OwnedDataValue,
@@ -386,8 +387,8 @@ pub(crate) fn kind(v: &OwnedDataValue) -> &'static str {
         OwnedDataValue::Object(_) => "an object",
         #[allow(
             unreachable_patterns,
-            reason = "the catch-all is live only with datavalue's `tensor` feature, which \
-                      feature unification can turn on from another crate"
+            reason = "the catch-all is live only with datavalue's `datetime` or `tensor` \
+                      feature, which feature unification can turn on from another crate"
         )]
         _ => "a non-array value",
     }
@@ -414,8 +415,9 @@ pub(crate) fn append(
 
 /// `map`'s write to a root slot (v3's `merge_root_field`): two objects merge,
 /// existing keys replaced in place and new keys appended in order; anything
-/// else replaces the slot.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the phase 4 writers"))]
+/// else replaces the slot. The owned statement of the rules the splice's
+/// `merge_root` follows: `map` writes a root only through the view.
+#[cfg(test)]
 pub(crate) fn merge_root(context: &mut OwnedDataValue, key: &str, value: OwnedDataValue) {
     let OwnedDataValue::Object(slots) = context else {
         *context = OwnedDataValue::Object(vec![(key.to_string(), value)]);

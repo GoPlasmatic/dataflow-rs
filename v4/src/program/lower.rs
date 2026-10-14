@@ -192,6 +192,19 @@ fn targets(op: Op) -> impl Iterator<Item = u32> {
     first.into_iter().chain(second)
 }
 
+/// The target of `op` that must lie ahead of it: every target but a
+/// `LoopNext`'s `body_to`, which goes back to the start of its sweep.
+fn ahead(op: Op) -> Option<u32> {
+    match op {
+        Op::Cond { else_to: to, .. }
+        | Op::Call { fail_to: to, .. }
+        | Op::FanOut { fail_to: to, .. }
+        | Op::LoopInit { exit_to: to, .. }
+        | Op::LoopNext { exit_to: to, .. } => Some(to),
+        Op::Halt => None,
+    }
+}
+
 /// Whether `index` is a row of a table of `len`, else why not.
 fn in_range(pc: usize, table: &str, index: u32, len: usize) -> Result<usize, String> {
     let index = index as usize;
@@ -216,7 +229,8 @@ impl CompiledWorkflow {
 
     /// Checks the lowering's invariants, naming the first broken one:
     ///
-    /// - every jump target is at most `ops.len()`;
+    /// - every jump target is at most `ops.len()`, and every one but a
+    ///   `LoopNext`'s `body_to` is past its own op;
     /// - every row an op names is in its table, as is every call site's task;
     /// - every condition is named by at least one `Cond`;
     /// - every call site and every task row is named by exactly one `Call` or
@@ -234,6 +248,11 @@ impl CompiledWorkflow {
         for (pc, &op) in self.ops.iter().enumerate() {
             if let Some(to) = targets(op).find(|&to| to as usize > end) {
                 return Err(format!("op {pc} jumps to {to}, past the end at {end}"));
+            }
+            if let Some(to) = ahead(op).filter(|&to| to as usize <= pc) {
+                return Err(format!(
+                    "op {pc} jumps back to {to}: only a LoopNext's body jumps back"
+                ));
             }
             let site = match op {
                 Op::Cond { cond, .. } => {
@@ -743,6 +762,25 @@ mod tests {
             },
         ];
         assert!(wf.check_invariants().is_err());
+    }
+
+    #[test]
+    fn check_invariants_refuses_any_jump_back_but_a_loop_nexts_body() {
+        let wf = compile(&json!({"id": "w", "tasks": [map("a"), map("b")]}));
+        refuses(
+            wf,
+            vec![
+                Op::Call {
+                    site: 0,
+                    fail_to: 1,
+                },
+                Op::Call {
+                    site: 1,
+                    fail_to: 1,
+                },
+            ],
+            "op 1 jumps back to 1",
+        );
     }
 
     /// `wf` with its ops replaced by `ops` breaks an invariant, and the

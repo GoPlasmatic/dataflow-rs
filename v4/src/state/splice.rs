@@ -234,7 +234,8 @@ pub(crate) fn append<'a>(
 
 /// `map`'s write to a root slot: two objects merge, existing keys replaced in
 /// place and new keys appended in order; anything else replaces the slot. The
-/// rules are `merge_root`'s.
+/// rules are the owned `path::merge_root`'s, which is v3's
+/// `merge_root_field`.
 pub(crate) fn merge_root<'a>(
     arena: &'a Bump,
     root: DataValue<'a>,
@@ -274,7 +275,11 @@ pub(crate) fn kind(v: &DataValue<'_>) -> &'static str {
         DataValue::String(_) => "a string",
         DataValue::Array(_) => "an array",
         DataValue::Object(_) => "an object",
-        #[allow(unreachable_patterns)]
+        #[allow(
+            unreachable_patterns,
+            reason = "the catch-all is live only with datavalue's `datetime` or `tensor` \
+                      feature, which feature unification can turn on from another crate"
+        )]
         _ => "a non-array value",
     }
 }

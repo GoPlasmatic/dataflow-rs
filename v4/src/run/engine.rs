@@ -2,7 +2,7 @@
 
 use super::builder::EngineBuilder;
 use super::interp::{Exit, Frame, RunEnv, run_workflow};
-use super::message::{AuditMode, Message, finish_audit};
+use super::message::{Message, finish_audit, keeps_entries};
 use super::options::RunOptions;
 use super::report::{Record, Run};
 use crate::expr::Path;
@@ -68,12 +68,6 @@ fn metadata(key: &str) -> Path {
         .expect("a metadata key is a path")
 }
 
-/// Whether `mode` keeps any entry, so that a call's changes are worth
-/// recording (I67).
-fn keeps(mode: AuditMode) -> bool {
-    !matches!(mode, AuditMode::Off | AuditMode::Last(0))
-}
-
 impl Engine {
     /// An engine running `program` with `cfg`.
     pub fn new(program: Program, cfg: EngineConfig) -> Self {
@@ -115,7 +109,9 @@ impl Engine {
 
         let mut rc = RunContext::new(parts.context, Tuning::default());
         let active = program.active(opts.channel);
-        let capture = opts.capture_changes && keeps(opts.audit);
+        // A call's changes are worth recording only in a mode that keeps
+        // an entry for them (I67).
+        let capture = opts.capture_changes && keeps_entries(opts.audit);
         let mut records = Vec::with_capacity(active.len());
         let mut stopped = None;
         for &ix in active {
