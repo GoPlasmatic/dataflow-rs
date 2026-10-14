@@ -339,6 +339,7 @@ dependencies = [
 name = "dataflow-rs-v4"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "bumpalo",
  "chrono",
  "dataflow-corpus",

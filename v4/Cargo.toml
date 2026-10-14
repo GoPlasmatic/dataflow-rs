@@ -58,6 +58,8 @@ workspace = true
 dataflow-corpus = { path = "../corpus" }
 # v3, the root package, for the differential tests that hold v4 to its rules.
 dataflow_rs_v3 = { package = "dataflow-rs", path = ".." }
+# v3's handler trait, for the twins `tests/fan_out.rs` registers on v3.
+async-trait = "0.1"
 tokio = { version = "1", features = ["full", "test-util"] }
 # The gate's ports (`examples/v4_*.rs`), at the versions v3's examples use.
 futures = "0.3"

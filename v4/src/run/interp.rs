@@ -2,10 +2,11 @@
 //! interprets steps.
 //!
 //! A built-in runs inline with no `.await`; a host call awaits through
-//! [`call_host`](super::host::call_host), and a fan-out will from Task 4.
-//! Every completed call goes through [`decide`](super::policy::decide), the
-//! one definition of failed, rejected and halted, and then
-//! [`record`](super::record::record).
+//! [`call_host`](super::host::call_host), and a fan-out through
+//! [`fan_out`](super::fan_out::fan_out), which runs its elements' calls
+//! before it folds them. Every completed call goes through
+//! [`decide`](super::policy::decide), the one definition of failed, rejected
+//! and halted, and then [`record`](super::record::record).
 //!
 //! A loop is two ops, in 05's order. `LoopInit` evaluates `over` once, writes
 //! the counter's `init`, checks the bounds, and in bounds writes the bindings
@@ -13,10 +14,11 @@
 //! the same, jumping back to the sweep's first op. The engine owns the
 //! counter: it lives in the [`Frame`], and the context only gets a copy.
 
+use super::fan_out::fan_out;
 use super::host::call_host;
 use super::message::{AuditEntry, AuditMode};
 use super::policy::{self, Flow};
-use super::record::{self, TaskIds};
+use super::record::{self, Stamp, TaskIds};
 use crate::base::{Change, Error, ErrorKind, ErrorRecord, ProgramId, WorkflowIx};
 use crate::def::WorkflowFailurePolicy;
 use crate::expr::path::kind;
@@ -29,6 +31,7 @@ use crate::state::RunContext;
 use chrono::{DateTime, Utc};
 use datavalue::{DataValue, OwnedDataValue};
 use std::borrow::Cow;
+use std::fmt;
 use std::sync::Arc;
 
 /// How one workflow's ops ended.
@@ -124,9 +127,13 @@ fn fail_to(op: Op) -> u32 {
     }
 }
 
-/// I65: until Task 4 of phase 5, a fan-out stops the run.
-fn not_yet() -> Error {
-    Error::new(ErrorKind::Config, "fan-outs run from phase 5")
+/// A fan-out whose callee is a built-in, which the parser refuses: a
+/// definition changed after its parse can still reach the compiler.
+fn builtin_fan_out(task_id: &str) -> Error {
+    Error::new(
+        ErrorKind::Config,
+        format!("Task {task_id}: a built-in cannot fan out"),
+    )
 }
 
 /// Runs one workflow's ops over the run context: how they ended, and the
@@ -188,7 +195,14 @@ pub(crate) async fn run_workflow<'p>(
                     Callee::Host(bound) => call_host(rc, env, wf, site, &**bound).await,
                 }
             }
-            Op::FanOut { .. } => return (Exit::Stopped(not_yet()), selection),
+            Op::FanOut { site, fan, .. } => {
+                let site = &wf.calls[site as usize];
+                let Callee::Host(bound) = &site.callee else {
+                    let task = &wf.tasks[site.task as usize].id;
+                    return (Exit::Stopped(builtin_fan_out(task)), selection);
+                };
+                fan_out(rc, env, wf, site, &wf.fans[fan as usize], &**bound).await
+            }
             Op::LoopInit { lp, exit_to } => loop_init(rc, env, &wf.loops[lp as usize], exit_to),
             Op::LoopNext {
                 lp,
@@ -230,7 +244,7 @@ fn loop_init<'p>(
     exit_to: u32,
 ) -> Flow {
     if let Some(over) = &site.over {
-        match elements(rc, env, over) {
+        match elements(rc, env.exprs, over, Over::Loop(env.workflow_id)) {
             Ok(items) => env.frame.items = Some(items),
             Err(e) => {
                 record::workflow_failure(env, &e);
@@ -301,22 +315,38 @@ fn enter<'p>(
     sweep
 }
 
-/// `loop.over`'s elements, owned. A value that is not an array is I61's
-/// [`ErrorKind::Eval`]; an evaluation error keeps its own kind, with v3's
-/// text less v3's `WORKFLOW_ERROR` wrapper, as I61 words the other.
-fn elements(
+/// Whose `over` is evaluated, which its errors name.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Over<'a> {
+    /// A workflow's `loop.over`, by the workflow's id.
+    Loop(&'a str),
+    /// A task's `for_each.over`, by the task's id.
+    FanOut(&'a str),
+}
+
+impl fmt::Display for Over<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Loop(id) => write!(f, "Workflow {id}: loop.over"),
+            Self::FanOut(id) => write!(f, "Task {id}: for_each.over"),
+        }
+    }
+}
+
+/// An `over`'s elements, owned: a loop's (I61) or a fan-out's (I91), by one
+/// rule. A value that is not an array is [`ErrorKind::Eval`]; an evaluation
+/// error keeps its own kind, with v3's text less v3's wrapper, as I61 words
+/// the other.
+pub(super) fn elements(
     rc: &mut RunContext<'_, '_>,
-    env: &RunEnv<'_, '_>,
+    exprs: &ExprEngine,
     over: &Expr,
+    owner: Over<'_>,
 ) -> Result<Vec<OwnedDataValue>, Error> {
-    let id = env.workflow_id;
-    let value = eval(rc, env.exprs, over).map_err(|e| {
+    let value = eval(rc, exprs, over).map_err(|e| {
         Error::new(
             e.kind().clone(),
-            format!(
-                "Workflow {id}: loop.over failed to evaluate: {}",
-                e.record_text()
-            ),
+            format!("{owner} failed to evaluate: {}", e.record_text()),
         )
     })?;
     match value {
@@ -324,10 +354,7 @@ fn elements(
         Cow::Borrowed(OwnedDataValue::Array(items)) => Ok(items.clone()),
         other => Err(Error::new(
             ErrorKind::Eval,
-            format!(
-                "Workflow {id}: loop.over must evaluate to an array, got {}",
-                kind(&other)
-            ),
+            format!("{owner} must evaluate to an array, got {}", kind(&other)),
         )),
     }
 }
@@ -360,7 +387,8 @@ fn call<'p>(
     if result.is_err() {
         env.changes.clear();
     }
-    let decision = policy::decide(site, ids.task, result);
-    record::record(rc, env, ids, decision.status, decision.record);
+    let decision = policy::decide(site.policy(), ids.task, result);
+    let stamp = Stamp::sweep(env);
+    record::record(rc, env, ids, stamp, decision.status, decision.record);
     decision.flow
 }

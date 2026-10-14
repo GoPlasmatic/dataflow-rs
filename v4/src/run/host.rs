@@ -7,17 +7,24 @@
 //! context in order and keeps the call's `Change`s; an `Err` drops both
 //! (break 1). The records the call added are kept either way. Then the
 //! recorder runs as for a built-in.
+//!
+//! A fan-out's elements are host calls too: [`invoke`] is the one call, and
+//! [`fan_out`](super::fan_out::fan_out) settles and records each element.
 
 use super::interp::RunEnv;
 use super::policy::{self, Flow};
-use super::record::{self, TaskIds};
+use super::record::{self, Stamp, TaskIds};
 use crate::base::{Change, ErrorRecord, Result, TaskIx};
+use crate::expr::Path;
 use crate::function::{BoundCall, CallInfo, CallLayer, CallStart, Ctx, Next, Outcome, Overlay};
 use crate::program::{CallSite, CompiledWorkflow};
 use crate::state::RunContext;
+use datavalue::OwnedDataValue;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// The layers around a call: the run's, outermost, then the registry's.
+#[derive(Clone, Copy)]
 pub(crate) struct Layers<'a> {
     /// The run's layers, outermost first.
     pub(crate) run: &'a [Arc<dyn CallLayer>],
@@ -35,25 +42,54 @@ pub(crate) struct Invoked {
     pub(crate) changes: Vec<Change>,
     /// The records the call added.
     pub(crate) errors: Vec<ErrorRecord>,
+    /// What the call saw at `collect` when it returned `Ok`: a fan-out
+    /// element's result (I91).
+    pub(crate) collected: Option<OwnedDataValue>,
 }
 
 /// One call through the layers: the `Ctx` built from `start`, the chain
-/// run, the `Ctx` settled.
+/// run, the value at `collect` read as the call sees it once it returned
+/// `Ok`, the `Ctx` settled.
 pub(crate) async fn invoke<'r>(
     start: CallStart<'r>,
     bound: &'r dyn BoundCall,
     layers: Layers<'r>,
+    collect: Option<&Path>,
 ) -> Invoked {
     let mut ctx = Ctx::new(start);
     let result = Next::new(layers.run, layers.registry, bound)
         .run(&mut ctx)
         .await;
+    let collected = match collect {
+        Some(path) if result.is_ok() => ctx.get(path).map(Cow::into_owned),
+        _ => None,
+    };
     let (overlay, changes, errors) = ctx.settle();
     Invoked {
         result,
         overlay,
         changes,
         errors,
+        collected,
+    }
+}
+
+/// The records a call added, onto the message, as given (I96): with the
+/// run's timestamp when they carry none, and in a fan-out the element's
+/// index when they carry none.
+pub(crate) fn keep_records(
+    env: &mut RunEnv<'_, '_>,
+    records: Vec<ErrorRecord>,
+    element_index: Option<usize>,
+) {
+    for mut record in records {
+        if record.timestamp.is_none() {
+            record.timestamp = Some(env.now_text.to_owned());
+        }
+        if record.element_index.is_none() {
+            record.element_index = element_index;
+        }
+        env.errors.push(record);
     }
 }
 
@@ -79,6 +115,7 @@ pub(crate) async fn call_host<'p>(
         overlay,
         changes,
         errors,
+        ..
     } = {
         let reader = rc.reader();
         let start = CallStart {
@@ -106,19 +143,15 @@ pub(crate) async fn call_host<'p>(
             run: env.layers,
             registry: wf.registry.layers(),
         };
-        invoke(start, bound, layers).await
+        invoke(start, bound, layers, None).await
     };
     if result.is_ok() {
         overlay.apply(rc);
         env.changes = changes;
     }
-    for mut record in errors {
-        if record.timestamp.is_none() {
-            record.timestamp = Some(env.now_text.to_owned());
-        }
-        env.errors.push(record);
-    }
-    let decision = policy::decide(site, ids.task, result);
-    record::record(rc, env, ids, decision.status, decision.record);
+    keep_records(env, errors, None);
+    let decision = policy::decide(site.policy(), ids.task, result);
+    let stamp = Stamp::sweep(env);
+    record::record(rc, env, ids, stamp, decision.status, decision.record);
     decision.flow
 }

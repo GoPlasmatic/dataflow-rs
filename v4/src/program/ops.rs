@@ -93,10 +93,6 @@ impl Callee {
 }
 
 /// A task's fan-out.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the lowering, and by Task 4's fan-out")
-)]
 pub(crate) struct FanSite {
     pub(crate) over: Expr,
     /// `temp_data.<as>`.

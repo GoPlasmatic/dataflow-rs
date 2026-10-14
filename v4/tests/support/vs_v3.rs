@@ -11,7 +11,7 @@
 
 use dataflow_corpus::json::Json;
 use dataflow_corpus::normalise;
-use dataflow_rs::run::{AuditMode, RunStatus};
+use dataflow_rs::run::{AuditMode, EngineBuilder, RunStatus};
 use dataflow_rs::{Engine, Message, RunOptions};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
@@ -27,6 +27,8 @@ pub struct Run {
     pub audit: Option<usize>,
     /// `AuditMode::Off`, over `audit`.
     pub audit_off: bool,
+    /// Change capture off.
+    pub capture_off: bool,
 }
 
 /// A run over `data`.
@@ -67,12 +69,21 @@ pub fn named(mut workflow: Value) -> Value {
 
 /// v3's build of `workflows` (named first), or why it refused them.
 pub fn v3_engine(workflows: &[Value]) -> Result<dataflow_rs_v3::Engine, String> {
+    v3_engine_with(workflows, |b| b)
+}
+
+/// [`v3_engine`] with `register` adding host functions to the builder:
+/// the twins of what [`v4_engine_with`] registers on v4.
+pub fn v3_engine_with(
+    workflows: &[Value],
+    register: impl FnOnce(dataflow_rs_v3::EngineBuilder) -> dataflow_rs_v3::EngineBuilder,
+) -> Result<dataflow_rs_v3::Engine, String> {
     let workflows = workflows
         .iter()
         .map(|w| dataflow_rs_v3::Workflow::from_json(&named(w.clone()).to_string()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    dataflow_rs_v3::Engine::builder()
+    register(dataflow_rs_v3::Engine::builder())
         .with_workflows(workflows)
         .build()
         .map_err(|e| e.to_string())
@@ -81,9 +92,20 @@ pub fn v3_engine(workflows: &[Value]) -> Result<dataflow_rs_v3::Engine, String> 
 /// v4's build of `workflows` (named first, as v3's is), or the issues it
 /// rejected them with.
 pub fn v4_engine(workflows: &[Value]) -> Result<Engine, String> {
+    v4_engine_with(workflows, |b| b)
+}
+
+/// [`v4_engine`] with `register` adding host functions to the builder:
+/// the twins of what [`v3_engine_with`] registers on v3.
+pub fn v4_engine_with(
+    workflows: &[Value],
+    register: impl FnOnce(EngineBuilder) -> EngineBuilder,
+) -> Result<Engine, String> {
     workflows
         .iter()
-        .fold(Engine::builder(), |b, w| b.workflow_json(&named(w.clone())))
+        .fold(register(Engine::builder()), |b, w| {
+            b.workflow_json(&named(w.clone()))
+        })
         .build()
         .map_err(|issues| format!("{issues:?}"))
 }
@@ -104,6 +126,9 @@ pub async fn on_v3(engine: &dataflow_rs_v3::Engine, run: &Run) -> (String, Strin
     }
     if run.audit_off {
         builder = builder.audit_mode(dataflow_rs_v3::AuditMode::Off);
+    }
+    if run.capture_off {
+        builder = builder.capture_changes(false);
     }
     let mut message = builder.build();
     let result = match run.channel {
@@ -142,6 +167,9 @@ pub async fn on_v4(engine: &Engine, run: &Run) -> (String, String, dataflow_rs::
     }
     if run.audit_off {
         opts = opts.audit(AuditMode::Off);
+    }
+    if run.capture_off {
+        opts = opts.capture_changes(false);
     }
     let report = engine.run_with(&mut message, &opts).await;
     let code = match report.status() {

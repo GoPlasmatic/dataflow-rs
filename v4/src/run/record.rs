@@ -2,9 +2,10 @@
 //!
 //! Once per completed call, from the call's [`Decision`](super::policy::Decision):
 //! when it has a status, the audit entry (through `AuditMode`'s trim, with the
-//! sweep's `loop_counter`), then the progress write, then the error record, if
-//! any, with the workflow and task ids and the run's timestamp. A `Skip`
-//! records nothing. This is v3's `handle_task_result`, in its order.
+//! call's [`Stamp`]), then the progress write, then the error record, if any,
+//! with the workflow and task ids, the run's timestamp and the stamp's
+//! element. A `Skip` records nothing. This is v3's `handle_task_result`, in
+//! its order. A fan-out records once per element it folds.
 //!
 //! A workflow's own failure, which no task made, records one error record
 //! and nothing else (I61): [`workflow_failure`].
@@ -34,12 +35,35 @@ pub(crate) struct TaskIds<'p> {
     pub(crate) task: &'p Arc<str>,
 }
 
-/// Records one completed call: `status` and `record` are its decision's. The
-/// call's changes are taken from `env.changes`.
+/// Where a completed call sits in the run's iterations: the sweep's loop
+/// counter, and the element's index in a fan-out. The audit entry carries
+/// both, and the call's error record the element.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Stamp {
+    /// The loop counter of the sweep the call ran in; `None` outside a
+    /// loop's sweeps.
+    pub(crate) loop_counter: Option<i64>,
+    /// The element the call ran for, in a fan-out.
+    pub(crate) element_index: Option<usize>,
+}
+
+impl Stamp {
+    /// A call outside a fan-out, in the sweep the frame is in.
+    pub(crate) fn sweep(env: &RunEnv<'_, '_>) -> Self {
+        Self {
+            loop_counter: env.frame.loop_counter,
+            element_index: None,
+        }
+    }
+}
+
+/// Records one completed call: `status` and `record` are its decision's,
+/// `stamp` where it sits. The call's changes are taken from `env.changes`.
 pub(crate) fn record<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
     ids: TaskIds<'p>,
+    stamp: Stamp,
     status: Option<u16>,
     record: Option<(Cow<'static, str>, String)>,
 ) {
@@ -58,8 +82,8 @@ pub(crate) fn record<'p>(
                 timestamp: env.now,
                 changes: std::mem::take(&mut env.changes),
                 status: usize::from(status),
-                loop_counter: env.frame.loop_counter,
-                element_index: None,
+                loop_counter: stamp.loop_counter,
+                element_index: stamp.element_index,
             },
         );
     } else {
@@ -68,8 +92,9 @@ pub(crate) fn record<'p>(
     write_progress(rc, ids.workflow, ids.task, status);
     if let Some((code, message)) = record {
         let (workflow, task) = (&**ids.workflow, &**ids.task);
-        env.errors
-            .push(task_record(&code, message, workflow, task, env.now_text));
+        let mut record = task_record(&code, message, workflow, task, env.now_text);
+        record.element_index = stamp.element_index;
+        env.errors.push(record);
     }
 }
 

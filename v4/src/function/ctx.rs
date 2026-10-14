@@ -77,7 +77,10 @@ pub struct Ctx<'r> {
     errors: Vec<ErrorRecord>,
 }
 
-/// What the runtime hands a new [`Ctx`].
+/// What the runtime hands a new [`Ctx`]. A fan-out builds one for the
+/// task and copies it for each element, with the element's binding and
+/// index.
+#[derive(Clone, Copy)]
 pub(crate) struct CallStart<'r> {
     /// The run's reader, taken in its own statement: never a `&RunView`.
     pub(crate) reader: Reader<'r>,
@@ -101,7 +104,8 @@ pub(crate) struct CallStart<'r> {
 
 /// A fan-out element's bindings: `temp_data.<as>` holds the element and
 /// `temp_data.<as>_index` its index. They sit between the run's context and
-/// the call's own writes. The runtime builds none until Task 4's fan-out.
+/// the call's own writes, and are never written to the run: the settle
+/// replays the call's writes at their paths, where the binding is not.
 pub(crate) struct Binding<'r> {
     /// `temp_data.<as>`.
     pub(crate) item: &'r Path,

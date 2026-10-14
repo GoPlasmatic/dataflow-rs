@@ -2,6 +2,7 @@
 
 mod builder;
 mod engine;
+mod fan_out;
 mod host;
 mod interp;
 mod message;

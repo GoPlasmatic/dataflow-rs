@@ -5,6 +5,10 @@
 //! next. A row's flow is computed first; `terminal` and `Outcome::Halt` then
 //! upgrade a `Next`, and only a `Next`, to `Halt`, so a terminal task that
 //! fails still records and still fails (v3's `handle_task_result`).
+//!
+//! A task decides under its site's [`Policy`]; each element of a fan-out
+//! under [`Policy::per_element`], which cannot halt, since `terminal` and
+//! the halting policies apply once, to the whole fan-out.
 
 use crate::base::{Error, Result};
 use crate::def::{FailurePolicy, RejectionPolicy};
@@ -38,6 +42,46 @@ pub(crate) struct Decision {
     pub(crate) flow: Flow,
 }
 
+/// What a task's outcome does: its three policies, as its call site holds
+/// them.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Policy {
+    /// What a failure (a 5xx or an `Err`) does.
+    pub(crate) on_failure: FailurePolicy,
+    /// What a rejection (a 4xx) does.
+    pub(crate) on_rejection: RejectionPolicy,
+    /// Whether completing the task ends the workflow.
+    pub(crate) terminal: bool,
+}
+
+impl CallSite {
+    /// The policies this site's outcome is decided under.
+    pub(crate) fn policy(&self) -> Policy {
+        Policy {
+            on_failure: self.on_failure,
+            on_rejection: self.on_rejection,
+            terminal: self.terminal,
+        }
+    }
+}
+
+impl Policy {
+    /// What one element of a fan-out runs under: nothing that can halt.
+    /// `terminal` is off, and `on_rejection: halt` and `on_failure: halt`
+    /// become `continue`; `fail` and `continue` stay. The fold applies the
+    /// task's own policy once, after the whole fan-out (v3's `fan_out_pass`).
+    pub(crate) fn per_element(self) -> Self {
+        Self {
+            on_failure: match self.on_failure {
+                FailurePolicy::Fail => FailurePolicy::Fail,
+                FailurePolicy::Halt | FailurePolicy::Continue => FailurePolicy::Continue,
+            },
+            on_rejection: RejectionPolicy::Continue,
+            terminal: false,
+        }
+    }
+}
+
 /// `on_failure`'s flow for a failure whose error is `error`.
 fn on_failure(policy: FailurePolicy, error: impl FnOnce() -> Error) -> Flow {
     match policy {
@@ -58,7 +102,7 @@ fn on_failure(policy: FailurePolicy, error: impl FnOnce() -> Error) -> Flow {
 /// | `Ok(Status(s))`, `400 ≤ s < 500` | `s` | none | `on_rejection` |
 /// | `Ok(Status(s))`, `s ≥ 500` | `s` | `TASK_STATUS_ERROR` | `on_failure`, failing with `TASK_ERROR` |
 /// | `Err(e)` | 500 | `e`'s code | `on_failure`, failing with `e` |
-pub(crate) fn decide(site: &CallSite, task_id: &str, result: Result<Outcome>) -> Decision {
+pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> Decision {
     let (status, record, flow) = match result {
         Ok(Outcome::Skip) => {
             return Decision {
@@ -71,7 +115,7 @@ pub(crate) fn decide(site: &CallSite, task_id: &str, result: Result<Outcome>) ->
         Ok(Outcome::Halt) => (HALT_STATUS, None, Flow::Halt),
         Ok(Outcome::Status(s)) if s < 400 => (s, None, Flow::Next),
         Ok(Outcome::Status(s)) if s < 500 => {
-            let flow = match site.on_rejection {
+            let flow = match policy.on_rejection {
                 RejectionPolicy::Continue => Flow::Next,
                 RejectionPolicy::Halt => Flow::Halt,
             };
@@ -82,7 +126,7 @@ pub(crate) fn decide(site: &CallSite, task_id: &str, result: Result<Outcome>) ->
                 Cow::Borrowed("TASK_STATUS_ERROR"),
                 format!("Task {task_id} returned status {s}"),
             );
-            let flow = on_failure(site.on_failure, || {
+            let flow = on_failure(policy.on_failure, || {
                 Error::service(
                     "TASK_ERROR",
                     format!("Task {task_id} failed with status {s}"),
@@ -95,12 +139,12 @@ pub(crate) fn decide(site: &CallSite, task_id: &str, result: Result<Outcome>) ->
                 Cow::Owned(e.code().to_owned()),
                 format!("Task {task_id} error: {}", e.record_text()),
             );
-            (500, Some(record), on_failure(site.on_failure, || e))
+            (500, Some(record), on_failure(policy.on_failure, || e))
         }
     };
     // `terminal` upgrades a `Next` and nothing else: a failure still fails.
     let flow = match flow {
-        Flow::Next if site.terminal => Flow::Halt,
+        Flow::Next if policy.terminal => Flow::Halt,
         other => other,
     };
     Decision {
@@ -240,7 +284,7 @@ mod tests {
                         (on_failure, on_rejection, terminal)
                     );
                     for row in ["skip", "ok", "halt", "302", "404", "503", "err"] {
-                        let d = decide(site, "t", result(row));
+                        let d = decide(site.policy(), "t", result(row));
                         let got = (
                             d.status,
                             d.record.map(|(code, message)| (code.into_owned(), message)),
@@ -263,6 +307,61 @@ mod tests {
             }
         }
         assert_eq!(rows, 84);
+    }
+
+    #[test]
+    fn per_element_neutralises_what_can_halt() {
+        // Each element of a fan-out runs under a policy that cannot halt:
+        // `terminal`, `on_rejection: halt` and `on_failure: halt` apply once,
+        // to the whole fan-out, at the fold. `fail` stays, so a failed
+        // element still fails the task.
+        let mut combinations = 0;
+        for on_failure in [
+            FailurePolicy::Fail,
+            FailurePolicy::Halt,
+            FailurePolicy::Continue,
+        ] {
+            for on_rejection in [RejectionPolicy::Continue, RejectionPolicy::Halt] {
+                for terminal in [false, true] {
+                    let policy = Policy {
+                        on_failure,
+                        on_rejection,
+                        terminal,
+                    };
+                    let element = policy.per_element();
+                    let kept = match on_failure {
+                        FailurePolicy::Fail => FailurePolicy::Fail,
+                        FailurePolicy::Halt | FailurePolicy::Continue => FailurePolicy::Continue,
+                    };
+                    let at = format!("{on_failure:?}, {on_rejection:?}, terminal {terminal}");
+                    assert_eq!(element.on_failure, kept, "{at}");
+                    assert_eq!(element.on_rejection, RejectionPolicy::Continue, "{at}");
+                    assert!(!element.terminal, "{at}");
+                    for row in ["skip", "ok", "halt", "302", "404", "503", "err"] {
+                        // Only a `Halt` halts an element, and only `fail`
+                        // fails one; the status and the record are the
+                        // site's own.
+                        let d = decide(element, "t", result(row));
+                        let want = match row {
+                            "halt" => Shape::Halt,
+                            "503" | "err" if kept == FailurePolicy::Fail => {
+                                expected(row, on_failure, on_rejection, false).2
+                            }
+                            _ => Shape::Next,
+                        };
+                        assert_eq!(shape(&d.flow), want, "{row} under {at}");
+                        let site = decide(policy, "t", result(row));
+                        assert_eq!(
+                            (d.status, d.record),
+                            (site.status, site.record),
+                            "{row} under {at}"
+                        );
+                    }
+                    combinations += 1;
+                }
+            }
+        }
+        assert_eq!(combinations, 12);
     }
 
     /// One run of a message over two workflows on v3 and on v4: the
