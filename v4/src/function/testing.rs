@@ -3,7 +3,7 @@
 //! [`call`] runs one call of one function through the path a run takes:
 //!
 //! - the config compiles as it would in a workflow: the function is
-//!   registered, its config compiled under a [`Prepare`] naming it, and the
+//!   registered, its config compiled under a [`Prepare`](super::Prepare) naming it, and the
 //!   checks a workflow's compile runs walk the config's expressions;
 //! - the call gets a real [`Ctx`](super::Ctx) and overlay over the message
 //!   given, and the layers given run around it, as a run's layers do;
@@ -19,14 +19,14 @@
 use super::registry::Entry;
 use super::{
     BoundCall, BoxFuture, CallInfo, CallLayer, CallStart, Function, FunctionConfig, Outcome,
-    Prepare, Registry,
+    Registry,
 };
 use crate::base::{
-    AuthoredPath, Change, Error, ErrorKind, ErrorRecord, Issue, IssueCode, ProgramId, Result,
-    Severity, StepKind, TaskIx, WorkflowIx,
+    AuthoredPath, Change, Error, ErrorKind, ErrorRecord, Issue, ProgramId, Result, Severity,
+    StepKind, TaskIx, WorkflowIx,
 };
 use crate::expr::{CompileCx, ExprEngine, Path};
-use crate::program::{Below, Checks};
+use crate::program::{Callee, CalleeAt, Checks, compile_callee, refused};
 use crate::run::Message;
 use crate::run::host::{Invoked, Layers, invoke, stamp_record};
 use crate::state::{RunContext, Tuning};
@@ -189,7 +189,7 @@ impl<F: Function> Call<F> {
         self
     }
 
-    /// The name the function is registered and called by: what [`Prepare`]
+    /// The name the function is registered and called by: what [`Prepare`](super::Prepare)
     /// and [`CallInfo::function`] say. By default `"function"`; a built-in's
     /// name is reserved, as [`Registry::register`] reserves it.
     pub fn name(mut self, n: &str) -> Self {
@@ -372,50 +372,39 @@ pub fn config<C: FunctionConfig>(input: Value) -> std::result::Result<C, Vec<Iss
     compiled.ok_or(issues)
 }
 
-/// Compiles `name`'s config from `input`, as the compiler compiles a task's
-/// host function, then walks it with the checks a workflow's compile runs.
-/// The bound call, unless anything Rejected was found, and every issue.
+/// Compiles `name`'s config from `input` through the compiler's own
+/// [`compile_callee`], as a task's host function at workflow and task
+/// `"test"`, walked with the checks a workflow's compile runs. The bound
+/// call, unless anything Rejected was found, and every issue.
 fn compile(
     registry: &Registry,
     name: &str,
     input: &Value,
 ) -> (Option<Box<dyn BoundCall>>, Vec<Issue>) {
-    let Some(Entry::Host(f)) = registry.entry(name) else {
+    let entry = registry.entry(name);
+    let Some(entry @ Entry::Host(_)) = entry else {
         unreachable!("`{name}` was registered as a host function");
     };
-    let step = (StepKind::Task, TEST);
     let mut issues = Vec::new();
-    let bound = {
-        let mut cx = CompileCx::new(registry.exprs(), &mut issues).for_step(step.0, step.1);
-        if let Some(fields) = &f.spec().runtime_fields {
-            cx = cx.with_runtime_fields(fields);
-        }
-        let before = cx.rejected();
-        let prepare = Prepare::new(name, TEST, TEST, f.spec());
-        let bound = f.compile(input, &mut cx, &prepare);
-        if bound.is_none() && cx.rejected() == before {
-            refused(&mut cx, name);
-        }
-        bound
+    let at = CalleeAt {
+        name,
+        workflow_id: TEST,
+        step: (StepKind::Task, TEST),
+        input_at: &AuthoredPath::root(),
     };
-    let Some(bound) = bound else {
-        return (None, issues);
-    };
-    bound.visit(&mut Below {
-        hook: &mut Checks::new(registry.exprs()),
-        issues: &mut issues,
-        root: &AuthoredPath::root(),
-        step: Some(step),
-    });
-    let rejected = issues.iter().any(|i| i.severity == Severity::Rejected);
-    ((!rejected).then_some(bound), issues)
-}
-
-/// A config that refused its input without recording why: reported, as the
-/// compiler reports it, so a rejection always carries an issue.
-fn refused(cx: &mut CompileCx<'_>, name: &str) {
-    cx.issue(
-        IssueCode::InputParse,
-        format!("the config of `{name}` refused its input without reporting why"),
+    let mut checks = Checks::new(registry.exprs());
+    let callee = compile_callee(
+        registry.exprs(),
+        entry,
+        input,
+        &at,
+        &mut checks,
+        &mut issues,
     );
+    let rejected = issues.iter().any(|i| i.severity == Severity::Rejected);
+    let bound = match callee {
+        Some(Callee::Host(bound)) if !rejected => Some(bound),
+        _ => None,
+    };
+    (bound, issues)
 }

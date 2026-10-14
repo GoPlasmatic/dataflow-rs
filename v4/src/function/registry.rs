@@ -52,6 +52,7 @@ struct Inner {
 }
 
 /// What a function name resolves to.
+#[derive(Clone, Copy)]
 pub(crate) enum Entry<'r> {
     /// One of the eight built-ins, which run inline.
     Builtin(BuiltinKind),

@@ -13,7 +13,7 @@ use crate::def::{
     WorkflowDef, WorkflowFailurePolicy,
 };
 use crate::expr::path::MAX_PATH_SEGMENTS;
-use crate::expr::{CompileCx, Expr, Path};
+use crate::expr::{CompileCx, Expr, ExprEngine, Path};
 use crate::function::{Entry, FunctionSpec, Prepare, Registry};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
@@ -302,6 +302,74 @@ impl fmt::Debug for CompiledWorkflow {
     }
 }
 
+/// Where a task's function is compiled: what [`compile_callee`] needs
+/// beside the function and its input.
+pub(crate) struct CalleeAt<'a> {
+    /// The function's registered name.
+    pub(crate) name: &'a str,
+    /// The workflow's id, which `prepare` is told; empty for a fragment.
+    pub(crate) workflow_id: &'a str,
+    /// The task's step, stamped on every issue.
+    pub(crate) step: (StepKind, &'a str),
+    /// Where the config sits: the task's `function.input`.
+    pub(crate) input_at: &'a AuthoredPath,
+}
+
+/// `entry`'s config from `input`, compiled as a task's at `at`: a host
+/// function's with its spec's runtime fields and a [`Prepare`] naming the
+/// task; a config that refuses its input without recording why reported, as
+/// [`refused`]; then, when it compiled, its expressions walked with `hook`.
+/// The compiler compiles every task's function through it, and
+/// `function::testing` the one function a unit test calls, so a check
+/// added here reaches both.
+pub(crate) fn compile_callee(
+    exprs: &ExprEngine,
+    entry: Entry<'_>,
+    input: &Value,
+    at: &CalleeAt<'_>,
+    hook: &mut dyn Hook,
+    issues: &mut Vec<Issue>,
+) -> Option<Callee> {
+    let callee = {
+        let mut cx = CompileCx::new(exprs, issues)
+            .at_path(at.input_at.clone())
+            .for_step(at.step.0, at.step.1);
+        let before = cx.rejected();
+        let callee = match entry {
+            Entry::Builtin(kind) => kind.compile(input, &mut cx).map(Callee::Builtin),
+            Entry::Host(f) => {
+                if let Some(fields) = &f.spec().runtime_fields {
+                    cx = cx.with_runtime_fields(fields);
+                }
+                let prepare = Prepare::new(at.name, at.workflow_id, at.step.1, f.spec());
+                f.compile(input, &mut cx, &prepare).map(Callee::Host)
+            }
+        };
+        // A hand-written config can refuse without recording why. Its task
+        // would then have no call, so the refusal is reported.
+        if callee.is_none() && cx.rejected() == before {
+            refused(&mut cx, at.name);
+        }
+        callee
+    }?;
+    callee.visit(&mut Below {
+        hook,
+        issues,
+        root: at.input_at,
+        step: Some(at.step),
+    });
+    Some(callee)
+}
+
+/// A config of `name` that refused its input without recording why,
+/// reported, so a rejection always carries an issue.
+pub(crate) fn refused(cx: &mut CompileCx<'_>, name: &str) {
+    cx.issue(
+        IssueCode::InputParse,
+        format!("the config of `{name}` refused its input without reporting why"),
+    );
+}
+
 /// A table's next index.
 pub(super) fn next(len: usize) -> u32 {
     u32::try_from(len).expect("a workflow holds fewer than 2^32 steps")
@@ -584,9 +652,10 @@ impl<'w> Walk<'w> {
     }
 
     /// The task's function: resolved, its config compiled at
-    /// `<at>.function.input` and visited, and its references checked.
-    /// `None` when the name is unknown, which is `UNKNOWN_FUNCTION` naming
-    /// the nearest catalogue name if one is close, or the config was Rejected.
+    /// `<at>.function.input` and visited ([`compile_callee`]), and its
+    /// references checked. `None` when the name is unknown, which is
+    /// `UNKNOWN_FUNCTION` naming the nearest catalogue name if one is close,
+    /// or the config was Rejected.
     fn callee(
         &mut self,
         task: &TaskDef,
@@ -611,37 +680,20 @@ impl<'w> Walk<'w> {
         };
         let input_at = at.join("function").join("input");
         let input = &task.function.input;
-        let callee = {
-            let mut cx = CompileCx::new(registry.exprs(), &mut self.issues)
-                .at_path(input_at.clone())
-                .for_step(step.0, step.1);
-            let before = cx.rejected();
-            let callee = match entry {
-                Entry::Builtin(kind) => kind.compile(input, &mut cx).map(Callee::Builtin),
-                Entry::Host(f) => {
-                    if let Some(fields) = &f.spec().runtime_fields {
-                        cx = cx.with_runtime_fields(fields);
-                    }
-                    let prepare = Prepare::new(name, self.workflow_id, step.1, f.spec());
-                    f.compile(input, &mut cx, &prepare).map(Callee::Host)
-                }
-            };
-            // A hand-written config can refuse without recording why. Its
-            // task would then have no call, so the refusal is reported.
-            if callee.is_none() && cx.rejected() == before {
-                cx.issue(
-                    IssueCode::InputParse,
-                    format!("the config of `{name}` refused its input without reporting why"),
-                );
-            }
-            callee
-        }?;
-        callee.visit(&mut Below {
-            hook: &mut *self.hook,
-            issues: &mut self.issues,
-            root: &input_at,
-            step: Some(step),
-        });
+        let site = CalleeAt {
+            name,
+            workflow_id: self.workflow_id,
+            step,
+            input_at: &input_at,
+        };
+        let callee = compile_callee(
+            registry.exprs(),
+            entry,
+            input,
+            &site,
+            &mut *self.hook,
+            &mut self.issues,
+        )?;
         if let Entry::Host(f) = entry {
             self.references(f.spec(), input, &input_at, step);
         }
