@@ -33,6 +33,9 @@ const PHASE_6: usize = 1;
 /// `families_on` and `families_off`, and `expressions/budget` without
 /// `budget`.
 const OTHER_BUILD: usize = if cfg!(feature = "budget") { 1 } else { 2 };
+/// Deviated pointers held to their row of `expect::RUN_DEVIATED`, one row
+/// each: none is in a case one build skips.
+const RUN_DEVIATED_ROWS: usize = 25;
 
 /// What the run comparison never compares, beyond v3's `IGNORED`: the run
 /// outcome's message, which is v4's wording (I62), and the trace, which is
@@ -106,6 +109,7 @@ struct Counts {
     no_build: usize,
     phase_6: usize,
     other_build: usize,
+    run_deviated: usize,
 }
 
 /// Holds v4's JSON at every pointer `patterns` name in `expected` (v3's) or
@@ -276,6 +280,7 @@ async fn v4_runs_every_case_as_v3_recorded_it() {
             ));
         }
     }
+    counts.run_deviated = used.iter().sum();
     println!("{counts:?}");
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
     assert_eq!(
@@ -285,6 +290,7 @@ async fn v4_runs_every_case_as_v3_recorded_it() {
             no_build: NO_BUILD,
             phase_6: PHASE_6,
             other_build: OTHER_BUILD,
+            run_deviated: RUN_DEVIATED_ROWS,
         }
     );
 }
