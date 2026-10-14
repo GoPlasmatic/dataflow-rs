@@ -14,9 +14,12 @@ this reads only that line.
         holds the names a v3 one does, and `compare` reads the two alike.
 
     gate.py baseline --bins DIR --rounds N --out FILE [--only a,b]
-        Run the binaries round-robin for N + 1 rounds, discard round 0 as
-        cold, and write every run, each metric's mean, median and spread, with
-        the build, the machine and the method, to FILE.
+        Run the gate binaries DIR holds (or --only's), as `compare` finds
+        them, so a `build --v4` directory runs its twelve ports and
+        `host_call_floor`, round-robin for
+        N + 1 rounds, discard round 0 as cold, and write every run, each
+        metric's mean, median and spread, with the build, the machine and the
+        method, to FILE.
 
     gate.py compare --a DIR --b DIR --rounds N [--only a,b] [--out FILE]
         Run the binaries of both directories round-robin for N + 1 rounds
@@ -227,10 +230,16 @@ def machine(load_before):
 
 
 def baseline(args):
-    names = args.only.split(",") if args.only else BENCHES
+    available = [n for n in BENCHES + list(SELF_JUDGED) if os.path.exists(os.path.join(args.bins, n))]
+    names = args.only.split(",") if args.only else available
     unknown = [n for n in names if n not in BENCHES and n not in SELF_JUDGED]
     if unknown:
         sys.exit(f"not gate benchmarks: {unknown}")
+    missing = [n for n in names if n not in available]
+    if missing:
+        sys.exit(f"not built in {args.bins}: {missing}")
+    if not names:
+        sys.exit(f"no gate binary in {args.bins}")
     with open(os.path.join(args.bins, "build.json")) as f:
         build_info = json.load(f)
 
