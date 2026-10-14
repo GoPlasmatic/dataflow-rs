@@ -417,10 +417,7 @@ impl Hop {
     /// index, and an index is spelled in decimal.
     pub(crate) fn to_seg(&self) -> Seg {
         match self {
-            Self::Key(k) => Seg {
-                key: k.clone(),
-                index: None,
-            },
+            Self::Key(k) => Seg::key(k),
             Self::Index(i) => Seg::index(*i),
         }
     }

@@ -386,6 +386,33 @@ fn a_read_borrows_unless_the_path_changed() {
     rc.finish();
 }
 
+/// Keys that share a hash, written, read and removed through the whole run
+/// context: each keeps its own value across a checkpoint.
+#[test]
+fn keys_that_share_a_hash_keep_their_own_values() {
+    let mut slot = context();
+    rooted("data.liquid").assign(&mut slot, OwnedDataValue::from("old"));
+    let mut rc = RunContext::new(&mut slot, Tuning::default());
+    rc.edit(|e| {
+        let v = OwnedDataValue::from(1).to_arena(e.arena());
+        e.set(&rooted("data.costarring"), v, None);
+    });
+    let read = |rc: &RunContext<'_, '_>, p: &str| json(rc.get(&rooted(p)));
+    assert_eq!(read(&rc, "data.costarring"), Some("1".into()));
+    assert_eq!(read(&rc, "data.liquid"), Some(r#""old""#.into()));
+    rc.set(&rooted("data.liquid"), OwnedDataValue::from(2), None);
+    assert_eq!(read(&rc, "data.costarring"), Some("1".into()));
+    assert_eq!(read(&rc, "data.liquid"), Some("2".into()));
+    rc.checkpoint();
+    // The view again, so the removal is marked beside its twin.
+    rc.read(|_, _| ());
+    rc.remove(&rooted("data.costarring"));
+    assert_eq!(read(&rc, "data.costarring"), None);
+    assert_eq!(read(&rc, "data.liquid"), Some("2".into()));
+    rc.finish();
+    assert_eq!(exact(&slot["data"]), r#"{"liquid":2}"#);
+}
+
 #[test]
 fn an_edit_reads_the_view_it_writes() {
     let mut slot = context();

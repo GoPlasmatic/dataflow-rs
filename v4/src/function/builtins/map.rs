@@ -160,6 +160,11 @@ impl SyncFunction for MapConfig {
     /// is then `Status(500)`, as v3's.
     fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let mut failed = false;
+        // Most mappings record one change: sized once, as v3's
+        // `with_capacity`, rather than grown by doubling.
+        if cx.capture {
+            cx.changes.reserve(self.mappings.len());
+        }
         for mapping in &self.mappings {
             let (exprs, capture, changes) = (cx.exprs, cx.capture, &mut *cx.changes);
             failed |= !cx.rc.edit(|e| {

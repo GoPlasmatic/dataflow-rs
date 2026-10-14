@@ -169,8 +169,12 @@ impl Message {
         data: OwnedDataValue,
         metadata: OwnedDataValue,
     ) -> Self {
+        // Encoded into a buffer, not `to_string`, which formats through
+        // `Display`: the same lowercase hyphenated text.
+        let mut id = [0u8; uuid::fmt::Hyphenated::LENGTH];
+        let id = String::from(&*uuid::Uuid::now_v7().hyphenated().encode_lower(&mut id));
         Self {
-            id: uuid::Uuid::now_v7().to_string(),
+            id,
             payload: payload.into(),
             context: Context::new(data, metadata),
             audit: Vec::new(),
@@ -371,6 +375,14 @@ mod tests {
             };
             assert_eq!(text(&a4), text(&a3));
         }
+    }
+
+    #[test]
+    fn the_id_is_the_uuids_lowercase_hyphenated_text() {
+        let m = Message::new(OwnedDataValue::Null);
+        let id = uuid::Uuid::parse_str(m.id()).unwrap();
+        assert_eq!(m.id(), id.hyphenated().to_string());
+        assert_eq!(m.id(), m.id().to_lowercase());
     }
 
     #[test]

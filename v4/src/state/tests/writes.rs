@@ -421,6 +421,37 @@ fn the_log_follows_the_rules() {
     );
 }
 
+/// Two keys FNV-1a sends to one hash are still two siblings: the hash only
+/// rejects, a match is decided on the names.
+#[test]
+fn keys_that_share_a_hash_stay_apart() {
+    use crate::expr::path::key_hash;
+    for (a, b) in [("costarring", "liquid"), ("declinate", "macallums")] {
+        assert_eq!(key_hash(a), key_hash(b), "{a} and {b} collide");
+        let mut w = Writes::default();
+        w.mark(p(&[k("data"), k(a)]).at(), owned(n(1)));
+        for probe in [vec![k("data"), k(b)], vec![k("data"), k(b), k("x")]] {
+            assert_eq!(w.lookup(p(&probe).at()), Lookup::Clean, "{probe:?}");
+        }
+        w.mark(p(&[k("data"), k(b)]).at(), owned(n(2)));
+        let read = |w: &Writes, key: &str| lookup_text(w.lookup(p(&[k("data"), k(key)]).at()));
+        assert_eq!(read(&w, a), r#"Owned(Some("1"))"#);
+        assert_eq!(read(&w, b), r#"Owned(Some("2"))"#);
+        // A key under `b` cannot go into a number: `b` alone reads the view.
+        w.mark(p(&[k("data"), k(b), k("x")]).at(), owned(n(3)));
+        assert_eq!(read(&w, a), r#"Owned(Some("1"))"#);
+        assert_eq!(read(&w, b), "Dirty");
+        assert_eq!(
+            texts(&w.drain().dirty),
+            [
+                format!(r#"[Key("data"), Key("{a}")] Set(Some("1"))"#),
+                format!(r#"[Key("data"), Key("{b}")] Set(None)"#),
+            ],
+            "two marks, in the order first marked"
+        );
+    }
+}
+
 /// A random path; the first hop is a key, since a context is an object.
 fn hops(rng: &mut random::Rng) -> Vec<Hop> {
     let len = 1 + rng.below(4);

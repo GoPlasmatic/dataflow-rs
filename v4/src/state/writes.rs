@@ -415,6 +415,8 @@ enum Key {
         start: u32,
         /// How long it is.
         len: u32,
+        /// The segment's [`Seg::hash`], compared before the name.
+        hash: u32,
     },
     /// An array index.
     Index(usize),
@@ -527,7 +529,7 @@ impl Writes {
     /// A node's key as a borrowed hop.
     fn key_ref(names: &str, key: Key) -> KeyRef<'_> {
         match key {
-            Key::Name { start, len } => {
+            Key::Name { start, len, .. } => {
                 KeyRef::Name(&names[start as usize..(start + len) as usize])
             }
             Key::Index(i) => KeyRef::Index(i),
@@ -535,12 +537,15 @@ impl Writes {
         }
     }
 
-    /// Whether the node key `key` is segment `i` of `at`.
+    /// Whether the node key `key` is segment `i` of `at`. A name is
+    /// compared only when the hashes agree, and always then: keys can share
+    /// a hash.
     fn matches(&self, key: Key, at: At<'_>, i: usize) -> bool {
         match key {
             Key::Index(j) => at.index(i) == Some(j),
-            Key::Name { start, len } => {
-                !at.is_index(i) && self.name(start, len) == &*at.segs()[i].key
+            Key::Name { start, len, hash } => {
+                let seg = &at.segs()[i];
+                !at.is_index(i) && hash == seg.hash && self.name(start, len) == &*seg.key
             }
             Key::Root => false,
         }
@@ -566,11 +571,13 @@ impl Writes {
         let key = match at.index(i) {
             Some(j) => Key::Index(j),
             None => {
+                let seg = &at.segs()[i];
                 let start = self.names.len() as u32;
-                self.names.push_str(&at.segs()[i].key);
+                self.names.push_str(&seg.key);
                 Key::Name {
                     start,
                     len: self.names.len() as u32 - start,
+                    hash: seg.hash,
                 }
             }
         };
@@ -615,7 +622,7 @@ impl Writes {
     /// The hop a node's key names.
     fn hop(&self, key: Key) -> Hop {
         match key {
-            Key::Name { start, len } => Hop::Key(self.name(start, len).into()),
+            Key::Name { start, len, .. } => Hop::Key(self.name(start, len).into()),
             Key::Index(i) => Hop::Index(i),
             Key::Root => unreachable!("the root has no key"),
         }
@@ -745,9 +752,21 @@ impl Writes {
     /// its value, an unowned `Appended` its tail, a reorder flag its key
     /// order, so the second phase needs no view.
     /// Returns how many marks it converted from the view.
+    ///
+    /// The view is looked up only below a node that reads it: a mark that
+    /// already holds its owned value, or a removal, takes nothing from it,
+    /// and that is most marks under capture.
     pub(crate) fn settle(&mut self, root: DataValue<'_>) -> u32 {
         #[cfg(test)]
         fault::trip("settle");
+        /// Whether settling `node` reads the view at it.
+        fn reads_view(node: &Node) -> bool {
+            match &node.mark {
+                Some(Mark::Set(None) | Mark::Appended { owned: None, .. }) => true,
+                Some(Mark::Set(Some(_)) | Mark::Removed | Mark::Appended { .. }) => false,
+                None => node.reorder || node.first != NONE,
+            }
+        }
         fn walk(nodes: &mut [Node], names: &str, n: u32, here: Option<DataValue<'_>>) -> u32 {
             if let Some(mark) = &mut nodes[n as usize].mark {
                 return settle_mark(mark, here);
@@ -758,8 +777,12 @@ impl Writes {
             let mut converted = 0;
             let mut c = nodes[n as usize].first;
             while c != NONE {
-                let below =
-                    here.and_then(|v| view_child(v, Writes::key_ref(names, nodes[c as usize].key)));
+                let child = &nodes[c as usize];
+                let below = if reads_view(child) {
+                    here.and_then(|v| view_child(v, Writes::key_ref(names, child.key)))
+                } else {
+                    None
+                };
                 converted += walk(nodes, names, c, below);
                 c = nodes[c as usize].next;
             }

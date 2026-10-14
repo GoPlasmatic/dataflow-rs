@@ -299,20 +299,14 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
                     _ => vec![None; new_pairs.len()],
                 };
                 for ((k, _), v) in new_pairs.iter().zip(owned) {
-                    let segs = [key_seg(key), key_seg(k)];
+                    let segs = [Seg::key(key), Seg::key(k)];
                     self.log.mark(At::new(&segs, 0), Mark::Set(v));
                 }
             }
-            _ => self.log.mark(At::new(&[key_seg(key)], 0), Mark::Set(owned)),
+            _ => self
+                .log
+                .mark(At::new(&[Seg::key(key)], 0), Mark::Set(owned)),
         }
-    }
-}
-
-/// A segment that is always an object key.
-fn key_seg(key: &str) -> Seg {
-    Seg {
-        key: key.into(),
-        index: None,
     }
 }
 

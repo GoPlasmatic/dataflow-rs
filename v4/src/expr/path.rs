@@ -46,27 +46,54 @@ impl Root {
 
 /// One path segment: its object key and, when the raw segment parses as one,
 /// its array index.
+///
+/// Built only through its constructors, which compute `hash` from `key`, so
+/// the derived equality stays consistent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Seg {
     /// The key on an object: the raw segment with one leading `#` stripped.
     pub(crate) key: Box<str>,
     /// The index on an array: the raw segment parsed as `usize`.
     pub(crate) index: Option<usize>,
+    /// [`key_hash`] of `key`, computed once, so the write log rejects a
+    /// sibling of another name with one compare. Two keys may share a hash,
+    /// so a match is always confirmed on the names.
+    pub(crate) hash: u32,
+}
+
+/// FNV-1a (32-bit) over a key's bytes: [`Seg::hash`].
+pub(crate) fn key_hash(key: &str) -> u32 {
+    key.bytes().fold(0x811c_9dc5, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    })
 }
 
 impl Seg {
     pub(crate) fn parse(raw: &str) -> Self {
+        let key = seg_key(raw);
         Self {
-            key: seg_key(raw).into(),
+            key: key.into(),
             index: seg_index(raw),
+            hash: key_hash(key),
+        }
+    }
+
+    /// A segment that is always an object key, never an index.
+    pub(crate) fn key(key: &str) -> Self {
+        Self {
+            key: key.into(),
+            index: None,
+            hash: key_hash(key),
         }
     }
 
     /// The segment naming array element `i`: its key is `i`'s text.
     #[cfg(test)]
     pub(crate) fn index(i: usize) -> Self {
+        let key = i.to_string();
         Self {
-            key: i.to_string().into(),
+            hash: key_hash(&key),
+            key: key.into(),
             index: Some(i),
         }
     }
@@ -281,7 +308,9 @@ pub(crate) fn set(v: &mut OwnedDataValue, segs: &[Seg], value: OwnedDataValue) -
                 let at = match pairs.iter().position(|(k, _)| **k == *seg.key) {
                     Some(at) => at,
                     None => {
-                        pairs.push((seg.key.to_string(), empty(next)));
+                        // `String::from`, not `to_string`: a `Box<str>`
+                        // formats through `Display`.
+                        pairs.push((String::from(&*seg.key), empty(next)));
                         pairs.len() - 1
                     }
                 };
@@ -306,7 +335,7 @@ pub(crate) fn set(v: &mut OwnedDataValue, segs: &[Seg], value: OwnedDataValue) -
         OwnedDataValue::Object(pairs) => {
             match pairs.iter_mut().find(|(k, _)| **k == *last.key) {
                 Some(slot) => slot.1 = value,
-                None => pairs.push((last.key.to_string(), value)),
+                None => pairs.push((String::from(&*last.key), value)),
             }
             true
         }
