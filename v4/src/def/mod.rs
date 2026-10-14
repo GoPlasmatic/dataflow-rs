@@ -35,6 +35,7 @@ mod rollout;
 mod ser;
 mod types;
 
+pub(crate) use for_each::for_each_issue;
 pub(crate) use loops::bound_issues;
 pub(crate) use parse::parse_steps;
 pub(crate) use parse::parse_with_rewrites;

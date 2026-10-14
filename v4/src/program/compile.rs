@@ -529,13 +529,22 @@ impl<'w> Walk<'w> {
         self.lower.close(open);
     }
 
-    /// A fan-out at `at`: its `over`, recorded, then its bindings as paths.
+    /// A fan-out at `at`: its rules, checked again, then its `over`,
+    /// recorded, then its bindings as paths.
+    ///
+    /// `parse` refuses a fan-out that breaks a rule, but a host may edit a
+    /// parsed definition, and the interpreter trusts them: no call starts
+    /// under `max_concurrency: 0`, and an `into` at a root would replace it.
     fn fan(
         &mut self,
         config: &ForEachDef,
         at: &AuthoredPath,
         step: (StepKind, &str),
     ) -> Option<FanSite> {
+        if let Some((code, path, message)) = def::for_each_issue(config, at) {
+            self.report(Issue::new(code, path, message), Some(step));
+            return None;
+        }
         let over = self.expr(&config.over, &at.join("over"), true, Some(step));
         let item = format!("temp_data.{}", config.r#as);
         let bound = self
@@ -1070,6 +1079,80 @@ mod tests {
             let authored =
                 json!({"id": "w", "loop": {"init": init, "max": max}, "tasks": [echo_task()]});
             assert_eq!(parse_issues(&authored), issues);
+        }
+    }
+
+    /// An `echo` fan-out, parsed, then edited by `edit`, as a host may edit a
+    /// parsed definition: the issues `compile_one` rejects it with, as
+    /// `edited_loop` lists them.
+    fn edited_fan(
+        edit: impl FnOnce(&mut ForEachDef),
+    ) -> Vec<(IssueCode, Severity, String, String)> {
+        let mut task = echo_task();
+        task["for_each"] = json!({"over": {"var": "data.items"}, "as": "item",
+            "collect": "temp_data.r", "into": "data.rs"});
+        let json = json!({"id": "w", "tasks": [task]});
+        let mut def = parse(&json, ParseOptions::default()).def.unwrap();
+        let StepDef::Task(task) = &mut def.tasks[0] else {
+            panic!("a task");
+        };
+        edit(task.for_each.as_mut().unwrap());
+        compiler()
+            .compile_one(&def)
+            .expect_err("compile refuses the edited fan-out")
+            .into_iter()
+            .map(|i| (i.code, i.severity, i.path.to_string(), i.message))
+            .collect()
+    }
+
+    #[test]
+    fn compile_refuses_an_edited_fan_out_the_parser_would_refuse() {
+        // `max_concurrency: 0` would start no call, and an `into` or a
+        // `collect` at a root would replace the root with an array.
+        let concurrency = |fan: &mut ForEachDef| fan.max_concurrency = 0;
+        let into = |fan: &mut ForEachDef| fan.into = Some("data".to_owned());
+        let collect = |fan: &mut ForEachDef| fan.collect = Some("temp_data".to_owned());
+        let cases: [(&dyn Fn(&mut ForEachDef), Value, &str, &str); 3] = [
+            (
+                &concurrency,
+                json!({"max_concurrency": 0}),
+                "max_concurrency",
+                "for_each max_concurrency must be at least 1",
+            ),
+            (
+                &into,
+                json!({"into": "data"}),
+                "into",
+                "for_each into must be a context path below data, metadata or temp_data, \
+                 got \"data\"",
+            ),
+            (
+                &collect,
+                json!({"collect": "temp_data"}),
+                "collect",
+                "for_each collect must be a context path below data, metadata or temp_data, \
+                 got \"temp_data\"",
+            ),
+        ];
+        for (edit, spelled, field, message) in cases {
+            let issues = edited_fan(edit);
+            assert_eq!(
+                issues,
+                [(
+                    IssueCode::InvalidForEach,
+                    Severity::Rejected,
+                    format!("tasks[0].for_each.{field}"),
+                    message.to_owned(),
+                )]
+            );
+            // The code, path and message `parse` gives the authored spelling.
+            let mut task = echo_task();
+            task["for_each"] = json!({"over": {"var": "data.items"}, "as": "item",
+                "collect": "temp_data.r", "into": "data.rs"});
+            for (key, value) in spelled.as_object().unwrap() {
+                task["for_each"][key] = value.clone();
+            }
+            assert_eq!(parse_issues(&json!({"id": "w", "tasks": [task]})), issues);
         }
     }
 

@@ -56,59 +56,41 @@ fn opt_str<'v>(
     }
 }
 
-/// Reads a `for_each` object, or its first problem. The built-in rule, which
-/// needs the task's function, is the caller's and comes first.
-fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
-    let over = obj
-        .get("over")
-        .ok_or_else(|| parse_failed("over", "missing field `over`"))?;
-    let item = obj
-        .get("as")
-        .ok_or_else(|| parse_failed("as", "missing field `as`"))?;
+/// An `over` that is a literal, which cannot be an array of elements.
+fn over_problem(over: &Value) -> Option<Problem> {
+    over_literal_problem(over)
+        .map(|problem| invalid("over", problem.replacen("loop over", "for_each over", 1)))
+}
 
-    if let Some(problem) = over_literal_problem(over) {
-        return Err(invalid(
-            "over",
-            problem.replacen("loop over", "for_each over", 1),
-        ));
-    }
-    let item = item
-        .as_str()
-        .ok_or_else(|| parse_failed("as", "expected a string"))?;
-    if !is_slot_path(item) {
-        return Err(invalid(
+/// An `as` that is not a `temp_data` slot.
+fn as_problem(item: &str) -> Option<Problem> {
+    (!is_slot_path(item)).then(|| {
+        invalid(
             "as",
             format!("for_each as must be a non-empty temp_data field path, got {item:?}"),
-        ));
-    }
-    let max_concurrency = match obj.get("max_concurrency") {
-        None => defaults::MAX_CONCURRENCY,
-        Some(raw) => raw
-            .as_u64()
-            .and_then(|n| usize::try_from(n).ok())
-            .ok_or_else(|| parse_failed("max_concurrency", "expected a non-negative integer"))?,
-    };
-    if max_concurrency == 0 {
-        return Err(invalid(
+        )
+    })
+}
+
+/// A `max_concurrency` that would start no call.
+fn concurrency_problem(max_concurrency: usize) -> Option<Problem> {
+    (max_concurrency == 0).then(|| {
+        invalid(
             "max_concurrency",
             "for_each max_concurrency must be at least 1",
-        ));
-    }
+        )
+    })
+}
 
-    let collect = opt_str(obj, "collect")?;
-    let into = opt_str(obj, "into")?;
-    let def = ForEachDef {
-        over: Logic(over.clone()),
-        r#as: item.to_string(),
-        max_concurrency,
-        collect: collect.map(str::to_string),
-        into: into.map(str::to_string),
-    };
+/// `collect` and `into`, beside the binding `item`: given together, each a
+/// context path below a root, and overlapping neither each other nor a
+/// binding.
+fn slots_problem(collect: Option<&str>, into: Option<&str>, item: &str) -> Option<Problem> {
     let (collect, into) = match (collect, into) {
-        (None, None) => return Ok(def),
+        (None, None) => return None,
         (Some(collect), Some(into)) => (collect, into),
         (collect, _) => {
-            return Err(invalid(
+            return Some(invalid(
                 if collect.is_some() { "collect" } else { "into" },
                 "for_each collect and into go together: collect names what each call writes, \
                  into names the array the results land in",
@@ -117,7 +99,7 @@ fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
     };
     for (field, path) in [("collect", collect), ("into", into)] {
         if !is_context_path(path) {
-            return Err(invalid(
+            return Some(invalid(
                 field,
                 format!(
                     "for_each {field} must be a context path below data, metadata or \
@@ -130,7 +112,7 @@ fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
     let index = format!("{item}_index");
     for binding in [&item, &index] {
         if slots_overlap(collect, binding) {
-            return Err(invalid(
+            return Some(invalid(
                 "collect",
                 format!(
                     "for_each collect ({collect:?}) and {binding:?} overlap — the bindings live \
@@ -142,7 +124,7 @@ fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
     }
     for other in [collect, &item, &index] {
         if slots_overlap(into, other) {
-            return Err(invalid(
+            return Some(invalid(
                 "into",
                 format!(
                     "for_each into ({into:?}) and {other:?} overlap — the results array would \
@@ -151,7 +133,80 @@ fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
             ));
         }
     }
-    Ok(def)
+    None
+}
+
+/// Reads a `for_each` object, or its first problem. The built-in rule, which
+/// needs the task's function, is the caller's and comes first.
+fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
+    let over = obj
+        .get("over")
+        .ok_or_else(|| parse_failed("over", "missing field `over`"))?;
+    let item = obj
+        .get("as")
+        .ok_or_else(|| parse_failed("as", "missing field `as`"))?;
+
+    if let Some(problem) = over_problem(over) {
+        return Err(problem);
+    }
+    let item = item
+        .as_str()
+        .ok_or_else(|| parse_failed("as", "expected a string"))?;
+    if let Some(problem) = as_problem(item) {
+        return Err(problem);
+    }
+    let max_concurrency = match obj.get("max_concurrency") {
+        None => defaults::MAX_CONCURRENCY,
+        Some(raw) => raw
+            .as_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .ok_or_else(|| parse_failed("max_concurrency", "expected a non-negative integer"))?,
+    };
+    if let Some(problem) = concurrency_problem(max_concurrency) {
+        return Err(problem);
+    }
+
+    let collect = opt_str(obj, "collect")?;
+    let into = opt_str(obj, "into")?;
+    if let Some(problem) = slots_problem(collect, into, item) {
+        return Err(problem);
+    }
+    Ok(ForEachDef {
+        over: Logic(over.clone()),
+        r#as: item.to_string(),
+        max_concurrency,
+        collect: collect.map(str::to_string),
+        into: into.map(str::to_string),
+    })
+}
+
+/// The first rule a read `for_each` at `at` breaks, as `parse` reports it:
+/// its code, its path and its message. `parse` checks the object it reads;
+/// the compile walk checks the definition it is handed again, since a host
+/// may edit one after `parse`, and a fan-out with no call in flight, or a
+/// result array at a root, would run as a silent no-op or replace the root.
+pub(crate) fn for_each_issue(
+    def: &ForEachDef,
+    at: &AuthoredPath,
+) -> Option<(IssueCode, AuthoredPath, String)> {
+    let problem = over_problem(&def.over.0)
+        .or_else(|| as_problem(&def.r#as))
+        .or_else(|| concurrency_problem(def.max_concurrency))
+        .or_else(|| slots_problem(def.collect.as_deref(), def.into.as_deref(), &def.r#as))?;
+    Some(problem.at(at))
+}
+
+impl Problem {
+    /// The problem as an issue of the `for_each` at `at`: at its key, or at
+    /// `at` itself for the whole.
+    fn at(self, at: &AuthoredPath) -> (IssueCode, AuthoredPath, String) {
+        let path = if self.field.is_empty() {
+            at.clone()
+        } else {
+            at.join(self.field)
+        };
+        (self.code, path, self.message)
+    }
 }
 
 impl Walk<'_> {
@@ -184,12 +239,8 @@ impl Walk<'_> {
         let def = match read {
             Ok(def) => Some(def),
             Err(problem) => {
-                let path = if problem.field.is_empty() {
-                    at.clone()
-                } else {
-                    at.join(problem.field)
-                };
-                self.report(problem.code, path, problem.message);
+                let (code, path, message) = problem.at(&at);
+                self.report(code, path, message);
                 None
             }
         };
