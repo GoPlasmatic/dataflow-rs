@@ -15,6 +15,7 @@ pub use crate::base::{
     AuthoredPath, Issue, IssueCode, ParseIssueCodeError, ParsePathError, PathSeg, ProgramId,
     Severity, StepKind, TaskIx, WorkflowIx,
 };
+pub(crate) use checks::{Below, Checks};
 pub use compile::{CompileOptions, Compiled, CompiledWorkflow, Compiler, ResourceOracle};
 pub use fingerprint::{Fingerprint, ParseFingerprintError};
 pub use link::{Program, TaskInfo, WorkflowInfo};

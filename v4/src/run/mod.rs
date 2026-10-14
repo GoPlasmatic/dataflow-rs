@@ -4,7 +4,7 @@ mod builder;
 mod cancel;
 mod engine;
 mod fan_out;
-mod host;
+pub(crate) mod host;
 mod interp;
 mod message;
 mod options;

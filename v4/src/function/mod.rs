@@ -13,6 +13,7 @@ mod registry;
 mod spec;
 mod sync;
 mod templated;
+pub mod testing;
 
 pub use crate::expr::{ExprVisitor, FieldKind, FieldSpec, Rendered, ValueKind};
 pub use call::{Function, Prepare};

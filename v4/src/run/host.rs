@@ -102,21 +102,32 @@ pub(crate) async fn invoke<'r>(
     }
 }
 
-/// The records a call added, onto the message, as given (I96): with the
-/// run's timestamp when they carry none, and in a fan-out the element's
-/// index when they carry none.
+/// A record a call added, as given (I96): with the run's timestamp,
+/// `now_text`, when it carries none, and in a fan-out the element's index
+/// when it carries none.
+pub(crate) fn stamp_record(
+    mut record: ErrorRecord,
+    now_text: &str,
+    element_index: Option<usize>,
+) -> ErrorRecord {
+    if record.timestamp.is_none() {
+        record.timestamp = Some(now_text.to_owned());
+    }
+    if record.element_index.is_none() {
+        record.element_index = element_index;
+    }
+    record
+}
+
+/// The records a call added, onto the message, each stamped by
+/// [`stamp_record`].
 pub(crate) fn keep_records(
     env: &mut RunEnv<'_, '_>,
     records: Vec<ErrorRecord>,
     element_index: Option<usize>,
 ) {
-    for mut record in records {
-        if record.timestamp.is_none() {
-            record.timestamp = Some(env.now_text.to_owned());
-        }
-        if record.element_index.is_none() {
-            record.element_index = element_index;
-        }
+    for record in records {
+        let record = stamp_record(record, env.now_text, element_index);
         env.errors.push(record);
     }
 }

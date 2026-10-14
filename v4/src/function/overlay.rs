@@ -30,18 +30,22 @@ use bumpalo::Bump;
 use datavalue::{DataValue, OwnedDataValue};
 
 /// The writes of one call, in the order they were made.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Overlay(Vec<(Path, Write)>);
 
-/// One write a call made, at the path it named.
-#[derive(Debug)]
-pub(crate) enum Write {
-    /// A value written, which the call's own root took.
+/// One write a call made, at the path it named: what
+/// [`Called::writes`](super::testing::Called::writes) lists, in the order
+/// the call made them.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Write {
+    /// A value written, which the call's own context took: the call reads it
+    /// there from then on.
     Set(OwnedDataValue),
-    /// A value written where the call's own root could not take it, below
+    /// A value written where the call's own context could not take it, below
     /// a scalar. It changes nothing the call reads, and the settle still
-    /// replays it, since the context may take it then, as v3 replays every
-    /// `Change`.
+    /// replays it at its path, since the message may take it by then, as v3
+    /// replays every `Change`.
     Blocked(OwnedDataValue),
     /// A value the call saw, removed.
     Removed,
@@ -121,6 +125,11 @@ impl Overlay {
             );
             spliced.unwrap_or(root)
         })
+    }
+
+    /// The writes, in the order the call made them.
+    pub(crate) fn into_writes(self) -> Vec<(Path, Write)> {
+        self.0
     }
 
     /// Replays every write through `rc`, in the order the call made them,
