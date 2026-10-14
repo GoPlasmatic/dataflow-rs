@@ -48,8 +48,16 @@ pub(crate) enum Exit {
     /// The ops ran to their end, past a failure `on_failure: continue`
     /// stepped over.
     Failed,
-    /// The workflow stops the run with this error.
+    /// A failure stops the run with this error: a task's, under
+    /// `on_failure: fail` in a workflow whose own is `fail`, or a step the
+    /// interpreter refuses.
     Stopped(Error),
+    /// The run's deadline passed or its token was cancelled, as this error
+    /// of kind `TimedOut` or `Cancelled` says: at a check between ops, as a
+    /// sweep starts, or cutting a call short (I92). Only this exit makes the
+    /// run `TimedOut` or `Cancelled`; an `Err` of either kind a function
+    /// returned is a task's failure like any other.
+    Limited(Error),
 }
 
 /// The loop frame: the sweep the workflow is in.
@@ -189,7 +197,7 @@ pub(crate) async fn run_workflow<'p>(
     let mut pc = 0;
     while let Some(&op) = wf.ops.get(pc) {
         if let Err(e) = env.tick(rc) {
-            return (Exit::Stopped(e), selection);
+            return (Exit::Limited(e), selection);
         }
         let flow = match op {
             Op::Cond {
@@ -244,7 +252,7 @@ pub(crate) async fn run_workflow<'p>(
             Flow::Next => pc + 1,
             Flow::Jump(to) => to as usize,
             Flow::Halt => return (Exit::Halted, selection),
-            Flow::Stop(e) => return (Exit::Stopped(e), selection),
+            Flow::Stop(e) => return (Exit::Limited(e), selection),
             Flow::Fail(e) => match wf.on_failure {
                 WorkflowFailurePolicy::Continue => {
                     env.failed = true;

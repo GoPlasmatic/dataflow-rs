@@ -102,7 +102,10 @@ impl Engine {
     /// `opts.routing_bucket` is skipped; no bucket is admitted by every
     /// rollout. A workflow that stops the run ends it, and the [`Run`] says
     /// how: [`TimedOut`](RunStatus::TimedOut) once `opts.deadline` passed,
-    /// [`Cancelled`](RunStatus::Cancelled) once `opts.cancel` was cancelled.
+    /// [`Cancelled`](RunStatus::Cancelled) once `opts.cancel` was cancelled,
+    /// and otherwise [`Stopped`](RunStatus::Stopped) with the error that
+    /// stopped it, whatever its kind: a child run's timeout that a function
+    /// returns is its task's failure, not this run's.
     pub async fn run_with(&self, msg: &mut Message, opts: &RunOptions<'_>) -> Run {
         let program = &self.inner.program;
         let now = Utc::now();
@@ -116,6 +119,7 @@ impl Engine {
         // an entry for them (I67).
         let capture = opts.capture_changes && keeps_entries(opts.audit);
         let mut records = Vec::with_capacity(active.len());
+        // How the run ended, once a workflow stopped it.
         let mut stopped = None;
         let limits = Limits {
             deadline: opts.deadline,
@@ -166,7 +170,18 @@ impl Engine {
                 Exit::Completed => (WorkflowExit::Completed, None),
                 Exit::Halted => (WorkflowExit::Halted, None),
                 Exit::Failed => (WorkflowExit::Failed, None),
-                Exit::Stopped(e) => (WorkflowExit::Stopped, Some(e)),
+                Exit::Stopped(e) => (WorkflowExit::Stopped, Some(RunStatus::Stopped(e))),
+                // Only the run's own limits make it `TimedOut` or
+                // `Cancelled`: a task's `Err` of either kind, a child run's
+                // propagated, stops it as any failure does.
+                Exit::Limited(e) => {
+                    let status = if *e.kind() == ErrorKind::Cancelled {
+                        RunStatus::Cancelled
+                    } else {
+                        RunStatus::TimedOut
+                    };
+                    (WorkflowExit::Stopped, Some(status))
+                }
             };
             records.push(Record {
                 ix,
@@ -174,17 +189,15 @@ impl Engine {
                 sweeps: env.frame.sweeps,
                 exit: ran.then_some(exit),
             });
-            if let Some(e) = stop {
-                stopped = Some(e);
+            if let Some(status) = stop {
+                stopped = Some(status);
                 break;
             }
         }
         let stats = rc.finish();
         finish_audit(parts.audit, opts.audit);
         let status = match stopped {
-            Some(e) if *e.kind() == ErrorKind::TimedOut => RunStatus::TimedOut,
-            Some(e) if *e.kind() == ErrorKind::Cancelled => RunStatus::Cancelled,
-            Some(e) => RunStatus::Stopped(e),
+            Some(status) => status,
             None if !parts.errors.is_empty() => RunStatus::CompletedWithErrors,
             None => RunStatus::Completed,
         };

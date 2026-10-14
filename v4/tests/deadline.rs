@@ -466,3 +466,94 @@ async fn ctx_exposes_the_deadline_and_the_token() {
         ]
     );
 }
+
+/// How [`Propagate`]'s child run is stopped short: never by the parent's
+/// own limits.
+#[derive(Clone, Copy)]
+enum ChildStop {
+    /// The child's deadline, `ms` from the call's start, earlier than any
+    /// the parent has.
+    Deadline(u64),
+    /// The child's own token, cancelled before the child runs; the parent's
+    /// is not.
+    Cancelled,
+}
+
+/// R60's child run, propagated: `nested` runs under a limit of its own, and
+/// the call returns its `into_result()?`, so the child's stop is the
+/// call's `Err`.
+struct Propagate {
+    nested: Engine,
+    stop: ChildStop,
+}
+
+impl Function for Propagate {
+    type Config = ();
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _: &()) -> Result<Outcome> {
+        let token = ctx
+            .cancel()
+            .map_or_else(CancelToken::new, CancelToken::child);
+        let mut opts = RunOptions::default().cancel(&token);
+        match self.stop {
+            ChildStop::Deadline(ms) => opts = opts.deadline(after(ms)),
+            ChildStop::Cancelled => token.cancel(),
+        }
+        self.nested
+            .run_with(&mut message(), &opts)
+            .await
+            .into_result()?;
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_child_runs_stop_is_the_calls_error_not_the_runs_limit() {
+    // The child's own deadline passes, or its own token trips, and the call
+    // returns that as an `Err` under the default policies: the parent's
+    // limits never fired, so the parent is `Stopped` with the task's error,
+    // neither `TimedOut` nor `Cancelled`.
+    for (stop, code, text) in [
+        (
+            ChildStop::Deadline(1000),
+            "TIMEOUT_ERROR",
+            "Task p error: Timeout error: the run timed out",
+        ),
+        (
+            ChildStop::Cancelled,
+            "CANCELLED",
+            "Task p error: the run was cancelled",
+        ),
+    ] {
+        let e = Engine::builder()
+            .register(
+                "propagate",
+                Propagate {
+                    nested: engine(&[workflow("child", vec![slow("c", 10_000)])]),
+                    stop,
+                },
+            )
+            .workflow_json(&workflow(
+                "w",
+                vec![
+                    json!({"id": "p", "function": {"name": "propagate", "input": {}}}),
+                    map("after", "data.after", json!(true)),
+                ],
+            ))
+            .build()
+            .unwrap();
+        let token = CancelToken::new();
+        let opts = RunOptions::default().deadline(after(5000)).cancel(&token);
+        let mut m = message();
+        let run = e.run_with(&mut m, &opts).await;
+        match run.status() {
+            RunStatus::Stopped(e) => assert_eq!(e.code(), code),
+            other => panic!("{other:?}"),
+        }
+        assert!(!token.is_cancelled());
+        assert_eq!(audit(&m), [("p".to_owned(), 500, None)]);
+        assert_eq!(errors(&m), [error(code, text)]);
+        assert_eq!(data(&m), json!({"input": 1}));
+        assert_eq!(considered(&run), [("w", 1, Some(WorkflowExit::Stopped))]);
+    }
+}
