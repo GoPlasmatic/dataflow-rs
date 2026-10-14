@@ -799,6 +799,100 @@ mod tests {
         }
     }
 
+    /// A fan-out's calls, each over the run's one view with its own
+    /// element bound, each writing under its binding and under `data`,
+    /// then settled in element order onto a run where no binding is: each
+    /// call reads its writes over its element, and each write lands at its
+    /// own path on the writes settled before it, as v3 replays an element's
+    /// `Change`s onto a message that holds no binding. A write below a
+    /// scalar element is blocked in its call and lands at the settle.
+    #[test]
+    fn calls_with_bindings_settled_in_order_replay_each_write_at_its_path() {
+        let context = json!({"data": {}, "metadata": {}, "temp_data": {}});
+        let item = parse("temp_data.p");
+        let index = parse("temp_data.p_index");
+        // Each element, its writes, what the call then sees at
+        // `temp_data.p`, and the old values its `Change`s record.
+        let elements: [(Value, Call<'_>, Value, [Value; 2]); 3] = [
+            (
+                json!({"id": "a"}),
+                vec![
+                    ("temp_data.p.x", Some(json!(1))),
+                    ("data.a", Some(json!(1))),
+                ],
+                json!({"id": "a", "x": 1}),
+                [json!(null), json!(null)],
+            ),
+            (
+                json!(5),
+                vec![
+                    ("temp_data.p.y", Some(json!(2))),
+                    ("data.b", Some(json!(2))),
+                ],
+                json!(5),
+                [json!(null), json!(null)],
+            ),
+            (
+                json!({"id": "c"}),
+                vec![
+                    ("temp_data.p.id", Some(json!("C"))),
+                    ("data.a", Some(json!(3))),
+                ],
+                json!({"id": "C"}),
+                [json!("c"), json!(null)],
+            ),
+        ];
+        let exprs = ExprEngine::default();
+        let payload = OwnedDataValue::Null;
+        let mut slot = OwnedDataValue::from(&context);
+        let mut rc = RunContext::new(&mut slot, Tuning::default());
+        let mut overlays = Vec::new();
+        let reader = rc.reader();
+        for (i, (element, writes, seen, olds)) in elements.iter().enumerate() {
+            let value = OwnedDataValue::from(element);
+            let binding = Binding {
+                item: &item,
+                value: &value,
+                index: &index,
+                index_value: OwnedDataValue::from(i),
+            };
+            let mut ctx = Ctx::new(CallStart {
+                reader,
+                binding: Some(&binding),
+                payload: &payload,
+                exprs: &exprs,
+                info: info(),
+                primary: None,
+                deadline: None,
+                cancel: None,
+                capture: true,
+            });
+            for (dotted, value) in writes {
+                let value = value.as_ref().map(OwnedDataValue::from).unwrap();
+                ctx.set(&parse(dotted), value).unwrap();
+            }
+            assert_eq!(get(&ctx, "temp_data.p").as_ref(), Some(seen), "element {i}");
+            assert_eq!(
+                eval(&ctx, json!({"var": "temp_data.p"})),
+                *seen,
+                "element {i}"
+            );
+            assert_eq!(get(&ctx, "temp_data.p_index"), Some(json!(i)));
+            let (overlay, changes, _) = ctx.settle();
+            let recorded: Vec<Value> = changes.iter().map(|c| Value::from(&c.old_value)).collect();
+            assert_eq!(recorded, olds, "element {i}");
+            overlays.push(overlay);
+        }
+        for overlay in overlays {
+            overlay.apply(&mut rc);
+        }
+        rc.finish();
+        assert_eq!(
+            serde_json::to_string(&slot).unwrap(),
+            r#"{"data":{"a":3,"b":2},"metadata":{},"temp_data":{"p":{"x":1,"y":2,"id":"C"}}}"#
+        );
+    }
+
     #[test]
     fn render_lends_each_hole_from_where_it_is_and_builds_no_tree() {
         // R54: only a value the call wrote below a hole is converted.
