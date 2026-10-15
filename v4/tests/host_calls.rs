@@ -15,7 +15,9 @@ use dataflow_rs::function::{
     BoxFuture, CallLayer, FunctionConfig, FunctionSpec, Next, Templated, layers,
 };
 use dataflow_rs::observe::{Event, Interest, Observer, TraceOptions};
-use dataflow_rs::run::{EngineConfig, ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
+use dataflow_rs::run::{
+    EngineConfig, ErrorContext, ErrorKind, ErrorRecord, RunStatus, WorkflowExit,
+};
 use dataflow_rs::{
     Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Registry, Result, Run, RunOptions,
 };
@@ -842,7 +844,11 @@ fn the_run_future_is_send_with_a_host_call_and_layers() {
     let e = Engine::builder()
         .register("probe", Probe(Arc::clone(&seen)))
         .layer(Named("registry", Arc::clone(&seen)))
-        .config(EngineConfig::default().observer(Arc::new(Quiet)))
+        .config(
+            EngineConfig::default()
+                .observer(Arc::new(Quiet))
+                .error_context(ErrorContext::new("metadata.errors".parse().unwrap(), 32).unwrap()),
+        )
         .workflow_json(&workflow(
             "w",
             &[],

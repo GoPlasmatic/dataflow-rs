@@ -330,7 +330,7 @@ async fn the_observer_survives_a_reload() {
     };
     assert_eq!(
         config(&reloaded),
-        "config: EngineConfig { observer: present, .. } }"
+        "config: EngineConfig { observer: present, error_context: None, .. } }"
     );
     reloaded.run(&mut message(json!({}))).await;
     assert_eq!(
