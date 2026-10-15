@@ -676,7 +676,7 @@ impl<C: FunctionConfig> Function for Resolves<C> {
     type Config = C;
 
     async fn call(&self, ctx: &mut Ctx<'_>, cfg: &C) -> Result<Outcome> {
-        let resolved = cfg.resolve(&mut &*ctx)?;
+        let resolved = ctx.resolve(cfg)?;
         let at: Path = format!("temp_data.{}", ctx.info().task_id).parse()?;
         ctx.set(&at, resolved)?;
         Ok(Outcome::Ok)
@@ -804,8 +804,9 @@ impl Function for TwinPlugin {
 
     async fn call(&self, ctx: &mut Ctx<'_>, cfg: &Templated) -> Result<Outcome> {
         let resolved = cfg.resolved(ctx)?;
-        // The trait's resolve is `resolved`.
+        // The trait's resolve is `resolved`, by the call's context too.
         assert_eq!(FunctionConfig::resolve(cfg, &mut &*ctx)?, resolved);
+        assert_eq!(ctx.resolve(cfg)?, resolved);
         ctx.set(&"temp_data.templated".parse()?, resolved)?;
         Ok(Outcome::Ok)
     }

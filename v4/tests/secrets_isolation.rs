@@ -158,6 +158,19 @@ impl Function for Sign {
             Some(SECRET),
             "Ctx::secret"
         );
+        // The function's own view of its config reads the secret; the
+        // input a layer reads does not.
+        let resolved = ctx.resolve(cfg)?;
+        assert_eq!(
+            resolved.get("key").and_then(OwnedDataValue::as_str),
+            Some(SECRET),
+            "Ctx::resolve"
+        );
+        assert_eq!(
+            ctx.input()?.get("key"),
+            Some(&OwnedDataValue::Null),
+            "Ctx::input"
+        );
         let body = ctx.eval(&cfg.body)?.into_owned();
         let sig = format!("{}:{}", body.len(), key.len());
         ctx.emit(&cfg.out, OwnedDataValue::String(sig))?;

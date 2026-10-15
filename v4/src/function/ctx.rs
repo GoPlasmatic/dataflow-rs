@@ -306,6 +306,24 @@ impl<'r> Ctx<'r> {
         Ok(input)
     }
 
+    /// `cfg` resolved for this call, unredacted:
+    /// [`FunctionConfig::resolve`](super::FunctionConfig::resolve) over the
+    /// context as this call sees it, a fan-out element's binding included,
+    /// with every expression evaluated, a secret-reading one too. It is
+    /// [`Self::input`]'s counterpart: `input` is what a layer or a dry run
+    /// reads, and this is the function's own view of its config, which it
+    /// may hand on whole.
+    ///
+    /// # Errors
+    ///
+    /// The first field's that fails: [`ErrorKind::Budget`] when the
+    /// operation ceiling is exceeded, [`ErrorKind::Eval`] for any other
+    /// evaluation failure, [`ErrorKind::Config`] for a serde field that does
+    /// not serialize.
+    pub fn resolve<C: super::FunctionConfig>(&self, cfg: &C) -> Result<OwnedDataValue> {
+        cfg.resolve(&mut &*self)
+    }
+
     /// The message's payload, which no expression reads.
     pub fn payload(&self) -> &OwnedDataValue {
         self.payload
@@ -574,8 +592,9 @@ impl<'r> Ctx<'r> {
 }
 
 /// A call's context resolves a config's fields against the context as the
-/// call sees it, as [`Ctx::eval`] and [`Ctx::render`] do, secrets read. So a
-/// function resolves its own config with `cfg.resolve(&mut &*ctx)`.
+/// call sees it, as [`Ctx::eval`] and [`Ctx::render`] do, secrets read: a
+/// host's [`ConfigField::resolve`](crate::expr::ConfigField::resolve) calls
+/// it. A function resolves its whole config with [`Ctx::resolve`].
 impl Resolver for &Ctx<'_> {
     fn eval(&mut self, expr: &dyn ResolveExpr) -> Result<OwnedDataValue> {
         Ctx::eval_owned(self, expr)
