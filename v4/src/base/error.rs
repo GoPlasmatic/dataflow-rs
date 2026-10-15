@@ -1,6 +1,7 @@
 //! The error type and the wire shape of a recorded error.
 
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::Cow;
 use std::fmt;
 
@@ -217,6 +218,18 @@ impl ErrorRecord {
 impl From<&Error> for ErrorRecord {
     fn from(error: &Error) -> Self {
         Self::new(error.code(), error.message())
+    }
+}
+
+/// Writes the error as `{"code", "message", "retryable"}`: [`Error::code`],
+/// [`Error::message`] and [`Error::is_retryable`], in that order (I126).
+impl Serialize for Error {
+    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        let mut o = s.serialize_struct("Error", 3)?;
+        o.serialize_field("code", self.code())?;
+        o.serialize_field("message", self.message())?;
+        o.serialize_field("retryable", &self.is_retryable())?;
+        o.end()
     }
 }
 

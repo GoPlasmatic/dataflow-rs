@@ -7,6 +7,8 @@ mod trace;
 
 use crate::base::{Error, WorkflowIx};
 pub use observer::{Event, Interest, Observer};
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 pub use trace::{StepResult, Trace, TraceOptions, TraceStep};
 
 /// How a run ended.
@@ -72,4 +74,71 @@ pub struct WorkflowRecord<'r> {
     pub sweeps: u32,
     /// How it ended; `None` when it did not run.
     pub exit: Option<WorkflowExit>,
+}
+
+/// Writes the `status` string of a run's JSON: `completed`,
+/// `completed_with_errors`, `stopped`, `timed_out` or `cancelled`. The
+/// `error` of a stopped run is a key of the run's object, which
+/// [`Run`](crate::Run) writes (I126).
+impl Serialize for RunStatus {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(match self {
+            Self::Completed => "completed",
+            Self::CompletedWithErrors => "completed_with_errors",
+            Self::Stopped(_) => "stopped",
+            Self::TimedOut => "timed_out",
+            Self::Cancelled => "cancelled",
+        })
+    }
+}
+
+/// Writes the `selection` string of a workflow's record: `ran`,
+/// `skipped_by_condition`, `condition_failed` or `skipped_by_rollout`. The
+/// error of a failed condition is a key of the record, which
+/// [`WorkflowRecord`] writes (I126).
+impl Serialize for Selection {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(match self {
+            Self::Ran => "ran",
+            Self::SkippedByCondition => "skipped_by_condition",
+            Self::ConditionFailed(_) => "condition_failed",
+            Self::SkippedByRollout => "skipped_by_rollout",
+        })
+    }
+}
+
+/// Writes how a workflow ended as a lowercase string: `completed`,
+/// `halted`, `failed` or `stopped` (I126).
+impl Serialize for WorkflowExit {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(match self {
+            Self::Completed => "completed",
+            Self::Halted => "halted",
+            Self::Failed => "failed",
+            Self::Stopped => "stopped",
+        })
+    }
+}
+
+/// Writes a workflow's record as `{"id", "index", "selection", "error"?,
+/// "sweeps", "exit"}`: `error` only for a condition that failed to
+/// evaluate, and `exit` `null` for a workflow that did not run (I126).
+impl Serialize for WorkflowRecord<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let error = match self.selection {
+            Selection::ConditionFailed(e) => Some(e),
+            _ => None,
+        };
+        let mut o = s.serialize_struct("WorkflowRecord", 6)?;
+        o.serialize_field("id", self.id)?;
+        o.serialize_field("index", &self.index)?;
+        o.serialize_field("selection", self.selection)?;
+        match error {
+            Some(e) => o.serialize_field("error", e)?,
+            None => o.skip_field("error")?,
+        }
+        o.serialize_field("sweeps", &self.sweeps)?;
+        o.serialize_field("exit", &self.exit)?;
+        o.end()
+    }
 }

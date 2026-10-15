@@ -4,6 +4,8 @@ use crate::base::{Error, ErrorKind, WorkflowIx};
 use crate::observe::{RunStatus, Selection, Trace, WorkflowExit, WorkflowRecord};
 use crate::program::Program;
 use crate::state::Stats;
+use serde::ser::{SerializeSeq, SerializeStruct};
+use serde::{Serialize, Serializer};
 
 /// One workflow considered by a run, as the engine records it.
 #[derive(Debug)]
@@ -139,6 +141,39 @@ impl Run {
             live_max: self.stats.live_max,
             peak_arena: self.stats.peak_arena,
         }
+    }
+}
+
+/// Writes a run as `{"status", "error"?, "retryable", "partial", "matched",
+/// "workflows"}` (I126): `error` only for a stopped run, `workflows` the
+/// records of [`Run::workflows`]. Neither the trace nor the arena counters
+/// are part of it. A `Run` has no `Deserialize`, since it holds its
+/// program.
+impl Serialize for Run {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        /// The records, written as a sequence.
+        struct Records<'r>(&'r Run);
+        impl Serialize for Records<'_> {
+            fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                let mut seq = s.serialize_seq(Some(self.0.records.len()))?;
+                for w in self.0.workflows() {
+                    seq.serialize_element(&w)?;
+                }
+                seq.end()
+            }
+        }
+
+        let mut o = s.serialize_struct("Run", 6)?;
+        o.serialize_field("status", &self.status)?;
+        match &self.status {
+            RunStatus::Stopped(e) => o.serialize_field("error", e)?,
+            _ => o.skip_field("error")?,
+        }
+        o.serialize_field("retryable", &self.retryable())?;
+        o.serialize_field("partial", &self.partial())?;
+        o.serialize_field("matched", &self.matched())?;
+        o.serialize_field("workflows", &Records(self))?;
+        o.end()
     }
 }
 
