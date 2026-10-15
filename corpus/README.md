@@ -74,11 +74,15 @@ and runs its steps:
     `max_snapshot_bytes`, and the driver asserts it: the trace check replays every trace to v3's
     snapshots and to the message, which a trace without changes, a redacted one or one past a
     budget cannot do, so no deviation could cover one (v4's own tests hold those three). v3's `snapshots`, `mapping_contexts` and `snapshot_audit_trail` have no
-    v4 counterpart. It records `{outcome, initial, steps, truncated, message_matches, contexts}`:
-    the traced run's outcome; `initial` and `steps` exactly as v4 serializes them; `truncated`;
-    whether the traced run's normalised message equals the plain run's; and v4's own replay,
-    `Trace::contexts`, one context per step. The traced run's events and log
-    lines are dropped, as v3's driver dropped them.
+    v4 counterpart. It records `{outcome, initial, steps, truncated, message_matches, contexts,
+    read_back}`: the traced run's outcome; `initial` and `steps` exactly as v4 serializes them;
+    `truncated`; whether the traced run's normalised message equals the plain run's; v4's own
+    replay, `Trace::contexts`, one context per step; and whether the trace reads back, below. The
+    traced run's events and log lines are dropped, as v3's driver dropped them.
+  - `read_back`, v4's own key, says whether the message reads back (I125): `"ok"` when the
+    `Message` read from the text v4 wrote writes that text again, byte for byte, or else what
+    failed. A trace's `read_back` says the same of the `Trace`, which must also replay
+    (`Trace::contexts`) to the contexts the original does, compared as text.
 
   `script` is v3's, ported to `Function` (`src/script.rs`). Each error it returns carries v3's code
   and v3's text, so its records are v3's.
@@ -94,6 +98,7 @@ The record is compared with `compare::diff`, ignoring:
   compared);
 - a refused reload's code;
 - the trace, which the traces check compares;
+- the run's `read_back`, which v3's recording has no twin of: every one must be `"ok"`;
 - every path a deviation covers, except one under a run's trace, which the traces check holds.
 
 At each deviated path, v4's value must be exactly its row of `expect::RUN_DEVIATED`, so a deviation
@@ -106,16 +111,20 @@ stale: the deviation would declare a difference that is not there. These counts 
 | Cases with no build | 10 | 10 |
 | Cases needing features this build has the other way | 2 | 1 |
 | Deviated pointers, each held to its `RUN_DEVIATED` row | 24 | 24 |
+| Run steps whose message reads back byte for byte: every one | 85 | 87 |
 
 `expressions/budget` runs only on a `budget` build. Exactly one of `families_on` and `families_off`
-runs in each build.
+runs in each build. The cases hold 95 run steps: 7 are in cases with no build, one is in the
+family case this build skips, and `expressions/budget`'s two run only on a `budget` build.
 
 **Traces** (`tests/traces.rs`, phase 6). For every run step whose recording holds a trace, in a case
 that builds and runs in this build, v4's traced run is held to v3's: its outcome (code and
 `retryable`, as the plain outcome is), `truncated`, `message_matches`, and its steps, aligned with
 v3's by replay (see [Traces](#traces) under Replay). Each traced run must also replay to its own
-message. A deviated pointer under a run's trace is held to its row of `expect::TRACE_DEVIATED`,
-each row used exactly once, with the same stale check. These counts are pinned, the same in every
+message, and its trace must read back from the text v4 wrote, byte for byte, replaying to the same
+contexts (`read_back`). A deviated pointer under a run's trace is held to its row of
+`expect::TRACE_DEVIATED`, each row used exactly once, with the same stale check. These counts are
+pinned, the same in every
 build (`expressions/budget` turns its trace off, and `families_on` and `families_off` trace alike):
 
 | Count | Every build |
@@ -131,6 +140,7 @@ build (`expressions/budget` turns its trace off, and `families_on` and `families
 | Of the matched steps, those whose `status` is held to v3's own audit entry | 215 |
 | Traced runs the replay invariant held: every one | 85 |
 | v4 steps whose `Trace::contexts` entry equals the corpus replay: every one | 294 |
+| Traced runs whose trace reads back byte for byte and replays the same: every one | 85 |
 
 In each build, v3's recordings hold 89 traced runs: the 85 compared, and four in cases v4 does not
 build (breaks 2a, 3 and 15), whose `/steps` a deviation covers.

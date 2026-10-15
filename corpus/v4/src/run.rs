@@ -11,9 +11,11 @@
 //! audit mode, on an engine holding the linked program and the case's config:
 //! the recording observer when the case asks for one, and its error context.
 //! A run step whose trace is on runs a second time, traced, as v3's driver
-//! ran it (I109). Each reload step parses, compiles and links its definitions
-//! through the same compiler and swaps the engine's program, keeping the
-//! config, as v3's driver swapped its engine.
+//! ran it (I109). Each run step's message, and each traced run's trace, is
+//! read back from the text v4 wrote and written again (I125). Each reload
+//! step parses, compiles and links its definitions through the same
+//! compiler and swaps the engine's program, keeping the config, as v3's
+//! driver swapped its engine.
 
 use crate::observe::Recorder;
 use crate::{compiler, definitions, logs};
@@ -24,7 +26,7 @@ use dataflow_corpus::{Case, Json, normalise};
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::def::{ParseOptions, parse};
 use dataflow_rs::expr::ExprEngine;
-use dataflow_rs::observe::TraceOptions;
+use dataflow_rs::observe::{Trace, TraceOptions};
 use dataflow_rs::program::{CompiledWorkflow, Compiler, Program};
 use dataflow_rs::run::{
     AuditMode, Engine, EngineConfig, ErrorContext, Message, RunOptions, RunStatus,
@@ -253,19 +255,20 @@ fn program(compiler: &Compiler, workflows: &[Json]) -> Result<Program, Vec<Strin
     }
 }
 
-/// One run step: `{run: {outcome, message, observer?, logs?, trace?}}`, in
-/// v3's key order.
+/// One run step: `{run: {outcome, message, observer?, logs?, trace?,
+/// read_back}}`, in v3's key order, then v4's own key.
 ///
 /// The plain run gives the outcome, the message, normalised with the case's
 /// error-context path, the observer's events when the case attaches it, and
 /// the log lines when it captures them. When the step's trace is on, the
 /// same input runs again, traced by [`trace_options`], and `trace` records
-/// `{outcome, initial, steps, truncated, message_matches, contexts}`: the
-/// traced run's outcome, v4's `initial` and steps exactly as v4 serializes
-/// them, `truncated`, whether the traced run's normalised message equals
-/// the plain run's, and v4's own replay, `Trace::contexts`, one context per
-/// step. The traced run's events and log lines are dropped, as v3's
-/// driver dropped them.
+/// `{outcome, initial, steps, truncated, message_matches, contexts,
+/// read_back}`: the traced run's outcome, v4's `initial` and steps exactly
+/// as v4 serializes them, `truncated`, whether the traced run's normalised
+/// message equals the plain run's, v4's own replay, `Trace::contexts`, one
+/// context per step, and [`trace_read_back`]. The traced run's events and
+/// log lines are dropped, as v3's driver dropped them. `read_back` is
+/// [`message_read_back`] of the plain run's message.
 async fn run_step(engine: &Engine, run: &RunSpec, spec: &EngineSpec, recorder: &Recorder) -> Json {
     let error_context = spec.error_context.as_ref().map(|e| e.path.as_str());
     let opts = options(run);
@@ -275,6 +278,7 @@ async fn run_step(engine: &Engine, run: &RunSpec, spec: &EngineSpec, recorder: &
     let result = engine.run_with(&mut message, &opts).await;
     let lines = logs::end();
     let events = recorder.take();
+    let read_back = message_read_back(&message);
     let message = normalised(&message, error_context);
 
     let mut record = Json::object();
@@ -308,8 +312,9 @@ async fn run_step(engine: &Engine, run: &RunSpec, spec: &EngineSpec, recorder: &
         let trace = result
             .trace()
             .expect("a run given trace options returns a trace");
-        let trace = Json::from_text(&serde_json::to_string(trace).expect("a trace serializes"))
-            .expect("serde_json's output parses");
+        let text = serde_json::to_string(trace).expect("a trace serializes");
+        let trace_read_back = trace_read_back(trace, &text);
+        let trace = Json::from_text(&text).expect("serde_json's output parses");
         let part = |key: &str| trace.get(key).cloned().expect("a trace has its three keys");
         let matches = normalised(&traced, error_context) == message;
         // v4's own replay, beside the corpus's: `tests/traces.rs` holds
@@ -332,10 +337,83 @@ async fn run_step(engine: &Engine, run: &RunSpec, spec: &EngineSpec, recorder: &
                 ("truncated".to_owned(), part("truncated")),
                 ("message_matches".to_owned(), Json::Bool(matches)),
                 ("contexts".to_owned(), Json::Array(contexts)),
+                ("read_back".to_owned(), trace_read_back),
             ]),
         );
     }
+    record.insert("read_back", read_back);
     Json::Object(vec![("run".to_owned(), record)])
+}
+
+/// Whether `message` reads back (I125): `"ok"` when the message read from
+/// the text it writes writes that text again; otherwise what failed.
+fn message_read_back(message: &Message) -> Json {
+    let text = serde_json::to_string(message).expect("a message serializes");
+    ok_or_why(match serde_json::from_str::<Message>(&text) {
+        Err(e) => Err(format!("the message does not read back: {e}")),
+        Ok(back) => same_text(
+            "the message",
+            &text,
+            &serde_json::to_string(&back).expect("a message serializes"),
+        ),
+    })
+}
+
+/// Whether `trace`, written as `text`, reads back (I125): `"ok"` when the
+/// trace read from `text` writes `text` again and its `Trace::contexts`
+/// write what the original's do; otherwise what failed.
+fn trace_read_back(trace: &Trace, text: &str) -> Json {
+    let contexts = |t: &Trace| -> Vec<String> {
+        t.contexts()
+            .map(|c| serde_json::to_string(&c).expect("a context serializes"))
+            .collect()
+    };
+    ok_or_why(match serde_json::from_str::<Trace>(text) {
+        Err(e) => Err(format!("the trace does not read back: {e}")),
+        Ok(back) => same_text(
+            "the trace",
+            text,
+            &serde_json::to_string(&back).expect("a trace serializes"),
+        )
+        .and_then(|()| {
+            (contexts(&back) == contexts(trace))
+                .then_some(())
+                .ok_or_else(|| "the trace read back replays to other contexts".to_owned())
+        }),
+    })
+}
+
+/// `Ok` when `again`, what `what` read back writes, is `text`; otherwise
+/// where the two first differ.
+fn same_text(what: &str, text: &str, again: &str) -> Result<(), String> {
+    if again == text {
+        return Ok(());
+    }
+    let at = text
+        .char_indices()
+        .zip(again.chars())
+        .find(|((_, a), b)| a != b)
+        .map_or(text.len().min(again.len()), |((i, _), _)| i);
+    let from = |s: &str| {
+        s.get(at..)
+            .unwrap_or("")
+            .chars()
+            .take(60)
+            .collect::<String>()
+    };
+    Err(format!(
+        "{what} reads back as other text, from byte {at}: wrote `{}`, read back `{}`",
+        from(text),
+        from(again)
+    ))
+}
+
+/// `"ok"`, or the failure's text.
+fn ok_or_why(checked: Result<(), String>) -> Json {
+    match checked {
+        Ok(()) => Json::str("ok"),
+        Err(why) => Json::str(why),
+    }
 }
 
 /// The step's run options: its channel, bucket, capture and audit mode.

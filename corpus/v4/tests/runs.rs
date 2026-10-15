@@ -11,8 +11,9 @@
 //! `build` and `steps` are compared with v3's recording, ignoring v3's
 //! `IGNORED`, the run outcome's message (I62), a refused reload's code, the
 //! trace (`tests/traces.rs` compares it) and every path a deviation covers.
-//! At each of those, v4's JSON must be `expect::RUN_DEVIATED`'s. The counts
-//! are pinned, so nothing drops out silently.
+//! At each of those, v4's JSON must be `expect::RUN_DEVIATED`'s. Every run
+//! step's message must also read back from the text v4 wrote, byte for byte
+//! (I125). The counts are pinned, so nothing drops out silently.
 
 use dataflow_corpus::case::Step;
 use dataflow_corpus::compare::{IGNORED, diff};
@@ -35,17 +36,27 @@ const OTHER_BUILD: usize = if cfg!(feature = "budget") { 1 } else { 2 };
 /// Deviated pointers held to their row of `expect::RUN_DEVIATED`, one row
 /// each: none is in a case one build skips.
 const RUN_DEVIATED_ROWS: usize = 24;
+/// Messages that read back byte for byte: every run step's, in the cases
+/// run. The cases hold 95 run steps: 7 are in cases with no build, and one
+/// in the case of `families_on` and `families_off` this build skips, and
+/// `expressions/budget`'s two without `budget`.
+const MESSAGES_READ_BACK: usize = if cfg!(feature = "budget") { 87 } else { 85 };
 
 /// What the run comparison never compares, beyond v3's `IGNORED`: the run
 /// outcome's message, which is v4's wording (I62); a refused reload's code,
 /// v3's own error's where v4's is `REJECTED`, whose message `IGNORED` already
-/// skips (a reload refused against one accepted is still compared); and the
-/// trace, which `tests/traces.rs` compares.
+/// skips (a reload refused against one accepted is still compared); the
+/// trace, which `tests/traces.rs` compares; and v4's own `read_back`, which
+/// v3's recording has no twin of and which is checked on its own.
 const RUN_IGNORED: &[&str] = &[
     "/steps/*/run/outcome/error/message",
     "/steps/*/reload/error/code",
     TRACE,
+    READ_BACK,
 ];
+
+/// Whether a run step's message read back: the driver's own key.
+const READ_BACK: &str = "/steps/*/run/read_back";
 
 /// A run step's trace, and every pointer under it: `tests/traces.rs`'s.
 const TRACE: &str = "/steps/*/run/trace";
@@ -91,6 +102,7 @@ struct Counts {
     no_build: usize,
     other_build: usize,
     run_deviated: usize,
+    messages_read_back: usize,
 }
 
 #[tokio::test]
@@ -168,6 +180,15 @@ async fn v4_runs_every_case_as_v3_recorded_it() {
         held.check(&name, &deviated, (&expected, &actual), &base, &mut failures);
 
         for (i, step) in case.steps.iter().enumerate() {
+            if let Step::Run(_) = step {
+                match actual.pointer(&format!("/steps/{i}/run/read_back")) {
+                    Some(Json::String(ok)) if ok == "ok" => counts.messages_read_back += 1,
+                    other => failures.push(format!(
+                        "{name}: step {i}'s message does not read back: {}",
+                        other.map_or_else(|| "no read_back".to_owned(), Json::to_text)
+                    )),
+                }
+            }
             if let Step::Run(run) = step
                 && let Some(n) = run.same_as
             {
@@ -191,6 +212,7 @@ async fn v4_runs_every_case_as_v3_recorded_it() {
             no_build: NO_BUILD,
             other_build: OTHER_BUILD,
             run_deviated: RUN_DEVIATED_ROWS,
+            messages_read_back: MESSAGES_READ_BACK,
         }
     );
 }

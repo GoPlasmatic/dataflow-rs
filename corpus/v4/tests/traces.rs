@@ -55,6 +55,10 @@
 //! message's own final context. A run it cannot hold (a truncated trace, a
 //! traced message unlike the plain one) fails outright, and the runs it held
 //! are counted, pinned at the traced runs.
+//!
+//! Every traced run's trace must also read back from the text v4 wrote,
+//! byte for byte, and replay to the same contexts (I125), counted and
+//! pinned at the traced runs.
 
 use dataflow_corpus::case::{Case, Step};
 use dataflow_corpus::compare::diff;
@@ -112,6 +116,7 @@ struct Counts {
     statuses: usize,
     replayed: usize,
     contexts: usize,
+    traces_read_back: usize,
 }
 
 /// The deviation paths of `case` under a run's trace.
@@ -426,6 +431,13 @@ async fn v4_traces_every_run_as_v3_recorded_it() {
             let pair = match (step, v3, v4) {
                 (Step::Run(_), Some(v3), Some(v4)) => {
                     counts.traced += 1;
+                    match v4.get("read_back") {
+                        Some(Json::String(ok)) if ok == "ok" => counts.traces_read_back += 1,
+                        other => failures.push(format!(
+                            "{name}: step {i}'s trace does not read back: {}",
+                            other.map_or_else(|| "no read_back".to_owned(), Json::to_text)
+                        )),
+                    }
                     let plain = actual
                         .pointer(&format!("{at}/message"))
                         .expect("a run records its message");
@@ -494,6 +506,8 @@ async fn v4_traces_every_run_as_v3_recorded_it() {
             // The replay invariant held every traced run.
             replayed: TRACED,
             contexts: CONTEXTS,
+            // Every traced run's trace read back.
+            traces_read_back: TRACED,
         }
     );
 }
