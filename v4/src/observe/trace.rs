@@ -39,6 +39,11 @@ pub struct TraceOptions {
     /// removal's included, so no key below it reaches the trace and a replay
     /// reads `null` there from the first write on. A path that resolves
     /// nothing in `initial` creates nothing there. Empty by default.
+    ///
+    /// It masks values at those paths and nothing else: a step's `errors`,
+    /// like a value derived from a redacted one and written elsewhere, are
+    /// carried as the message keeps them, so a record whose message quotes
+    /// a redacted value quotes it in the trace too.
     pub redact: Vec<Path>,
     /// A ceiling on what the trace holds, on v3's scale: one machine word
     /// per node, plus each string's and each key's length, counting
