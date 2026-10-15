@@ -20,10 +20,12 @@ mod sealed {
 ///
 /// Sealed: the implementations are [`OwnedDataValue`] (lent as
 /// `Cow<OwnedDataValue>`), [`String`] (`Cow<str>`; a result that is not a
-/// string is its compact JSON), [`u64`], [`i64`] and [`bool`] (themselves; an
-/// integer out of the type's range, or anything else, is an error), [`f64`]
-/// (itself; any number) and [`Path`] (`Cow<Path>`; a string parsed as a
-/// path).
+/// string is its compact JSON), [`u64`] and [`i64`] (themselves: an integer,
+/// or a whole float, in the type's range; above `i64::MAX` an integer is read
+/// as a float and may round; anything else is an error), [`f64`] (itself:
+/// any finite number, the only kind JSON carries; anything else is an
+/// error), [`bool`] (itself; anything else is an error) and [`Path`]
+/// (`Cow<Path>`; a string parsed as a path).
 pub trait FromValue: Sized + Send + Sync + 'static + sealed::Sealed {
     /// What kind of value the type is, for a field's schema.
     #[doc(hidden)]
@@ -165,10 +167,12 @@ impl FromValue for i64 {
 impl FromValue for f64 {
     const KIND: ValueKind = ValueKind::Number;
     type Out<'a> = Self;
-    /// Any number.
+    /// Any finite number: an infinity, which arithmetic can make, has no
+    /// JSON spelling and would be written as `null`.
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
-            DataValue::Number(n) => Ok(n.as_f64()),
+            DataValue::Number(n) if n.as_f64().is_finite() => Ok(n.as_f64()),
+            DataValue::Number(n) => Err(format!("{} is not a finite f64", n.as_f64())),
             other => Err(format!("{other} is not an f64")),
         }
     }

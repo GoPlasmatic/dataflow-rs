@@ -316,6 +316,23 @@ fn an_f64_expression() {
     let err = e.eval(&y, &root(json!({"data": {"s": "x"}}))).unwrap_err();
     assert_eq!(err.kind(), &ErrorKind::Eval);
     assert!(err.message().contains("an f64"), "{}", err.message());
+    // A result JSON cannot carry: arithmetic past the largest float.
+    let z: Expr<f64> = e
+        .compile(&json!({"*": [{"var": "data.huge"}, 10]}))
+        .unwrap();
+    for huge in [1e308, -1e308] {
+        let err = e
+            .eval(&z, &root(json!({"data": {"huge": huge}})))
+            .unwrap_err();
+        assert_eq!(err.kind(), &ErrorKind::Eval);
+        assert!(
+            err.message().contains("not a finite f64"),
+            "{}",
+            err.message()
+        );
+    }
+    let inf = e.compile::<f64>(&json!({"*": [1e308, 10]})).unwrap_err();
+    assert_eq!(inf.kind(), &ErrorKind::Config, "a constant at compile");
 }
 
 /// A config with an `i64` and an `f64` field, as a host derives one.
