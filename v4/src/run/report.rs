@@ -108,8 +108,17 @@ impl Run {
         )
     }
 
+    /// The run's trace, taken out of the report, which keeps none after.
+    /// Take it before [`into_result`](Self::into_result) when the trace is
+    /// wanted on every status: `into_result` drops the report, the trace
+    /// with it, on exactly the runs that stopped.
+    pub fn take_trace(&mut self) -> Option<Trace> {
+        self.trace.take()
+    }
+
     /// `Ok(self)` unless the run was stopped, timed out or cancelled, which
-    /// become the error.
+    /// become the error, the report and its trace dropped; take the trace
+    /// first with [`take_trace`](Self::take_trace) to keep it.
     pub fn into_result(self) -> crate::Result<Self> {
         match self.status {
             RunStatus::Stopped(e) => Err(e),

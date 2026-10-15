@@ -375,8 +375,14 @@ async fn the_failing_step_is_recorded_with_its_error() {
         &[],
     )]);
     let mut m = message(json!({}));
-    let (run, trace) = trace_of(&e, &mut m, TraceOptions::default()).await;
+    let (mut run, trace) = trace_of(&e, &mut m, TraceOptions::default()).await;
     assert!(matches!(run.status(), RunStatus::Stopped(_)), "{run:?}");
+    // The trace taken out of the report survives `into_result`'s `Err`
+    // (review B M-4).
+    let taken = run.take_trace().expect("the report holds the trace");
+    assert_eq!(text(&taken), text(&trace));
+    assert!(run.trace().is_none() && run.take_trace().is_none());
+    assert!(run.into_result().is_err());
 
     let last = trace.steps.last().unwrap();
     assert_eq!(last.task_id.as_deref(), Some("boom"));
