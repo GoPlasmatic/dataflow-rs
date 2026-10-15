@@ -46,7 +46,9 @@
 //!
 //! Beside v3, every traced run holds to I19's rule, with no deviation: the
 //! replay of all of v4's steps from `initial`, normalised, is the traced
-//! message's own final context.
+//! message's own final context. A run it cannot hold (a truncated trace, a
+//! traced message unlike the plain one) fails outright, and the runs it held
+//! are counted, pinned at the traced runs.
 
 use dataflow_corpus::case::{Case, Step};
 use dataflow_corpus::compare::diff;
@@ -99,6 +101,7 @@ struct Counts {
     failed_workflows: usize,
     trace_deviated: usize,
     statuses: usize,
+    replayed: usize,
 }
 
 /// The deviation paths of `case` under a run's trace.
@@ -289,10 +292,20 @@ fn traced_run(
 
     // I19: the replay of every step is the traced message's final context.
     // The traced message is the plain one when `message_matches` holds,
-    // which is compared below; a trace past its budget cannot replay.
+    // which is compared below too; a trace past its budget cannot replay.
+    // No traced case sets a budget (`run_step` asserts it) and v3 records
+    // every traced message as matching, so a run the invariant cannot hold
+    // is unexplained, and fails outright (review C M-3).
     let whole = v4.get("truncated") == Some(&Json::Bool(false));
     let same = v4.get("message_matches") == Some(&Json::Bool(true));
-    if whole && same {
+    if !(whole && same) {
+        failures.push(format!(
+            "{name}: step {i}'s trace cannot be held to its message's context: \
+             truncated {}, message_matches {}",
+            !whole, same
+        ));
+    } else {
+        counts.replayed += 1;
         normalise::context(&mut context, error_context);
         let message = plain.pointer("/context").cloned().unwrap_or(Json::Null);
         let differs = diff(&message, &context, &[]);
@@ -442,6 +455,8 @@ async fn v4_traces_every_run_as_v3_recorded_it() {
             failed_workflows: FAILED_WORKFLOWS,
             trace_deviated: TRACE_DEVIATED_ROWS,
             statuses: STATUSES,
+            // The replay invariant held every traced run.
+            replayed: TRACED,
         }
     );
 }
@@ -580,6 +595,27 @@ fn a_step_that_disagrees_and_a_replay_that_misses_the_message_fail() {
     assert_eq!(paths, ["/steps/1/task_id"]);
     assert_eq!(failures.len(), 1, "{failures:?}");
     assert!(failures[0].contains("does not replay"), "{failures:?}");
+}
+
+#[test]
+fn a_trace_the_replay_invariant_cannot_hold_fails_outright() {
+    for (key, value) in [("truncated", true), ("message_matches", false)] {
+        let (mut counts, mut failures) = (Counts::default(), Vec::new());
+        let mut v4 = v4_trace("b");
+        v4.insert(key, Json::Bool(value));
+        traced_run(
+            "c",
+            0,
+            (&v3_trace(), &v4, &plain()),
+            None,
+            false,
+            &mut counts,
+            &mut failures,
+        );
+        assert_eq!(counts.replayed, 0, "{key}");
+        assert_eq!(failures.len(), 1, "{key}: {failures:?}");
+        assert!(failures[0].contains("cannot be held"), "{failures:?}");
+    }
 }
 
 #[test]

@@ -125,6 +125,7 @@ build (`expressions/budget` turns its trace off, and `families_on` and `families
 | v4 steps matched to nothing: a workflow's own failure | 1 |
 | Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 4 |
 | Of the matched steps, those whose `status` is held to v3's own audit entry | 215 |
+| Traced runs the replay invariant held: every one | 85 |
 
 v3's recordings hold 87 traced runs. The other four are in cases v4 does not build (breaks 2a, 3
 and 15), whose `/steps` a deviation covers.
@@ -280,7 +281,9 @@ carry neither.
 **The replay invariant.** For every traced run, the replay of all of v4's steps from `initial`,
 normalised, must equal the traced message's own final context, normalised (I19: a trace replays to
 the context on every status). The traced message is the plain run's whenever `message_matches`
-holds, which is itself compared. The invariant does not depend on v3 and takes no deviation.
+holds, which is itself compared. The invariant does not depend on v3 and takes no deviation. A
+traced run it cannot hold, a truncated trace or a traced message that differs from the plain
+run's, fails outright, and the count of runs it held is pinned at the traced-run count.
 
 **Trace deviations.** Both sides are compared in v3's coordinates. Each trace is read as
 `{outcome, steps, truncated, message_matches}`, each step as `{workflow_id, task_id, result,
