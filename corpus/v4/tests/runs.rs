@@ -35,7 +35,7 @@ const NO_BUILD: usize = 10;
 const OTHER_BUILD: usize = if cfg!(feature = "budget") { 1 } else { 2 };
 /// Deviated pointers held to their row of `expect::RUN_DEVIATED`, one row
 /// each: none is in a case one build skips.
-const RUN_DEVIATED_ROWS: usize = 24;
+const RUN_DEVIATED_ROWS: usize = 28;
 /// Messages that read back byte for byte: every run step's, in the cases
 /// run. The cases hold 95 run steps: 7 are in cases with no build, and one
 /// in the case of `families_on` and `families_off` this build skips, and

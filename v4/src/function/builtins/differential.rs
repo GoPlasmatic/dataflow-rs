@@ -139,7 +139,8 @@ impl V3Task {
 }
 
 /// v3's context text after one task over `context` as it is, so a tree whose
-/// keys are not sorted (a `serde_json::Value` always sorts them) can be used.
+/// keys are not sorted (a `serde_json::Value` sorts them unless serde_json's
+/// `preserve_order` is on) can be used.
 pub(crate) async fn v3_context_text(
     function: &str,
     input: &Value,

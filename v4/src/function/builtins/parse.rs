@@ -2,7 +2,7 @@
 //! `data` to write.
 
 use super::paths::{DataPath, ParseFrom, ParseSource};
-use super::xml::{validation_error, xml_to_json};
+use super::xml::{validation_error, xml_to_value};
 use crate::base::Result;
 use crate::expr::path;
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
@@ -58,8 +58,8 @@ impl ParseConfig {
         Ok(Outcome::Ok)
     }
 
-    /// `parse_xml`: the source's string read as an XML document, written at
-    /// the target.
+    /// `parse_xml`: the source's string read as an XML document, its
+    /// elements in document order, written at the target.
     ///
     /// # Errors
     ///
@@ -69,7 +69,7 @@ impl ParseConfig {
         let from = self.source.resolve(cx)?;
         debug!("ParseXml: Extracting from '{}'", from.text());
         let (parsed, len) = match lookup(cx.payload, cx.rc, &from).as_deref() {
-            Some(OwnedDataValue::String(xml)) => (xml_to_json(xml)?, xml.len()),
+            Some(OwnedDataValue::String(xml)) => (xml_to_value(xml)?, xml.len()),
             _ => {
                 return Err(validation_error(format_args!(
                     "ParseXml: Source '{}' is not a string",
@@ -78,7 +78,7 @@ impl ParseConfig {
             }
         };
         let target = self.target.path(cx)?;
-        write(cx, &target, OwnedDataValue::from(&parsed), Some(len));
+        write(cx, &target, parsed, Some(len));
         Ok(Outcome::Ok)
     }
 }
@@ -103,7 +103,7 @@ fn write(
 
 #[cfg(test)]
 mod tests {
-    use crate::function::builtins::differential::{Observed, same, v4_task};
+    use crate::function::builtins::differential::{Observed, same, v4_context_text, v4_task};
     use serde_json::{Value, json};
 
     fn context() -> Value {
@@ -275,6 +275,35 @@ mod tests {
             &json!({"data": {"slot": "xml", "xml": "<q>1</q>"}}),
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn parse_xml_keeps_the_documents_element_order() {
+        // In every build, where v3's default build sorted the keys (break
+        // 23). A repeated element keeps its first place and its last value,
+        // as v3 read it with serde_json's `preserve_order` on; in sorted
+        // order, v3's default build agrees.
+        same(
+            "parse_xml",
+            &json!({"source": "data.xml", "target": "doc"}),
+            &Value::Null,
+            &json!({"data": {"xml": "<r><a>1</a><b>2</b><a>3</a></r>"}}),
+        )
+        .await;
+        let context = datavalue::OwnedDataValue::from_json(concat!(
+            r#"{"data":{"xml":"<r><z>1</z><a><y>2</y><b>3</b></a><m>x</m><z>4</z></r>"},"#,
+            r#""metadata":{},"temp_data":{}}"#
+        ))
+        .expect("JSON");
+        let input = json!({"source": "data.xml", "target": "doc"});
+        let written = v4_context_text("parse_xml", &input, context);
+        assert!(
+            written.contains(concat!(
+                r#""doc":{"z":{"$text":"4"},"a":{"y":{"$text":"2"},"b":{"$text":"3"}},"#,
+                r#""m":{"$text":"x"}}"#
+            )),
+            "{written}"
+        );
     }
 
     #[tokio::test]

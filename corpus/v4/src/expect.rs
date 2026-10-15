@@ -234,6 +234,9 @@ pub type RunDeviated = (&'static str, &'static str, &'static str);
 ///   names every Rejected issue.
 /// - `breaks/name_required` (break 6): both unnamed definitions parse, so
 ///   all four workflows run, in definition order, and each appends.
+/// - `builtins/publish` (break 23): `publish_json`'s `pretty` and
+///   `publish_xml` write the source's key order, as compact does, where
+///   v3's default build sorted the keys.
 /// - `fan_out/over_shapes` (break 4, I91): the non-array `over` is the
 ///   task's record with `LOGIC_ERROR` and a logic evaluation error's text,
 ///   where v3 recorded a `TASK_ERROR` "Task error".
@@ -292,6 +295,26 @@ pub const RUN_DEVIATED: &[RunDeviated] = &[
         "/build",
         r#"{"error": {"code": "REJECTED",
             "message": "UNKNOWN_FUNCTION at tasks[0].function.name; UNKNOWN_FUNCTION at tasks[1].function.name; UNKNOWN_FUNCTION at tasks[2].function.name"}}"#,
+    ),
+    (
+        "builtins/publish",
+        "/steps/0/run/message/context/data/pretty_out",
+        PRETTY,
+    ),
+    (
+        "builtins/publish",
+        "/steps/0/run/message/context/data/xml",
+        XML,
+    ),
+    (
+        "builtins/publish",
+        "/steps/0/run/message/audit_trail/1/changes/0/new_value",
+        PRETTY,
+    ),
+    (
+        "builtins/publish",
+        "/steps/0/run/message/audit_trail/4/changes/0/new_value",
+        XML,
     ),
     (
         "expressions/host_config_stray_key",
@@ -394,6 +417,12 @@ pub const RUN_DEVIATED: &[RunDeviated] = &[
 /// v4's record does not reach.
 pub const MISSING: &str = "<missing>";
 
+/// `builtins/publish`'s pretty text, in the source's key order (break 23).
+const PRETTY: &str = r#""{\n  \"b\": 1,\n  \"a\": [\n    1,\n    \"x\"\n  ]\n}""#;
+
+/// `builtins/publish`'s XML, in the source's key order (break 23).
+const XML: &str = r#""<doc><b>1</b><a><item>1</item><item>x</item></a></doc>""#;
+
 /// What v4's trace shows at every deviated trace pointer (I109), as JSON,
 /// held as [`RUN_DEVIATED`] holds the run record. Each pointer is one into
 /// v3's recorded trace, `/steps/<i>/run/trace/...`, and v4's JSON there is
@@ -423,6 +452,8 @@ pub const MISSING: &str = "<missing>";
 ///   `data.partial`.
 /// - `breaks/name_required` (break 6): both unnamed definitions parse, so
 ///   four workflows run where v3 ran two.
+/// - `builtins/publish` (break 23): every snapshot after the `pretty` and
+///   `xml` steps holds their text in the source's key order.
 /// - `fan_out/over_shapes` (break 4, I91): the non-array `over`'s record
 ///   on the task's step is `LOGIC_ERROR` with a logic evaluation error's
 ///   text, where v3's snapshot gained a `TASK_ERROR` "Task error".
@@ -461,6 +492,31 @@ pub const TRACE_DEVIATED: &[RunDeviated] = &[
         "/steps/0/run/trace/steps",
         r#"["no_workflow_name/t/executed", "no_task_name/t/executed",
             "no_group_name/t/executed", "named/t/executed"]"#,
+    ),
+    (
+        "builtins/publish",
+        "/steps/0/run/trace/steps/1/message/context/data/pretty_out",
+        PRETTY,
+    ),
+    (
+        "builtins/publish",
+        "/steps/0/run/trace/steps/2/message/context/data/pretty_out",
+        PRETTY,
+    ),
+    (
+        "builtins/publish",
+        "/steps/0/run/trace/steps/3/message/context/data/pretty_out",
+        PRETTY,
+    ),
+    (
+        "builtins/publish",
+        "/steps/0/run/trace/steps/4/message/context/data/pretty_out",
+        PRETTY,
+    ),
+    (
+        "builtins/publish",
+        "/steps/0/run/trace/steps/4/message/context/data/xml",
+        XML,
     ),
     (
         "fan_out/over_shapes",

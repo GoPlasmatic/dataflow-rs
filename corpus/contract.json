@@ -512,6 +512,12 @@
     "reason": "The corpus's one host function has no computed destination, so v3 cannot record a secret read in one; v4 pins the refusal in v4/tests/checks.rs"
   },
   {
+    "id": "break.23",
+    "source": "06",
+    "row": "23",
+    "v3": true
+  },
+  {
     "id": "code.LOGIC_ERROR",
     "source": "04",
     "row": "LOGIC_ERROR",

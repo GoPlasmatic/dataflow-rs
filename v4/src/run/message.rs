@@ -255,9 +255,10 @@ impl Message {
     /// The message as a JSON value holding `id`, `payload`, `context`,
     /// `audit_trail` and `errors`.
     ///
-    /// A [`serde_json::Value`] does not keep key order here (the workspace
-    /// builds serde_json without `preserve_order`), so the keys come back
-    /// sorted. The wire text, in wire order, is `serde_json::to_string(&message)`.
+    /// A [`serde_json::Value`]'s keys are sorted unless serde_json's
+    /// `preserve_order` is on, so this value's order depends on the build.
+    /// The wire text, in wire order in every build, is
+    /// `serde_json::to_string(&message)`.
     pub fn to_json(&self) -> Value {
         serde_json::to_value(self).expect("a message always serializes")
     }

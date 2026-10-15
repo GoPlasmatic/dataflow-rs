@@ -95,7 +95,7 @@ const FAILED_TASKS: usize = 9;
 const FAILED_WORKFLOWS: usize = 1;
 /// Deviated trace pointers held to their row of `expect::TRACE_DEVIATED`,
 /// one row each.
-const TRACE_DEVIATED_ROWS: usize = 11;
+const TRACE_DEVIATED_ROWS: usize = 16;
 /// Of the matched steps, those whose v4 `status` was held to v3's: every
 /// one whose v3 snapshot's audit trail ends in the step's own entry.
 const STATUSES: usize = 215;

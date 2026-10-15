@@ -110,12 +110,14 @@ stale: the deviation would declare a difference that is not there. These counts 
 | Cases run and compared | 71 | 72 |
 | Cases with no build | 10 | 10 |
 | Cases needing features this build has the other way | 2 | 1 |
-| Deviated pointers, each held to its `RUN_DEVIATED` row | 24 | 24 |
+| Deviated pointers, each held to its `RUN_DEVIATED` row | 28 | 28 |
 | Run steps whose message reads back byte for byte: every one | 85 | 87 |
 
 `expressions/budget` runs only on a `budget` build. Exactly one of `families_on` and `families_off`
 runs in each build. The cases hold 95 run steps: 7 are in cases with no build, one is in the
 family case this build skips, and `expressions/budget`'s two run only on a `budget` build.
+Every count, here and in the traces table, is the same with serde_json's `preserve_order` on, which
+Orion's graph turns on and CI runs: no recording's order follows serde_json's map type.
 
 **Traces** (`tests/traces.rs`, phase 6). For every run step whose recording holds a trace, in a case
 that builds and runs in this build, v4's traced run is held to v3's: its outcome (code and
@@ -137,7 +139,7 @@ build (`expressions/budget` turns its trace off, and `families_on` and `families
 | v4 steps matched to nothing: the engine's step at a sweep | 41 |
 | v4 steps matched to nothing: a task's failure the workflow's policy took | 9 |
 | v4 steps matched to nothing: a workflow's own failure | 1 |
-| Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 11 |
+| Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 16 |
 | Of the matched steps, those whose `status` is held to v3's own audit entry | 215 |
 | Traced runs the replay invariant held: every one | 85 |
 | v4 steps whose `Trace::contexts` entry equals the corpus replay: every one | 294 |

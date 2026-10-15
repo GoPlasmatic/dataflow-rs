@@ -1,6 +1,6 @@
 {
-  "description": "publish_json serializes a data-rooted source into a data-rooted target: compact keeps the source's key order, pretty sorts the keys. A missing source and a null source each fail the task with VALIDATION_ERROR. publish_xml serializes under root_element.",
-  "covers": ["publish", "publish.null-source"],
+  "description": "publish_json serializes a data-rooted source into a data-rooted target: compact keeps the source's key order, and v3's default build sorted pretty's keys. A missing source and a null source each fail the task with VALIDATION_ERROR. publish_xml serializes under root_element, its keys sorted by v3's default build.",
+  "covers": ["publish", "publish.null-source", "break.23"],
   "mirrors": ["src/publish::test_execute_publish_json_not_found"],
   "workflows": [
     {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
@@ -10,5 +10,18 @@
       {"id": "null", "name": "null", "continue_on_error": true, "function": {"name": "publish_json", "input": {"source": "nul", "target": "n"}}},
       {"id": "xml", "name": "xml", "function": {"name": "publish_xml", "input": {"source": "obj", "target": "xml", "root_element": "doc"}}}]}
   ],
-  "steps": [{"run": {"message": {"data": {"obj": {"b": 1, "a": [1, "x"]}, "nul": null}}}}]
+  "steps": [{"run": {"message": {"data": {"obj": {"b": 1, "a": [1, "x"]}, "nul": null}}}}],
+  "deviations": [
+    {"break": "23", "paths": [
+      "/steps/0/run/message/context/data/pretty_out",
+      "/steps/0/run/message/context/data/xml",
+      "/steps/0/run/message/audit_trail/1/changes/0/new_value",
+      "/steps/0/run/message/audit_trail/4/changes/0/new_value",
+      "/steps/0/run/trace/steps/1/message/context/data/pretty_out",
+      "/steps/0/run/trace/steps/2/message/context/data/pretty_out",
+      "/steps/0/run/trace/steps/3/message/context/data/pretty_out",
+      "/steps/0/run/trace/steps/4/message/context/data/pretty_out",
+      "/steps/0/run/trace/steps/4/message/context/data/xml"],
+     "note": "pretty and XML write the source's key order in every build, as compact does, where v3 sorted them unless serde_json's preserve_order was on"}
+  ]
 }

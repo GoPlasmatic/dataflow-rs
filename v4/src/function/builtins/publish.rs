@@ -2,13 +2,12 @@
 //! serialize, and where under `data` to write the text.
 
 use super::paths::{DataPath, PublishSource};
-use super::xml::{json_to_xml, validation_error};
+use super::xml::{validation_error, value_to_xml};
 use crate::base::Result;
 use crate::expr::{Expr, Path};
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use ::log::debug;
 use datavalue::OwnedDataValue;
-use serde_json::Value;
 use std::borrow::Cow;
 
 /// `publish_json`'s and `publish_xml`'s input.
@@ -44,8 +43,8 @@ impl PublishConfig {
         Ok((source, fallback, target))
     }
 
-    /// `publish_json`: the source serialized to JSON text, compact in the
-    /// source's key order or, with `pretty`, indented with sorted keys.
+    /// `publish_json`: the source serialized to JSON text, compact or, with
+    /// `pretty`, indented, both in the source's key order.
     ///
     /// # Errors
     ///
@@ -56,7 +55,7 @@ impl PublishConfig {
         let text = {
             let found = find(cx, &source, fallback.as_deref(), "PublishJson")?;
             if self.pretty {
-                serde_json::to_string_pretty(&Value::from(&*found)).map_err(|e| {
+                serde_json::to_string_pretty(&*found).map_err(|e| {
                     validation_error(format_args!("Failed to serialize to JSON: {e}"))
                 })?
             } else {
@@ -68,7 +67,7 @@ impl PublishConfig {
     }
 
     /// `publish_xml`: the source serialized to an XML document under
-    /// `root_element`.
+    /// `root_element`, its keys in the source's order.
     ///
     /// # Errors
     ///
@@ -76,9 +75,11 @@ impl PublishConfig {
     pub(crate) fn xml<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let (source, fallback, target) = self.paths(cx)?;
         debug!("PublishXml: Serializing '{source}' to '{target}'");
-        let bridge = Value::from(&*find(cx, &source, fallback.as_deref(), "PublishXml")?);
+        // Owned, as v3's bridge was: the root element is evaluated after the
+        // source is found, as in v3, and the evaluation needs the context.
+        let found = find(cx, &source, fallback.as_deref(), "PublishXml")?.into_owned();
         let root = cx.eval(&self.root_element)?;
-        write(cx, &target, json_to_xml(&bridge, &root));
+        write(cx, &target, value_to_xml(&found, &root));
         Ok(Outcome::Ok)
     }
 }
@@ -157,24 +158,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compact_keeps_the_sources_key_order_and_pretty_sorts_the_keys() {
-        // Built from JSON text so the keys stay out of order; v3 decides the text.
-        let text = r#"{"data":{"obj":{"z":1,"a":{"y":2,"b":[3,{"q":1,"c":2}]}}},"metadata":{},"temp_data":{}}"#;
+    async fn compact_pretty_and_xml_keep_the_sources_key_order() {
+        // Built from JSON text so the keys stay out of order whatever
+        // serde_json's map type is. All three write the source's order in
+        // every build: break 23, where v3's default build sorted pretty's
+        // and XML's keys. Compact is v3's text in either build.
+        let text = r#"{"data":{"obj":{"z":1,"a":{"y":2,"b":[3,{"q":1,"c":2.0}]}}},"metadata":{},"temp_data":{}}"#;
         let context = || OwnedDataValue::from_json(text).expect("JSON");
-        for pretty in [false, true] {
-            let input = json!({"source": "obj", "target": "out", "pretty": pretty});
-            let v3 = v3_context_text("publish_json", &input, context()).await;
-            let v4 = v4_context_text("publish_json", &input, context());
-            assert_eq!(v4, v3, "pretty {pretty}");
-        }
-        // Compact is in the source's order, pretty is sorted: the two differ.
         let compact = json!({"source": "obj", "target": "out"});
-        let pretty = json!({"source": "obj", "target": "out", "pretty": true});
-        assert_ne!(
+        assert_eq!(
             v4_context_text("publish_json", &compact, context()),
-            v4_context_text("publish_json", &pretty, context())
+            v3_context_text("publish_json", &compact, context()).await
         );
-        assert!(v4_context_text("publish_json", &compact, context()).contains(r#"\"z\":1,\"a\""#));
+        let out = |function: &str, pretty: bool| {
+            let input = json!({"source": "obj", "target": "out", "pretty": pretty});
+            let written: Value =
+                serde_json::from_str(&v4_context_text(function, &input, context())).unwrap();
+            written["data"]["out"]
+                .as_str()
+                .expect("a string")
+                .to_owned()
+        };
+        assert_eq!(
+            out("publish_json", false),
+            r#"{"z":1,"a":{"y":2,"b":[3,{"q":1,"c":2.0}]}}"#
+        );
+        assert_eq!(
+            out("publish_json", true),
+            concat!(
+                "{\n  \"z\": 1,\n  \"a\": {\n    \"y\": 2,\n    \"b\": [\n      3,\n",
+                "      {\n        \"q\": 1,\n        \"c\": 2.0\n      }\n    ]\n  }\n}"
+            )
+        );
+        assert_eq!(
+            out("publish_xml", false),
+            "<root><z>1</z><a><y>2</y><b><item>3</item><item><q>1</q><c>2.0</c></item></b></a></root>"
+        );
     }
 
     #[tokio::test]

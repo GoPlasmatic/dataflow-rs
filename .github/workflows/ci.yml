@@ -152,6 +152,16 @@ jobs:
       - name: Run the corpus, v4 (default features)
         run: cargo test -p dataflow-corpus-v4 --locked
 
+      # The corpus under Orion's `preserve_order`: v4's differential tests
+      # compare against a v3 built the same way, so only the recordings, which
+      # are fixed bytes, show an order that follows serde_json's map type. The
+      # feature's `indexmap`, `hashbrown` and `equivalent` are not in
+      # `Cargo.lock`, since no member turns it on, so this step's versions of
+      # them float: a new release of one can turn it red with no commit behind
+      # it.
+      - name: Run the corpus, v4 (serde_json preserve_order)
+        run: cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order --locked
+
       # `--all-features` and the default build are the two endpoints; neither
       # catches a family that only compiles when another one is also on. v4's
       # list adds `tensor` (outside `all-operators`) and the `budget` knob.
