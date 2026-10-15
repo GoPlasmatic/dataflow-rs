@@ -595,6 +595,12 @@ fn new_refuses_a_root_metadata_progress_and_a_zero_limit() {
         // `#` names the same key, so it is the same slot.
         ("metadata.#progress", 32),
         ("metadata.errors", 0),
+        // At or below any slot the engine owns (review B M-8): v3 accepted
+        // these, and the next progress write or the stamps wrote over them.
+        ("metadata.progress.notes", 32),
+        ("metadata.processed_at", 32),
+        ("metadata.engine_version.x", 32),
+        ("metadata.channel", 32),
     ] {
         let e = ErrorContext::new(path.parse().unwrap(), limit).unwrap_err();
         assert_eq!(*e.kind(), ErrorKind::Config, "{path}, {limit}: {e}");
@@ -623,12 +629,13 @@ fn new_refuses_a_root_metadata_progress_and_a_zero_limit() {
     assert_eq!(ec.path().to_string(), "metadata.errors");
     assert_eq!(ec.limit(), 32);
     assert_eq!(ErrorContext::DEFAULT_LIMIT, 32);
-    // What v3 accepts beside it, below `progress` included.
+    // What v3 accepts beside it.
     for path in [
-        "metadata.progress.notes",
         "data.errors",
+        "data.progress",
         "temp_data.a.b",
         "metadata.#errors",
+        "metadata.errors.progress",
     ] {
         let ec = ErrorContext::new(path.parse().unwrap(), 1).unwrap();
         assert_eq!(ec.limit(), 1);

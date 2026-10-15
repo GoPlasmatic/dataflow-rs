@@ -15,6 +15,12 @@ use datavalue::OwnedDataValue;
 use std::borrow::Cow;
 use std::sync::Arc;
 
+/// The `metadata` keys the engine writes on every run (S5): the progress
+/// after every call, which cross-workflow chaining reads, and the run's
+/// stamps. A records array at or below one would be overwritten, or would
+/// overwrite it.
+const ENGINE_OWNED: [&str; 4] = ["progress", "processed_at", "engine_version", "channel"];
+
 /// Where the engine mirrors failure records in the context, and how many it
 /// keeps.
 ///
@@ -39,8 +45,8 @@ use std::sync::Arc;
 /// let config = EngineConfig::default().error_context(ec);
 /// assert!(config.error_context.is_some());
 ///
-/// // The engine owns `metadata.progress`.
-/// let refused = ErrorContext::new("metadata.progress".parse()?, 32).unwrap_err();
+/// // The engine owns `metadata.progress`, and every slot below it.
+/// let refused = ErrorContext::new("metadata.progress.errors".parse()?, 32).unwrap_err();
 /// assert_eq!(*refused.kind(), ErrorKind::Config);
 /// # Ok::<(), dataflow_rs::Error>(())
 /// ```
@@ -59,8 +65,11 @@ impl ErrorContext {
     /// # Errors
     ///
     /// [`ErrorKind::Config`] for a root (`data`, `metadata` or `temp_data`
-    /// itself), for `metadata.progress`, which the engine writes after every
-    /// call for cross-workflow chaining, and for a `limit` of 0.
+    /// itself); for a path at or below a `metadata` slot the engine owns
+    /// (S5): `metadata.progress`, which it writes after every call for
+    /// cross-workflow chaining, and the run's stamps `metadata.processed_at`,
+    /// `metadata.engine_version` and `metadata.channel`; and for a `limit` of
+    /// 0.
     pub fn new(path: Path, limit: usize) -> Result<Self> {
         if path.is_root() {
             return Err(Error::new(
@@ -72,13 +81,16 @@ impl ErrorContext {
             ));
         }
         if path.root() == Root::Metadata
-            && path.segs().len() == 2
-            && &*path.segs()[1].key == "progress"
+            && let Some(slot) = path.segs().get(1)
+            && ENGINE_OWNED.contains(&&*slot.key)
         {
             return Err(Error::new(
                 ErrorKind::Config,
-                "error context path may not be `metadata.progress` — the engine owns that slot \
-                 for cross-workflow chaining",
+                format!(
+                    "error context path may not be at or below `metadata.{}` — the engine owns \
+                     that slot",
+                    slot.key
+                ),
             ));
         }
         if limit == 0 {
