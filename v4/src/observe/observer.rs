@@ -69,7 +69,16 @@ pub trait Observer: Send + Sync + 'static {
 }
 
 /// What an [`Observer`] asks for: a set of flags. `|` and `|=` unite two
-/// sets, and [`contains`](Self::contains) tests one.
+/// sets, [`union`](Self::union) does in a `const`, and
+/// [`contains`](Self::contains) tests one.
+///
+/// ```
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// use dataflow_rs::observe::Interest;
+///
+/// const TIMED_TASKS: Interest = Interest::TASKS.union(Interest::TIMINGS);
+/// assert_eq!(TIMED_TASKS, Interest::TASKS | Interest::TIMINGS);
+/// ```
 ///
 /// Every observer receives [`RunStarted`](Event::RunStarted) and
 /// [`RunFinished`](Event::RunFinished).
@@ -87,7 +96,7 @@ impl Interest {
     /// Each `elapsed` this observer is given is `Some`: the clock is read.
     pub const TIMINGS: Self = Self(1 << 2);
     /// Every flag.
-    pub const ALL: Self = Self(Self::WORKFLOWS.0 | Self::TASKS.0 | Self::TIMINGS.0);
+    pub const ALL: Self = Self::WORKFLOWS.union(Self::TASKS).union(Self::TIMINGS);
 
     /// The flags' names, in `Debug`'s order.
     const NAMES: [(Self, &'static str); 3] = [
@@ -95,6 +104,12 @@ impl Interest {
         (Self::TASKS, "TASKS"),
         (Self::TIMINGS, "TIMINGS"),
     ];
+
+    /// The flags of either set: `|`, usable in a `const`.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
 
     /// Whether every flag of `other` is in this set: always for
     /// [`NONE`](Self::NONE).
@@ -113,16 +128,16 @@ impl Interest {
 impl BitOr for Interest {
     type Output = Self;
 
-    /// The flags of either set.
+    /// The flags of either set: [`Interest::union`].
     fn bitor(self, other: Self) -> Self {
-        Self(self.0 | other.0)
+        self.union(other)
     }
 }
 
 impl BitOrAssign for Interest {
     /// Adds `other`'s flags.
     fn bitor_assign(&mut self, other: Self) {
-        self.0 |= other.0;
+        *self = self.union(other);
     }
 }
 

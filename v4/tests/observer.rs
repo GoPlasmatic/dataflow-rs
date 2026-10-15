@@ -707,6 +707,10 @@ fn interest_is_a_set() {
     grown |= Interest::TASKS;
     grown |= Interest::TASKS;
     assert_eq!(grown, Interest::TASKS);
+    // `union` composes in a `const` (review B M-3).
+    const MINE: Interest = Interest::TASKS.union(Interest::TIMINGS);
+    assert_eq!(MINE, Interest::TASKS | Interest::TIMINGS);
+    assert_eq!(Interest::WORKFLOWS.union(MINE), Interest::ALL);
 
     assert_eq!(format!("{:?}", Interest::NONE), "Interest(NONE)");
     assert_eq!(format!("{both:?}"), "Interest(WORKFLOWS | TASKS)");
