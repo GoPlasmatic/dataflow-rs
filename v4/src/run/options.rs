@@ -15,7 +15,9 @@ pub struct RunOptions<'a> {
     pub channel: Option<&'a str>,
     /// The bucket a rollout admits; `None` is admitted by every rollout.
     pub routing_bucket: Option<u8>,
-    /// Record each write's `Change`. `true` by default (#63).
+    /// Record each write's `Change` in its task's audit entry. `true` by
+    /// default (#63). It governs only the audit trail: a trace records its
+    /// own changes whatever it says (R45, I107).
     pub capture_changes: bool,
     /// Which audit entries the message keeps. `Full` by default.
     pub audit: AuditMode,
@@ -104,7 +106,7 @@ impl<'a> RunOptions<'a> {
         self
     }
 
-    /// Turns change capture on or off.
+    /// Turns the audit trail's change capture on or off.
     #[must_use]
     pub fn capture_changes(mut self, on: bool) -> Self {
         self.capture_changes = on;

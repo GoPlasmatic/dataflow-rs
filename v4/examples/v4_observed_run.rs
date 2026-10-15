@@ -5,8 +5,8 @@
 //! tasks and workflows and never reads a duration, as an always-on metrics
 //! observer that counts only events does. In 3.15 an attached observer costs
 //! a clock read per task and per workflow whether it uses the time or not.
-//! v4 reads the clock only for an observer whose interest holds `TIMINGS`,
-//! so the gate requires the observed row to be faster.
+//! v4 reads the clock only for an observer whose interest holds `TIMINGS`.
+//! The gate judges the row as every other: not slower (I4, I110).
 //!
 //! The workload runs twice: unobserved, which is `realistic_benchmark`, and
 //! observed. The unobserved row shows what observing costs on this line.

@@ -166,7 +166,10 @@ pub enum Event<'a> {
         considered: usize,
     },
     /// A workflow was selected: its condition admitted it, or it has none.
-    /// Once per workflow, a loop's included.
+    /// Once per workflow, a loop's included. A workflow that ends `Ran`
+    /// with no judgment of its condition reached (a loop that enters no
+    /// sweep, or a run stopped before the condition) gets it as it ends,
+    /// before its `WorkflowFinished`.
     WorkflowStarted {
         /// The workflow's position in the program.
         workflow: WorkflowIx,
