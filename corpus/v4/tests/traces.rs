@@ -9,7 +9,8 @@
 //! - an engine step (`task_id: null`, `executed`, with a `loop_counter` and
 //!   every change under `temp_data`: a sweep's counter, `as` and `scratch`)
 //!   and a `failed` step (the step v3 drops, break 5) are applied and
-//!   matched to nothing;
+//!   matched to nothing, and their records carried to the next step whose
+//!   records are compared;
 //! - every other step is matched to v3's next step, which must agree on
 //!   `(workflow_id, task_id, result, loop_counter, element_index)`. When
 //!   that v3 step's snapshot `audit_trail` ends in its own task's entry (the
@@ -18,22 +19,24 @@
 //!   context rebuilt after v4's step, normalised with the case's
 //!   error-context path, must equal the snapshot's `context`, key order
 //!   included, and v4's step `errors`, every record the step added (I127),
-//!   normalised, must equal the records the snapshot's `errors` gained over
-//!   the snapshot before it, in order. They are compared at the indices the
-//!   snapshot holds them, after the earlier steps' records, which are `null`
-//!   on both sides, so a pointer names one record in v3's recording and in
-//!   the aligned trace.
+//!   after the records carried to it, normalised, must equal the records
+//!   the snapshot's `errors` gained over the snapshot before it, in order.
+//!   They are compared at the indices the snapshot holds them, after the
+//!   earlier steps' records, which are `null` on both sides, so a pointer
+//!   names one record in v3's recording and in the aligned trace. A matched
+//!   step with no snapshot (a skip) carries its records on too, since v3's
+//!   next snapshot gained them.
 //!
 //! Every v3 step must be matched. v3's `mapping_contexts`, `started_at`,
 //! `duration_us`, `changes`, and the rest of its snapshot's `audit_trail`
 //! are not compared.
 //!
-//! The records a step added differ from v3's in two shapes, each a
-//! `TRACE_DEVIATED` row: break 4's (no `WORKFLOW_ERROR` wrapper, and
-//! `LOGIC_ERROR` for a non-array `over`), and break 5's, a record on a
-//! `failed` step, which v3's trace drops, so v3's next snapshot gained it.
-//! The steps whose records were compared with a record on either side are
-//! counted and pinned.
+//! The records a step added differ from v3's in break 4's shape alone, each
+//! a `TRACE_DEVIATED` row: no `WORKFLOW_ERROR` wrapper, and `LOGIC_ERROR`
+//! for a non-array `over`. A record on a `failed` step, which v3's trace
+//! drops (break 5), is held where v3's next snapshot gained it. The steps
+//! whose records were compared with a record on either side are counted
+//! and pinned.
 //!
 //! The comparison reads both sides in v3's coordinates: each trace becomes
 //! `{outcome, steps, truncated, message_matches}`, its steps as above, so a
@@ -58,6 +61,14 @@
 //! message's own final context. A run it cannot hold (a truncated trace, a
 //! traced message unlike the plain one) fails outright, and the runs it held
 //! are counted, pinned at the traced runs.
+//!
+//! Beside v3 too, every traced run holds to the records invariant, with no
+//! deviation: its steps' records, in step order and normalised, are the
+//! traced message's errors. A workflow's own `skipped` step is left out,
+//! since its record is a condition that could not be evaluated (R34),
+//! which the message never gets. It holds the records on the `failed` steps
+//! that end a run, which no v3 snapshot follows, and the runs it held are
+//! counted, pinned at the traced runs.
 //!
 //! Every traced run's trace must also read back from the text v4 wrote,
 //! byte for byte, and replay to the same contexts (I125), counted and
@@ -95,7 +106,7 @@ const FAILED_TASKS: usize = 9;
 const FAILED_WORKFLOWS: usize = 1;
 /// Deviated trace pointers held to their row of `expect::TRACE_DEVIATED`,
 /// one row each.
-const TRACE_DEVIATED_ROWS: usize = 16;
+const TRACE_DEVIATED_ROWS: usize = 15;
 /// Of the matched steps, those whose v4 `status` was held to v3's: every
 /// one whose v3 snapshot's audit trail ends in the step's own entry.
 const STATUSES: usize = 215;
@@ -125,6 +136,7 @@ struct Counts {
     contexts: usize,
     traces_read_back: usize,
     errors_compared: usize,
+    records_held: usize,
 }
 
 /// The deviation paths of `case` under a run's trace.
@@ -268,6 +280,18 @@ fn records(step: &Json) -> Vec<Json> {
     }
 }
 
+/// The records `step` added that reach the message: all of them, but on a
+/// workflow's own `skipped` step, whose record is the failure of a
+/// condition that could not be evaluated (R34), which the message never
+/// gets.
+fn reaching(step: &Json) -> Vec<Json> {
+    let own = step.get("task_id").is_none_or(|t| *t == Json::Null);
+    if own && step.get("result").and_then(Json::as_str) == Some("skipped") {
+        return Vec::new();
+    }
+    records(step)
+}
+
 /// One step's records where v3's snapshot holds them: after `before`
 /// earlier steps' records, which are `null` on both sides, so a pointer
 /// names the same record in v3's recording and in the aligned trace.
@@ -350,7 +374,12 @@ fn traced_run(
     let v3_steps = v3.get("steps").and_then(Json::as_array).unwrap_or(&[]);
     let v4_steps = v4.get("steps").and_then(Json::as_array).unwrap_or(&[]);
     let mut context = v4.get("initial").cloned().unwrap_or(Json::Null);
-    let mut matched: Vec<(&Json, Json)> = Vec::new();
+    // Each matched step, its rebuilt context, and the records of the
+    // unmatched steps before it, which v3's next snapshot gained there.
+    let mut matched: Vec<(&Json, Json, Vec<Json>)> = Vec::new();
+    let mut carried = Vec::new();
+    // Every record the steps added that reaches the message, in step order.
+    let mut every_record = Vec::new();
     // v4's own replay, one context per step, held to the corpus's after the
     // same step (review C M-6).
     let own = v4.get("contexts").and_then(Json::as_array).unwrap_or(&[]);
@@ -381,6 +410,8 @@ fn traced_run(
                 ));
             }
         }
+        let added = reaching(step);
+        every_record.extend(added.iter().cloned());
         match kind(step) {
             Kind::Engine => counts.engine += 1,
             Kind::FailedTask => counts.failed_tasks += 1,
@@ -388,9 +419,28 @@ fn traced_run(
             Kind::Matched => {
                 let mut rebuilt = context.clone();
                 normalise::context(&mut rebuilt, error_context);
-                matched.push((step, rebuilt));
+                matched.push((step, rebuilt, std::mem::take(&mut carried)));
+                continue;
             }
         }
+        carried.extend(added);
+    }
+
+    // The records invariant, with no v3 and no deviation: the steps' records,
+    // in step order, are the traced message's errors. The traced message is
+    // the plain one when `message_matches` holds, which the next check
+    // requires.
+    let message_errors = plain.pointer("/errors").cloned().unwrap_or(Json::Null);
+    let differs = diff(&message_errors, &Json::Array(every_record), &[]);
+    if differs.is_empty() {
+        counts.records_held += 1;
+    } else {
+        let shown: Vec<String> = differs.iter().take(8).map(|d| format!("  {d}")).collect();
+        failures.push(format!(
+            "{name}: step {i}'s trace steps' records are not its message's errors \
+             (expected the message's, got the steps')\n{}",
+            shown.join("\n")
+        ));
     }
 
     // I19: the replay of every step is the traced message's final context.
@@ -426,12 +476,17 @@ fn traced_run(
         counts.step_lists += 1;
         (
             v3_steps.iter().map(key_text).collect(),
-            matched.iter().map(|(step, _)| key_text(step)).collect(),
+            matched.iter().map(|(step, ..)| key_text(step)).collect(),
         )
     } else {
         let gains = gained(v3_steps);
         let mut actual = Vec::new();
-        for (j, (step, rebuilt)) in matched.into_iter().enumerate() {
+        // The records not yet compared: the unmatched steps' before a step,
+        // and a step's own when v3 recorded it with no snapshot, a skip,
+        // whose records land on the next snapshot's, as v3's do.
+        let mut pending: Vec<Json> = Vec::new();
+        for (j, (step, rebuilt, carried)) in matched.into_iter().enumerate() {
+            pending.extend(carried);
             let v3_step = v3_steps.get(j);
             if v3_step.is_some_and(|v3_step| keys(v3_step) == keys(step)) {
                 counts.matched += 1;
@@ -449,19 +504,23 @@ fn traced_run(
             if status.is_some() {
                 counts.statuses += 1;
             }
-            // The records v4's step added, held to those v3's snapshot
-            // gained at it (I127).
+            // The records v4's step added, after those carried to it, held
+            // to those v3's snapshot gained at it (I127).
             let errors = gains
                 .get(j)
                 .and_then(Option::as_ref)
                 .filter(|_| snapshot.is_some())
                 .map(|(before, theirs)| {
-                    let ours = records(step);
+                    let mut ours = std::mem::take(&mut pending);
+                    ours.extend(reaching(step));
                     if !(theirs.is_empty() && ours.is_empty()) {
                         counts.errors_compared += 1;
                     }
                     at_their_index(*before, ours)
                 });
+            if errors.is_none() {
+                pending.extend(reaching(step));
+            }
             actual.push(compared(step, status, snapshot, errors));
         }
         let expected = v3_steps
@@ -590,6 +649,8 @@ async fn v4_traces_every_run_as_v3_recorded_it() {
             // Every traced run's trace read back.
             traces_read_back: TRACED,
             errors_compared: ERRORS_COMPARED,
+            // Every traced run's steps' records are its message's errors.
+            records_held: TRACED,
         }
     );
 }
@@ -648,7 +709,10 @@ fn v4_trace_with(third: &str, status: u16) -> Json {
 }
 
 fn plain() -> Json {
-    j(r#"{"context": {"data": {"a": 1, "b": 2}, "metadata": {}, "temp_data": {"i": 0}}}"#)
+    j(
+        r#"{"context": {"data": {"a": 1, "b": 2}, "metadata": {}, "temp_data": {"i": 0}},
+            "errors": []}"#,
+    )
 }
 
 #[test]
@@ -739,7 +803,7 @@ fn a_status_that_disagrees_with_v3s_own_entry_is_a_difference() {
 #[test]
 fn a_step_that_disagrees_and_a_replay_that_misses_the_message_fail() {
     let (mut counts, mut failures) = (Counts::default(), Vec::new());
-    let other = j(r#"{"context": {"data": {}, "metadata": {}, "temp_data": {}}}"#);
+    let other = j(r#"{"context": {"data": {}, "metadata": {}, "temp_data": {}}, "errors": []}"#);
     let (v3, v4) = traced_run(
         "c",
         0,
@@ -859,9 +923,24 @@ fn v4_with_records(b_errors: &str) -> Json {
 
 #[test]
 fn a_steps_records_are_held_to_what_v3s_snapshot_gained_there() {
-    let plain = j(r#"{"context": {"data": {"a": 1, "b": 2}, "metadata": {}, "temp_data": {}}}"#);
     let run = |b_errors: &str| {
         let (mut counts, mut failures) = (Counts::default(), Vec::new());
+        // The message holds what the steps added, so the records invariant
+        // holds whatever `b` added.
+        let mut b_records = j(b_errors);
+        if let Json::Array(records) = &mut b_records {
+            for record in records {
+                record.insert("timestamp", Json::str("<timestamp>"));
+            }
+        }
+        let mut plain = j(
+            r#"{"context": {"data": {"a": 1, "b": 2}, "metadata": {}, "temp_data": {}},
+                "errors": [{"code": "A", "timestamp": "<timestamp>"}]}"#,
+        );
+        if let (Some(Json::Array(errors)), Json::Array(more)) = (plain.get_mut("errors"), b_records)
+        {
+            errors.extend(more);
+        }
         let (v3, v4) = traced_run(
             "c",
             0,
@@ -891,4 +970,171 @@ fn a_steps_records_are_held_to_what_v3s_snapshot_gained_there() {
     assert_eq!(run("[]").1, ["/steps/1/message/errors/1"]);
     let extra = r#"[{"code": "B", "timestamp": "t"}, {"code": "C", "timestamp": "t"}]"#;
     assert_eq!(run(extra).1, ["/steps/1/message/errors/2"]);
+}
+
+/// v4's steps `a`, a failed `f`, a skipped `s` and `b`, each adding the
+/// records given, then workflow `v`'s own skip, whose condition failed to
+/// evaluate, and v3's of the same run, which drops `f` and records `s` with
+/// no snapshot: `b`'s snapshot gained `f`'s, `s`'s and `b`'s.
+fn carried_run(f_errors: &str) -> (Json, Json) {
+    let v3 = j(r#"{"outcome": "ok", "steps": [
+        {"workflow_id": "w", "task_id": "a", "result": "executed",
+         "message": {"context": {"data": {"a": 1}, "metadata": {}, "temp_data": {}},
+                     "audit_trail": [],
+                     "errors": [{"code": "A", "timestamp": "<timestamp>"}]}},
+        {"workflow_id": "w", "task_id": "s", "result": "skipped"},
+        {"workflow_id": "w", "task_id": "b", "result": "executed",
+         "message": {"context": {"data": {"a": 1, "b": 2}, "metadata": {}, "temp_data": {}},
+                     "audit_trail": [],
+                     "errors": [{"code": "A", "timestamp": "<timestamp>"},
+                                {"code": "F", "timestamp": "<timestamp>"},
+                                {"code": "S", "timestamp": "<timestamp>"},
+                                {"code": "B", "timestamp": "<timestamp>"}]}},
+        {"workflow_id": "v", "task_id": null, "result": "skipped"}
+    ], "truncated": false, "message_matches": true}"#);
+    let t = "2026-10-15T00:00:00+00:00";
+    let v4 = j(&format!(
+        r#"{{"outcome": "ok", "initial": {{"data": {{}}, "metadata": {{}}, "temp_data": {{}}}},
+        "steps": [
+            {{"workflow": 0, "workflow_id": "w", "task": 0, "task_id": "a",
+              "result": "executed", "status": 200,
+              "changes": [{{"path": "data.a", "old_value": null, "new_value": 1}}],
+              "errors": [{{"code": "A", "timestamp": "{t}"}}]}},
+            {{"workflow": 0, "workflow_id": "w", "task": 1, "task_id": "f",
+              "result": "failed", "status": 500, "changes": [], "errors": {f_errors}}},
+            {{"workflow": 0, "workflow_id": "w", "task": 2, "task_id": "s",
+              "result": "skipped", "status": null, "changes": [],
+              "errors": [{{"code": "S", "timestamp": "{t}"}}]}},
+            {{"workflow": 0, "workflow_id": "w", "task": 3, "task_id": "b",
+              "result": "executed", "status": 200,
+              "changes": [{{"path": "data.b", "old_value": null, "new_value": 2}}],
+              "errors": [{{"code": "B", "timestamp": "{t}"}}]}},
+            {{"workflow": 1, "workflow_id": "v", "task": null, "task_id": null,
+              "result": "skipped", "status": null, "changes": [],
+              "errors": [{{"code": "EVALUATION_ERROR", "timestamp": "{t}"}}]}}
+        ], "truncated": false, "message_matches": true, "contexts": [
+            {{"data": {{"a": 1}}, "metadata": {{}}, "temp_data": {{}}}},
+            {{"data": {{"a": 1}}, "metadata": {{}}, "temp_data": {{}}}},
+            {{"data": {{"a": 1}}, "metadata": {{}}, "temp_data": {{}}}},
+            {{"data": {{"a": 1, "b": 2}}, "metadata": {{}}, "temp_data": {{}}}},
+            {{"data": {{"a": 1, "b": 2}}, "metadata": {{}}, "temp_data": {{}}}}
+        ]}}"#
+    ));
+    (v3, v4)
+}
+
+/// The plain run's message after [`carried_run`]: every record but the
+/// condition failure on `v`'s own step, which never reaches the message.
+fn carried_plain() -> Json {
+    j(
+        r#"{"context": {"data": {"a": 1, "b": 2}, "metadata": {}, "temp_data": {}},
+          "errors": [{"code": "A", "timestamp": "<timestamp>"},
+                     {"code": "F", "timestamp": "<timestamp>"},
+                     {"code": "S", "timestamp": "<timestamp>"},
+                     {"code": "B", "timestamp": "<timestamp>"}]}"#,
+    )
+}
+
+#[test]
+fn an_unmatched_steps_records_are_held_where_v3s_next_snapshot_gained_them() {
+    // The failed step's record, and the skip's, which v3 recorded with no
+    // snapshot, are compared at `b`, where v3's snapshot gained them.
+    let (v3, v4) = carried_run(r#"[{"code": "F", "timestamp": "t"}]"#);
+    let (mut counts, mut failures) = (Counts::default(), Vec::new());
+    let (v3, v4) = traced_run(
+        "c",
+        0,
+        (&v3, &v4, &carried_plain()),
+        None,
+        false,
+        &mut counts,
+        &mut failures,
+    );
+    assert!(failures.is_empty(), "{failures:?}");
+    assert!(diff(&v3, &v4, &[]).is_empty(), "{:?}", diff(&v3, &v4, &[]));
+    assert_eq!(
+        v4.pointer("/steps/2/message/errors").unwrap().to_text(),
+        concat!(
+            r#"[null,{"code":"F","timestamp":"<timestamp>"},"#,
+            r#"{"code":"S","timestamp":"<timestamp>"},{"code":"B","timestamp":"<timestamp>"}]"#
+        )
+    );
+    assert_eq!(
+        (
+            counts.failed_tasks,
+            counts.errors_compared,
+            counts.records_held
+        ),
+        (1, 2, 1)
+    );
+
+    // A failed step that lost its record differs where v3's snapshot holds
+    // it, and the steps' records are no longer the message's.
+    let (v3, v4) = carried_run("[]");
+    let (mut counts, mut failures) = (Counts::default(), Vec::new());
+    let (v3, v4) = traced_run(
+        "c",
+        0,
+        (&v3, &v4, &carried_plain()),
+        None,
+        false,
+        &mut counts,
+        &mut failures,
+    );
+    let paths: Vec<String> = diff(&v3, &v4, &[]).into_iter().map(|d| d.path).collect();
+    assert_eq!(
+        paths,
+        [
+            "/steps/2/message/errors/1/code",
+            "/steps/2/message/errors/2/code",
+            "/steps/2/message/errors/3"
+        ]
+    );
+    assert_eq!(counts.records_held, 0);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(
+        failures[0].contains("are not its message's errors"),
+        "{failures:?}"
+    );
+}
+
+#[test]
+fn the_steps_records_are_the_messages_errors() {
+    // Held with no v3: a record on a step the message does not hold, or one
+    // the message holds that no step added, fails; a condition failure on a
+    // workflow's own skipped step is left out, as the message never gets it.
+    let (v3, v4) = carried_run(r#"[{"code": "F", "timestamp": "t"}]"#);
+    let held = |plain: &Json| {
+        let (mut counts, mut failures) = (Counts::default(), Vec::new());
+        traced_run(
+            "c",
+            0,
+            (&v3, &v4, plain),
+            None,
+            true,
+            &mut counts,
+            &mut failures,
+        );
+        (counts.records_held, failures)
+    };
+    assert_eq!(held(&carried_plain()), (1, Vec::new()));
+    let mut fewer = carried_plain();
+    if let Some(Json::Array(errors)) = fewer.get_mut("errors") {
+        errors.remove(1);
+    }
+    let mut more = carried_plain();
+    if let Some(Json::Array(errors)) = more.get_mut("errors") {
+        errors.push(j(
+            r#"{"code": "EVALUATION_ERROR", "timestamp": "<timestamp>"}"#,
+        ));
+    }
+    for plain in [fewer, more] {
+        let (held, failures) = held(&plain);
+        assert_eq!(held, 0);
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(
+            failures[0].contains("are not its message's errors"),
+            "{failures:?}"
+        );
+    }
 }

@@ -458,21 +458,23 @@ const XML: &str = r#""<doc><b>1</b><a><item>1</item><item>x</item></a></doc>""#;
 ///   on the task's step is `LOGIC_ERROR` with a logic evaluation error's
 ///   text, where v3's snapshot gained a `TASK_ERROR` "Task error".
 /// - `loop/continue_on_error_next_sweep` and `loop/setup_error_continues`
-///   (breaks 5 and 4): the failing call's record is on its own `failed`
-///   step, which v3's trace drops, so v3's next snapshot gained it, at
-///   `errors/0` (break 5), and the `WORKFLOW_ERROR` beside it, at
-///   `errors/1`, v4 does not write (break 4).
-/// - `loop/over_shapes` (break 5): the workflow's own failure is its own
-///   `failed` step, holding its `LOGIC_ERROR` record (I61), so v3's next
-///   snapshot gained the `WORKFLOW_ERROR` v3 wrote for it.
+///   (break 4): the failing call's record is on its own `failed` step,
+///   which v3's trace drops, and is held where v3's next snapshot gained it,
+///   at `errors/0`, as v3 wrote it; the `WORKFLOW_ERROR` beside it, at
+///   `errors/1`, v4 does not write.
+/// - `loop/over_shapes` (break 4, I61): the workflow's own failure is its
+///   own `failed` step, whose record is held where v3's next snapshot gained
+///   the `WORKFLOW_ERROR` v3 wrote for it: one record with `LOGIC_ERROR` and
+///   the loop's own message.
 /// - `schema/status_without_channel` (break 7): only the Active workflow
 ///   runs without a channel, where v3 ran all three: v4's one step is v3's
 ///   first, and v3's other two are missing.
 ///
 /// The step v3's trace drops, the call whose failure went to its
 /// workflow's policy (break 5), and the engine's steps as a sweep is
-/// entered need no row: the alignment matches them to nothing. The records
-/// such a step adds do: v3's next snapshot gains them.
+/// entered need no row: the alignment matches them to nothing, and carries
+/// the records such a step adds to the next step whose records are
+/// compared, where v3's next snapshot gained them.
 ///
 /// **No row can cover a trace that does not replay**, so a traced case keeps
 /// `changes` on and sets no `redact_paths` or `max_snapshot_bytes`, and the
@@ -530,23 +532,18 @@ pub const TRACE_DEVIATED: &[RunDeviated] = &[
     ),
     (
         "loop/continue_on_error_next_sweep",
-        "/steps/0/run/trace/steps/2/message/errors/0",
-        MISSING,
-    ),
-    (
-        "loop/continue_on_error_next_sweep",
         "/steps/0/run/trace/steps/2/message/errors/1",
         MISSING,
     ),
     (
         "loop/over_shapes",
-        "/steps/0/run/trace/steps/2/message/errors/0",
-        MISSING,
+        "/steps/0/run/trace/steps/2/message/errors/0/code",
+        r#""LOGIC_ERROR""#,
     ),
     (
-        "loop/setup_error_continues",
-        "/steps/0/run/trace/steps/0/message/errors/0",
-        MISSING,
+        "loop/over_shapes",
+        "/steps/0/run/trace/steps/2/message/errors/0/message",
+        r#""Workflow not_array: loop.over must evaluate to an array, got a string""#,
     ),
     (
         "loop/setup_error_continues",

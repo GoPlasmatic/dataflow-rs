@@ -139,11 +139,12 @@ build (`expressions/budget` turns its trace off, and `families_on` and `families
 | v4 steps matched to nothing: the engine's step at a sweep | 41 |
 | v4 steps matched to nothing: a task's failure the workflow's policy took | 9 |
 | v4 steps matched to nothing: a workflow's own failure | 1 |
-| Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 16 |
+| Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 15 |
 | Of the matched steps, those whose `status` is held to v3's own audit entry | 215 |
 | Traced runs the replay invariant held: every one | 85 |
 | v4 steps whose `Trace::contexts` entry equals the corpus replay: every one | 294 |
 | Traced runs whose trace reads back byte for byte and replays the same: every one | 85 |
+| Traced runs whose steps' records are the message's errors: every one | 85 |
 
 In each build, v3's recordings hold 89 traced runs: the 85 compared, and four in cases v4 does not
 build (breaks 2a, 3 and 15), whose `/steps` a deviation covers.
@@ -277,29 +278,38 @@ its `initial` with `replay::apply` over each step's changes, in order, and walke
   or a limit stops the run at a sweep) is applied and matched to nothing. A workflow's own
   `executed` step of any other shape is matched, so it fails against v3's steps.
 - **A `failed` step** is applied and matched to nothing. It is the step v3's trace drops (break 5):
-  a call whose failure went to its workflow's policy, or a workflow's own failure.
+  a call whose failure went to its workflow's policy, or a workflow's own failure. Its records,
+  like an engine step's, are carried to the next step whose records are compared.
 - **Every other step** is matched to v3's next step. The two must agree on `(workflow_id, task_id,
   result, loop_counter, element_index)`. When that v3 step's snapshot `audit_trail` ends in its own
   task's entry (the recordings' `snapshot_audit_trail: "own"`), v4's step `status` must equal that
   entry's `status`. When the v3 step has a snapshot, the context rebuilt after v4's step,
   normalised with the case's error-context path, must equal the snapshot's `context`, key order
-  included, and v4's step `errors`, normalised, must equal the records the snapshot's `errors`
-  gained over the snapshot before it, in order.
+  included, and v4's step `errors`, after the records carried to it, normalised, must equal the
+  records the snapshot's `errors` gained over the snapshot before it, in order.
 
 Every v3 step must be matched. v3's `mapping_contexts`, `started_at`, `duration_us`, `changes`, and
 the rest of its snapshot's `audit_trail`, are not compared.
 
 **A step's records.** v4's step `errors` is every record the step added to the message, the call's
 own and then the recorder's (I127), so it is held to what v3's snapshot gained at the matched step.
-The two are compared at the indices the snapshot holds them, after the earlier steps' records,
-which are `null` on both sides, so a deviation's pointer, such as
+A step matched to nothing (an engine step, a `failed` step) and a matched step v3 recorded with no
+snapshot (a skip) carry their records forward: v3's next snapshot gained them, so they are held
+there, before that step's own. The two are compared at the indices the snapshot holds them, after
+the earlier steps' records, which are `null` on both sides, so a deviation's pointer, such as
 `/steps/0/run/trace/steps/2/message/errors/1`, names one record in v3's recording and in the aligned
-trace. 43 matched steps carry a record on either side. They differ in two shapes, each deviated:
-break 4's, where v3 wrapped a `WORKFLOW_ERROR` (`loop/continue_on_error_next_sweep`,
-`loop/setup_error_continues`) or recorded `TASK_ERROR` for a non-array `for_each.over`
-(`fan_out/over_shapes`); and break 5's, where the record is on a `failed` step, which v3's trace
-drops, so v3's next snapshot gained it (the same two loop cases, and `loop/over_shapes`, whose
-workflow's own failure is its `failed` step).
+trace. 43 matched steps carry a record on either side. They differ in break 4's shape alone, where
+v3 wrapped a `WORKFLOW_ERROR` (`loop/continue_on_error_next_sweep`, `loop/setup_error_continues`),
+recorded `TASK_ERROR` for a non-array `for_each.over` (`fan_out/over_shapes`), or recorded a
+`WORKFLOW_ERROR` for a workflow's own failure, where v4's `failed` step holds one `LOGIC_ERROR`
+(`loop/over_shapes`).
+
+**The records invariant.** For every traced run, the records of all of v4's steps, in step order,
+normalised, must equal the traced message's `errors`, normalised. A workflow's own `skipped` step
+is left out: its record is the failure of a condition that could not be evaluated (R34), which the
+message never gets. Like the replay invariant below, it does not depend on v3 and takes no
+deviation, and it holds the records on the `failed` steps that end a run, which no v3 snapshot
+follows. The count of runs it held is pinned at the traced-run count.
 
 **The replay invariant.** For every traced run, the replay of all of v4's steps from `initial`,
 normalised, must equal the traced message's own final context, normalised (I19: a trace replays to

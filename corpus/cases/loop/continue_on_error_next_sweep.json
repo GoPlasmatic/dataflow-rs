@@ -77,13 +77,6 @@
         "/steps/0/run/trace/steps/2/message/errors/1"
       ],
       "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"
-    },
-    {
-      "break": "5",
-      "paths": [
-        "/steps/0/run/trace/steps/2/message/errors/0"
-      ],
-      "note": "the failing call's record is on its own failed step, which v3's trace drops, so v3's next snapshot gained it"
     }
   ]
 }
