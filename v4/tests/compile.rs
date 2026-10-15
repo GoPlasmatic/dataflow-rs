@@ -161,12 +161,30 @@ impl Function for Silent {
     }
 }
 
-/// Knows only the connectors it was given.
+/// Knows only the connectors it was given, and says nothing of the rest.
 struct Known(&'static [&'static str]);
 
 impl ResourceOracle for Known {
-    fn resolve(&self, kind: &str, name: &str) -> bool {
-        kind == "connector" && self.0.contains(&name)
+    fn resolve(&self, kind: &str, name: &str) -> std::result::Result<(), String> {
+        if kind == "connector" && self.0.contains(&name) {
+            Ok(())
+        } else {
+            Err(String::new())
+        }
+    }
+}
+
+/// Knows `db9` as a database and `db1` as a cache, which it says when a
+/// database is asked for.
+struct Typed;
+
+impl ResourceOracle for Typed {
+    fn resolve(&self, _kind: &str, name: &str) -> std::result::Result<(), String> {
+        match name {
+            "db9" => Ok(()),
+            "db1" => Err("connector `db1` is a cache, not a database".to_owned()),
+            _ => Err(String::new()),
+        }
     }
 }
 
@@ -404,8 +422,32 @@ fn an_unresolved_literal_reference_is_a_defect() {
         issues[0].message
     );
     assert!(issues[0].message.contains("db2"), "{}", issues[0].message);
+    // An oracle that gives no reason leaves the message as it is.
+    assert_eq!(issues[0].message, "no connector named `db2` resolves");
 
     assert!(compiled(&with_oracle(), &one("query", json!({"connector": "db1"}))).is_empty());
+}
+
+#[test]
+fn the_oracles_reason_ends_the_message() {
+    let compiler = registry().compiler(CompileOptions::default().resources(Arc::new(Typed)));
+    let issues = compiled(&compiler, &one("query", json!({"connector": "db1"})));
+    assert_eq!(
+        rows(&issues),
+        [row(
+            C::UnresolvedReference,
+            D,
+            "tasks[0].function.input.connector"
+        )]
+    );
+    let why = "connector `db1` is a cache, not a database";
+    assert!(issues[0].message.ends_with(why), "{}", issues[0].message);
+    assert_eq!(
+        issues[0].message,
+        format!("no connector named `db1` resolves: {why}")
+    );
+    // `Ok` passes.
+    assert!(compiled(&compiler, &one("query", json!({"connector": "db9"}))).is_empty());
 }
 
 #[test]

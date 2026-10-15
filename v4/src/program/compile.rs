@@ -22,15 +22,40 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 /// Answers whether a definition that a config names exists, such as a
-/// connector a deployment declares.
+/// connector a deployment declares, and why not when it does not.
 ///
 /// A [`Compiler`] given one through [`CompileOptions::resources`] checks each
 /// [`Reference`](crate::function::Reference) a host function's spec declares.
 /// A field holding a literal string the oracle does not resolve is an
-/// `UNRESOLVED_REFERENCE` Defect. A computed or absent value is not checked.
+/// `UNRESOLVED_REFERENCE` Defect, whose message the oracle's reason ends. A
+/// computed or absent value is not checked.
+///
+/// ```
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// use dataflow_rs::program::ResourceOracle;
+///
+/// /// The deployment's connectors: `orders` a database, `sessions` a cache.
+/// struct Connectors;
+///
+/// impl ResourceOracle for Connectors {
+///     fn resolve(&self, _kind: &str, name: &str) -> Result<(), String> {
+///         match name {
+///             "orders" => Ok(()),
+///             "sessions" => Err(format!("connector `{name}` is a cache, not a database")),
+///             _ => Err(String::new()),
+///         }
+///     }
+/// }
+/// ```
 pub trait ResourceOracle: Send + Sync + 'static {
-    /// Whether a `kind` named `name` exists: the connector `db1`, say.
-    fn resolve(&self, kind: &str, name: &str) -> bool;
+    /// `Ok` when a `kind` named `name` exists: the connector `db1`, say.
+    /// `Err(why)` when it does not: a `why` that is not empty ends the
+    /// issue's message, after a colon.
+    ///
+    /// # Errors
+    ///
+    /// Why `name` does not resolve, or nothing more to say: an empty string.
+    fn resolve(&self, kind: &str, name: &str) -> std::result::Result<(), String>;
 }
 
 /// How a [`Compiler`] compiles.
@@ -722,10 +747,14 @@ impl<'w> Walk<'w> {
                 continue;
             };
             if let Some(Value::String(name)) = lookup(input, &field)
-                && !oracle.resolve(&reference.kind, name)
+                && let Err(why) = oracle.resolve(&reference.kind, name)
             {
                 let kind = &reference.kind;
-                let message = format!("no {kind} named `{name}` resolves");
+                let mut message = format!("no {kind} named `{name}` resolves");
+                if !why.is_empty() {
+                    message.push_str(": ");
+                    message.push_str(&why);
+                }
                 cx.adopt(Issue::new(IssueCode::UnresolvedReference, field, message));
             }
         }

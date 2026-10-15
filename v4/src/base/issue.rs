@@ -357,7 +357,9 @@ pub enum IssueCode {
     InvalidPath,
     /// A `Reference` field whose value is a literal string the host's
     /// `ResourceOracle` does not resolve, such as a connector no deployment
-    /// declares. A computed or absent value is not checked.
+    /// declares, or one of the wrong type; the oracle's reason, when it
+    /// gives one, ends the message. A computed or absent value is not
+    /// checked.
     ///
     /// Default severity [`Severity::Defect`]: the workflow loads, then fails
     /// every call.

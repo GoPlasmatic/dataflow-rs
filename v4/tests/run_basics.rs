@@ -731,8 +731,12 @@ impl Function for Query {
 struct Known;
 
 impl ResourceOracle for Known {
-    fn resolve(&self, _kind: &str, name: &str) -> bool {
-        name == "db1"
+    fn resolve(&self, _kind: &str, name: &str) -> std::result::Result<(), String> {
+        if name == "db1" {
+            Ok(())
+        } else {
+            Err(format!("only `db1` is declared, not `{name}`"))
+        }
     }
 }
 
