@@ -72,8 +72,16 @@ impl<'r> Observers<'r> {
 
     /// Each slot gets the event if its interest admits it; `elapsed` is
     /// masked to `None` for a slot without `TIMINGS`. A run event goes to
-    /// every slot.
+    /// every slot. A run without observers builds no event.
+    #[inline]
     pub(crate) fn emit(&self, event: Event<'_>) {
+        if self.slots.iter().any(Option::is_some) {
+            self.deliver(event);
+        }
+    }
+
+    /// [`emit`](Self::emit)'s delivery, to every slot.
+    fn deliver(&self, event: Event<'_>) {
         let wants = match event {
             Event::RunStarted { .. } | Event::RunFinished { .. } => Interest::NONE,
             Event::WorkflowStarted { .. } | Event::WorkflowFinished { .. } => Interest::WORKFLOWS,

@@ -143,6 +143,11 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) capture_audit: bool,
     /// What the run reports beyond the message, held by `run_with`.
     pub(crate) watch: &'r mut Watch<'p>,
+    /// Whether a call is recorded beyond the message: the run is traced,
+    /// mirrors its records into an error context, or tells an observer of
+    /// the task events ([`Watch::records_calls`]). An unwatched call takes
+    /// the plain recorder (review A M-1).
+    pub(crate) watched: bool,
     /// The run's one clock reading.
     pub(crate) now: DateTime<Utc>,
     /// The same reading, RFC 3339, for error records.
@@ -175,6 +180,15 @@ pub(crate) struct Watch<'p> {
     /// Where the recorder mirrors each call's records, when the engine has
     /// an error context.
     pub(crate) error_context: Option<&'p ErrorContext>,
+}
+
+impl Watch<'_> {
+    /// Whether a recorded call has anything to report beyond the message:
+    /// a trace step, an error-context mirror or a `TaskFinished`. Fixed for
+    /// the run: a trace stays, its budget crossed or not.
+    pub(crate) fn records_calls(&self) -> bool {
+        self.trace.is_some() || self.error_context.is_some() || self.observers.tasks()
+    }
 }
 
 /// How many ops run between two checks of the limits.
@@ -397,7 +411,7 @@ fn judged_first(wf: &CompiledWorkflow) -> bool {
 /// The workflow's `WorkflowStarted`, once, and in a timed run the clock
 /// reading its elapsed time starts from.
 fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
-    if std::mem::replace(&mut env.frame.begun, true) || !env.watch.observers.workflows() {
+    if !env.watch.observers.workflows() || std::mem::replace(&mut env.frame.begun, true) {
         return;
     }
     // Only an observer of the workflow events with `TIMINGS` times a
@@ -649,8 +663,12 @@ fn call<'p>(
         task: &env.task_ids[site.task as usize],
     };
     let errors_before = env.errors.len();
-    let traced = env.traces_changes();
-    let started = env.watch.timed.then(record::now);
+    // An unwatched run neither traces nor times a call.
+    let (traced, started) = if env.watched {
+        (env.traces_changes(), env.watch.timed.then(record::now))
+    } else {
+        (false, None)
+    };
     let mut cx = SyncCtx {
         rc: &mut *rc,
         exprs: env.exprs,

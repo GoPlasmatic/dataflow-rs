@@ -136,7 +136,10 @@ impl Engine {
 
     /// Runs `msg` with [`RunOptions::default`].
     pub async fn run(&self, msg: &mut Message) -> Run {
-        self.run_with(msg, &RunOptions::default()).await
+        // Borrowed for the whole run: a temporary would make the run's
+        // future carry the options.
+        static DEFAULT: RunOptions<'static> = RunOptions::DEFAULT;
+        self.run_with(msg, &DEFAULT).await
     }
 
     /// Runs `msg` through the program's Active workflows, those of
@@ -249,6 +252,7 @@ impl Engine {
                     mode: opts.audit,
                     capture: capture_audit || watch.trace.as_ref().is_some_and(|t| t.changes()),
                     capture_audit,
+                    watched: watch.records_calls(),
                     watch: &mut watch,
                     now,
                     now_text: &now_text,
@@ -323,7 +327,7 @@ impl Engine {
             status,
             records,
             stats,
-            watch.trace.map(|t| t.finish()),
+            watch.trace.map(|t| Box::new(t.finish())),
         )
     }
 

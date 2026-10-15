@@ -133,6 +133,11 @@ pub(crate) struct Completed<'p> {
 /// (through `AuditMode`), the progress write, the error record, the
 /// error-context record, the trace's step, and the observers'
 /// `TaskFinished`. A `Skip` gets the last two only.
+///
+/// A call of an unwatched run ([`RunEnv::watched`]) that marked no change
+/// has only the first three to record, through [`plain`]: the run's other
+/// outputs cost it one branch (review A M-1).
+#[inline(always)]
 pub(crate) fn record<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
@@ -141,6 +146,67 @@ pub(crate) fn record<'p>(
 ) {
     #[cfg(test)]
     tests::completed(&done);
+    if env.watched || done.marked {
+        watched(rc, env, wf, done);
+    } else {
+        plain(rc, env, done.ids, done.stamp, done.status, done.record);
+    }
+}
+
+/// [`record`] for a call of an unwatched run that marked no change: the
+/// audit entry, with every change the call recorded, the progress write and
+/// the error record, as [`watched`] records them for such a call. A `Skip`
+/// records nothing.
+#[inline]
+fn plain<'p>(
+    rc: &mut RunContext<'_, 'p>,
+    env: &mut RunEnv<'_, 'p>,
+    ids: TaskIds<'p>,
+    stamp: Stamp,
+    status: Option<u16>,
+    record: Option<(Cow<'static, str>, String)>,
+) {
+    let Some(status) = status else {
+        env.changes.clear();
+        return;
+    };
+    // A mode that keeps nothing builds no entry for `record_audit` to drop.
+    if keeps_entries(env.mode) {
+        record_audit(
+            env.audit,
+            env.mode,
+            AuditEntry {
+                workflow_id: Arc::clone(ids.workflow),
+                task_id: Arc::clone(ids.task),
+                timestamp: env.now,
+                changes: std::mem::take(&mut env.changes),
+                status: usize::from(status),
+                loop_counter: stamp.loop_counter,
+                element_index: stamp.element_index,
+            },
+        );
+    } else {
+        env.changes.clear();
+    }
+    write_progress(rc, ids.workflow, ids.task, status);
+    if let Some((code, message)) = record {
+        let (workflow, task) = (&**ids.workflow, &**ids.task);
+        let mut record = task_record(&code, message, workflow, task, env.now_text);
+        record.element_index = stamp.element_index;
+        env.errors.push(record);
+    }
+}
+
+/// [`record`] for a call of a watched run, or one that marked a change:
+/// everything the recorder makes.
+#[cold]
+#[inline(never)]
+fn watched<'p>(
+    rc: &mut RunContext<'_, 'p>,
+    env: &mut RunEnv<'_, 'p>,
+    wf: &'p CompiledWorkflow,
+    done: Completed<'p>,
+) {
     let Completed {
         ids,
         task,

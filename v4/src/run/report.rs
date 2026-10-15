@@ -36,7 +36,9 @@ pub struct Run {
     status: RunStatus,
     records: Vec<Record>,
     stats: Stats,
-    trace: Option<Trace>,
+    /// Boxed: the report is the run future's output, and most runs are
+    /// not traced.
+    trace: Option<Box<Trace>>,
 }
 
 impl Run {
@@ -45,7 +47,7 @@ impl Run {
         status: RunStatus,
         records: Vec<Record>,
         stats: Stats,
-        trace: Option<Trace>,
+        trace: Option<Box<Trace>>,
     ) -> Self {
         Self {
             program,
@@ -62,7 +64,7 @@ impl Run {
     /// one stopped as a sweep starts only the engine's step for the counter
     /// it wrote; either way the trace replays to the message's context.
     pub fn trace(&self) -> Option<&Trace> {
-        self.trace.as_ref()
+        self.trace.as_deref()
     }
 
     /// How the run ended.
@@ -113,7 +115,7 @@ impl Run {
     /// wanted on every status: `into_result` drops the report, the trace
     /// with it, on exactly the runs that stopped.
     pub fn take_trace(&mut self) -> Option<Trace> {
-        self.trace.take()
+        self.trace.take().map(|trace| *trace)
     }
 
     /// `Ok(self)` unless the run was stopped, timed out or cancelled, which

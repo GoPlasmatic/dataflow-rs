@@ -53,19 +53,24 @@ pub struct RunOptions<'a> {
     pub trace: Option<TraceOptions>,
 }
 
+impl RunOptions<'static> {
+    /// The defaults, as a constant: `Engine::run` borrows a static copy.
+    pub(crate) const DEFAULT: Self = Self {
+        channel: None,
+        routing_bucket: None,
+        capture_changes: true,
+        audit: AuditMode::Full,
+        deadline: None,
+        cancel: None,
+        layers: &[],
+        observer: None,
+        trace: None,
+    };
+}
+
 impl Default for RunOptions<'_> {
     fn default() -> Self {
-        Self {
-            channel: None,
-            routing_bucket: None,
-            capture_changes: true,
-            audit: AuditMode::Full,
-            deadline: None,
-            cancel: None,
-            layers: &[],
-            observer: None,
-            trace: None,
-        }
+        RunOptions::DEFAULT
     }
 }
 
