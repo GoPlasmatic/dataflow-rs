@@ -405,13 +405,6 @@ fn agreeing() -> Vec<(&'static str, Value)> {
             ])),
         ),
         (
-            "an alias beside its target",
-            wf(
-                json!([{"id": "call", "name": "call", "function": {"name": "http_call",
-                       "input": {"connector": "c", "path": "/a", "path_logic": "/b"}}}]),
-            ),
-        ),
-        (
             "a stray publish_json input key",
             wf(
                 json!([{"id": "p", "name": "p", "function": {"name": "publish_json",
@@ -491,6 +484,18 @@ fn where_v4_differs_from_v3_it_is_deliberate() {
             vec![],
             (true, false),
             "I25: input defaults to {} (v3: missing field `input`)",
+        ),
+        (
+            "an alias beside its target",
+            wf(
+                json!([{"id": "call", "name": "call", "function": {"name": "http_call",
+                       "input": {"connector": "c", "path": "/a", "path_logic": "/b"}}}]),
+            ),
+            vec![],
+            vec![],
+            (true, false),
+            "I132: the integration configs are the host's, so the reader leaves both keys \
+             alone (v3: a pathless duplicate-field PARSE_FAILED)",
         ),
         (
             "a group nested too deep carrying halt_on",

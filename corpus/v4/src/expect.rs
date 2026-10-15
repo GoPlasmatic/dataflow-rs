@@ -73,7 +73,7 @@ pub type Deviated = (
 /// `breaks/unknown_keys` and `builtins/pre39_spellings#1` are what `parse`
 /// reports, as phase 2's tests pin it: the typos in
 /// `v4/tests/repository_definitions.rs`, the UI's `path` in `v4/tests/parse.rs`,
-/// and both spellings at once in `v4/tests/compat.rs`.
+/// and, for `pre39_spellings#1`, an unregistered `http_call` (the reader leaves the aliases to the host).
 pub const DEVIATED: &[Deviated] = &[
     ("breaks/name_required", 0, &["6"], &[]),
     ("breaks/name_required", 1, &["6"], &[]),
@@ -153,34 +153,8 @@ pub const DEVIATED: &[Deviated] = &[
         &[
             ("V3_SPELLING", "ADVISORY", "continue_on_error"),
             ("V3_SPELLING", "ADVISORY", "tasks[0].continue_on_error"),
-            (
-                "V3_SPELLING",
-                "ADVISORY",
-                "tasks[0].function.input.body_logic",
-            ),
-            ("V3_SPELLING", "ADVISORY", "tasks[0].function.input.output"),
-            (
-                "V3_SPELLING",
-                "ADVISORY",
-                "tasks[0].function.input.path_logic",
-            ),
             ("V3_SPELLING", "ADVISORY", "tasks[1].continue_on_error"),
-            (
-                "V3_SPELLING",
-                "ADVISORY",
-                "tasks[1].function.input.path_logic",
-            ),
             ("V3_SPELLING", "ADVISORY", "tasks[2].continue_on_error"),
-            (
-                "V3_SPELLING",
-                "ADVISORY",
-                "tasks[2].function.input.key_logic",
-            ),
-            (
-                "V3_SPELLING",
-                "ADVISORY",
-                "tasks[2].function.input.value_logic",
-            ),
             ("UNKNOWN_FUNCTION", "REJECTED", "tasks[0].function.name"),
             ("UNKNOWN_FUNCTION", "REJECTED", "tasks[1].function.name"),
             ("UNKNOWN_FUNCTION", "REJECTED", "tasks[2].function.name"),
@@ -190,11 +164,7 @@ pub const DEVIATED: &[Deviated] = &[
         "builtins/pre39_spellings",
         1,
         &["8"],
-        &[(
-            "PARSE_FAILED",
-            "REJECTED",
-            "tasks[0].function.input.path_logic",
-        )],
+        &[("UNKNOWN_FUNCTION", "REJECTED", "tasks[0].function.name")],
     ),
     (
         "builtins/validate_alias",

@@ -13,12 +13,10 @@
 //! | Workflow | `continue_on_error` | `on_failure: continue` or `fail` |
 //! | Task | `continue_on_error`, `halt_on` | `on_failure` and `on_rejection`, by 06's policy table |
 //! | `function.name` | `validate` | `validation` |
-//! | `http_call` input | `path_logic`, `body_logic`, `output` | `path`, `body`, `response_path` |
-//! | `enrich` input | `path_logic` | `path` |
-//! | `publish_kafka` input | `key_logic`, `value_logic` | `key`, `value` |
 //!
 //! Each rewrite is a `V3_SPELLING` Advisory at the v3 key, and a
-//! [`Rewrite`]. Two moves are not rewrites, and are reported as the keys they
+//! [`Rewrite`]. The integration configs (`http_call`, `enrich`,
+//! `publish_kafka`) are their hosts': their inputs are left as written. Two moves are not rewrites, and are reported as the keys they
 //! are:
 //!
 //! - **A key a built-in's input does not know (I54)** moves into the task's
@@ -35,10 +33,9 @@
 //! The reader refuses a `continue_on_error` that is not a bool
 //! (`PARSE_FAILED`), a `halt_on` that is not `"never"` or `"failure"`
 //! (`INVALID_HALT_ON`, v3's message), and a v3 key written beside a v4 one
-//! (`PARSE_FAILED` at the v3 key, as v3's duplicate field was): on one node,
+//! (`PARSE_FAILED` at the v3 key): on one node,
 //! any v3 policy key (`continue_on_error`, a task's `halt_on`) beside any v4
-//! policy key (`on_failure`, a task's `on_rejection`), and an alias beside its
-//! target. The two flags make one policy, so a v3 flag beside the v4 key of
+//! policy key (`on_failure`, a task's `on_rejection`). The two flags make one policy, so a v3 flag beside the v4 key of
 //! the other axis would be a guess at how the author meant them to combine. A
 //! refused key is taken out all the same, so the walk does not report it
 //! twice.
@@ -62,30 +59,18 @@ use std::collections::HashMap;
 ///   `on_failure: continue, on_rejection: continue`. A task's two flags are
 ///   read together, so each of its rewrites names the same policies (a flag
 ///   beside a v4 policy is refused, not rewritten);
-/// - a function name or an input key is the bare name: `validate` read as
-///   `validation`, `path_logic` read as `path`.
+/// - a function name is the bare name: `validate` read as `validation`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Rewrite {
-    /// The v3 key's authored path, such as `tasks[0].continue_on_error`,
-    /// `tasks[0].function.name` or `tasks[0].function.input.path_logic`.
+    /// The v3 key's authored path, such as `tasks[0].continue_on_error`
+    /// or `tasks[0].function.name`.
     pub path: AuthoredPath,
     /// The v3 spelling.
     pub v3: String,
     /// What it was read as.
     pub v4: String,
 }
-
-/// The integration configs' v3 aliases: the function, the alias, and the key
-/// it is read as.
-const ALIASES: &[(&str, &str, &str)] = &[
-    ("http_call", "path_logic", "path"),
-    ("http_call", "body_logic", "body"),
-    ("http_call", "output", "response_path"),
-    ("enrich", "path_logic", "path"),
-    ("publish_kafka", "key_logic", "key"),
-    ("publish_kafka", "value_logic", "value"),
-];
 
 /// What the reader found: its issues, in document order, its rewrites, and
 /// the `ext` of each node it moved a key into, by the node's path, for the
@@ -167,11 +152,6 @@ fn keys_among(obj: &Map<String, Value>, wanted: &[&'static str]) -> Vec<&'static
     obj.keys()
         .filter_map(|key| wanted.iter().copied().find(|w| *w == key))
         .collect()
-}
-
-/// Both spellings of one key written at once.
-fn both(v3: &str, v4: &str) -> String {
-    format!("`{v3}` is the v3 spelling of `{v4}`, and both are written: keep `{v4}`")
 }
 
 /// The v4 policy keys of `policies` that `obj` holds, in the table's order.
@@ -483,61 +463,13 @@ impl Read {
                     self.rewrite(at.join("name"), v3, v4, Some(step), None);
                 }
             } else if let Some(Value::Object(input)) = fields.get_mut("input") {
-                match builtin {
-                    Some(known) => self.builtin_input(obj, task, input, known, step),
-                    None => self.aliases(input, &name, &at.join("input"), step),
+                if let Some(known) = builtin {
+                    self.builtin_input(obj, task, input, known, step);
                 }
             }
         }
         if let Some(Value::Object(slot)) = obj.get_mut("function") {
             *slot = fields;
-        }
-    }
-
-    /// The input's v3 aliases for `function`, each renamed in its place.
-    fn aliases(
-        &mut self,
-        input: &mut Map<String, Value>,
-        function: &str,
-        at: &AuthoredPath,
-        step: &Step,
-    ) {
-        let alias_of = |key: &str| {
-            ALIASES
-                .iter()
-                .find(|(f, alias, _)| *f == function && *alias == key)
-                .map(|(_, alias, target)| (*alias, *target))
-        };
-        if !input.keys().any(|key| alias_of(key).is_some()) {
-            return;
-        }
-        let authored = std::mem::take(input);
-        let conflicts: Vec<&str> = authored
-            .keys()
-            .filter_map(|key| alias_of(key))
-            .filter(|(_, target)| authored.contains_key(*target))
-            .map(|(alias, _)| alias)
-            .collect();
-        for (key, value) in authored {
-            let Some((alias, target)) = alias_of(&key) else {
-                input.insert(key, value);
-                continue;
-            };
-            let path = at.join(alias);
-            if conflicts.contains(&alias) {
-                let message = both(alias, target);
-                self.report(
-                    IssueCode::ParseFailed,
-                    path,
-                    message,
-                    Some(step),
-                    Some(alias),
-                );
-            } else {
-                input.insert(target.into(), value);
-                let (v3, v4) = (alias.to_string(), target.to_string());
-                self.rewrite(path, v3, v4, Some(step), Some(alias));
-            }
         }
     }
 

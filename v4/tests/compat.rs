@@ -346,62 +346,36 @@ fn for_each_on_validate_is_refused_after_the_rewrite() {
 }
 
 #[test]
-fn the_integration_aliases_are_rewritten_by_function_name() {
-    for (name, input, aliases, rewritten) in [
+fn the_integration_configs_are_left_as_written() {
+    // `http_call`, `enrich` and `publish_kafka` are their hosts': the reader
+    // rewrites none of their keys, so no `V3_SPELLING` and no `Rewrite`.
+    for (name, input) in [
         (
             "http_call",
             json!({"connector": "c", "body_logic": {"var": "data.obj"},
                    "output": "data.resp", "path_logic": {"var": "data.id"}}),
-            vec![
-                ("body_logic", "body"),
-                ("output", "response_path"),
-                ("path_logic", "path"),
-            ],
-            json!({"connector": "c", "path": {"var": "data.id"},
-                   "body": {"var": "data.obj"}, "response_path": "data.resp"}),
         ),
         (
             "enrich",
             json!({"connector": "c", "merge_path": "data.out", "path_logic": "/x"}),
-            vec![("path_logic", "path")],
-            json!({"connector": "c", "merge_path": "data.out", "path": "/x"}),
         ),
         (
             "publish_kafka",
             json!({"connector": "c", "topic": "t", "key_logic": {"var": "data.id"},
                    "value_logic": {"var": "data.obj"}}),
-            vec![("key_logic", "key"), ("value_logic", "value")],
-            json!({"connector": "c", "topic": "t", "key": {"var": "data.id"},
-                   "value": {"var": "data.obj"}}),
+        ),
+        (
+            "http_call",
+            json!({"connector": "c", "path": "/a", "path_logic": "/b",
+                   "output": "data.a", "response_path": "data.b"}),
         ),
     ] {
-        let json = calling(name, input);
+        let json = calling(name, input.clone());
         let parsed = compat(&json);
-        // In the input's key order, which the inputs above spell sorted, as `aliases` does.
-        let expected: Vec<Row> = aliases
-            .iter()
-            .map(|(alias, _)| {
-                row(
-                    C::V3Spelling,
-                    A,
-                    &format!("tasks[0].function.input.{alias}"),
-                )
-            })
-            .collect();
-        assert_eq!(rows(&parsed), expected, "{name}");
-        for (issue, (alias, _)) in parsed.issues.iter().zip(&aliases) {
-            assert_eq!(issue.field.as_deref(), Some(*alias), "{name}");
-            assert_eq!(issue.step_id.as_deref(), Some("t"), "{name}");
-        }
+        assert_eq!(rows(&parsed), vec![], "{name}");
         let def = built(parsed);
-        assert_eq!(task(&def.tasks[0]).function.input, rewritten, "{name}");
-        let expected: Vec<_> = aliases
-            .iter()
-            .map(|(alias, target)| {
-                rewrite(&format!("tasks[0].function.input.{alias}"), alias, target)
-            })
-            .collect();
-        assert_eq!(rewrites(&migrated(&json)), expected, "{name}");
+        assert_eq!(task(&def.tasks[0]).function.input, input, "{name}");
+        assert_eq!(rewrites(&migrated(&json)), vec![], "{name}");
     }
 }
 
@@ -429,44 +403,6 @@ fn an_alias_of_another_function_is_left_alone() {
 // ---------------------------------------------------------------------------
 // Refusals
 // ---------------------------------------------------------------------------
-
-#[test]
-fn both_spellings_at_once_is_a_parse_failure_at_the_v3_key() {
-    for (json, path) in [
-        (
-            calling(
-                "http_call",
-                json!({"connector": "c", "path": "/a", "path_logic": "/b"}),
-            ),
-            "tasks[0].function.input.path_logic",
-        ),
-        (
-            calling(
-                "http_call",
-                json!({"connector": "c", "output": "data.a",
-                                        "response_path": "data.b"}),
-            ),
-            "tasks[0].function.input.output",
-        ),
-        (
-            calling(
-                "publish_kafka",
-                json!({"connector": "c", "topic": "t", "value": 1,
-                                            "value_logic": 2}),
-            ),
-            "tasks[0].function.input.value_logic",
-        ),
-    ] {
-        let parsed = compat(&json);
-        assert_eq!(rows(&parsed), vec![row(C::ParseFailed, R, path)], "{json}");
-        assert!(
-            parsed.issues[0].message.contains("both"),
-            "{}",
-            parsed.issues[0].message
-        );
-        assert!(parsed.def.is_none());
-    }
-}
 
 #[test]
 fn a_continue_on_error_that_is_not_a_bool_is_a_parse_failure() {
@@ -932,7 +868,6 @@ fn the_readers_issues_come_first_in_document_order() {
             row(C::V3Spelling, A, "tasks[0].continue_on_error"),
             row(C::V3Spelling, A, "tasks[0].function.name"),
             row(C::V3Spelling, A, "tasks[0].halt_on"),
-            row(C::V3Spelling, A, "tasks[1].function.input.output"),
             row(C::EmptyWorkflowId, R, "id"),
             row(C::InvalidTerminal, R, "tasks[0].terminal"),
         ]
@@ -1285,9 +1220,9 @@ fn every_corpus_definition_migrates_to_one_that_parses_with_compat_off_to_an_equ
     assert!(saw_publish, "builtins/publish#0 is in the corpus");
     // 143 definitions on 2026-10-12: 130 migrate, 30 of them carrying a v3
     // spelling and 7 host data; 13 are refused, each by a rule v3 refuses
-    // too (an alias beside its target, a group's shape, a loop's bounds).
+    // too (a group's shape, a loop's bounds).
     assert!(migrated_count >= 130, "only {migrated_count} migrated");
     assert!(rewritten >= 30, "only {rewritten} carry a v3 spelling");
     assert!(with_ext >= 7, "only {with_ext} carry host data");
-    assert!(refused >= 13, "only {refused} refused");
+    assert!(refused >= 12, "only {refused} refused");
 }

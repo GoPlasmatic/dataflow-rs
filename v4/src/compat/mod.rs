@@ -14,9 +14,6 @@
 //! | Task | both | `on_failure: halt`, `on_rejection: halt` |
 //! | Task | `halt_on: "never"`, `continue_on_error: false` | the defaults, still reported |
 //! | `function.name` | `validate` | `validation` |
-//! | `http_call` input | `path_logic`, `body_logic`, `output` | `path`, `body`, `response_path` |
-//! | `enrich` input | `path_logic` | `path` |
-//! | `publish_kafka` input | `key_logic`, `value_logic` | `key`, `value` |
 //!
 //! It moves two kinds of key into a node's `ext`, reporting each as the key
 //! it is:
@@ -31,13 +28,12 @@
 //! It refuses a `continue_on_error` that is not a bool and a `halt_on` that
 //! is not `"never"` or `"failure"`. It refuses a v3 key written beside a v4
 //! one, at the v3 key: on one node, any v3 policy key (`continue_on_error`,
-//! `halt_on`) beside any v4 policy key (`on_failure`, `on_rejection`), and an
-//! integration alias beside its target.
+//! `halt_on`) beside any v4 policy key (`on_failure`, `on_rejection`).
 //!
 //! With the reader off, nothing is rewritten. The v3 keys of a workflow, a
 //! task and a group (`continue_on_error`, `halt_on`) are unknown keys, and
-//! Rejected as every unknown key then is. `validate`, the integration aliases
-//! and a built-in input's stray keys are not keys of the definition: they stay
+//! Rejected as every unknown key then is. `validate` and a built-in
+//! input's stray keys are not keys of the definition: they stay
 //! in the task's `function` as written, for the function's lookup and config
 //! to refuse when the workflow is compiled (phase 3).
 //!

@@ -41,8 +41,8 @@ pub struct ParseOptions {
     /// is Rejected, and so are the v3 keys of a workflow, a task and a group
     /// (`continue_on_error`, `halt_on`), which are unknown keys to v4. The
     /// v3 spellings inside a task's `function` are not `parse`'s to refuse:
-    /// `validate` stays the function's name, and an integration alias or a
-    /// key a built-in's input does not know stays in its `input`, for the
+    /// `validate` stays the function's name, and a key a built-in's input
+    /// does not know stays in its `input`, for the
     /// function's lookup and config to refuse when the workflow is compiled
     /// (phase 3).
     pub compat: bool,
