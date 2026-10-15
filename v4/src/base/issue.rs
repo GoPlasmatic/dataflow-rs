@@ -273,9 +273,11 @@ pub enum IssueCode {
     /// No handler will dispatch this function name, and it is not a built-in.
     /// Usually a typo or a handler the host forgot to register.
     UnknownFunction,
-    /// The name *is* a built-in, but one that ships as a config schema only
-    /// (`http_call`, `enrich`, `publish_kafka`) and no handler is registered
-    /// under it. The workflow builds cleanly and then fails every message.
+    /// v3's code for a function that shipped as a config schema only
+    /// (`http_call`, `enrich`, `publish_kafka`) with no handler registered
+    /// under it. Kept so the corpus can name what v3 reported; v4 never
+    /// reports it, since those configs are the host's, and an unregistered
+    /// name is [`UnknownFunction`](Self::UnknownFunction).
     MissingHandler,
     /// A custom task's `input` does not deserialize into its handler's declared
     /// `Input` type.
