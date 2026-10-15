@@ -127,8 +127,8 @@ build (`expressions/budget` turns its trace off, and `families_on` and `families
 | Of the matched steps, those whose `status` is held to v3's own audit entry | 215 |
 | Traced runs the replay invariant held: every one | 85 |
 
-v3's recordings hold 87 traced runs. The other four are in cases v4 does not build (breaks 2a, 3
-and 15), whose `/steps` a deviation covers.
+In each build, v3's recordings hold 89 traced runs: the 85 compared, and four in cases v4 does not
+build (breaks 2a, 3 and 15), whose `/steps` a deviation covers.
 
 ## A case
 
