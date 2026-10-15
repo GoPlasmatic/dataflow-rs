@@ -1,7 +1,10 @@
 extern crate dataflow_rs_v4 as dataflow_rs;
 
 use dataflow_rs::datavalue::OwnedDataValue;
-use dataflow_rs::expr::{Evaluated, ExprEngine, escaped_keys, secret_refs};
+use dataflow_rs::expr::{
+    ConfigField, Evaluated, ExprEngine, FieldKind, ValueKind, escaped_keys, secret_refs,
+};
+use dataflow_rs::function::{FunctionConfig, testing};
 use dataflow_rs::run::ErrorKind;
 use dataflow_rs::{Expr, Path};
 use serde_json::{Value, json};
@@ -18,6 +21,8 @@ fn expressions_are_send_and_sync() {
     assert_send_sync::<Expr<OwnedDataValue>>();
     assert_send_sync::<Expr<String>>();
     assert_send_sync::<Expr<u64>>();
+    assert_send_sync::<Expr<i64>>();
+    assert_send_sync::<Expr<f64>>();
     assert_send_sync::<Expr<bool>>();
     assert_send_sync::<Expr<Path>>();
 }
@@ -253,4 +258,102 @@ fn a_string_expression_renders_null_and_bool() {
     assert_eq!(out.value, "null");
     let out = e.eval(&x, &root(json!({"data": {"v": true}}))).unwrap();
     assert_eq!(out.value, "true");
+}
+
+#[test]
+fn an_i64_expression() {
+    let e = ExprEngine::default();
+    // A negative literal folds, and is the value.
+    let k: Expr<i64> = e.compile(&json!(-3)).unwrap();
+    assert_eq!(k.constant(), Some(&-3));
+    assert_eq!(e.eval(&k, &root(json!({}))).unwrap().value, -3);
+    // An expression that reads the context does not fold.
+    let x: Expr<i64> = e.compile(&json!({"-": [{"var": "data.n"}, 10]})).unwrap();
+    assert!(x.constant().is_none());
+    assert_eq!(
+        e.eval(&x, &root(json!({"data": {"n": 3}}))).unwrap().value,
+        -7
+    );
+    // A float with a fraction, a number out of range and a string are not
+    // an i64: a constant at compile, a computed one at eval.
+    for lit in ["2.5", "1e20", r#""3""#] {
+        let raw: Value = serde_json::from_str(lit).unwrap();
+        let err = e.compile::<i64>(&raw).unwrap_err();
+        assert_eq!(err.kind(), &ErrorKind::Config, "{lit}");
+        assert!(
+            err.message().contains("not an i64"),
+            "{lit}: {}",
+            err.message()
+        );
+    }
+    let v: Expr<i64> = e.compile(&json!({"var": "data.v"})).unwrap();
+    for n in [json!(0.5), json!(1e20), json!("x")] {
+        let err = e.eval(&v, &root(json!({"data": {"v": n}}))).unwrap_err();
+        assert_eq!(err.kind(), &ErrorKind::Eval, "{n}");
+        assert!(err.message().contains("an i64"), "{n}: {}", err.message());
+    }
+}
+
+#[test]
+fn an_f64_expression() {
+    let e = ExprEngine::default();
+    let k: Expr<f64> = e.compile(&json!(2.5)).unwrap();
+    assert_eq!(k.constant(), Some(&2.5));
+    assert!((e.eval(&k, &root(json!({}))).unwrap().value - 2.5).abs() < f64::EPSILON);
+    // Any number: an integer is one too.
+    let k: Expr<f64> = e.compile(&json!(-4)).unwrap();
+    assert_eq!(k.constant(), Some(&-4.0));
+    let x: Expr<f64> = e.compile(&json!({"*": [{"var": "data.n"}, 0.5]})).unwrap();
+    assert!(x.constant().is_none());
+    let out = e.eval(&x, &root(json!({"data": {"n": 5}}))).unwrap().value;
+    assert!((out - 2.5).abs() < f64::EPSILON, "{out}");
+    // A string is not a number, at compile and at eval.
+    let err = e.compile::<f64>(&json!("2.5")).unwrap_err();
+    assert_eq!(err.kind(), &ErrorKind::Config);
+    assert!(err.message().contains("not an f64"), "{}", err.message());
+    let y: Expr<f64> = e.compile(&json!({"var": "data.s"})).unwrap();
+    let err = e.eval(&y, &root(json!({"data": {"s": "x"}}))).unwrap_err();
+    assert_eq!(err.kind(), &ErrorKind::Eval);
+    assert!(err.message().contains("an f64"), "{}", err.message());
+}
+
+/// A config with an `i64` and an `f64` field, as a host derives one.
+#[derive(FunctionConfig)]
+struct Incr {
+    by: Expr<i64>,
+    ratio: Option<Expr<f64>>,
+}
+
+#[test]
+fn i64_and_f64_fields_are_numbers_in_a_derived_config() {
+    assert!(matches!(
+        <Expr<i64> as ConfigField>::kind(),
+        FieldKind::Expr(ValueKind::Number)
+    ));
+    assert!(matches!(
+        <Expr<f64> as ConfigField>::kind(),
+        FieldKind::Expr(ValueKind::Number)
+    ));
+    let kinds: Vec<(&str, bool)> = Incr::fields()
+        .iter()
+        .map(|f| {
+            (
+                &*f.name,
+                matches!(f.kind, FieldKind::Expr(ValueKind::Number)),
+            )
+        })
+        .collect();
+    assert_eq!(kinds, [("by", true), ("ratio", true)]);
+
+    let Ok(cfg) = testing::config::<Incr>(json!({"by": -2, "ratio": 0.25})) else {
+        panic!("the config compiles");
+    };
+    assert_eq!(cfg.by.constant(), Some(&-2));
+    assert_eq!(cfg.ratio.as_ref().and_then(Expr::constant), Some(&0.25));
+    // A literal that is not the field's type is refused at compile.
+    let Err(issues) = testing::config::<Incr>(json!({"by": 1.5})) else {
+        panic!("a fraction is not an i64");
+    };
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert_eq!(issues[0].path.to_string(), "by");
 }

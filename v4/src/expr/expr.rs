@@ -18,8 +18,10 @@ mod sealed {
 ///
 /// Sealed: the implementations are [`OwnedDataValue`] (lent as
 /// `Cow<OwnedDataValue>`), [`String`] (`Cow<str>`; a result that is not a
-/// string is its compact JSON), [`u64`] and [`bool`] (themselves; anything else
-/// is an error) and [`Path`] (`Cow<Path>`; a string parsed as a path).
+/// string is its compact JSON), [`u64`], [`i64`] and [`bool`] (themselves; an
+/// integer out of the type's range, or anything else, is an error), [`f64`]
+/// (itself; any number) and [`Path`] (`Cow<Path>`; a string parsed as a
+/// path).
 pub trait FromValue: Sized + Send + Sync + 'static + sealed::Sealed {
     /// What kind of value the type is, for a field's schema.
     #[doc(hidden)]
@@ -43,6 +45,8 @@ pub trait FromValue: Sized + Send + Sync + 'static + sealed::Sealed {
 impl sealed::Sealed for OwnedDataValue {}
 impl sealed::Sealed for String {}
 impl sealed::Sealed for u64 {}
+impl sealed::Sealed for i64 {}
+impl sealed::Sealed for f64 {}
 impl sealed::Sealed for bool {}
 impl sealed::Sealed for Path {}
 
@@ -102,6 +106,48 @@ impl FromValue for u64 {
     }
     fn type_name() -> &'static str {
         "a u64"
+    }
+}
+
+impl FromValue for i64 {
+    const KIND: ValueKind = ValueKind::Number;
+    type Out<'a> = Self;
+    /// An integer in range, or a whole float that is one, as [`u64`]'s.
+    fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
+        match v {
+            DataValue::Number(n) => n.as_i64().ok_or_else(|| format!("{v} is not an i64")),
+            other => Err(format!("{other} is not an i64")),
+        }
+    }
+    fn lend(c: &Self) -> Self::Out<'_> {
+        *c
+    }
+    fn give<'a>(v: Self) -> Self::Out<'a> {
+        v
+    }
+    fn type_name() -> &'static str {
+        "an i64"
+    }
+}
+
+impl FromValue for f64 {
+    const KIND: ValueKind = ValueKind::Number;
+    type Out<'a> = Self;
+    /// Any number.
+    fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
+        match v {
+            DataValue::Number(n) => Ok(n.as_f64()),
+            other => Err(format!("{other} is not an f64")),
+        }
+    }
+    fn lend(c: &Self) -> Self::Out<'_> {
+        *c
+    }
+    fn give<'a>(v: Self) -> Self::Out<'a> {
+        v
+    }
+    fn type_name() -> &'static str {
+        "an f64"
     }
 }
 
