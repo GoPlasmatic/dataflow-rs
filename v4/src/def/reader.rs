@@ -462,10 +462,10 @@ impl Read {
                     let (v3, v4) = ("validate".into(), "validation".into());
                     self.rewrite(at.join("name"), v3, v4, Some(step), None);
                 }
-            } else if let Some(Value::Object(input)) = fields.get_mut("input") {
-                if let Some(known) = builtin {
-                    self.builtin_input(obj, task, input, known, step);
-                }
+            } else if let Some(Value::Object(input)) = fields.get_mut("input")
+                && let Some(known) = builtin
+            {
+                self.builtin_input(obj, task, input, known, step);
             }
         }
         if let Some(Value::Object(slot)) = obj.get_mut("function") {
