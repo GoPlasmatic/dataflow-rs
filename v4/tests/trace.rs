@@ -839,8 +839,10 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
         "data.user.password",
         // Inside `map`'s merge into the root.
         "data.token",
-        // One that resolves nothing.
+        // One that resolves nothing, then is written below.
         "data.missing.deep",
+        // Removed, then written below.
+        "data.vault",
     ]
     .iter()
     .map(|p| p.parse().unwrap())
@@ -857,6 +859,17 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
             ),
             map("merge", "data", json!({"token": "tok3n", "x": 1})),
             map("copy", "data.copied", json!({"var": "data.secret"})),
+            // T2-C3's three shapes, each written below a redact path: its
+            // parent absent from `initial`, present, and removed first.
+            put(
+                "deep",
+                json!({"data.missing.deep.hidden_a": "x1"}),
+                json!("ok"),
+            ),
+            put("below", json!({"data.card.hidden_b": "x2"}), json!("ok")),
+            json!({"id": "unset", "function": {"name": "map", "input": {"mappings": [
+                {"path": "data.vault", "unset": true}]}}}),
+            put("vault", json!({"data.vault.hidden_c": "x3"}), json!("ok")),
         ],
         &[],
     )]);
@@ -864,6 +877,7 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
         "secret": "s0",
         "card": {"number": "4111", "exp": "12/30"},
         "user": {"name": "n"},
+        "vault": {"key": "v0"},
     }));
     let (_, trace) = trace_of(&e, &mut m, TraceOptions::default().redact(redact)).await;
 
@@ -871,7 +885,7 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
     // not creates nothing. (`json!` sorts the seed's keys.)
     assert_eq!(
         text(trace.initial.data()),
-        r#"{"card":null,"secret":null,"user":{"name":"n"}}"#
+        r#"{"card":null,"secret":null,"user":{"name":"n"},"vault":null}"#
     );
 
     // No change carries a redacted value, `copy`'s excepted: a value derived
@@ -889,15 +903,38 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
     assert_eq!(text(&merge.new_value), r#"{"token":null,"x":1}"#);
     assert_eq!(
         text(&merge.old_value),
-        r#"{"card":null,"secret":null,"user":{"name":"m","password":null}}"#
+        r#"{"card":null,"secret":null,"user":{"name":"m","password":null},"vault":null}"#
     );
+    // A write below a redact path, or a removal at one, is a write of `null`
+    // at the redact path, so no key below it reaches the trace.
+    for (step, path) in [
+        (5, "data.missing.deep"),
+        (6, "data.card"),
+        (7, "data.vault"),
+        (8, "data.vault"),
+    ] {
+        assert_eq!(
+            text(&trace.steps[step].changes[0]),
+            format!(r#"{{"path":"{path}","old_value":null,"new_value":null}}"#),
+            "step {step}"
+        );
+    }
+    let wire = text(&trace);
+    for hidden in ["hidden_a", "hidden_b", "hidden_c", "x1", "x2", "x3", "v0"] {
+        assert!(!wire.contains(hidden), "{hidden} in {wire}");
+    }
 
     // Every replayed context reads `null` at each redacted path.
     for (i, context) in trace.contexts().enumerate() {
         let data = context.data();
         assert_eq!(data["secret"], OwnedDataValue::Null, "step {i}");
         assert_eq!(data["card"], OwnedDataValue::Null, "step {i}");
-        assert!(data.get("missing").is_none(), "step {i}");
+        assert_eq!(data["vault"], OwnedDataValue::Null, "step {i}");
+        if i < 5 {
+            assert!(data.get("missing").is_none(), "step {i}");
+        } else {
+            assert_eq!(data["missing"]["deep"], OwnedDataValue::Null, "step {i}");
+        }
         if i >= 2 {
             assert_eq!(data["user"]["password"], OwnedDataValue::Null, "step {i}");
         }
@@ -913,7 +950,9 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
     assert_eq!(data["card"]["number"], dv(json!("5555")));
     assert_eq!(data["user"]["password"], dv(json!("pw0rd")));
     assert_eq!(data["token"], dv(json!("tok3n")));
-    assert!(data.get("missing").is_none());
+    assert_eq!(data["missing"], dv(json!({"deep": {"hidden_a": "x1"}})));
+    assert_eq!(data["card"]["hidden_b"], dv(json!("x2")));
+    assert_eq!(data["vault"], dv(json!({"hidden_c": "x3"})));
 }
 
 #[tokio::test]

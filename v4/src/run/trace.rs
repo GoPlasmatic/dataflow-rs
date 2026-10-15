@@ -6,8 +6,11 @@
 //! segments: on an object a segment is its key (one leading `#` stripped),
 //! on an array its index, and a path that resolves nothing creates nothing.
 //! A change is redacted by where its path sits against each redact path: at
-//! or below one, both its values read `null`; above one, the rest of the
-//! redact path is pruned inside both values. The size is v3's scale too: one
+//! or below one, it becomes a write of `null` at its own prefix of the
+//! redact path's length, so no key below a redact path reaches the trace and
+//! a replay reads `null` there at every step, its parent absent from
+//! `initial` or not; above one, the rest of the redact path is pruned inside
+//! both values. The size is v3's scale too: one
 //! machine word per node, plus a string's length and a key's.
 
 use crate::base::Change;
@@ -16,6 +19,7 @@ use crate::expr::path::Seg;
 use crate::observe::{Trace, TraceOptions, TraceStep};
 use crate::run::Context;
 use datavalue::OwnedDataValue;
+use std::sync::Arc;
 
 /// What one node costs: a machine word, as v3's `NODE_SIZE`.
 const NODE_SIZE: usize = size_of::<usize>();
@@ -114,12 +118,12 @@ impl Capture {
         }
         // Every change's path is a `Path`'s spelling; one that is not is
         // nulled rather than let through.
-        let Ok(at) = change.path.parse::<Path>() else {
+        let Ok(parsed) = change.path.parse::<Path>() else {
             change.old_value = OwnedDataValue::Null;
             change.new_value = OwnedDataValue::Null;
             return;
         };
-        let at = at.segs();
+        let at = parsed.segs();
         let mut inside = Vec::new();
         for redact in &self.options.redact {
             let redact = redact.segs();
@@ -132,8 +136,16 @@ impl Capture {
                 continue;
             }
             if redact.len() <= at.len() {
+                // T2-C3: at the change's own prefix, so the container kind
+                // a replay writes through is the real one, and as a write of
+                // `null`, a removal's included.
+                if redact.len() < at.len() {
+                    change.path = Arc::clone(parsed.prefix(redact.len()).dotted());
+                }
                 change.old_value = OwnedDataValue::Null;
                 change.new_value = OwnedDataValue::Null;
+                change.removed = false;
+                change.replaced = false;
                 return;
             }
             inside.push(&redact[at.len()..]);
@@ -380,12 +392,14 @@ mod tests {
             seen,
             [
                 "data.user.password null null false",
-                "data.user.password.deep null null false",
+                // Below a redact path: at the redact path's length.
+                "data.user.password null null false",
                 r#"data.user {"name":"n"} {"name":"m","password":null} false"#,
                 r#"data {} {"list":[0,null,2],"user":{"password":null}} false"#,
                 "data.list null [0,null] false",
                 r#"data.other null "p" false"#,
-                "data.user.password null null true",
+                // A removal: a write of `null`, so the path reads `null`.
+                "data.user.password null null false",
             ]
         );
     }

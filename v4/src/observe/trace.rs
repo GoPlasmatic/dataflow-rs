@@ -36,7 +36,10 @@ pub struct TraceOptions {
     pub changes: bool,
     /// Prefixes whose values read `null` in `initial` and in every change,
     /// applied as each is captured; the message keeps the real values. A
-    /// path that resolves nothing creates nothing. Empty by default.
+    /// change at or below one is recorded as a write of `null` at it, a
+    /// removal's included, so no key below it reaches the trace and a replay
+    /// reads `null` there from the first write on. A path that resolves
+    /// nothing in `initial` creates nothing there. Empty by default.
     pub redact: Vec<Path>,
     /// A ceiling on what the trace holds, on v3's scale: one machine word
     /// per node, plus each string's and each key's length, counting
