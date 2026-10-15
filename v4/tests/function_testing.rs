@@ -204,6 +204,28 @@ impl Function for Flaky {
     }
 }
 
+/// Replaces `data` whole.
+struct Replace;
+
+impl Function for Replace {
+    type Config = ();
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+        ctx.set(&path("data"), dv(json!({"fresh": true})))?;
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn a_write_at_a_root_says_replaced_as_recorded() {
+    // `Called::changes` keeps the flag as the call recorded it; only the
+    // audit entry's copy reads `false` (I106).
+    let called = testing::call(Replace, json!({})).await;
+    assert_eq!(called.changes.len(), 1);
+    assert!(called.changes[0].replaced, "{:?}", called.changes);
+    assert_eq!(called.message.context().data(), &dv(json!({"fresh": true})));
+}
+
 #[tokio::test]
 async fn an_err_leaves_the_message_as_given_and_keeps_the_records() {
     let given = Message::from_parts(

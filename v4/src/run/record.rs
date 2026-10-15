@@ -120,8 +120,9 @@ pub(crate) struct Completed<'p> {
     /// `env.errors.len()` before the call: the error context mirrors what
     /// came after.
     pub(crate) errors_before: usize,
-    /// A change of the call is the trace's alone ([`Change::for_trace`]):
-    /// only then is the audit's copy of the changes filtered.
+    /// A change of the call is the trace's alone ([`Change::for_trace`]) or
+    /// says `replaced`: only then is the audit's copy of the changes made
+    /// over ([`audited`]).
     pub(crate) marked: bool,
 }
 
@@ -164,10 +165,18 @@ pub(crate) fn record<'p>(
         if keeps_entries(env.mode) {
             let changes = match (env.capture_audit, traced) {
                 (false, _) => Vec::new(),
-                // Both want them, the audit v3's rows alone.
-                (true, true) if marked => for_audit(&env.changes),
+                // Both want them, the audit v3's bytes.
+                (true, true) if marked => {
+                    let mut changes = env.changes.clone();
+                    changes.retain_mut(audited);
+                    changes
+                }
                 (true, true) => env.changes.clone(),
-                // Only a trace that keeps changes is given one of its own.
+                (true, false) if marked => {
+                    let mut changes = std::mem::take(&mut env.changes);
+                    changes.retain_mut(audited);
+                    changes
+                }
                 (true, false) => std::mem::take(&mut env.changes),
             };
             record_audit(
@@ -261,10 +270,13 @@ pub(crate) fn record<'p>(
     }
 }
 
-/// The audit entry's copy of a call's changes when the call marked one:
-/// without the changes the trace alone keeps, so the entry is v3's.
-fn for_audit(changes: &[Change]) -> Vec<Change> {
-    changes.iter().filter(|c| !c.trace_only).cloned().collect()
+/// Whether a change of a call that marked one stays in its audit entry,
+/// made as the entry carries it, so the entry is v3's bytes: a change the
+/// trace alone keeps does not, and `replaced` is the trace's alone (I106:
+/// the trace is the replay surface, R17), so it is cleared.
+fn audited(change: &mut Change) -> bool {
+    change.replaced = false;
+    !change.trace_only
 }
 
 /// Records a workflow's own failure (I61), whatever its policy: one record

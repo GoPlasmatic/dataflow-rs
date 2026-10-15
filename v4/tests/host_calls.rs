@@ -697,11 +697,12 @@ async fn a_root_write_takes_only_an_object_and_a_root_cannot_be_removed() {
         run.status()
     );
     assert_eq!(data(&m), json!({"fresh": true}));
-    // The root's `Change` says it replaced the root (I106).
+    // The audit's copy of the root's `Change` is v3's bytes: `replaced` is
+    // the trace's alone (I106, `tests/trace.rs`).
     assert_eq!(
         changes(&m, "t"),
         json!([{"path": "data", "old_value": {"kept": true},
-                "new_value": {"fresh": true, "gone": 1}, "replaced": true}])
+                "new_value": {"fresh": true, "gone": 1}}])
     );
     assert_eq!(
         changes(&m, "u"),

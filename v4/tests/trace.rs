@@ -1095,6 +1095,14 @@ async fn a_root_write_from_a_host_says_replaced_and_map_at_a_root_does_not() {
     assert_eq!(text(contexts[1].data()), r#"{"h":2}"#);
     assert_eq!(text(m.context().data()), r#"{"h":2}"#);
     assert_replays(&trace, &m);
+
+    // The audit entry's copy is v3's bytes: `replaced` is the trace's alone
+    // (review B I-2), with a trace and without one.
+    let audited = r#"[{"path":"data","old_value":{"keep":0,"m":1},"new_value":{"h":2}}]"#;
+    assert_eq!(text(&m.audit()[1].changes), audited);
+    let mut plain = message(json!({"keep": 0}));
+    e.run(&mut plain).await;
+    assert_eq!(text(&plain.audit()[1].changes), audited);
 }
 
 #[tokio::test]

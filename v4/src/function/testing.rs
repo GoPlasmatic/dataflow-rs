@@ -338,8 +338,10 @@ pub struct Called {
     /// The call's writes, in the order it made them. Empty after an `Err`,
     /// which drops them.
     pub writes: Vec<(Path, Write)>,
-    /// The call's `Change`s, as the task's audit entry would carry them.
-    /// Empty after an `Err`, or without capture.
+    /// The call's `Change`s, as the call recorded them: a write at a root
+    /// says [`replaced`](Change::replaced), as a trace's copy does, where
+    /// the task's audit entry, which keeps v3's bytes, does not. Empty after
+    /// an `Err`, or without capture.
     pub changes: Vec<Change>,
     /// The records the call added, kept whatever it returned: as given, with
     /// a timestamp when they carry none.

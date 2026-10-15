@@ -33,7 +33,7 @@
 //! of an `over` with nothing to call the time from its evaluation to its
 //! record, as v3's.
 
-use super::host::{Invoked, Layers, call_start, invoke, keep_records};
+use super::host::{Invoked, Layers, call_start, invoke, keep_records, replaces_a_root};
 use super::interp::{Over, RunEnv, elements, old_value};
 use super::policy::{self, Decision, Flow, Policy, decide};
 use super::record::{self, Completed, Stamp, TaskIds};
@@ -303,6 +303,7 @@ pub(crate) async fn fan_out<'p>(
             overlay.apply(rc);
             env.changes = changes;
         }
+        let marked = replaces_a_root(&env.changes);
         let status = decision.status.unwrap_or_default();
         let failed_here = status >= 400;
         if let Some(slot) = fan.into.as_ref().map(|into| slot(into, index)) {
@@ -334,7 +335,7 @@ pub(crate) async fn fan_out<'p>(
             failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
             elapsed,
             errors_before,
-            marked: false,
+            marked,
         };
         record::record(rc, env, wf, done);
         rc.tick();

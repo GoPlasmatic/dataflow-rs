@@ -24,8 +24,10 @@ pub struct Change {
     pub removed: bool,
     /// The write replaced the root at `path` instead of merging into it
     /// (I106): a host's `Ctx::set` at a root replaces it, and `map`'s root
-    /// mapping, which records only the keys it wrote, merges. Skipped when
-    /// `false`, so a merge's JSON, and every write v3 could record, is v3's.
+    /// mapping, which records only the keys it wrote, merges. A trace's
+    /// changes carry it, so a replay knows which; an audit entry's always
+    /// read `false`, so the audit trail's JSON is v3's. Skipped when
+    /// `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub replaced: bool,
     /// The change is the trace's alone: a write the call made that v3's

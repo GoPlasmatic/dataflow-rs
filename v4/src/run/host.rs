@@ -218,6 +218,7 @@ pub(crate) async fn call_host<'p>(
         overlay.apply(rc);
         env.changes = changes;
     }
+    let marked = replaces_a_root(&env.changes);
     keep_records(env, errors, None);
     let decision = match result {
         Err(e) if cut_short => policy::cut_short(ids.task, e),
@@ -232,8 +233,14 @@ pub(crate) async fn call_host<'p>(
         failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
         elapsed,
         errors_before,
-        marked: false,
+        marked,
     };
     record::record(rc, env, wf, done);
     decision.flow
+}
+
+/// Whether a host call's `changes` replace a root (I106): the recorder then
+/// clears the flag on the audit's copy, which keeps v3's bytes.
+pub(crate) fn replaces_a_root(changes: &[Change]) -> bool {
+    changes.iter().any(|c| c.replaced)
 }
