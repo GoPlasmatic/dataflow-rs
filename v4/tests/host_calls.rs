@@ -14,7 +14,8 @@ use dataflow_rs::expr::{ExprEngine, FieldKind, FieldSpec, Output, Secrets, Value
 use dataflow_rs::function::{
     BoxFuture, CallLayer, FunctionConfig, FunctionSpec, Next, Templated, layers,
 };
-use dataflow_rs::run::{ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
+use dataflow_rs::observe::{Event, Interest, Observer};
+use dataflow_rs::run::{EngineConfig, ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
 use dataflow_rs::{
     Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Registry, Result, Run, RunOptions,
 };
@@ -822,6 +823,17 @@ async fn call_info_carries_the_program_indices_ids_channel_and_counter() {
     assert_eq!(seen.lock().unwrap().infos, [info(None, 0), info(None, 1)]);
 }
 
+/// An observer that asks for every event and keeps none.
+struct Quiet;
+
+impl Observer for Quiet {
+    fn interest(&self) -> Interest {
+        Interest::ALL
+    }
+
+    fn on(&self, _event: &Event<'_>) {}
+}
+
 #[test]
 fn the_run_future_is_send_with_a_host_call_and_layers() {
     fn assert_send<T: Send>(_: &T) {}
@@ -829,6 +841,7 @@ fn the_run_future_is_send_with_a_host_call_and_layers() {
     let e = Engine::builder()
         .register("probe", Probe(Arc::clone(&seen)))
         .layer(Named("registry", Arc::clone(&seen)))
+        .config(EngineConfig::default().observer(Arc::new(Quiet)))
         .workflow_json(&workflow(
             "w",
             &[],
@@ -837,7 +850,10 @@ fn the_run_future_is_send_with_a_host_call_and_layers() {
         .build()
         .unwrap();
     let run_layers: Vec<Arc<dyn CallLayer>> = vec![Arc::new(Named("run", Arc::clone(&seen)))];
-    let opts = RunOptions::default().layers(&run_layers);
+    let observer = Quiet;
+    let opts = RunOptions::default()
+        .layers(&run_layers)
+        .observer(&observer);
     let mut m = message(json!({}));
     assert_send(&e.run_with(&mut m, &opts));
 }
