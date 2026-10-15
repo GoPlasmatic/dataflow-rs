@@ -1,6 +1,6 @@
 //! Opaque identities of programs and the positions within them.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_PROGRAM: AtomicU64 = AtomicU64::new(1);
@@ -21,8 +21,10 @@ impl ProgramId {
     }
 }
 
-/// The position of a workflow within a program. Serialized as its number.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+/// The position of a workflow within a program. Serialized as its number,
+/// and read from one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct WorkflowIx(u32);
 
 impl WorkflowIx {
@@ -37,8 +39,11 @@ impl WorkflowIx {
     }
 }
 
-/// The position of a task within a program. Serialized as its number.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+/// The position of a task within a program. Serialized as its number, and
+/// read from one: any `u32`, so a position read for another program makes
+/// [`Program::task`](crate::program::Program::task) panic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct TaskIx(u32);
 
 impl TaskIx {

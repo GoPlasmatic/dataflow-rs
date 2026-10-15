@@ -2,6 +2,7 @@
 
 mod cancel;
 mod change;
+mod context;
 mod error;
 mod ids;
 mod issue;
@@ -9,6 +10,8 @@ pub(crate) mod typo;
 
 pub use cancel::CancelToken;
 pub use change::Change;
+pub use context::Context;
+pub(crate) use context::exact;
 pub use error::{Error, ErrorKind, ErrorRecord, Result};
 pub use ids::{ProgramId, TaskIx, WorkflowIx};
 pub use issue::{

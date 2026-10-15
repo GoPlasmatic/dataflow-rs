@@ -15,15 +15,14 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 //
 // It also pins the access vectors that must *not* reach the store: a `var`
 // path that looks like a root, a `Path` naming one, the whole-context read,
-// and a message carrying its own `secret` / `secrets` keys.
+// a message carrying its own `secret` / `secrets` keys, and one read from
+// JSON with a fourth `secrets` root, which v4 refuses to read (break 22).
 //
 // Dropped with their v3 surfaces: mapping contexts, snapshot audit scopes and
 // `final_message` (v4's trace is `initial` plus each step's changes; its
 // replayed contexts stand in for `final_message`), `declared_secrets` (v4's
 // `Secrets::names` and masked `Debug` stand in), the `process_message_*`
-// entry points (v4 has `run` and `run_with`), `TaskContext::with_view`, and
-// the smuggled fourth context root (v4's `Message` has no `Deserialize`, and
-// a `Context` holds exactly its three roots: no `Path` names a fourth).
+// entry points (v4 has `run` and `run_with`) and `TaskContext::with_view`.
 
 use dataflow_rs::def::{ParseOptions, WorkflowDef, parse};
 use dataflow_rs::expr::{ExprEngine, Interpolated, Output, Secrets};
@@ -621,19 +620,17 @@ async fn the_default_trace_entry_points_and_the_channel_path_are_clean() {
 
 #[tokio::test]
 async fn a_message_that_round_trips_through_json_stays_clean() {
-    // `Message` has no `Deserialize`: the round trip re-parses its wire text.
     install_logger();
     let engine = engine();
 
     let mut message = fresh_message();
     engine.run(&mut message).await;
     let wire = serde_json::to_string(&message).unwrap();
-    let back: Value = serde_json::from_str(&wire).unwrap();
-    assert_clean(
-        "round-tripped message",
-        &serde_json::to_string(&back).unwrap(),
-    );
-    assert_eq!(back["context"]["data"]["done"], json!("12:17"));
+    let back: Message = serde_json::from_str(&wire).unwrap();
+    let again = serde_json::to_string(&back).unwrap();
+    assert_clean("round-tripped message", &again);
+    assert_eq!(again, wire);
+    assert_eq!(Value::from(back.context().data())["done"], json!("12:17"));
 }
 
 #[tokio::test]
@@ -762,6 +759,37 @@ async fn context_keys_named_secret_neither_shadow_nor_expose_the_store() {
     assert_clean(
         "message with decoy keys",
         &serde_json::to_string(&message).unwrap(),
+    );
+
+    // A message read from JSON with a fourth `secrets` root, which v3 read
+    // and ran: v4 refuses the read (break 22), so the root never reaches a
+    // run, and the refusal names the key, not what it holds.
+    let err = serde_json::from_value::<Message>(json!({
+        "id": "m", "payload": {},
+        "context": { "data": {}, "metadata": {}, "temp_data": {},
+                     "secrets": { "partner_key": "decoy-root" } },
+        "audit_trail": [], "errors": []
+    }))
+    .expect_err("a context holds only its three roots");
+    let shown = format!("{err} {err:?}");
+    assert!(
+        shown.contains("a context holds only `data`, `metadata` and `temp_data`, not `secrets`"),
+        "{shown}"
+    );
+    assert!(!shown.contains("decoy-root"), "{shown}");
+    assert_clean("smuggled-root refusal", &shown);
+
+    // The decoy message itself reads back and runs as before.
+    let wire = serde_json::to_string(&message).unwrap();
+    let mut back: Message = serde_json::from_str(&wire).unwrap();
+    let run = engine.run(&mut back).await;
+    assert!(matches!(run.status(), RunStatus::Completed), "{run:?}");
+    let data = Value::from(back.context().data());
+    assert_eq!(data["from_store_matches"], json!(true));
+    assert_eq!(data["from_context"], json!("decoy-in-data"));
+    assert_clean(
+        "read-back message with decoy keys",
+        &serde_json::to_string(&back).unwrap(),
     );
 }
 

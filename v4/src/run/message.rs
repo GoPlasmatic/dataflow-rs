@@ -1,11 +1,11 @@
 //! The message and its audit trail, on v3's wire shape.
 
-use crate::base::{Change, ErrorRecord, Result};
+use crate::base::{Change, Context, ErrorRecord, Result};
 use crate::expr::Path;
 use chrono::{DateTime, Utc};
 use datavalue::OwnedDataValue;
 use serde::ser::SerializeStruct;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -44,64 +44,9 @@ pub enum AuditMode {
     Off,
 }
 
-/// `{data, metadata, temp_data}`: always these three keys, in that order.
-/// Each root starts as an object, and a `map` to a root of a value that is
-/// not an object replaces it, as v3's does.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Context {
-    root: OwnedDataValue,
-}
-
-impl Serialize for Context {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        self.root.serialize(s)
-    }
-}
-
-fn slot(seed: OwnedDataValue) -> OwnedDataValue {
-    if seed.is_object() {
-        seed
-    } else {
-        OwnedDataValue::Object(Vec::new())
-    }
-}
-
+// `Context` is `base`'s; its reads and writes over a `Path` are here, since
+// `expr` sits above `base`.
 impl Context {
-    fn new(data: OwnedDataValue, metadata: OwnedDataValue) -> Self {
-        Self {
-            root: OwnedDataValue::Object(vec![
-                ("data".to_string(), slot(data)),
-                ("metadata".to_string(), slot(metadata)),
-                ("temp_data".to_string(), slot(OwnedDataValue::Null)),
-            ]),
-        }
-    }
-
-    /// A context over `root`, the object holding the three roots: a trace's
-    /// `initial` and each context its replay rebuilds.
-    pub(crate) fn from_root(root: OwnedDataValue) -> Self {
-        Self { root }
-    }
-
-    fn root(&self, key: &str) -> &OwnedDataValue {
-        &self.root[key]
-    }
-
-    /// The `data` root.
-    pub fn data(&self) -> &OwnedDataValue {
-        self.root("data")
-    }
-
-    /// The `metadata` root.
-    pub fn metadata(&self) -> &OwnedDataValue {
-        self.root("metadata")
-    }
-
-    /// The `temp_data` root.
-    pub fn temp_data(&self) -> &OwnedDataValue {
-        self.root("temp_data")
-    }
-
     /// The value at `path`, if any.
     pub fn get(&self, path: &Path) -> Option<&OwnedDataValue> {
         path.get(&self.root)
@@ -117,15 +62,14 @@ impl Context {
     pub fn remove(&mut self, path: &Path) -> Result<Option<OwnedDataValue>> {
         path.remove(&mut self.root)
     }
-
-    /// The object holding the three roots: what expressions evaluate against.
-    pub fn as_value(&self) -> &OwnedDataValue {
-        &self.root
-    }
 }
 
 /// Pure wire data: `{id, payload, context, audit_trail, errors}`, in that
 /// order.
+///
+/// Read from JSON as v3's is: the five fields, each required, any other key
+/// ignored. Its context reads by [`Context`]'s rules, so a fourth root is
+/// refused (break 22).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
     id: String,
@@ -144,6 +88,37 @@ impl Serialize for Message {
         st.serialize_field("audit_trail", &self.audit)?;
         st.serialize_field("errors", &self.errors)?;
         st.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        /// The wire shape, as v3's `Message` reads it, each value read
+        /// back as v4 wrote it.
+        #[derive(Deserialize)]
+        struct Wire {
+            id: String,
+            #[serde(deserialize_with = "payload")]
+            payload: Arc<OwnedDataValue>,
+            context: Context,
+            audit_trail: Vec<AuditEntry>,
+            errors: Vec<ErrorRecord>,
+        }
+
+        fn payload<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> std::result::Result<Arc<OwnedDataValue>, D::Error> {
+            crate::base::exact(d).map(Arc::new)
+        }
+
+        let wire = Wire::deserialize(d)?;
+        Ok(Self {
+            id: wire.id,
+            payload: wire.payload,
+            context: wire.context,
+            audit: wire.audit_trail,
+            errors: wire.errors,
+        })
     }
 }
 

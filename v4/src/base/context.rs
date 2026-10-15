@@ -1,0 +1,277 @@
+//! The context, `{data, metadata, temp_data}`, on v3's wire shape, and the
+//! reader every value of a wire shape is read back with.
+//!
+//! The context's reads and writes over a [`Path`](crate::expr::Path) live in
+//! `run`, beside the message, since `expr` sits above `base`.
+
+use datavalue::{NumberValue, OwnedDataValue};
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+
+/// The three roots, in the order a context holds them.
+const ROOTS: [&str; 3] = ["data", "metadata", "temp_data"];
+
+/// The context: always `data`, `metadata` and `temp_data`, in that order.
+/// Each root starts as an object, and a `map` to a root of a value that is
+/// not an object replaces it, as v3's does.
+///
+/// Read from JSON, it takes the three roots in any order and writes them in
+/// that order, reads a missing one as `{}`, takes any value at each (a
+/// trace's redacted root is `null`), and refuses any other key: break 22,
+/// since expressions evaluate against the whole object and a fourth key
+/// would be readable by `{"var": …}`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Context {
+    pub(crate) root: OwnedDataValue,
+}
+
+/// A seed for a root: an object as it is, anything else `{}`.
+fn slot(seed: OwnedDataValue) -> OwnedDataValue {
+    if seed.is_object() {
+        seed
+    } else {
+        OwnedDataValue::Object(Vec::new())
+    }
+}
+
+impl Context {
+    /// A context seeded with `data` and `metadata`, each ignored when it is
+    /// not an object, and an empty `temp_data`.
+    pub(crate) fn new(data: OwnedDataValue, metadata: OwnedDataValue) -> Self {
+        Self::from_roots([slot(data), slot(metadata), slot(OwnedDataValue::Null)])
+    }
+
+    /// A context over `root`, the object holding the three roots: a trace's
+    /// `initial` and each context its replay rebuilds.
+    pub(crate) fn from_root(root: OwnedDataValue) -> Self {
+        Self { root }
+    }
+
+    /// A context over the three roots' values, in [`ROOTS`]' order.
+    fn from_roots(values: [OwnedDataValue; 3]) -> Self {
+        let pairs = ROOTS
+            .iter()
+            .zip(values)
+            .map(|(key, value)| ((*key).to_owned(), value))
+            .collect();
+        Self::from_root(OwnedDataValue::Object(pairs))
+    }
+
+    fn root(&self, key: &str) -> &OwnedDataValue {
+        &self.root[key]
+    }
+
+    /// The `data` root.
+    pub fn data(&self) -> &OwnedDataValue {
+        self.root("data")
+    }
+
+    /// The `metadata` root.
+    pub fn metadata(&self) -> &OwnedDataValue {
+        self.root("metadata")
+    }
+
+    /// The `temp_data` root.
+    pub fn temp_data(&self) -> &OwnedDataValue {
+        self.root("temp_data")
+    }
+
+    /// The object holding the three roots: what expressions evaluate against.
+    pub fn as_value(&self) -> &OwnedDataValue {
+        &self.root
+    }
+}
+
+impl Serialize for Context {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.root.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Context {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_map(Roots)
+    }
+}
+
+/// [`Context`]'s reader: the three roots, by name, once each.
+struct Roots;
+
+impl<'de> Visitor<'de> for Roots {
+    type Value = Context;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a context: an object holding `data`, `metadata` and `temp_data`")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Context, A::Error> {
+        let mut values: [Option<OwnedDataValue>; 3] = [None, None, None];
+        while let Some(key) = map.next_key::<String>()? {
+            let Some(at) = ROOTS.iter().position(|root| *root == key) else {
+                return Err(de::Error::custom(format_args!(
+                    "a context holds only `data`, `metadata` and `temp_data`, not `{key}`"
+                )));
+            };
+            if values[at].is_some() {
+                return Err(de::Error::duplicate_field(ROOTS[at]));
+            }
+            values[at] = Some(map.next_value::<Exact>()?.0);
+        }
+        Ok(Context::from_roots(values.map(|value| {
+            value.unwrap_or_else(|| OwnedDataValue::Object(Vec::new()))
+        })))
+    }
+}
+
+/// A value read back as v4 wrote it: as [`OwnedDataValue`]'s own reader
+/// reads it, except that a number written with a fraction or an exponent
+/// stays a float, as `OwnedDataValue::from(&serde_json::Value)` keeps one.
+/// That reader makes `2.0` the integer `2`, which writes back as `2`, so a
+/// message holding a whole-number float would not read back byte for byte.
+pub(crate) fn exact<'de, D: Deserializer<'de>>(d: D) -> Result<OwnedDataValue, D::Error> {
+    d.deserialize_any(ExactValue)
+}
+
+/// A value read by [`exact`].
+struct Exact(OwnedDataValue);
+
+impl<'de> Deserialize<'de> for Exact {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        exact(d).map(Exact)
+    }
+}
+
+/// [`exact`]'s reader: `OwnedDataValue`'s, but for `visit_f64`.
+struct ExactValue;
+
+impl<'de> Visitor<'de> for ExactValue {
+    type Value = OwnedDataValue;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("any valid JSON value")
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::Null)
+    }
+
+    fn visit_none<E: de::Error>(self) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::Null)
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<OwnedDataValue, D::Error> {
+        exact(d)
+    }
+
+    fn visit_bool<E: de::Error>(self, v: bool) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::Bool(v))
+    }
+
+    fn visit_i64<E: de::Error>(self, v: i64) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::Number(NumberValue::Integer(v)))
+    }
+
+    fn visit_u64<E: de::Error>(self, v: u64) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::Number(NumberValue::from_u64(v)))
+    }
+
+    fn visit_i128<E: de::Error>(self, v: i128) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::Number(match i64::try_from(v) {
+            Ok(i) => NumberValue::Integer(i),
+            Err(_) => NumberValue::Float(v as f64),
+        }))
+    }
+
+    fn visit_u128<E: de::Error>(self, v: u128) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::Number(match i64::try_from(v) {
+            Ok(i) => NumberValue::Integer(i),
+            Err(_) => NumberValue::Float(v as f64),
+        }))
+    }
+
+    fn visit_f64<E: de::Error>(self, v: f64) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::Number(NumberValue::Float(v)))
+    }
+
+    fn visit_str<E: de::Error>(self, v: &str) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::String(v.to_owned()))
+    }
+
+    fn visit_string<E: de::Error>(self, v: String) -> Result<OwnedDataValue, E> {
+        Ok(OwnedDataValue::String(v))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<OwnedDataValue, A::Error> {
+        let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        while let Some(Exact(item)) = seq.next_element()? {
+            items.push(item);
+        }
+        Ok(OwnedDataValue::Array(items))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<OwnedDataValue, A::Error> {
+        let mut pairs = Vec::with_capacity(map.size_hint().unwrap_or(0));
+        while let Some(key) = map.next_key::<String>()? {
+            pairs.push((key, map.next_value::<Exact>()?.0));
+        }
+        Ok(OwnedDataValue::Object(pairs))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn text(c: &Context) -> String {
+        serde_json::to_string(c).unwrap()
+    }
+
+    #[test]
+    fn a_seed_that_is_not_an_object_is_ignored() {
+        let c = Context::new(
+            OwnedDataValue::from(&json!([1])),
+            OwnedDataValue::from(&json!({"m": 1})),
+        );
+        assert_eq!(text(&c), r#"{"data":{},"metadata":{"m":1},"temp_data":{}}"#);
+    }
+
+    #[test]
+    fn a_context_reads_what_it_writes() {
+        let wire = r#"{"data":{"b":1,"a":[null]},"metadata":null,"temp_data":"t"}"#;
+        let c: Context = serde_json::from_str(wire).unwrap();
+        assert_eq!(text(&c), wire);
+        assert_eq!(c.metadata(), &OwnedDataValue::Null);
+        assert_eq!(
+            c,
+            Context::from_root(OwnedDataValue::from(&json!({
+                "data": {"b": 1, "a": [null]}, "metadata": null, "temp_data": "t"
+            })))
+        );
+    }
+
+    #[test]
+    fn a_value_reads_back_as_written_and_as_the_json_bridge_builds_it() {
+        let wire =
+            r#"[2.0,-3.0,2.5,1e+300,7,-7,9223372036854775807,"s",true,null,{"b":[1.0],"a":{}}]"#;
+        let mut de = serde_json::Deserializer::from_str(wire);
+        let read = exact(&mut de).unwrap();
+        assert_eq!(serde_json::to_string(&read).unwrap(), wire);
+        let bridged: serde_json::Value = serde_json::from_str(wire).unwrap();
+        assert_eq!(read, OwnedDataValue::from(&bridged));
+        // `OwnedDataValue`'s own reader makes the whole floats integers.
+        let collapsed: OwnedDataValue = serde_json::from_str(wire).unwrap();
+        assert!(
+            serde_json::to_string(&collapsed)
+                .unwrap()
+                .starts_with("[2,-3,2.5,")
+        );
+        // Above `i64::MAX`, an integer is a float, as the bridge makes it.
+        let big = exact(&mut serde_json::Deserializer::from_str(
+            "18446744073709551615",
+        ))
+        .unwrap();
+        assert_eq!(big, OwnedDataValue::from(&json!(u64::MAX)));
+    }
+}

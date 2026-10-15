@@ -13,11 +13,10 @@
 //! both values. The size is v3's scale too: one
 //! machine word per node, plus a string's length and a key's.
 
-use crate::base::Change;
+use crate::base::{Change, Context};
 use crate::expr::Path;
 use crate::expr::path::Seg;
 use crate::observe::{Trace, TraceOptions, TraceStep};
-use crate::run::Context;
 use datavalue::OwnedDataValue;
 use std::sync::Arc;
 

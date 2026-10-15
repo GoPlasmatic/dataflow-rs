@@ -2,11 +2,10 @@
 //! recorded call, skipped step and engine write, each with its changes, so a
 //! replay from `initial` rebuilds the context after every step.
 
-use crate::base::{Change, ErrorRecord, TaskIx, WorkflowIx};
+use crate::base::{Change, Context, ErrorRecord, TaskIx, WorkflowIx};
 use crate::expr::{Path, path};
-use crate::run::Context;
 use datavalue::OwnedDataValue;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -92,8 +91,10 @@ impl TraceOptions {
 
 /// A run's trace: [`initial`](Self::initial), then each step's changes.
 ///
-/// Serialized as `{initial, steps, truncated}`.
-#[derive(Clone, Debug, Serialize)]
+/// Serialized as `{initial, steps, truncated}`, and read back from what it
+/// writes: the text a trace read back writes is the text it was read from,
+/// and its [`contexts`](Self::contexts) are the original's.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Trace {
     /// The context after the run's stamps and the error context's reset,
@@ -156,8 +157,8 @@ fn apply(root: &mut OwnedDataValue, change: &Change) {
     at.assign(root, change.new_value.clone());
 }
 
-/// What a step was.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// What a step was. Serialized, and read, as its lowercase name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum StepResult {
@@ -177,8 +178,9 @@ pub enum StepResult {
 ///
 /// Serialized with its keys in field order; `elapsed` as whole microseconds
 /// under `elapsed_us`, and it, `error`, `loop_counter` and `element_index`
-/// only when present.
-#[derive(Clone, Debug, Serialize)]
+/// only when present. Read back from what it writes, so `elapsed` reads as
+/// the whole microseconds written.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TraceStep {
     /// The workflow's position in the program.
@@ -208,7 +210,9 @@ pub struct TraceStep {
     /// How long the call ran, when the trace asked for timings.
     #[serde(
         rename = "elapsed_us",
+        default,
         serialize_with = "micros",
+        deserialize_with = "from_micros",
         skip_serializing_if = "Option::is_none"
     )]
     pub elapsed: Option<Duration>,
@@ -247,4 +251,9 @@ fn micros<S: Serializer>(elapsed: &Option<Duration>, s: S) -> Result<S::Ok, S::E
         Some(d) => s.serialize_u64(u64::try_from(d.as_micros()).unwrap_or(u64::MAX)),
         None => s.serialize_none(),
     }
+}
+
+/// `elapsed` from whole microseconds, as [`micros`] writes it.
+fn from_micros<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
+    Ok(Option::<u64>::deserialize(d)?.map(Duration::from_micros))
 }
