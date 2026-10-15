@@ -56,7 +56,7 @@ export type Context = {
 };
 
 /**
- * One task's record, v3's `AuditTrail` on the wire.
+ * One task's audit record, written as v3 wrote one.
  */
 export type AuditEntry = {
   /**
@@ -90,7 +90,7 @@ export type AuditEntry = {
 };
 
 /**
- * One write or removal, v3's `Change` on the wire.
+ * One write or removal, written as v3 wrote one.
  *
  * A path that was absent before the write records `old_value` as `null`.
  */
@@ -104,29 +104,29 @@ export type Change = {
    */
   old_value: JsonValue,
   /**
-   * The value written; `null` for a removal (read `Self::removed` to tell
-   * a removal from a write of `null`).
+   * The value written; `null` for a removal (read
+   * `removed` to tell a removal from a write of `null`).
    */
   new_value: JsonValue,
   /**
-   * The key at `path` was removed rather than written. Skipped when
+   * The key at `path` was removed rather than written. Absent when
    * `false`, so a write's JSON is v3's.
    */
   removed?: boolean,
   /**
-   * The write replaced the root at `path` instead of merging into it
-   * (I106): a host's `Ctx::set` at a root replaces it, and `map`'s root
+   * The write replaced the root at `path` instead of merging into it: a
+   * host function's write at a root replaces it, and `map`'s root
    * mapping, which records only the keys it wrote, merges. A trace's
-   * changes carry it, so a replay knows which; an audit entry's always
-   * read `false`, so the audit trail's JSON is v3's. Skipped when
+   * changes carry it, so a replay knows which; an audit entry's are
+   * always `false`, so the audit trail's JSON is v3's. Absent when
    * `false`.
    */
   replaced?: boolean,
 };
 
 /**
- * v3's `ErrorInfo` on the wire: the same fields, in the same order, with the
- * same serde attributes.
+ * One error record, written as v3 wrote one: the same keys, in the same
+ * order, each optional one absent when unset.
  */
 export type ErrorRecord = {
   /**
@@ -138,7 +138,7 @@ export type ErrorRecord = {
    */
   message: string,
   /**
-   * Where the error happened, if known. Always serialized.
+   * Where the error happened; `null` when not known, and never absent.
    */
   path: string | null,
   /**
@@ -174,9 +174,9 @@ export type ErrorRecord = {
 /**
  * A run's trace: `initial`, then each step's changes.
  *
- * Serialized as `{initial, steps, truncated}`, and read back from what it
- * writes: the text a trace read back writes is the text it was read from,
- * and its `contexts` are the original's.
+ * Written as `{initial, steps, truncated}`, and read back from what it
+ * writes: a trace read back writes the text it was read from, and replays
+ * to the original's contexts.
  */
 export type Trace = {
   /**
@@ -199,11 +199,11 @@ export type Trace = {
 /**
  * One step of a `Trace`.
  *
- * Serialized with its keys in field order; `mapping_ends` and `errors` only
- * when not empty; `elapsed` as whole microseconds under `elapsed_us`, and
- * it, `loop_counter` and `element_index` only when present. Read back from
- * what it writes, so `elapsed` reads as the whole microseconds written, and
- * a missing `mapping_ends` or `errors` as empty.
+ * Written with its keys in this order. `mapping_ends` and `errors` are
+ * absent when empty, and `elapsed_us` (in whole microseconds),
+ * `loop_counter` and `element_index` when there is none.
+ * Read back from what it writes: `elapsed_us` as the whole microseconds
+ * written, and an absent `mapping_ends` or `errors` as empty.
  */
 export type TraceStep = {
   /**
@@ -215,13 +215,13 @@ export type TraceStep = {
    */
   workflow_id: string,
   /**
-   * The task's position in the program; `None` for the workflow's own
+   * The task's position in the program; `null` for the workflow's own
    * step: its skip, its failure, or the engine's writes as a sweep is
    * entered.
    */
   task: TaskIx | null,
   /**
-   * The task's id; `None` with `task`.
+   * The task's id; `null` when `task` is.
    */
   task_id: string | null,
   /**
@@ -229,8 +229,8 @@ export type TraceStep = {
    */
   result: StepResult,
   /**
-   * The call's status; `None` for a skip, a `Skip` outcome and the
-   * engine's step.
+   * The call's status; `null` for a skip, a call whose outcome was a
+   * skip, and the engine's step.
    */
   status: number | null,
   /**
@@ -241,24 +241,25 @@ export type TraceStep = {
    */
   changes: Array<Change>,
   /**
-   * Where each of a `map`'s mappings ends in `changes` (I127): one entry
-   * per mapping, in order, the index just past its last change, so
-   * mapping `i`'s changes are `changes[ends[i - 1]..ends[i]]`, from 0 for
-   * the first. A mapping that wrote nothing repeats the end before it.
-   * Replaying `changes[..ends[i]]` gives the context after mapping `i`.
-   * Empty for every other step, and whenever `changes` is.
+   * Where each of a `map`'s mappings ends in `changes`: one entry per
+   * mapping, in order, the index just past its last change, so mapping
+   * `i`'s changes run from the end before it (0 for the first) up to its
+   * own. A mapping that wrote nothing repeats the end before it.
+   * Replaying the changes before mapping `i`'s end gives the context
+   * after mapping `i`. Empty for every other step, and whenever `changes`
+   * is.
    */
   mapping_ends?: Array<number>,
   /**
-   * Every record the step added to the message, in the message's order
-   * (I127): the call's own, then the recorder's (I96); for a workflow's
-   * own failure, its record. A workflow whose condition failed to
-   * evaluate (R34) adds none, and its `Skipped` step holds that failure's
-   * record, which the message never gets.
+   * Every record the step added to the message, in the message's order:
+   * the call's own, then the engine's; for a workflow's own failure, its
+   * record. A workflow whose condition failed to evaluate adds none to
+   * the message, and its `skipped` step holds that failure's record.
    */
   errors?: Array<ErrorRecord>,
   /**
-   * How long the call ran, when the trace asked for timings.
+   * How long the call ran, written in whole microseconds, when the trace
+   * asked for timings.
    */
   elapsed_us?: number,
   /**
@@ -285,8 +286,8 @@ export type WorkflowIx = number;
 
 /**
  * The position of a task within a program. Serialized as its number, and
- * read from one: any `u32`, so a position read for another program makes
- * `Program::task` panic.
+ * read from one: a position read back names a task only in the program
+ * that wrote it.
  */
 export type TaskIx = number;
 
@@ -300,7 +301,7 @@ export type Run = {
    */
   status: RunStatus,
   /**
-   * The error that stopped the run: `stopped` only.
+   * The error that stopped the run; present only when `status` is `stopped`.
    */
   error?: DataflowError,
   /**
@@ -345,7 +346,8 @@ export type WorkflowRecord = {
    */
   selection: Selection,
   /**
-   * Why its condition failed to evaluate: `condition_failed` only.
+   * Why its condition failed to evaluate; present only when `selection` is
+   * `condition_failed`.
    */
   error?: DataflowError,
   /**
@@ -371,8 +373,8 @@ export type Selection = "ran" | "skipped_by_condition" | "condition_failed" | "s
 export type WorkflowExit = "completed" | "halted" | "failed" | "stopped";
 
 /**
- * An error as JSON: `dataflow_rs::Error`'s code, message and whether a
- * retry may succeed.
+ * An error as JSON: its code, its message, and whether a retry may
+ * succeed.
  */
 export type DataflowError = {
   /**
@@ -402,7 +404,7 @@ export type Issue = {
    */
   code: IssueCode,
   /**
-   * When it bites. `IssueCode::severity` unless overridden.
+   * When it bites: its code's own severity, unless the host overrode it.
    */
   severity: Severity,
   /**

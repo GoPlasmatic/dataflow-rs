@@ -41,8 +41,8 @@ impl WorkflowIx {
 }
 
 /// The position of a task within a program. Serialized as its number, and
-/// read from one: any `u32`, so a position read for another program makes
-/// [`Program::task`](crate::program::Program::task) panic.
+/// read from one: a position read back names a task only in the program
+/// that wrote it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(transparent)]

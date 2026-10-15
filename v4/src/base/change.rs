@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Arc;
 
-/// One write or removal, v3's `Change` on the wire.
+/// One write or removal, written as v3 wrote one.
 ///
 /// A path that was absent before the write records `old_value` as `null`.
 #[derive(Clone, Serialize, Deserialize)]
@@ -18,20 +18,20 @@ pub struct Change {
     #[serde(deserialize_with = "super::exact")]
     #[cfg_attr(feature = "ts", ts(type = "JsonValue"))]
     pub old_value: OwnedDataValue,
-    /// The value written; `null` for a removal (read [`Self::removed`] to tell
-    /// a removal from a write of `null`).
+    /// The value written; `null` for a removal (read
+    /// [`removed`](Self::removed) to tell a removal from a write of `null`).
     #[serde(deserialize_with = "super::exact")]
     #[cfg_attr(feature = "ts", ts(type = "JsonValue"))]
     pub new_value: OwnedDataValue,
-    /// The key at `path` was removed rather than written. Skipped when
+    /// The key at `path` was removed rather than written. Absent when
     /// `false`, so a write's JSON is v3's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removed: bool,
-    /// The write replaced the root at `path` instead of merging into it
-    /// (I106): a host's `Ctx::set` at a root replaces it, and `map`'s root
+    /// The write replaced the root at `path` instead of merging into it: a
+    /// host function's write at a root replaces it, and `map`'s root
     /// mapping, which records only the keys it wrote, merges. A trace's
-    /// changes carry it, so a replay knows which; an audit entry's always
-    /// read `false`, so the audit trail's JSON is v3's. Skipped when
+    /// changes carry it, so a replay knows which; an audit entry's are
+    /// always `false`, so the audit trail's JSON is v3's. Absent when
     /// `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub replaced: bool,

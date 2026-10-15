@@ -72,14 +72,14 @@ pub struct WorkflowRecord<'r> {
     /// The sweeps begun: one for a workflow without a loop that ran, and for
     /// a loop each sweep its condition admitted.
     pub sweeps: u32,
-    /// How it ended; `None` when it did not run.
+    /// How it ended, if it ran.
     pub exit: Option<WorkflowExit>,
 }
 
 /// Writes the `status` string of a run's JSON: `completed`,
 /// `completed_with_errors`, `stopped`, `timed_out` or `cancelled`. The
 /// `error` of a stopped run is a key of the run's object, which
-/// [`Run`](crate::Run) writes (I126).
+/// [`Run`](crate::Run) writes.
 impl Serialize for RunStatus {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(match self {
@@ -95,7 +95,7 @@ impl Serialize for RunStatus {
 /// Writes the `selection` string of a workflow's record: `ran`,
 /// `skipped_by_condition`, `condition_failed` or `skipped_by_rollout`. The
 /// error of a failed condition is a key of the record, which
-/// [`WorkflowRecord`] writes (I126).
+/// [`WorkflowRecord`] writes.
 impl Serialize for Selection {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(match self {
@@ -108,7 +108,7 @@ impl Serialize for Selection {
 }
 
 /// Writes how a workflow ended as a lowercase string: `completed`,
-/// `halted`, `failed` or `stopped` (I126).
+/// `halted`, `failed` or `stopped`.
 impl Serialize for WorkflowExit {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(match self {
@@ -122,7 +122,7 @@ impl Serialize for WorkflowExit {
 
 /// Writes a workflow's record as `{"id", "index", "selection", "error"?,
 /// "sweeps", "exit"}`: `error` only for a condition that failed to
-/// evaluate, and `exit` `null` for a workflow that did not run (I126).
+/// evaluate, and `exit` `null` for a workflow that did not run.
 impl Serialize for WorkflowRecord<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let error = match self.selection {
@@ -203,7 +203,10 @@ crate::base::ts::ts_decl!(
             Prop::optional(
                 "error",
                 Error::name(cfg),
-                &[" Why its condition failed to evaluate: `condition_failed` only."],
+                &[
+                    " Why its condition failed to evaluate; present only when `selection` is",
+                    " `condition_failed`.",
+                ],
             ),
             Prop::new(
                 "sweeps",

@@ -684,7 +684,7 @@ impl<'de> serde::Deserialize<'de> for StepKind {
 pub struct Issue {
     /// What it is about.
     pub code: IssueCode,
-    /// When it bites. [`IssueCode::severity`] unless overridden.
+    /// When it bites: its code's own severity, unless the host overrode it.
     pub severity: Severity,
     /// Where in the authored JSON.
     pub path: AuthoredPath,

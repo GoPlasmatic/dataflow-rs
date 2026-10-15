@@ -163,8 +163,8 @@ impl std::error::Error for Error {
 /// The result of a fallible v4 operation.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// v3's `ErrorInfo` on the wire: the same fields, in the same order, with the
-/// same serde attributes.
+/// One error record, written as v3 wrote one: the same keys, in the same
+/// order, each optional one absent when unset.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[non_exhaustive]
@@ -173,7 +173,7 @@ pub struct ErrorRecord {
     pub code: String,
     /// The human-readable message.
     pub message: String,
-    /// Where the error happened, if known. Always serialized.
+    /// Where the error happened; `null` when not known, and never absent.
     pub path: Option<String>,
     /// The workflow it happened in.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,7 +230,7 @@ impl From<&Error> for ErrorRecord {
 }
 
 /// Writes the error as `{"code", "message", "retryable"}`: [`Error::code`],
-/// [`Error::message`] and [`Error::is_retryable`], in that order (I126).
+/// [`Error::message`] and [`Error::is_retryable`], in that order.
 impl Serialize for Error {
     fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
         let mut o = s.serialize_struct("Error", 3)?;
@@ -248,8 +248,8 @@ crate::base::ts::ts_decl!(
     Error,
     "DataflowError",
     [
-        " An error as JSON: `dataflow_rs::Error`'s code, message and whether a",
-        " retry may succeed.",
+        " An error as JSON: its code, its message, and whether a retry may",
+        " succeed.",
     ],
     |_cfg| {
         use crate::base::ts::{Prop, object};

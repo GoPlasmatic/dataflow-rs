@@ -145,7 +145,7 @@ impl Run {
 }
 
 /// Writes a run as `{"status", "error"?, "retryable", "partial", "matched",
-/// "workflows"}` (I126): `error` only for a stopped run, `workflows` the
+/// "workflows"}`: `error` only for a stopped run, `workflows` the
 /// records of [`Run::workflows`]. Neither the trace nor the arena counters
 /// are part of it. A `Run` has no `Deserialize`, since it holds its
 /// program.
@@ -192,7 +192,7 @@ crate::base::ts::ts_decl!(
             Prop::optional(
                 "error",
                 Error::name(cfg),
-                &[" The error that stopped the run: `stopped` only."],
+                &[" The error that stopped the run; present only when `status` is `stopped`."],
             ),
             Prop::new(
                 "retryable",
