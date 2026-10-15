@@ -2,6 +2,7 @@
 
 use super::config::ValueKind;
 use super::path::Path;
+use super::walk::secret_refs;
 use crate::base::{Error, ErrorKind};
 use datalogic_rs::Logic;
 use datavalue::{DataValue, OwnedDataValue};
@@ -279,13 +280,17 @@ impl<T: FromValue> Expr<T> {
     }
 
     /// An evaluation's result as a `T`, or the [`ErrorKind::Eval`] error
-    /// naming this expression.
+    /// naming this expression. The reason quotes the value, so an expression
+    /// that reads a secret gives only the type it expected: the authored
+    /// expression names the secret, never its value.
     pub(crate) fn convert(&self, view: &DataValue<'_>) -> crate::Result<T> {
         T::from_view(view).map_err(|why| {
-            Error::new(
-                ErrorKind::Eval,
-                format!("`{}` did not give {}: {why}", self.raw, T::type_name()),
-            )
+            let message = if secret_refs(&self.raw).next().is_some() {
+                format!("`{}` did not give {}", self.raw, T::type_name())
+            } else {
+                format!("`{}` did not give {}: {why}", self.raw, T::type_name())
+            };
+            Error::new(ErrorKind::Eval, message)
         })
     }
 }

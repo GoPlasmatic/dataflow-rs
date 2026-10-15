@@ -457,6 +457,7 @@ fn assert_exits_clean(label: &str, message: &Message, run: &Run) {
         &serde_json::to_string(message.context()).unwrap(),
     );
     clean("Debug for Run", &format!("{run:?}"));
+    clean("Serialize for Run", &serde_json::to_string(run).unwrap());
     if let RunStatus::Stopped(e) = run.status() {
         clean("stop error Display", &e.to_string());
         clean("stop error Debug", &format!("{e:?}"));
@@ -905,6 +906,99 @@ async fn a_hard_failure_after_reading_a_secret_is_clean_on_both_error_channels()
         .expect_err("a stopped run is an error on the result channel");
     assert_clean("Result::Err Display", &err.to_string());
     assert_clean("Result::Err Debug", &format!("{err:?}"));
+}
+
+/// `typed`'s config: one typed expression of each kind, each optional.
+#[derive(FunctionConfig)]
+struct TypedConfig {
+    u: Option<Expr<u64>>,
+    i: Option<Expr<i64>>,
+    f: Option<Expr<f64>>,
+    b: Option<Expr<bool>>,
+    p: Option<Expr<Path>>,
+}
+
+/// Evaluates each expression it is given, as a function reads its config.
+struct Typed;
+
+impl Function for Typed {
+    type Config = TypedConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &TypedConfig) -> Result<Outcome> {
+        if let Some(e) = &cfg.u {
+            ctx.eval(e)?;
+        }
+        if let Some(e) = &cfg.i {
+            ctx.eval(e)?;
+        }
+        if let Some(e) = &cfg.f {
+            ctx.eval(e)?;
+        }
+        if let Some(e) = &cfg.b {
+            ctx.eval(e)?;
+        }
+        if let Some(e) = &cfg.p {
+            ctx.eval(e)?;
+        }
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn a_secret_of_the_wrong_type_is_named_never_quoted() {
+    // A typed expression over a string secret fails to convert, and the
+    // conversion's reason would quote the value: the error says only which
+    // type it expected, on every exit, `Run`'s JSON and the trace included.
+    install_logger();
+    for (key, expected) in [
+        ("u", "a u64"),
+        ("i", "an i64"),
+        ("f", "an f64"),
+        ("b", "a bool"),
+        ("p", "a path"),
+    ] {
+        let mut registry = Registry::new(exprs());
+        registry.register("typed", Typed);
+        let engine = Engine::builder()
+            .registry(registry)
+            .config(config())
+            .workflow_json(&json!({ "id": "w", "tasks": [
+                { "id": "t", "function": { "name": "typed", "input": {
+                    key: { "secret": "partner_key" } } } }
+            ] }))
+            .build()
+            .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"));
+        let mut message = Message::from_json(&json!({}));
+        let run = engine
+            .run_with(
+                &mut message,
+                &RunOptions::default().trace(TraceOptions::default()),
+            )
+            .await;
+        let RunStatus::Stopped(stop) = run.status() else {
+            panic!("{key}: the conversion fails the call: {run:?}");
+        };
+        let said = format!("`{{\"secret\":\"partner_key\"}}` did not give {expected}");
+        assert!(stop.to_string().ends_with(&said), "{key}: {stop}");
+        let trace = run.trace().expect("a traced run returns its trace");
+        assert!(
+            trace
+                .steps
+                .iter()
+                .flat_map(|s| &s.errors)
+                .any(|e| e.message.ends_with(&said)),
+            "{key}: the step holds the record: {trace:?}"
+        );
+        assert!(
+            message.errors().iter().any(|e| e.message.ends_with(&said)),
+            "{key}: {:?}",
+            message.errors()
+        );
+        assert_exits_clean(key, &message, &run);
+    }
+    for line in captured_logs() {
+        assert_clean("the process log", &line);
+    }
 }
 
 // =============================================================================
