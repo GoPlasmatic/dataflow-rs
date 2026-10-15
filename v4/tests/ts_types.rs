@@ -121,7 +121,8 @@ fn render() -> String {
 {JSON_VALUE}",
         name = env!("CARGO_PKG_NAME"),
         version = dataflow_rs::VERSION,
-        file = file!(),
+        // With `/` on every platform, so the header is one text.
+        file = file!().replace('\\', "/"),
         cmd = regenerate(),
     );
     for (docs, decl) in declarations() {
@@ -139,7 +140,11 @@ fn the_committed_bindings_are_current() {
         std::fs::write(BINDINGS, &text).unwrap();
         return;
     }
-    let committed = std::fs::read_to_string(BINDINGS).unwrap_or_default();
+    // A checkout that turns line ends into `\r\n` (Git's `core.autocrlf` on
+    // Windows) changes nothing the file says.
+    let committed = std::fs::read_to_string(BINDINGS)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
     if committed != text {
         let (line, (want, have)) = text
             .lines()
