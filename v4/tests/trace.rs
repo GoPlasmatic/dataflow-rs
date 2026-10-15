@@ -401,6 +401,141 @@ async fn the_failing_step_is_recorded_with_its_error() {
 }
 
 #[tokio::test]
+async fn a_builtin_failure_that_stops_the_run_records_its_failed_step() {
+    // v3's `tracing_retains_steps_when_sync_stretch_fails`, with break 5:
+    // two built-ins, the second failing on a source that is not a string,
+    // and v4 keeps the failing step v3 dropped, with its error.
+    let e = engine(&[workflow(
+        "wf",
+        vec![
+            map("step_ok", "data.n", json!(7)),
+            json!({"id": "step_boom", "function": {"name": "parse_xml",
+                "input": {"source": "data.n", "target": "parsed"}}}),
+        ],
+        &[],
+    )]);
+    let mut m = message(json!({}));
+    let (run, trace) = trace_of(&e, &mut m, TraceOptions::default()).await;
+    assert!(matches!(run.status(), RunStatus::Stopped(_)), "{run:?}");
+    use StepResult::{Executed, Failed};
+    assert_eq!(
+        lines(&trace),
+        [
+            line("wf", Some("step_ok"), Executed, Some(200)),
+            line("wf", Some("step_boom"), Failed, Some(500)),
+        ]
+    );
+    let error = trace.steps[1]
+        .error
+        .as_ref()
+        .expect("the failing step carries its error");
+    assert_eq!(Some(error), m.errors().last());
+    assert_replays(&trace, &m);
+}
+
+#[tokio::test]
+async fn a_failing_run_is_stamped() {
+    // v3's `tracing_stamps_processing_metadata_even_when_the_run_fails`:
+    // the stamps are in `initial` and on the message.
+    let e = engine(&[workflow(
+        "wf",
+        vec![put("step_boom", json!({}), json!("err"))],
+        &[],
+    )]);
+    let mut m = message(json!({}));
+    let (run, trace) = trace_of(&e, &mut m, TraceOptions::default()).await;
+    assert!(matches!(run.status(), RunStatus::Stopped(_)), "{run:?}");
+    let stamped = m.context().metadata();
+    assert_eq!(
+        trace.initial.metadata()["processed_at"],
+        stamped["processed_at"]
+    );
+    assert!(matches!(stamped["processed_at"], OwnedDataValue::String(_)));
+    assert_eq!(
+        trace.initial.metadata()["engine_version"],
+        dv(json!(dataflow_rs::VERSION))
+    );
+    assert_replays(&trace, &m);
+}
+
+#[tokio::test]
+async fn the_channel_is_stamped_in_initial_and_an_unknown_channel_traces_no_step() {
+    // v3's `channel_tracing_stamps_channel_metadata_and_retains_steps` and
+    // `channel_tracing_on_an_unknown_channel_is_a_noop`.
+    let e = engine(&[with(
+        workflow(
+            "wf_ch",
+            vec![
+                map("step_ok", "data.a", json!(1)),
+                put("step_boom", json!({}), json!("err")),
+            ],
+            &[],
+        ),
+        &[("channel", json!("payments"))],
+    )]);
+    let mut m = message(json!({}));
+    let opts = RunOptions::default()
+        .channel("payments")
+        .trace(TraceOptions::default());
+    let (run, trace) = traced(&e, &mut m, &opts).await;
+    assert!(matches!(run.status(), RunStatus::Stopped(_)), "{run:?}");
+    assert_eq!(trace.initial.metadata()["channel"], dv(json!("payments")));
+    use StepResult::{Executed, Failed};
+    assert_eq!(
+        lines(&trace),
+        [
+            line("wf_ch", Some("step_ok"), Executed, Some(200)),
+            line("wf_ch", Some("step_boom"), Failed, Some(500)),
+        ]
+    );
+    assert_replays(&trace, &m);
+
+    // A channel no workflow is on runs nothing, and traces no step.
+    let mut m = message(json!({}));
+    let opts = RunOptions::default()
+        .channel("nope")
+        .trace(TraceOptions::default());
+    let (run, trace) = traced(&e, &mut m, &opts).await;
+    assert!(matches!(run.status(), RunStatus::Completed), "{run:?}");
+    assert!(trace.steps.is_empty(), "{:?}", trace.steps);
+    assert_eq!(text(&trace.initial), text(m.context()));
+}
+
+#[tokio::test]
+async fn a_filter_halt_records_the_halting_step_and_nothing_after() {
+    // v3's `tracing_records_the_full_trace_on_a_filter_halt`.
+    let e = engine(&[workflow(
+        "wf",
+        vec![
+            map("step_ok", "data.a", json!(1)),
+            json!({"id": "gate", "function": {"name": "filter",
+                "input": {"condition": false}}}),
+            map("never", "data.never", json!(1)),
+        ],
+        &[],
+    )]);
+    let mut m = message(json!({}));
+    let (run, trace) = trace_of(&e, &mut m, TraceOptions::default()).await;
+    assert!(matches!(run.status(), RunStatus::Completed), "{run:?}");
+    let steps: Vec<_> = trace
+        .steps
+        .iter()
+        .map(|s| (s.task_id.as_deref(), s.result))
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            (Some("step_ok"), StepResult::Executed),
+            (Some("gate"), StepResult::Executed),
+        ],
+        "the halting task is recorded; the task after it never runs"
+    );
+    assert_eq!(trace.steps[1].status, m.audit()[1].status.try_into().ok());
+    assert!(m.context().data().get("never").is_none());
+    assert_replays(&trace, &m);
+}
+
+#[tokio::test]
 async fn a_failure_stepped_past_is_executed_with_its_error() {
     use StepResult::{Executed, Failed};
     // The task's own policy steps past it: `continue` (in a workflow that
