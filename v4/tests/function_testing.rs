@@ -4,15 +4,17 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // the real `Ctx` and overlay, and the layers given, with no registry,
 // compiler, definition or engine assembled by hand (R59, I93).
 
-use dataflow_rs::expr::{CompileCx, ExprVisitor, FieldSpec, Output};
+use dataflow_rs::datalogic_rs::{self, CustomOperator};
+use dataflow_rs::expr::{CompileCx, ExprEngine, ExprVisitor, FieldSpec, Output};
 use dataflow_rs::function::testing::{self, Called, Write};
 use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next, Prepare};
 use dataflow_rs::program::{IssueCode, StepKind};
-use dataflow_rs::run::{Change, ErrorKind, ErrorRecord};
+use dataflow_rs::run::{CancelToken, Change, ErrorKind, ErrorRecord, Instant};
 use dataflow_rs::{Ctx, Error, Expr, Function, Issue, Message, Outcome, Path, Result};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 type Log = Arc<Mutex<Vec<String>>>;
 
@@ -412,5 +414,196 @@ async fn call_is_awaited_directly() {
     assert_eq!(
         json_of(called.message.context().data()),
         json!({"greeting": "hi", "n": {"x": 1}})
+    );
+}
+
+/// What a call was told of its channel and the run's limits.
+#[derive(Debug)]
+struct Told {
+    channel: Option<String>,
+    deadline: Option<Instant>,
+    cancel: Option<CancelToken>,
+}
+
+/// Records what it was told, writes `data.ran`, then, when `cancel_self`
+/// says so, cancels the token it was given and waits on it forever.
+struct Tell {
+    told: Arc<Mutex<Vec<Told>>>,
+    cancel_self: bool,
+}
+
+impl Tell {
+    fn new(told: &Arc<Mutex<Vec<Told>>>) -> Self {
+        Self {
+            told: Arc::clone(told),
+            cancel_self: false,
+        }
+    }
+}
+
+impl Function for Tell {
+    type Config = ();
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+        self.told.lock().unwrap().push(Told {
+            channel: ctx.info().channel.map(str::to_owned),
+            deadline: ctx.deadline(),
+            cancel: ctx.cancel().cloned(),
+        });
+        ctx.set(&path("data.ran"), dv(json!(true)))?;
+        if self.cancel_self {
+            ctx.cancel().expect("a token was given").cancel();
+            std::future::pending::<()>().await;
+        }
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn a_call_is_told_the_channel_deadline_and_token_given() {
+    let told = Arc::new(Mutex::new(Vec::new()));
+    let at = Instant::now() + Duration::from_secs(60);
+    let token = CancelToken::new();
+    let called = testing::call(Tell::new(&told), json!({}))
+        .channel("orders")
+        .deadline(at)
+        .cancel(token.clone())
+        .await;
+    assert_eq!(called.outcome.unwrap(), Outcome::Ok);
+    assert_eq!(
+        json_of(called.message.context().data()),
+        json!({"ran": true})
+    );
+    {
+        let told = told.lock().unwrap();
+        assert_eq!(told[0].channel.as_deref(), Some("orders"));
+        assert_eq!(told[0].deadline, Some(at));
+        // The call holds the token given: cancelling it cancels the call's.
+        let seen = told[0].cancel.as_ref().expect("the call sees a token");
+        assert!(!seen.is_cancelled());
+        token.cancel();
+        assert!(seen.is_cancelled());
+    }
+
+    // By default, none of the three.
+    told.lock().unwrap().clear();
+    let called = testing::call(Tell::new(&told), json!({})).await;
+    assert_eq!(called.outcome.unwrap(), Outcome::Ok);
+    let told = told.lock().unwrap();
+    assert!(told[0].channel.is_none() && told[0].deadline.is_none() && told[0].cancel.is_none());
+}
+
+#[tokio::test]
+async fn the_runs_limits_end_a_call_as_a_run_ends_it() {
+    let told = Arc::new(Mutex::new(Vec::new()));
+    // A token cancelled before the call: the function never runs, and the
+    // call ends `Cancelled`, naming it, as a run's host call does.
+    let token = CancelToken::new();
+    token.cancel();
+    let called = testing::call(Tell::new(&told), json!({}))
+        .name("lookup")
+        .cancel(token)
+        .await;
+    let err = called.outcome.unwrap_err();
+    assert_eq!(err.kind(), &ErrorKind::Cancelled);
+    assert_eq!(err.message(), "the run was cancelled during `lookup`");
+    assert!(told.lock().unwrap().is_empty());
+    assert!(called.writes.is_empty() && called.changes.is_empty());
+    assert_eq!(json_of(called.message.context().data()), json!({}));
+
+    // A deadline already passed: `TimedOut`, and nothing runs.
+    let called = testing::call(Tell::new(&told), json!({}))
+        .name("lookup")
+        .deadline(Instant::now())
+        .await;
+    let err = called.outcome.unwrap_err();
+    assert_eq!(err.kind(), &ErrorKind::TimedOut);
+    assert_eq!(err.message(), "the run's deadline passed during `lookup`");
+    assert!(told.lock().unwrap().is_empty());
+
+    // A token cancelled during the call: the race drops it, and its write.
+    let called = testing::call(
+        Tell {
+            told: Arc::clone(&told),
+            cancel_self: true,
+        },
+        json!({}),
+    )
+    .name("lookup")
+    .cancel(CancelToken::new())
+    .await;
+    let err = called.outcome.unwrap_err();
+    assert_eq!(err.kind(), &ErrorKind::Cancelled);
+    assert_eq!(told.lock().unwrap().len(), 1);
+    assert!(called.writes.is_empty() && called.changes.is_empty());
+    assert_eq!(json_of(called.message.context().data()), json!({}));
+}
+
+/// `answer`: always 42.
+struct Answer42;
+
+impl CustomOperator for Answer42 {
+    fn evaluate<'a>(
+        &self,
+        _args: &[&'a datalogic_rs::DataValue<'a>],
+        _ctx: &mut datalogic_rs::operator::EvalContext<'_, 'a>,
+        arena: &'a datalogic_rs::bumpalo::Bump,
+    ) -> datalogic_rs::Result<&'a datalogic_rs::DataValue<'a>> {
+        Ok(arena.alloc(datalogic_rs::DataValue::Number(
+            datavalue::NumberValue::from_i64(42),
+        )))
+    }
+}
+
+/// A config whose limit must be known at compile, from what the engine
+/// it compiles with can evaluate: the host's operators included.
+#[derive(FunctionConfig)]
+#[config(check = known_now)]
+struct Limit {
+    limit: Expr<u64>,
+}
+
+/// Evaluates the limit over an empty context with the compile's engine.
+fn known_now(cfg: &Limit, cx: &mut CompileCx<'_>) {
+    let empty = json!({"data": {}, "metadata": {}, "temp_data": {}});
+    if let Err(e) = cx.exprs().eval(&cfg.limit, &empty) {
+        let why = format!("the limit must be known at compile: {}", e.message());
+        cx.at("limit", |cx| cx.issue(IssueCode::InputParse, why));
+    }
+}
+
+#[test]
+fn config_with_compiles_with_the_engine_given() {
+    let exprs = ExprEngine::builder()
+        .operator("answer", Answer42)
+        .build()
+        .unwrap();
+    let input = json!({"limit": {"answer": []}});
+    // To the default engine `answer` is no operator: the object is data,
+    // which is not a u64, so `config` refuses it.
+    let Err(issues) = testing::config::<Limit>(input.clone()) else {
+        panic!("`answer` is no operator to the default engine");
+    };
+    assert_eq!(
+        found(&issues),
+        [(IssueCode::InputParse, "limit".to_owned())]
+    );
+    assert!(issues[0].message.contains("a u64"), "{}", issues[0].message);
+    // With the host's engine it is an operator, and evaluates.
+    let Ok(cfg) = testing::config_with::<Limit>(&exprs, input) else {
+        panic!("the config compiles with the host's operator");
+    };
+    let root = dv(json!({"data": {}, "metadata": {}, "temp_data": {}}));
+    assert_eq!(exprs.eval(&cfg.limit, &root).unwrap().value, 42);
+    // `Err` carries every issue, as `config`'s does.
+    let Err(issues) = testing::config_with::<Limit>(&exprs, json!({"limt": 1})) else {
+        panic!("the config is rejected");
+    };
+    assert_eq!(
+        found(&issues),
+        [
+            (IssueCode::LikelyTypo, "limt".to_owned()),
+            (IssueCode::InputParse, "limit".to_owned()),
+        ]
     );
 }

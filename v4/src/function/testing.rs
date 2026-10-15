@@ -14,7 +14,8 @@
 //! No recorder runs, so the message gains no audit entry, no
 //! `metadata.progress` and no record of the call's own `Err`: the [`Called`]
 //! says what the call returned. No registry, compiler, definition or engine
-//! is assembled by hand. [`config`] compiles a config alone.
+//! is assembled by hand. [`config`] compiles a config alone, and
+//! [`config_with`] compiles one with the host's own [`ExprEngine`].
 
 use super::registry::Entry;
 use super::{
@@ -22,8 +23,8 @@ use super::{
     Registry,
 };
 use crate::base::{
-    AuthoredPath, Change, Error, ErrorKind, ErrorRecord, Issue, ProgramId, Result, Severity,
-    StepKind, TaskIx, WorkflowIx,
+    AuthoredPath, CancelToken, Change, Error, ErrorKind, ErrorRecord, Instant, Issue, ProgramId,
+    Result, Severity, StepKind, TaskIx, WorkflowIx,
 };
 use crate::expr::{CompileCx, ExprEngine, Path};
 use crate::program::{Callee, CalleeAt, Checks, compile_callee, refused};
@@ -46,7 +47,8 @@ const TEST: &str = "test";
 /// would compile it; `.await` runs it.
 ///
 /// The builder's setters are optional: an empty message, no layers,
-/// [`ExprEngine::default`], the name `"function"`, and changes captured.
+/// [`ExprEngine::default`], the name `"function"`, changes captured, and no
+/// channel, deadline or cancellation token.
 ///
 /// # Panics
 ///
@@ -149,6 +151,9 @@ pub fn call<F: Function>(f: F, input: Value) -> Call<F> {
         exprs: None,
         name: "function".to_owned(),
         capture: true,
+        channel: None,
+        deadline: None,
+        cancel: None,
     }
 }
 
@@ -165,6 +170,9 @@ pub struct Call<F: Function> {
     exprs: Option<ExprEngine>,
     name: String,
     capture: bool,
+    channel: Option<String>,
+    deadline: Option<Instant>,
+    cancel: Option<CancelToken>,
 }
 
 impl<F: Function> Call<F> {
@@ -205,6 +213,33 @@ impl<F: Function> Call<F> {
         self
     }
 
+    /// The channel the call's run was started on, as
+    /// [`CallInfo::channel`] says. By default none.
+    pub fn channel(mut self, c: &str) -> Self {
+        self.channel = Some(c.to_owned());
+        self
+    }
+
+    /// The run's deadline, as [`Ctx::deadline`](super::Ctx::deadline) says.
+    /// The call is checked against it and, natively, raced against it, as
+    /// a run's host call is: one it passes ends `Err` of kind
+    /// [`TimedOut`](ErrorKind::TimedOut), its writes dropped. A deadline
+    /// needs a Tokio runtime with its time driver. By default none.
+    pub fn deadline(mut self, at: Instant) -> Self {
+        self.deadline = Some(at);
+        self
+    }
+
+    /// The run's cancellation token, as [`Ctx::cancel`](super::Ctx::cancel)
+    /// says. The call is checked against it and, natively, raced against
+    /// it, as a run's host call is: one it cancels ends `Err` of kind
+    /// [`Cancelled`](ErrorKind::Cancelled), its writes dropped. By default
+    /// none.
+    pub fn cancel(mut self, token: CancelToken) -> Self {
+        self.cancel = Some(token);
+        self
+    }
+
     /// Compiles the config, runs the call, and settles it.
     async fn run(self) -> Called {
         let Self {
@@ -215,6 +250,9 @@ impl<F: Function> Call<F> {
             exprs,
             name,
             capture,
+            channel,
+            deadline,
+            cancel,
         } = self;
         let mut message = message.unwrap_or_else(|| Message::new(OwnedDataValue::Null));
         // Registered as a host registers it, so `register`'s checks of the
@@ -259,13 +297,13 @@ impl<F: Function> Call<F> {
                     function: &name,
                     workflow_id: TEST,
                     task_id: TEST,
-                    channel: None,
+                    channel: channel.as_deref(),
                     loop_counter: None,
                     element_index: None,
                 },
                 primary: bound.primary(),
-                deadline: None,
-                cancel: None,
+                deadline,
+                cancel: cancel.as_ref(),
                 capture,
             };
             let layers = Layers {
@@ -311,14 +349,17 @@ impl<F: Function> IntoFuture for Call<F> {
 }
 
 impl<F: Function> fmt::Debug for Call<F> {
-    /// The name, the input, the layer count and whether changes are
-    /// captured; not the function or the layers.
+    /// The name, the input, the layer count, whether changes are captured,
+    /// the channel and the deadline; not the function, the layers or the
+    /// token.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Call")
             .field("name", &self.name)
             .field("input", &self.input)
             .field("layers", &self.layers.len())
             .field("capture_changes", &self.capture)
+            .field("channel", &self.channel)
+            .field("deadline", &self.deadline)
             .finish_non_exhaustive()
     }
 }
@@ -360,10 +401,23 @@ pub struct Called {
 /// Every issue the compile found, when any is Rejected or the config
 /// refused its input.
 pub fn config<C: FunctionConfig>(input: Value) -> std::result::Result<C, Vec<Issue>> {
-    let exprs = ExprEngine::default();
+    config_with(&ExprEngine::default(), input)
+}
+
+/// A config compiled alone, as [`config`] compiles it, against `exprs`: the
+/// host's engine, with its own operators and secrets.
+///
+/// # Errors
+///
+/// Every issue the compile found, when any is Rejected or the config
+/// refused its input.
+pub fn config_with<C: FunctionConfig>(
+    exprs: &ExprEngine,
+    input: Value,
+) -> std::result::Result<C, Vec<Issue>> {
     let mut issues = Vec::new();
     let compiled = {
-        let mut cx = CompileCx::new(&exprs, &mut issues);
+        let mut cx = CompileCx::new(exprs, &mut issues);
         let before = cx.rejected();
         let compiled = C::compile(&input, &mut cx).filter(|_| cx.rejected() == before);
         if compiled.is_none() && cx.rejected() == before {
