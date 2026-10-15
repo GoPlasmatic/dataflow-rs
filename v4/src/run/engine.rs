@@ -262,6 +262,12 @@ impl Engine {
                     failed: false,
                     frame: Frame::default(),
                 };
+                // What lets an unwatched call take the plain recorder: it
+                // neither times a call nor captures a change the audit would
+                // not keep.
+                debug_assert!(
+                    env.watched || (!env.watch.timed && env.capture == env.capture_audit)
+                );
                 let (exit, selection) = run_workflow(&mut rc, wf, &mut env).await;
                 ops = env.ops;
                 let ran = matches!(selection, Selection::Ran);
