@@ -459,6 +459,14 @@ pub const MISSING: &str = "<missing>";
 /// workflow's policy (break 5), and the engine's steps as a sweep is
 /// entered need no row: the alignment matches them to nothing. Break 4's
 /// records live in a snapshot's `errors`, which is not compared.
+///
+/// **No row can cover a trace that does not replay**, so a traced case keeps
+/// `changes` on and sets no `redact_paths` or `max_snapshot_bytes`, and the
+/// driver's `run_step` asserts it (review C M-5): a trace without changes
+/// rebuilds no snapshot, a redacted one replays to `null` where the message
+/// keeps the value, which the replay invariant forbids, and v4's budget
+/// truncates on its own scale, so its `truncated` and v3's snapshot cut-off
+/// would rarely agree. v4's own tests hold those three (`v4/tests/trace.rs`).
 pub const TRACE_DEVIATED: &[RunDeviated] = &[
     (
         "breaks/handler_writes_then_err",

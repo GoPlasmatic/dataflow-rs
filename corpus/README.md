@@ -70,7 +70,10 @@ and runs its steps:
   - `logs`, when the case captures them, is the `log` built-in's lines.
   - `trace`, when the step's trace is on, comes from a second run of the same input, traced with
     no timings, the spec's `changes` and `redact_paths`, and its `max_snapshot_bytes` as the byte
-    budget when it is not 0. v3's `snapshots`, `mapping_contexts` and `snapshot_audit_trail` have no
+    budget when it is not 0. A traced case keeps `changes` on and sets no `redact_paths` or
+    `max_snapshot_bytes`, and the driver asserts it: the trace check replays every trace to v3's
+    snapshots and to the message, which a trace without changes, a redacted one or one past a
+    budget cannot do, so no deviation could cover one (v4's own tests hold those three). v3's `snapshots`, `mapping_contexts` and `snapshot_audit_trail` have no
     v4 counterpart. It records `{outcome, initial, steps, truncated, message_matches}`: the traced
     run's outcome; `initial` and `steps` exactly as v4 serializes them; `truncated`; and whether
     the traced run's normalised message equals the plain run's. The traced run's events and log

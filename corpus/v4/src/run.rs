@@ -287,6 +287,17 @@ async fn run_step(engine: &Engine, run: &RunSpec, spec: &EngineSpec, recorder: &
     }
 
     if run.trace.enabled {
+        // `tests/traces.rs` replays every trace to v3's snapshots and to the
+        // message: one without changes, redacted or past a budget can be held
+        // to neither (`expect::TRACE_DEVIATED`'s doc), so a traced case may
+        // ask for none of them, and adding one fails here, loudly.
+        assert!(
+            run.trace.changes
+                && run.trace.redact_paths.is_empty()
+                && run.trace.max_snapshot_bytes == 0,
+            "a traced case keeps `changes` on and sets no `redact_paths` or \
+             `max_snapshot_bytes`: tests/traces.rs replays every trace"
+        );
         let opts = options(run).trace(trace_options(&run.trace));
         let mut traced = self::message(&run.message);
         logs::begin(spec.logs.as_deref());
