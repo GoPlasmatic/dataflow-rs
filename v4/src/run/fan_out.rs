@@ -27,11 +27,16 @@
 //! their element, as a single call cut short keeps its own (I96); then the
 //! task is recorded once, with no element, as a call cut short is, and the
 //! run stops.
+//!
+//! In a timed run each element's call is timed as it runs. The task's one
+//! record of a fan-out cut short takes the time the call cut short ran, and
+//! of an `over` with nothing to call the time from its evaluation to its
+//! record, as v3's.
 
 use super::host::{Invoked, Layers, call_start, invoke, keep_records};
 use super::interp::{Over, RunEnv, elements};
 use super::policy::{self, Decision, Flow, Policy, decide};
-use super::record::{self, Stamp, TaskIds};
+use super::record::{self, Completed, Stamp, TaskIds};
 use crate::base::{Change, ErrorRecord};
 use crate::def::{FailurePolicy, RejectionPolicy};
 use crate::expr::Path;
@@ -41,6 +46,7 @@ use crate::state::RunContext;
 use datavalue::OwnedDataValue;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// What one element's call left once its `Ctx` was settled: all the fold
 /// needs, owned, so no element holds the view.
@@ -56,6 +62,8 @@ struct Element {
     errors: Vec<ErrorRecord>,
     /// The value at `collect` as the call saw it, when it returned `Ok`.
     collected: Option<OwnedDataValue>,
+    /// How long the call ran, in a timed run.
+    elapsed: Option<Duration>,
 }
 
 impl Element {
@@ -67,6 +75,7 @@ impl Element {
             changes,
             errors,
             collected,
+            elapsed,
             ..
         } = invoked;
         Self {
@@ -77,6 +86,7 @@ impl Element {
             changes,
             errors,
             collected,
+            elapsed,
         }
     }
 
@@ -89,7 +99,7 @@ impl Element {
 }
 
 /// One element's call: the task's `start` with the element bound and its
-/// index in the call's info.
+/// index in the call's info, timed when `timed`.
 async fn call_element<'r>(
     start: CallStart<'r>,
     fan: &'r FanSite,
@@ -97,6 +107,7 @@ async fn call_element<'r>(
     item: &'r OwnedDataValue,
     bound: &'r dyn BoundCall,
     layers: Layers<'r>,
+    timed: bool,
 ) -> (usize, Invoked) {
     let binding = Binding {
         item: &fan.r#as,
@@ -112,7 +123,9 @@ async fn call_element<'r>(
         },
         ..start
     };
-    let invoked = invoke(start, bound, layers, fan.collect.as_ref()).await;
+    let started = timed.then(record::now);
+    let mut invoked = invoke(start, bound, layers, fan.collect.as_ref()).await;
+    invoked.elapsed = started.map(record::since);
     (index, invoked)
 }
 
@@ -148,6 +161,8 @@ pub(crate) async fn fan_out<'p>(
         // Nothing to call: an empty array completes the task, anything else
         // fails it.
         no_calls => {
+            let errors_before = env.errors.len();
+            let started = env.timed.then(record::now);
             let result = no_calls.map(|_| {
                 if let Some(into) = &fan.into {
                     rc.set(into, OwnedDataValue::Array(Vec::new()), None);
@@ -162,8 +177,17 @@ pub(crate) async fn fan_out<'p>(
                 Outcome::Ok
             });
             let decision = decide(policy, ids.task, result);
-            let stamp = Stamp::sweep(env);
-            record::record(rc, env, ids, stamp, decision.status, decision.record);
+            let done = Completed {
+                ids,
+                task: site.task,
+                stamp: Stamp::sweep(env),
+                status: decision.status,
+                record: decision.record,
+                failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
+                elapsed: started.map(record::since),
+                errors_before,
+            };
+            record::record(rc, env, wf, done);
             return decision.flow;
         }
     };
@@ -172,7 +196,7 @@ pub(crate) async fn fan_out<'p>(
     let per_element = policy.per_element();
     let mut finished: Vec<Option<Element>> = (0..n).map(|_| None).collect();
     // The first call the run's limits cut short: its index, the records it
-    // added and its error. The fan-out folds nothing then.
+    // added, its error and how long it ran. The fan-out folds nothing then.
     let mut cut = None;
     {
         // The reader is taken in its own statement and every call holds a
@@ -187,7 +211,9 @@ pub(crate) async fn fan_out<'p>(
                 let Some((index, item)) = pending.next() else {
                     break;
                 };
-                in_flight.push(call_element(start, fan, index, item, bound, layers));
+                in_flight.push(call_element(
+                    start, fan, index, item, bound, layers, env.timed,
+                ));
             }
             let Some((index, invoked)) = in_flight.next().await else {
                 break;
@@ -195,7 +221,7 @@ pub(crate) async fn fan_out<'p>(
             if invoked.cut_short {
                 // Dropping `in_flight` drops the calls still running.
                 let error = invoked.result.expect_err("a call cut short is an `Err`");
-                cut = Some((index, invoked.errors, error));
+                cut = Some((index, invoked.errors, error, invoked.elapsed));
                 break;
             }
             let element = Element::new(index, invoked, per_element, ids.task);
@@ -204,7 +230,8 @@ pub(crate) async fn fan_out<'p>(
         }
     }
     drop(items);
-    if let Some((index, errors, e)) = cut {
+    if let Some((index, errors, e, elapsed)) = cut {
+        let errors_before = env.errors.len();
         let mut kept: Vec<_> = finished
             .into_iter()
             .flatten()
@@ -216,8 +243,17 @@ pub(crate) async fn fan_out<'p>(
             keep_records(env, errors, Some(index));
         }
         let decision = policy::cut_short(ids.task, e);
-        let stamp = Stamp::sweep(env);
-        record::record(rc, env, ids, stamp, decision.status, decision.record);
+        let done = Completed {
+            ids,
+            task: site.task,
+            stamp: Stamp::sweep(env),
+            status: decision.status,
+            record: decision.record,
+            failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
+            elapsed,
+            errors_before,
+        };
+        record::record(rc, env, wf, done);
         return decision.flow;
     }
 
@@ -242,7 +278,9 @@ pub(crate) async fn fan_out<'p>(
             changes,
             errors,
             collected,
+            elapsed,
         } = element;
+        let errors_before = env.errors.len();
         keep_records(env, errors, Some(index));
         if ok {
             overlay.apply(rc);
@@ -267,11 +305,20 @@ pub(crate) async fn fan_out<'p>(
         }
         rejected |= (400..500).contains(&status);
         failed |= status >= 500;
-        let stamp = Stamp {
-            element_index: Some(index),
-            ..Stamp::sweep(env)
+        let done = Completed {
+            ids,
+            task: site.task,
+            stamp: Stamp {
+                element_index: Some(index),
+                ..Stamp::sweep(env)
+            },
+            status: decision.status,
+            record: decision.record,
+            failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
+            elapsed,
+            errors_before,
         };
-        record::record(rc, env, ids, stamp, decision.status, decision.record);
+        record::record(rc, env, wf, done);
         rc.tick();
         match decision.flow {
             flow @ (Flow::Fail(_) | Flow::Stop(_)) => return flow,

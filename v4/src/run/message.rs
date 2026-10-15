@@ -144,10 +144,6 @@ impl Serialize for Message {
 /// The parts a run borrows separately (05: only `run` holds a `&mut Message`).
 #[derive(Debug)]
 pub(crate) struct Parts<'a> {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "phase 6's observer events carry the message id")
-    )]
     pub(crate) id: &'a str,
     pub(crate) payload: &'a OwnedDataValue,
     pub(crate) context: &'a mut OwnedDataValue,

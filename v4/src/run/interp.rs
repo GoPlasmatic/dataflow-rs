@@ -16,20 +16,25 @@
 //!
 //! The run's [`Limits`] are checked every 64 ops and as each sweep starts,
 //! when one is set; a stop there ends the run with nothing recorded.
+//!
+//! A workflow's `WorkflowStarted` goes to the run's observers once, when it
+//! is known to be selected: as it starts when it has no condition, or when
+//! the first evaluation of its condition admits it.
 
 use super::cancel::Limits;
 use super::fan_out::fan_out;
 use super::host::call_host;
 use super::message::{AuditEntry, AuditMode};
+use super::observers::Observers;
 use super::policy::{self, Flow};
-use super::record::{self, Stamp, TaskIds};
-use crate::base::{Change, Error, ErrorKind, ErrorRecord, ProgramId, WorkflowIx};
+use super::record::{self, Completed, Stamp, TaskIds};
+use crate::base::{Change, Error, ErrorKind, ErrorRecord, Instant, ProgramId, WorkflowIx};
 use crate::def::WorkflowFailurePolicy;
 use crate::expr::path::kind;
 use crate::expr::{Expr, ExprEngine};
 use crate::function::builtins::Builtin;
 use crate::function::{CallLayer, SyncCtx, eval, test};
-use crate::observe::Selection;
+use crate::observe::{Event, Selection};
 use crate::program::{CallSite, Callee, CompiledWorkflow, CondKind, LoopSite, Op};
 use crate::state::RunContext;
 use chrono::{DateTime, Utc};
@@ -76,6 +81,11 @@ pub(crate) struct Frame {
     /// its element out, so the array is never in the run arena, where a
     /// borrow held across sweeps would forbid every checkpoint.
     items: Option<Vec<OwnedDataValue>>,
+    /// Whether the workflow's `WorkflowStarted` went out.
+    begun: bool,
+    /// When it went out, in a timed run: where the workflow's elapsed time
+    /// starts.
+    pub(crate) started: Option<Instant>,
 }
 
 impl Frame {
@@ -117,6 +127,14 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) mode: AuditMode,
     /// Whether a call records its `Change`s (I67).
     pub(crate) capture: bool,
+    /// Whether the audit entry gets the call's `Change`s: change capture is
+    /// on and the mode keeps entries (I67, I107).
+    pub(crate) capture_audit: bool,
+    /// The run's observers.
+    pub(crate) observers: Observers<'r>,
+    /// Whether the run reads the clock for elapsed times: an observer asked
+    /// for `TIMINGS`.
+    pub(crate) timed: bool,
     /// The run's one clock reading.
     pub(crate) now: DateTime<Utc>,
     /// The same reading, RFC 3339, for error records.
@@ -184,6 +202,11 @@ fn builtin_fan_out(task_id: &str) -> Error {
 /// each sweep its `LoopInit` or `LoopNext` enters. A workflow condition that
 /// refuses the sweep it guards takes it back: a sweep counts once its
 /// condition admits it, as v3's `sweeps_run`.
+///
+/// The workflow's `WorkflowStarted` goes out as it starts when no workflow
+/// condition judges it first, else once that judgment admits it, and in
+/// any case before it ends `Ran`: a loop whose condition no sweep reached,
+/// or a run stopped before its condition, is `Ran` too.
 pub(crate) async fn run_workflow<'p>(
     rc: &mut RunContext<'_, 'p>,
     wf: &'p CompiledWorkflow,
@@ -194,10 +217,20 @@ pub(crate) async fn run_workflow<'p>(
     // first one evaluated.
     let mut unjudged = true;
     env.frame.sweeps = u32::from(wf.loops.is_empty());
+    if !judged_first(wf) {
+        begin(env, wf);
+    }
     let mut pc = 0;
-    while let Some(&op) = wf.ops.get(pc) {
+    let exit = loop {
+        let Some(&op) = wf.ops.get(pc) else {
+            break if env.failed {
+                Exit::Failed
+            } else {
+                Exit::Completed
+            };
+        };
         if let Err(e) = env.tick(rc) {
-            return (Exit::Limited(e), selection);
+            break Exit::Limited(e);
         }
         let flow = match op {
             Op::Cond {
@@ -213,7 +246,10 @@ pub(crate) async fn run_workflow<'p>(
                     }
                     if std::mem::take(&mut unjudged) {
                         selection = match passed {
-                            Ok(true) => Selection::Ran,
+                            Ok(true) => {
+                                begin(env, wf);
+                                Selection::Ran
+                            }
                             Ok(false) => Selection::SkippedByCondition,
                             Err(e) => Selection::ConditionFailed(e),
                         };
@@ -236,7 +272,7 @@ pub(crate) async fn run_workflow<'p>(
                 let site = &wf.calls[site as usize];
                 let Callee::Host(bound) = &site.callee else {
                     let task = &wf.tasks[site.task as usize].id;
-                    return (Exit::Stopped(builtin_fan_out(task)), selection);
+                    break Exit::Stopped(builtin_fan_out(task));
                 };
                 // Boxed: a fan-out's state stays out of the run's future,
                 // which a host spawns once per message.
@@ -253,23 +289,53 @@ pub(crate) async fn run_workflow<'p>(
         pc = match flow {
             Flow::Next => pc + 1,
             Flow::Jump(to) => to as usize,
-            Flow::Halt => return (Exit::Halted, selection),
-            Flow::Stop(e) => return (Exit::Limited(e), selection),
+            Flow::Halt => break Exit::Halted,
+            Flow::Stop(e) => break Exit::Limited(e),
             Flow::Fail(e) => match wf.on_failure {
                 WorkflowFailurePolicy::Continue => {
                     env.failed = true;
                     fail_to(op) as usize
                 }
-                WorkflowFailurePolicy::Fail => return (Exit::Stopped(e), selection),
+                WorkflowFailurePolicy::Fail => break Exit::Stopped(e),
             },
         };
-    }
-    let exit = if env.failed {
-        Exit::Failed
-    } else {
-        Exit::Completed
     };
+    if matches!(selection, Selection::Ran) {
+        begin(env, wf);
+    }
     (exit, selection)
+}
+
+/// Whether a workflow condition is the first thing `wf` judges: its first
+/// op, or, in a loop without setup or `over`, the first sweep's (05's
+/// shape, as `program::lower` emits it).
+fn judged_first(wf: &CompiledWorkflow) -> bool {
+    let first = match wf.ops.first() {
+        Some(Op::LoopInit { .. }) => wf.ops.get(1),
+        first => first,
+    };
+    matches!(
+        first,
+        Some(Op::Cond {
+            kind: CondKind::Workflow,
+            ..
+        })
+    )
+}
+
+/// The workflow's `WorkflowStarted`, once, and in a timed run the clock
+/// reading its elapsed time starts from.
+fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
+    if std::mem::replace(&mut env.frame.begun, true) || !env.observers.workflows() {
+        return;
+    }
+    if env.timed {
+        env.frame.started = Some(record::now());
+    }
+    env.observers.emit(Event::WorkflowStarted {
+        workflow: env.workflow_ix,
+        id: &wf.id,
+    });
 }
 
 /// `LoopInit`: `over`, once, then the counter's `init` and the first sweep.
@@ -408,7 +474,8 @@ pub(super) fn elements(
     }
 }
 
-/// One built-in call: the call, the decision, the recorder; the flow.
+/// One built-in call: the call, timed in a timed run, the decision, the
+/// recorder; the flow.
 fn call<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
@@ -420,6 +487,8 @@ fn call<'p>(
         workflow: env.workflow_id,
         task: &env.task_ids[site.task as usize],
     };
+    let errors_before = env.errors.len();
+    let started = env.timed.then(record::now);
     let result = builtin.call(&mut SyncCtx {
         rc: &mut *rc,
         exprs: env.exprs,
@@ -431,13 +500,23 @@ fn call<'p>(
         errors: &mut *env.errors,
         now: env.now_text,
     });
+    let elapsed = started.map(record::since);
     // An `Err` records no changes, as v3's recorder drops them; its writes
     // stand.
     if result.is_err() {
         env.changes.clear();
     }
     let decision = policy::decide(site.policy(), ids.task, result);
-    let stamp = Stamp::sweep(env);
-    record::record(rc, env, ids, stamp, decision.status, decision.record);
+    let done = Completed {
+        ids,
+        task: site.task,
+        stamp: Stamp::sweep(env),
+        status: decision.status,
+        record: decision.record,
+        failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
+        elapsed,
+        errors_before,
+    };
+    record::record(rc, env, wf, done);
     decision.flow
 }

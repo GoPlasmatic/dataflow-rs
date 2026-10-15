@@ -25,6 +25,7 @@ pub use crate::base::{Error, Issue, Result};
 pub use crate::def::WorkflowDef;
 pub use crate::expr::{Expr, Path};
 pub use crate::function::{Ctx, Function, Outcome, Registry};
+pub use crate::observe::Observer;
 pub use crate::run::{Engine, Message, Run, RunOptions};
 pub use datalogic_rs;
 pub use datavalue;

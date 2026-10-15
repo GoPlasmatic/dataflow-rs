@@ -19,7 +19,7 @@
 use super::cancel::{Limits, race};
 use super::interp::RunEnv;
 use super::policy::{self, Flow};
-use super::record::{self, Stamp, TaskIds};
+use super::record::{self, Completed, Stamp, TaskIds};
 use crate::base::{Change, ErrorRecord, Result, TaskIx};
 use crate::expr::Path;
 use crate::function::{BoundCall, CallInfo, CallLayer, CallStart, Ctx, Next, Outcome, Overlay};
@@ -28,6 +28,7 @@ use crate::state::{Reader, RunContext};
 use datavalue::OwnedDataValue;
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// The layers around a call: the run's, outermost, then the registry's.
 #[derive(Clone, Copy)]
@@ -93,6 +94,9 @@ pub(crate) struct Invoked {
     /// Whether the run's deadline or token cut the call short: `result` is
     /// then the `Err` that stops the run.
     pub(crate) cut_short: bool,
+    /// How long a fan-out element's call ran, in a timed run: set by its
+    /// caller, which reads the clock around the call.
+    pub(crate) elapsed: Option<Duration>,
 }
 
 /// One call through the layers: the `Ctx` built from `start`, the run's
@@ -140,6 +144,7 @@ pub(crate) fn invoke<'r>(
             errors,
             collected,
             cut_short,
+            elapsed: None,
         }
     }
 }
@@ -174,8 +179,8 @@ pub(crate) fn keep_records(
     }
 }
 
-/// One `Call` op on a host callee: the call, the settle, the decision, the
-/// recorder; the flow.
+/// One `Call` op on a host callee: the call, timed in a timed run, the
+/// settle, the decision, the recorder; the flow.
 ///
 /// The records the call added go to the message first, as given, with the
 /// run's timestamp when they carry none (I96); the recorder's own follows.
@@ -192,6 +197,8 @@ pub(crate) async fn call_host<'p>(
         workflow: env.workflow_id,
         task: &env.task_ids[site.task as usize],
     };
+    let errors_before = env.errors.len();
+    let started = env.timed.then(record::now);
     let Invoked {
         result,
         overlay,
@@ -204,6 +211,7 @@ pub(crate) async fn call_host<'p>(
         let (start, layers) = call_start(env, reader, wf, site, bound);
         invoke(start, bound, layers, None).await
     };
+    let elapsed = started.map(record::since);
     if result.is_ok() {
         overlay.apply(rc);
         env.changes = changes;
@@ -213,7 +221,16 @@ pub(crate) async fn call_host<'p>(
         Err(e) if cut_short => policy::cut_short(ids.task, e),
         result => policy::decide(site.policy(), ids.task, result),
     };
-    let stamp = Stamp::sweep(env);
-    record::record(rc, env, ids, stamp, decision.status, decision.record);
+    let done = Completed {
+        ids,
+        task: site.task,
+        stamp: Stamp::sweep(env),
+        status: decision.status,
+        record: decision.record,
+        failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
+        elapsed,
+        errors_before,
+    };
+    record::record(rc, env, wf, done);
     decision.flow
 }

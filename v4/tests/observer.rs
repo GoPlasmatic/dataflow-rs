@@ -88,7 +88,9 @@ impl Observer for Timeline {
 
     fn on(&self, event: &Event<'_>) {
         let (line, task, elapsed) = match event {
-            Event::RunStarted { considered, .. } => (format!("run_started({considered})"), None, None),
+            Event::RunStarted { considered, .. } => {
+                (format!("run_started({considered})"), None, None)
+            }
             Event::WorkflowStarted { id, .. } => (format!("workflow_started({id})"), None, None),
             Event::TaskFinished {
                 info,
@@ -116,7 +118,9 @@ impl Observer for Timeline {
                 None,
                 *elapsed,
             ),
-            Event::RunFinished { status, elapsed, .. } => (
+            Event::RunFinished {
+                status, elapsed, ..
+            } => (
                 format!(
                     "run_finished(stopped_early={})",
                     matches!(
@@ -320,6 +324,14 @@ async fn the_observer_survives_a_reload() {
     .unwrap();
     let program = compiler.link([compiler.compile_one(&def).unwrap().workflow]);
     let reloaded = e.with_program(program);
+    let config = |e: &Engine| {
+        let debug = format!("{e:?}");
+        debug[debug.find("config:").expect("the config is shown")..].to_owned()
+    };
+    assert_eq!(
+        config(&reloaded),
+        "config: EngineConfig { observer: present, .. } }"
+    );
     reloaded.run(&mut message(json!({}))).await;
     assert_eq!(
         timeline.tasks().len(),
@@ -527,7 +539,11 @@ async fn each_observer_receives_only_its_interest() {
         .iter()
         .map(|s| s.elapsed.is_some())
         .collect();
-    assert_eq!(timed, [false, false, true, true], "the finished events carry it");
+    assert_eq!(
+        timed,
+        [false, false, true, true],
+        "the finished events carry it"
+    );
     assert_eq!((tasks_only.asked(), timed_workflows.asked()), (1, 1));
 
     // An observer asking for nothing still sees the run's events; each
@@ -598,9 +614,16 @@ async fn an_engine_with_no_observer_runs_the_same_workflows() {
         }
         text
     };
+    assert_eq!(
+        format!("{:?}", EngineConfig::default()),
+        "EngineConfig { observer: absent, .. }"
+    );
     let mut unobserved = message(json!({}));
     engine(&workflows, None).run(&mut unobserved).await;
-    assert_eq!(unobserved.context().data(), &OwnedDataValue::from(&json!({"a": 1})));
+    assert_eq!(
+        unobserved.context().data(),
+        &OwnedDataValue::from(&json!({"a": 1}))
+    );
 
     let timeline = Timeline::new(Interest::ALL);
     let mut observed = message(json!({}));

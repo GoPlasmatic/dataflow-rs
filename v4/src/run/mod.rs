@@ -7,6 +7,7 @@ mod fan_out;
 pub(crate) mod host;
 mod interp;
 mod message;
+mod observers;
 mod options;
 pub(crate) mod policy;
 mod record;

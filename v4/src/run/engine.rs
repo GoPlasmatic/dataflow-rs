@@ -4,11 +4,13 @@ use super::builder::EngineBuilder;
 use super::cancel::Limits;
 use super::interp::{Exit, Frame, RunEnv, run_workflow};
 use super::message::{Message, finish_audit, keeps_entries};
+use super::observers::Observers;
 use super::options::RunOptions;
+use super::record;
 use super::report::{Record, Run};
 use crate::base::ErrorKind;
 use crate::expr::Path;
-use crate::observe::{RunStatus, Selection, WorkflowExit};
+use crate::observe::{Event, Observer, RunStatus, Selection, WorkflowExit, WorkflowRecord};
 use crate::program::{Compiler, Program};
 use crate::state::{RunContext, Tuning};
 use chrono::Utc;
@@ -16,11 +18,39 @@ use datavalue::OwnedDataValue;
 use std::fmt;
 use std::sync::{Arc, LazyLock};
 
-/// What an [`Engine`] is configured with beside its program. Phase 6 adds
-/// the observer and the error context.
-#[derive(Clone, Debug, Default)]
+/// What an [`Engine`] is configured with beside its program. A reload,
+/// [`Engine::with_program`], keeps it.
+#[derive(Clone, Default)]
 #[non_exhaustive]
-pub struct EngineConfig {}
+pub struct EngineConfig {
+    /// The observer every run of the engine reports to, beside a run's own
+    /// ([`RunOptions::observer`](RunOptions::observer())). `None` by
+    /// default.
+    pub observer: Option<Arc<dyn Observer>>,
+}
+
+impl EngineConfig {
+    /// Reports every run of the engine to `o`.
+    #[must_use]
+    pub fn observer(mut self, o: Arc<dyn Observer>) -> Self {
+        self.observer = Some(o);
+        self
+    }
+}
+
+impl fmt::Debug for EngineConfig {
+    /// The observer as a presence: `EngineConfig { observer: present, .. }`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let observer = if self.observer.is_some() {
+            "present"
+        } else {
+            "absent"
+        };
+        f.debug_struct("EngineConfig")
+            .field("observer", &format_args!("{observer}"))
+            .finish_non_exhaustive()
+    }
+}
 
 /// A program and its config: what runs messages.
 ///
@@ -96,7 +126,9 @@ impl Engine {
     /// `opts.channel` when it names one, in priority order.
     ///
     /// The run reads the clock once: `metadata.processed_at`, every audit
-    /// entry and every error record carry that reading. It writes
+    /// entry and every error record carry that reading. Only an observer
+    /// asking for [`TIMINGS`](crate::observe::Interest::TIMINGS) has the
+    /// clock read again, for the elapsed times it is given. It writes
     /// `metadata.engine_version`, and `metadata.channel` under a channel,
     /// before any workflow runs. A workflow whose rollout does not admit
     /// `opts.routing_bucket` is skipped; no bucket is admitted by every
@@ -108,6 +140,9 @@ impl Engine {
     /// returns is its task's failure, not this run's.
     pub async fn run_with(&self, msg: &mut Message, opts: &RunOptions<'_>) -> Run {
         let program = &self.inner.program;
+        let observers = Observers::attach(self.inner.config.observer.as_deref(), opts.observer);
+        let timed = observers.timed();
+        let started = timed.then(record::now);
         let now = Utc::now();
         let now_text = now.to_rfc3339();
         let parts = msg.parts();
@@ -115,9 +150,15 @@ impl Engine {
 
         let mut rc = RunContext::new(parts.context, Tuning::default());
         let active = program.active(opts.channel);
+        observers.emit(Event::RunStarted {
+            program: program.id(),
+            message_id: parts.id,
+            channel: opts.channel,
+            considered: active.len(),
+        });
         // A call's changes are worth recording only in a mode that keeps
         // an entry for them (I67).
-        let capture = opts.capture_changes && keeps_entries(opts.audit);
+        let capture_audit = opts.capture_changes && keeps_entries(opts.audit);
         let mut records = Vec::with_capacity(active.len());
         // How the run ended, once a workflow stopped it.
         let mut stopped = None;
@@ -154,7 +195,10 @@ impl Engine {
                 errors: &mut *parts.errors,
                 audit: &mut *parts.audit,
                 mode: opts.audit,
-                capture,
+                capture: capture_audit,
+                capture_audit,
+                observers,
+                timed,
                 now,
                 now_text: &now_text,
                 changes: Vec::new(),
@@ -183,12 +227,26 @@ impl Engine {
                     (WorkflowExit::Stopped, Some(status))
                 }
             };
-            records.push(Record {
+            let considered = Record {
                 ix,
                 selection,
                 sweeps: env.frame.sweeps,
                 exit: ran.then_some(exit),
-            });
+            };
+            if ran && observers.workflows() {
+                let view = WorkflowRecord {
+                    id: workflow_id,
+                    index: ix,
+                    selection: &considered.selection,
+                    sweeps: considered.sweeps,
+                    exit: considered.exit,
+                };
+                observers.emit(Event::WorkflowFinished {
+                    record: &view,
+                    elapsed: env.frame.started.map(record::since),
+                });
+            }
+            records.push(considered);
             if let Some(status) = stop {
                 stopped = Some(status);
                 break;
@@ -201,6 +259,11 @@ impl Engine {
             None if !parts.errors.is_empty() => RunStatus::CompletedWithErrors,
             None => RunStatus::Completed,
         };
+        observers.emit(Event::RunFinished {
+            status: &status,
+            errors: parts.errors.len(),
+            elapsed: started.map(record::since),
+        });
         Run::new(program.clone(), status, records, stats)
     }
 

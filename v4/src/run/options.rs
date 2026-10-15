@@ -3,6 +3,7 @@
 use super::message::AuditMode;
 use crate::base::{CancelToken, Instant};
 use crate::function::CallLayer;
+use crate::observe::Observer;
 use std::fmt;
 use std::sync::Arc;
 
@@ -37,6 +38,11 @@ pub struct RunOptions<'a> {
     /// Layers around every host call of this run, outside the registry's;
     /// the first is the outermost. None by default.
     pub layers: &'a [Arc<dyn CallLayer>],
+    /// An observer of this run, beside the engine's
+    /// ([`EngineConfig::observer`]); `None` by default.
+    ///
+    /// [`EngineConfig::observer`]: crate::run::EngineConfig::observer()
+    pub observer: Option<&'a dyn Observer>,
 }
 
 impl Default for RunOptions<'_> {
@@ -49,13 +55,19 @@ impl Default for RunOptions<'_> {
             deadline: None,
             cancel: None,
             layers: &[],
+            observer: None,
         }
     }
 }
 
 impl fmt::Debug for RunOptions<'_> {
-    /// Every option, the layers as a count.
+    /// Every option, the layers as a count and the observer as a presence.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let observer = if self.observer.is_some() {
+            "present"
+        } else {
+            "absent"
+        };
         f.debug_struct("RunOptions")
             .field("channel", &self.channel)
             .field("routing_bucket", &self.routing_bucket)
@@ -64,6 +76,7 @@ impl fmt::Debug for RunOptions<'_> {
             .field("deadline", &self.deadline)
             .field("cancel", &self.cancel)
             .field("layers", &self.layers.len())
+            .field("observer", &format_args!("{observer}"))
             .finish()
     }
 }
@@ -119,6 +132,13 @@ impl<'a> RunOptions<'a> {
         self.layers = layers;
         self
     }
+
+    /// Reports this run to `o` too, beside the engine's observer.
+    #[must_use]
+    pub fn observer(mut self, o: &'a dyn Observer) -> Self {
+        self.observer = Some(o);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -134,6 +154,7 @@ mod tests {
         assert_eq!(o.routing_bucket, None);
         assert!(o.deadline.is_none() && o.cancel.is_none());
         assert!(o.layers.is_empty());
+        assert!(o.observer.is_none());
         let layers: Vec<Arc<dyn CallLayer>> = vec![Arc::new(Pass)];
         let token = CancelToken::new();
         let o = o
@@ -149,10 +170,20 @@ mod tests {
         assert_eq!(o.layers.len(), 1);
         assert_eq!(
             format!("{o:?}"),
-            r#"RunOptions { channel: Some("c"), routing_bucket: Some(7), capture_changes: false, audit: Off, deadline: None, cancel: Some(CancelToken { cancelled: false, .. }), layers: 1 }"#
+            r#"RunOptions { channel: Some("c"), routing_bucket: Some(7), capture_changes: false, audit: Off, deadline: None, cancel: Some(CancelToken { cancelled: false, .. }), layers: 1, observer: absent }"#
         );
+        let watcher = Quiet;
+        let o = o.observer(&watcher);
+        assert!(format!("{o:?}").ends_with("layers: 1, observer: present }"));
         let at = Instant::now();
         assert_eq!(o.deadline(at).deadline, Some(at));
+    }
+
+    /// An observer that keeps nothing.
+    struct Quiet;
+
+    impl Observer for Quiet {
+        fn on(&self, _event: &crate::observe::Event<'_>) {}
     }
 
     /// A layer that goes straight on.

@@ -1,24 +1,33 @@
-//! The recorder: what one completed call leaves on the message.
+//! The recorder: what one completed call leaves on the message, and what
+//! the run's observers are told of it.
 //!
-//! Once per completed call, from the call's [`Decision`](super::policy::Decision):
+//! Once per completed call, from what the call's
+//! [`Decision`](super::policy::Decision) and the call left ([`Completed`]):
 //! when it has a status, the audit entry (through `AuditMode`'s trim, with the
 //! call's [`Stamp`]), then the progress write, then the error record, if any,
 //! with the workflow and task ids, the run's timestamp and the stamp's
-//! element. A `Skip` records nothing. This is v3's `handle_task_result`, in
-//! its order. A fan-out records once per element it folds.
+//! element; then, for a `Skip` too, the observers' `TaskFinished`. This is
+//! v3's `handle_task_result`, in its order. A fan-out records once per
+//! element it folds.
 //!
 //! A workflow's own failure, which no task made, records one error record
 //! and nothing else (I61): [`workflow_failure`].
+//!
+//! Every clock reading for an elapsed time goes through [`now`] and
+//! [`since`], and only in a timed run: one an observer asked `TIMINGS` of.
 
 use super::interp::RunEnv;
 use super::message::{AuditEntry, keeps_entries, record_audit};
-use crate::base::{Error, ErrorRecord};
+use crate::base::{Error, ErrorRecord, Instant, TaskIx};
 use crate::expr::Path;
-use crate::function::task_record;
+use crate::function::{CallInfo, task_record};
+use crate::observe::Event;
+use crate::program::CompiledWorkflow;
 use crate::state::RunContext;
 use datavalue::{DataValue, NumberValue, OwnedDataValue};
 use std::borrow::Cow;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 /// `metadata.progress`, which the engine writes after every call that does
 /// not skip. Cross-workflow chaining reads it, so it is never gated.
@@ -57,44 +66,119 @@ impl Stamp {
     }
 }
 
-/// Records one completed call: `status` and `record` are its decision's,
-/// `stamp` where it sits. The call's changes are taken from `env.changes`.
+/// The clock, read for an elapsed time: only when the run is timed.
+pub(crate) fn now() -> Instant {
+    #[cfg(test)]
+    tests::CLOCK_READS.with(|reads| reads.set(reads.get() + 1));
+    Instant::now()
+}
+
+/// The time since `start`, on [`now`]'s clock.
+pub(crate) fn since(start: Instant) -> Duration {
+    now().saturating_duration_since(start)
+}
+
+/// One recorded call: what the decision and the call left, for the
+/// recorder's outputs.
+pub(crate) struct Completed<'p> {
+    /// The workflow's and the task's ids.
+    pub(crate) ids: TaskIds<'p>,
+    /// The task's row in the workflow, for `TaskIx` and the function's name.
+    pub(crate) task: u32,
+    /// Where the call sits in the run's iterations.
+    pub(crate) stamp: Stamp,
+    /// The decision's status; `None` for a `Skip`.
+    pub(crate) status: Option<u16>,
+    /// The decision's error record: (code, message).
+    pub(crate) record: Option<(Cow<'static, str>, String)>,
+    /// The decision's flow is `Fail` or `Stop`: the trace's `Failed` (I105).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read by phase 6's Task 2 (the trace)")
+    )]
+    pub(crate) failed: bool,
+    /// How long the call ran, when the run is timed.
+    pub(crate) elapsed: Option<Duration>,
+    /// `env.errors.len()` before the call: the error context mirrors what
+    /// came after.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read by phase 6's Task 3 (the error context)")
+    )]
+    pub(crate) errors_before: usize,
+}
+
+/// Records one completed call of `wf`, in this order: the audit entry, with
+/// the call's changes, taken from `env.changes`, under `capture_audit`
+/// (through `AuditMode`), the progress write, the error record, and the
+/// observers' `TaskFinished`. A `Skip` gets the last only.
 pub(crate) fn record<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
-    ids: TaskIds<'p>,
-    stamp: Stamp,
-    status: Option<u16>,
-    record: Option<(Cow<'static, str>, String)>,
+    wf: &'p CompiledWorkflow,
+    done: Completed<'p>,
 ) {
-    let Some(status) = status else {
-        env.changes.clear();
-        return;
-    };
-    // A mode that keeps nothing builds no entry for `record_audit` to drop.
-    if keeps_entries(env.mode) {
-        record_audit(
-            env.audit,
-            env.mode,
-            AuditEntry {
-                workflow_id: Arc::clone(ids.workflow),
-                task_id: Arc::clone(ids.task),
-                timestamp: env.now,
-                changes: std::mem::take(&mut env.changes),
-                status: usize::from(status),
-                loop_counter: stamp.loop_counter,
-                element_index: stamp.element_index,
-            },
-        );
-    } else {
-        env.changes.clear();
+    #[cfg(test)]
+    tests::completed(&done);
+    let Completed {
+        ids,
+        task,
+        stamp,
+        status,
+        record,
+        elapsed,
+        ..
+    } = done;
+    if let Some(status) = status {
+        // A mode that keeps nothing builds no entry for `record_audit` to
+        // drop.
+        if keeps_entries(env.mode) {
+            let changes = if env.capture_audit {
+                std::mem::take(&mut env.changes)
+            } else {
+                Vec::new()
+            };
+            record_audit(
+                env.audit,
+                env.mode,
+                AuditEntry {
+                    workflow_id: Arc::clone(ids.workflow),
+                    task_id: Arc::clone(ids.task),
+                    timestamp: env.now,
+                    changes,
+                    status: usize::from(status),
+                    loop_counter: stamp.loop_counter,
+                    element_index: stamp.element_index,
+                },
+            );
+        }
+        write_progress(rc, ids.workflow, ids.task, status);
+        if let Some((code, message)) = record {
+            let (workflow, task) = (&**ids.workflow, &**ids.task);
+            let mut record = task_record(&code, message, workflow, task, env.now_text);
+            record.element_index = stamp.element_index;
+            env.errors.push(record);
+        }
     }
-    write_progress(rc, ids.workflow, ids.task, status);
-    if let Some((code, message)) = record {
-        let (workflow, task) = (&**ids.workflow, &**ids.task);
-        let mut record = task_record(&code, message, workflow, task, env.now_text);
-        record.element_index = stamp.element_index;
-        env.errors.push(record);
+    env.changes.clear();
+    if env.observers.tasks() {
+        let meta = &wf.tasks[task as usize];
+        let info = CallInfo {
+            program: env.program,
+            workflow: env.workflow_ix,
+            task: TaskIx::new(env.task_base + task),
+            function: &meta.function,
+            workflow_id: &wf.id,
+            task_id: &meta.id,
+            channel: env.channel,
+            loop_counter: stamp.loop_counter,
+            element_index: stamp.element_index,
+        };
+        env.observers.emit(Event::TaskFinished {
+            info: &info,
+            status,
+            elapsed,
+        });
     }
 }
 
@@ -301,7 +385,256 @@ fn write_progress<'p>(rc: &mut RunContext<'_, 'p>, workflow: &'p str, task: &'p 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::base::CancelToken;
+    use crate::function::{Ctx, Function, Outcome};
+    use crate::observe::{Interest, Observer};
+    use crate::run::{EngineConfig, RunOptions};
     use crate::state::Tuning;
+    use crate::{Engine, Message};
+    use serde_json::{Value, json};
+    use std::cell::{Cell, RefCell};
+    use std::sync::Arc;
+
+    thread_local! {
+        /// How many times this thread read the recorder's clock.
+        pub(super) static CLOCK_READS: Cell<u32> = const { Cell::new(0) };
+        /// What each recorded call completed with, while a test collects it.
+        static COMPLETED: RefCell<Option<Vec<Done>>> = const { RefCell::new(None) };
+    }
+
+    /// What one recorded call completed with, owned.
+    #[derive(Debug, PartialEq)]
+    struct Done {
+        task: String,
+        element: Option<usize>,
+        status: Option<u16>,
+        failed: bool,
+        errors_before: usize,
+        timed: bool,
+    }
+
+    /// `done`, kept while a test collects.
+    pub(super) fn completed(done: &Completed<'_>) {
+        COMPLETED.with_borrow_mut(|kept| {
+            if let Some(kept) = kept {
+                kept.push(Done {
+                    task: done.ids.task.to_string(),
+                    element: done.stamp.element_index,
+                    status: done.status,
+                    failed: done.failed,
+                    errors_before: done.errors_before,
+                    timed: done.elapsed.is_some(),
+                });
+            }
+        });
+    }
+
+    fn reads() -> u32 {
+        CLOCK_READS.with(Cell::get)
+    }
+
+    /// Completes.
+    struct Answer;
+
+    impl Function for Answer {
+        type Config = ();
+
+        async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &()) -> crate::Result<Outcome> {
+            Ok(Outcome::Ok)
+        }
+    }
+
+    /// Fails.
+    struct Down;
+
+    impl Function for Down {
+        type Config = ();
+
+        async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &()) -> crate::Result<Outcome> {
+            Err(Error::service("PARTNER_DOWN", "down"))
+        }
+    }
+
+    /// An observer with `interest` that keeps nothing.
+    struct Quiet(Interest);
+
+    impl Observer for Quiet {
+        fn interest(&self) -> Interest {
+            self.0
+        }
+
+        fn on(&self, _event: &Event<'_>) {}
+    }
+
+    /// An engine over `workflows` with `answer` and `down` registered and
+    /// `observer` its own.
+    fn engine(workflows: &[Value], observer: Option<Interest>) -> Engine {
+        let mut config = EngineConfig::default();
+        if let Some(interest) = observer {
+            config = config.observer(Arc::new(Quiet(interest)));
+        }
+        workflows
+            .iter()
+            .fold(
+                Engine::builder()
+                    .register("answer", Answer)
+                    .register("down", Down)
+                    .config(config),
+                |b, w| b.workflow_json(w),
+            )
+            .build()
+            .unwrap()
+    }
+
+    fn task(id: &str, function: &str, extra: Value) -> Value {
+        let mut task = json!({"id": id, "function": {"name": function}});
+        for (key, value) in extra.as_object().unwrap() {
+            task[key] = value.clone();
+        }
+        task
+    }
+
+    fn map(id: &str, path: &str, mode: &str) -> Value {
+        json!({"id": id, "function": {"name": "map", "input": {
+            "mappings": [{"path": path, "logic": 1, "mode": mode}]}}})
+    }
+
+    /// What every call of one run of `e` completed with, over `data`.
+    async fn collect(e: &Engine, data: Value, opts: &RunOptions<'_>) -> Vec<Done> {
+        COMPLETED.with_borrow_mut(|kept| *kept = Some(Vec::new()));
+        let mut message = Message::from_parts(
+            OwnedDataValue::Null,
+            OwnedDataValue::from(&data),
+            OwnedDataValue::Null,
+        );
+        e.run_with(&mut message, opts).await;
+        COMPLETED.with_borrow_mut(Option::take).unwrap()
+    }
+
+    #[tokio::test]
+    async fn no_clock_is_read_without_an_interest_in_timings() {
+        // Two sweeps of a built-in, a host call and a two-element fan-out.
+        let workflows = [
+            json!({"id": "w", "loop": {"counter": "i", "max": 2}, "tasks": [
+                map("m", "data.a", "set"),
+                task("h", "answer", json!({})),
+                task("f", "answer", json!({"for_each": {"over": [1, 2], "as": "x"}})),
+            ]}),
+        ];
+        let untimed = [
+            None,
+            Some(Interest::NONE),
+            Some(Interest::TASKS),
+            Some(Interest::WORKFLOWS | Interest::TASKS),
+        ];
+        for interest in untimed {
+            let e = engine(&workflows, interest);
+            let before = reads();
+            let done = collect(&e, json!({}), &RunOptions::default()).await;
+            assert_eq!(reads(), before, "{interest:?}");
+            assert_eq!(done.len(), 8);
+            assert!(done.iter().all(|d| !d.timed), "{interest:?}: {done:?}");
+        }
+
+        // Timed, every call reads it twice, and each end once. A workflow's
+        // start is read only for an observer of workflows.
+        let e = engine(&workflows, Some(Interest::TASKS));
+        for (run, expected) in [
+            (Interest::TIMINGS, 2 + 8 * 2),
+            (Interest::WORKFLOWS | Interest::TIMINGS, 2 + 2 + 8 * 2),
+        ] {
+            let observer = Quiet(run);
+            let before = reads();
+            let opts = RunOptions::default().observer(&observer);
+            let done = collect(&e, json!({}), &opts).await;
+            assert_eq!(reads() - before, expected, "{run:?}");
+            assert!(done.iter().all(|d| d.timed), "{run:?}: {done:?}");
+        }
+    }
+
+    /// `(task, element, status, failed, errors_before)`.
+    type Site = (&'static str, Option<usize>, Option<u16>, bool, usize);
+
+    fn sites(done: &[Done]) -> Vec<Site> {
+        done.iter()
+            .map(|d| {
+                let task = ["m", "bad", "h", "f", "e", "n", "stop", "g", "c", "fc"]
+                    .into_iter()
+                    .find(|&t| t == d.task)
+                    .unwrap_or_else(|| panic!("an unknown task {}", d.task));
+                (task, d.element, d.status, d.failed, d.errors_before)
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn every_call_site_completes_with_its_failure_and_its_error_count() {
+        let on_continue = json!({"on_failure": "continue"});
+        let e = engine(
+            &[
+                json!({"id": "w", "on_failure": "continue", "tasks": [
+                    map("m", "data.a", "set"),
+                    // An append to a string fails the mapping: a 500.
+                    {"id": "bad", "on_failure": "continue", "function": {"name": "map",
+                        "input": {"mappings": [
+                            {"path": "data.text", "logic": 1, "mode": "append"}]}}},
+                    task("h", "down", on_continue.clone()),
+                    task("f", "answer", json!({"for_each": {"over": [1, 2], "as": "x"}})),
+                    task("e", "answer", json!({"for_each": {"over": [], "as": "x"}})),
+                    task("n", "answer", json!({"on_failure": "continue",
+                        "for_each": {"over": {"var": "data.text"}, "as": "x"}})),
+                    // Its failure goes to the workflow, which steps past it.
+                    task("stop", "down", json!({})),
+                ]}),
+                json!({"id": "x", "priority": 1, "tasks": [
+                    task("g", "down", json!({"for_each": {"over": [1, 2], "as": "x"}})),
+                ]}),
+            ],
+            Some(Interest::ALL),
+        );
+        let done = collect(&e, json!({"text": "t"}), &RunOptions::default()).await;
+        assert_eq!(
+            sites(&done),
+            [
+                ("m", None, Some(200), false, 0),
+                ("bad", None, Some(500), false, 0),
+                ("h", None, Some(500), false, 1),
+                ("f", Some(0), Some(200), false, 2),
+                ("f", Some(1), Some(200), false, 2),
+                ("e", None, Some(200), false, 2),
+                ("n", None, Some(500), false, 2),
+                ("stop", None, Some(500), true, 3),
+                // The first element fails the task, and the fold stops.
+                ("g", Some(0), Some(500), true, 4),
+            ]
+        );
+        assert!(done.iter().all(|d| d.timed), "{done:?}");
+
+        // Cut short by the run's token: a host call, and a fan-out recorded
+        // once, with no element.
+        let token = CancelToken::new();
+        token.cancel();
+        let opts = RunOptions::default().cancel(&token);
+        for (workflow, expected) in [
+            (
+                task("c", "answer", json!({})),
+                ("c", None, Some(500), true, 0),
+            ),
+            (
+                task(
+                    "fc",
+                    "answer",
+                    json!({"for_each": {"over": [1, 2], "as": "x"}}),
+                ),
+                ("fc", None, Some(500), true, 0),
+            ),
+        ] {
+            let e = engine(&[json!({"id": "w", "tasks": [workflow]})], None);
+            let done = collect(&e, json!({}), &opts).await;
+            assert_eq!(sites(&done), [expected]);
+            assert!(!done[0].timed);
+        }
+    }
 
     fn text(v: &OwnedDataValue) -> String {
         serde_json::to_string(v).unwrap()
