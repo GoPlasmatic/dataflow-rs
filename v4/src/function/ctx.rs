@@ -10,7 +10,7 @@ use crate::expr::arena::with_arena;
 use crate::expr::path;
 use crate::expr::{
     Expr, ExprEngine, ExprVisitor, Filled, FromValue, Interpolated, Output, Path, Rendered,
-    ResolveExpr, Resolver, Seg, secret_refs,
+    ResolveExpr, Resolver, SealedResolver, Seg, secret_refs,
 };
 use crate::state::{Lookup, Reader, splice};
 use bumpalo::Bump;
@@ -595,6 +595,8 @@ impl<'r> Ctx<'r> {
 /// call sees it, as [`Ctx::eval`] and [`Ctx::render`] do, secrets read: a
 /// host's [`ConfigField::resolve`](crate::expr::ConfigField::resolve) calls
 /// it. A function resolves its whole config with [`Ctx::resolve`].
+impl SealedResolver for &Ctx<'_> {}
+
 impl Resolver for &Ctx<'_> {
     fn eval(&mut self, expr: &dyn ResolveExpr) -> Result<OwnedDataValue> {
         Ctx::eval_owned(self, expr)
@@ -614,6 +616,8 @@ fn reads_secret(raw: &Value) -> bool {
 /// is `null`, and is never evaluated; anything else as the call's context
 /// resolves it.
 struct Redacted<'c, 'r>(&'c Ctx<'r>);
+
+impl SealedResolver for Redacted<'_, '_> {}
 
 impl Resolver for Redacted<'_, '_> {
     fn eval(&mut self, expr: &dyn ResolveExpr) -> Result<OwnedDataValue> {

@@ -308,11 +308,38 @@ impl fmt::Debug for CompileCx<'_> {
     }
 }
 
+/// What [`Resolver`] is sealed with: only the crate implements it.
+pub(crate) mod sealed {
+    /// The seal: a type the crate resolves configs with.
+    pub trait Resolver {}
+}
+
 /// What resolving a config needs from a call: an expression evaluated, and
 /// a document rendered, each to an owned value, against the context the call
 /// sees. A [`ConfigField`] calls it from [`ConfigField::resolve`]; a call's
 /// context implements it ([`Ctx`](crate::Ctx), through a shared reference).
-pub trait Resolver {
+///
+/// Sealed: a host calls it, from its own [`ConfigField::resolve`], and never
+/// implements it, so a method can join it without a breaking change.
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// use dataflow_rs::Result;
+/// use dataflow_rs::datavalue::OwnedDataValue;
+/// use dataflow_rs::expr::{Interpolated, ResolveExpr, Resolver};
+///
+/// struct Mine;
+///
+/// impl Resolver for Mine {
+///     fn eval(&mut self, _expr: &dyn ResolveExpr) -> Result<OwnedDataValue> {
+///         Ok(OwnedDataValue::Null)
+///     }
+///     fn render(&mut self, _doc: &Interpolated) -> Result<OwnedDataValue> {
+///         Ok(OwnedDataValue::Null)
+///     }
+/// }
+/// ```
+pub trait Resolver: sealed::Resolver {
     /// `expr` evaluated, as an owned value: a number for a `u64`, `i64` or
     /// `f64` expression, a boolean for a `bool` one, a string for a `String`
     /// one, a path's dotted text for a `Path` one, and the value itself for
@@ -329,7 +356,8 @@ pub trait Resolver {
     ///
     /// # Errors
     ///
-    /// None from a call's context; a resolver of another kind may refuse.
+    /// None from a call's context, which is every resolver there is today;
+    /// the `Result` leaves room for one that may refuse.
     fn render(&mut self, doc: &Interpolated) -> Result<OwnedDataValue>;
 }
 
