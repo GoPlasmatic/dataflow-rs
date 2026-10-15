@@ -429,7 +429,7 @@ fn an_unresolved_literal_reference_is_a_defect() {
 }
 
 #[test]
-fn the_oracles_reason_ends_the_message() {
+fn the_oracles_reason_leads_the_message() {
     let compiler = registry().compiler(CompileOptions::default().resources(Arc::new(Typed)));
     let issues = compiled(&compiler, &one("query", json!({"connector": "db1"})));
     assert_eq!(
@@ -441,10 +441,9 @@ fn the_oracles_reason_ends_the_message() {
         )]
     );
     let why = "connector `db1` is a cache, not a database";
-    assert!(issues[0].message.ends_with(why), "{}", issues[0].message);
     assert_eq!(
         issues[0].message,
-        format!("no connector named `db1` resolves: {why}")
+        format!("`db1` does not resolve as a connector: {why}")
     );
     // `Ok` passes.
     assert!(compiled(&compiler, &one("query", json!({"connector": "db9"}))).is_empty());

@@ -27,8 +27,8 @@ use std::sync::Arc;
 /// A [`Compiler`] given one through [`CompileOptions::resources`] checks each
 /// [`Reference`](crate::function::Reference) a host function's spec declares.
 /// A field holding a literal string the oracle does not resolve is an
-/// `UNRESOLVED_REFERENCE` Defect, whose message the oracle's reason ends. A
-/// computed or absent value is not checked.
+/// `UNRESOLVED_REFERENCE` Defect, whose message leads with the oracle's
+/// reason when it gives one. A computed or absent value is not checked.
 ///
 /// ```
 /// # extern crate dataflow_rs_v4 as dataflow_rs;
@@ -49,8 +49,11 @@ use std::sync::Arc;
 /// ```
 pub trait ResourceOracle: Send + Sync + 'static {
     /// `Ok` when a `kind` named `name` exists: the connector `db1`, say.
-    /// `Err(why)` when it does not: a `why` that is not empty ends the
-    /// issue's message, after a colon.
+    /// `Err(why)` when it does not. A `why` that is not empty is the issue's
+    /// message, after what did not resolve: `` `sessions` does not resolve
+    /// as a connector: connector `sessions` is a cache, not a database ``.
+    /// An empty one gives the plain message: `` no connector named `db2`
+    /// resolves ``.
     ///
     /// # Errors
     ///
@@ -750,11 +753,11 @@ impl<'w> Walk<'w> {
                 && let Err(why) = oracle.resolve(&reference.kind, name)
             {
                 let kind = &reference.kind;
-                let mut message = format!("no {kind} named `{name}` resolves");
-                if !why.is_empty() {
-                    message.push_str(": ");
-                    message.push_str(&why);
-                }
+                let message = if why.is_empty() {
+                    format!("no {kind} named `{name}` resolves")
+                } else {
+                    format!("`{name}` does not resolve as a {kind}: {why}")
+                };
                 cx.adopt(Issue::new(IssueCode::UnresolvedReference, field, message));
             }
         }
