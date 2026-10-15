@@ -13,9 +13,12 @@
 //!
 //! The trace's step carries, while the trace keeps changes, the engine's
 //! writes made for it (the capture's prelude), the call's changes, the
-//! progress write's `Change` and the error context's; the audit entry
-//! carries the call's changes alone, and only under `capture_audit` (I107),
-//! so the engine's writes never reach it.
+//! progress write's `Change` and the error context's, and for a `map`, where
+//! each of its mappings ends in them; the audit entry carries the call's
+//! changes alone, and only under `capture_audit` (I107), so the engine's
+//! writes never reach it. The step also carries every record the call
+//! added to the message, its own and the recorder's, in order (I127): the
+//! records after `errors_before`, read once the call has returned.
 //!
 //! A workflow's own failure, which no task made, records one error record,
 //! and the trace's `Failed` step for it, and nothing else (I61):
@@ -95,6 +98,14 @@ pub(crate) fn failing_after_its_writes(
         return Err(Error::service("BROKE", "after its writes"));
     }
     result
+}
+
+/// In the lib's own tests, one piece of the trace's own work done (I127): a
+/// step's records copied, or a mapping's end noted. A run without a trace
+/// does none.
+#[cfg(test)]
+pub(crate) fn traced_work() {
+    tests::TRACE_WORK.with(|work| work.set(work.get() + 1));
 }
 
 /// The time since `start`, on [`now`]'s clock.
@@ -226,7 +237,9 @@ fn watched<'p>(
         Some(trace) if traced => trace.take_prelude(),
         _ => Vec::new(),
     };
-    let mut error = None;
+    // The call's own changes follow the prelude: its mapping ends move past
+    // it.
+    let prelude = changes.len();
     if let Some(status) = status {
         // A mode that keeps nothing builds no entry for `record_audit` to
         // drop.
@@ -275,9 +288,6 @@ fn watched<'p>(
             let (workflow, task) = (&**ids.workflow, &**ids.task);
             let mut record = task_record(&code, message, workflow, task, env.now_text);
             record.element_index = stamp.element_index;
-            if env.watch.trace.is_some() {
-                error = Some(record.clone());
-            }
             env.errors.push(record);
         }
         // Every record the call added, its own and the recorder's (I96,
@@ -299,8 +309,9 @@ fn watched<'p>(
         changes.append(&mut env.changes);
     }
     env.changes.clear();
-    if let Some(trace) = env.watch.trace.as_deref() {
+    if let Some(trace) = env.watch.trace.as_deref_mut() {
         let timings = trace.timings();
+        let mapping_ends = trace.take_mapping_ends(prelude);
         let mut step = env.task_step(
             task,
             if failed {
@@ -311,7 +322,11 @@ fn watched<'p>(
         );
         step.status = status;
         step.changes = changes;
-        step.error = error;
+        step.mapping_ends = mapping_ends;
+        // Every record the call added, in the message's order (I127).
+        #[cfg(test)]
+        traced_work();
+        step.errors = env.errors[errors_before..].to_vec();
         step.elapsed = elapsed.filter(|_| timings);
         step.loop_counter = stamp.loop_counter;
         step.element_index = stamp.element_index;
@@ -350,15 +365,17 @@ fn audited(change: &mut Change) -> bool {
 /// Records a workflow's own failure (I61), whatever its policy: one record
 /// with the error's code and message, the workflow's id, no task id, and the
 /// run's timestamp, and in a traced run the workflow's `Failed` step, with
-/// the record as its error. No audit entry and no progress write: no task
-/// completed.
+/// the record as the one it added. No audit entry and no progress write: no
+/// task completed.
 pub(crate) fn workflow_failure(env: &mut RunEnv<'_, '_>, error: &Error) {
     let mut record = ErrorRecord::from(error);
     record.workflow_id = Some(env.workflow_id.to_string());
     record.timestamp = Some(env.now_text.to_owned());
     if env.watch.trace.is_some() {
         let mut step = env.workflow_step(StepResult::Failed);
-        step.error = Some(record.clone());
+        #[cfg(test)]
+        traced_work();
+        step.errors = vec![record.clone()];
         env.push_step(step);
     }
     env.errors.push(record);
@@ -574,6 +591,9 @@ mod tests {
         static COMPLETED: RefCell<Option<Vec<Done>>> = const { RefCell::new(None) };
         /// Every built-in call on this thread fails once it has written.
         pub(super) static FAIL_AFTER_WRITES: Cell<bool> = const { Cell::new(false) };
+        /// How much of the trace's own work this thread did (I127): a
+        /// step's records copied, or a mapping's end noted.
+        pub(super) static TRACE_WORK: Cell<u32> = const { Cell::new(0) };
     }
 
     /// What one recorded call completed with, owned.
@@ -748,6 +768,75 @@ mod tests {
                 assert!(done.iter().all(|d| d.timed == timed), "{done:?}");
             }
         }
+    }
+
+    fn trace_work() -> u32 {
+        TRACE_WORK.with(Cell::get)
+    }
+
+    #[tokio::test]
+    async fn an_untraced_run_does_no_trace_work() {
+        // I127: a step's records and a map's mapping ends are made only
+        // under a trace, so a run without one, watched or not, does none of
+        // that work: every call site that adds a record, a map of two
+        // mappings, a workflow's own failure and a condition that fails.
+        let workflows = [
+            json!({"id": "w", "on_failure": "continue", "loop": {"counter": "i", "max": 2},
+            "tasks": [
+                {"id": "m", "function": {"name": "map", "input": {"mappings": [
+                    {"path": "data.a", "logic": 1},
+                    {"path": "data.l", "logic": 1, "mode": "append"}]}}},
+                {"id": "v", "function": {"name": "validation", "input": {"rules": [
+                    {"logic": {"var": "data.missing"}, "message": "no"}]}}},
+                task("h", "down", json!({"on_failure": "continue"})),
+                task("f", "down", json!({"on_failure": "continue",
+                    "for_each": {"over": [1, 2], "as": "x"}})),
+                task("stop", "down", json!({})),
+            ]}),
+            json!({"id": "c", "priority": 1, "condition": {"/": [1, {"var": "data.zero"}]},
+                "tasks": [map("cm", "data.c", "set")]}),
+            json!({"id": "o", "priority": 2, "on_failure": "continue",
+                "loop": {"max": 1, "over": {"var": "data.a"}, "as": "x"},
+                "tasks": [map("om", "data.o", "set")]}),
+        ];
+        let failures: Path = "temp_data.failures".parse().unwrap();
+        let build = |observer: Option<Interest>, mirrored: bool| {
+            let mut config = EngineConfig::default();
+            if let Some(interest) = observer {
+                config = config.observer(Arc::new(Quiet(interest)));
+            }
+            if mirrored {
+                let ec = crate::run::ErrorContext::new(failures.clone(), 8).unwrap();
+                config = config.error_context(ec);
+            }
+            workflows
+                .iter()
+                .fold(
+                    Engine::builder().register("down", Down).config(config),
+                    |b, w| b.workflow_json(w),
+                )
+                .build()
+                .unwrap()
+        };
+        let data = json!({"zero": 0});
+        for (observer, mirrored) in [
+            (None, false),
+            (Some(Interest::ALL), false),
+            (None, true),
+            (Some(Interest::TASKS), true),
+        ] {
+            let e = build(observer, mirrored);
+            let before = trace_work();
+            let done = collect(&e, data.clone(), &RunOptions::default()).await;
+            assert_eq!(done.len(), 12, "{done:?}");
+            assert_eq!(trace_work(), before, "{observer:?}, mirrored {mirrored}");
+        }
+        // The same runs traced do it.
+        let e = build(None, true);
+        let before = trace_work();
+        let opts = RunOptions::default().trace(TraceOptions::default());
+        collect(&e, data, &opts).await;
+        assert!(trace_work() > before, "a traced run copies its records");
     }
 
     /// `(task, element, status, failed, errors_before)`.

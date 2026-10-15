@@ -25,6 +25,8 @@ pub use engine::{Engine, EngineConfig};
 pub use error_context::ErrorContext;
 pub use message::{AuditEntry, AuditMode, Message};
 pub use options::RunOptions;
+#[cfg(test)]
+pub(crate) use record::traced_work;
 #[doc(hidden)]
 pub use report::ArenaStats;
 pub use report::Run;

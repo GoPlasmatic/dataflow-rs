@@ -8,10 +8,11 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // budget, timings, the failing step); the snapshots they checked have no
 // twin, since a v4 trace carries changes, not snapshots.
 //
-// Three host functions drive the calls: `put` writes `writes` in key order
+// Four host functions drive the calls: `put` writes `writes` in key order
 // through `Ctx::set`, then returns what `outcome` names; `peek` keeps the
-// whole context as it sees it; `slow` sleeps on tokio's clock. `wrap`, with
-// a v3 twin, wraps its fan-out element for the audit-bytes test.
+// whole context as it sees it; `slow` sleeps on tokio's clock; `note`
+// records an error of its own, then fails. `wrap`, with a v3 twin, wraps its
+// fan-out element for the audit-bytes test.
 
 #[path = "support/vs_v3.rs"]
 mod vs_v3;
@@ -20,7 +21,7 @@ use dataflow_corpus::json::Json;
 use dataflow_corpus::replay;
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::observe::{Event, Interest, Observer, StepResult, Trace, TraceOptions, TraceStep};
-use dataflow_rs::run::{AuditMode, Instant, RunStatus, Selection};
+use dataflow_rs::run::{AuditMode, ErrorRecord, Instant, RunStatus, Selection};
 use dataflow_rs::{
     Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Result, Run, RunOptions,
 };
@@ -111,6 +112,18 @@ impl Function for Slow {
     }
 }
 
+/// Records a `NOTED` error of its own, then fails with `PARTNER_DOWN`.
+struct Note;
+
+impl Function for Note {
+    type Config = ();
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+        ctx.record_error(ErrorRecord::new("NOTED", "noted"));
+        Err(Error::service("PARTNER_DOWN", "down"))
+    }
+}
+
 /// Writes `temp_data.r = {"v": <temp_data.x>}`: a fan-out element wrapped.
 struct Wrap;
 
@@ -163,7 +176,8 @@ fn engine_with(workflows: &[Value], peeked: &Peek) -> Engine {
             Engine::builder()
                 .register("put", Put)
                 .register("peek", peeked.clone())
-                .register("slow", Slow),
+                .register("slow", Slow)
+                .register("note", Note),
             |b, w| b.workflow_json(w),
         )
         .build()
@@ -389,12 +403,12 @@ async fn the_failing_step_is_recorded_with_its_error() {
     assert_eq!(last.result, StepResult::Failed);
     assert_eq!(last.status, Some(500));
     // The recorder's record, as the message keeps it.
-    let error = last
-        .error
-        .as_ref()
-        .expect("the failing step carries its error");
-    assert_eq!(Some(error), m.errors().last());
-    assert_eq!(error.code, "PARTNER_DOWN");
+    assert_eq!(
+        last.errors,
+        m.errors(),
+        "the failing step carries its error"
+    );
+    assert_eq!(last.errors[0].code, "PARTNER_DOWN");
     // An `Err` drops its writes; the progress write stands.
     assert_eq!(paths(last), ["metadata.progress"]);
     assert_replays(&trace, &m);
@@ -425,11 +439,11 @@ async fn a_builtin_failure_that_stops_the_run_records_its_failed_step() {
             line("wf", Some("step_boom"), Failed, Some(500)),
         ]
     );
-    let error = trace.steps[1]
-        .error
-        .as_ref()
-        .expect("the failing step carries its error");
-    assert_eq!(Some(error), m.errors().last());
+    assert_eq!(
+        trace.steps[1].errors,
+        m.errors(),
+        "the failing step carries its error"
+    );
     assert_replays(&trace, &m);
 }
 
@@ -582,9 +596,8 @@ async fn a_failure_stepped_past_is_executed_with_its_error() {
             (Some("t"), expected, Some(500)),
             "{task} in a workflow {workflow_policy:?}"
         );
-        let error = step.error.as_ref().expect("the step carries its error");
-        assert_eq!(error.code, "PARTNER_DOWN");
-        assert_eq!(Some(error), m.errors().first());
+        assert_eq!(step.errors, m.errors(), "the step carries its error");
+        assert_eq!(step.errors[0].code, "PARTNER_DOWN");
         assert_replays(&trace, &m);
     }
 }
@@ -655,19 +668,24 @@ async fn skipped_steps_are_recorded_for_tasks_groups_and_workflows() {
         [Some(0), Some(1), Some(2), Some(3), None, None, None]
     );
     for step in &trace.steps[..3] {
-        assert!(step.changes.is_empty() && step.error.is_none(), "{step:?}");
+        assert!(
+            step.changes.is_empty() && step.errors.is_empty(),
+            "{step:?}"
+        );
     }
     // A condition that fails to evaluate is a skip with its error (R34).
     let Selection::ConditionFailed(e) = run.workflows().nth(2).unwrap().selection else {
         panic!("w3's condition fails: {run:?}");
     };
-    let error = trace.steps[5].error.as_ref().expect("the failure is kept");
+    let [error] = &trace.steps[5].errors[..] else {
+        panic!("the failure is kept: {:?}", trace.steps[5]);
+    };
     assert_eq!(
         (error.code.as_str(), error.message.as_str()),
         (e.code(), e.message())
     );
     assert_eq!(error.workflow_id.as_deref(), Some("w3"));
-    assert!(trace.steps[4].error.is_none() && trace.steps[6].error.is_none());
+    assert!(trace.steps[4].errors.is_empty() && trace.steps[6].errors.is_empty());
     assert_replays(&trace, &m);
 }
 
@@ -1239,9 +1257,8 @@ async fn a_run_cut_short_returns_its_trace() {
         (cut.task_id.as_deref(), cut.result, cut.status),
         (Some("t"), StepResult::Failed, Some(500))
     );
-    let error = cut.error.as_ref().expect("the cut call carries its error");
-    assert_eq!(error.code, "TIMEOUT_ERROR");
-    assert_eq!(Some(error), m.errors().last());
+    assert_eq!(cut.errors, m.errors(), "the cut call carries its error");
+    assert_eq!(cut.errors[0].code, "TIMEOUT_ERROR");
     // The cut call's writes are dropped.
     assert_eq!(paths(cut), ["metadata.progress"]);
     assert_replays(&trace, &m);
@@ -1420,13 +1437,21 @@ async fn the_serialized_shape() {
         ),
         workflow(
             "w3",
-            vec![with(
-                put("f", json!({}), json!("err")),
-                &[
-                    ("on_failure", json!("continue")),
-                    ("for_each", json!({"over": [1], "as": "x"})),
-                ],
-            )],
+            vec![
+                with(
+                    put("f", json!({}), json!("err")),
+                    &[
+                        ("on_failure", json!("continue")),
+                        ("for_each", json!({"over": [1], "as": "x"})),
+                    ],
+                ),
+                // A write, then an append to a number, which fails the
+                // mapping: a 500, stepped past.
+                json!({"id": "mf", "on_failure": "continue", "function": {"name": "map",
+                    "input": {"mappings": [
+                        {"path": "data.z", "logic": 1},
+                        {"path": "data.a", "logic": 2, "mode": "append"}]}}}),
+            ],
             &[
                 ("priority", json!(2)),
                 ("loop", json!({"counter": "i", "max": 1})),
@@ -1440,7 +1465,8 @@ async fn the_serialized_shape() {
             r#"{"workflow":0,"workflow_id":"w","task":0,"task_id":"m","result":"executed","#,
             r#""status":200,"changes":[{"path":"data.a","old_value":null,"new_value":1},"#,
             r#"{"path":"metadata.progress","old_value":null,"#,
-            r#""new_value":{"workflow_id":"w","task_id":"m","status_code":200}}]}"#,
+            r#""new_value":{"workflow_id":"w","task_id":"m","status_code":200}}],"#,
+            r#""mapping_ends":[1]}"#,
         )
     );
     assert_eq!(
@@ -1464,15 +1490,16 @@ async fn the_serialized_shape() {
         TraceOptions::default().timings(true),
     )
     .await;
-    let element = Json::from_text(&text(&trace.steps[3])).unwrap();
-    let keys: Vec<_> = element
-        .as_object()
-        .unwrap()
-        .iter()
-        .map(|(k, _)| k.as_str())
-        .collect();
+    let keys_of = |step: &TraceStep| -> Vec<String> {
+        let wire = Json::from_text(&text(step)).unwrap();
+        wire.as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, _)| k.clone())
+            .collect()
+    };
     assert_eq!(
-        keys,
+        keys_of(&trace.steps[3]),
         [
             "workflow",
             "workflow_id",
@@ -1481,13 +1508,39 @@ async fn the_serialized_shape() {
             "result",
             "status",
             "changes",
-            "error",
+            "errors",
             "elapsed_us",
             "loop_counter",
             "element_index",
         ]
     );
+    let element = Json::from_text(&text(&trace.steps[3])).unwrap();
     assert_eq!(element.get("result"), Some(&Json::str("executed")));
+    // A `map` step: each mapping's end, after the changes and before the
+    // records (I127).
+    assert_eq!(trace.steps[4].task_id.as_deref(), Some("mf"));
+    assert_eq!(
+        keys_of(&trace.steps[4]),
+        [
+            "workflow",
+            "workflow_id",
+            "task",
+            "task_id",
+            "result",
+            "status",
+            "changes",
+            "mapping_ends",
+            "errors",
+            "elapsed_us",
+            "loop_counter",
+        ]
+    );
+    let mapped = Json::from_text(&text(&trace.steps[4])).unwrap();
+    assert_eq!(mapped.get("mapping_ends").unwrap().to_text(), "[1,1]");
+    assert_eq!(
+        mapped.pointer("/errors/0/code"),
+        Some(&Json::str("TASK_STATUS_ERROR"))
+    );
 
     let whole = Json::from_text(&text(&trace)).unwrap();
     let keys: Vec<_> = whole
@@ -1497,4 +1550,302 @@ async fn the_serialized_shape() {
         .map(|(k, _)| k.as_str())
         .collect();
     assert_eq!(keys, ["initial", "steps", "truncated"]);
+}
+
+/// A `validation` task failing each of `rules` (`{"var": <path>}` over
+/// paths that hold nothing), under `on_failure: continue`.
+fn failing_validation(id: &str, rules: &[&str]) -> Value {
+    let rules: Vec<Value> = rules
+        .iter()
+        .map(|r| json!({"logic": {"var": format!("data.{r}")}, "message": format!("needs {r}")}))
+        .collect();
+    json!({"id": id, "on_failure": "continue",
+        "function": {"name": "validation", "input": {"rules": rules}}})
+}
+
+/// Each record's code.
+fn codes(records: &[ErrorRecord]) -> Vec<&str> {
+    records.iter().map(|r| r.code.as_str()).collect()
+}
+
+#[tokio::test]
+async fn a_steps_errors_are_every_record_it_added() {
+    // I127: every record the step added to the message, in order: the
+    // call's own, then the recorder's (I96).
+    let e = engine(&[
+        workflow(
+            "w",
+            vec![
+                // Two rules fail: two records of its own, and a 400, for
+                // which the recorder adds none.
+                failing_validation("v", &["a", "b"]),
+                with(
+                    json!({"id": "n", "function": {"name": "note"}}),
+                    &[("on_failure", json!("continue"))],
+                ),
+                map("ok", "data.ok", json!(1)),
+            ],
+            &[],
+        ),
+        // The same validation fails in each of two sweeps.
+        workflow(
+            "l",
+            vec![failing_validation("lv", &["c"])],
+            &[
+                ("priority", json!(1)),
+                ("loop", json!({"counter": "i", "max": 2})),
+            ],
+        ),
+    ]);
+    let mut m = message(json!({}));
+    let (run, trace) = trace_of(&e, &mut m, TraceOptions::default()).await;
+    assert!(
+        matches!(run.status(), RunStatus::CompletedWithErrors),
+        "{run:?}"
+    );
+    let calls: Vec<_> = trace
+        .steps
+        .iter()
+        .filter(|s| s.task_id.is_some())
+        .map(|s| {
+            (
+                s.task_id.as_deref().unwrap(),
+                s.loop_counter,
+                codes(&s.errors),
+            )
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("v", None, vec!["VALIDATION_ERROR", "VALIDATION_ERROR"]),
+            ("n", None, vec!["NOTED", "PARTNER_DOWN"]),
+            ("ok", None, vec![]),
+            ("lv", Some(0), vec!["VALIDATION_ERROR"]),
+            ("lv", Some(1), vec!["VALIDATION_ERROR"]),
+        ]
+    );
+    let messages: Vec<_> = trace.steps[0]
+        .errors
+        .iter()
+        .map(|r| r.message.as_str())
+        .collect();
+    assert_eq!(messages, ["needs a", "needs b"]);
+    // Each record is on the step that added it, and on no other: the steps'
+    // records, in step order, are the message's, as it keeps them.
+    let all: Vec<ErrorRecord> = trace
+        .steps
+        .iter()
+        .flat_map(|s| s.errors.iter().cloned())
+        .collect();
+    assert_eq!(all, m.errors());
+    assert_replays(&trace, &m);
+}
+
+#[tokio::test]
+async fn a_condition_that_failed_to_evaluate_shows_its_record() {
+    // R34: a workflow whose condition fails to evaluate is skipped. Its
+    // record reaches no message, so its step shows it: the only record on
+    // a step that the message does not keep.
+    let e = engine(&[workflow(
+        "w",
+        vec![map("never", "data.never", json!(1))],
+        &[("condition", json!({"/": [1, {"var": "data.zero"}]}))],
+    )]);
+    let mut m = message(json!({"zero": 0}));
+    let (run, trace) = trace_of(&e, &mut m, TraceOptions::default()).await;
+    let Selection::ConditionFailed(e) = &run.workflows().next().unwrap().selection else {
+        panic!("w's condition fails: {run:?}");
+    };
+    assert!(m.errors().is_empty(), "{:?}", m.errors());
+    assert_eq!(lines(&trace), [line("w", None, StepResult::Skipped, None)]);
+    let [record] = &trace.steps[0].errors[..] else {
+        panic!("the failure is kept: {:?}", trace.steps[0]);
+    };
+    assert_eq!(
+        (record.code.as_str(), record.message.as_str()),
+        (e.code(), e.message())
+    );
+    assert_eq!(record.workflow_id.as_deref(), Some("w"));
+    assert_eq!(record.task_id, None);
+    let wire = Json::from_text(&text(&trace.steps[0])).unwrap();
+    assert_eq!(wire.pointer("/errors/0/code"), Some(&Json::str(e.code())));
+}
+
+#[tokio::test]
+async fn a_step_with_no_records_writes_no_errors_key() {
+    let e = engine(&[workflow(
+        "w",
+        vec![
+            map("m", "data.a", json!(1)),
+            with(
+                put("boom", json!({}), json!("err")),
+                &[("on_failure", json!("continue"))],
+            ),
+        ],
+        &[],
+    )]);
+    let (_, trace) = trace_of(&e, &mut message(json!({})), TraceOptions::default()).await;
+    let quiet = text(&trace.steps[0]);
+    assert!(trace.steps[0].errors.is_empty());
+    assert!(!quiet.contains("\"errors\""), "{quiet}");
+    let failed = text(&trace.steps[1]);
+    assert!(
+        failed.contains(r#""errors":[{"code":"PARTNER_DOWN""#),
+        "{failed}"
+    );
+    // Both read back as written: a missing key is no records.
+    for wire in [quiet, failed] {
+        let back: TraceStep = serde_json::from_str(&wire).unwrap();
+        assert_eq!(text(&back), wire);
+    }
+}
+
+/// `context` with the two stamps that differ between two runs, and
+/// `metadata.progress`, which no mapping writes, taken out.
+fn unstamped(mut context: Value) -> Value {
+    if let Some(metadata) = context.get_mut("metadata").and_then(Value::as_object_mut) {
+        for key in ["processed_at", "engine_version", "progress"] {
+            metadata.remove(key);
+        }
+    }
+    context
+}
+
+#[tokio::test]
+async fn mapping_ends_split_a_maps_changes_by_mapping() {
+    let workflows = [workflow(
+        "w",
+        vec![
+            json!({"id": "m", "function": {"name": "map", "input": {"mappings": [
+                // A plain write: one change.
+                {"path": "data.a", "logic": 1},
+                // A `null` result, skipped: none.
+                {"path": "data.b", "logic": {"var": "data.missing"}},
+                // An append creating its array: the trace's `[]`, then the
+                // element (I115).
+                {"path": "data.list", "logic": 7, "mode": "append"},
+                // A root, merged with two keys: one change, at the root.
+                {"path": "data", "logic": {"x": 1, "y": 2}},
+            ]}}}),
+        ],
+        &[],
+    )];
+    let seed = json!({"seed": true});
+    let mut m = message(seed.clone());
+    let (_, trace) = trace_of(&engine(&workflows), &mut m, TraceOptions::default()).await;
+    let step = &trace.steps[0];
+    assert_eq!(step.mapping_ends, [1, 1, 3, 4]);
+    assert_eq!(
+        paths(step),
+        [
+            "data.a",
+            "data.list",
+            "data.list.0",
+            "data",
+            "metadata.progress"
+        ]
+    );
+    // The changes after the last mapping's end are the engine's.
+    assert_eq!(
+        paths(step)[step.mapping_ends[3] as usize..],
+        ["metadata.progress"]
+    );
+
+    // v3's context before each mapping, and its snapshot after the task.
+    let v3 = v3_engine(&workflows).unwrap();
+    let mut v3_message = dataflow_rs_v3::Message::builder()
+        .id("m")
+        .data_json(&seed)
+        .build();
+    let v3_trace = v3
+        .process_message_with_trace_options(
+            &mut v3_message,
+            dataflow_rs_v3::TraceOptions::default(),
+        )
+        .await
+        .unwrap();
+    let v3_step = &v3_trace.steps[0];
+    let before: Vec<Value> = v3_step
+        .mapping_contexts
+        .clone()
+        .expect("v3 keeps a map's contexts")
+        .into_iter()
+        .map(unstamped)
+        .collect();
+    assert_eq!(before.len(), 4);
+
+    // The context replayed from `initial` through `changes[..end]`.
+    let replayed = |end: usize| -> Value {
+        let mut prefix = trace.clone();
+        prefix.steps.truncate(1);
+        prefix.steps[0].changes.truncate(end);
+        let context = prefix.contexts().last().expect("one step");
+        unstamped(serde_json::from_str(&text(&context)).unwrap())
+    };
+    let ends: Vec<usize> = step.mapping_ends.iter().map(|&e| e as usize).collect();
+    // Before mapping `i` is after mapping `i - 1`: `ends[i - 1]`, with
+    // `ends[-1]` 0.
+    for (i, v3_before) in before.iter().enumerate() {
+        let end = if i == 0 { 0 } else { ends[i - 1] };
+        assert_eq!(&replayed(end), v3_before, "before mapping {i}");
+    }
+    // After the last mapping, v3's snapshot less the progress write.
+    let snapshot = serde_json::to_value(v3_step.message.as_ref().expect("a snapshot")).unwrap();
+    assert_eq!(
+        replayed(ends[3]),
+        unstamped(snapshot["context"].clone()),
+        "after the last mapping"
+    );
+    assert_replays(&trace, &m);
+
+    // The audit entry and the wire shape of the changes are as before: the
+    // audit holds v3's rows, without the trace's `[]`.
+    assert_eq!(
+        paths_of(&m),
+        [vec!["data.a", "data.list.0", "data"]],
+        "the audit entry"
+    );
+}
+
+#[tokio::test]
+async fn a_trace_without_changes_has_no_mapping_ends() {
+    let big = "x".repeat(2000);
+    let mapped = |id: &str, value: &Value| {
+        json!({"id": id, "function": {"name": "map", "input": {"mappings": [
+            {"path": format!("data.{id}"), "logic": value},
+            {"path": format!("data.{id}_2"), "logic": 1},
+        ]}}})
+    };
+    let e = engine(&[workflow(
+        "w",
+        vec![mapped("a", &json!(1)), mapped("b", &json!(big))],
+        &[],
+    )]);
+    let ends = |trace: &Trace| -> Vec<Vec<u32>> {
+        trace.steps.iter().map(|s| s.mapping_ends.clone()).collect()
+    };
+    let (_, whole) = trace_of(&e, &mut message(json!({})), TraceOptions::default()).await;
+    assert_eq!(ends(&whole), [vec![1, 2], vec![1, 2]]);
+
+    // A trace that records no changes: no ends, and no key.
+    let (_, profiled) = trace_of(
+        &e,
+        &mut message(json!({})),
+        TraceOptions::default().changes(false),
+    )
+    .await;
+    assert_eq!(ends(&profiled), [Vec::<u32>::new(), vec![]]);
+    assert!(!text(&profiled).contains("mapping_ends"));
+
+    // Past the byte budget a step keeps no changes, so no ends either.
+    let (_, cut) = trace_of(
+        &e,
+        &mut message(json!({})),
+        TraceOptions::default().max_bytes(1000),
+    )
+    .await;
+    assert!(cut.truncated);
+    assert_eq!(ends(&cut), [vec![1, 2], vec![]]);
+    assert!(cut.steps[1].changes.is_empty());
 }

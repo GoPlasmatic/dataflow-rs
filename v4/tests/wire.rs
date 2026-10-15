@@ -320,8 +320,12 @@ async fn a_trace_reads_back_and_replays_the_same() {
     assert!(
         steps
             .iter()
-            .any(|s| s.result == StepResult::Executed && s.error.is_some()),
+            .any(|s| s.result == StepResult::Executed && !s.errors.is_empty()),
         "a failure stepped past"
+    );
+    assert!(
+        steps.iter().any(|s| s.mapping_ends == [1, 2]),
+        "a map's mapping ends"
     );
     assert!(
         steps.iter().any(|s| s.result == StepResult::Failed),

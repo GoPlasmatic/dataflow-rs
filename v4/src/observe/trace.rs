@@ -164,7 +164,7 @@ fn apply(root: &mut OwnedDataValue, change: &Change) {
 pub enum StepResult {
     /// A call ran, or the engine wrote, and the run went on: a failure its
     /// task's `on_failure: continue` or `halt` stepped past included, with
-    /// its status and error.
+    /// its status and its records.
     Executed,
     /// A condition or a rollout refused the task, the group's tasks or the
     /// workflow.
@@ -176,10 +176,11 @@ pub enum StepResult {
 
 /// One step of a [`Trace`].
 ///
-/// Serialized with its keys in field order; `elapsed` as whole microseconds
-/// under `elapsed_us`, and it, `error`, `loop_counter` and `element_index`
-/// only when present. Read back from what it writes, so `elapsed` reads as
-/// the whole microseconds written.
+/// Serialized with its keys in field order; `mapping_ends` and `errors` only
+/// when not empty; `elapsed` as whole microseconds under `elapsed_us`, and
+/// it, `loop_counter` and `element_index` only when present. Read back from
+/// what it writes, so `elapsed` reads as the whole microseconds written, and
+/// a missing `mapping_ends` or `errors` as empty.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TraceStep {
@@ -203,10 +204,21 @@ pub struct TraceStep {
     /// write, then the error context's. Empty past the byte budget and when
     /// the trace records none.
     pub changes: Vec<Change>,
-    /// The recorder's error record for the call, or the workflow's own
-    /// failure, or the error its condition failed with.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ErrorRecord>,
+    /// Where each of a `map`'s mappings ends in `changes` (I127): one entry
+    /// per mapping, in order, the index just past its last change, so
+    /// mapping `i`'s changes are `changes[ends[i - 1]..ends[i]]`, from 0 for
+    /// the first. A mapping that wrote nothing repeats the end before it.
+    /// Replaying `changes[..ends[i]]` gives the context after mapping `i`.
+    /// Empty for every other step, and whenever `changes` is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mapping_ends: Vec<u32>,
+    /// Every record the step added to the message, in the message's order
+    /// (I127): the call's own, then the recorder's (I96); for a workflow's
+    /// own failure, its record. A workflow whose condition failed to
+    /// evaluate (R34) adds none, and its `Skipped` step holds that failure's
+    /// record, which the message never gets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<ErrorRecord>,
     /// How long the call ran, when the trace asked for timings.
     #[serde(
         rename = "elapsed_us",
@@ -237,7 +249,8 @@ impl TraceStep {
             result,
             status: None,
             changes: Vec::new(),
-            error: None,
+            mapping_ends: Vec::new(),
+            errors: Vec::new(),
             elapsed: None,
             loop_counter: None,
             element_index: None,

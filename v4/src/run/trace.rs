@@ -1,6 +1,6 @@
 //! The trace as a run builds it (I105): [`Capture`], which redacts and
 //! charges `initial` and each step's changes, and drops the changes past the
-//! byte budget.
+//! byte budget, a `map` step's mapping ends with them (I127).
 //!
 //! Redaction is v3's pruning rule (`redacting_clone`), over a [`Path`]'s
 //! segments: on an object a segment is its key (one leading `#` stripped),
@@ -37,6 +37,10 @@ pub(crate) struct Capture {
     /// call's own: a fan-out's `into` pre-fill, which its first element's
     /// step takes. Filled only while the trace keeps changes.
     prelude: Vec<Change>,
+    /// Where each mapping of the `map` call running ends in its changes,
+    /// lent to the call while the trace keeps changes (I127), and moved
+    /// onto its step by the recorder.
+    mapping_ends: Vec<u32>,
 }
 
 impl Capture {
@@ -56,6 +60,7 @@ impl Capture {
             truncated,
             initial: Context::from_root(initial),
             prelude: Vec::new(),
+            mapping_ends: Vec::new(),
         }
     }
 
@@ -67,6 +72,27 @@ impl Capture {
     /// The engine's writes kept for this step, taken.
     pub(crate) fn take_prelude(&mut self) -> Vec<Change> {
         std::mem::take(&mut self.prelude)
+    }
+
+    /// The mapping ends a `map` call notes, lent to it: each an index into
+    /// the call's own changes.
+    pub(crate) fn mapping_ends(&mut self) -> &mut Vec<u32> {
+        &mut self.mapping_ends
+    }
+
+    /// The mapping ends the call noted, taken, each moved past the
+    /// `offset` changes its step carries before the call's own (the
+    /// prelude). Empty, and allocating nothing, for any call but a traced
+    /// `map`.
+    pub(crate) fn take_mapping_ends(&mut self, offset: usize) -> Vec<u32> {
+        let mut ends = std::mem::take(&mut self.mapping_ends);
+        if offset > 0 {
+            let offset = u32::try_from(offset).unwrap_or(u32::MAX);
+            for end in &mut ends {
+                *end = end.saturating_add(offset);
+            }
+        }
+        ends
     }
 
     /// Whether a step's changes are kept: the trace records changes and is
@@ -84,10 +110,12 @@ impl Capture {
     /// Pushes `step`: its changes redacted and, under a byte budget,
     /// charged after the redaction, or dropped when the trace keeps none or
     /// they would cross the budget, which truncates the trace from this step
-    /// on. Without a budget nothing is sized (A M-6).
+    /// on. Its mapping ends go with its changes: they index nothing once
+    /// those are dropped. Without a budget nothing is sized (A M-6).
     pub(crate) fn push(&mut self, mut step: TraceStep) {
         if !self.changes() {
             step.changes.clear();
+            step.mapping_ends.clear();
         } else if !step.changes.is_empty() {
             for change in &mut step.changes {
                 self.redact(change);
@@ -101,6 +129,7 @@ impl Capture {
                 if total > max {
                     self.truncated = true;
                     step.changes.clear();
+                    step.mapping_ends.clear();
                 } else {
                     self.bytes = total;
                 }

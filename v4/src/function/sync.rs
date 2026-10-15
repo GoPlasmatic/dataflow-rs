@@ -47,6 +47,10 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     /// Set by a built-in that recorded a change the trace alone keeps, so
     /// the recorder makes the audit's copy without it, and only then.
     pub(crate) marked: bool,
+    /// Where `map` notes each mapping's end in `changes` (I127), lent by the
+    /// trace only while it keeps changes; `None` otherwise, so a run that
+    /// is not traced notes nothing.
+    pub(crate) mapping_ends: Option<&'c mut Vec<u32>>,
     /// The message's error list.
     pub(crate) errors: &'c mut Vec<ErrorRecord>,
     /// The run's clock reading, RFC 3339, for error records.
@@ -186,6 +190,7 @@ mod tests {
             traced: false,
             changes: &mut changes,
             marked: false,
+            mapping_ends: None,
             errors: &mut errors,
             now: NOW,
         });

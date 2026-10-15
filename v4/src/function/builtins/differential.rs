@@ -233,6 +233,7 @@ impl V4Task {
             traced: false,
             changes,
             marked: false,
+            mapping_ends: None,
             errors: &mut *errors,
             now: NOW,
         });

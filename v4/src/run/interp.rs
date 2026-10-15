@@ -426,18 +426,21 @@ fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
 }
 
 /// The workflow's own `Skipped` step, for a condition that refused it on
-/// its first judgment: with the error it failed with, and the workflow's id,
-/// when it failed to evaluate (R34).
+/// its first judgment: when it failed to evaluate (R34), with the record of
+/// the error it failed with and the workflow's id. The message never gets
+/// that record, so the step's is the only one (I127).
 fn skipped_workflow(env: &mut RunEnv<'_, '_>, error: Option<&Error>) {
     if env.watch.trace.is_none() {
         return;
     }
     let mut step = env.workflow_step(StepResult::Skipped);
-    step.error = error.map(|e| {
+    if let Some(e) = error {
+        #[cfg(test)]
+        super::record::traced_work();
         let mut record = ErrorRecord::from(e);
         record.workflow_id = Some(env.workflow_id.to_string());
-        record
-    });
+        step.errors.push(record);
+    }
     env.push_step(step);
 }
 
@@ -669,6 +672,12 @@ fn call<'p>(
     } else {
         (false, None)
     };
+    // Lent only to a call whose trace keeps changes (I127).
+    let mapping_ends = if traced {
+        env.watch.trace.as_deref_mut().map(Capture::mapping_ends)
+    } else {
+        None
+    };
     let mut cx = SyncCtx {
         rc: &mut *rc,
         exprs: env.exprs,
@@ -679,6 +688,7 @@ fn call<'p>(
         traced,
         changes: &mut env.changes,
         marked: false,
+        mapping_ends,
         errors: &mut *env.errors,
         now: env.now_text,
     };

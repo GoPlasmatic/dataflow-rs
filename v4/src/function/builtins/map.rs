@@ -157,7 +157,9 @@ impl Mapping {
 impl SyncFunction for MapConfig {
     /// Each mapping in order, each against the view as the ones before it
     /// left it. A failing mapping is logged and the rest still run; the call
-    /// is then `Status(500)`, as v3's.
+    /// is then `Status(500)`, as v3's. Under a trace that keeps changes,
+    /// each mapping's end in the changes is noted, a failing one's included
+    /// (I127).
     fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let mut failed = false;
         // Most mappings record one change: sized once, as v3's
@@ -168,15 +170,20 @@ impl SyncFunction for MapConfig {
         for mapping in &self.mappings {
             let (exprs, capture, traced) = (cx.exprs, cx.capture, cx.traced);
             let (changes, marked) = (&mut *cx.changes, &mut cx.marked);
+            let ends = cx.mapping_ends.as_deref_mut();
             failed |= !cx.rc.edit(|e| {
-                mapping.apply(&mut Writer {
+                let mut w = Writer {
                     e,
                     exprs,
                     capture,
                     traced,
                     changes,
                     marked,
-                })
+                    ends,
+                };
+                let applied = mapping.apply(&mut w);
+                w.end();
+                applied
             });
         }
         Ok(if failed {
@@ -201,6 +208,9 @@ struct Writer<'w, 'e, 'q, 'p> {
     changes: &'w mut Vec<Change>,
     /// Set once such a change is recorded ([`SyncCtx::marked`]).
     marked: &'w mut bool,
+    /// Where the mapping's end is noted, under a trace that keeps changes
+    /// ([`SyncCtx::mapping_ends`]).
+    ends: Option<&'w mut Vec<u32>>,
 }
 
 /// A mapping's result: its view, and the folded constant it came from.
@@ -306,6 +316,17 @@ impl Mapping {
 }
 
 impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
+    /// Notes where the mapping's changes end, when the trace lent a list
+    /// for it: the count of the call's changes so far, which a mapping that
+    /// wrote nothing leaves where the one before it did.
+    fn end(&mut self) {
+        if let Some(ends) = self.ends.as_deref_mut() {
+            #[cfg(test)]
+            crate::run::traced_work();
+            ends.push(u32::try_from(self.changes.len()).unwrap_or(u32::MAX));
+        }
+    }
+
     /// Writes `result` at `path`: a root merges, anything else is assigned.
     /// The change is recorded first, with the old value read from the view;
     /// under capture the mark keeps the owned new value (I7).
