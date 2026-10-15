@@ -5,7 +5,9 @@
 use crate::observe::{Event, Interest, Observer};
 
 /// The attached observers, their interests read once, and the union.
-#[derive(Clone, Copy)]
+///
+/// Not `Copy`: `run_with` moves it into its `Watch`, so the run's future
+/// holds one.
 pub(crate) struct Observers<'r> {
     /// The engine's, then the run's.
     slots: [Option<(&'r dyn Observer, Interest)>; 2],

@@ -3,7 +3,7 @@
 use super::builder::EngineBuilder;
 use super::cancel::Limits;
 use super::error_context::ErrorContext;
-use super::interp::{Exit, Frame, RunEnv, run_workflow};
+use super::interp::{Exit, Frame, RunEnv, Watch, run_workflow};
 use super::message::{Message, finish_audit, keeps_entries};
 use super::observers::Observers;
 use super::options::RunOptions;
@@ -165,8 +165,18 @@ impl Engine {
     /// workflow and sweep, the step that stopped the run included.
     pub async fn run_with(&self, msg: &mut Message, opts: &RunOptions<'_>) -> Run {
         let program = &self.inner.program;
-        let observers = Observers::attach(self.inner.config.observer.as_deref(), opts.observer);
-        let started = observers.timed().then(record::now);
+        // Built in a block: a local the run borrowed would stay in its
+        // future beside the `Watch` it moved into.
+        let mut watch = {
+            let observers = Observers::attach(self.inner.config.observer.as_deref(), opts.observer);
+            Watch {
+                timed: observers.timed(),
+                observers,
+                trace: None,
+                error_context: self.inner.config.error_context.as_ref(),
+            }
+        };
+        let started = watch.observers.timed().then(record::now);
         let now = Utc::now();
         let now_text = now.to_rfc3339();
         let parts = msg.parts();
@@ -177,17 +187,15 @@ impl Engine {
             ec.reset(parts.context);
         }
         // `initial` is the context as the stamps and the reset left it.
-        // Boxed: the run's future, which a host spawns once per message,
-        // carries a pointer.
-        let mut trace = opts
-            .trace
-            .as_ref()
-            .map(|t| Box::new(Capture::new(t.clone(), parts.context)));
-        let timed = observers.timed() || trace.as_ref().is_some_and(|t| t.timings());
+        if let Some(options) = &opts.trace {
+            let trace = Capture::new(options.clone(), parts.context);
+            watch.timed |= trace.timings();
+            watch.trace = Some(Box::new(trace));
+        }
 
         let mut rc = RunContext::new(parts.context, Tuning::default());
         let active = program.active(opts.channel);
-        observers.emit(Event::RunStarted {
+        watch.observers.emit(Event::RunStarted {
             program: program.id(),
             message_id: parts.id,
             channel: opts.channel,
@@ -197,105 +205,103 @@ impl Engine {
         // an entry for them (I67).
         let capture_audit = opts.capture_changes && keeps_entries(opts.audit);
         let mut records = Vec::with_capacity(active.len());
-        // How the run ended, once a workflow stopped it.
-        let mut stopped = None;
-        let limits = Limits {
-            deadline: opts.deadline,
-            cancel: opts.cancel,
-        };
         // Every 64th op of the run checks the limits, across workflows.
         let mut ops = 0;
-        for &ix in active {
-            let wf = program.compiled(ix);
-            if let (Some(rollout), Some(bucket)) = (wf.rollout, opts.routing_bucket)
-                && !rollout.accepts(bucket)
-            {
-                if let Some(trace) = trace.as_deref_mut() {
-                    let (workflow_id, _) = program.ids(ix);
-                    trace.push(TraceStep::new(ix, workflow_id, StepResult::Skipped));
+        // How the run ended, once a workflow stopped it: the loop's value,
+        // so the run's future holds no status across its workflows.
+        let stopped = 'run: {
+            for &ix in active {
+                let wf = program.compiled(ix);
+                if let (Some(rollout), Some(bucket)) = (wf.rollout, opts.routing_bucket)
+                    && !rollout.accepts(bucket)
+                {
+                    if let Some(trace) = watch.trace.as_deref_mut() {
+                        let (workflow_id, _) = program.ids(ix);
+                        trace.push(TraceStep::new(ix, workflow_id, StepResult::Skipped));
+                    }
+                    records.push(Record {
+                        ix,
+                        selection: Selection::SkippedByRollout,
+                        sweeps: 0,
+                        exit: None,
+                    });
+                    continue;
                 }
-                records.push(Record {
-                    ix,
-                    selection: Selection::SkippedByRollout,
-                    sweeps: 0,
-                    exit: None,
-                });
-                continue;
-            }
-            let (workflow_id, task_ids) = program.ids(ix);
-            let mut env = RunEnv {
-                program: program.id(),
-                workflow_ix: ix,
-                task_base: program.task_base(ix),
-                channel: opts.channel,
-                layers: opts.layers,
-                limits,
-                ops,
-                exprs: program.registry().exprs(),
-                payload: parts.payload,
-                errors: &mut *parts.errors,
-                audit: &mut *parts.audit,
-                mode: opts.audit,
-                capture: capture_audit || trace.as_ref().is_some_and(|t| t.changes()),
-                capture_audit,
-                observers,
-                timed,
-                trace: trace.as_deref_mut(),
-                error_context: self.inner.config.error_context.as_ref(),
-                now,
-                now_text: &now_text,
-                trace_prelude: Vec::new(),
-                changes: Vec::new(),
-                workflow_id,
-                task_ids,
-                failed: false,
-                frame: Frame::default(),
-            };
-            let (exit, selection) = run_workflow(&mut rc, wf, &mut env).await;
-            ops = env.ops;
-            let ran = matches!(selection, Selection::Ran);
-            let (exit, stop) = match exit {
-                Exit::Completed => (WorkflowExit::Completed, None),
-                Exit::Halted => (WorkflowExit::Halted, None),
-                Exit::Failed => (WorkflowExit::Failed, None),
-                Exit::Stopped(e) => (WorkflowExit::Stopped, Some(RunStatus::Stopped(e))),
-                // Only the run's own limits make it `TimedOut` or
-                // `Cancelled`: a task's `Err` of either kind, a child run's
-                // propagated, stops it as any failure does.
-                Exit::Limited(e) => {
-                    let status = if *e.kind() == ErrorKind::Cancelled {
-                        RunStatus::Cancelled
-                    } else {
-                        RunStatus::TimedOut
-                    };
-                    (WorkflowExit::Stopped, Some(status))
-                }
-            };
-            let considered = Record {
-                ix,
-                selection,
-                sweeps: env.frame.sweeps,
-                exit: ran.then_some(exit),
-            };
-            if ran && observers.workflows() {
-                let view = WorkflowRecord {
-                    id: workflow_id,
-                    index: ix,
-                    selection: &considered.selection,
-                    sweeps: considered.sweeps,
-                    exit: considered.exit,
+                let (workflow_id, task_ids) = program.ids(ix);
+                let mut env = RunEnv {
+                    program: program.id(),
+                    workflow_ix: ix,
+                    task_base: program.task_base(ix),
+                    channel: opts.channel,
+                    layers: opts.layers,
+                    limits: Limits {
+                        deadline: opts.deadline,
+                        cancel: opts.cancel,
+                    },
+                    ops,
+                    exprs: program.registry().exprs(),
+                    payload: parts.payload,
+                    errors: &mut *parts.errors,
+                    audit: &mut *parts.audit,
+                    mode: opts.audit,
+                    capture: capture_audit || watch.trace.as_ref().is_some_and(|t| t.changes()),
+                    capture_audit,
+                    watch: &mut watch,
+                    now,
+                    now_text: &now_text,
+                    changes: Vec::new(),
+                    workflow_id,
+                    task_ids,
+                    failed: false,
+                    frame: Frame::default(),
                 };
-                observers.emit(Event::WorkflowFinished {
-                    record: &view,
-                    elapsed: env.frame.started.map(record::since),
-                });
+                let (exit, selection) = run_workflow(&mut rc, wf, &mut env).await;
+                ops = env.ops;
+                let ran = matches!(selection, Selection::Ran);
+                let (exit, stop) = match exit {
+                    Exit::Completed => (WorkflowExit::Completed, None),
+                    Exit::Halted => (WorkflowExit::Halted, None),
+                    Exit::Failed => (WorkflowExit::Failed, None),
+                    Exit::Stopped(e) => (WorkflowExit::Stopped, Some(RunStatus::Stopped(e))),
+                    // Only the run's own limits make it `TimedOut` or
+                    // `Cancelled`: a task's `Err` of either kind, a child run's
+                    // propagated, stops it as any failure does.
+                    Exit::Limited(e) => {
+                        let status = if *e.kind() == ErrorKind::Cancelled {
+                            RunStatus::Cancelled
+                        } else {
+                            RunStatus::TimedOut
+                        };
+                        (WorkflowExit::Stopped, Some(status))
+                    }
+                };
+                let considered = Record {
+                    ix,
+                    selection,
+                    sweeps: env.frame.sweeps,
+                    exit: ran.then_some(exit),
+                };
+                let workflow_started = env.frame.started;
+                if ran && watch.observers.workflows() {
+                    let view = WorkflowRecord {
+                        id: workflow_id,
+                        index: ix,
+                        selection: &considered.selection,
+                        sweeps: considered.sweeps,
+                        exit: considered.exit,
+                    };
+                    watch.observers.emit(Event::WorkflowFinished {
+                        record: &view,
+                        elapsed: workflow_started.map(record::since),
+                    });
+                }
+                records.push(considered);
+                if let Some(status) = stop {
+                    break 'run Some(status);
+                }
             }
-            records.push(considered);
-            if let Some(status) = stop {
-                stopped = Some(status);
-                break;
-            }
-        }
+            None
+        };
         let stats = rc.finish();
         finish_audit(parts.audit, opts.audit);
         let status = match stopped {
@@ -303,7 +309,7 @@ impl Engine {
             None if !parts.errors.is_empty() => RunStatus::CompletedWithErrors,
             None => RunStatus::Completed,
         };
-        observers.emit(Event::RunFinished {
+        watch.observers.emit(Event::RunFinished {
             status: &status,
             errors: parts.errors.len(),
             elapsed: started.map(record::since),
@@ -313,7 +319,7 @@ impl Engine {
             status,
             records,
             stats,
-            trace.map(|t| t.finish()),
+            watch.trace.map(|t| t.finish()),
         )
     }
 

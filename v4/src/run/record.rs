@@ -12,7 +12,7 @@
 //! records once per element it folds.
 //!
 //! The trace's step carries, while the trace keeps changes, the engine's
-//! writes made for it (`RunEnv::trace_prelude`), the call's changes, the
+//! writes made for it (the capture's prelude), the call's changes, the
 //! progress write's `Change` and the error context's; the audit entry
 //! carries the call's changes alone, and only under `capture_audit` (I107),
 //! so the engine's writes never reach it.
@@ -136,10 +136,9 @@ pub(crate) fn record<'p>(
     // made for it first, then the call's, then the progress write, then the
     // error-context write.
     let traced = env.traces_changes();
-    let mut changes = if traced {
-        std::mem::take(&mut env.trace_prelude)
-    } else {
-        Vec::new()
+    let mut changes = match env.watch.trace.as_deref_mut() {
+        Some(trace) if traced => trace.take_prelude(),
+        _ => Vec::new(),
     };
     let mut error = None;
     if let Some(status) = status {
@@ -180,14 +179,14 @@ pub(crate) fn record<'p>(
             let (workflow, task) = (&**ids.workflow, &**ids.task);
             let mut record = task_record(&code, message, workflow, task, env.now_text);
             record.element_index = stamp.element_index;
-            if env.trace.is_some() {
+            if env.watch.trace.is_some() {
                 error = Some(record.clone());
             }
             env.errors.push(record);
         }
         // Every record the call added, its own and the recorder's (I96,
         // I108).
-        if let Some(ec) = env.error_context
+        if let Some(ec) = env.watch.error_context
             && let Some(change) = ec.mirror(
                 rc,
                 &env.errors[errors_before..],
@@ -204,8 +203,7 @@ pub(crate) fn record<'p>(
         changes.append(&mut env.changes);
     }
     env.changes.clear();
-    env.trace_prelude.clear();
-    if let Some(trace) = env.trace.as_deref() {
+    if let Some(trace) = env.watch.trace.as_deref() {
         let timings = trace.timings();
         let mut step = env.task_step(
             task,
@@ -223,7 +221,7 @@ pub(crate) fn record<'p>(
         step.element_index = stamp.element_index;
         env.push_step(step);
     }
-    if env.observers.tasks() {
+    if env.watch.observers.tasks() {
         let meta = &wf.tasks[task as usize];
         let info = CallInfo {
             program: env.program,
@@ -236,7 +234,7 @@ pub(crate) fn record<'p>(
             loop_counter: stamp.loop_counter,
             element_index: stamp.element_index,
         };
-        env.observers.emit(Event::TaskFinished {
+        env.watch.observers.emit(Event::TaskFinished {
             info: &info,
             status,
             elapsed,
@@ -253,7 +251,7 @@ pub(crate) fn workflow_failure(env: &mut RunEnv<'_, '_>, error: &Error) {
     let mut record = ErrorRecord::from(error);
     record.workflow_id = Some(env.workflow_id.to_string());
     record.timestamp = Some(env.now_text.to_owned());
-    if env.trace.is_some() {
+    if env.watch.trace.is_some() {
         let mut step = env.workflow_step(StepResult::Failed);
         step.error = Some(record.clone());
         env.push_step(step);

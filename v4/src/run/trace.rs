@@ -29,6 +29,10 @@ pub(crate) struct Capture {
     bytes: usize,
     truncated: bool,
     initial: Context,
+    /// The engine's writes made for the next recorded step, before its
+    /// call's own: a fan-out's `into` pre-fill, which its first element's
+    /// step takes. Filled only while the trace keeps changes.
+    prelude: Vec<Change>,
 }
 
 impl Capture {
@@ -45,7 +49,18 @@ impl Capture {
             bytes,
             truncated,
             initial: Context::from_root(initial),
+            prelude: Vec::new(),
         }
+    }
+
+    /// Keeps `change` for the next recorded step, before its call's own.
+    pub(crate) fn push_prelude(&mut self, change: Change) {
+        self.prelude.push(change);
+    }
+
+    /// The engine's writes kept for this step, taken.
+    pub(crate) fn take_prelude(&mut self) -> Vec<Change> {
+        std::mem::take(&mut self.prelude)
     }
 
     /// Whether a step's changes are kept: the trace records changes and is

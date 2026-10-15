@@ -162,7 +162,7 @@ pub(crate) async fn fan_out<'p>(
         // fails it.
         no_calls => {
             let errors_before = env.errors.len();
-            let started = env.timed.then(record::now);
+            let started = env.watch.timed.then(record::now);
             let result = no_calls.map(|_| {
                 if let Some(into) = &fan.into {
                     rc.set(into, OwnedDataValue::Array(Vec::new()), None);
@@ -212,7 +212,13 @@ pub(crate) async fn fan_out<'p>(
                     break;
                 };
                 in_flight.push(call_element(
-                    start, fan, index, item, bound, layers, env.timed,
+                    start,
+                    fan,
+                    index,
+                    item,
+                    bound,
+                    layers,
+                    env.watch.timed,
                 ));
             }
             let Some((index, invoked)) = in_flight.next().await else {
@@ -262,8 +268,8 @@ pub(crate) async fn fan_out<'p>(
     // audit, and in a trace that keeps changes the first change of the first
     // folded element's step.
     if let Some(into) = &fan.into {
-        if env.traces_changes() {
-            env.trace_prelude.push(Change::write(
+        if let Some(trace) = env.watch.trace.as_deref_mut().filter(|t| t.changes()) {
+            trace.push_prelude(Change::write(
                 Arc::clone(into.dotted()),
                 old_value(rc, into),
                 OwnedDataValue::Array(vec![OwnedDataValue::Null; n]),

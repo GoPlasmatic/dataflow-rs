@@ -193,12 +193,7 @@ pub(crate) async fn call_host<'p>(
     site: &'p CallSite,
     bound: &'p dyn BoundCall,
 ) -> Flow {
-    let ids = TaskIds {
-        workflow: env.workflow_id,
-        task: &env.task_ids[site.task as usize],
-    };
-    let errors_before = env.errors.len();
-    let started = env.timed.then(record::now);
+    let started = env.watch.timed.then(record::now);
     let Invoked {
         result,
         overlay,
@@ -212,6 +207,13 @@ pub(crate) async fn call_host<'p>(
         invoke(start, bound, layers, None).await
     };
     let elapsed = started.map(record::since);
+    // Read after the call, so the run's future keeps neither across its
+    // `.await`: nothing pushes to the message's records while it runs.
+    let ids = TaskIds {
+        workflow: env.workflow_id,
+        task: &env.task_ids[site.task as usize],
+    };
+    let errors_before = env.errors.len();
     if result.is_ok() {
         overlay.apply(rc);
         env.changes = changes;

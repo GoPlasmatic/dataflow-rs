@@ -139,24 +139,12 @@ pub(crate) struct RunEnv<'r, 'p> {
     /// Whether the audit entry gets the call's `Change`s: change capture is
     /// on and the mode keeps entries (I67, I107).
     pub(crate) capture_audit: bool,
-    /// The run's observers.
-    pub(crate) observers: Observers<'r>,
-    /// Whether the run reads the clock for elapsed times: an observer asked
-    /// for `TIMINGS`, or the trace for timings.
-    pub(crate) timed: bool,
-    /// The run's trace, when it is traced.
-    pub(crate) trace: Option<&'r mut Capture>,
-    /// Where the recorder mirrors each call's records, when the engine has
-    /// an error context.
-    pub(crate) error_context: Option<&'r ErrorContext>,
+    /// What the run reports beyond the message, held by `run_with`.
+    pub(crate) watch: &'r mut Watch<'p>,
     /// The run's one clock reading.
     pub(crate) now: DateTime<Utc>,
     /// The same reading, RFC 3339, for error records.
     pub(crate) now_text: &'r str,
-    /// The engine's writes made for the next recorded step, before its
-    /// call's own: a fan-out's `into` pre-fill, which its first element's
-    /// step takes. Filled only while the trace keeps changes.
-    pub(crate) trace_prelude: Vec<Change>,
     /// The changes of the call running, read by the recorder.
     pub(crate) changes: Vec<Change>,
     /// The current workflow's id.
@@ -167,6 +155,24 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) failed: bool,
     /// The current workflow's loop frame.
     pub(crate) frame: Frame,
+}
+
+/// What a run reports beyond the message, which the interpreter reads
+/// rarely: its observers, its trace and its error context, and whether it
+/// reads the clock. One per run, held by `run_with`, so the run's future
+/// carries it once and each workflow's [`RunEnv`] one reference to it.
+pub(crate) struct Watch<'p> {
+    /// The run's observers.
+    pub(crate) observers: Observers<'p>,
+    /// Whether the run reads the clock for elapsed times: an observer asked
+    /// for `TIMINGS`, or the trace for timings.
+    pub(crate) timed: bool,
+    /// The run's trace, when it is traced. Boxed: the run's future carries
+    /// a pointer.
+    pub(crate) trace: Option<Box<Capture>>,
+    /// Where the recorder mirrors each call's records, when the engine has
+    /// an error context.
+    pub(crate) error_context: Option<&'p ErrorContext>,
 }
 
 /// How many ops run between two checks of the limits.
@@ -189,7 +195,7 @@ impl RunEnv<'_, '_> {
     /// Whether the trace keeps changes: only then are the engine's writes
     /// recorded, and their old values read.
     pub(crate) fn traces_changes(&self) -> bool {
-        self.trace.as_ref().is_some_and(|t| t.changes())
+        self.watch.trace.as_ref().is_some_and(|t| t.changes())
     }
 
     /// The current workflow's own step.
@@ -211,7 +217,7 @@ impl RunEnv<'_, '_> {
     /// their changes from then on only while the audit or the trace wants
     /// them: a budget crossed leaves only the audit's.
     pub(crate) fn push_step(&mut self, step: TraceStep) {
-        if let Some(trace) = self.trace.as_deref_mut() {
+        if let Some(trace) = self.watch.trace.as_deref_mut() {
             trace.push(step);
             self.capture = self.capture_audit || trace.changes();
         }
@@ -315,7 +321,7 @@ pub(crate) async fn run_workflow<'p>(
                             }
                         };
                     }
-                } else if !admitted && env.trace.is_some() {
+                } else if !admitted && env.watch.trace.is_some() {
                     skipped_calls(env, wf, kind, pc, else_to);
                 }
                 if admitted {
@@ -389,15 +395,15 @@ fn judged_first(wf: &CompiledWorkflow) -> bool {
 /// The workflow's `WorkflowStarted`, once, and in a timed run the clock
 /// reading its elapsed time starts from.
 fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
-    if std::mem::replace(&mut env.frame.begun, true) || !env.observers.workflows() {
+    if std::mem::replace(&mut env.frame.begun, true) || !env.watch.observers.workflows() {
         return;
     }
     // Only an observer's `TIMINGS` times a workflow: a trace's timings are
     // its calls'.
-    if env.observers.timed() {
+    if env.watch.observers.timed() {
         env.frame.started = Some(record::now());
     }
-    env.observers.emit(Event::WorkflowStarted {
+    env.watch.observers.emit(Event::WorkflowStarted {
         workflow: env.workflow_ix,
         id: &wf.id,
     });
@@ -407,7 +413,7 @@ fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
 /// its first judgment: with the error it failed with, and the workflow's id,
 /// when it failed to evaluate (R34).
 fn skipped_workflow(env: &mut RunEnv<'_, '_>, error: Option<&Error>) {
-    if env.trace.is_none() {
+    if env.watch.trace.is_none() {
         return;
     }
     let mut step = env.workflow_step(StepResult::Skipped);
@@ -569,7 +575,7 @@ fn enter<'p>(
 /// The engine's step for a sweep entered or a loop exited at `counter`,
 /// with its writes' `changes`, when the run is traced.
 fn sweep_step(env: &mut RunEnv<'_, '_>, counter: i64, changes: Vec<Change>) {
-    if env.trace.is_none() {
+    if env.watch.trace.is_none() {
         return;
     }
     let mut step = env.workflow_step(StepResult::Executed);
@@ -636,7 +642,7 @@ fn call<'p>(
         task: &env.task_ids[site.task as usize],
     };
     let errors_before = env.errors.len();
-    let started = env.timed.then(record::now);
+    let started = env.watch.timed.then(record::now);
     let result = builtin.call(&mut SyncCtx {
         rc: &mut *rc,
         exprs: env.exprs,
