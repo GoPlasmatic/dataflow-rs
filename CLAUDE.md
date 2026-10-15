@@ -179,9 +179,10 @@ instead.
 (`dataflow-rs-v4`, library `dataflow_rs_v4`) and `derive/`
 (`dataflow-rs-derive`), with `corpus/v4` (`dataflow-corpus-v4`) as its corpus
 driver, which parses and compiles every corpus definition and holds each to
-v3's issues or to its declared deviation, and runs every built-in and phase-5
-case against v3's recording or a declared `RUN_DEVIATED` row; only a case that
-needs an observer or an error context waits, for phase 6. The reason is 08's
+v3's issues or to its declared deviation, and runs every case it builds
+against v3's recording or a declared `RUN_DEVIATED` row, comparing its
+observer events and replaying its traces (or holding them to a declared
+`TRACE_DEVIATED` row). The reason is 08's
 phase 4 fallback, which ships phases 2 and 3 as a layer over v3: v3's root
 crate must keep building on `main`, with its tests, examples, docs-tests, wasm
 and `corpus/v3`.
@@ -222,8 +223,22 @@ Only the run's own limits end it `TimedOut` or `Cancelled`: a function's own
 when its task's policies stop the run. `function::testing::call(f, input)`
 runs one function through the real compile, overlay and layers. Message ids
 come from a thread-local UUID v7 context: ordered per thread, but not across
-threads within one millisecond. Phase 6 adds observers, the trace, the error
-context and `observed_run`.
+threads within one millisecond.
+
+**v4 observes a run** (phase 6). An `observe::Observer` (`interest()`, read
+once per run, and `on(&Event)`, called inline) is attached for every run
+(`EngineConfig::observer`, an `Arc`) or for one (`RunOptions::observer(&o)`);
+its `Interest` (`WORKFLOWS`, `TASKS`, `TIMINGS`) decides which events it gets
+and whether a clock is read at all. `RunOptions::trace(TraceOptions)` asks for
+a `Trace` (`Run::trace`, `Run::take_trace`): the redacted initial context and
+one `TraceStep` per call, skip, failure and engine write, whose changes replay
+(`Trace::contexts`) to the run's context on every status. `Change::replaced`
+is the trace's alone; an audit entry keeps v3's bytes.
+`EngineConfig::error_context(ErrorContext::new(path, limit)?)` mirrors the
+failure records into the context and resets that path at run start (break
+20); a path at or below the engine's own `metadata` slots is refused. With no
+observer, trace or error context, a call takes the plain recorder: the
+unobserved path pays one branch per call.
 
 v4's own checks, beside the workspace-wide ones above:
 
@@ -247,11 +262,11 @@ worktree with its own target directory: in the repository's `target/`, macOS
 scans each newly linked test binary on its first launch, which can add
 minutes.
 
-**The gate compares v4 with v3** through twelve ports,
-`v4/examples/v4_<name>.rs`: the eight sync benchmarks and phase 5's four
+**The gate compares v4 with v3** through thirteen ports,
+`v4/examples/v4_<name>.rs`: the eight sync benchmarks, phase 5's four
 host-call rows (`async_handler_benchmark`, `large_context_handler`,
-`fan_out`, `orion_connector`). Each keeps its v3 benchmark's workload, startup
-check, `GATE` name and metric names; `observed_run` waits for phase 6:
+`fan_out`, `orion_connector`) and phase 6's `observed_run`. Each keeps its v3
+benchmark's workload, startup check, `GATE` name and metric names:
 
 ```bash
 python3 bench/gate.py build --out /tmp/gate/v3        # v3's examples
@@ -273,7 +288,10 @@ message with one host call, must be not slower; `sync.ratio` and
 (`METRIC_RULES`: `async_handler_benchmark.marginal`,
 `large_context_handler.write_only`). On this machine the 3% noise floor holds
 for one-thread rows only: two copies of one binary read the spawned rows'
-means and p99s up to about 5% apart at five rounds.
+means and p99s up to about 5% apart at five rounds. With the owner's Docker
+stack busy (a load of 4 to 5), the spawned throughputs spread 10 to 18%; read
+the one-thread rows and the instructions retired, and re-run a spawned row at
+seven rounds before calling it WORSE.
 
 ### Release Process
 
@@ -685,14 +703,14 @@ alters what a message ends up as re-records the affected cases and is read
 before it is committed; never edit a `.v3.json` by hand. The comparator is
 order-sensitive, because key order is wire data.
 
-`cargo test --workspace --all-features` should report 1617 passing: the
-engine's 867 plus the corpus's 35 (its case checks are one test each way),
-v4's 703, the derive's 2 and v4's corpus driver's 10.
+`cargo test --workspace --all-features` should report 1716 passing: the
+engine's 867 plus the corpus's 36 (its case checks are one test each way),
+v4's 790, the derive's 2 and v4's corpus driver's 21.
 `cargo test -p dataflow-rs` (default features) should report 753,
-`cargo test -p dataflow-corpus-v3` 3, `cargo test -p dataflow-rs-v4` 691 and
-`cargo test -p dataflow-corpus-v4` 10. The operator families are
+`cargo test -p dataflow-corpus-v3` 3, `cargo test -p dataflow-rs-v4` 771 and
+`cargo test -p dataflow-corpus-v4` 21. The operator families are
 `#[cfg]`-gated on both sides, so the counts legitimately differ: v4 reports
-701 under `--no-default-features --features all-operators`.
+781 under `--no-default-features --features all-operators`.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and
 `with_ops_budget`'s doctest is gated too.
