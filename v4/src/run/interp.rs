@@ -166,8 +166,8 @@ pub(crate) struct RunEnv<'r, 'p> {
 pub(crate) struct Watch<'p> {
     /// The run's observers.
     pub(crate) observers: Observers<'p>,
-    /// Whether the run reads the clock for elapsed times: an observer asked
-    /// for `TIMINGS`, or the trace for timings.
+    /// Whether the run reads the clock around each call: an observer of the
+    /// task events asked for `TIMINGS`, or the trace for timings.
     pub(crate) timed: bool,
     /// The run's trace, when it is traced. Boxed: the run's future carries
     /// a pointer.
@@ -400,9 +400,9 @@ fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
     if std::mem::replace(&mut env.frame.begun, true) || !env.watch.observers.workflows() {
         return;
     }
-    // Only an observer's `TIMINGS` times a workflow: a trace's timings are
-    // its calls'.
-    if env.watch.observers.timed() {
+    // Only an observer of the workflow events with `TIMINGS` times a
+    // workflow: a trace's timings are its calls'.
+    if env.watch.observers.timed_workflows() {
         env.frame.started = Some(record::now());
     }
     env.watch.observers.emit(Event::WorkflowStarted {

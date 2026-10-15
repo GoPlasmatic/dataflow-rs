@@ -1,6 +1,9 @@
 //! The observers attached to one run (I104): the engine's and the run's,
 //! each with its interest read once, and the union of the two, which decides
-//! what the run computes for them, the clock reads included.
+//! what the run computes for them. The clock is read per kind of event: a
+//! call's only for a slot that holds both `TASKS` and `TIMINGS`, a
+//! workflow's only for one that holds `WORKFLOWS` and `TIMINGS`, and the
+//! run's for any `TIMINGS`, which every slot's run events then carry.
 
 use crate::observe::{Event, Interest, Observer};
 
@@ -12,6 +15,10 @@ pub(crate) struct Observers<'r> {
     /// The engine's, then the run's.
     slots: [Option<(&'r dyn Observer, Interest)>; 2],
     union: Interest,
+    /// Some slot holds `TASKS` and `TIMINGS`.
+    timed_tasks: bool,
+    /// Some slot holds `WORKFLOWS` and `TIMINGS`.
+    timed_workflows: bool,
 }
 
 impl<'r> Observers<'r> {
@@ -23,12 +30,34 @@ impl<'r> Observers<'r> {
             .iter()
             .flatten()
             .fold(Interest::NONE, |union, &(_, interest)| union | interest);
-        Self { slots, union }
+        let timed = |kind: Interest| {
+            let both = kind | Interest::TIMINGS;
+            slots.iter().flatten().any(|&(_, i)| i.contains(both))
+        };
+        Self {
+            timed_tasks: timed(Interest::TASKS),
+            timed_workflows: timed(Interest::WORKFLOWS),
+            slots,
+            union,
+        }
     }
 
-    /// Whether an observer asks for timings: only then is the clock read.
+    /// Whether an observer asks for timings: the run's own elapsed time is
+    /// read then.
     pub(crate) fn timed(&self) -> bool {
         self.union.contains(Interest::TIMINGS)
+    }
+
+    /// Whether an observer of the task events asks for timings: only then
+    /// is a call timed for an observer (A M-2).
+    pub(crate) fn timed_tasks(&self) -> bool {
+        self.timed_tasks
+    }
+
+    /// Whether an observer of the workflow events asks for timings: only
+    /// then is a workflow timed.
+    pub(crate) fn timed_workflows(&self) -> bool {
+        self.timed_workflows
     }
 
     /// Whether an observer asks for the workflow events.

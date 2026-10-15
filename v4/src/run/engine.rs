@@ -173,7 +173,7 @@ impl Engine {
         let mut watch = {
             let observers = Observers::attach(self.inner.config.observer.as_deref(), opts.observer);
             Watch {
-                timed: observers.timed(),
+                timed: observers.timed_tasks(),
                 observers,
                 trace: None,
                 error_context: self.inner.config.error_context.as_ref(),

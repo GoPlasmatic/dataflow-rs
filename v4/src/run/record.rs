@@ -22,8 +22,10 @@
 //! [`workflow_failure`].
 //!
 //! Every clock reading for an elapsed time goes through [`now`] and
-//! [`since`], and only in a timed run: one an observer asked `TIMINGS` of,
-//! or a trace its timings. A step's `elapsed` is kept only for the latter.
+//! [`since`], and only for an interest in it: a call's for an observer of
+//! the task events that asked `TIMINGS`, or a trace's timings; a workflow's
+//! for an observer of the workflow events that asked it; the run's for any
+//! `TIMINGS`. A step's `elapsed` is kept only for the trace's timings.
 
 use super::interp::{RunEnv, old_value};
 use super::message::{AuditEntry, keeps_entries, record_audit};
@@ -642,19 +644,25 @@ mod tests {
             assert!(done.iter().all(|d| !d.timed), "{interest:?}: {done:?}");
         }
 
-        // Timed, every call reads it twice, and each end once. A workflow's
-        // start is read only for an observer of workflows.
-        let e = engine(&workflows, Some(Interest::TASKS));
-        for (run, expected) in [
-            (Interest::TIMINGS, 2 + 8 * 2),
-            (Interest::WORKFLOWS | Interest::TIMINGS, 2 + 2 + 8 * 2),
+        // Timed, per kind (A M-2): the run's ends once each for any
+        // `TIMINGS`; the workflow's start and end only for a slot holding
+        // `WORKFLOWS` and `TIMINGS`; every call twice only for one holding
+        // `TASKS` and `TIMINGS`. A `TIMINGS` beside another slot's interest
+        // times nothing for it.
+        use Interest as I;
+        for (engine_interest, run, expected, calls) in [
+            (I::TASKS, I::TIMINGS, 2, false),
+            (I::TASKS, I::WORKFLOWS | I::TIMINGS, 2 + 2, false),
+            (I::WORKFLOWS, I::TASKS | I::TIMINGS, 2 + 8 * 2, true),
+            (I::TASKS, I::ALL, 2 + 2 + 8 * 2, true),
         ] {
+            let e = engine(&workflows, Some(engine_interest));
             let observer = Quiet(run);
             let before = reads();
             let opts = RunOptions::default().observer(&observer);
             let done = collect(&e, json!({}), &opts).await;
-            assert_eq!(reads() - before, expected, "{run:?}");
-            assert!(done.iter().all(|d| d.timed), "{run:?}: {done:?}");
+            assert_eq!(reads() - before, expected, "{engine_interest:?}, {run:?}");
+            assert!(done.iter().all(|d| d.timed == calls), "{run:?}: {done:?}");
         }
 
         // A trace reads the clock only for its timings: two per call, and
