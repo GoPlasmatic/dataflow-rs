@@ -369,6 +369,70 @@ pub trait Resolver: sealed::Resolver {
 /// [`Interpolated`] document and any JSON value do. There the `null` is
 /// compiled as `T`: `map`'s `"logic": null` is a constant `null` expression,
 /// not a missing `logic`.
+///
+/// A host writes its own field type by implementing it: here a connector's
+/// name, a newtype over an `Expr<String>`, compiled, walked and resolved as
+/// the expression is, so a derived config holding one checks its secrets
+/// and template keys, and resolves it, as it would the expression.
+///
+/// ```
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+/// use dataflow_rs::datavalue::OwnedDataValue;
+/// use dataflow_rs::expr::{CompileCx, ConfigField, FieldKind, Resolver, ValueKind, Visit};
+/// use dataflow_rs::function::{FunctionConfig, testing};
+/// use dataflow_rs::{Ctx, Expr, Function, Message, Outcome, Result};
+/// use serde_json::{Value, json};
+///
+/// /// The connector a call reaches, by name.
+/// struct Connector(Expr<String>);
+///
+/// impl ConfigField for Connector {
+///     fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+///         Expr::<String>::compile(raw, cx).map(Self)
+///     }
+///     fn visit(&self, v: &mut Visit<'_>) {
+///         v.expr(self.0.raw());
+///     }
+///     fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+///         r.eval(&self.0).map(Some)
+///     }
+///     fn kind() -> FieldKind {
+///         FieldKind::Expr(ValueKind::String)
+///     }
+/// }
+///
+/// #[derive(FunctionConfig)]
+/// struct Query {
+///     connector: Connector,
+///     limit: Option<Expr<u64>>,
+/// }
+///
+/// /// Writes its input, as a layer or a dry run reads it, at `data.input`.
+/// struct Echo;
+///
+/// impl Function for Echo {
+///     type Config = Query;
+///
+///     async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &Query) -> Result<Outcome> {
+///         let input = ctx.input()?;
+///         ctx.set(&"data.input".parse()?, input)?;
+///         Ok(Outcome::Ok)
+///     }
+/// }
+///
+/// let input = json!({"connector": {"cat": ["db-", {"var": "data.region"}]}});
+/// let data = OwnedDataValue::from(&json!({"region": "eu"}));
+/// let out = testing::call(Echo, input)
+///     .message(Message::from_parts(OwnedDataValue::Null, data, OwnedDataValue::Null))
+///     .await;
+/// assert_eq!(out.outcome.unwrap(), Outcome::Ok);
+/// // The field resolved at its key; the `Option` left unset is absent.
+/// let at = "data.input".parse().unwrap();
+/// let written = out.message.context().get(&at).unwrap();
+/// assert_eq!(serde_json::to_string(written).unwrap(), r#"{"connector":"db-eu"}"#);
+/// # });
+/// ```
 pub trait ConfigField: Sized + Send + Sync + 'static {
     /// Whether `null` is one of the type's values. When it is not, an explicit
     /// `null` in an `Option<Self>` field means `None`.
