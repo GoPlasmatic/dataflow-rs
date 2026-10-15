@@ -10,6 +10,7 @@ use crate::expr::{
 };
 use datavalue::OwnedDataValue;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::str::FromStr;
 
 /// One compiled runtime field.
@@ -49,14 +50,17 @@ pub struct Templated {
 }
 
 impl TemplatedField {
-    /// The field's value for one call.
-    fn resolve(&self, ctx: &Ctx<'_>) -> Result<OwnedDataValue> {
+    /// The field's value for one call: a literal and a folded constant lent
+    /// from the config, anything else owned.
+    fn resolve(&self, ctx: &Ctx<'_>) -> Result<Cow<'_, OwnedDataValue>> {
         Ok(match self {
-            Self::Expr(expr) => ctx.eval(expr)?.into_owned(),
-            Self::Path(expr) => OwnedDataValue::String(ctx.eval(expr)?.to_string()),
-            Self::Interpolated(doc) => ctx.render(doc).to_owned(),
-            Self::Literal(value) => value.clone(),
-            Self::Output(out) => OwnedDataValue::String(ctx.eval(out.path())?.to_string()),
+            Self::Expr(expr) => ctx.eval(expr)?,
+            Self::Path(expr) => Cow::Owned(OwnedDataValue::String(ctx.eval(expr)?.to_string())),
+            Self::Interpolated(doc) => Cow::Owned(ctx.render(doc).to_owned()),
+            Self::Literal(value) => Cow::Borrowed(value),
+            Self::Output(out) => {
+                Cow::Owned(OwnedDataValue::String(ctx.eval(out.path())?.to_string()))
+            }
         })
     }
 }
@@ -202,15 +206,16 @@ impl Templated {
         (cx.rejected() == before).then_some(Self { fields, primary })
     }
 
-    /// The field `name`'s value for this call: an expression evaluated, a
-    /// document rendered then owned, a literal cloned, an output's or a
-    /// path's destination as a string. `None` for a field the input did not
+    /// The field `name`'s value for this call: a literal, and an expression
+    /// that folded to a constant, lent from the config; an expression
+    /// evaluated, a document rendered, and an output's or a path's
+    /// destination as a string, owned. `None` for a field the input did not
     /// set, and for a name no field has.
     ///
     /// # Errors
     ///
     /// [`Ctx::eval`]'s, for an expression, a path or an output.
-    pub fn get(&self, ctx: &Ctx<'_>, name: &str) -> Result<Option<OwnedDataValue>> {
+    pub fn get<'s>(&'s self, ctx: &Ctx<'_>, name: &str) -> Result<Option<Cow<'s, OwnedDataValue>>> {
         self.fields
             .iter()
             .find(|field| &*field.name == name)
@@ -228,7 +233,10 @@ impl Templated {
         let entries = self
             .fields
             .iter()
-            .map(|field| Ok((field.name.to_string(), field.value.resolve(ctx)?)))
+            .map(|field| {
+                let value = field.value.resolve(ctx)?.into_owned();
+                Ok((field.name.to_string(), value))
+            })
             .collect::<Result<Vec<_>>>()?;
         Ok(OwnedDataValue::Object(entries))
     }

@@ -1117,7 +1117,7 @@ impl Function for Plugin {
     async fn call(&self, ctx: &mut Ctx<'_>, cfg: &Templated) -> Result<Outcome> {
         let mut got = Vec::new();
         for name in ["expr", "doc", "lit", "out", "unset", "undeclared"] {
-            got.push((name, cfg.get(ctx, name)?.map(|v| Value::from(&v))));
+            got.push((name, cfg.get(ctx, name)?.map(|v| Value::from(&*v))));
         }
         let resolved = cfg.resolved(ctx)?;
         self.0.lock().unwrap().push((got, Value::from(&resolved)));
@@ -1174,6 +1174,84 @@ async fn a_templated_config_reads_its_fields_per_call() {
         r#"{"expr":11,"doc":{"$n":1,"k":"v"},"lit":"label","out":"data.out_1"}"#
     );
     assert_eq!(data(&m), json!({"out_0": call(0).1, "out_1": call(1).1}));
+}
+
+/// What `Templated::get` gave of each field: its value, and whether it
+/// was lent.
+type Lent = Arc<Mutex<Vec<(&'static str, Option<(Value, bool)>)>>>;
+
+/// A plugin function that reads each of its fields with `get`.
+struct Lender(Lent);
+
+/// `Lender`'s fields, in the order it reads them.
+const LENDER_FIELDS: [&str; 6] = ["lit", "folded", "evaluated", "doc", "to", "out"];
+
+impl Function for Lender {
+    type Config = Templated;
+
+    fn spec(&self) -> FunctionSpec {
+        FunctionSpec::default().with_runtime_fields(vec![
+            FieldSpec::runtime("lit", FieldKind::Literal(ValueKind::Any), true),
+            FieldSpec::runtime("folded", FieldKind::Expr(ValueKind::Any), true),
+            FieldSpec::runtime("evaluated", FieldKind::Expr(ValueKind::Number), true),
+            FieldSpec::runtime("doc", FieldKind::Interpolated, true),
+            FieldSpec::runtime("to", FieldKind::Expr(ValueKind::Path), true),
+            FieldSpec::runtime("out", FieldKind::Output, true),
+        ])
+    }
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &Templated) -> Result<Outcome> {
+        let mut got = Vec::new();
+        for name in LENDER_FIELDS {
+            let value = cfg.get(ctx, name)?;
+            got.push((
+                name,
+                value.map(|v| (Value::from(&*v), matches!(v, Cow::Borrowed(_)))),
+            ));
+        }
+        self.0.lock().unwrap().extend(got);
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn templated_get_lends_a_literal_and_a_folded_constant() {
+    let lent = Lent::default();
+    let e = Engine::builder()
+        .register("lender", Lender(Arc::clone(&lent)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "lender", "input": {
+                "lit": {"a": [1, 2]},
+                "folded": {"cat": ["a", "b"]},
+                "evaluated": {"+": [{"var": "data.n"}, 1]},
+                "doc": {"n": {"var": "data.n"}},
+                "to": "data.to",
+                "out": "data.out"}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({"n": 4}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    // A literal and a folded constant are lent from the config; a value
+    // the call evaluates, renders or turns into a path's text is owned.
+    assert_eq!(
+        *lent.lock().unwrap(),
+        [
+            ("lit", Some((json!({"a": [1, 2]}), true))),
+            ("folded", Some((json!("ab"), true))),
+            ("evaluated", Some((json!(5), false))),
+            ("doc", Some((json!({"n": 4}), false))),
+            ("to", Some((json!("data.to"), false))),
+            ("out", Some((json!("data.out"), false))),
+        ]
+    );
 }
 
 #[tokio::test]
