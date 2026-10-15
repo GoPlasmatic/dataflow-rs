@@ -164,7 +164,7 @@ pub const DEVIATED: &[Deviated] = &[
     (
         "builtins/pre39_spellings",
         1,
-        &["8"],
+        &["8", "3"],
         &[("UNKNOWN_FUNCTION", "REJECTED", "tasks[0].function.name")],
     ),
     (
