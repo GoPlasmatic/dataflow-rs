@@ -6,7 +6,7 @@ use super::operators::{Family, OperatorInfo, TABLE};
 use super::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
 use crate::base::{Error, ErrorKind, Result};
 use bumpalo::Bump;
-use datalogic_rs::{CustomOperator, DataValue, Engine, Logic};
+use datalogic_rs::{CustomOperator, DataValue, Engine, EvalInput, Logic};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -30,6 +30,65 @@ impl CustomOperator for SharedOperator {
         arena: &'a datalogic_rs::bumpalo::Bump,
     ) -> datalogic_rs::Result<&'a datalogic_rs::DataValue<'a>> {
         self.0.evaluate(args, ctx, arena)
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for &datavalue::OwnedDataValue {}
+    impl Sealed for &serde_json::Value {}
+}
+
+/// A root [`ExprEngine::eval`] evaluates against: an object holding the
+/// three context roots, as an [`OwnedDataValue`] or as a
+/// [`serde_json::Value`].
+///
+/// Either is viewed in place, its strings and keys borrowed and only its
+/// arrays' and objects' spines built, so a host that holds its context as
+/// JSON evaluates it without converting it first, and gets what the same
+/// context as an `OwnedDataValue` gives. Sealed: the two are the
+/// implementations.
+///
+/// ```
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// use dataflow_rs::datavalue::OwnedDataValue;
+/// use dataflow_rs::expr::ExprEngine;
+/// use dataflow_rs::Expr;
+/// use serde_json::json;
+///
+/// let exprs = ExprEngine::default();
+/// let limit: Expr<u64> = exprs.compile(&json!({"*": [{"var": "data.n"}, 2]})).unwrap();
+/// let context = json!({"data": {"n": 21}, "metadata": {}, "temp_data": {}});
+/// assert_eq!(exprs.eval(&limit, &context).unwrap().value, 42);
+/// let owned = OwnedDataValue::from(&context);
+/// assert_eq!(exprs.eval(&limit, &owned).unwrap().value, 42);
+/// ```
+pub trait EvalRoot<'r>: sealed::Sealed {
+    /// The root as an arena value in `arena`, through datalogic's own input
+    /// adapter.
+    #[doc(hidden)]
+    fn view_in<'a>(self, arena: &'a Bump) -> datalogic_rs::Result<&'a DataValue<'a>>
+    where
+        'r: 'a;
+}
+
+impl<'r> EvalRoot<'r> for &'r OwnedDataValue {
+    #[inline]
+    fn view_in<'a>(self, arena: &'a Bump) -> datalogic_rs::Result<&'a DataValue<'a>>
+    where
+        'r: 'a,
+    {
+        <&'a OwnedDataValue as EvalInput<'a>>::into_arena_value(self, arena)
+    }
+}
+
+impl<'r> EvalRoot<'r> for &'r Value {
+    #[inline]
+    fn view_in<'a>(self, arena: &'a Bump) -> datalogic_rs::Result<&'a DataValue<'a>>
+    where
+        'r: 'a,
+    {
+        <&'a Value as EvalInput<'a>>::into_arena_value(self, arena)
     }
 }
 
@@ -130,17 +189,19 @@ impl ExprEngine {
     }
 
     /// Evaluates `expr` against `root`, an object holding the three context
-    /// roots. A folded constant is lent from `expr` and takes no arena.
+    /// roots, as an [`OwnedDataValue`] or a [`serde_json::Value`]
+    /// ([`EvalRoot`]). A folded constant is lent from `expr` and takes no
+    /// arena.
     ///
     /// # Errors
     ///
     /// [`ErrorKind::Budget`] when the operation ceiling is exceeded;
     /// [`ErrorKind::Eval`] for any other failure, including a result that is
     /// not a `T`.
-    pub fn eval<'e, T: FromValue>(
+    pub fn eval<'e, 'r, T: FromValue>(
         &self,
         expr: &'e Expr<T>,
-        root: &OwnedDataValue,
+        root: impl EvalRoot<'r>,
     ) -> Result<Evaluated<T::Out<'e>>> {
         if let Some(c) = &expr.constant {
             return Ok(Evaluated {
@@ -153,6 +214,7 @@ impl ExprEngine {
             });
         }
         with_arena(|arena| {
+            let root = root.view_in(arena).map_err(eval_error)?;
             #[cfg(feature = "budget")]
             let (view, ops) = {
                 let budget = self.logic().resolve_ops_budget(None);

@@ -2,7 +2,8 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::expr::{
-    ConfigField, Evaluated, ExprEngine, FieldKind, ValueKind, escaped_keys, secret_refs,
+    ConfigField, EvalRoot, Evaluated, ExprEngine, FieldKind, Secrets, ValueKind, escaped_keys,
+    secret_refs,
 };
 use dataflow_rs::function::{FunctionConfig, testing};
 use dataflow_rs::run::ErrorKind;
@@ -356,4 +357,75 @@ fn i64_and_f64_fields_are_numbers_in_a_derived_config() {
     };
     assert_eq!(issues.len(), 1, "{issues:?}");
     assert_eq!(issues[0].path.to_string(), "by");
+}
+
+/// Evaluates `x` against `root`, whichever kind of root it is: the value
+/// and the operations spent.
+fn eval_against<'r>(
+    e: &ExprEngine,
+    x: &Expr,
+    root: impl EvalRoot<'r>,
+) -> dataflow_rs::Result<(OwnedDataValue, Option<u64>)> {
+    e.eval(x, root).map(|out| (out.value.into_owned(), out.ops))
+}
+
+#[test]
+fn eval_over_a_json_root_gives_what_its_owned_value_gives() {
+    let secrets = Secrets::new(root(json!({"api": {"key": "k-1"}}))).unwrap();
+    let e = ExprEngine::builder().secrets(secrets).build().unwrap();
+    let json_root = json!({
+        "data": {"n": 4, "name": "ada", "which": "api.key"},
+        "metadata": {"m": true},
+        "temp_data": {}
+    });
+    let owned_root = root(json_root.clone());
+    for raw in [
+        json!({"var": "data.name"}),
+        json!({"var": "metadata"}),
+        json!({"+": [{"var": "data.n"}, 1]}),
+        json!({"cat": [{"var": "data.name"}, "/", {"var": "data.n"}]}),
+        json!({"secret": {"var": "data.which"}}),
+        json!({"cat": [{"secret": "api.key"}, "@", {"var": "data.name"}]}),
+    ] {
+        let x: Expr = e.compile(&raw).unwrap();
+        assert!(x.constant().is_none(), "{raw} reads the root");
+        let from_json = eval_against(&e, &x, &json_root).unwrap();
+        let from_owned = eval_against(&e, &x, &owned_root).unwrap();
+        // The value and, under `budget`, the operations spent.
+        assert_eq!(from_json, from_owned, "{raw}");
+    }
+    let x: Expr = e
+        .compile(&json!({"secret": {"var": "data.which"}}))
+        .unwrap();
+    assert_eq!(
+        eval_against(&e, &x, &json_root).unwrap().0,
+        root(json!("k-1"))
+    );
+    // A typed expression, and a failure, are the same over either root.
+    let n: Expr<u64> = e.compile(&json!({"var": "data.n"})).unwrap();
+    assert_eq!(e.eval(&n, &json_root).unwrap().value, 4);
+    let s: Expr<u64> = e.compile(&json!({"var": "data.name"})).unwrap();
+    let (a, b) = (
+        e.eval(&s, &json_root).unwrap_err(),
+        e.eval(&s, &owned_root).unwrap_err(),
+    );
+    assert_eq!((a.kind(), a.message()), (b.kind(), b.message()));
+    // A folded constant is lent over a JSON root too.
+    let k: Expr<String> = e.compile(&json!("hi")).unwrap();
+    assert!(matches!(
+        e.eval(&k, &json_root).unwrap().value,
+        Cow::Borrowed("hi")
+    ));
+}
+
+#[cfg(feature = "budget")]
+#[test]
+fn a_budget_failure_over_a_json_root_is_budget() {
+    let e = ExprEngine::builder().ops_budget(2).build().unwrap();
+    let x: Expr<OwnedDataValue> = e
+        .compile(&json!({"map": [{"var": "data.l"}, {"+": [{"var": ""}, 1]}]}))
+        .unwrap();
+    let err = e.eval(&x, &json!({"data": {"l": [1, 2, 3]}})).unwrap_err();
+    assert_eq!(err.kind(), &ErrorKind::Budget);
+    assert_eq!(err.code(), "BUDGET_EXCEEDED");
 }
