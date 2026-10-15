@@ -285,6 +285,9 @@ impl<'r> Ctx<'r> {
     /// [`FunctionConfig::resolve`](super::FunctionConfig::resolve) gives it
     /// over the context as this call sees it, a fan-out element's binding
     /// included. A hand-written config gives what its own `resolve` does.
+    /// A field of type `f64` writes a float, `2.0` for an authored `2` too,
+    /// where a [`Templated`](super::Templated) number field writes the
+    /// number as it was authored.
     ///
     /// A field whose expression reads a secret is `null`, the one redaction
     /// the engine writes, as [`TraceOptions::redact`](crate::observe::TraceOptions::redact)

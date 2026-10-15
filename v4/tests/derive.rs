@@ -776,6 +776,33 @@ async fn a_derived_config_resolves_each_field_in_declaration_order() {
     );
 }
 
+/// Floats a derived config reads three ways: as a scalar, as an expression
+/// and through serde.
+#[derive(FunctionConfig)]
+struct Floats {
+    scalar: f64,
+    expr: Expr<f64>,
+    #[config(serde)]
+    weights: Vec<f64>,
+}
+
+#[tokio::test]
+async fn a_whole_number_float_resolves_as_a_float() {
+    // `2.0` is written `2.0` whichever way the field reads it, as the
+    // message writes a whole-number float.
+    let input = json!({"scalar": 2.0, "expr": {"*": [{"var": "data.n"}, 0.5]},
+                       "weights": [1.0, 2.5]});
+    let called = testing::call(Resolves::<Floats>(PhantomData), input)
+        .message(resolve_message())
+        .await;
+    assert!(called.issues.is_empty(), "{:?}", called.issues);
+    assert_eq!(called.outcome.unwrap(), Outcome::Ok);
+    assert_eq!(
+        resolved_at(&called.message, "test"),
+        r#"{"scalar":2.0,"expr":2.0,"weights":[1.0,2.5]}"#
+    );
+}
+
 /// A derived config with one field of each kind a `Templated` manifest can
 /// declare.
 #[derive(FunctionConfig)]
@@ -814,8 +841,17 @@ impl Function for TwinPlugin {
 
 #[tokio::test]
 async fn a_derived_config_and_its_templated_twin_resolve_alike() {
-    // I90's one resolver: the same fields, derived and declared at
-    // runtime, resolve to the same object over one message.
+    // One resolver: the same fields, derived and declared at runtime,
+    // resolve to the same object over one message, a whole-number float
+    // written as the float it is.
+    for ratio in ["2.5", "2.0"] {
+        twins_resolve_alike(serde_json::from_str(ratio).unwrap(), ratio).await;
+    }
+}
+
+/// [`Twin`] and its manifest over one input, `ratio` its `ratio`, which
+/// both write as `written`.
+async fn twins_resolve_alike(ratio: Value, written: &str) {
     let input = json!({
         "expr": {"var": "data.k"},
         "n": {"+": [{"var": "data.n"}, 1]},
@@ -823,7 +859,7 @@ async fn a_derived_config_and_its_templated_twin_resolve_alike() {
         "doc": {"$oid": {"var": "data.name"}, "n": 1},
         "label": "l",
         "count": 7,
-        "ratio": 2.5,
+        "ratio": ratio,
         "any": {"a": [1, {"b": null}]},
         "out": {"cat": ["data.", {"var": "data.k"}]},
     });
@@ -840,9 +876,12 @@ async fn a_derived_config_and_its_templated_twin_resolve_alike() {
     let run = e.run(&mut m).await;
     assert!(matches!(run.status(), RunStatus::Completed), "{run:?}");
     assert!(m.errors().is_empty(), "{:?}", m.errors());
-    let want = concat!(
-        r#"{"expr":"v","n":5,"to":"data.v","doc":{"$oid":"ada","n":1},"label":"l","#,
-        r#""count":7,"ratio":2.5,"any":{"a":[1,{"b":null}]},"out":"data.v"}"#
+    let want = format!(
+        concat!(
+            r#"{{"expr":"v","n":5,"to":"data.v","doc":{{"$oid":"ada","n":1}},"label":"l","#,
+            r#""count":7,"ratio":{},"any":{{"a":[1,{{"b":null}}]}},"out":"data.v"}}"#
+        ),
+        written
     );
     assert_eq!(resolved_at(&m, "derived"), want);
     assert_eq!(resolved_at(&m, "templated"), want);

@@ -5,7 +5,7 @@ use super::path::Path;
 use super::walk::secret_refs;
 use crate::base::{Error, ErrorKind};
 use datalogic_rs::Logic;
-use datavalue::{DataValue, OwnedDataValue};
+use datavalue::{DataValue, NumberValue, OwnedDataValue};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::fmt;
@@ -182,11 +182,12 @@ impl FromValue for f64 {
     fn give<'a>(v: Self) -> Self::Out<'a> {
         v
     }
+    /// A float, as the JSON bridge builds one: `2.0` stays `2.0`.
     fn to_value(c: &Self) -> OwnedDataValue {
-        (*c).into()
+        OwnedDataValue::Number(NumberValue::Float(*c))
     }
     fn into_value(v: Self) -> OwnedDataValue {
-        v.into()
+        OwnedDataValue::Number(NumberValue::Float(v))
     }
     fn type_name() -> &'static str {
         "an f64"

@@ -6,7 +6,7 @@ use super::engine::ExprEngine;
 use super::expr::{Expr, FromValue, ResolveExpr};
 use crate::base::typo::unknown_key;
 use crate::base::{AuthoredPath, ErrorKind, Issue, IssueCode, PathSeg, Result, Severity, StepKind};
-use datavalue::OwnedDataValue;
+use datavalue::{NumberValue, OwnedDataValue};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -511,7 +511,21 @@ scalar_field! {
     usize => Number, "an unsigned integer that fits usize";
     i32 => Number, "an integer that fits i32";
     i64 => Number, "an integer that fits i64";
-    f64 => Number, "a number";
+}
+
+/// A float, written as one: `2.0` stays `2.0`, as the JSON bridge keeps a
+/// float literal, where [`OwnedDataValue`]'s `From<f64>` would make it the
+/// integer `2`.
+impl ConfigField for f64 {
+    fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
+        scalar(raw, cx, "a number")
+    }
+    fn resolve(&self, _r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        Ok(Some(OwnedDataValue::Number(NumberValue::Float(*self))))
+    }
+    fn kind() -> FieldKind {
+        FieldKind::Literal(ValueKind::Number)
+    }
 }
 
 impl ConfigField for OwnedDataValue {

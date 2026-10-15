@@ -204,7 +204,10 @@ pub mod __private {
             )
         };
         let text = serde_json::to_string(field).map_err(refused)?;
-        let value: OwnedDataValue = serde_json::from_str(&text).map_err(refused)?;
+        // Read as a message's values are, so a whole-number float stays a
+        // float, as the JSON bridge keeps one.
+        let value =
+            crate::base::exact(&mut serde_json::Deserializer::from_str(&text)).map_err(refused)?;
         if !value.is_null() {
             entries.push((key.to_owned(), value));
         }
