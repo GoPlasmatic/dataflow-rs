@@ -44,6 +44,11 @@
 //! `"workflow_id/task_id/result"` keys in order, and no context is compared
 //! against v3's.
 //!
+//! v4's own replay, `Trace::contexts`, which the driver records per step,
+//! must equal the corpus's after the same step, normalised: the two replay
+//! rules are separate implementations (`Path::set` and `path::set`), and a
+//! host or the UI calls v4's.
+//!
 //! Beside v3, every traced run holds to I19's rule, with no deviation: the
 //! replay of all of v4's steps from `initial`, normalised, is the traced
 //! message's own final context. A run it cannot hold (a truncated trace, a
@@ -86,6 +91,9 @@ const TRACE_DEVIATED_ROWS: usize = 4;
 /// Of the matched steps, those whose v4 `status` was held to v3's: every
 /// one whose v3 snapshot's audit trail ends in the step's own entry.
 const STATUSES: usize = 215;
+/// v4 steps whose `Trace::contexts` entry equals the corpus's replay after
+/// the same step: every step of every traced run.
+const CONTEXTS: usize = 294;
 
 /// A run step's trace, and every pointer under it.
 const TRACE: &str = "/steps/*/run/trace";
@@ -102,6 +110,7 @@ struct Counts {
     trace_deviated: usize,
     statuses: usize,
     replayed: usize,
+    contexts: usize,
 }
 
 /// The deviation paths of `case` under a run's trace.
@@ -274,9 +283,35 @@ fn traced_run(
     let v4_steps = v4.get("steps").and_then(Json::as_array).unwrap_or(&[]);
     let mut context = v4.get("initial").cloned().unwrap_or(Json::Null);
     let mut matched: Vec<(&Json, Json)> = Vec::new();
-    for step in v4_steps {
+    // v4's own replay, one context per step, held to the corpus's after the
+    // same step (review C M-6).
+    let own = v4.get("contexts").and_then(Json::as_array).unwrap_or(&[]);
+    if own.len() != v4_steps.len() {
+        failures.push(format!(
+            "{name}: step {i}'s trace has {} steps and {} `Trace::contexts`",
+            v4_steps.len(),
+            own.len()
+        ));
+    }
+    for (k, step) in v4_steps.iter().enumerate() {
         for change in step.get("changes").and_then(Json::as_array).unwrap_or(&[]) {
             replay::apply(&mut context, change);
+        }
+        if let Some(own) = own.get(k) {
+            let (mut ours, mut theirs) = (context.clone(), own.clone());
+            normalise::context(&mut ours, error_context);
+            normalise::context(&mut theirs, error_context);
+            let differs = diff(&ours, &theirs, &[]);
+            if differs.is_empty() {
+                counts.contexts += 1;
+            } else {
+                let shown: Vec<String> = differs.iter().take(8).map(|d| format!("  {d}")).collect();
+                failures.push(format!(
+                    "{name}: step {i}'s `Trace::contexts` differs from the corpus replay \
+                     after v4 step {k} (expected the replay)\n{}",
+                    shown.join("\n")
+                ));
+            }
         }
         match kind(step) {
             Kind::Engine => counts.engine += 1,
@@ -457,6 +492,7 @@ async fn v4_traces_every_run_as_v3_recorded_it() {
             statuses: STATUSES,
             // The replay invariant held every traced run.
             replayed: TRACED,
+            contexts: CONTEXTS,
         }
     );
 }
@@ -505,7 +541,12 @@ fn v4_trace_with(third: &str, status: u16) -> Json {
             {{"workflow": 0, "workflow_id": "w", "task": 2, "task_id": "{third}",
               "result": "executed", "status": {status}, "loop_counter": 0,
               "changes": [{{"path": "data.b", "old_value": null, "new_value": 2}}]}}
-        ], "truncated": false, "message_matches": true}}"#
+        ], "truncated": false, "message_matches": true, "contexts": [
+            {{"data": {{}}, "metadata": {{}}, "temp_data": {{"i": 0}}}},
+            {{"data": {{"a": 1}}, "metadata": {{}}, "temp_data": {{"i": 0}}}},
+            {{"data": {{"a": 1}}, "metadata": {{}}, "temp_data": {{"i": 0}}}},
+            {{"data": {{"a": 1, "b": 2}}, "metadata": {{}}, "temp_data": {{"i": 0}}}}
+        ]}}"#
     ))
 }
 
@@ -533,10 +574,31 @@ fn the_engines_step_and_a_failed_step_are_matched_to_nothing() {
             counts.failed_tasks,
             counts.matched,
             counts.snapshots,
-            counts.statuses
+            counts.statuses,
+            counts.contexts
         ),
-        (1, 1, 2, 2, 1)
+        (1, 1, 2, 2, 1, 4)
     );
+}
+
+#[test]
+fn v4s_own_replay_that_differs_from_the_corpus_fails() {
+    let (mut counts, mut failures) = (Counts::default(), Vec::new());
+    let text = v4_trace("b")
+        .to_text()
+        .replacen(r#""data":{"a":1}"#, r#""data":{"a":9}"#, 1);
+    traced_run(
+        "c",
+        0,
+        (&v3_trace(), &j(&text), &plain()),
+        None,
+        false,
+        &mut counts,
+        &mut failures,
+    );
+    assert_eq!(counts.contexts, 3);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].contains("after v4 step 1"), "{failures:?}");
 }
 
 #[test]

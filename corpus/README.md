@@ -74,9 +74,10 @@ and runs its steps:
     `max_snapshot_bytes`, and the driver asserts it: the trace check replays every trace to v3's
     snapshots and to the message, which a trace without changes, a redacted one or one past a
     budget cannot do, so no deviation could cover one (v4's own tests hold those three). v3's `snapshots`, `mapping_contexts` and `snapshot_audit_trail` have no
-    v4 counterpart. It records `{outcome, initial, steps, truncated, message_matches}`: the traced
-    run's outcome; `initial` and `steps` exactly as v4 serializes them; `truncated`; and whether
-    the traced run's normalised message equals the plain run's. The traced run's events and log
+    v4 counterpart. It records `{outcome, initial, steps, truncated, message_matches, contexts}`:
+    the traced run's outcome; `initial` and `steps` exactly as v4 serializes them; `truncated`;
+    whether the traced run's normalised message equals the plain run's; and v4's own replay,
+    `Trace::contexts`, one context per step. The traced run's events and log
     lines are dropped, as v3's driver dropped them.
 
   `script` is v3's, ported to `Function` (`src/script.rs`). Each error it returns carries v3's code
@@ -129,6 +130,7 @@ build (`expressions/budget` turns its trace off, and `families_on` and `families
 | Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 4 |
 | Of the matched steps, those whose `status` is held to v3's own audit entry | 215 |
 | Traced runs the replay invariant held: every one | 85 |
+| v4 steps whose `Trace::contexts` entry equals the corpus replay: every one | 294 |
 
 In each build, v3's recordings hold 89 traced runs: the 85 compared, and four in cases v4 does not
 build (breaks 2a, 3 and 15), whose `/steps` a deviation covers.
@@ -287,6 +289,11 @@ the context on every status). The traced message is the plain run's whenever `me
 holds, which is itself compared. The invariant does not depend on v3 and takes no deviation. A
 traced run it cannot hold, a truncated trace or a traced message that differs from the plain
 run's, fails outright, and the count of runs it held is pinned at the traced-run count.
+
+**v4's own replay.** `Trace::contexts`, which a host or the UI calls, is a second implementation of
+the replay rule (`Path::set` against the corpus's `path::set`). Each context it yields must equal
+the corpus's replay after the same step, normalised, so a drift between the two fails. It takes no
+deviation.
 
 **Trace deviations.** Both sides are compared in v3's coordinates. Each trace is read as
 `{outcome, steps, truncated, message_matches}`, each step as `{workflow_id, task_id, result,

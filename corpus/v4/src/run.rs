@@ -260,10 +260,11 @@ fn program(compiler: &Compiler, workflows: &[Json]) -> Result<Program, Vec<Strin
 /// error-context path, the observer's events when the case attaches it, and
 /// the log lines when it captures them. When the step's trace is on, the
 /// same input runs again, traced by [`trace_options`], and `trace` records
-/// `{outcome, initial, steps, truncated, message_matches}`: the traced run's
-/// outcome, v4's `initial` and steps exactly as v4 serializes them,
-/// `truncated`, and whether the traced run's normalised message equals the
-/// plain run's. The traced run's events and log lines are dropped, as v3's
+/// `{outcome, initial, steps, truncated, message_matches, contexts}`: the
+/// traced run's outcome, v4's `initial` and steps exactly as v4 serializes
+/// them, `truncated`, whether the traced run's normalised message equals
+/// the plain run's, and v4's own replay, `Trace::contexts`, one context per
+/// step. The traced run's events and log lines are dropped, as v3's
 /// driver dropped them.
 async fn run_step(engine: &Engine, run: &RunSpec, spec: &EngineSpec, recorder: &Recorder) -> Json {
     let error_context = spec.error_context.as_ref().map(|e| e.path.as_str());
@@ -311,6 +312,17 @@ async fn run_step(engine: &Engine, run: &RunSpec, spec: &EngineSpec, recorder: &
             .expect("serde_json's output parses");
         let part = |key: &str| trace.get(key).cloned().expect("a trace has its three keys");
         let matches = normalised(&traced, error_context) == message;
+        // v4's own replay, beside the corpus's: `tests/traces.rs` holds
+        // each to the other (review C M-6).
+        let contexts = result
+            .trace()
+            .expect("a run given trace options returns a trace")
+            .contexts()
+            .map(|c| {
+                Json::from_text(&serde_json::to_string(&c).expect("a context serializes"))
+                    .expect("serde_json's output parses")
+            })
+            .collect();
         record.insert(
             "trace",
             Json::Object(vec![
@@ -319,6 +331,7 @@ async fn run_step(engine: &Engine, run: &RunSpec, spec: &EngineSpec, recorder: &
                 ("steps".to_owned(), part("steps")),
                 ("truncated".to_owned(), part("truncated")),
                 ("message_matches".to_owned(), Json::Bool(matches)),
+                ("contexts".to_owned(), Json::Array(contexts)),
             ]),
         );
     }
