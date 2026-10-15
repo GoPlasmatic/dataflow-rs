@@ -1026,6 +1026,88 @@ async fn emit_default_writes_the_primary_output_and_fails_without_one() {
     );
 }
 
+/// Returns `Ok`, writing nothing.
+struct Silent<C>(PhantomData<fn() -> C>);
+
+impl<C: FunctionConfig> Function for Silent<C> {
+    type Config = C;
+
+    async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &C) -> Result<Outcome> {
+        Ok(Outcome::Ok)
+    }
+}
+
+/// What each call's primary output was, as authored, by task.
+type Primaries = Arc<Mutex<Vec<(String, Option<Value>)>>>;
+
+/// Logs, for each call it wraps, the callee's primary output.
+struct SeesPrimary(Primaries);
+
+impl CallLayer for SeesPrimary {
+    fn call<'a>(&'a self, ctx: &'a mut Ctx<'_>, next: Next<'a>) -> BoxFuture<'a, Result<Outcome>> {
+        let primary = ctx.primary_output().map(|out| out.path().raw().clone());
+        let task = ctx.info().task_id.to_owned();
+        self.0.lock().unwrap().push((task, primary));
+        next.run(ctx)
+    }
+}
+
+#[tokio::test]
+async fn a_layer_reads_the_callees_primary_output() {
+    let seen = Primaries::default();
+    let task = |id: &str, name: &str, input: Value| json!({"id": id, "function": {"name": name, "input": input}});
+    let e = Engine::builder()
+        .register("two", Silent::<TwoOutputs>(PhantomData))
+        .register("one", Silent::<OneOutput>(PhantomData))
+        .register("maybe", Silent::<MaybeOutput>(PhantomData))
+        // `()` is hand-written and declares no output.
+        .register("none", Silent::<()>(PhantomData))
+        .layer(SeesPrimary(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![
+                task(
+                    "two",
+                    "two",
+                    json!({"main": "data.main", "side": "data.side"}),
+                ),
+                task(
+                    "one",
+                    "one",
+                    json!({"out": {"cat": ["data.", {"var": "data.k"}]}}),
+                ),
+                task("maybe_set", "maybe", json!({"out": "data.maybe"})),
+                task("maybe_unset", "maybe", json!({})),
+                task("none", "none", json!({})),
+            ],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({"k": "one"}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    // `Some` for a primary output the call site set, literal or computed;
+    // `None` for an optional one left unset, and for a config with none.
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            ("two".to_owned(), Some(json!("data.main"))),
+            (
+                "one".to_owned(),
+                Some(json!({"cat": ["data.", {"var": "data.k"}]}))
+            ),
+            ("maybe_set".to_owned(), Some(json!("data.maybe"))),
+            ("maybe_unset".to_owned(), None),
+            ("none".to_owned(), None),
+        ]
+    );
+}
+
 /// One output, with a default.
 #[derive(FunctionConfig)]
 struct AnswerConfig {

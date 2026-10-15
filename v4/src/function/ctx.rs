@@ -454,6 +454,17 @@ impl<'r> Ctx<'r> {
         self.set(&path, value)
     }
 
+    /// The callee's primary output, the one [`Self::emit_default`] writes
+    /// through, as the call site set it: `None` when the config declares
+    /// none, or leaves an optional one unset. A layer reads it to know
+    /// whether, and where, an answer would be written.
+    pub fn primary_output(&self) -> Option<&Output> {
+        match self.primary {
+            Primary::Set(out) => Some(out),
+            Primary::Unset(_) | Primary::Undeclared => None,
+        }
+    }
+
     /// [`Self::emit`] through the function's primary output, the one its
     /// config's [`FunctionConfig::primary_output`](super::FunctionConfig::primary_output)
     /// names.
