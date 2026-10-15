@@ -5,7 +5,7 @@ use super::erased::{Erased, ErasedFunction};
 use super::templated::primary_problem;
 use super::{CallLayer, Function, FunctionSpec, Templated};
 use crate::base::{AuthoredPath, PathSeg};
-use crate::expr::{ExprEngine, FieldSpec};
+use crate::expr::{ExprEngine, FieldKind, FieldSpec, ValueKind};
 use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -89,7 +89,12 @@ impl Registry {
     /// once, here:
     ///
     /// - a [`Reference`](super::Reference) whose `field` is not an authored
-    ///   path, or does not start at a field of the config;
+    ///   path, or does not reach a field of the config: it starts at one of
+    ///   the config's fields, and each segment below is a field of a nested
+    ///   config, an index into a list or a key of a map; nothing goes below a
+    ///   scalar, an expression or an output, and anything may go below a
+    ///   literal of any JSON, an object or an array, a document, or a
+    ///   runtime-declared set of fields;
     /// - [`runtime_fields`](FunctionSpec::runtime_fields) on a config that is
     ///   not [`Templated`], which would never compile them;
     /// - a [`Templated`] config with no `runtime_fields`, which has nothing
@@ -169,8 +174,8 @@ impl Registry {
 
 /// Panics on a spec `register` refuses: runtime fields on a config that is
 /// not [`Templated`], none on one that is, several outputs among them
-/// without exactly one primary, or a reference that does not start at one of
-/// `fields`, the config's fields.
+/// without exactly one primary, or a reference that does not reach a field
+/// through `fields`, the config's fields, and the kinds below them.
 fn check_spec(name: &str, spec: &FunctionSpec, fields: &[FieldSpec], templated: bool) {
     match (templated, spec.runtime_fields.is_some()) {
         (false, true) => panic!(
@@ -194,16 +199,64 @@ fn check_spec(name: &str, spec: &FunctionSpec, fields: &[FieldSpec], templated: 
                  path ({error})"
             )
         });
-        let names_a_field = match path.segs().first() {
-            Some(PathSeg::Key(key)) => fields.iter().any(|f| f.name == **key),
-            _ => false,
-        };
-        assert!(
-            names_a_field,
-            "cannot register `{name}`: its reference field `{field}` does not start at a field \
-             of its config"
-        );
+        if let Err(why) = reaches(fields, path.segs()) {
+            panic!("cannot register `{name}`: its reference field `{field}` {why}");
+        }
     }
+}
+
+/// Whether `segs` reach a field (M3): the first names one of `fields`, and
+/// each one below is walked through the kind above it. `Err` says why not.
+///
+/// A nested config's fields are named by key, a list's elements by index
+/// and a map's values by any key. A kind whose shape no spec describes, a
+/// literal of any JSON, an object or an array, a document, or a
+/// runtime-declared set of fields, takes anything below it; any other kind
+/// takes nothing.
+fn reaches(fields: &[FieldSpec], segs: &[PathSeg]) -> Result<(), String> {
+    let start = || "does not start at a field of its config".to_owned();
+    let Some((PathSeg::Key(first), rest)) = segs.split_first() else {
+        return Err(start());
+    };
+    let Some(spec) = fields.iter().find(|f| f.name == **first) else {
+        return Err(start());
+    };
+    let mut kind = spec.kind;
+    let mut at = AuthoredPath::root().join(&**first);
+    for seg in rest {
+        let refused = |why: String| {
+            Err(format!(
+                "does not reach a field of its config: `{at}` {why}"
+            ))
+        };
+        kind = match (kind, seg) {
+            (
+                FieldKind::Literal(ValueKind::Any | ValueKind::Object | ValueKind::Array)
+                | FieldKind::Interpolated
+                | FieldKind::Templated,
+                _,
+            ) => return Ok(()),
+            (FieldKind::Nested(fields), PathSeg::Key(key)) => {
+                match fields().iter().find(|f| f.name == **key) {
+                    Some(spec) => spec.kind,
+                    None => return refused(format!("has no field `{key}`")),
+                }
+            }
+            (FieldKind::List(element), PathSeg::Index(_)) => element(),
+            (FieldKind::Map(element), PathSeg::Key(_)) => element(),
+            (FieldKind::List(_), PathSeg::Key(key)) => {
+                return refused(format!("is a list, so `{key}` is not an index"));
+            }
+            (_, PathSeg::Index(index)) => {
+                return refused(format!("is not a list, so it has no `[{index}]`"));
+            }
+            (_, PathSeg::Key(key)) => {
+                return refused(format!("holds no fields, so it has no `{key}`"));
+            }
+        };
+        at.push(seg.clone());
+    }
+    Ok(())
 }
 
 impl Default for Registry {

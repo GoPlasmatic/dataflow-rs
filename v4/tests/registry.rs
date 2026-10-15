@@ -293,6 +293,102 @@ fn a_reference_names_a_field_of_the_config_or_of_the_runtime_fields() {
     assert_eq!(names(&registry), with_builtins(&["fetch", "plugin"]));
 }
 
+/// A connector's settings, nested in a config.
+#[derive(FunctionConfig)]
+struct AuthConfig {
+    connector: String,
+}
+
+/// A field of every kind a reference can sit in or below.
+#[derive(FunctionConfig)]
+struct DeepConfig {
+    auth: AuthConfig,
+    auths: Vec<AuthConfig>,
+    hosts: Vec<String>,
+    pools: std::collections::BTreeMap<String, String>,
+    url: Expr<String>,
+    connector: String,
+    extra: serde_json::Value,
+}
+
+/// A host function over [`DeepConfig`] whose reference is `field`.
+fn deep(field: &'static str) -> Specced<DeepConfig> {
+    specced(referencing(field))
+}
+
+#[test]
+#[should_panic(
+    expected = "cannot register `typo`: its reference field `auth.conector` does not reach a \
+                field of its config: `auth` has no field `conector`"
+)]
+fn a_reference_into_a_nested_config_names_one_of_its_fields() {
+    Registry::default().register("typo", deep("auth.conector"));
+}
+
+#[test]
+#[should_panic(
+    expected = "cannot register `indexed`: its reference field `auth[0]` does not reach a field \
+                of its config: `auth` is not a list, so it has no `[0]`"
+)]
+fn a_reference_indexing_what_is_not_a_list_panics() {
+    Registry::default().register("indexed", deep("auth[0]"));
+}
+
+#[test]
+#[should_panic(
+    expected = "cannot register `keyed`: its reference field `hosts.primary` does not reach a \
+                field of its config: `hosts` is a list, so `primary` is not an index"
+)]
+fn a_reference_keying_into_a_list_panics() {
+    Registry::default().register("keyed", deep("hosts.primary"));
+}
+
+#[test]
+#[should_panic(
+    expected = "cannot register `scalar`: its reference field `connector.name` does not reach a \
+                field of its config: `connector` holds no fields, so it has no `name`"
+)]
+fn a_reference_below_a_scalar_panics() {
+    Registry::default().register("scalar", deep("connector.name"));
+}
+
+#[test]
+#[should_panic(
+    expected = "cannot register `expr`: its reference field `url.host` does not reach a field \
+                of its config: `url` holds no fields, so it has no `host`"
+)]
+fn a_reference_below_an_expression_panics() {
+    Registry::default().register("expr", deep("url.host"));
+}
+
+#[test]
+fn a_reference_reaches_a_nested_field_a_list_element_and_a_map_value() {
+    // Each segment through the field kinds (M3): a nested config's field, a
+    // list's index, a map's key, and anything below a literal of any JSON.
+    let mut registry = Registry::default();
+    for (name, field) in [
+        ("nested", "auth.connector"),
+        ("element", "hosts[0]"),
+        ("nested_element", "auths[1].connector"),
+        ("value", "pools.primary"),
+        ("literal", "extra.a[2].b"),
+        ("top", "connector"),
+    ] {
+        registry.register(name, deep(field));
+    }
+    assert_eq!(
+        names(&registry),
+        with_builtins(&[
+            "element",
+            "literal",
+            "nested",
+            "nested_element",
+            "top",
+            "value"
+        ])
+    );
+}
+
 #[test]
 fn registering_a_name_twice_keeps_the_second() {
     let mut registry = Registry::default();
