@@ -710,6 +710,87 @@ async fn a_root_write_takes_only_an_object_and_a_root_cannot_be_removed() {
     );
 }
 
+/// v3's side of break 21: a handler assigning whatever it is given at `data`.
+mod v3_root {
+    use async_trait::async_trait;
+    use dataflow_rs_v3::{AsyncFunctionHandler, Result, TaskContext, TaskOutcome};
+    use datavalue::OwnedDataValue;
+    use serde_json::Value;
+
+    pub struct Write;
+
+    #[async_trait]
+    impl AsyncFunctionHandler for Write {
+        type Input = Value;
+
+        async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Value) -> Result<TaskOutcome> {
+            ctx.set("data", OwnedDataValue::from(input));
+            Ok(TaskOutcome::Success)
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_non_object_written_at_a_root_is_refused_where_v3_replaced_the_root() {
+    // Break 21. v3's `TaskContext::set` assigned whatever it was given, so a
+    // handler could turn `data` into an array, a string or a number; v4's
+    // `Ctx::set` refuses a non-object at a root (R52). The number alone is
+    // pinned above; this computes v3's side beside v4's, for each kind.
+    for (value, kind) in [
+        (json!([1, 2]), "an array"),
+        (json!("text"), "a string"),
+        (json!(5), "a number"),
+    ] {
+        let v3_engine = dataflow_rs_v3::Engine::builder()
+            .register("write_root", v3_root::Write)
+            .with_workflow(
+                dataflow_rs_v3::Workflow::from_json(
+                    &json!({"id": "w", "name": "w", "tasks": [
+                        {"id": "t", "name": "t",
+                         "function": {"name": "write_root", "input": value}}
+                    ]})
+                    .to_string(),
+                )
+                .unwrap(),
+            )
+            .build()
+            .unwrap();
+        let mut v3 = dataflow_rs_v3::Message::builder()
+            .id("m")
+            .data_json(&json!({"kept": true}))
+            .build();
+        v3_engine.process_message(&mut v3).await.unwrap();
+        assert!(v3.errors().is_empty(), "{kind}: {:?}", v3.errors());
+        assert_eq!(
+            serde_json::to_value(v3.data()).unwrap(),
+            value,
+            "{kind}: v3 replaced the root"
+        );
+
+        let (e, _) = engine(&[workflow(
+            "w",
+            &[],
+            vec![probe("t", json!([]), json!({"data": value}), json!("ok"))],
+        )]);
+        let mut m = message(json!({"kept": true}));
+        let run = e.run(&mut m).await;
+        let RunStatus::Stopped(error) = run.status() else {
+            panic!("{kind}: {:?}", run.status());
+        };
+        assert_eq!(error.kind(), &ErrorKind::Config, "{kind}");
+        assert_eq!(error.code(), "CONFIG_ERROR", "{kind}");
+        assert_eq!(
+            errors(&m),
+            [(
+                "CONFIG_ERROR".to_owned(),
+                format!("Task t error: `data` is a root and takes only an object, not {kind}")
+            )],
+            "{kind}"
+        );
+        assert_eq!(data(&m), json!({"kept": true}), "{kind}: the root is kept");
+    }
+}
+
 #[tokio::test]
 async fn the_run_layers_wrap_the_registry_layers_which_wrap_the_function() {
     // The order `function::layer`'s unit test pins, end to end: the run's
