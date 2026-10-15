@@ -92,7 +92,8 @@
         "/steps/0/run/message/context/data/order",
         "/steps/0/run/message/context/metadata/progress",
         "/steps/0/run/message/audit_trail",
-        "/steps/0/run/trace/steps"
+        "/steps/0/run/trace/steps/1",
+        "/steps/0/run/trace/steps/2"
       ],
       "note": "v4 runs only active workflows, with or without a channel"
     }

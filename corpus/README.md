@@ -117,14 +117,14 @@ build (`expressions/budget` turns its trace off, and `families_on` and `families
 | Count | Every build |
 | --- | --- |
 | Traced runs compared | 85 |
-| Of those, runs whose step list a deviation declares | 2 |
-| v3 steps matched by a v4 step, in the other 83 | 238 |
-| Of those, snapshots compared with v4's rebuilt context | 226 |
+| Of those, runs whose step list a deviation declares | 1 |
+| v3 steps matched by a v4 step, in the other 84 | 239 |
+| Of those, snapshots compared with v4's rebuilt context | 227 |
 | v4 steps matched to nothing: the engine's step at a sweep | 41 |
 | v4 steps matched to nothing: a task's failure the workflow's policy took | 9 |
 | v4 steps matched to nothing: a workflow's own failure | 1 |
-| Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 3 |
-| Of the matched steps, those whose `status` is held to v3's own audit entry | 214 |
+| Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 4 |
+| Of the matched steps, those whose `status` is held to v3's own audit entry | 215 |
 
 v3's recordings hold 87 traced runs. The other four are in cases v4 does not build (breaks 2a, 3
 and 15), whose `/steps` a deviation covers.
@@ -287,9 +287,12 @@ names a pointer into v3's recorded trace, such as
 `/steps/0/run/trace/steps/0/message/context/data/partial`, and v4's JSON at that pointer in the
 aligned trace is its row (`MISSING` where the aligned trace has nothing).
 
-**A step list that differs** (v4 runs workflows v3 did not, as break 6 lets it, or skips ones v3
-ran, as break 7 does) is deviated at the trace's `steps` itself: `/steps/<i>/run/trace/steps`.
-Both sides' `steps` are then read as the keys of the steps the alignment would match, in order,
-each as the string `"workflow_id/task_id/result"`, with an empty task id for a workflow's own step.
-The row holds v4's list. No context is compared with v3's in that run, and the replay invariant
-still applies.
+**A step list v4 shortens at its tail** (it skips the last steps v3 ran and matches every one
+before them, as break 7 does in `schema/status_without_channel`) is deviated per missing index:
+`/steps/<i>/run/trace/steps/<j>`, each `MISSING`, so the steps both ran are still compared in
+full, contexts and statuses included. **A step list that differs otherwise** (v4 runs workflows
+v3 did not, as break 6 lets it) is deviated at the trace's `steps` itself:
+`/steps/<i>/run/trace/steps`. Both sides' `steps` are then read as the keys of the steps the
+alignment would match, in order, each as the string `"workflow_id/task_id/result"`, with an empty
+task id for a workflow's own step. The row holds v4's list. No context is compared with v3's in
+that run, and the replay invariant still applies.

@@ -35,11 +35,13 @@
 //! `{outcome, steps, truncated, message_matches}`, its steps as above, so a
 //! deviation's pointer into v3's recorded trace names the same place in v4's
 //! aligned one, where v4's JSON must be its row of `expect::TRACE_DEVIATED`
-//! (each row used once, a stale one failing). A deviation at a trace's
-//! `steps` itself declares a step list that differs (v4 runs workflows v3
-//! did not, or skips ones v3 ran): both sides' `steps` are then the matched
-//! steps' `"workflow_id/task_id/result"` keys in order, and no context is
-//! compared against v3's.
+//! (each row used once, a stale one failing). A step list v4 shortens at
+//! its tail is deviated per missing index, each `MISSING`, so the steps both
+//! ran are compared in full. A deviation at a trace's `steps` itself
+//! declares a step list that differs otherwise (v4 runs workflows v3 did
+//! not): both sides' `steps` are then the matched steps'
+//! `"workflow_id/task_id/result"` keys in order, and no context is compared
+//! against v3's.
 //!
 //! Beside v3, every traced run holds to I19's rule, with no deviation: the
 //! replay of all of v4's steps from `initial`, normalised, is the traced
@@ -57,14 +59,15 @@ use std::fs;
 /// build: the budget case turns its trace off, and `families_on` and
 /// `families_off` trace alike.
 const TRACED: usize = 85;
-/// Traced runs whose step list a deviation declares: breaks 6 and 7.
-const STEP_LISTS: usize = 2;
+/// Traced runs whose step list a deviation declares: break 6's.
+const STEP_LISTS: usize = 1;
 /// v3 steps matched by a v4 step, in the traced runs whose step list is not
-/// deviated: every v3 step of those, since an unmatched one fails.
-const MATCHED: usize = 238;
+/// deviated: every v3 step of those, since an unmatched one fails, but the
+/// ones a deviation declares missing.
+const MATCHED: usize = 239;
 /// Of those, the steps whose v3 snapshot was compared with v4's rebuilt
 /// context: every one but a skip, which v3 records with no snapshot.
-const SNAPSHOTS: usize = 226;
+const SNAPSHOTS: usize = 227;
 /// v4 steps matched to nothing: the engine's step as each sweep is entered
 /// and as a loop with a counter exits.
 const ENGINE: usize = 41;
@@ -76,10 +79,10 @@ const FAILED_TASKS: usize = 9;
 const FAILED_WORKFLOWS: usize = 1;
 /// Deviated trace pointers held to their row of `expect::TRACE_DEVIATED`,
 /// one row each.
-const TRACE_DEVIATED_ROWS: usize = 3;
+const TRACE_DEVIATED_ROWS: usize = 4;
 /// Of the matched steps, those whose v4 `status` was held to v3's: every
 /// one whose v3 snapshot's audit trail ends in the step's own entry.
-const STATUSES: usize = 214;
+const STATUSES: usize = 215;
 
 /// A run step's trace, and every pointer under it.
 const TRACE: &str = "/steps/*/run/trace";

@@ -434,11 +434,14 @@ pub const MISSING: &str = "<missing>";
 /// steps up to it, normalised. A pointer the aligned trace
 /// does not reach is [`MISSING`].
 ///
-/// **A step list that differs** (v4 runs workflows v3 did not, or skips
-/// ones v3 ran) is deviated at the trace's `steps` itself,
-/// `/steps/<i>/run/trace/steps`. Both sides' `steps` are then read as the
-/// keys of the steps the alignment would match, in order, each as the
-/// string `"workflow_id/task_id/result"` (an empty task id for a
+/// **A step list v4 shortens at its tail** (it skips the last steps v3
+/// ran, and matches every one before them) is deviated per missing index,
+/// `/steps/<i>/run/trace/steps/<j>`, each [`MISSING`], so the steps both
+/// ran are still compared in full. **A step list that differs otherwise**
+/// (v4 runs workflows v3 did not) is deviated at the trace's `steps`
+/// itself, `/steps/<i>/run/trace/steps`. Both sides' `steps` are then read
+/// as the keys of the steps the alignment would match, in order, each as
+/// the string `"workflow_id/task_id/result"` (an empty task id for a
 /// workflow's own step), and the row holds v4's. No context is compared
 /// with v3's there; the replay of v4's own steps must still rebuild its
 /// message.
@@ -449,7 +452,8 @@ pub const MISSING: &str = "<missing>";
 /// - `breaks/name_required` (break 6): both unnamed definitions parse, so
 ///   four workflows run where v3 ran two.
 /// - `schema/status_without_channel` (break 7): only the Active workflow
-///   runs without a channel, where v3 ran all three.
+///   runs without a channel, where v3 ran all three: v4's one step is v3's
+///   first, and v3's other two are missing.
 ///
 /// The step v3's trace drops, the call whose failure went to its
 /// workflow's policy (break 5), and the engine's steps as a sweep is
@@ -469,8 +473,13 @@ pub const TRACE_DEVIATED: &[RunDeviated] = &[
     ),
     (
         "schema/status_without_channel",
-        "/steps/0/run/trace/steps",
-        r#"["active/t/executed"]"#,
+        "/steps/0/run/trace/steps/1",
+        MISSING,
+    ),
+    (
+        "schema/status_without_channel",
+        "/steps/0/run/trace/steps/2",
+        MISSING,
     ),
 ];
 
