@@ -253,8 +253,10 @@ must carry, or its runner must derive. `tests/replay.rs` pins that list.
 v4's driver compares each of v4's traces with v3's by replay (I109). v4's steps are replayed from
 its `initial` with `replay::apply` over each step's changes, in order, and walked in order:
 
-- **An engine step** (`task_id: null`, `result: executed`: the counter, `as` and `scratch` written
-  as a sweep is entered or a loop exits) is applied and matched to nothing.
+- **An engine step** (`task_id: null`, `result: executed`, with a `loop_counter` and every change
+  under `temp_data`: the counter, `as` and `scratch` written as a sweep is entered, a loop exits
+  or a limit stops the run at a sweep) is applied and matched to nothing. A workflow's own
+  `executed` step of any other shape is matched, so it fails against v3's steps.
 - **A `failed` step** is applied and matched to nothing. It is the step v3's trace drops (break 5):
   a call whose failure went to its workflow's policy, or a workflow's own failure.
 - **Every other step** is matched to v3's next step. The two must agree on `(workflow_id, task_id,

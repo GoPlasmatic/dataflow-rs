@@ -6,9 +6,10 @@
 //! are replayed from `initial` (`dataflow_corpus::replay::apply` over each
 //! step's changes) and walked in order:
 //!
-//! - an engine step (`task_id: null`, `executed`: a sweep's counter, `as`
-//!   and `scratch`) and a `failed` step (the step v3 drops, break 5) are
-//!   applied and matched to nothing;
+//! - an engine step (`task_id: null`, `executed`, with a `loop_counter` and
+//!   every change under `temp_data`: a sweep's counter, `as` and `scratch`)
+//!   and a `failed` step (the step v3 drops, break 5) are applied and
+//!   matched to nothing;
 //! - every other step is matched to v3's next step, which must agree on
 //!   `(workflow_id, task_id, result, loop_counter, element_index)`. When
 //!   that v3 step's snapshot `audit_trail` ends in its own task's entry (the
@@ -221,14 +222,36 @@ enum Kind {
     Matched,
 }
 
+/// What `step` is. A workflow's own `executed` step is the engine's only as
+/// I105 defines it: with the sweep's `loop_counter`, and every change under
+/// `temp_data` (the counter, `as` and `scratch`); any other falls through to
+/// `Matched`, and so to v3's steps, which it fails against.
 fn kind(step: &Json) -> Kind {
     let own = step.get("task_id").is_none_or(|t| *t == Json::Null);
     match (step.get("result").and_then(Json::as_str), own) {
         (Some("failed"), true) => Kind::FailedWorkflow,
         (Some("failed"), false) => Kind::FailedTask,
-        (Some("executed"), true) => Kind::Engine,
+        (Some("executed"), true) if engines(step) => Kind::Engine,
         _ => Kind::Matched,
     }
+}
+
+/// Whether a workflow's own step has the engine's shape: a `loop_counter`,
+/// and only changes under `temp_data`.
+fn engines(step: &Json) -> bool {
+    let under_temp_data = |change: &Json| {
+        change
+            .get("path")
+            .and_then(Json::as_str)
+            .is_some_and(|p| p == "temp_data" || p.starts_with("temp_data."))
+    };
+    step.get("loop_counter").is_some_and(|c| *c != Json::Null)
+        && step
+            .get("changes")
+            .and_then(Json::as_array)
+            .unwrap_or(&[])
+            .iter()
+            .all(under_temp_data)
 }
 
 /// One traced run, both sides in v3's coordinates: v3's recorded trace and
@@ -499,6 +522,26 @@ fn the_engines_step_and_a_failed_step_are_matched_to_nothing() {
         ),
         (1, 1, 2, 2, 1)
     );
+}
+
+#[test]
+fn only_the_engines_shape_is_an_engine_step() {
+    let own = |extra: &str| {
+        j(&format!(
+            r#"{{"workflow_id": "w", "task_id": null, "result": "executed"{extra}}}"#
+        ))
+    };
+    let engine = |step: &Json| matches!(kind(step), Kind::Engine);
+    let counter = r#"{"path": "temp_data.i", "old_value": null, "new_value": 0}"#;
+    assert!(engine(&own(&format!(
+        r#", "loop_counter": 0, "changes": [{counter}]"#
+    ))));
+    // No loop counter, or a change outside `temp_data`: matched, so it
+    // fails against v3's steps (review C M-2).
+    assert!(!engine(&own(&format!(r#", "changes": [{counter}]"#))));
+    assert!(!engine(&own(
+        r#", "loop_counter": 0, "changes": [{"path": "data.a", "old_value": null, "new_value": 1}]"#
+    )));
 }
 
 #[test]
