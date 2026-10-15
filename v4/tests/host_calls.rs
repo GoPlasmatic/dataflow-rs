@@ -14,7 +14,7 @@ use dataflow_rs::expr::{ExprEngine, FieldKind, FieldSpec, Output, Secrets, Value
 use dataflow_rs::function::{
     BoxFuture, CallLayer, FunctionConfig, FunctionSpec, Next, Templated, layers,
 };
-use dataflow_rs::observe::{Event, Interest, Observer};
+use dataflow_rs::observe::{Event, Interest, Observer, TraceOptions};
 use dataflow_rs::run::{EngineConfig, ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
 use dataflow_rs::{
     Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Registry, Result, Run, RunOptions,
@@ -853,7 +853,8 @@ fn the_run_future_is_send_with_a_host_call_and_layers() {
     let observer = Quiet;
     let opts = RunOptions::default()
         .layers(&run_layers)
-        .observer(&observer);
+        .observer(&observer)
+        .trace(TraceOptions::default());
     let mut m = message(json!({}));
     assert_send(&e.run_with(&mut m, &opts));
 }
