@@ -616,7 +616,7 @@ async fn an_engine_with_no_observer_runs_the_same_workflows() {
     };
     assert_eq!(
         format!("{:?}", EngineConfig::default()),
-        "EngineConfig { observer: absent, .. }"
+        "EngineConfig { observer: absent, error_context: None, .. }"
     );
     let mut unobserved = message(json!({}));
     engine(&workflows, None).run(&mut unobserved).await;

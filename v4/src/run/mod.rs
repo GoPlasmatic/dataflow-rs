@@ -3,6 +3,7 @@
 mod builder;
 mod cancel;
 mod engine;
+mod error_context;
 mod fan_out;
 pub(crate) mod host;
 mod interp;
@@ -21,6 +22,7 @@ pub use crate::base::{CancelToken, Change, Error, ErrorKind, ErrorRecord, Result
 pub use crate::observe::{RunStatus, Selection, WorkflowExit, WorkflowRecord};
 pub use builder::EngineBuilder;
 pub use engine::{Engine, EngineConfig};
+pub use error_context::ErrorContext;
 pub use message::{AuditEntry, AuditMode, Context, Message};
 pub use options::RunOptions;
 #[doc(hidden)]

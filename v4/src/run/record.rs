@@ -6,15 +6,16 @@
 //! when it has a status, the audit entry (through `AuditMode`'s trim, with the
 //! call's [`Stamp`]), then the progress write, then the error record, if any,
 //! with the workflow and task ids, the run's timestamp and the stamp's
-//! element; then, for a `Skip` too, the trace's step and the observers'
+//! element, then, with an error context, the mirror of every record the call
+//! added; then, for a `Skip` too, the trace's step and the observers'
 //! `TaskFinished`. This is v3's `handle_task_result`, in its order. A fan-out
 //! records once per element it folds.
 //!
 //! The trace's step carries, while the trace keeps changes, the engine's
-//! writes made for it (`RunEnv::trace_prelude`), the call's changes, and the
-//! progress write's `Change`; the audit entry carries the call's changes
-//! alone, and only under `capture_audit` (I107), so the engine's writes never
-//! reach it.
+//! writes made for it (`RunEnv::trace_prelude`), the call's changes, the
+//! progress write's `Change` and the error context's; the audit entry
+//! carries the call's changes alone, and only under `capture_audit` (I107),
+//! so the engine's writes never reach it.
 //!
 //! A workflow's own failure, which no task made, records one error record,
 //! and the trace's `Failed` step for it, and nothing else (I61):
@@ -105,17 +106,14 @@ pub(crate) struct Completed<'p> {
     pub(crate) elapsed: Option<Duration>,
     /// `env.errors.len()` before the call: the error context mirrors what
     /// came after.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by phase 6's Task 3 (the error context)")
-    )]
     pub(crate) errors_before: usize,
 }
 
 /// Records one completed call of `wf`, in this order: the audit entry, with
 /// the call's changes, taken from `env.changes`, under `capture_audit`
-/// (through `AuditMode`), the progress write, the error record, the trace's
-/// step, and the observers' `TaskFinished`. A `Skip` gets the last two only.
+/// (through `AuditMode`), the progress write, the error record, the
+/// error-context record, the trace's step, and the observers'
+/// `TaskFinished`. A `Skip` gets the last two only.
 pub(crate) fn record<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
@@ -132,10 +130,11 @@ pub(crate) fn record<'p>(
         record,
         failed,
         elapsed,
-        ..
+        errors_before,
     } = done;
     // The step's changes, while the trace keeps them: the engine's writes
-    // made for it first, then the call's, then the progress write.
+    // made for it first, then the call's, then the progress write, then the
+    // error-context write.
     let traced = env.traces_changes();
     let mut changes = if traced {
         std::mem::take(&mut env.trace_prelude)
@@ -185,6 +184,20 @@ pub(crate) fn record<'p>(
                 error = Some(record.clone());
             }
             env.errors.push(record);
+        }
+        // Every record the call added, its own and the recorder's (I96,
+        // I108).
+        if let Some(ec) = env.error_context
+            && let Some(change) = ec.mirror(
+                rc,
+                &env.errors[errors_before..],
+                ids.workflow,
+                ids.task,
+                status,
+                traced,
+            )
+        {
+            changes.push(change);
         }
     } else if traced {
         // A `Skip`'s writes stand: its step carries them.

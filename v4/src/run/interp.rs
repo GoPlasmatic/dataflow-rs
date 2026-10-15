@@ -28,6 +28,7 @@
 //! through the recorder, a workflow's own `Failed` step.
 
 use super::cancel::Limits;
+use super::error_context::ErrorContext;
 use super::fan_out::fan_out;
 use super::host::call_host;
 use super::message::{AuditEntry, AuditMode};
@@ -145,13 +146,16 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) timed: bool,
     /// The run's trace, when it is traced.
     pub(crate) trace: Option<&'r mut Capture>,
-    /// The engine's writes made for the next recorded step, before its
-    /// call's own: a fan-out's `into` pre-fill, which its first element's
-    /// step takes. Filled only while the trace keeps changes.
+    /// Where the recorder mirrors each call's records, when the engine has
+    /// an error context.
+    pub(crate) error_context: Option<&'r ErrorContext>,
     /// The run's one clock reading.
     pub(crate) now: DateTime<Utc>,
     /// The same reading, RFC 3339, for error records.
     pub(crate) now_text: &'r str,
+    /// The engine's writes made for the next recorded step, before its
+    /// call's own: a fan-out's `into` pre-fill, which its first element's
+    /// step takes. Filled only while the trace keeps changes.
     pub(crate) trace_prelude: Vec<Change>,
     /// The changes of the call running, read by the recorder.
     pub(crate) changes: Vec<Change>,

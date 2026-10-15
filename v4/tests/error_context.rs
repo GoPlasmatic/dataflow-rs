@@ -29,7 +29,7 @@ use dataflow_rs::run::{EngineConfig, ErrorContext, ErrorKind, ErrorRecord};
 use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Result, RunOptions};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
-use vs_v3::{Run, data, on_v3, on_v4, v3_engine_with, v4_engine_with};
+use vs_v3::{Run, data, on_v3, on_v4, v3_engine, v3_engine_with, v4_engine, v4_engine_with};
 
 /// `act`'s config.
 #[derive(FunctionConfig)]
@@ -819,14 +819,12 @@ async fn a_reload_keeps_the_error_context() {
         at(&m, "metadata.errors"),
         Some(records(&[("w", "t", "TASK_STATUS_ERROR", 500)]))
     );
-    // With none configured, there is no key.
-    let plain = Engine::builder()
-        .register("act", Act)
-        .workflow_json(&workflow("w", vec![goes_on(act("t", json!(500)))]))
-        .build()
-        .unwrap();
-    let mut m = message(json!({}), json!({}));
-    plain.run(&mut m).await;
-    assert_eq!(at(&m, "metadata.errors"), None);
+    // With none configured, neither engine writes a key.
+    let workflows = [workflow("w", vec![goes_on(fails("map"))])];
+    let expected = on_v3(&v3_engine(&workflows).unwrap(), &seeded()).await;
+    let plain = v4_engine(&workflows).unwrap();
+    let (text, code, _) = on_v4(&plain, &seeded()).await;
+    assert_eq!((&text, &code), (&expected.0, &expected.1));
+    assert_eq!(slot(&text, "metadata.errors"), None);
     assert!(format!("{plain:?}").contains("error_context: None"));
 }

@@ -2,6 +2,7 @@
 
 use super::builder::EngineBuilder;
 use super::cancel::Limits;
+use super::error_context::ErrorContext;
 use super::interp::{Exit, Frame, RunEnv, run_workflow};
 use super::message::{Message, finish_audit, keeps_entries};
 use super::observers::Observers;
@@ -30,6 +31,10 @@ pub struct EngineConfig {
     /// ([`RunOptions::observer`](RunOptions::observer())). `None` by
     /// default.
     pub observer: Option<Arc<dyn Observer>>,
+    /// Where the records of each call that added any are mirrored in the
+    /// context, and how many are kept. `None` by default: nothing is
+    /// mirrored, and nothing is reset at run start.
+    pub error_context: Option<ErrorContext>,
 }
 
 impl EngineConfig {
@@ -39,10 +44,18 @@ impl EngineConfig {
         self.observer = Some(o);
         self
     }
+
+    /// Mirrors every run's failure records by `ec`.
+    #[must_use]
+    pub fn error_context(mut self, ec: ErrorContext) -> Self {
+        self.error_context = Some(ec);
+        self
+    }
 }
 
 impl fmt::Debug for EngineConfig {
-    /// The observer as a presence: `EngineConfig { observer: present, .. }`.
+    /// The observer as a presence, and the error context:
+    /// `EngineConfig { observer: present, error_context: None, .. }`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let observer = if self.observer.is_some() {
             "present"
@@ -51,6 +64,7 @@ impl fmt::Debug for EngineConfig {
         };
         f.debug_struct("EngineConfig")
             .field("observer", &format_args!("{observer}"))
+            .field("error_context", &self.error_context)
             .finish_non_exhaustive()
     }
 }
@@ -134,19 +148,21 @@ impl Engine {
     /// asking for [`timings`](crate::observe::TraceOptions::timings()), has the
     /// clock read again, for the elapsed times it is given. It writes
     /// `metadata.engine_version`, and `metadata.channel` under a channel,
-    /// before any workflow runs. A workflow whose rollout does not admit
-    /// `opts.routing_bucket` is skipped; no bucket is admitted by every
-    /// rollout. A workflow that stops the run ends it, and the [`Run`] says
-    /// how: [`TimedOut`](RunStatus::TimedOut) once `opts.deadline` passed,
+    /// before any workflow runs, and then, with an [`ErrorContext`]
+    /// configured, removes its path's key: the records there are the run's
+    /// own. A workflow whose rollout does not admit `opts.routing_bucket` is
+    /// skipped; no bucket is admitted by every rollout. A workflow that stops
+    /// the run ends it, and the [`Run`] says how:
+    /// [`TimedOut`](RunStatus::TimedOut) once `opts.deadline` passed,
     /// [`Cancelled`](RunStatus::Cancelled) once `opts.cancel` was cancelled,
     /// and otherwise [`Stopped`](RunStatus::Stopped) with the error that
     /// stopped it, whatever its kind: a child run's timeout that a function
     /// returns is its task's failure, not this run's.
     ///
     /// With [`opts.trace`](RunOptions::trace()) set, the [`Run`] carries the
-    /// run's [`Trace`](crate::observe::Trace): the context after the stamps,
-    /// then a step for every recorded call, skipped call or workflow and
-    /// sweep, the step that stopped the run included.
+    /// run's [`Trace`](crate::observe::Trace): the context after the stamps
+    /// and the reset, then a step for every recorded call, skipped call or
+    /// workflow and sweep, the step that stopped the run included.
     pub async fn run_with(&self, msg: &mut Message, opts: &RunOptions<'_>) -> Run {
         let program = &self.inner.program;
         let observers = Observers::attach(self.inner.config.observer.as_deref(), opts.observer);
@@ -155,8 +171,14 @@ impl Engine {
         let now_text = now.to_rfc3339();
         let parts = msg.parts();
         stamp(parts.context, &now_text, opts.channel);
-        // `initial` is the context as the stamps left it. Boxed: the run's
-        // future, which a host spawns once per message, carries a pointer.
+        // Break 20: a message brings no records in at the error context's
+        // path (I108, S5).
+        if let Some(ec) = &self.inner.config.error_context {
+            ec.reset(parts.context);
+        }
+        // `initial` is the context as the stamps and the reset left it.
+        // Boxed: the run's future, which a host spawns once per message,
+        // carries a pointer.
         let mut trace = opts
             .trace
             .as_ref()
@@ -219,6 +241,7 @@ impl Engine {
                 observers,
                 timed,
                 trace: trace.as_deref_mut(),
+                error_context: self.inner.config.error_context.as_ref(),
                 now,
                 now_text: &now_text,
                 trace_prelude: Vec::new(),

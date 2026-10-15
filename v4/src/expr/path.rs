@@ -205,6 +205,22 @@ impl Path {
         })
     }
 
+    /// The path of the first `len` segments, the root's own counted: what
+    /// the first `len` pieces of the dotted spelling parse to.
+    pub(crate) fn prefix(&self, len: usize) -> Self {
+        debug_assert!((1..=self.segs.len()).contains(&len), "a prefix of {self}");
+        let end = self
+            .dotted
+            .match_indices('.')
+            .nth(len - 1)
+            .map_or(self.dotted.len(), |(at, _)| at);
+        Self {
+            root: self.root,
+            segs: Arc::from(&self.segs[..len]),
+            dotted: Arc::from(&self.dotted[..end]),
+        }
+    }
+
     /// The value at the path in `context`, an object holding the three roots.
     pub fn get<'v>(&self, context: &'v OwnedDataValue) -> Option<&'v OwnedDataValue> {
         get(context, &self.segs)
