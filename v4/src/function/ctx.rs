@@ -525,9 +525,11 @@ impl<'r> Ctx<'r> {
     /// The callee's primary output, the one [`Self::emit_default`] writes
     /// through, as the call site set it: `None` when the config declares
     /// none, or leaves an optional one unset. A layer reads it to know
-    /// whether, and where, an answer would be written.
-    pub fn primary_output(&self) -> Option<&Output> {
-        match self.callee.primary() {
+    /// whether, and where, an answer would be written. It borrows the
+    /// callee, not this context, so a layer can [`Self::emit`] through it.
+    pub fn primary_output(&self) -> Option<&'r Output> {
+        let callee: &'r dyn BoundCall = self.callee;
+        match callee.primary() {
             Primary::Set(out) => Some(out),
             Primary::Unset(_) | Primary::Undeclared => None,
         }

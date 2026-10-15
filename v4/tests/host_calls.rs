@@ -1189,6 +1189,59 @@ async fn a_layer_reads_the_callees_primary_output() {
     );
 }
 
+/// Answers every call that has a primary output with `"stubbed"`, written
+/// through it, and calls on the rest, as a host's stub for its own
+/// functions does.
+struct StubsThroughPrimary;
+
+impl CallLayer for StubsThroughPrimary {
+    fn call<'a>(&'a self, ctx: &'a mut Ctx<'_>, next: Next<'a>) -> BoxFuture<'a, Result<Outcome>> {
+        if let Some(out) = ctx.primary_output() {
+            return Box::pin(async move {
+                ctx.emit(out, OwnedDataValue::from("stubbed"))?;
+                Ok(Outcome::Ok)
+            });
+        }
+        next.run(ctx)
+    }
+}
+
+#[tokio::test]
+async fn a_layer_writes_through_the_callees_primary_output() {
+    let task = |id: &str, name: &str, input: Value| json!({"id": id, "function": {"name": name, "input": input}});
+    let e = Engine::builder()
+        .register("one", Silent::<OneOutput>(PhantomData))
+        .register("maybe", Silent::<MaybeOutput>(PhantomData))
+        .layer(StubsThroughPrimary)
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![
+                task(
+                    "one",
+                    "one",
+                    json!({"out": {"cat": ["data.", {"var": "data.k"}]}}),
+                ),
+                task("maybe_unset", "maybe", json!({})),
+            ],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({"k": "one"}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    // The computed output, written by the layer; nothing for the unset one,
+    // whose call ran and wrote nothing.
+    assert_eq!(
+        Value::from(m.context().data()),
+        json!({"k": "one", "one": "stubbed"})
+    );
+}
+
 /// One output, with a default.
 #[derive(FunctionConfig)]
 struct AnswerConfig {
