@@ -46,8 +46,9 @@
 //!
 //! v4's own replay, `Trace::contexts`, which the driver records per step,
 //! must equal the corpus's after the same step, normalised: the two replay
-//! rules are separate implementations (`Path::set` and `path::set`), and a
-//! host or the UI calls v4's.
+//! rules are separate implementations (v4's, which is `Path::set`'s without
+//! its refusal of a non-object at a root, and the corpus's `path::set`), and
+//! a host or the UI calls v4's.
 //!
 //! Beside v3, every traced run holds to I19's rule, with no deviation: the
 //! replay of all of v4's steps from `initial`, normalised, is the traced

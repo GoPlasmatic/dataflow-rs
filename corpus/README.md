@@ -291,9 +291,9 @@ traced run it cannot hold, a truncated trace or a traced message that differs fr
 run's, fails outright, and the count of runs it held is pinned at the traced-run count.
 
 **v4's own replay.** `Trace::contexts`, which a host or the UI calls, is a second implementation of
-the replay rule (`Path::set` against the corpus's `path::set`). Each context it yields must equal
-the corpus's replay after the same step, normalised, so a drift between the two fails. It takes no
-deviation.
+the replay rule (`Path::set`'s, except that a root takes any value whole, against the corpus's
+`path::set`). Each context it yields must equal the corpus's replay after the same step,
+normalised, so a drift between the two fails. It takes no deviation.
 
 **Trace deviations.** Both sides are compared in v3's coordinates. Each trace is read as
 `{outcome, steps, truncated, message_matches}`, each step as `{workflow_id, task_id, result,

@@ -111,11 +111,12 @@ impl Trace {
     /// The context after each step, replaying the steps' changes in order
     /// from `initial`: a removal removes its path; a change at a root merges
     /// its object's keys into the root, unless it says
-    /// [`replaced`](Change::replaced); anything else is set at its path by
-    /// [`Path::set`]'s rules, so a hop that cannot continue writes nothing
-    /// and a segment that is an index on an array names its element. A
-    /// replay elsewhere, such as the UI's, follows the same rules. Each
-    /// context yielded is a whole copy.
+    /// [`replaced`](Change::replaced); anything else is set at its path as
+    /// [`Path::set`] sets it, except that a root takes any value whole (a
+    /// redacted root's `null`, which `Path::set` refuses, included): a hop
+    /// that cannot continue writes nothing, and a segment that is an index
+    /// on an array names its element. A replay elsewhere, such as the UI's,
+    /// follows the same rules. Each context yielded is a whole copy.
     pub fn contexts(&self) -> impl Iterator<Item = Context> + '_ {
         let mut root = self.initial.as_value().clone();
         self.steps.iter().map(move |step| {
