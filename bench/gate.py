@@ -8,14 +8,14 @@ this reads only that line.
         Build every example in release from a clean tree, copy the 13 gate
         binaries out of target/, and write DIR/build.json (commit, rustc, date).
         With --v4, build `cargo build --release -p dataflow-rs-v4 --examples`
-        instead and copy the ports v4 has (V4_BENCHES: twelve, every bench
-        but `observed_run`, and the self-judged `host_call_floor`),
+        instead and copy the ports v4 has (V4_BENCHES: thirteen, every
+        bench, and the self-judged `host_call_floor`),
         target/release/examples/v4_<name>, to DIR/<name>: a v4 directory then
         holds the names a v3 one does, and `compare` reads the two alike.
 
     gate.py baseline --bins DIR --rounds N --out FILE [--only a,b]
         Run the gate binaries DIR holds (or --only's), as `compare` finds
-        them, so a `build --v4` directory runs its twelve ports and
+        them, so a `build --v4` directory runs its thirteen ports and
         `host_call_floor`, round-robin for
         N + 1 rounds, discard round 0 as cold, and write every run, each
         metric's mean, median and spread, with the build, the machine and the
@@ -87,9 +87,9 @@ BENCHES = [
 
 
 # The benchmarks v4 ports (`v4/examples/v4_<name>.rs`), in BENCHES order: the
-# eight sync ones of phase 4 and phase 5's four host-call rows, twelve ports,
+# eight sync ones of phase 4, phase 5's four host-call rows and phase 6's
+# `observed_run`, thirteen ports,
 # with the self-judged `host_call_floor` beside the row whose floor it gates.
-# `observed_run` waits for phase 6's observer.
 V4_BENCHES = [
     "realistic_benchmark",
     "benchmark",
@@ -104,6 +104,7 @@ V4_BENCHES = [
     "large_context_handler",
     "fan_out",
     "orion_connector",
+    "observed_run",
 ]
 
 # The rows whose gate is "Faster" rather than "Not slower" (design 06), every
