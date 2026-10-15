@@ -231,8 +231,12 @@ impl ErrorContext {
             .fold(OwnedDataValue::Array(items), |inner, seg| {
                 OwnedDataValue::Object(vec![(String::from(&*seg.key), inner)])
             });
-        let change =
-            old_value.map(|old| Change::write(Arc::clone(at.dotted()), old, value.clone()));
+        // A write at a root replaces it, and its `Change` says so (I106).
+        let change = old_value.map(|old| {
+            let mut change = Change::write(Arc::clone(at.dotted()), old, value.clone());
+            change.replaced = at.is_root();
+            change
+        });
         (value, change)
     }
 }
@@ -353,6 +357,43 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn a_write_at_a_root_says_it_replaced_it() {
+        // Review A M-3, by I106's rule: a root that holds no object is
+        // replaced, and the trace's change says so; a hop below a root is
+        // assigned, and its change says nothing.
+        for (path, seed, at, replaced) in [
+            (
+                "data.errors",
+                r#"{"data":[1],"metadata":{},"temp_data":{}}"#,
+                "data",
+                true,
+            ),
+            (
+                "data.n.list",
+                r#"{"data":{"n":5},"metadata":{},"temp_data":{}}"#,
+                "data.n",
+                false,
+            ),
+        ] {
+            let ec = ErrorContext::new(path.parse().unwrap(), 3).unwrap();
+            let mut ctx = parse(seed);
+            let mut rc = RunContext::new(&mut ctx, Tuning::default());
+            let records = [ErrorRecord::new("A", "m")];
+            let change = ec
+                .mirror(&mut rc, &records, "w", "t", 500, true)
+                .expect("a traced mirror records its change");
+            rc.finish();
+            assert_eq!((&*change.path, change.replaced), (at, replaced), "{path}");
+            let written: Path = at.parse().unwrap();
+            assert_eq!(
+                text(written.get(&ctx).unwrap()),
+                text(&change.new_value),
+                "{path}"
+            );
         }
     }
 
