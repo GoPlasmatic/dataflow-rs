@@ -20,6 +20,12 @@
 //! A workflow's `WorkflowStarted` goes to the run's observers once, when it
 //! is known to be selected: as it starts when it has no condition, or when
 //! the first evaluation of its condition admits it.
+//!
+//! A traced run's steps that are not a call's are made here (I105): the
+//! workflow's `Skipped` step when its condition refuses it on the first
+//! judgment, one `Skipped` step per call a group's or a task's condition
+//! refuses, the engine's step as a sweep is entered or a loop exits, and,
+//! through the recorder, a workflow's own `Failed` step.
 
 use super::cancel::Limits;
 use super::fan_out::fan_out;
@@ -28,13 +34,14 @@ use super::message::{AuditEntry, AuditMode};
 use super::observers::Observers;
 use super::policy::{self, Flow};
 use super::record::{self, Completed, Stamp, TaskIds};
-use crate::base::{Change, Error, ErrorKind, ErrorRecord, Instant, ProgramId, WorkflowIx};
+use super::trace::Capture;
+use crate::base::{Change, Error, ErrorKind, ErrorRecord, Instant, ProgramId, TaskIx, WorkflowIx};
 use crate::def::WorkflowFailurePolicy;
 use crate::expr::path::kind;
-use crate::expr::{Expr, ExprEngine};
+use crate::expr::{Expr, ExprEngine, Path};
 use crate::function::builtins::Builtin;
 use crate::function::{CallLayer, SyncCtx, eval, test};
-use crate::observe::{Event, Selection};
+use crate::observe::{Event, Selection, StepResult, TraceStep};
 use crate::program::{CallSite, Callee, CompiledWorkflow, CondKind, LoopSite, Op};
 use crate::state::RunContext;
 use chrono::{DateTime, Utc};
@@ -125,7 +132,8 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) audit: &'r mut Vec<AuditEntry>,
     /// Which audit entries the message keeps.
     pub(crate) mode: AuditMode,
-    /// Whether a call records its `Change`s (I67).
+    /// Whether a call records its `Change`s: the audit or the trace wants
+    /// them (I67, I107).
     pub(crate) capture: bool,
     /// Whether the audit entry gets the call's `Change`s: change capture is
     /// on and the mode keeps entries (I67, I107).
@@ -133,12 +141,18 @@ pub(crate) struct RunEnv<'r, 'p> {
     /// The run's observers.
     pub(crate) observers: Observers<'r>,
     /// Whether the run reads the clock for elapsed times: an observer asked
-    /// for `TIMINGS`.
+    /// for `TIMINGS`, or the trace for timings.
     pub(crate) timed: bool,
+    /// The run's trace, when it is traced.
+    pub(crate) trace: Option<&'r mut Capture>,
+    /// The engine's writes made for the next recorded step, before its
+    /// call's own: a fan-out's `into` pre-fill, which its first element's
+    /// step takes. Filled only while the trace keeps changes.
     /// The run's one clock reading.
     pub(crate) now: DateTime<Utc>,
     /// The same reading, RFC 3339, for error records.
     pub(crate) now_text: &'r str,
+    pub(crate) trace_prelude: Vec<Change>,
     /// The changes of the call running, read by the recorder.
     pub(crate) changes: Vec<Change>,
     /// The current workflow's id.
@@ -167,6 +181,43 @@ impl RunEnv<'_, '_> {
         }
         Ok(())
     }
+
+    /// Whether the trace keeps changes: only then are the engine's writes
+    /// recorded, and their old values read.
+    pub(crate) fn traces_changes(&self) -> bool {
+        self.trace.as_ref().is_some_and(|t| t.changes())
+    }
+
+    /// The current workflow's own step.
+    pub(crate) fn workflow_step(&self, result: StepResult) -> TraceStep {
+        TraceStep::new(self.workflow_ix, self.workflow_id, result)
+    }
+
+    /// A step of the current workflow's task at row `task`, in the sweep
+    /// the frame is in.
+    pub(crate) fn task_step(&self, task: u32, result: StepResult) -> TraceStep {
+        let mut step = self.workflow_step(result);
+        step.task = Some(TaskIx::new(self.task_base + task));
+        step.task_id = Some(Arc::clone(&self.task_ids[task as usize]));
+        step.loop_counter = self.frame.loop_counter;
+        step
+    }
+
+    /// Pushes `step` onto the trace, if the run is traced. Calls record
+    /// their changes from then on only while the audit or the trace wants
+    /// them: a budget crossed leaves only the audit's.
+    pub(crate) fn push_step(&mut self, step: TraceStep) {
+        if let Some(trace) = self.trace.as_deref_mut() {
+            trace.push(step);
+            self.capture = self.capture_audit || trace.changes();
+        }
+    }
+}
+
+/// The value at `path`, owned, or `null`: an engine write's old value, read
+/// only for a trace that keeps changes.
+pub(crate) fn old_value(rc: &RunContext<'_, '_>, path: &Path) -> OwnedDataValue {
+    rc.get(path).map_or(OwnedDataValue::Null, Cow::into_owned)
 }
 
 /// Where a failure `on_failure: continue` steps past goes from `op`.
@@ -250,10 +301,18 @@ pub(crate) async fn run_workflow<'p>(
                                 begin(env, wf);
                                 Selection::Ran
                             }
-                            Ok(false) => Selection::SkippedByCondition,
-                            Err(e) => Selection::ConditionFailed(e),
+                            Ok(false) => {
+                                skipped_workflow(env, None);
+                                Selection::SkippedByCondition
+                            }
+                            Err(e) => {
+                                skipped_workflow(env, Some(&e));
+                                Selection::ConditionFailed(e)
+                            }
                         };
                     }
+                } else if !admitted && env.trace.is_some() {
+                    skipped_calls(env, wf, kind, pc, else_to);
                 }
                 if admitted {
                     Flow::Next
@@ -329,13 +388,54 @@ fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
     if std::mem::replace(&mut env.frame.begun, true) || !env.observers.workflows() {
         return;
     }
-    if env.timed {
+    // Only an observer's `TIMINGS` times a workflow: a trace's timings are
+    // its calls'.
+    if env.observers.timed() {
         env.frame.started = Some(record::now());
     }
     env.observers.emit(Event::WorkflowStarted {
         workflow: env.workflow_ix,
         id: &wf.id,
     });
+}
+
+/// The workflow's own `Skipped` step, for a condition that refused it on
+/// its first judgment: with the error it failed with, and the workflow's id,
+/// when it failed to evaluate (R34).
+fn skipped_workflow(env: &mut RunEnv<'_, '_>, error: Option<&Error>) {
+    if env.trace.is_none() {
+        return;
+    }
+    let mut step = env.workflow_step(StepResult::Skipped);
+    step.error = error.map(|e| {
+        let mut record = ErrorRecord::from(e);
+        record.workflow_id = Some(env.workflow_id.to_string());
+        record
+    });
+    env.push_step(step);
+}
+
+/// The `Skipped` steps of what a group's or a task's condition at `pc`
+/// refused: one per call in the group's span, `pc + 1 .. else_to`, or the
+/// task's one call, at `pc + 1`, in the sweep the frame is in.
+fn skipped_calls(
+    env: &mut RunEnv<'_, '_>,
+    wf: &CompiledWorkflow,
+    kind: CondKind,
+    pc: usize,
+    else_to: u32,
+) {
+    let span = match kind {
+        CondKind::Group => wf.ops.get(pc + 1..else_to as usize),
+        CondKind::Task => wf.ops.get(pc + 1..pc + 2),
+        CondKind::Workflow => None,
+    };
+    for op in span.unwrap_or_default() {
+        if let Op::Call { site, .. } | Op::FanOut { site, .. } = *op {
+            let step = env.task_step(wf.calls[site as usize].task, StepResult::Skipped);
+            env.push_step(step);
+        }
+    }
 }
 
 /// `LoopInit`: `over`, once, then the counter's `init` and the first sweep.
@@ -381,7 +481,13 @@ fn loop_next<'p>(
 /// the run's limits, then `over[counter]` moved into `as` and `{}` into
 /// `scratch`, before the sweep's condition. Out of bounds the loop exits,
 /// leaving the first counter past them in the context; past a limit the run
-/// stops, the sweep not begun. None of these writes records a `Change`.
+/// stops, the sweep not begun.
+///
+/// None of these writes records a `Change` for the audit. A traced run
+/// gets the engine's step for them, `task: None` with the counter written,
+/// as each sweep is entered and as the loop exits on a counter it wrote,
+/// with each write's `Change` while the trace keeps changes. A stop makes
+/// no step.
 fn enter<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
@@ -389,45 +495,83 @@ fn enter<'p>(
     sweep: Flow,
     exit_to: u32,
 ) -> Flow {
-    let frame = &mut env.frame;
-    let counter = frame.counter;
+    let traced = env.traces_changes();
+    let mut changes = Vec::new();
+    let counter = env.frame.counter;
     if let Some(path) = &site.counter {
+        let old = traced.then(|| old_value(rc, path));
         rc.engine_set(
             path,
             || OwnedDataValue::from_i64(counter),
             |_| DataValue::from_i64(counter),
         );
+        if let Some(old) = old {
+            changes.push(Change::write(
+                Arc::clone(path.dotted()),
+                old,
+                OwnedDataValue::from_i64(counter),
+            ));
+        }
     }
-    if counter >= site.max {
+    // The element's index, when the loop is over an array.
+    let element = match &env.frame.items {
+        None => None,
+        Some(items) => usize::try_from(counter).ok().filter(|&i| i < items.len()),
+    };
+    if counter >= site.max || (env.frame.items.is_some() && element.is_none()) {
+        if site.counter.is_some() {
+            sweep_step(env, counter, changes);
+        }
         return Flow::Jump(exit_to);
     }
-    let item = match &mut frame.items {
-        None => None,
-        Some(items) => match usize::try_from(counter).ok().and_then(|i| items.get_mut(i)) {
-            Some(item) => Some(item),
-            None => return Flow::Jump(exit_to),
-        },
-    };
     if let Err(e) = env.limits.check() {
         return Flow::Stop(e);
     }
-    if let Some(item) = item {
+    if let Some(item) = element.and_then(|i| env.frame.items.as_mut()?.get_mut(i)) {
         // Moved, not cloned: `increment >= 1` visits no element twice.
         let item = std::mem::take(item);
         if let Some(path) = &site.r#as {
+            if traced {
+                changes.push(Change::write(
+                    Arc::clone(path.dotted()),
+                    old_value(rc, path),
+                    item.clone(),
+                ));
+            }
             rc.set(path, item, None);
         }
     }
     if let Some(path) = &site.scratch {
+        let old = traced.then(|| old_value(rc, path));
         rc.engine_set(
             path,
             || OwnedDataValue::Object(Vec::new()),
             |_| DataValue::Object(&[]),
         );
+        if let Some(old) = old {
+            changes.push(Change::write(
+                Arc::clone(path.dotted()),
+                old,
+                OwnedDataValue::Object(Vec::new()),
+            ));
+        }
     }
-    frame.loop_counter = Some(counter);
-    frame.sweeps = frame.sweeps.saturating_add(1);
+    env.frame.loop_counter = Some(counter);
+    env.frame.sweeps = env.frame.sweeps.saturating_add(1);
+    sweep_step(env, counter, changes);
     sweep
+}
+
+/// The engine's step for a sweep entered or a loop exited at `counter`,
+/// with its writes' `changes`, when the run is traced.
+fn sweep_step(env: &mut RunEnv<'_, '_>, counter: i64, changes: Vec<Change>) {
+    if env.trace.is_none() {
+        return;
+    }
+    let mut step = env.workflow_step(StepResult::Executed);
+    step.changes = changes;
+    step.loop_counter = Some(counter);
+    env.push_step(step);
 }
 
 /// Whose `over` is evaluated, which its errors name.

@@ -34,7 +34,7 @@
 //! record, as v3's.
 
 use super::host::{Invoked, Layers, call_start, invoke, keep_records};
-use super::interp::{Over, RunEnv, elements};
+use super::interp::{Over, RunEnv, elements, old_value};
 use super::policy::{self, Decision, Flow, Policy, decide};
 use super::record::{self, Completed, Stamp, TaskIds};
 use crate::base::{Change, ErrorRecord};
@@ -258,8 +258,17 @@ pub(crate) async fn fan_out<'p>(
     }
 
     // One slot per element, so an element that failed or never ran is a
-    // `null` at its own index. Written by the engine: no `Change`.
+    // `null` at its own index. Written by the engine: no `Change` for the
+    // audit, and in a trace that keeps changes the first change of the first
+    // folded element's step.
     if let Some(into) = &fan.into {
+        if env.traces_changes() {
+            env.trace_prelude.push(Change::write(
+                Arc::clone(into.dotted()),
+                old_value(rc, into),
+                OwnedDataValue::Array(vec![OwnedDataValue::Null; n]),
+            ));
+        }
         rc.set(
             into,
             OwnedDataValue::Array(vec![OwnedDataValue::Null; n]),

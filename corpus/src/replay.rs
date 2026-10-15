@@ -26,12 +26,14 @@ pub fn rebuild(initial: &Json, steps: &[Json]) -> Vec<Option<Json>> {
         .collect()
 }
 
-/// One recorded `Change`: `{path, old_value, new_value, removed?}`.
+/// One recorded `Change`: `{path, old_value, new_value, removed?, replaced?}`.
 ///
 /// A change whose path is a whole root (`data`, `metadata`, `temp_data`) is
 /// merged into it, because that is what `map` does there and what its change
-/// records: only the keys it wrote. v3's format cannot tell this from a
-/// handler's `ctx.set` at a root, which replaces; the corpus has no such write.
+/// records: only the keys it wrote. A handler's `ctx.set` at a root replaces
+/// it instead. v3's format cannot tell the two apart, and the corpus has no
+/// such write; v4's change says `replaced: true` for the replacement (I106),
+/// which is then set like any other write.
 pub fn apply(context: &mut Json, change: &Json) {
     let Some(at) = change.get("path").and_then(Json::as_str) else {
         return;
@@ -41,8 +43,9 @@ pub fn apply(context: &mut Json, change: &Json) {
         return;
     }
     let value = change.get("new_value").cloned().unwrap_or(Json::Null);
-    let is_root = matches!(at, "data" | "metadata" | "temp_data");
-    match (is_root, value, context.get_mut(at)) {
+    let replaced = change.get("replaced").and_then(Json::as_bool) == Some(true);
+    let merges = !replaced && matches!(at, "data" | "metadata" | "temp_data");
+    match (merges, value, context.get_mut(at)) {
         (true, Json::Object(pairs), Some(root @ Json::Object(_))) => {
             for (key, v) in pairs {
                 root.insert(key, v);
@@ -145,6 +148,22 @@ mod tests {
         assert_eq!(
             rebuilt[2].as_ref().unwrap().to_text(),
             r#"{"data":{"b":2},"metadata":{},"temp_data":{}}"#
+        );
+    }
+
+    #[test]
+    fn a_change_at_a_root_that_says_replaced_replaces_it() {
+        let mut ctx = Json::from_text(r#"{"data":{"b":2},"metadata":{},"temp_data":{}}"#).unwrap();
+        apply(
+            &mut ctx,
+            &Json::from_text(
+                r#"{"path":"data","old_value":{"b":2},"new_value":{"a":1},"replaced":true}"#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            ctx.to_text(),
+            r#"{"data":{"a":1},"metadata":{},"temp_data":{}}"#
         );
     }
 

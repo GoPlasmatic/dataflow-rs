@@ -1,7 +1,7 @@
 //! What a finished run reports.
 
 use crate::base::{Error, ErrorKind, WorkflowIx};
-use crate::observe::{RunStatus, Selection, WorkflowExit, WorkflowRecord};
+use crate::observe::{RunStatus, Selection, Trace, WorkflowExit, WorkflowRecord};
 use crate::program::Program;
 use crate::state::Stats;
 
@@ -29,12 +29,14 @@ pub struct ArenaStats {
     pub peak_arena: usize,
 }
 
-/// The report of one run: how it ended and what each workflow did.
+/// The report of one run: how it ended, what each workflow did, and its
+/// trace when one was asked for.
 pub struct Run {
     program: Program,
     status: RunStatus,
     records: Vec<Record>,
     stats: Stats,
+    trace: Option<Trace>,
 }
 
 impl Run {
@@ -43,13 +45,23 @@ impl Run {
         status: RunStatus,
         records: Vec<Record>,
         stats: Stats,
+        trace: Option<Trace>,
     ) -> Self {
         Self {
             program,
             status,
             records,
             stats,
+            trace,
         }
+    }
+
+    /// The run's trace, when [`RunOptions::trace`](crate::RunOptions::trace())
+    /// asked for one: on every status, the step that stopped the run
+    /// included. A run stopped between ops or as a sweep starts made no step
+    /// for the stop; its trace is as it stood.
+    pub fn trace(&self) -> Option<&Trace> {
+        self.trace.as_ref()
     }
 
     /// How the run ended.
@@ -171,7 +183,7 @@ mod tests {
     }
 
     fn run(status: RunStatus) -> Run {
-        Run::new(program(), status, records(), Stats::default())
+        Run::new(program(), status, records(), Stats::default(), None)
     }
 
     #[test]
@@ -218,7 +230,7 @@ mod tests {
             peak_arena: 50,
             ..Stats::default()
         };
-        let r = Run::new(program(), RunStatus::Completed, Vec::new(), stats);
+        let r = Run::new(program(), RunStatus::Completed, Vec::new(), stats, None);
         let a = r.arena_stats();
         assert_eq!(
             (a.views, a.checkpoints, a.live_max, a.peak_arena),

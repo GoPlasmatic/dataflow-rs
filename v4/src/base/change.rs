@@ -21,6 +21,12 @@ pub struct Change {
     /// `false`, so a write's JSON is v3's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removed: bool,
+    /// The write replaced the root at `path` instead of merging into it
+    /// (I106): a host's `Ctx::set` at a root replaces it, and `map`'s root
+    /// mapping, which records only the keys it wrote, merges. Skipped when
+    /// `false`, so a merge's JSON, and every write v3 could record, is v3's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replaced: bool,
 }
 
 impl Change {
@@ -35,6 +41,7 @@ impl Change {
             old_value,
             new_value,
             removed: false,
+            replaced: false,
         }
     }
 
@@ -45,6 +52,7 @@ impl Change {
             old_value,
             new_value: OwnedDataValue::Null,
             removed: true,
+            replaced: false,
         }
     }
 }

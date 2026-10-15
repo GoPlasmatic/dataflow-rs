@@ -91,6 +91,7 @@ impl<'p> SyncCtx<'_, '_, 'p> {
                 old_value,
                 new_value,
                 removed,
+                replaced: false,
             });
         }
     }

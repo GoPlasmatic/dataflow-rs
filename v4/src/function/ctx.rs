@@ -392,7 +392,9 @@ impl<'r> Ctx<'r> {
     /// Assigns `value` at `path`, by `Path::set`'s rules: a hop that cannot
     /// continue writes nothing. The `Change` is recorded first, under
     /// capture, with the value this call sees there now, so a second write to
-    /// one path leaves two `Change`s and one value.
+    /// one path leaves two `Change`s and one value. At a root the write
+    /// replaces the root, and its `Change` says so
+    /// ([`replaced`](Change::replaced), I106).
     ///
     /// # Errors
     ///
@@ -414,11 +416,13 @@ impl<'r> Ctx<'r> {
                 Some(Some(r)) => self.reader.get_resolved(path, r),
                 None => self.get(path),
             };
-            self.changes.push(Change::write(
+            let mut change = Change::write(
                 Arc::clone(path.dotted()),
                 old_value.map_or(OwnedDataValue::Null, Cow::into_owned),
                 value.clone(),
-            ));
+            );
+            change.replaced = path.is_root();
+            self.changes.push(change);
         }
         if let Some(resolved) = first {
             self.overlay.push(path, value, resolved.is_some());

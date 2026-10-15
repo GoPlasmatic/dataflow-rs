@@ -12,6 +12,7 @@ mod options;
 pub(crate) mod policy;
 mod record;
 mod report;
+mod trace;
 
 /// The clock a deadline is read on: `std::time::Instant` until phase 7's wasm
 /// track makes it `web_time::Instant`, the same type on native targets (I86).

@@ -246,7 +246,7 @@ fn line(workflow: &str, task: Option<&str>, result: StepResult, status: Option<u
     (workflow.to_owned(), task.map(str::to_owned), result, status)
 }
 
-fn text<T: serde::Serialize>(v: &T) -> String {
+fn text<T: serde::Serialize + ?Sized>(v: &T) -> String {
     serde_json::to_string(v).unwrap()
 }
 
@@ -318,7 +318,7 @@ async fn a_trace_is_the_initial_context_plus_each_steps_changes() {
     let meta = trace.initial.metadata();
     assert_eq!(meta["processed_at"], m.context().metadata()["processed_at"]);
     assert_eq!(meta["engine_version"], dv(json!(dataflow_rs::VERSION)));
-    assert!(trace.initial.temp_data() == &dv(json!({})));
+    assert_eq!(trace.initial.temp_data(), &dv(json!({})));
     assert!(!trace.truncated);
 
     use StepResult::Executed;
@@ -796,15 +796,17 @@ async fn the_engines_writes_never_enter_an_audit_entry() {
     ];
     let v3 = v3_engine_with(&workflows, |b| b.register("wrap", v3_twin::Wrap)).unwrap();
     let v4 = v4_engine_with(&workflows, |b| b.register("wrap", Wrap)).unwrap();
-    let mut runs = vec![data(json!({}))];
-    runs.push(vs_v3::Run {
-        capture_off: true,
-        ..data(json!({}))
-    });
-    runs.push(vs_v3::Run {
-        audit: Some(3),
-        ..data(json!({}))
-    });
+    let runs = [
+        data(json!({})),
+        vs_v3::Run {
+            capture_off: true,
+            ..data(json!({}))
+        },
+        vs_v3::Run {
+            audit: Some(3),
+            ..data(json!({}))
+        },
+    ];
     for run in &runs {
         let (expected, code) = on_v3(&v3, run).await;
         assert_eq!(code, "ok");
@@ -866,10 +868,10 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
     let (_, trace) = trace_of(&e, &mut m, TraceOptions::default().redact(redact)).await;
 
     // `initial`: each redacted path that resolves reads `null`; one that does
-    // not creates nothing.
+    // not creates nothing. (`json!` sorts the seed's keys.)
     assert_eq!(
         text(trace.initial.data()),
-        r#"{"secret":null,"card":null,"user":{"name":"n"}}"#
+        r#"{"card":null,"secret":null,"user":{"name":"n"}}"#
     );
 
     // No change carries a redacted value, `copy`'s excepted: a value derived
@@ -887,7 +889,7 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
     assert_eq!(text(&merge.new_value), r#"{"token":null,"x":1}"#);
     assert_eq!(
         text(&merge.old_value),
-        r#"{"secret":null,"card":null,"user":{"name":"m","password":null}}"#
+        r#"{"card":null,"secret":null,"user":{"name":"m","password":null}}"#
     );
 
     // Every replayed context reads `null` at each redacted path.

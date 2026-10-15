@@ -6,22 +6,30 @@
 //! when it has a status, the audit entry (through `AuditMode`'s trim, with the
 //! call's [`Stamp`]), then the progress write, then the error record, if any,
 //! with the workflow and task ids, the run's timestamp and the stamp's
-//! element; then, for a `Skip` too, the observers' `TaskFinished`. This is
-//! v3's `handle_task_result`, in its order. A fan-out records once per
-//! element it folds.
+//! element; then, for a `Skip` too, the trace's step and the observers'
+//! `TaskFinished`. This is v3's `handle_task_result`, in its order. A fan-out
+//! records once per element it folds.
 //!
-//! A workflow's own failure, which no task made, records one error record
-//! and nothing else (I61): [`workflow_failure`].
+//! The trace's step carries, while the trace keeps changes, the engine's
+//! writes made for it (`RunEnv::trace_prelude`), the call's changes, and the
+//! progress write's `Change`; the audit entry carries the call's changes
+//! alone, and only under `capture_audit` (I107), so the engine's writes never
+//! reach it.
+//!
+//! A workflow's own failure, which no task made, records one error record,
+//! and the trace's `Failed` step for it, and nothing else (I61):
+//! [`workflow_failure`].
 //!
 //! Every clock reading for an elapsed time goes through [`now`] and
-//! [`since`], and only in a timed run: one an observer asked `TIMINGS` of.
+//! [`since`], and only in a timed run: one an observer asked `TIMINGS` of,
+//! or a trace its timings. A step's `elapsed` is kept only for the latter.
 
-use super::interp::RunEnv;
+use super::interp::{RunEnv, old_value};
 use super::message::{AuditEntry, keeps_entries, record_audit};
-use crate::base::{Error, ErrorRecord, Instant, TaskIx};
+use crate::base::{Change, Error, ErrorRecord, Instant, TaskIx};
 use crate::expr::Path;
 use crate::function::{CallInfo, task_record};
-use crate::observe::Event;
+use crate::observe::{Event, StepResult};
 use crate::program::CompiledWorkflow;
 use crate::state::RunContext;
 use datavalue::{DataValue, NumberValue, OwnedDataValue};
@@ -92,10 +100,6 @@ pub(crate) struct Completed<'p> {
     /// The decision's error record: (code, message).
     pub(crate) record: Option<(Cow<'static, str>, String)>,
     /// The decision's flow is `Fail` or `Stop`: the trace's `Failed` (I105).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by phase 6's Task 2 (the trace)")
-    )]
     pub(crate) failed: bool,
     /// How long the call ran, when the run is timed.
     pub(crate) elapsed: Option<Duration>,
@@ -110,8 +114,8 @@ pub(crate) struct Completed<'p> {
 
 /// Records one completed call of `wf`, in this order: the audit entry, with
 /// the call's changes, taken from `env.changes`, under `capture_audit`
-/// (through `AuditMode`), the progress write, the error record, and the
-/// observers' `TaskFinished`. A `Skip` gets the last only.
+/// (through `AuditMode`), the progress write, the error record, the trace's
+/// step, and the observers' `TaskFinished`. A `Skip` gets the last two only.
 pub(crate) fn record<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
@@ -126,17 +130,28 @@ pub(crate) fn record<'p>(
         stamp,
         status,
         record,
+        failed,
         elapsed,
         ..
     } = done;
+    // The step's changes, while the trace keeps them: the engine's writes
+    // made for it first, then the call's, then the progress write.
+    let traced = env.traces_changes();
+    let mut changes = if traced {
+        std::mem::take(&mut env.trace_prelude)
+    } else {
+        Vec::new()
+    };
+    let mut error = None;
     if let Some(status) = status {
         // A mode that keeps nothing builds no entry for `record_audit` to
         // drop.
         if keeps_entries(env.mode) {
-            let changes = if env.capture_audit {
-                std::mem::take(&mut env.changes)
-            } else {
-                Vec::new()
+            let changes = match (env.capture_audit, traced) {
+                (false, _) => Vec::new(),
+                // Both want them.
+                (true, true) => env.changes.clone(),
+                (true, false) => std::mem::take(&mut env.changes),
             };
             record_audit(
                 env.audit,
@@ -152,15 +167,49 @@ pub(crate) fn record<'p>(
                 },
             );
         }
+        let old = traced.then(|| old_value(rc, &PROGRESS));
         write_progress(rc, ids.workflow, ids.task, status);
+        if let Some(old) = old {
+            changes.append(&mut env.changes);
+            changes.push(Change::write(
+                Arc::clone(PROGRESS.dotted()),
+                old,
+                old_value(rc, &PROGRESS),
+            ));
+        }
         if let Some((code, message)) = record {
             let (workflow, task) = (&**ids.workflow, &**ids.task);
             let mut record = task_record(&code, message, workflow, task, env.now_text);
             record.element_index = stamp.element_index;
+            if env.trace.is_some() {
+                error = Some(record.clone());
+            }
             env.errors.push(record);
         }
+    } else if traced {
+        // A `Skip`'s writes stand: its step carries them.
+        changes.append(&mut env.changes);
     }
     env.changes.clear();
+    env.trace_prelude.clear();
+    if let Some(trace) = env.trace.as_deref() {
+        let timings = trace.timings();
+        let mut step = env.task_step(
+            task,
+            if failed {
+                StepResult::Failed
+            } else {
+                StepResult::Executed
+            },
+        );
+        step.status = status;
+        step.changes = changes;
+        step.error = error;
+        step.elapsed = elapsed.filter(|_| timings);
+        step.loop_counter = stamp.loop_counter;
+        step.element_index = stamp.element_index;
+        env.push_step(step);
+    }
     if env.observers.tasks() {
         let meta = &wf.tasks[task as usize];
         let info = CallInfo {
@@ -184,11 +233,18 @@ pub(crate) fn record<'p>(
 
 /// Records a workflow's own failure (I61), whatever its policy: one record
 /// with the error's code and message, the workflow's id, no task id, and the
-/// run's timestamp. No audit entry and no progress write: no task completed.
+/// run's timestamp, and in a traced run the workflow's `Failed` step, with
+/// the record as its error. No audit entry and no progress write: no task
+/// completed.
 pub(crate) fn workflow_failure(env: &mut RunEnv<'_, '_>, error: &Error) {
     let mut record = ErrorRecord::from(error);
     record.workflow_id = Some(env.workflow_id.to_string());
     record.timestamp = Some(env.now_text.to_owned());
+    if env.trace.is_some() {
+        let mut step = env.workflow_step(StepResult::Failed);
+        step.error = Some(record.clone());
+        env.push_step(step);
+    }
     env.errors.push(record);
 }
 
@@ -387,7 +443,7 @@ mod tests {
     use super::*;
     use crate::base::CancelToken;
     use crate::function::{Ctx, Function, Outcome};
-    use crate::observe::{Interest, Observer};
+    use crate::observe::{Interest, Observer, TraceOptions};
     use crate::run::{EngineConfig, RunOptions};
     use crate::state::Tuning;
     use crate::{Engine, Message};
@@ -549,6 +605,24 @@ mod tests {
             let done = collect(&e, json!({}), &opts).await;
             assert_eq!(reads() - before, expected, "{run:?}");
             assert!(done.iter().all(|d| d.timed), "{run:?}: {done:?}");
+        }
+
+        // A trace reads the clock only for its timings: two per call, and
+        // neither the run's ends nor a workflow's start, which only an
+        // observer's `TIMINGS` asks for.
+        for observer in [None, Some(Interest::WORKFLOWS | Interest::TASKS)] {
+            let e = engine(&workflows, observer);
+            for (trace, expected) in [
+                (TraceOptions::default(), 0),
+                (TraceOptions::default().timings(true), 8 * 2),
+            ] {
+                let timed = trace.timings;
+                let before = reads();
+                let opts = RunOptions::default().trace(trace);
+                let done = collect(&e, json!({}), &opts).await;
+                assert_eq!(reads() - before, expected, "{observer:?}, timed {timed}");
+                assert!(done.iter().all(|d| d.timed == timed), "{done:?}");
+            }
         }
     }
 

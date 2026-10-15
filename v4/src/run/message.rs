@@ -77,6 +77,12 @@ impl Context {
         }
     }
 
+    /// A context over `root`, the object holding the three roots: a trace's
+    /// `initial` and each context its replay rebuilds.
+    pub(crate) fn from_root(root: OwnedDataValue) -> Self {
+        Self { root }
+    }
+
     fn root(&self, key: &str) -> &OwnedDataValue {
         &self.root[key]
     }

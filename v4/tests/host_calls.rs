@@ -695,10 +695,11 @@ async fn a_root_write_takes_only_an_object_and_a_root_cannot_be_removed() {
         run.status()
     );
     assert_eq!(data(&m), json!({"fresh": true}));
+    // The root's `Change` says it replaced the root (I106).
     assert_eq!(
         changes(&m, "t"),
         json!([{"path": "data", "old_value": {"kept": true},
-                "new_value": {"fresh": true, "gone": 1}}])
+                "new_value": {"fresh": true, "gone": 1}, "replaced": true}])
     );
     assert_eq!(
         changes(&m, "u"),

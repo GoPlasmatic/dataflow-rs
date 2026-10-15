@@ -8,9 +8,12 @@ use super::observers::Observers;
 use super::options::RunOptions;
 use super::record;
 use super::report::{Record, Run};
+use super::trace::Capture;
 use crate::base::ErrorKind;
 use crate::expr::Path;
-use crate::observe::{Event, Observer, RunStatus, Selection, WorkflowExit, WorkflowRecord};
+use crate::observe::{
+    Event, Observer, RunStatus, Selection, StepResult, TraceStep, WorkflowExit, WorkflowRecord,
+};
 use crate::program::{Compiler, Program};
 use crate::state::{RunContext, Tuning};
 use chrono::Utc;
@@ -127,7 +130,8 @@ impl Engine {
     ///
     /// The run reads the clock once: `metadata.processed_at`, every audit
     /// entry and every error record carry that reading. Only an observer
-    /// asking for [`TIMINGS`](crate::observe::Interest::TIMINGS) has the
+    /// asking for [`TIMINGS`](crate::observe::Interest::TIMINGS), or a trace
+    /// asking for [`timings`](crate::observe::TraceOptions::timings()), has the
     /// clock read again, for the elapsed times it is given. It writes
     /// `metadata.engine_version`, and `metadata.channel` under a channel,
     /// before any workflow runs. A workflow whose rollout does not admit
@@ -138,15 +142,26 @@ impl Engine {
     /// and otherwise [`Stopped`](RunStatus::Stopped) with the error that
     /// stopped it, whatever its kind: a child run's timeout that a function
     /// returns is its task's failure, not this run's.
+    ///
+    /// With [`opts.trace`](RunOptions::trace()) set, the [`Run`] carries the
+    /// run's [`Trace`](crate::observe::Trace): the context after the stamps,
+    /// then a step for every recorded call, skipped call or workflow and
+    /// sweep, the step that stopped the run included.
     pub async fn run_with(&self, msg: &mut Message, opts: &RunOptions<'_>) -> Run {
         let program = &self.inner.program;
         let observers = Observers::attach(self.inner.config.observer.as_deref(), opts.observer);
-        let timed = observers.timed();
-        let started = timed.then(record::now);
+        let started = observers.timed().then(record::now);
         let now = Utc::now();
         let now_text = now.to_rfc3339();
         let parts = msg.parts();
         stamp(parts.context, &now_text, opts.channel);
+        // `initial` is the context as the stamps left it. Boxed: the run's
+        // future, which a host spawns once per message, carries a pointer.
+        let mut trace = opts
+            .trace
+            .as_ref()
+            .map(|t| Box::new(Capture::new(t.clone(), parts.context)));
+        let timed = observers.timed() || trace.as_ref().is_some_and(|t| t.timings());
 
         let mut rc = RunContext::new(parts.context, Tuning::default());
         let active = program.active(opts.channel);
@@ -173,6 +188,10 @@ impl Engine {
             if let (Some(rollout), Some(bucket)) = (wf.rollout, opts.routing_bucket)
                 && !rollout.accepts(bucket)
             {
+                if let Some(trace) = trace.as_deref_mut() {
+                    let (workflow_id, _) = program.ids(ix);
+                    trace.push(TraceStep::new(ix, workflow_id, StepResult::Skipped));
+                }
                 records.push(Record {
                     ix,
                     selection: Selection::SkippedByRollout,
@@ -195,12 +214,14 @@ impl Engine {
                 errors: &mut *parts.errors,
                 audit: &mut *parts.audit,
                 mode: opts.audit,
-                capture: capture_audit,
+                capture: capture_audit || trace.as_ref().is_some_and(|t| t.changes()),
                 capture_audit,
                 observers,
                 timed,
+                trace: trace.as_deref_mut(),
                 now,
                 now_text: &now_text,
+                trace_prelude: Vec::new(),
                 changes: Vec::new(),
                 workflow_id,
                 task_ids,
@@ -264,7 +285,13 @@ impl Engine {
             errors: parts.errors.len(),
             elapsed: started.map(record::since),
         });
-        Run::new(program.clone(), status, records, stats)
+        Run::new(
+            program.clone(),
+            status,
+            records,
+            stats,
+            trace.map(|t| t.finish()),
+        )
     }
 
     /// A compiler with the program's registry and options, whose workflows

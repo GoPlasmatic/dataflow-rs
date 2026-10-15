@@ -1,10 +1,13 @@
 //! What a run reports about itself: as it goes, to an [`Observer`], and
-//! once it ends, on its [`Run`](crate::Run).
+//! once it ends, on its [`Run`](crate::Run), with its [`Trace`] when one was
+//! asked for.
 
 mod observer;
+mod trace;
 
 use crate::base::{Error, WorkflowIx};
 pub use observer::{Event, Interest, Observer};
+pub use trace::{StepResult, Trace, TraceOptions, TraceStep};
 
 /// How a run ended.
 #[derive(Debug)]

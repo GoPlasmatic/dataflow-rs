@@ -3,7 +3,7 @@
 use super::message::AuditMode;
 use crate::base::{CancelToken, Instant};
 use crate::function::CallLayer;
-use crate::observe::Observer;
+use crate::observe::{Observer, TraceOptions};
 use std::fmt;
 use std::sync::Arc;
 
@@ -43,6 +43,12 @@ pub struct RunOptions<'a> {
     ///
     /// [`EngineConfig::observer`]: crate::run::EngineConfig::observer()
     pub observer: Option<&'a dyn Observer>,
+    /// Trace the run, as these options say: its [`Run::trace`] is then the
+    /// initial context plus each step's changes. `None` by default: no
+    /// trace, and no copy of the context.
+    ///
+    /// [`Run::trace`]: crate::Run::trace()
+    pub trace: Option<TraceOptions>,
 }
 
 impl Default for RunOptions<'_> {
@@ -56,6 +62,7 @@ impl Default for RunOptions<'_> {
             cancel: None,
             layers: &[],
             observer: None,
+            trace: None,
         }
     }
 }
@@ -77,6 +84,7 @@ impl fmt::Debug for RunOptions<'_> {
             .field("cancel", &self.cancel)
             .field("layers", &self.layers.len())
             .field("observer", &format_args!("{observer}"))
+            .field("trace", &self.trace)
             .finish()
     }
 }
@@ -139,6 +147,13 @@ impl<'a> RunOptions<'a> {
         self.observer = Some(o);
         self
     }
+
+    /// Traces the run under `opts`, as the `trace` field says.
+    #[must_use]
+    pub fn trace(mut self, opts: TraceOptions) -> Self {
+        self.trace = Some(opts);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -155,6 +170,7 @@ mod tests {
         assert!(o.deadline.is_none() && o.cancel.is_none());
         assert!(o.layers.is_empty());
         assert!(o.observer.is_none());
+        assert!(o.trace.is_none());
         let layers: Vec<Arc<dyn CallLayer>> = vec![Arc::new(Pass)];
         let token = CancelToken::new();
         let o = o
@@ -170,11 +186,13 @@ mod tests {
         assert_eq!(o.layers.len(), 1);
         assert_eq!(
             format!("{o:?}"),
-            r#"RunOptions { channel: Some("c"), routing_bucket: Some(7), capture_changes: false, audit: Off, deadline: None, cancel: Some(CancelToken { cancelled: false, .. }), layers: 1, observer: absent }"#
+            r#"RunOptions { channel: Some("c"), routing_bucket: Some(7), capture_changes: false, audit: Off, deadline: None, cancel: Some(CancelToken { cancelled: false, .. }), layers: 1, observer: absent, trace: None }"#
         );
         let watcher = Quiet;
         let o = o.observer(&watcher);
-        assert!(format!("{o:?}").ends_with("layers: 1, observer: present }"));
+        assert!(format!("{o:?}").ends_with("layers: 1, observer: present, trace: None }"));
+        let o = o.trace(TraceOptions::default().timings(true));
+        assert!(o.trace.as_ref().is_some_and(|t| t.timings && t.changes));
         let at = Instant::now();
         assert_eq!(o.deadline(at).deadline, Some(at));
     }
