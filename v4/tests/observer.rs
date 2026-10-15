@@ -96,6 +96,7 @@ impl Observer for Timeline {
                 info,
                 status,
                 elapsed,
+                ..
             } => (
                 format!("task_finished({}/{})", info.workflow_id, info.task_id),
                 Some(Task {
@@ -108,7 +109,9 @@ impl Observer for Timeline {
                 }),
                 *elapsed,
             ),
-            Event::WorkflowFinished { record, elapsed } => (
+            Event::WorkflowFinished {
+                record, elapsed, ..
+            } => (
                 format!(
                     "workflow_finished({}, sweeps={}, halted={})",
                     record.id,

@@ -149,11 +149,13 @@ impl fmt::Debug for Interest {
 /// observer copies out what it keeps.
 ///
 /// An `elapsed` is `Some` only for an observer whose interest holds
-/// [`Interest::TIMINGS`].
+/// [`Interest::TIMINGS`]. Each variant is `#[non_exhaustive]`: match its
+/// fields with `..`, so a fact added later breaks no host.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Event<'a> {
     /// The run starts, after its stamps, before any workflow.
+    #[non_exhaustive]
     RunStarted {
         /// The program the run runs.
         program: ProgramId,
@@ -170,6 +172,7 @@ pub enum Event<'a> {
     /// with no judgment of its condition reached (a loop that enters no
     /// sweep, or a run stopped before the condition) gets it as it ends,
     /// before its `WorkflowFinished`.
+    #[non_exhaustive]
     WorkflowStarted {
         /// The workflow's position in the program.
         workflow: WorkflowIx,
@@ -179,6 +182,7 @@ pub enum Event<'a> {
     /// A call was recorded: once per call, a fan-out's once per element it
     /// folds, and once with no element for a fan-out with nothing to call or
     /// cut short. A task its condition refused is not.
+    #[non_exhaustive]
     TaskFinished {
         /// The call: its workflow, its task and the function's registered
         /// name, its loop counter and its element.
@@ -190,6 +194,7 @@ pub enum Event<'a> {
     },
     /// A workflow that was selected ended. Its record says how, and how many
     /// sweeps it ran.
+    #[non_exhaustive]
     WorkflowFinished {
         /// What the workflow did.
         record: &'a WorkflowRecord<'a>,
@@ -197,6 +202,7 @@ pub enum Event<'a> {
         elapsed: Option<Duration>,
     },
     /// The run ended, whatever its status.
+    #[non_exhaustive]
     RunFinished {
         /// The message's id, as its `RunStarted` named it: what ties the end
         /// to the start when one observer sees runs overlap.
