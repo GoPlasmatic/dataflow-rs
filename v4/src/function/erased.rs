@@ -6,7 +6,8 @@ use super::{
     BoxFuture, Ctx, Function, FunctionConfig, FunctionSpec, Outcome, Prepare, Primary, Templated,
 };
 use crate::base::Result;
-use crate::expr::{CompileCx, ExprVisitor, FieldKind, FieldSpec};
+use crate::expr::{CompileCx, ExprVisitor, FieldKind, FieldSpec, Resolver};
+use datavalue::OwnedDataValue;
 use serde_json::Value;
 use std::any::TypeId;
 use std::sync::Arc;
@@ -47,6 +48,9 @@ pub(crate) trait BoundCall: Send + Sync {
     /// The config's primary output, which `Ctx::emit_default` writes
     /// through, or why there is none.
     fn primary(&self) -> Primary<'_>;
+
+    /// The config resolved through `r`: [`FunctionConfig::resolve`].
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue>;
 }
 
 /// A registered function with the spec it gave at `register`.
@@ -145,6 +149,10 @@ impl<F: Function> BoundCall for Bound<F> {
             (None, Some(field)) => Primary::Unset(field),
             (None, None) => Primary::Undeclared,
         }
+    }
+
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+        FunctionConfig::resolve(&self.cfg, r)
     }
 }
 

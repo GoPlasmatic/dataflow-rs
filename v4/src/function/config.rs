@@ -187,6 +187,9 @@ pub trait FunctionConfig: Sized + Send + Sync + 'static {
     /// `null`, as an `Option` left `None` is). The derive generates it; a
     /// hand-written config resolves to `null` unless it says otherwise.
     ///
+    /// [`Ctx::input`](crate::Ctx::input) is this over the call's context,
+    /// with every field that reads a secret `null`.
+    ///
     /// # Errors
     ///
     /// The first field's that fails: an evaluation's, or a serde field that

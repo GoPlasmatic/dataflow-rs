@@ -203,7 +203,7 @@ pub(crate) async fn fan_out<'p>(
         // The reader is taken in its own statement and every call holds a
         // copy: nothing writes to the run until the last call has finished.
         let reader = rc.reader();
-        let (start, layers) = call_start(env, reader, wf, site, bound);
+        let (start, layers) = call_start(env, reader, wf, site);
         let mut pending = items.iter().enumerate();
         let mut in_flight = FuturesUnordered::new();
         let mut stop = false;

@@ -607,3 +607,40 @@ fn config_with_compiles_with_the_engine_given() {
         ]
     );
 }
+
+/// Writes what `ctx.input()` gives at `data.input`.
+struct EchoInput;
+
+impl Function for EchoInput {
+    type Config = GreetConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &GreetConfig) -> Result<Outcome> {
+        let input = ctx.input()?;
+        ctx.set(&path("data.input"), input)?;
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn a_tested_call_reads_its_input_resolved() {
+    let input = json!({"greeting": {"cat": ["hi ", {"var": "data.name"}]}});
+    let called = testing::call(EchoInput, input)
+        .message(Message::from_parts(
+            OwnedDataValue::Null,
+            dv(json!({"name": "ada"})),
+            OwnedDataValue::Null,
+        ))
+        .await;
+    assert!(called.issues.is_empty(), "{:?}", called.issues);
+    assert_eq!(called.outcome.unwrap(), Outcome::Ok);
+    // The greeting evaluated over the message given, and the output's
+    // default path.
+    assert_eq!(
+        called
+            .message
+            .context()
+            .get(&path("data.input"))
+            .map(json_of),
+        Some(json!({"greeting": "hi ada", "output": "data.greeting"}))
+    );
+}

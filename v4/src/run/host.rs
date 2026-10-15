@@ -47,7 +47,6 @@ pub(crate) fn call_start<'c, 'r: 'c, 'p: 'c>(
     reader: Reader<'c>,
     wf: &'c CompiledWorkflow,
     site: &CallSite,
-    bound: &'c dyn BoundCall,
 ) -> (CallStart<'c>, Layers<'c>) {
     let task = &wf.tasks[site.task as usize];
     let start = CallStart {
@@ -66,7 +65,6 @@ pub(crate) fn call_start<'c, 'r: 'c, 'p: 'c>(
             loop_counter: env.frame.loop_counter,
             element_index: None,
         },
-        primary: bound.primary(),
         deadline: env.limits.deadline,
         cancel: env.limits.cancel,
         capture: env.capture,
@@ -99,16 +97,16 @@ pub(crate) struct Invoked {
     pub(crate) elapsed: Option<Duration>,
 }
 
-/// One call through the layers: the `Ctx` built from `start`, the run's
-/// limits checked, the chain run and, natively, raced against them, the
-/// value at `collect` read as the call sees it once it returned `Ok`, the
-/// `Ctx` settled. A call the limits cut short, before it starts or while it
+/// One call of `bound` through the layers: the `Ctx` built from `start`,
+/// the run's limits checked, the chain run and, natively, raced against
+/// them, the value at `collect` read as the call sees it once it returned
+/// `Ok`, the `Ctx` settled. A call the limits cut short, before it starts or while it
 /// runs, gives `Err` of kind `TimedOut` or `Cancelled`, naming the function.
 ///
-/// The future holds the `Ctx` and not `start` beside it, and the race is
-/// boxed, made only when a limit is set: the run's future, which a host
-/// spawns once per message, carries neither the timer's state nor a second
-/// copy of the call's start.
+/// The future holds the `Ctx`, which holds the callee, and not `start` or
+/// `bound` beside it, and the race is boxed, made only when a limit is set:
+/// the run's future, which a host spawns once per message, carries neither
+/// the timer's state nor a second copy of the call's start.
 pub(crate) fn invoke<'r>(
     start: CallStart<'r>,
     bound: &'r dyn BoundCall,
@@ -120,9 +118,9 @@ pub(crate) fn invoke<'r>(
         cancel: start.cancel,
     };
     let function = start.info.function;
-    let mut ctx = Ctx::new(start);
+    let mut ctx = Ctx::new(start, bound);
     async move {
-        let chain = Next::new(layers.run, layers.registry, bound);
+        let chain = Next::new(layers.run, layers.registry, ctx.callee());
         let ran = match limits.stop() {
             Some(stop) => Err(stop),
             None if !limits.is_set() => Ok(chain.run(&mut ctx).await),
@@ -203,7 +201,7 @@ pub(crate) async fn call_host<'p>(
         ..
     } = {
         let reader = rc.reader();
-        let (start, layers) = call_start(env, reader, wf, site, bound);
+        let (start, layers) = call_start(env, reader, wf, site);
         invoke(start, bound, layers, None).await
     };
     let elapsed = started.map(record::since);

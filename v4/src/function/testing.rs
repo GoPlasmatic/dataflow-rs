@@ -301,7 +301,6 @@ impl<F: Function> Call<F> {
                     loop_counter: None,
                     element_index: None,
                 },
-                primary: bound.primary(),
                 deadline,
                 cancel: cancel.as_ref(),
                 capture,

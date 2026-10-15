@@ -26,8 +26,8 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 
 use dataflow_rs::def::{ParseOptions, WorkflowDef, parse};
 use dataflow_rs::expr::{ExprEngine, Interpolated, Output, Secrets};
-use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::function::testing;
+use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next};
 use dataflow_rs::observe::{Event, Interest, Observer, StepResult, TraceOptions};
 use dataflow_rs::program::{CompileOptions, IssueCode};
 use dataflow_rs::run::{EngineConfig, ErrorContext, ErrorKind, RunStatus};
@@ -1162,4 +1162,116 @@ async fn a_secret_in_an_interpolated_document_is_refused_and_never_rendered() {
         })
     );
     assert_exits_clean("document", &message, &run);
+}
+
+/// `keyed`'s config: secrets read from every place a field can read one,
+/// beside fields that read none.
+#[derive(FunctionConfig)]
+struct KeyedConfig {
+    /// A literal name.
+    key: Expr<String>,
+    /// A computed name.
+    computed: Expr<String>,
+    /// A secret inside a larger expression.
+    wrapped: Expr<String>,
+    /// A secret that is not a `u64`: evaluating it would fail, naming the
+    /// value.
+    count: Expr<u64>,
+    /// A secret and a plain read, side by side.
+    keys: Vec<Expr<String>>,
+    /// A secret inside a map, beside a plain read.
+    headers: std::collections::BTreeMap<String, Expr<String>>,
+    body: Expr<String>,
+    label: String,
+}
+
+/// Reads its key, as a function may, and returns `Ok`.
+struct Keyed;
+
+impl Function for Keyed {
+    type Config = KeyedConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &KeyedConfig) -> Result<Outcome> {
+        assert_eq!(
+            ctx.eval(&cfg.key)?,
+            SECRET,
+            "the function reads its own secret"
+        );
+        assert_eq!(ctx.eval(&cfg.computed)?, SECRET);
+        Ok(Outcome::Ok)
+    }
+}
+
+/// What a logging layer logged of each call's input: its `Debug` and its
+/// wire text.
+type Logged = Arc<Mutex<Vec<(String, String)>>>;
+
+/// A logging layer: it logs every call's input, through the process log
+/// too, and passes the call on.
+struct LogsInput(Logged);
+
+impl CallLayer for LogsInput {
+    fn call<'a>(&'a self, ctx: &'a mut Ctx<'_>, next: Next<'a>) -> BoxFuture<'a, Result<Outcome>> {
+        let input = ctx.input().expect("the input resolves");
+        let wire = input.to_json_string();
+        log::info!("call input: {wire}");
+        self.0.lock().unwrap().push((format!("{input:?}"), wire));
+        next.run(ctx)
+    }
+}
+
+#[tokio::test]
+async fn a_logging_layer_reading_the_input_never_sees_a_secret() {
+    install_logger();
+    let logged = Logged::default();
+    let mut registry = Registry::new(exprs());
+    registry.register("keyed", Keyed);
+    registry.layer(LogsInput(Arc::clone(&logged)));
+    let engine = Engine::builder()
+        .registry(registry)
+        .workflow_json(&json!({ "id": "w", "tasks": [
+            { "id": "t", "function": { "name": "keyed", "input": {
+                "key": { "secret": "partner_key" },
+                "computed": { "secret": { "var": "data.which" } },
+                "wrapped": { "cat": ["Bearer ", { "secret": "partner.hmac" }] },
+                "count": { "secret": "partner_key" },
+                "keys": [{ "secret": "partner_key" }, { "var": "data.which" }],
+                "headers": {
+                    "auth": { "secret": { "var": "data.which" } },
+                    "host": { "var": "data.host" }
+                },
+                "body": { "var": "data.body" },
+                "label": "l"
+            } } }
+        ] }))
+        .build()
+        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"));
+    let mut message = Message::from_parts(
+        OwnedDataValue::Null,
+        dv(json!({ "which": "partner_key", "host": "h", "body": "b" })),
+        OwnedDataValue::Null,
+    );
+    let run = engine.run(&mut message).await;
+    assert!(matches!(run.status(), RunStatus::Completed), "{run:?}");
+    assert!(message.errors().is_empty(), "{:?}", message.errors());
+    let logged = logged.lock().unwrap();
+    assert_eq!(logged.len(), 1);
+    let (debug, wire) = &logged[0];
+    assert_clean("the input's Debug", debug);
+    assert_clean("the input's wire text", wire);
+    // Every field whose expression reads a secret is `null`, a computed
+    // name and a secret inside a list or a map included; one that would
+    // fail to evaluate was never evaluated. The rest resolve.
+    assert_eq!(
+        wire,
+        concat!(
+            r#"{"key":null,"computed":null,"wrapped":null,"count":null,"#,
+            r#""keys":[null,"partner_key"],"headers":{"auth":null,"host":"h"},"#,
+            r#""body":"b","label":"l"}"#
+        )
+    );
+    for line in captured_logs() {
+        assert_clean("the process log", &line);
+    }
+    assert_clean("the message", &message.to_json().to_string());
 }

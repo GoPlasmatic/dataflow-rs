@@ -1,19 +1,21 @@
 //! `Ctx`: a function's view of one call, and the static facts about it.
 
+use super::erased::BoundCall;
 use super::overlay::Overlay;
 use crate::base::{
-    CancelToken, Change, Error, ErrorKind, ErrorRecord, Instant, ProgramId, Result, TaskIx,
-    WorkflowIx,
+    AuthoredPath, CancelToken, Change, Error, ErrorKind, ErrorRecord, Instant, PathSeg, ProgramId,
+    Result, TaskIx, WorkflowIx,
 };
 use crate::expr::arena::with_arena;
 use crate::expr::path;
 use crate::expr::{
-    Expr, ExprEngine, Filled, FromValue, Interpolated, Output, Path, Rendered, ResolveExpr,
-    Resolver, Seg,
+    Expr, ExprEngine, ExprVisitor, Filled, FromValue, Interpolated, Output, Path, Rendered,
+    ResolveExpr, Resolver, Seg, secret_refs,
 };
 use crate::state::{Lookup, Reader, splice};
 use bumpalo::Bump;
 use datavalue::{DataValue, OwnedDataValue};
+use serde_json::Value;
 use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
@@ -110,8 +112,9 @@ pub struct Ctx<'r> {
     payload: &'r OwnedDataValue,
     exprs: &'r ExprEngine,
     info: CallInfo<'r>,
-    /// The callee's primary output, which `emit_default` writes through.
-    primary: Primary<'r>,
+    /// The function and its config: `emit_default` writes through its
+    /// primary output, and `input` resolves its config.
+    callee: &'r dyn BoundCall,
     deadline: Option<Instant>,
     cancel: Option<&'r CancelToken>,
     /// Whether `set` and `remove` record `Change`s (I67).
@@ -139,8 +142,6 @@ pub(crate) struct CallStart<'r> {
     pub(crate) exprs: &'r ExprEngine,
     /// The call's static facts.
     pub(crate) info: CallInfo<'r>,
-    /// The callee's primary output.
-    pub(crate) primary: Primary<'r>,
     /// When the run must end.
     pub(crate) deadline: Option<Instant>,
     /// The run's cancellation token.
@@ -149,7 +150,7 @@ pub(crate) struct CallStart<'r> {
     pub(crate) capture: bool,
 }
 
-/// A call's primary output, as [`Ctx::emit_default`] writes through it.
+/// A callee's primary output, as [`Ctx::emit_default`] writes through it.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Primary<'r> {
     /// The config declares none.
@@ -250,15 +251,15 @@ fn with_base<R>(
 }
 
 impl<'r> Ctx<'r> {
-    /// A context for one call.
-    pub(crate) fn new(start: CallStart<'r>) -> Self {
+    /// A context for one call of `callee`.
+    pub(crate) fn new(start: CallStart<'r>, callee: &'r dyn BoundCall) -> Self {
         Self {
             reader: start.reader,
             binding: start.binding,
             payload: start.payload,
             exprs: start.exprs,
             info: start.info,
-            primary: start.primary,
+            callee,
             deadline: start.deadline,
             cancel: start.cancel,
             capture: start.capture,
@@ -271,6 +272,38 @@ impl<'r> Ctx<'r> {
     /// The static facts about this call.
     pub fn info(&self) -> &CallInfo<'r> {
         &self.info
+    }
+
+    /// The function this call reaches and its config, bound at compile.
+    pub(crate) fn callee(&self) -> &'r dyn BoundCall {
+        self.callee
+    }
+
+    /// The callee's config resolved for this call (I130): every field the
+    /// input set, keyed by its authored key, in declaration order, as
+    /// [`FunctionConfig::resolve`](super::FunctionConfig::resolve) gives it
+    /// over the context as this call sees it, a fan-out element's binding
+    /// included. A hand-written config resolves to `null` unless it says
+    /// otherwise.
+    ///
+    /// A field whose expression reads a secret is `null`, the one redaction
+    /// the engine writes, as [`TraceOptions::redact`](crate::observe::TraceOptions::redact)
+    /// writes a redacted path's value, and it is never evaluated, so not
+    /// even its error can carry the value: a logging layer or a dry run
+    /// reads the input without reading a secret (R37). The function itself
+    /// reads its own fields, secrets included, through [`Self::eval`].
+    ///
+    /// # Errors
+    ///
+    /// The first field's that fails: [`ErrorKind::Budget`] when the
+    /// operation ceiling is exceeded, [`ErrorKind::Eval`] for any other
+    /// evaluation failure.
+    pub fn input(&self) -> Result<OwnedDataValue> {
+        let mut input = self.callee.resolve(&mut Redacted(self))?;
+        // The walk the secret checks trust: whatever a field's resolve did,
+        // the value where its secret-reading expression sits is `null`.
+        self.callee.visit(&mut Redact(&mut input));
+        Ok(input)
     }
 
     /// The message's payload, which no expression reads.
@@ -476,7 +509,7 @@ impl<'r> Ctx<'r> {
     /// none, or leaves an optional one unset. A layer reads it to know
     /// whether, and where, an answer would be written.
     pub fn primary_output(&self) -> Option<&Output> {
-        match self.primary {
+        match self.callee.primary() {
             Primary::Set(out) => Some(out),
             Primary::Unset(_) | Primary::Undeclared => None,
         }
@@ -492,7 +525,8 @@ impl<'r> Ctx<'r> {
     /// leaves an optional one unset, which the error names; [`Self::emit`]'s.
     pub fn emit_default(&mut self, value: OwnedDataValue) -> Result<()> {
         let function = self.info.function;
-        match self.primary {
+        let callee = self.callee;
+        match callee.primary() {
             Primary::Set(out) => self.emit(out, value),
             Primary::Unset(field) => Err(Error::new(
                 ErrorKind::Config,
@@ -552,6 +586,58 @@ impl Resolver for &Ctx<'_> {
     }
 }
 
+/// Whether `raw` reads a secret anywhere, a computed name included.
+fn reads_secret(raw: &Value) -> bool {
+    secret_refs(raw).next().is_some()
+}
+
+/// The resolver behind [`Ctx::input`]: an expression that reads a secret
+/// is `null`, and is never evaluated; anything else as the call's context
+/// resolves it.
+struct Redacted<'c, 'r>(&'c Ctx<'r>);
+
+impl Resolver for Redacted<'_, '_> {
+    fn eval(&mut self, expr: &dyn ResolveExpr) -> Result<OwnedDataValue> {
+        if reads_secret(expr.raw()) {
+            return Ok(OwnedDataValue::Null);
+        }
+        self.0.eval_owned(expr)
+    }
+
+    fn render(&mut self, doc: &Interpolated) -> Result<OwnedDataValue> {
+        Ok(self.0.render(doc).to_owned())
+    }
+}
+
+/// Sets the value of every expression that reads a secret to `null`, at the
+/// path the config's walk reports it, in a resolved config.
+struct Redact<'v>(&'v mut OwnedDataValue);
+
+impl ExprVisitor for Redact<'_> {
+    fn expr(&mut self, at: &AuthoredPath, raw: &Value, _records: bool) {
+        if reads_secret(raw)
+            && let Some(slot) = slot_at(self.0, at)
+        {
+            *slot = OwnedDataValue::Null;
+        }
+    }
+}
+
+/// The value at `at` in `value`, a key naming an object's entry and an
+/// index an array's element; `None` when nothing is there.
+fn slot_at<'v>(value: &'v mut OwnedDataValue, at: &AuthoredPath) -> Option<&'v mut OwnedDataValue> {
+    at.segs()
+        .iter()
+        .try_fold(value, |value, seg| match (value, seg) {
+            (OwnedDataValue::Object(entries), PathSeg::Key(key)) => entries
+                .iter_mut()
+                .find(|(k, _)| **k == **key)
+                .map(|(_, v)| v),
+            (OwnedDataValue::Array(items), PathSeg::Index(i)) => items.get_mut(*i),
+            _ => None,
+        })
+}
+
 impl fmt::Debug for Ctx<'_> {
     /// The call's facts and whether it has written; never the context.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -566,7 +652,27 @@ impl fmt::Debug for Ctx<'_> {
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
+    use crate::function::{BoxFuture, Outcome};
     use crate::state::{RunContext, Tuning};
+
+    /// A callee with no config: no primary output, and nothing to resolve.
+    pub(crate) struct NoCallee;
+
+    impl BoundCall for NoCallee {
+        fn call<'a>(&'a self, _ctx: &'a mut Ctx<'_>) -> BoxFuture<'a, Result<Outcome>> {
+            Box::pin(std::future::ready(Ok(Outcome::Ok)))
+        }
+
+        fn visit(&self, _v: &mut dyn ExprVisitor) {}
+
+        fn primary(&self) -> Primary<'_> {
+            Primary::Undeclared
+        }
+
+        fn resolve(&self, _r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+            Ok(OwnedDataValue::Null)
+        }
+    }
 
     /// Runs `f` with a call context over `context`, the call described by
     /// `info`, with `binding` if any.
@@ -581,23 +687,25 @@ pub(crate) mod testing {
         let mut slot = OwnedDataValue::from(context);
         let mut rc = RunContext::new(&mut slot, Tuning::default());
         let reader = rc.reader();
-        f(Ctx::new(CallStart {
-            reader,
-            binding,
-            payload: &payload,
-            exprs: &exprs,
-            info,
-            primary: Primary::Undeclared,
-            deadline: None,
-            cancel: None,
-            capture: true,
-        }))
+        f(Ctx::new(
+            CallStart {
+                reader,
+                binding,
+                payload: &payload,
+                exprs: &exprs,
+                info,
+                deadline: None,
+                cancel: None,
+                capture: true,
+            },
+            &NoCallee,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::testing::with_ctx;
+    use super::testing::{NoCallee, with_ctx};
     use super::*;
     use crate::state::{RunContext, Tuning};
     use serde_json::{Value, json};
@@ -701,17 +809,19 @@ mod tests {
         let payload = OwnedDataValue::Null;
         let mut slot = OwnedDataValue::from(&context);
         let mut rc = RunContext::new(&mut slot, Tuning::default());
-        let mut ctx = Ctx::new(CallStart {
-            reader: rc.reader(),
-            binding: None,
-            payload: &payload,
-            exprs: &exprs,
-            info: info(),
-            primary: Primary::Undeclared,
-            deadline: None,
-            cancel: None,
-            capture: false,
-        });
+        let mut ctx = Ctx::new(
+            CallStart {
+                reader: rc.reader(),
+                binding: None,
+                payload: &payload,
+                exprs: &exprs,
+                info: info(),
+                deadline: None,
+                cancel: None,
+                capture: false,
+            },
+            &NoCallee,
+        );
         // A value of the run's, one the call wrote, nothing, and an element
         // the call's own removal moved: after it, `list.1` holds nothing.
         for (dotted, write) in [
@@ -752,17 +862,19 @@ mod tests {
         let mut olds = Vec::new();
         let mut overlays = Vec::new();
         for dotted in writes {
-            let mut ctx = Ctx::new(CallStart {
-                reader: rc.reader(),
-                binding: None,
-                payload: &payload,
-                exprs: &exprs,
-                info: info(),
-                primary: Primary::Undeclared,
-                deadline: None,
-                cancel: None,
-                capture: true,
-            });
+            let mut ctx = Ctx::new(
+                CallStart {
+                    reader: rc.reader(),
+                    binding: None,
+                    payload: &payload,
+                    exprs: &exprs,
+                    info: info(),
+                    deadline: None,
+                    cancel: None,
+                    capture: true,
+                },
+                &NoCallee,
+            );
             if after_another {
                 ctx.set(&parse("temp_data.other"), OwnedDataValue::from(0))
                     .unwrap();
@@ -827,17 +939,19 @@ mod tests {
         let mut rc = RunContext::new(&mut slot, Tuning::default());
         let mut overlays = Vec::new();
         for writes in calls {
-            let mut ctx = Ctx::new(CallStart {
-                reader: rc.reader(),
-                binding: None,
-                payload: &payload,
-                exprs: &exprs,
-                info: info(),
-                primary: Primary::Undeclared,
-                deadline: None,
-                cancel: None,
-                capture: true,
-            });
+            let mut ctx = Ctx::new(
+                CallStart {
+                    reader: rc.reader(),
+                    binding: None,
+                    payload: &payload,
+                    exprs: &exprs,
+                    info: info(),
+                    deadline: None,
+                    cancel: None,
+                    capture: true,
+                },
+                &NoCallee,
+            );
             for (dotted, value) in writes {
                 match value {
                     Some(value) => ctx.set(&parse(dotted), OwnedDataValue::from(value)),
@@ -965,17 +1079,19 @@ mod tests {
                 index: &index,
                 index_value: OwnedDataValue::from(i),
             };
-            let mut ctx = Ctx::new(CallStart {
-                reader,
-                binding: Some(&binding),
-                payload: &payload,
-                exprs: &exprs,
-                info: info(),
-                primary: Primary::Undeclared,
-                deadline: None,
-                cancel: None,
-                capture: true,
-            });
+            let mut ctx = Ctx::new(
+                CallStart {
+                    reader,
+                    binding: Some(&binding),
+                    payload: &payload,
+                    exprs: &exprs,
+                    info: info(),
+                    deadline: None,
+                    cancel: None,
+                    capture: true,
+                },
+                &NoCallee,
+            );
             for (dotted, value) in writes {
                 let value = value.as_ref().map(OwnedDataValue::from).unwrap();
                 ctx.set(&parse(dotted), value).unwrap();
@@ -1027,17 +1143,19 @@ mod tests {
                 None,
             )
         });
-        let mut ctx = Ctx::new(CallStart {
-            reader: rc.reader(),
-            binding: None,
-            payload: &payload,
-            exprs: &exprs,
-            info: info(),
-            primary: Primary::Undeclared,
-            deadline: None,
-            cancel: None,
-            capture: true,
-        });
+        let mut ctx = Ctx::new(
+            CallStart {
+                reader: rc.reader(),
+                binding: None,
+                payload: &payload,
+                exprs: &exprs,
+                info: info(),
+                deadline: None,
+                cancel: None,
+                capture: true,
+            },
+            &NoCallee,
+        );
         ctx.set(&parse("temp_data.mine"), OwnedDataValue::from(1))
             .unwrap();
         ctx.set(&parse("temp_data.box.k"), OwnedDataValue::from(2))
@@ -1082,6 +1200,70 @@ mod tests {
             serde_json::to_value(&rendered).unwrap(),
             json!([1, {"k": 2}, "2026", "p",
                 {"customer": "C", "qty": 3, "since": "2026"}, "C", "d", "p"])
+        );
+    }
+
+    /// A callee whose resolve puts a value where its walk reports a
+    /// secret-reading expression, as a field resolving its secret some other
+    /// way than through the resolver would.
+    struct Leaky;
+
+    impl BoundCall for Leaky {
+        fn call<'a>(
+            &'a self,
+            _ctx: &'a mut Ctx<'_>,
+        ) -> crate::function::BoxFuture<'a, Result<crate::function::Outcome>> {
+            Box::pin(std::future::ready(Ok(crate::function::Outcome::Ok)))
+        }
+
+        fn visit(&self, v: &mut dyn ExprVisitor) {
+            let at = |text: &str| text.parse::<AuthoredPath>().unwrap();
+            v.expr(&at("a.b[1]"), &json!({"secret": "k"}), false);
+            v.expr(
+                &at("a.c"),
+                &json!({"cat": ["x", {"secret": {"var": "data.k"}}]}),
+                false,
+            );
+            v.expr(&at("kept"), &json!({"var": "data.k"}), false);
+            // Nothing is there: nothing is written.
+            v.expr(&at("absent.x"), &json!({"secret": "k"}), false);
+        }
+
+        fn primary(&self) -> Primary<'_> {
+            Primary::Undeclared
+        }
+
+        fn resolve(&self, _r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+            Ok(OwnedDataValue::from(&json!({
+                "a": {"b": [1, "leaked"], "c": "leaked too"},
+                "kept": "v",
+            })))
+        }
+    }
+
+    #[test]
+    fn input_nulls_every_value_the_walk_reports_reading_a_secret() {
+        let context = json!({"data": {"k": "v"}, "metadata": {}, "temp_data": {}});
+        let exprs = ExprEngine::default();
+        let payload = OwnedDataValue::Null;
+        let mut slot = OwnedDataValue::from(&context);
+        let mut rc = RunContext::new(&mut slot, Tuning::default());
+        let ctx = Ctx::new(
+            CallStart {
+                reader: rc.reader(),
+                binding: None,
+                payload: &payload,
+                exprs: &exprs,
+                info: info(),
+                deadline: None,
+                cancel: None,
+                capture: true,
+            },
+            &Leaky,
+        );
+        assert_eq!(
+            ctx.input().unwrap().to_json_string(),
+            r#"{"a":{"b":[1,null],"c":null},"kept":"v"}"#
         );
     }
 

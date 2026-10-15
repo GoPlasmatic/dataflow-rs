@@ -1146,8 +1146,8 @@ async fn an_answering_layer_writes_the_primary_output_and_the_function_never_run
         .build()
         .unwrap();
     // A dry run answers `fails` and passes every other call on.
-    let answer = layers::Answer::new(|info| {
-        (info.function == "fails").then(|| OwnedDataValue::from("answered"))
+    let answer = layers::Answer::new(|ctx| {
+        (ctx.info().function == "fails").then(|| OwnedDataValue::from("answered"))
     });
     assert_eq!(format!("{answer:?}"), "Answer { .. }");
     let run_layers: Vec<Arc<dyn CallLayer>> = vec![Arc::new(answer)];
@@ -1473,4 +1473,191 @@ async fn a_host_reads_the_payload_and_the_engines_secrets() {
     // What the function did with the secret is its own; the engine wrote
     // it nowhere.
     assert!(!m.to_json().to_string().contains("s3cr3t"));
+}
+
+/// What each call's `ctx.input()` gave, as wire text, by element index.
+type Inputs = Arc<Mutex<Vec<(Option<usize>, Result<String>)>>>;
+
+/// A config with an expression, a literal and an output.
+#[derive(FunctionConfig)]
+struct QuoteConfig {
+    sku: Expr<String>,
+    qty: Expr<u64>,
+    label: String,
+    #[output(default = "data.quote")]
+    out: Output,
+}
+
+/// Records `ctx.input()` and returns `Ok`.
+struct Quote(Inputs);
+
+impl Function for Quote {
+    type Config = QuoteConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &QuoteConfig) -> Result<Outcome> {
+        let input = ctx.input().map(|v| v.to_json_string());
+        let index = ctx.info().element_index;
+        self.0.lock().unwrap().push((index, input));
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn ctx_input_over_a_fan_out_element_sees_its_binding() {
+    let seen = Inputs::default();
+    let e = Engine::builder()
+        .register("quote", Quote(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t",
+                "for_each": {"over": {"var": "data.items"}, "as": "item", "max_concurrency": 2},
+                "function": {"name": "quote", "input": {
+                    "sku": {"var": "temp_data.item.sku"},
+                    "qty": {"+": [{"var": "temp_data.item_index"}, 1]},
+                    "label": "each",
+                    "out": {"cat": ["data.quote_", {"var": "temp_data.item.sku"}]}}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({"items": [{"sku": "A"}, {"sku": "B"}]}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    let mut got: Vec<(Option<usize>, String)> = seen
+        .lock()
+        .unwrap()
+        .drain(..)
+        .map(|(index, input)| (index, input.unwrap()))
+        .collect();
+    got.sort_by_key(|(index, _)| *index);
+    // Each element's input is resolved over its own binding, the computed
+    // output included, in declaration order.
+    assert_eq!(
+        got,
+        [
+            (
+                Some(0),
+                r#"{"sku":"A","qty":1,"label":"each","out":"data.quote_A"}"#.to_owned()
+            ),
+            (
+                Some(1),
+                r#"{"sku":"B","qty":2,"label":"each","out":"data.quote_B"}"#.to_owned()
+            ),
+        ]
+    );
+}
+
+/// What an answering layer's closure saw of each call: the function, the
+/// primary output's authored path, and the input.
+type Answered = Arc<Mutex<Vec<(String, Option<Value>, Value)>>>;
+
+#[tokio::test]
+async fn an_answering_layer_reads_the_calls_info_input_and_primary_output() {
+    let seen = Inputs::default();
+    let answered = Answered::default();
+    let e = Engine::builder()
+        .register("quote", Quote(Arc::clone(&seen)))
+        .register("none", Silent::<()>(PhantomData))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![
+                json!({"id": "q", "function": {"name": "quote", "input": {
+                    "sku": {"var": "data.sku"}, "qty": 3, "label": "dry"}}}),
+                json!({"id": "n", "function": {"name": "none", "input": {}}}),
+            ],
+        ))
+        .build()
+        .unwrap();
+    // A dry run answers every call that has a primary output with the input
+    // it was given, and passes the rest on.
+    let log = Arc::clone(&answered);
+    let answer = layers::Answer::new(move |ctx| {
+        let input = ctx.input().expect("the input resolves");
+        let primary = ctx.primary_output().map(|out| out.path().raw().clone());
+        log.lock().unwrap().push((
+            ctx.info().function.to_owned(),
+            primary.clone(),
+            Value::from(&input),
+        ));
+        primary.map(|_| input)
+    });
+    let run_layers: Vec<Arc<dyn CallLayer>> = vec![Arc::new(answer)];
+    let mut m = message(json!({"sku": "A"}));
+    let run = e
+        .run_with(&mut m, &RunOptions::default().layers(&run_layers))
+        .await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    let quote = json!({"sku": "A", "qty": 3, "label": "dry", "out": "data.quote"});
+    assert_eq!(
+        *answered.lock().unwrap(),
+        [
+            ("quote".to_owned(), Some(json!("data.quote")), quote.clone()),
+            // `()` is hand-written: no primary output, and an input of `null`.
+            ("none".to_owned(), None, Value::Null),
+        ]
+    );
+    // The answer went through the primary output; the function never ran.
+    assert_eq!(data(&m), json!({"sku": "A", "quote": quote}));
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+/// A field whose expression folds over `data.xs`, which a tight budget
+/// cannot afford.
+#[cfg(feature = "budget")]
+#[derive(FunctionConfig)]
+struct SumConfig {
+    total: Expr,
+}
+
+/// Records whether `ctx.input()` failed, and of what kind.
+#[cfg(feature = "budget")]
+struct Sums(Arc<Mutex<Vec<Option<ErrorKind>>>>);
+
+#[cfg(feature = "budget")]
+impl Function for Sums {
+    type Config = SumConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &SumConfig) -> Result<Outcome> {
+        let kind = ctx.input().err().map(|e| e.kind().clone());
+        self.0.lock().unwrap().push(kind);
+        Ok(Outcome::Ok)
+    }
+}
+
+#[cfg(feature = "budget")]
+#[tokio::test]
+async fn an_input_over_the_budget_is_a_budget_error() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let exprs = ExprEngine::builder().ops_budget(2_000).build().unwrap();
+    let e = Engine::builder()
+        .registry(Registry::new(exprs))
+        .register("sums", Sums(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![
+                json!({"id": "t", "function": {"name": "sums", "input": {"total": {
+                "reduce": [{"var": "data.xs"},
+                    {"+": [{"var": "current"}, {"var": "accumulator"}]}, 0]}}}}),
+            ],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({"xs": vec![1; 20_000]}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(*seen.lock().unwrap(), [Some(ErrorKind::Budget)]);
 }
