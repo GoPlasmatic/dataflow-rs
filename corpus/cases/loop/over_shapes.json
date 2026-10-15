@@ -152,6 +152,13 @@
         "/steps/0/run/message/errors/0/message"
       ],
       "note": "v4 records no WORKFLOW_ERROR: the non-array over is one record with the evaluation's own code, LOGIC_ERROR, the workflow id and no task id, and its message is the loop's own (I61)"
+    },
+    {
+      "break": "5",
+      "paths": [
+        "/steps/0/run/trace/steps/2/message/errors/0"
+      ],
+      "note": "the workflow's own failure, and its record, are its own failed step, which v3's trace drops, so v3's next snapshot gained its WORKFLOW_ERROR"
     }
   ]
 }

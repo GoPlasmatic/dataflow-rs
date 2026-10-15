@@ -429,9 +429,11 @@ pub const MISSING: &str = "<missing>";
 /// v3's recorded trace, `/steps/<i>/run/trace/...`, and v4's JSON there is
 /// read from v4's trace as `tests/traces.rs` aligns it with v3's: each step
 /// v4 matches with v3's next as `{workflow_id, task_id, result, status?,
-/// message?: {context}, loop_counter?, element_index?}`, its `status` where
-/// v3's step carries its own audit entry and its context the replay of v4's
-/// steps up to it, normalised. A pointer the aligned trace
+/// message?: {context, errors}, loop_counter?, element_index?}`, its `status`
+/// where v3's step carries its own audit entry, its context the replay of
+/// v4's steps up to it, normalised, and its `errors` the step's own records
+/// at the indices v3's snapshot holds the records it gained there (the
+/// earlier steps' records `null` on both sides). A pointer the aligned trace
 /// does not reach is [`MISSING`].
 ///
 /// **A step list v4 shortens at its tail** (it skips the last steps v3
@@ -451,14 +453,25 @@ pub const MISSING: &str = "<missing>";
 ///   `data.partial`.
 /// - `breaks/name_required` (break 6): both unnamed definitions parse, so
 ///   four workflows run where v3 ran two.
+/// - `fan_out/over_shapes` (break 4, I91): the non-array `over`'s record
+///   on the task's step is `LOGIC_ERROR` with a logic evaluation error's
+///   text, where v3's snapshot gained a `TASK_ERROR` "Task error".
+/// - `loop/continue_on_error_next_sweep` and `loop/setup_error_continues`
+///   (breaks 5 and 4): the failing call's record is on its own `failed`
+///   step, which v3's trace drops, so v3's next snapshot gained it, at
+///   `errors/0` (break 5), and the `WORKFLOW_ERROR` beside it, at
+///   `errors/1`, v4 does not write (break 4).
+/// - `loop/over_shapes` (break 5): the workflow's own failure is its own
+///   `failed` step, holding its `LOGIC_ERROR` record (I61), so v3's next
+///   snapshot gained the `WORKFLOW_ERROR` v3 wrote for it.
 /// - `schema/status_without_channel` (break 7): only the Active workflow
 ///   runs without a channel, where v3 ran all three: v4's one step is v3's
 ///   first, and v3's other two are missing.
 ///
 /// The step v3's trace drops, the call whose failure went to its
 /// workflow's policy (break 5), and the engine's steps as a sweep is
-/// entered need no row: the alignment matches them to nothing. Break 4's
-/// records live in a snapshot's `errors`, which is not compared.
+/// entered need no row: the alignment matches them to nothing. The records
+/// such a step adds do: v3's next snapshot gains them.
 ///
 /// **No row can cover a trace that does not replay**, so a traced case keeps
 /// `changes` on and sets no `redact_paths` or `max_snapshot_bytes`, and the
@@ -478,6 +491,41 @@ pub const TRACE_DEVIATED: &[RunDeviated] = &[
         "/steps/0/run/trace/steps",
         r#"["no_workflow_name/t/executed", "no_task_name/t/executed",
             "no_group_name/t/executed", "named/t/executed"]"#,
+    ),
+    (
+        "fan_out/over_shapes",
+        "/steps/0/run/trace/steps/1/message/errors/0/code",
+        r#""LOGIC_ERROR""#,
+    ),
+    (
+        "fan_out/over_shapes",
+        "/steps/0/run/trace/steps/1/message/errors/0/message",
+        r#""Task t error: Logic evaluation error: Task t: for_each.over must evaluate to an array, got a string""#,
+    ),
+    (
+        "loop/continue_on_error_next_sweep",
+        "/steps/0/run/trace/steps/2/message/errors/0",
+        MISSING,
+    ),
+    (
+        "loop/continue_on_error_next_sweep",
+        "/steps/0/run/trace/steps/2/message/errors/1",
+        MISSING,
+    ),
+    (
+        "loop/over_shapes",
+        "/steps/0/run/trace/steps/2/message/errors/0",
+        MISSING,
+    ),
+    (
+        "loop/setup_error_continues",
+        "/steps/0/run/trace/steps/0/message/errors/0",
+        MISSING,
+    ),
+    (
+        "loop/setup_error_continues",
+        "/steps/0/run/trace/steps/0/message/errors/1",
+        MISSING,
     ),
     (
         "schema/status_without_channel",

@@ -18,7 +18,9 @@
   ],
   "steps": [{"run": {"message": {"data": {"empty": [], "scalar": "x"}}}}],
   "deviations": [
-    {"break": "4", "paths": ["/steps/0/run/message/errors/0/code", "/steps/0/run/message/errors/0/message"],
+    {"break": "4", "paths": ["/steps/0/run/message/errors/0/code", "/steps/0/run/message/errors/0/message",
+                             "/steps/0/run/trace/steps/1/message/errors/0/code",
+                             "/steps/0/run/trace/steps/1/message/errors/0/message"],
      "note": "v4 records the non-array over as the evaluation failure it is: LOGIC_ERROR, \"Logic evaluation error: ...\", where v3 wrapped it as a task error, TASK_ERROR (I91)"}
   ]
 }

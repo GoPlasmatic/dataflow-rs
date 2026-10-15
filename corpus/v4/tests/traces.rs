@@ -17,20 +17,23 @@
 //!   equal that entry's `status`. When the v3 step has a snapshot, the
 //!   context rebuilt after v4's step, normalised with the case's
 //!   error-context path, must equal the snapshot's `context`, key order
-//!   included.
+//!   included, and v4's step `errors`, every record the step added (I127),
+//!   normalised, must equal the records the snapshot's `errors` gained over
+//!   the snapshot before it, in order. They are compared at the indices the
+//!   snapshot holds them, after the earlier steps' records, which are `null`
+//!   on both sides, so a pointer names one record in v3's recording and in
+//!   the aligned trace.
 //!
 //! Every v3 step must be matched. v3's `mapping_contexts`, `started_at`,
-//! `duration_us`, `changes`, the rest of its snapshot's `audit_trail`, and
-//! its snapshot's `errors` are not compared.
+//! `duration_us`, `changes`, and the rest of its snapshot's `audit_trail`
+//! are not compared.
 //!
-//! A step's `error` is not held to the record v3's snapshot gained at that
-//! step either, because the two are not one to one: v4's `error` is the
-//! recorder's record alone, where the records a v3 step gains include the
-//! call's own (`validation`'s, a host's, I96), and break 4's wrappers and a
-//! workflow's own failure land on the next step's snapshot. Measured over
-//! the snapshots: 35 agree on code and message, 7 differ by those shapes,
-//! and one by break 4's own code (`fan_out/over_shapes`); the rest have
-//! neither.
+//! The records a step added differ from v3's in two shapes, each a
+//! `TRACE_DEVIATED` row: break 4's (no `WORKFLOW_ERROR` wrapper, and
+//! `LOGIC_ERROR` for a non-array `over`), and break 5's, a record on a
+//! `failed` step, which v3's trace drops, so v3's next snapshot gained it.
+//! The steps whose records were compared with a record on either side are
+//! counted and pinned.
 //!
 //! The comparison reads both sides in v3's coordinates: each trace becomes
 //! `{outcome, steps, truncated, message_matches}`, its steps as above, so a
@@ -92,13 +95,17 @@ const FAILED_TASKS: usize = 9;
 const FAILED_WORKFLOWS: usize = 1;
 /// Deviated trace pointers held to their row of `expect::TRACE_DEVIATED`,
 /// one row each.
-const TRACE_DEVIATED_ROWS: usize = 4;
+const TRACE_DEVIATED_ROWS: usize = 11;
 /// Of the matched steps, those whose v4 `status` was held to v3's: every
 /// one whose v3 snapshot's audit trail ends in the step's own entry.
 const STATUSES: usize = 215;
 /// v4 steps whose `Trace::contexts` entry equals the corpus's replay after
 /// the same step: every step of every traced run.
 const CONTEXTS: usize = 294;
+
+/// Of the snapshots compared, those whose records were held to v4's step's
+/// `errors` with a record on either side.
+const ERRORS_COMPARED: usize = 43;
 
 /// A run step's trace, and every pointer under it.
 const TRACE: &str = "/steps/*/run/trace";
@@ -117,6 +124,7 @@ struct Counts {
     replayed: usize,
     contexts: usize,
     traces_read_back: usize,
+    errors_compared: usize,
 }
 
 /// The deviation paths of `case` under a run's trace.
@@ -201,8 +209,14 @@ fn own_status(step: &Json) -> Option<Json> {
 }
 
 /// A step as compared: its keys, then `status` when `status` is given,
-/// then, when `snapshot` is given, its `message.context`, in v3's key order.
-fn compared(step: &Json, status: Option<Json>, snapshot: Option<Json>) -> Json {
+/// then, when `snapshot` is given, its `message`: the `context`, then, when
+/// `errors` is given, the records, in v3's key order.
+fn compared(
+    step: &Json,
+    status: Option<Json>,
+    snapshot: Option<Json>,
+    errors: Option<Json>,
+) -> Json {
     let mut pairs = keys(step);
     // After `result`, then `message`, before the two stamps.
     let mut at = 3;
@@ -211,10 +225,58 @@ fn compared(step: &Json, status: Option<Json>, snapshot: Option<Json>) -> Json {
         at += 1;
     }
     if let Some(context) = snapshot {
-        let message = Json::Object(vec![("context".to_owned(), context)]);
-        pairs.insert(at, ("message".to_owned(), message));
+        let mut message = vec![("context".to_owned(), context)];
+        if let Some(errors) = errors {
+            message.push(("errors".to_owned(), errors));
+        }
+        pairs.insert(at, ("message".to_owned(), Json::Object(message)));
     }
     Json::Object(pairs)
+}
+
+/// The records v3's snapshot gained at each step, over the snapshot before
+/// it (none before the first): how many records came before them, and the
+/// records. `None` for a step with no snapshot, a skip, whose records land
+/// on the next one's.
+fn gained(v3_steps: &[Json]) -> Vec<Option<(usize, Vec<Json>)>> {
+    let mut seen = 0;
+    v3_steps
+        .iter()
+        .map(|step| {
+            let Some(Json::Array(errors)) = step.pointer("/message/errors") else {
+                return None;
+            };
+            let before = seen.min(errors.len());
+            seen = errors.len();
+            Some((before, errors[before..].to_vec()))
+        })
+        .collect()
+}
+
+/// A v4 step's `errors`, normalised as a v3 snapshot's records are: each
+/// record's timestamp replaced. A step without the key has none.
+fn records(step: &Json) -> Vec<Json> {
+    let errors = step
+        .get("errors")
+        .cloned()
+        .unwrap_or_else(|| Json::Array(Vec::new()));
+    let mut wrapped = Json::Object(vec![("errors".to_owned(), errors)]);
+    normalise::message(&mut wrapped, None);
+    match wrapped.get("errors") {
+        Some(Json::Array(records)) => records.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// One step's records where v3's snapshot holds them: after `before`
+/// earlier steps' records, which are `null` on both sides, so a pointer
+/// names the same record in v3's recording and in the aligned trace.
+fn at_their_index(before: usize, records: Vec<Json>) -> Json {
+    Json::Array(
+        std::iter::repeat_n(Json::Null, before)
+            .chain(records)
+            .collect(),
+    )
 }
 
 /// What one traced run is compared on.
@@ -367,6 +429,7 @@ fn traced_run(
             matched.iter().map(|(step, _)| key_text(step)).collect(),
         )
     } else {
+        let gains = gained(v3_steps);
         let mut actual = Vec::new();
         for (j, (step, rebuilt)) in matched.into_iter().enumerate() {
             let v3_step = v3_steps.get(j);
@@ -386,11 +449,29 @@ fn traced_run(
             if status.is_some() {
                 counts.statuses += 1;
             }
-            actual.push(compared(step, status, snapshot));
+            // The records v4's step added, held to those v3's snapshot
+            // gained at it (I127).
+            let errors = gains
+                .get(j)
+                .and_then(Option::as_ref)
+                .filter(|_| snapshot.is_some())
+                .map(|(before, theirs)| {
+                    let ours = records(step);
+                    if !(theirs.is_empty() && ours.is_empty()) {
+                        counts.errors_compared += 1;
+                    }
+                    at_their_index(*before, ours)
+                });
+            actual.push(compared(step, status, snapshot, errors));
         }
         let expected = v3_steps
             .iter()
-            .map(|s| compared(s, own_status(s), s.pointer("/message/context").cloned()))
+            .zip(gains)
+            .map(|(s, gain)| {
+                let snapshot = s.pointer("/message/context").cloned();
+                let errors = gain.map(|(before, theirs)| at_their_index(before, theirs));
+                compared(s, own_status(s), snapshot, errors)
+            })
             .collect();
         (expected, actual)
     };
@@ -508,6 +589,7 @@ async fn v4_traces_every_run_as_v3_recorded_it() {
             contexts: CONTEXTS,
             // Every traced run's trace read back.
             traces_read_back: TRACED,
+            errors_compared: ERRORS_COMPARED,
         }
     );
 }
@@ -737,4 +819,76 @@ fn a_step_list_is_named_by_a_deviation_at_a_traces_steps() {
     ]}"#);
     assert_eq!(step_lists(&case, &recording), [0, 2]);
     assert_eq!(trace_paths(&case).len(), 2);
+}
+
+/// v3's trace of `a` then `b`, each snapshot holding the message's records:
+/// `a`'s one, then `b`'s.
+fn v3_with_records() -> Json {
+    j(r#"{"outcome": "ok", "steps": [
+        {"workflow_id": "w", "task_id": "a", "result": "executed",
+         "message": {"context": {"data": {"a": 1}, "metadata": {}, "temp_data": {}},
+                     "audit_trail": [],
+                     "errors": [{"code": "A", "timestamp": "<timestamp>"}]}},
+        {"workflow_id": "w", "task_id": "b", "result": "executed",
+         "message": {"context": {"data": {"a": 1, "b": 2}, "metadata": {}, "temp_data": {}},
+                     "audit_trail": [],
+                     "errors": [{"code": "A", "timestamp": "<timestamp>"},
+                                {"code": "B", "timestamp": "<timestamp>"}]}}
+    ], "truncated": false, "message_matches": true}"#)
+}
+
+/// v4's trace of the same run, `a` with its record and `b` with `b_errors`.
+fn v4_with_records(b_errors: &str) -> Json {
+    j(&format!(
+        r#"{{"outcome": "ok", "initial": {{"data": {{}}, "metadata": {{}}, "temp_data": {{}}}},
+        "steps": [
+            {{"workflow": 0, "workflow_id": "w", "task": 0, "task_id": "a",
+              "result": "executed", "status": 200,
+              "changes": [{{"path": "data.a", "old_value": null, "new_value": 1}}],
+              "errors": [{{"code": "A", "timestamp": "2026-10-15T00:00:00+00:00"}}]}},
+            {{"workflow": 0, "workflow_id": "w", "task": 1, "task_id": "b",
+              "result": "executed", "status": 200,
+              "changes": [{{"path": "data.b", "old_value": null, "new_value": 2}}],
+              "errors": {b_errors}}}
+        ], "truncated": false, "message_matches": true, "contexts": [
+            {{"data": {{"a": 1}}, "metadata": {{}}, "temp_data": {{}}}},
+            {{"data": {{"a": 1, "b": 2}}, "metadata": {{}}, "temp_data": {{}}}}
+        ]}}"#
+    ))
+}
+
+#[test]
+fn a_steps_records_are_held_to_what_v3s_snapshot_gained_there() {
+    let plain = j(r#"{"context": {"data": {"a": 1, "b": 2}, "metadata": {}, "temp_data": {}}}"#);
+    let run = |b_errors: &str| {
+        let (mut counts, mut failures) = (Counts::default(), Vec::new());
+        let (v3, v4) = traced_run(
+            "c",
+            0,
+            (&v3_with_records(), &v4_with_records(b_errors), &plain),
+            None,
+            false,
+            &mut counts,
+            &mut failures,
+        );
+        assert!(failures.is_empty(), "{failures:?}");
+        let paths: Vec<String> = diff(&v3, &v4, &[]).into_iter().map(|d| d.path).collect();
+        (v4, paths, counts.errors_compared)
+    };
+
+    // Each step's own record, its timestamp normalised, at the index v3's
+    // snapshot holds it, after the earlier step's, `null` on both sides.
+    let b = r#"[{"code": "B", "timestamp": "2026-10-15T00:00:00+00:00"}]"#;
+    let (v4, paths, compared) = run(b);
+    assert!(paths.is_empty(), "{paths:?}");
+    assert_eq!(compared, 2);
+    assert_eq!(
+        v4.pointer("/steps/1/message/errors").unwrap().to_text(),
+        r#"[null,{"code":"B","timestamp":"<timestamp>"}]"#
+    );
+
+    // A record the step did not add, and one it added that v3's did not.
+    assert_eq!(run("[]").1, ["/steps/1/message/errors/1"]);
+    let extra = r#"[{"code": "B", "timestamp": "t"}, {"code": "C", "timestamp": "t"}]"#;
+    assert_eq!(run(extra).1, ["/steps/1/message/errors/2"]);
 }
