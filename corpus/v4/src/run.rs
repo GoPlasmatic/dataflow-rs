@@ -6,23 +6,33 @@
 //! `parse` or its compile rejects it) is left out when v3's `parse` refused
 //! it too, as v3's driver left that one out; the definitions test holds the
 //! two refusals together, wherever v4 makes its own. Any other refusal leaves
-//! the case with no engine, as a v3 build failure did. Each run step then runs on a fresh message,
-//! with the step's channel, bucket, capture and audit mode, on an engine
-//! holding the linked program and the default config. Each reload step
-//! parses, compiles and links its definitions through the same compiler and
-//! swaps the engine's program, as v3's driver swapped its engine.
+//! the case with no engine, as a v3 build failure did. Each run step then
+//! runs on a fresh message, with the step's channel, bucket, capture and
+//! audit mode, on an engine holding the linked program and the case's config:
+//! the recording observer when the case asks for one, and its error context.
+//! A run step whose trace is on runs a second time, traced, as v3's driver
+//! ran it (I109). Each reload step parses, compiles and links its definitions
+//! through the same compiler and swaps the engine's program, keeping the
+//! config, as v3's driver swapped its engine.
 
+use crate::observe::Recorder;
 use crate::{compiler, definitions, logs};
-use dataflow_corpus::case::{AuditSpec, MessageSpec, Requires, RunSpec, Step};
+use dataflow_corpus::case::{
+    AuditSpec, EngineSpec, MessageSpec, Requires, RunSpec, Step, TraceSpec,
+};
 use dataflow_corpus::{Case, Json, normalise};
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::def::{ParseOptions, parse};
 use dataflow_rs::expr::ExprEngine;
+use dataflow_rs::observe::TraceOptions;
 use dataflow_rs::program::{CompiledWorkflow, Compiler, Program};
-use dataflow_rs::run::{AuditMode, Engine, EngineConfig, Message, RunOptions, RunStatus};
+use dataflow_rs::run::{
+    AuditMode, Engine, EngineConfig, ErrorContext, Message, RunOptions, RunStatus,
+};
 use dataflow_rs::{Issue, Path};
 use serde_json::Value;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 /// What v4 makes of one definition.
 enum Verdict {
@@ -59,13 +69,6 @@ fn verdict(compiler: &Compiler, raw: &Value) -> Verdict {
             Err(issues) => Verdict::Refused(rejected(issues)),
         },
     }
-}
-
-/// Why a case's steps wait for a later phase, read from the case; `None`
-/// when they run now: `"phase 6"` when the engine has an observer or an
-/// error context.
-pub fn waits_for(case: &Case) -> Option<&'static str> {
-    (case.engine.observer || case.engine.error_context.is_some()).then_some("phase 6")
 }
 
 /// Whether v3's `parse` refused definition `i`, by its `recording`.
@@ -137,15 +140,15 @@ pub fn satisfies(requires: &Requires) -> bool {
 }
 
 /// What v4 does with a case, shaped as v3's recording: `{build, steps}`,
-/// each run step `{run: {outcome, message, logs?}}`, normalised as the
-/// recording is. `recording` is v3's, read only for which definitions v3's
-/// `parse` refused.
+/// each run step `{run: {outcome, message, observer?, logs?, trace?}}`
+/// (see `run_step`), normalised as the recording is. `recording` is v3's,
+/// read only for which definitions v3's `parse` refused.
 ///
 /// `build` is `"ok"`, or, when v4 refuses a definition v3's `parse`
 /// accepted, an error naming every Rejected issue of each, and then no step
-/// runs. No step runs either when the case [`waits_for`] a later phase or
-/// this build does not [`satisfies`] its `requires`: `steps` is then empty.
-/// A reload step records `{reload: "ok"}`, or the error of a refused build.
+/// runs. No step runs either when this build does not [`satisfies`] the
+/// case's `requires`: `steps` is then empty. A reload step records
+/// `{reload: "ok"}`, or the error of a refused build.
 pub async fn run_case(case: &Case, recording: &Json) -> Json {
     let compiler = compiler(case);
     let mut compiled = Vec::new();
@@ -165,17 +168,18 @@ pub async fn run_case(case: &Case, recording: &Json) -> Json {
     }
     out.insert("build", Json::str("ok"));
     let mut steps = Vec::new();
-    if waits_for(case).is_none() && satisfies(&case.requires) {
+    if satisfies(&case.requires) {
         // A case's ceiling is applied only on a `budget` build, so a case
         // that sets one must require the feature, or it would run without.
         assert!(
             case.engine.ops_budget.is_none() || cfg!(feature = "budget"),
             "a case with engine.ops_budget must require the budget feature"
         );
-        let mut engine = Engine::new(compiler.link(compiled), EngineConfig::default());
+        let recorder = Arc::new(Recorder::default());
+        let mut engine = Engine::new(compiler.link(compiled), config(&case.engine, &recorder));
         for step in &case.steps {
             steps.push(match step {
-                Step::Run(run) => run_step(&engine, run, case.engine.logs.as_deref()).await,
+                Step::Run(run) => run_step(&engine, run, &case.engine, &recorder).await,
                 Step::Reload(reload) => {
                     let result = match program(&compiler, &reload.workflows) {
                         Ok(program) => {
@@ -191,6 +195,27 @@ pub async fn run_case(case: &Case, recording: &Json) -> Json {
     }
     out.insert("steps", Json::Array(steps));
     out
+}
+
+/// The engine's config from the case: the recording observer when the case
+/// asks for one, and its error context, with v3's default limit when the
+/// case names none.
+fn config(spec: &EngineSpec, recorder: &Arc<Recorder>) -> EngineConfig {
+    let mut config = EngineConfig::default();
+    if spec.observer {
+        config = config.observer(Arc::clone(recorder) as _);
+    }
+    if let Some(context) = &spec.error_context {
+        let path: Path = context
+            .path
+            .parse()
+            .unwrap_or_else(|e| panic!("a case's error-context path parses: {e}"));
+        let limit = context.limit.unwrap_or(ErrorContext::DEFAULT_LIMIT);
+        let context = ErrorContext::new(path, limit)
+            .unwrap_or_else(|e| panic!("a case's error context is valid: {e}"));
+        config = config.error_context(context);
+    }
+    config
 }
 
 /// `{"error": {"code": "REJECTED", "message"}}`, the message naming every
@@ -228,9 +253,69 @@ fn program(compiler: &Compiler, workflows: &[Json]) -> Result<Program, Vec<Strin
     }
 }
 
-/// One run step: `{run: {outcome, message, logs?}}`.
-async fn run_step(engine: &Engine, run: &RunSpec, log_level: Option<&str>) -> Json {
+/// One run step: `{run: {outcome, message, observer?, logs?, trace?}}`, in
+/// v3's key order.
+///
+/// The plain run gives the outcome, the message, normalised with the case's
+/// error-context path, the observer's events when the case attaches it, and
+/// the log lines when it captures them. When the step's trace is on, the
+/// same input runs again, traced by [`trace_options`], and `trace` records
+/// `{outcome, initial, steps, truncated, message_matches}`: the traced run's
+/// outcome, v4's `initial` and steps exactly as v4 serializes them,
+/// `truncated`, and whether the traced run's normalised message equals the
+/// plain run's. The traced run's events and log lines are dropped, as v3's
+/// driver dropped them.
+async fn run_step(engine: &Engine, run: &RunSpec, spec: &EngineSpec, recorder: &Recorder) -> Json {
+    let error_context = spec.error_context.as_ref().map(|e| e.path.as_str());
+    let opts = options(run);
     let mut message = message(&run.message);
+    recorder.take();
+    logs::begin(spec.logs.as_deref());
+    let result = engine.run_with(&mut message, &opts).await;
+    let lines = logs::end();
+    let events = recorder.take();
+    let message = normalised(&message, error_context);
+
+    let mut record = Json::object();
+    record.insert("outcome", outcome(result.status()));
+    record.insert("message", message.clone());
+    if spec.observer {
+        record.insert("observer", Json::Array(events));
+    }
+    if spec.logs.is_some() {
+        record.insert("logs", Json::Array(lines));
+    }
+
+    if run.trace.enabled {
+        let opts = options(run).trace(trace_options(&run.trace));
+        let mut traced = self::message(&run.message);
+        logs::begin(spec.logs.as_deref());
+        let result = engine.run_with(&mut traced, &opts).await;
+        logs::end();
+        recorder.take();
+        let trace = result
+            .trace()
+            .expect("a run given trace options returns a trace");
+        let trace = Json::from_text(&serde_json::to_string(trace).expect("a trace serializes"))
+            .expect("serde_json's output parses");
+        let part = |key: &str| trace.get(key).cloned().expect("a trace has its three keys");
+        let matches = normalised(&traced, error_context) == message;
+        record.insert(
+            "trace",
+            Json::Object(vec![
+                ("outcome".to_owned(), outcome(result.status())),
+                ("initial".to_owned(), part("initial")),
+                ("steps".to_owned(), part("steps")),
+                ("truncated".to_owned(), part("truncated")),
+                ("message_matches".to_owned(), Json::Bool(matches)),
+            ]),
+        );
+    }
+    Json::Object(vec![("run".to_owned(), record)])
+}
+
+/// The step's run options: its channel, bucket, capture and audit mode.
+fn options(run: &RunSpec) -> RunOptions<'_> {
     let mut opts = RunOptions::default();
     if let Some(channel) = &run.channel {
         opts = opts.channel(channel);
@@ -248,17 +333,31 @@ async fn run_step(engine: &Engine, run: &RunSpec, log_level: Option<&str>) -> Js
             AuditSpec::Last(n) => AuditMode::Last(*n),
         });
     }
-    logs::begin(log_level);
-    let result = engine.run_with(&mut message, &opts).await;
-    let lines = logs::end();
+    opts
+}
 
-    let mut record = Json::object();
-    record.insert("outcome", outcome(result.status()));
-    record.insert("message", normalised(&message));
-    if log_level.is_some() {
-        record.insert("logs", Json::Array(lines));
+/// The traced run's options, from the case's trace spec (I109): no timings,
+/// its `changes`, its redaction prefixes, and its byte budget when it names
+/// one (0 is v3's "unbounded"). v3's `snapshots`, `mapping_contexts` and
+/// `snapshot_audit_trail` have no v4 counterpart: a v4 trace is `initial`
+/// plus each step's changes, and a snapshot is its replay.
+fn trace_options(spec: &TraceSpec) -> TraceOptions {
+    let redact = spec
+        .redact_paths
+        .iter()
+        .map(|p| {
+            p.parse::<Path>()
+                .unwrap_or_else(|e| panic!("a case's redact path {p} parses: {e}"))
+        })
+        .collect();
+    let opts = TraceOptions::default()
+        .timings(false)
+        .changes(spec.changes)
+        .redact(redact);
+    match spec.max_snapshot_bytes {
+        0 => opts,
+        max => opts.max_bytes(max),
     }
-    Json::Object(vec![("run".to_owned(), record)])
 }
 
 /// The step's message: its id, payload, data and metadata, and `temp_data`
@@ -284,11 +383,12 @@ fn owned(json: &Json) -> OwnedDataValue {
     serde_json::from_str(&json.to_text()).expect("a Json is a valid OwnedDataValue")
 }
 
-/// The message on the wire, in wire order, normalised as a recording is.
-fn normalised(message: &Message) -> Json {
+/// The message on the wire, in wire order, normalised as a recording is,
+/// with the case's error-context path.
+fn normalised(message: &Message, error_context: Option<&str>) -> Json {
     let text = serde_json::to_string(message).expect("a message serializes");
     let mut json = Json::from_text(&text).expect("serde_json's output parses");
-    normalise::message(&mut json, None);
+    normalise::message(&mut json, error_context);
     json
 }
 

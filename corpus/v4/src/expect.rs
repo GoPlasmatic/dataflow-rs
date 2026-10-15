@@ -1,8 +1,12 @@
 //! What the driver holds v4 to beyond v3's recording: which v4 issues are
 //! compared against it, what v4 reports for each definition a deviation
-//! covers, and what v4's run records at each path a deviation covers.
+//! covers, what v4's run records at each path a deviation covers, and what
+//! v4's trace shows at each trace pointer a deviation covers; and [`Held`],
+//! which holds a deviated pointer to its row.
 
 use crate::Row;
+use dataflow_corpus::Json;
+use dataflow_corpus::compare::ignored;
 
 /// v3's 34 issue codes, in v3's order: the first 34 of v4's `IssueCode`.
 pub const V3_CODES: [&str; 34] = [
@@ -247,8 +251,8 @@ pub type RunDeviated = (&'static str, &'static str, &'static str);
 /// (whitespace is not compared). A deviation path with `*` is expanded to
 /// every pointer it names in v3's recording or in v4's record, and each needs
 /// its row here. A pointer v4's record does not reach is written
-/// [`MISSING`]. A path under the trace needs no row until phase 6 compares
-/// traces.
+/// [`MISSING`]. A path under a run's `trace` has its row in
+/// [`TRACE_DEVIATED`] instead.
 ///
 /// - `breaks/handler_writes_then_err` and `run/failing_run_trace` (break 1):
 ///   the write of a call that returns `Err` is dropped, so `data.partial` is
@@ -416,14 +420,262 @@ pub const RUN_DEVIATED: &[RunDeviated] = &[
     ),
 ];
 
-/// The JSON of a [`RUN_DEVIATED`] row whose pointer v4's record does not
-/// reach.
+/// The JSON of a [`RUN_DEVIATED`] or [`TRACE_DEVIATED`] row whose pointer
+/// v4's record does not reach.
 pub const MISSING: &str = "<missing>";
+
+/// What v4's trace shows at every deviated trace pointer (I109), as JSON,
+/// held as [`RUN_DEVIATED`] holds the run record. Each pointer is one into
+/// v3's recorded trace, `/steps/<i>/run/trace/...`, and v4's JSON there is
+/// read from v4's trace as `tests/traces.rs` aligns it with v3's: each step
+/// v4 matches with v3's next as `{workflow_id, task_id, result,
+/// loop_counter?, element_index?, message?: {context}}`, its context the
+/// replay of v4's steps up to it, normalised. A pointer the aligned trace
+/// does not reach is [`MISSING`].
+///
+/// **A step list that differs** (v4 runs workflows v3 did not, or skips
+/// ones v3 ran) is deviated at the trace's `steps` itself,
+/// `/steps/<i>/run/trace/steps`. Both sides' `steps` are then read as the
+/// keys of the steps the alignment would match, in order, each as the
+/// string `"workflow_id/task_id/result"` (an empty task id for a
+/// workflow's own step), and the row holds v4's. No context is compared
+/// with v3's there; the replay of v4's own steps must still rebuild its
+/// message.
+///
+/// - `breaks/handler_writes_then_err` (break 1): the write of a call that
+///   returns `Err` is dropped, so the context after it has no
+///   `data.partial`.
+/// - `breaks/name_required` (break 6): both unnamed definitions parse, so
+///   four workflows run where v3 ran two.
+/// - `schema/status_without_channel` (break 7): only the Active workflow
+///   runs without a channel, where v3 ran all three.
+///
+/// The step v3's trace drops, the call whose failure went to its
+/// workflow's policy (break 5), and the engine's steps as a sweep is
+/// entered need no row: the alignment matches them to nothing. Break 4's
+/// records live in a snapshot's `errors`, which is not compared.
+pub const TRACE_DEVIATED: &[RunDeviated] = &[
+    (
+        "breaks/handler_writes_then_err",
+        "/steps/0/run/trace/steps/0/message/context/data/partial",
+        MISSING,
+    ),
+    (
+        "breaks/name_required",
+        "/steps/0/run/trace/steps",
+        r#"["no_workflow_name/t/executed", "no_task_name/t/executed",
+            "no_group_name/t/executed", "named/t/executed"]"#,
+    ),
+    (
+        "schema/status_without_channel",
+        "/steps/0/run/trace/steps",
+        r#"["active/t/executed"]"#,
+    ),
+];
+
+/// Every pointer `pattern` (`*` for any one segment) names in `json`.
+pub fn expand(json: &Json, pattern: &str) -> Vec<String> {
+    fn walk(json: &Json, rest: &[&str], at: &mut String, out: &mut Vec<String>) {
+        let Some((first, rest)) = rest.split_first() else {
+            out.push(at.clone());
+            return;
+        };
+        let children: Vec<(String, &Json)> = match json {
+            Json::Object(pairs) => pairs
+                .iter()
+                .map(|(k, v)| (k.replace('~', "~0").replace('/', "~1"), v))
+                .collect(),
+            Json::Array(items) => items
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i.to_string(), v))
+                .collect(),
+            _ => Vec::new(),
+        };
+        for (key, child) in children {
+            if *first == "*" || *first == key {
+                let len = at.len();
+                at.push('/');
+                at.push_str(&key);
+                walk(child, rest, at, out);
+                at.truncate(len);
+            }
+        }
+    }
+    let segments: Vec<&str> = pattern.split('/').skip(1).collect();
+    let mut out = Vec::new();
+    walk(json, &segments, &mut String::new(), &mut out);
+    out
+}
+
+/// Whether `pointer`, or a pointer above it, matches a pattern of `ignore`.
+pub fn under_ignored(pointer: &str, ignore: &[&str]) -> bool {
+    let mut at = String::new();
+    pointer.split('/').skip(1).any(|segment| {
+        at.push('/');
+        at.push_str(segment);
+        ignored(&at, ignore)
+    })
+}
+
+/// A table of deviated pointers ([`RUN_DEVIATED`] or [`TRACE_DEVIATED`])
+/// and how many deviated pointers each of its rows has matched: each must
+/// match exactly one.
+#[derive(Debug)]
+pub struct Held {
+    table: &'static str,
+    rows: &'static [RunDeviated],
+    used: Vec<usize>,
+}
+
+impl Held {
+    /// Holds pointers to `rows`, the table named `table` in failures.
+    pub fn new(table: &'static str, rows: &'static [RunDeviated]) -> Self {
+        Self {
+            table,
+            rows,
+            used: vec![0; rows.len()],
+        }
+    }
+
+    /// Holds v4's JSON at every pointer `patterns` name in `expected`
+    /// (v3's) or `actual` (v4's) to its row, counting each row it uses,
+    /// skipping a pointer under `base`. A pointer at which v4's JSON is
+    /// v3's is stale: the deviation declares a difference that is not
+    /// there, and would hide one that came back.
+    pub fn check(
+        &mut self,
+        name: &str,
+        patterns: &[&str],
+        (expected, actual): (&Json, &Json),
+        base: &[&str],
+        failures: &mut Vec<String>,
+    ) {
+        let table = self.table;
+        for pattern in patterns {
+            let mut pointers = expand(expected, pattern);
+            for p in expand(actual, pattern) {
+                if !pointers.contains(&p) {
+                    pointers.push(p);
+                }
+            }
+            if pointers.is_empty() {
+                failures.push(format!(
+                    "{name}: the deviation path {pattern} names nothing v3 or v4 recorded"
+                ));
+            }
+            for pointer in pointers {
+                if under_ignored(&pointer, base) {
+                    continue;
+                }
+                let got = actual
+                    .pointer(&pointer)
+                    .map_or(MISSING.to_owned(), Json::to_text);
+                let v3 = expected
+                    .pointer(&pointer)
+                    .map_or(MISSING.to_owned(), Json::to_text);
+                if got == v3 {
+                    failures.push(format!(
+                        "{name}: {pointer} is deviated, and v4 records there what v3 recorded: \
+                         the deviation is stale\n  v3 and v4: {got}"
+                    ));
+                }
+                let row = self
+                    .rows
+                    .iter()
+                    .position(|(n, p, _)| *n == name && *p == pointer);
+                match row {
+                    None => failures.push(format!(
+                        "{name}: {pointer} is deviated, and expect::{table} has no row \
+                         for it\n  v4: {got}"
+                    )),
+                    Some(at) => {
+                        self.used[at] += 1;
+                        let want = self.rows[at].2;
+                        let want = if want == MISSING {
+                            want.to_owned()
+                        } else {
+                            Json::from_text(want)
+                                .unwrap_or_else(|e| panic!("{name}: {pointer}'s row: {e}"))
+                                .to_text()
+                        };
+                        if want != got {
+                            failures.push(format!(
+                                "{name}: at deviated {pointer}\n  expect::{table}: \
+                                 {want}\n  v4: {got}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fails each row that did not match exactly one deviated pointer, and
+    /// returns how many pointers the rows matched.
+    pub fn finish(&self, failures: &mut Vec<String>) -> usize {
+        for ((case, pointer, _), n) in self.rows.iter().zip(&self.used) {
+            if *n != 1 {
+                failures.push(format!(
+                    "expect::{}'s row for {case} at {pointer} matched {n} deviated \
+                     pointers, not 1",
+                    self.table
+                ));
+            }
+        }
+        self.used.iter().sum()
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use dataflow_rs::program::IssueCode;
+
+    #[test]
+    fn a_pattern_expands_to_every_pointer_it_names() {
+        let json =
+            Json::from_text(r#"{"steps":[{"run":{"a":1}},{"run":{"a":2,"b/c":3}}]}"#).unwrap();
+        assert_eq!(
+            expand(&json, "/steps/*/run/a"),
+            ["/steps/0/run/a", "/steps/1/run/a"]
+        );
+        assert_eq!(
+            expand(&json, "/steps/1/run/*"),
+            ["/steps/1/run/a", "/steps/1/run/b~1c"]
+        );
+        assert!(expand(&json, "/steps/2").is_empty());
+    }
+
+    #[test]
+    fn a_pointer_below_an_ignored_one_is_ignored() {
+        let ignore = ["/steps/*/run/trace", "/steps/*/reload/error/code"];
+        assert!(under_ignored("/steps/0/run/trace", &ignore));
+        assert!(under_ignored("/steps/3/run/trace/steps/0", &ignore));
+        assert!(under_ignored("/steps/1/reload/error/code", &ignore));
+        assert!(!under_ignored("/steps/1/reload", &ignore));
+        assert!(!under_ignored("/steps/0/run/message", &ignore));
+    }
+
+    #[test]
+    fn a_held_pointer_matches_its_row_once_and_a_stale_one_fails() {
+        const ROWS: &[RunDeviated] = &[("c", "/a", "2"), ("c", "/b", MISSING)];
+        let v3 = Json::from_text(r#"{"a":1,"b":1}"#).unwrap();
+        let v4 = Json::from_text(r#"{"a":2}"#).unwrap();
+        let mut held = Held::new("ROWS", ROWS);
+        let mut failures = Vec::new();
+        held.check("c", &["/a", "/b"], (&v3, &v4), &[], &mut failures);
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(held.finish(&mut failures), 2);
+        assert!(failures.is_empty(), "{failures:?}");
+
+        let mut stale = Held::new("ROWS", ROWS);
+        stale.check("c", &["/a"], (&v3, &v3), &[], &mut failures);
+        assert_eq!(failures.len(), 2, "{failures:?}");
+        assert!(failures[0].contains("stale"), "{failures:?}");
+        stale.finish(&mut failures);
+        assert!(failures[2].contains("matched 0"), "{failures:?}");
+    }
 
     /// `IssueCode`'s variants, in declaration order. The enum is
     /// `#[non_exhaustive]` and v4 exposes no list of its codes, so this reads

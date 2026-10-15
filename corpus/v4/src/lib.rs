@@ -1,19 +1,25 @@
-//! v4's golden-corpus driver. It checks two things. Phase 3's: v4 compiles
+//! v4's golden-corpus driver. It checks three things. Phase 3's: v4 compiles
 //! every corpus definition as v3 built it, reporting v3's issues at v3's
 //! paths, and, for a definition a deviation covers, exactly what
-//! [`expect::DEVIATED`] says. Phase 4's: v4 runs every case that needs only
-//! the built-ins as v3 recorded it, and, at a deviated path, exactly what
-//! [`expect::RUN_DEVIATED`] says. Phase 5's: the same for every case calling
-//! `script` or fanning out, reloads and the ops budget included. See
-//! `corpus/README.md`.
+//! [`expect::DEVIATED`] says. Phases 4 and 5's: v4 runs every case as v3
+//! recorded it (the built-ins, `script`, fan-outs, reloads and the ops
+//! budget), and, at a deviated path, exactly what [`expect::RUN_DEVIATED`]
+//! says. Phase 6's: the same for the cases with an observer or an error
+//! context, the observer's events compared with v3's verbatim, and every
+//! traced run's trace compared with v3's by replay (I109): each step's
+//! context rebuilt from `initial` and the changes, aligned with v3's steps,
+//! and held to v3's snapshot, and, at a deviated trace pointer, to exactly
+//! what [`expect::TRACE_DEVIATED`] says. See `corpus/README.md`.
 //!
 //! This crate holds the reusable pieces (the case's compiler, reading a
 //! case's definitions, normalising what v3 recorded, collecting what v4
-//! reports, running a case's steps); `tests/definitions.rs` and
-//! `tests/runs.rs` are the checks.
+//! reports, running a case's steps, the recording observer, and holding a
+//! deviated pointer to its row); `tests/definitions.rs`, `tests/runs.rs`
+//! and `tests/traces.rs` are the checks.
 
 pub mod expect;
 pub mod logs;
+pub mod observe;
 pub mod operators;
 pub mod run;
 pub mod script;

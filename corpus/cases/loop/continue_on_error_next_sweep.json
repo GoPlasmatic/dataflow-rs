@@ -73,8 +73,7 @@
     {
       "break": "4",
       "paths": [
-        "/steps/0/run/message/errors/1",
-        "/steps/0/run/trace"
+        "/steps/0/run/message/errors/1"
       ],
       "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"
     }

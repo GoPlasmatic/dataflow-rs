@@ -140,8 +140,10 @@ jobs:
       - name: Run tests, v4 (default features)
         run: cargo test -p dataflow-rs-v4 --locked
 
-      # v4's corpus driver reads the same cases as v3's; in phase 2 it checks that
-      # v4 parses every definition, or refuses it with v3's code at v3's path.
+      # v4's corpus driver reads the same cases as v3's. It checks that v4 parses
+      # and compiles every definition as v3 built it, runs every case as v3
+      # recorded it (observer events included), and traces every run as v3 did,
+      # compared by replay.
       - name: Run the corpus, v4 (default features)
         run: cargo test -p dataflow-corpus-v4 --locked
 

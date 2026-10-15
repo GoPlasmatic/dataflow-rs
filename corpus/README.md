@@ -23,14 +23,14 @@ it. v3 is the oracle: a recording is what v3 did, never what someone expected it
 | --- | --- |
 | `corpus/` (`dataflow-corpus`) | The case format, an order-preserving JSON value, normalisation, the comparator, v3's path rules, trace replay, and the coverage tests. It does not depend on dataflow-rs |
 | `corpus/v3/` (`dataflow-corpus-v3`) | v3's driver, which runs a case and records it. Also the `script` host function, the observer recorder, the log capture, `record`, and the green test |
-| `corpus/v4/` (`dataflow-corpus-v4`) | v4's driver, which holds v4 to the recordings: `script` ported to v4's `Function`, the declared deviations (`expect`), the definitions check and the runs check |
+| `corpus/v4/` (`dataflow-corpus-v4`) | v4's driver, which holds v4 to the recordings: `script` ported to v4's `Function`, the recording observer, the declared deviations (`expect`), the definitions check, the runs check and the traces check |
 
 When v4 replaces v3's API on `main`, `corpus/v3` stays on `v3-maintenance`, and `corpus/v4` goes on
 reading the same cases through `dataflow-corpus`.
 
 ## v4's driver
 
-`corpus/v4/` (`dataflow-corpus-v4`) reads the same cases through `dataflow-corpus`. It makes two
+`corpus/v4/` (`dataflow-corpus-v4`) reads the same cases through `dataflow-corpus`. It makes three
 checks.
 
 **Definitions** (`tests/definitions.rs`, phase 3). It compiles every definition: v4's `parse` issues,
@@ -41,7 +41,8 @@ have such as `V3_SPELLING`, are filtered out (`expect::compared`). A deviated on
 exactly its row of `expect::DEVIATED`, unfiltered, and the row must name exactly the breaks of the
 deviations covering it. Nothing is skipped.
 
-**Runs** (`tests/runs.rs`, from phase 4). `run::run_case` builds the case and runs its steps:
+**Runs** (`tests/runs.rs`, from phase 4). `run::run_case` builds the case, with its engine config,
+and runs its steps:
 
 - **The build.** Each definition is parsed and compiled on its own. One v4 refuses is left out
   when v3's `parse` refused it too, as v3's driver left it out; the definitions check holds the two
@@ -51,14 +52,32 @@ deviations covering it. Nothing is skipped.
   cover `/steps` too.
 - **The budget.** On a `budget` build, the case's compiler applies `engine.ops_budget`. A case that
   sets one must require `budget`, so it never runs without its ceiling.
-- **The skip rules.** A case whose engine has an observer or an error context waits for phase 6
-  (`run::waits_for`); that is the one rule tied to a phase. A case whose `requires` this build does
-  not satisfy is skipped too.
+- **The engine's config.** `engine.observer` attaches the recording observer (`observe::Recorder`),
+  one per engine, drained per run step. `engine.error_context` sets an `ErrorContext` at its path,
+  with its `limit` or v3's default of 32. A reload keeps both, as v3's did.
+- **The skip rule.** A case whose `requires` this build does not satisfy is skipped.
 - **A run step** runs on a fresh message with its channel, bucket, `capture_changes` and
-  `audit_mode`. It records `{outcome, message, logs}` as v3's driver does, normalised the same way.
-  The outcome is `"ok"` for a run that completed, with or without error records. `script` is v3's,
-  ported to `Function` (`src/script.rs`). Each error it returns carries v3's code and v3's text, so
-  its records are v3's.
+  `audit_mode`. It records `{outcome, message, observer, logs, trace}` as v3's driver does,
+  normalised the same way, the message with the case's error-context path:
+  - The outcome is `"ok"` for a run that completed, with or without error records.
+  - `observer`, when the case attaches one, is v3's five events, key for key, made from v4's
+    `Event`s, each object's keys in the sorted order v3's recordings hold. `message_started` is `{message_id, workflows_considered}` from
+    `RunStarted`. `workflow_started` is `{workflow_id}`. `task_finished` is `{workflow_id,
+    task_id, function, status}` from the call's `CallInfo`. `workflow_finished` is `{workflow_id,
+    sweeps, halted}`, `halted` when the workflow's exit is `Halted`. `message_finished` is
+    `{message_id, errors, stopped_early}`, `stopped_early` when the run ended `Stopped`, `TimedOut`
+    or `Cancelled`.
+  - `logs`, when the case captures them, is the `log` built-in's lines.
+  - `trace`, when the step's trace is on, comes from a second run of the same input, traced with
+    no timings, the spec's `changes` and `redact_paths`, and its `max_snapshot_bytes` as the byte
+    budget when it is not 0. v3's `snapshots`, `mapping_contexts` and `snapshot_audit_trail` have no
+    v4 counterpart. It records `{outcome, initial, steps, truncated, message_matches}`: the traced
+    run's outcome; `initial` and `steps` exactly as v4 serializes them; `truncated`; and whether
+    the traced run's normalised message equals the plain run's. The traced run's events and log
+    lines are dropped, as v3's driver dropped them.
+
+  `script` is v3's, ported to `Function` (`src/script.rs`). Each error it returns carries v3's code
+  and v3's text, so its records are v3's.
 - **A reload step** parses, compiles and links its definitions through the case's compiler, then
   swaps the engine's program (`Engine::with_program`). It records `"ok"`, or the error of a refused
   build, whose code and message are not compared: v4's code is `REJECTED`, v3's its own error's. A
@@ -70,23 +89,44 @@ The record is compared with `compare::diff`, ignoring:
 - the run outcome's message (v4's `Error` has its own wording; its code and `retryable` are
   compared);
 - a refused reload's code;
-- the trace (phase 6's);
-- every path a deviation covers.
+- the trace, which the traces check compares;
+- every path a deviation covers, except one under a run's trace, which the traces check holds.
 
 At each deviated path, v4's value must be exactly its row of `expect::RUN_DEVIATED`, so a deviation
 says what v4 does, not only that it differs. A deviated path where v4's value is v3's fails as
 stale: the deviation would declare a difference that is not there. These counts are pinned:
 
-| Count | Default build | `--all-features` |
+| Count | Default build | `budget` or `--all-features` |
 | --- | --- | --- |
-| Cases run and compared | 70 | 71 |
+| Cases run and compared | 71 | 72 |
 | Cases with no build | 10 | 10 |
-| Cases waiting for phase 6 | 1 | 1 |
 | Cases needing features this build has the other way | 2 | 1 |
 | Deviated pointers, each held to its `RUN_DEVIATED` row | 24 | 24 |
 
 `expressions/budget` runs only on a `budget` build. Exactly one of `families_on` and `families_off`
 runs in each build.
+
+**Traces** (`tests/traces.rs`, phase 6). For every run step whose recording holds a trace, in a case
+that builds and runs in this build, v4's traced run is held to v3's: its outcome (code and
+`retryable`, as the plain outcome is), `truncated`, `message_matches`, and its steps, aligned with
+v3's by replay (see [Traces](#traces) under Replay). Each traced run must also replay to its own
+message. A deviated pointer under a run's trace is held to its row of `expect::TRACE_DEVIATED`,
+each row used exactly once, with the same stale check. These counts are pinned, the same in every
+build (`expressions/budget` turns its trace off, and `families_on` and `families_off` trace alike):
+
+| Count | Every build |
+| --- | --- |
+| Traced runs compared | 85 |
+| Of those, runs whose step list a deviation declares | 2 |
+| v3 steps matched by a v4 step, in the other 83 | 238 |
+| Of those, snapshots compared with v4's rebuilt context | 226 |
+| v4 steps matched to nothing: the engine's step at a sweep | 41 |
+| v4 steps matched to nothing: a task's failure the workflow's policy took | 9 |
+| v4 steps matched to nothing: a workflow's own failure | 1 |
+| Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 3 |
+
+v3's recordings hold 87 traced runs. The other four are in cases v4 does not build (breaks 2a, 3
+and 15), whose `/steps` a deviation covers.
 
 ## A case
 
@@ -206,3 +246,40 @@ each snapshot by replaying them.
 **Measuring the gap.** `cargo run -p dataflow-corpus --bin replay_report` replays v3's own recorded
 traces and lists every snapshot path the changes do not reproduce. Each one is something v4's trace
 must carry, or its runner must derive. `tests/replay.rs` pins that list.
+
+### Traces
+
+v4's driver compares each of v4's traces with v3's by replay (I109). v4's steps are replayed from
+its `initial` with `replay::apply` over each step's changes, in order, and walked in order:
+
+- **An engine step** (`task_id: null`, `result: executed`: the counter, `as` and `scratch` written
+  as a sweep is entered or a loop exits) is applied and matched to nothing.
+- **A `failed` step** is applied and matched to nothing. It is the step v3's trace drops (break 5):
+  a call whose failure went to its workflow's policy, or a workflow's own failure.
+- **Every other step** is matched to v3's next step. The two must agree on `(workflow_id, task_id,
+  result, loop_counter, element_index)`. When that v3 step has a snapshot, the context rebuilt after
+  v4's step, normalised with the case's error-context path, must equal the snapshot's `context`,
+  key order included.
+
+Every v3 step must be matched. v3's `mapping_contexts`, `started_at`, `duration_us`, `changes`, and
+its snapshot's `audit_trail` and `errors`, are not compared. So break 4's records, which live in a
+snapshot's `errors`, need no trace deviation.
+
+**The replay invariant.** For every traced run, the replay of all of v4's steps from `initial`,
+normalised, must equal the traced message's own final context, normalised (I19: a trace replays to
+the context on every status). The traced message is the plain run's whenever `message_matches`
+holds, which is itself compared. The invariant does not depend on v3 and takes no deviation.
+
+**Trace deviations.** Both sides are compared in v3's coordinates. Each trace is read as
+`{outcome, steps, truncated, message_matches}`, each step as `{workflow_id, task_id, result,
+loop_counter?, element_index?, message?: {context}}`, with v4's steps as aligned. So a deviation
+names a pointer into v3's recorded trace, such as
+`/steps/0/run/trace/steps/0/message/context/data/partial`, and v4's JSON at that pointer in the
+aligned trace is its row (`MISSING` where the aligned trace has nothing).
+
+**A step list that differs** (v4 runs workflows v3 did not, as break 6 lets it, or skips ones v3
+ran, as break 7 does) is deviated at the trace's `steps` itself: `/steps/<i>/run/trace/steps`.
+Both sides' `steps` are then read as the keys of the steps the alignment would match, in order,
+each as the string `"workflow_id/task_id/result"`, with an empty task id for a workflow's own step.
+The row holds v4's list. No context is compared with v3's in that run, and the replay invariant
+still applies.
