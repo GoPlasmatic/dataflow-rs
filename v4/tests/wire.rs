@@ -416,3 +416,78 @@ async fn a_whole_number_float_reads_back_as_written() {
     assert!(trace.contains(r#""f":3.0"#) && trace.contains(r#""new_value":2.0"#));
     assert_eq!(text(&serde_json::from_str::<Trace>(&trace).unwrap()), trace);
 }
+
+#[tokio::test]
+async fn an_arithmetic_float_reads_back() {
+    // `0.1 + 0.33` is `0.43000000000000005`, seventeen significant digits,
+    // which serde_json's default parser reads one ULP off; v4 builds it with
+    // `float_roundtrip`, so the message and the trace read back byte for byte.
+    let engine = Engine::builder()
+        .workflow_json(&json!({"id": "w", "tasks": [{"id": "m", "function": {
+            "name": "map", "input": {"mappings": [{"path": "data.total",
+            "logic": {"+": [{"var": "data.a"}, {"var": "data.b"}]}}]}}}]}))
+        .build()
+        .unwrap();
+    let mut m = Message::from_parts(
+        OwnedDataValue::Null,
+        dv(json!({"a": 0.1, "b": 0.33})),
+        OwnedDataValue::Null,
+    )
+    .with_id("m");
+    let run = engine
+        .run_with(
+            &mut m,
+            &RunOptions::default().trace(TraceOptions::default()),
+        )
+        .await;
+    let wire = text(&m);
+    assert!(wire.contains(r#""total":0.43000000000000005"#), "{wire}");
+    let back: Message = serde_json::from_str(&wire).unwrap();
+    assert_eq!(text(&back), wire);
+    assert_eq!(back, m);
+
+    let trace = run.trace().expect("a traced run returns its trace");
+    let written = text(trace);
+    let read: Trace = serde_json::from_str(&written).unwrap();
+    assert_eq!(text(&read), written);
+    let replayed = |t: &Trace| t.contexts().map(|c| text(&c)).collect::<Vec<_>>();
+    assert_eq!(replayed(&read), replayed(trace));
+}
+
+#[test]
+fn every_finite_float_reads_back() {
+    // A batch of finite floats from random bit patterns (xorshift64*, seeded,
+    // so a failure reproduces), each read back as the bits it was written from.
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let mut floats = Vec::new();
+    while floats.len() < 20_000 {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        let f = f64::from_bits(state.wrapping_mul(0x2545_F491_4F6C_DD1D));
+        if f.is_finite() {
+            floats.push(f);
+        }
+    }
+    let values = floats.iter().map(|&f| json!(f)).collect::<Vec<_>>();
+    let m = Message::from_parts(
+        OwnedDataValue::Null,
+        dv(json!({"f": values})),
+        dv(json!({})),
+    )
+    .with_id("m");
+    let wire = text(&m);
+    let back: Message = serde_json::from_str(&wire).unwrap();
+    let Some(OwnedDataValue::Array(read)) = back.context().data().get("f") else {
+        panic!("an array");
+    };
+    let moved = floats
+        .iter()
+        .zip(read)
+        .filter(|(written, read)| {
+            Value::from(*read).as_f64().map(f64::to_bits) != Some(written.to_bits())
+        })
+        .count();
+    assert_eq!((read.len(), moved), (floats.len(), 0), "floats that moved");
+    assert!(text(&back) == wire, "the message reads back byte for byte");
+}
