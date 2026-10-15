@@ -19,6 +19,6 @@ pub use issue::{
     StepKind,
 };
 // The clock a deadline is read on, named by `run::Instant` and by
-// `Ctx::deadline`: the one line phase 7's wasm track changes to
-// `web_time::Instant`, the same type on native targets (I86).
-pub use std::time::Instant;
+// `Ctx::deadline`: `web_time::Instant`, which is `std::time::Instant` on native
+// targets and a `performance.now()` clock on wasm32, where `std`'s panics (I86).
+pub use web_time::Instant;

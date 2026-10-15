@@ -15,8 +15,9 @@ mod record;
 mod report;
 mod trace;
 
-/// The clock a deadline is read on: `std::time::Instant` until phase 7's wasm
-/// track makes it `web_time::Instant`, the same type on native targets (I86).
+/// The clock a deadline is read on: `web_time::Instant`, which is
+/// `std::time::Instant` itself on native targets and a browser clock on wasm32
+/// (I86).
 pub use crate::base::Instant;
 pub use crate::base::{CancelToken, Change, Context, Error, ErrorKind, ErrorRecord, Result};
 pub use crate::observe::{RunStatus, Selection, WorkflowExit, WorkflowRecord};

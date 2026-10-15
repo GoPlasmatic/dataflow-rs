@@ -17,6 +17,16 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// Compiles only while `run::Instant` is `std::time::Instant` natively (I86).
+fn same(i: std::time::Instant) -> dataflow_rs::run::Instant {
+    i
+}
+
+#[test]
+fn run_instant_is_the_std_instant_natively() {
+    let _ = same(std::time::Instant::now());
+}
+
 /// Long enough for anything that should resolve, on the paused clock: a
 /// future that never resolves fails its `timeout` at once instead of hanging.
 const PATIENCE: Duration = Duration::from_secs(3600);
