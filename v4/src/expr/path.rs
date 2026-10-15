@@ -112,7 +112,9 @@ fn seg_index(raw: &str) -> Option<usize> {
 /// A root plus typed segments, parsed once. A segment is a key on an object
 /// (one leading `#` stripped) and an index on an array (the raw segment parsed
 /// as `usize`), resolved at parse.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `Debug` prints the dotted text, `Path("metadata.errors")`.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Path {
     root: Root,
     /// The root's own segment first, then the segments below it: the chain the
@@ -165,6 +167,14 @@ impl FromStr for Path {
 impl fmt::Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.dotted)
+    }
+}
+
+impl fmt::Debug for Path {
+    /// The dotted text, `Path("metadata.errors")`: the segments are the
+    /// text parsed, so they say nothing more.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Path").field(&&*self.dotted).finish()
     }
 }
 

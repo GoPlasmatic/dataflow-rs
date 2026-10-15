@@ -803,8 +803,10 @@ async fn a_reload_keeps_the_error_context() {
         debug[debug.find("config:").expect("the config is shown")..].to_owned()
     };
     assert_eq!(config(&reloaded), config(&e));
+    // A path shows as its dotted text (review B M-9).
     assert!(
-        config(&reloaded).contains("error_context: Some(ErrorContext {"),
+        config(&reloaded)
+            .contains(r#"error_context: Some(ErrorContext { path: Path("metadata.errors")"#),
         "{}",
         config(&reloaded)
     );

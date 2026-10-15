@@ -70,6 +70,12 @@ fn text(value: &OwnedDataValue) -> String {
 }
 
 #[test]
+fn debug_prints_the_dotted_text() {
+    let path: Path = "metadata.#errors.0".parse().unwrap();
+    assert_eq!(format!("{path:?}"), r##"Path("metadata.#errors.0")"##);
+}
+
+#[test]
 fn get_set_and_remove_agree_with_v3_on_random_contexts() {
     let mut rng = Rng(SEED);
     for round in 0..2000 {
