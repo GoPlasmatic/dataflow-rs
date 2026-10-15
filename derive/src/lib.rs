@@ -41,9 +41,10 @@ use syn::{
 /// `FunctionConfig::primary_output` returns, so its type is `Output` or
 /// `Option<Output>`; any other is refused.
 ///
-/// `FunctionConfig::resolve` gives every set field, keyed by its key, in
-/// declaration order, each through its type's `ConfigField::resolve`, and a
-/// `serde` field as it serializes.
+/// `FunctionConfig::resolve` gives every field with a value, set by the
+/// input or by its default, keyed by its key, in declaration order, each
+/// through its type's `ConfigField::resolve`, and a `serde` field as it
+/// serializes; an `Option` left unset is absent.
 #[proc_macro_derive(FunctionConfig, attributes(config, output))]
 pub fn derive_function_config(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as DeriveInput);

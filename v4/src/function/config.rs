@@ -179,8 +179,9 @@ pub trait FunctionConfig: Sized + Send + Sync + 'static {
         None
     }
 
-    /// The config resolved for one call, through `r`: every field the input
-    /// set, keyed by its authored key, in declaration order. An expression
+    /// The config resolved for one call, through `r`: every field with a
+    /// value, set by the input or by its default, keyed by its authored key,
+    /// in declaration order; an `Option` left unset is absent. An expression
     /// is evaluated, a document rendered, an output's path given as its
     /// dotted text, a nested config resolved as an object, and a
     /// `#[config(serde)]` field written as it serializes (unset when that is

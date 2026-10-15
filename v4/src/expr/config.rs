@@ -386,8 +386,9 @@ pub trait ConfigField: Sized + Send + Sync + 'static {
     /// Reports the field's expressions.
     fn visit(&self, _v: &mut Visit<'_>) {}
 
-    /// The field's value for this call, through `r`; `None` when the input
-    /// left it unset, as an `Option` that is `None` is. The value sits where
+    /// The field's value for this call, through `r`; `None` when it has none,
+    /// as an `Option` the input left unset, with no default, has none. The
+    /// value sits where
     /// [`Self::visit`] reports the field's expressions: a list's elements at
     /// their indices, a map's values at their keys, and an element left
     /// unset is `null`, keeping its place.

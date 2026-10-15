@@ -43,9 +43,10 @@ struct Field {
 /// [`primary`](FieldSpec::primary).
 #[derive(Debug)]
 pub struct Templated {
-    /// The fields the input set, in declaration order.
+    /// The fields with a value, set by the input or by a default, in
+    /// declaration order.
     fields: Vec<Field>,
-    /// The primary output's position in `fields`, when the input set it.
+    /// The primary output's position in `fields`, when it has a value.
     primary: Option<usize>,
 }
 
@@ -225,8 +226,9 @@ impl Templated {
     /// The field `name`'s value for this call: a literal, and an expression
     /// that folded to a constant, lent from the config; an expression
     /// evaluated, a document rendered, and an output's or a path's
-    /// destination as a string, owned. `None` for a field the input did not
-    /// set, and for a name no field has.
+    /// destination as a string, owned. `None` for a field with no value (an
+    /// optional one the input left unset, with no default), and for a name
+    /// no field has.
     ///
     /// # Errors
     ///
@@ -239,10 +241,11 @@ impl Templated {
             .transpose()
     }
 
-    /// Every field the input set, each as [`Self::get`] gives it, as an
-    /// object in declaration order: what a derived config with the same
-    /// fields resolves to ([`FunctionConfig::resolve`], on the same per-field
-    /// code). Secrets are read, as the call reads them.
+    /// Every field with a value, set by the input or by its default, each as
+    /// [`Self::get`] gives it, as an object in declaration order (an
+    /// optional field left unset is absent): what a derived config with the
+    /// same fields resolves to ([`FunctionConfig::resolve`], on the same
+    /// per-field code). Secrets are read, as the call reads them.
     ///
     /// # Errors
     ///
@@ -251,7 +254,7 @@ impl Templated {
         self.resolve_fields(&mut &*ctx)
     }
 
-    /// Every field the input set, through `r`, as an object in declaration
+    /// Every field with a value, through `r`, as an object in declaration
     /// order: [`FunctionConfig::resolve`], which a derived config with the
     /// same fields gives alike.
     fn resolve_fields(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue> {

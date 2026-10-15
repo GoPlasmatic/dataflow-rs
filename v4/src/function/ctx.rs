@@ -279,8 +279,9 @@ impl<'r> Ctx<'r> {
         self.callee
     }
 
-    /// The callee's config resolved for this call (I130): every field the
-    /// input set, keyed by its authored key, in declaration order, as
+    /// The callee's config resolved for this call: every field with a value,
+    /// set by the input or by its default, keyed by its authored key, in
+    /// declaration order, an `Option` left unset absent, as
     /// [`FunctionConfig::resolve`](super::FunctionConfig::resolve) gives it
     /// over the context as this call sees it, a fan-out element's binding
     /// included. A hand-written config resolves to `null` unless it says
