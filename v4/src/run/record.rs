@@ -82,6 +82,19 @@ pub(crate) fn now() -> Instant {
     Instant::now()
 }
 
+/// In the lib's own tests, `result` turned into an `Err` once the call has
+/// written, while a test asks: a built-in that writes, then fails, which no
+/// built-in does today (T2-C4).
+#[cfg(test)]
+pub(crate) fn failing_after_its_writes(
+    result: crate::Result<crate::function::Outcome>,
+) -> crate::Result<crate::function::Outcome> {
+    if tests::FAIL_AFTER_WRITES.with(std::cell::Cell::get) {
+        return Err(Error::service("BROKE", "after its writes"));
+    }
+    result
+}
+
 /// The time since `start`, on [`now`]'s clock.
 pub(crate) fn since(start: Instant) -> Duration {
     now().saturating_duration_since(start)
@@ -479,6 +492,8 @@ mod tests {
         pub(super) static CLOCK_READS: Cell<u32> = const { Cell::new(0) };
         /// What each recorded call completed with, while a test collects it.
         static COMPLETED: RefCell<Option<Vec<Done>>> = const { RefCell::new(None) };
+        /// Every built-in call on this thread fails once it has written.
+        pub(super) static FAIL_AFTER_WRITES: Cell<bool> = const { Cell::new(false) };
     }
 
     /// What one recorded call completed with, owned.
@@ -735,6 +750,52 @@ mod tests {
 
     fn text(v: &OwnedDataValue) -> String {
         serde_json::to_string(v).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_builtin_that_writes_then_fails_gives_its_writes_to_the_trace_alone() {
+        // T2-C4: no built-in writes, then returns `Err`, today, so the hook
+        // makes `map` do it. Its write stands: its `Failed` step carries it
+        // and the trace replays to the message. The audit entry gets none,
+        // as v3's recorder dropped them, with a trace and without one.
+        let e = engine(
+            &[json!({"id": "w", "tasks": [map("m", "data.a", "set")]})],
+            None,
+        );
+        let traced = RunOptions::default().trace(TraceOptions::default());
+        for opts in [RunOptions::default(), traced] {
+            let mut message = Message::from_parts(
+                OwnedDataValue::Null,
+                OwnedDataValue::from(&json!({})),
+                OwnedDataValue::Null,
+            );
+            FAIL_AFTER_WRITES.set(true);
+            let run = e.run_with(&mut message, &opts).await;
+            FAIL_AFTER_WRITES.set(false);
+            assert!(
+                matches!(run.status(), crate::observe::RunStatus::Stopped(_)),
+                "{run:?}"
+            );
+            let context = message.context();
+            assert_eq!(text(&context.data()["a"]), "1", "the write stands");
+            let audit = message.audit();
+            assert_eq!(audit.len(), 1);
+            assert!(audit[0].changes.is_empty(), "{audit:?}");
+            assert_eq!(audit[0].status, 500);
+            let Some(trace) = run.trace() else {
+                continue;
+            };
+            let step = &trace.steps[0];
+            assert_eq!((step.result, step.status), (StepResult::Failed, Some(500)));
+            let paths: Vec<&str> = step.changes.iter().map(|c| &*c.path).collect();
+            assert_eq!(paths, ["data.a", "metadata.progress"]);
+            let last = trace.contexts().last().expect("a step");
+            assert_eq!(
+                serde_json::to_string(&last).unwrap(),
+                serde_json::to_string(context).unwrap(),
+                "the trace replays to the message"
+            );
+        }
     }
 
     /// A context with `progress` (JSON text, its key order kept) seeded.

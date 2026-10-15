@@ -658,12 +658,23 @@ fn call<'p>(
         now: env.now_text,
     };
     let result = builtin.call(&mut cx);
-    let marked = cx.marked;
+    let mut marked = cx.marked;
+    #[cfg(test)]
+    let result = record::failing_after_its_writes(result);
     let elapsed = started.map(record::since);
-    // An `Err` records no changes, as v3's recorder drops them; its writes
-    // stand.
+    // An `Err` records no changes for the audit, as v3's recorder drops
+    // them. Its writes stand, so a trace that keeps changes keeps them, for
+    // itself alone: the call's `Failed` or `Executed` step carries them
+    // (I19, T2-C4).
     if result.is_err() {
-        env.changes.clear();
+        if traced {
+            for change in &mut env.changes {
+                change.trace_only = true;
+            }
+            marked = true;
+        } else {
+            env.changes.clear();
+        }
     }
     let decision = policy::decide(site.policy(), ids.task, result);
     let done = Completed {
