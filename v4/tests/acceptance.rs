@@ -9,10 +9,10 @@ use dataflow_rs::expr::{
 use dataflow_rs::function::{FunctionConfig, Templated};
 use dataflow_rs::program::{AuthoredPath, IssueCode, Severity};
 use dataflow_rs::{Expr, Issue};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[allow(dead_code, reason = "the variants are read by serde only")]
 enum MongoOp {

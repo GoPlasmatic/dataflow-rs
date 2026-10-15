@@ -15,11 +15,13 @@ pub(crate) mod path;
 mod secrets;
 mod walk;
 
-pub use config::{CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, ValueKind, Visit};
+pub use config::{
+    CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, Resolver, ValueKind, Visit,
+};
 pub(crate) use document::Filled;
 pub use document::{Interpolated, Rendered};
 pub use engine::{EvalRoot, ExprEngine, ExprEngineBuilder};
-pub use expr::{Evaluated, Expr, FromValue};
+pub use expr::{Evaluated, Expr, FromValue, ResolveExpr};
 pub use operators::{Family, OperatorInfo};
 pub use output::Output;
 pub(crate) use path::Seg;

@@ -39,14 +39,17 @@ pub use templated::Templated;
 #[doc(hidden)]
 pub mod __private {
     pub use super::config::FunctionConfig;
-    pub use crate::base::AuthoredPath;
+    pub use crate::base::{AuthoredPath, Result};
     pub use crate::expr::{
-        CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, Output, ValueKind, Visit,
+        CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, Output, Resolver, ValueKind,
+        Visit,
     };
+    pub use datavalue::OwnedDataValue;
     pub use serde_json::Value;
     pub use std::sync::OnceLock;
 
-    use crate::base::IssueCode;
+    use crate::base::{Error, ErrorKind, IssueCode};
+    use serde::Serialize;
     use serde::de::DeserializeOwned;
     use serde_json::Map;
     use std::borrow::Cow;
@@ -162,6 +165,50 @@ pub mod __private {
     /// from `null`.
     pub fn serde_required<T: DeserializeOwned>() -> bool {
         serde_json::from_value::<T>(Value::Null).is_err()
+    }
+
+    /// A resolved config's entries, in declaration order.
+    pub type Entries = Vec<(String, OwnedDataValue)>;
+
+    /// Resolves one field through its [`ConfigField`] impl, and keeps it at
+    /// `key` unless it is unset.
+    ///
+    /// # Errors
+    ///
+    /// The field's.
+    pub fn resolve_field<T: ConfigField>(
+        entries: &mut Entries,
+        key: &str,
+        field: &T,
+        r: &mut dyn Resolver,
+    ) -> Result<()> {
+        if let Some(value) = field.resolve(r)? {
+            entries.push((key.to_owned(), value));
+        }
+        Ok(())
+    }
+
+    /// Resolves one `#[config(serde)]` field as it serializes, and keeps it
+    /// at `key` unless that is `null`. The JSON text is read back, so a
+    /// struct's or a map's keys keep the order its `Serialize` writes them
+    /// in.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Config`] when the value does not serialize.
+    pub fn resolve_serde<T: Serialize>(entries: &mut Entries, key: &str, field: &T) -> Result<()> {
+        let refused = |e: serde_json::Error| {
+            Error::new(
+                ErrorKind::Config,
+                format!("the field `{key}` does not serialize: {e}"),
+            )
+        };
+        let text = serde_json::to_string(field).map_err(refused)?;
+        let value: OwnedDataValue = serde_json::from_str(&text).map_err(refused)?;
+        if !value.is_null() {
+            entries.push((key.to_owned(), value));
+        }
+        Ok(())
     }
 
     /// The assembled config, unless this compile recorded a Rejected issue.

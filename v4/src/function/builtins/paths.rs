@@ -9,7 +9,7 @@
 //! refuse it.
 
 use crate::base::{IssueCode, Result};
-use crate::expr::{CompileCx, ConfigField, Expr, FieldKind, Path, ValueKind, Visit};
+use crate::expr::{CompileCx, ConfigField, Expr, FieldKind, Path, Resolver, ValueKind, Visit};
 use crate::function::SyncCtx;
 use datavalue::OwnedDataValue;
 use serde_json::Value;
@@ -172,6 +172,17 @@ impl ConfigField for ParseSource {
         }
     }
 
+    /// The source's name: the one resolved at compile, as its text, or the
+    /// one computed for this call.
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        match self {
+            Self::Literal(from) | Self::Folded { from, .. } => {
+                Ok(Some(OwnedDataValue::String(from.text())))
+            }
+            Self::Computed(expr) => ConfigField::resolve(expr, r),
+        }
+    }
+
     fn kind() -> FieldKind {
         FieldKind::Expr(ValueKind::String)
     }
@@ -237,6 +248,11 @@ impl ConfigField for DataPath {
 
     fn visit(&self, v: &mut Visit<'_>) {
         v.expr(self.expr.raw());
+    }
+
+    /// The name below `data`, as written or as computed for this call.
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        ConfigField::resolve(&self.expr, r)
     }
 
     fn kind() -> FieldKind {
@@ -345,6 +361,11 @@ impl ConfigField for PublishSource {
 
     fn visit(&self, v: &mut Visit<'_>) {
         self.path.visit(v);
+    }
+
+    /// The source's name, as a [`DataPath`]'s.
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        ConfigField::resolve(&self.path, r)
     }
 
     fn kind() -> FieldKind {

@@ -5,14 +5,16 @@ use dataflow_rs::expr::{
     CompileCx, ConfigField, ExprEngine, ExprVisitor, FieldKind, FieldSpec, Interpolated, Output,
     ValueKind, Visit,
 };
-use dataflow_rs::function::FunctionConfig;
+use dataflow_rs::function::{FunctionConfig, FunctionSpec, Templated, testing};
 use dataflow_rs::program::{AuthoredPath, IssueCode, Severity};
-use dataflow_rs::{Expr, Issue};
-use serde::Deserialize;
+use dataflow_rs::run::RunStatus;
+use dataflow_rs::{Ctx, Engine, Expr, Function, Issue, Message, Outcome, Path, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum Level {
     Info,
@@ -664,4 +666,183 @@ fn a_lone_option_output_is_the_primary_without_saying_so() {
         assert!(issues.is_empty(), "{issues:?}");
         assert_eq!(primary(&cfg.unwrap()), None, "{input}");
     }
+}
+
+/// Resolves its config over the call's context and writes the object at
+/// `temp_data.<task id>`.
+struct Resolves<C>(PhantomData<fn() -> C>);
+
+impl<C: FunctionConfig> Function for Resolves<C> {
+    type Config = C;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &C) -> Result<Outcome> {
+        let resolved = cfg.resolve(&mut &*ctx)?;
+        let at: Path = format!("temp_data.{}", ctx.info().task_id).parse()?;
+        ctx.set(&at, resolved)?;
+        Ok(Outcome::Ok)
+    }
+}
+
+/// The message every resolve below reads.
+fn resolve_message() -> Message {
+    Message::from_parts(
+        OwnedDataValue::Null,
+        OwnedDataValue::from(&json!({"n": 4, "name": "ada", "k": "v"})),
+        OwnedDataValue::Null,
+    )
+}
+
+/// What a call wrote at `temp_data.<task>`, as wire text.
+fn resolved_at(message: &Message, task: &str) -> String {
+    let at: Path = format!("temp_data.{task}").parse().unwrap();
+    let value = message.context().get(&at).expect("the call wrote it");
+    serde_json::to_string(value).unwrap()
+}
+
+/// One field of each kind the derive resolves.
+#[derive(FunctionConfig)]
+struct Kinds {
+    flag: bool,
+    count: u32,
+    any: Expr,
+    text: Expr<String>,
+    n: Expr<u64>,
+    delta: Expr<i64>,
+    ratio: Expr<f64>,
+    on: Expr<bool>,
+    to: Expr<Path>,
+    set: Option<Expr<u64>>,
+    unset: Option<Expr<u64>>,
+    nulled: Option<Expr>,
+    list: Vec<Expr<u64>>,
+    keyed: BTreeMap<String, Expr<String>>,
+    limits: Limits,
+    #[output(primary)]
+    literal_out: Output,
+    computed_out: Output,
+    body: Interpolated,
+    #[config(rename = "renamed_key")]
+    renamed: String,
+    #[config(serde)]
+    level: Level,
+    #[config(serde)]
+    maybe_level: Option<Level>,
+}
+
+#[tokio::test]
+async fn a_derived_config_resolves_each_field_in_declaration_order() {
+    let input = json!({
+        "flag": true,
+        "count": 7,
+        "any": {"var": "data.k"},
+        "text": {"cat": ["hi ", {"var": "data.name"}]},
+        "n": {"+": [{"var": "data.n"}, 1]},
+        "delta": {"-": [{"var": "data.n"}, 10]},
+        "ratio": {"/": [{"var": "data.n"}, 8]},
+        "on": {"==": [{"var": "data.n"}, 4]},
+        "to": {"cat": ["data.", {"var": "data.k"}]},
+        "set": 3,
+        "nulled": null,
+        "list": [1, {"var": "data.n"}],
+        "keyed": {"b": {"var": "data.name"}, "a": "lit"},
+        "limits": {"max": {"var": "data.n"}},
+        "literal_out": "data.out",
+        "computed_out": {"cat": ["data.", {"var": "data.k"}]},
+        "body": {"$oid": {"var": "data.name"}, "n": 1},
+        "renamed_key": "r",
+        "level": "warn",
+    });
+    let called = testing::call(Resolves::<Kinds>(PhantomData), input)
+        .message(resolve_message())
+        .await;
+    assert!(called.issues.is_empty(), "{:?}", called.issues);
+    assert_eq!(called.outcome.unwrap(), Outcome::Ok);
+    // Every set field, by its authored key, in declaration order: a scalar
+    // as itself; an expression evaluated, as a number, a string, a boolean
+    // or a path's text; an `Option` left unset has no key, and one set to
+    // `null` is `null`; a list and a map element by element (the map in its
+    // own key order); a nested config as an object; an output's path; a
+    // document rendered; a serde field as it serializes, and absent when
+    // that is `null`.
+    assert_eq!(
+        resolved_at(&called.message, "test"),
+        concat!(
+            r#"{"flag":true,"count":7,"any":"v","text":"hi ada","n":5,"delta":-6,"#,
+            r#""ratio":0.5,"on":true,"to":"data.v","set":3,"nulled":null,"list":[1,4],"#,
+            r#""keyed":{"a":"lit","b":"ada"},"limits":{"max":4},"literal_out":"data.out","#,
+            r#""computed_out":"data.v","body":{"$oid":"ada","n":1},"renamed_key":"r","#,
+            r#""level":"warn"}"#
+        )
+    );
+}
+
+/// A derived config with one field of each kind a `Templated` manifest can
+/// declare.
+#[derive(FunctionConfig)]
+struct Twin {
+    expr: Expr,
+    n: Expr<u64>,
+    to: Expr<Path>,
+    doc: Interpolated,
+    label: String,
+    count: u32,
+    ratio: f64,
+    any: Value,
+    unset: Option<String>,
+    out: Output,
+}
+
+/// [`Twin`]'s fields as a plugin's manifest: resolved through `Templated`.
+struct TwinPlugin;
+
+impl Function for TwinPlugin {
+    type Config = Templated;
+
+    fn spec(&self) -> FunctionSpec {
+        FunctionSpec::default().with_runtime_fields(Twin::fields().to_vec())
+    }
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &Templated) -> Result<Outcome> {
+        let resolved = cfg.resolved(ctx)?;
+        // The trait's resolve is `resolved`.
+        assert_eq!(FunctionConfig::resolve(cfg, &mut &*ctx)?, resolved);
+        ctx.set(&"temp_data.templated".parse()?, resolved)?;
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn a_derived_config_and_its_templated_twin_resolve_alike() {
+    // I90's one resolver: the same fields, derived and declared at
+    // runtime, resolve to the same object over one message.
+    let input = json!({
+        "expr": {"var": "data.k"},
+        "n": {"+": [{"var": "data.n"}, 1]},
+        "to": {"cat": ["data.", {"var": "data.k"}]},
+        "doc": {"$oid": {"var": "data.name"}, "n": 1},
+        "label": "l",
+        "count": 7,
+        "ratio": 2.5,
+        "any": {"a": [1, {"b": null}]},
+        "out": {"cat": ["data.", {"var": "data.k"}]},
+    });
+    let e = Engine::builder()
+        .register("derived", Resolves::<Twin>(PhantomData))
+        .register("templated", TwinPlugin)
+        .workflow_json(&json!({"id": "w", "tasks": [
+            {"id": "derived", "function": {"name": "derived", "input": input}},
+            {"id": "templated", "function": {"name": "templated", "input": input}},
+        ]}))
+        .build()
+        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"));
+    let mut m = resolve_message();
+    let run = e.run(&mut m).await;
+    assert!(matches!(run.status(), RunStatus::Completed), "{run:?}");
+    assert!(m.errors().is_empty(), "{:?}", m.errors());
+    let want = concat!(
+        r#"{"expr":"v","n":5,"to":"data.v","doc":{"$oid":"ada","n":1},"label":"l","#,
+        r#""count":7,"ratio":2.5,"any":{"a":[1,{"b":null}]},"out":"data.v"}"#
+    );
+    assert_eq!(resolved_at(&m, "derived"), want);
+    assert_eq!(resolved_at(&m, "templated"), want);
 }

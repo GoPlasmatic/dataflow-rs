@@ -1,6 +1,6 @@
 //! Interpolated documents: data with `var` holes, `$` keys kept verbatim.
 
-use super::config::{CompileCx, ConfigField, FieldKind, Visit};
+use super::config::{CompileCx, ConfigField, FieldKind, Resolver, Visit};
 use super::engine::ExprEngine;
 use super::path::Path;
 use crate::base::{Issue, IssueCode, Severity};
@@ -360,6 +360,10 @@ impl ConfigField for Interpolated {
     }
     fn visit(&self, v: &mut Visit<'_>) {
         v.interpolated(self);
+    }
+    /// The document rendered for this call.
+    fn resolve(&self, r: &mut dyn Resolver) -> crate::Result<Option<OwnedDataValue>> {
+        r.render(self).map(Some)
     }
     fn kind() -> FieldKind {
         FieldKind::Interpolated

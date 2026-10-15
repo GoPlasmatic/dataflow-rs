@@ -4,7 +4,7 @@ use crate::base::Result;
 use crate::expr::Expr;
 use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
 use ::log::debug;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// `filter`'s input.
 #[derive(Debug, FunctionConfig)]
@@ -19,7 +19,7 @@ pub struct FilterConfig {
 }
 
 /// What a [`FilterConfig`] does when its condition is not met.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum RejectAction {

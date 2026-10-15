@@ -3,9 +3,9 @@
 
 use super::document::Interpolated;
 use super::engine::ExprEngine;
-use super::expr::{Expr, FromValue};
+use super::expr::{Expr, FromValue, ResolveExpr};
 use crate::base::typo::unknown_key;
-use crate::base::{AuthoredPath, ErrorKind, Issue, IssueCode, PathSeg, Severity, StepKind};
+use crate::base::{AuthoredPath, ErrorKind, Issue, IssueCode, PathSeg, Result, Severity, StepKind};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
 use std::borrow::Cow;
@@ -308,6 +308,31 @@ impl fmt::Debug for CompileCx<'_> {
     }
 }
 
+/// What resolving a config needs from a call: an expression evaluated, and
+/// a document rendered, each to an owned value, against the context the call
+/// sees. A [`ConfigField`] calls it from [`ConfigField::resolve`]; a call's
+/// context implements it ([`Ctx`](crate::Ctx), through a shared reference).
+pub trait Resolver {
+    /// `expr` evaluated, as an owned value: a number for a `u64`, `i64` or
+    /// `f64` expression, a boolean for a `bool` one, a string for a `String`
+    /// one, a path's dotted text for a `Path` one, and the value itself for
+    /// any other. A folded constant is its value, evaluated never.
+    ///
+    /// # Errors
+    ///
+    /// The evaluation's: [`ErrorKind::Budget`] when the operation ceiling is
+    /// exceeded, [`ErrorKind::Eval`] for any other failure, a result that is
+    /// not of the expression's type included.
+    fn eval(&mut self, expr: &dyn ResolveExpr) -> Result<OwnedDataValue>;
+
+    /// `doc` rendered, as an owned tree: each hole's value, or its default.
+    ///
+    /// # Errors
+    ///
+    /// None from a call's context; a resolver of another kind may refuse.
+    fn render(&mut self, doc: &Interpolated) -> Result<OwnedDataValue>;
+}
+
 /// A type a config is made of.
 ///
 /// An `Option<T>` field is optional: an absent key is `None`, and so is an
@@ -333,8 +358,24 @@ pub trait ConfigField: Sized + Send + Sync + 'static {
     /// Reports the field's expressions.
     fn visit(&self, _v: &mut Visit<'_>) {}
 
+    /// The field's value for this call, through `r`; `None` when the input
+    /// left it unset, as an `Option` that is `None` is. The value sits where
+    /// [`Self::visit`] reports the field's expressions: a list's elements at
+    /// their indices, a map's values at their keys, and an element left
+    /// unset is `null`, keeping its place.
+    ///
+    /// # Errors
+    ///
+    /// The resolver's, for the first expression or document that fails.
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>>;
+
     /// What the field is.
     fn kind() -> FieldKind;
+}
+
+/// A scalar's value: itself.
+fn owned<T: Clone + Into<OwnedDataValue>>(v: &T) -> Result<Option<OwnedDataValue>> {
+    Ok(Some(v.clone().into()))
 }
 
 fn scalar<T: serde::de::DeserializeOwned>(
@@ -356,6 +397,9 @@ macro_rules! scalar_field {
         impl ConfigField for $t {
             fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
                 scalar(raw, cx, $expected)
+            }
+            fn resolve(&self, _r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+                owned(self)
             }
             fn kind() -> FieldKind {
                 FieldKind::Literal(ValueKind::$kind)
@@ -382,6 +426,9 @@ impl ConfigField for OwnedDataValue {
     fn compile(raw: &Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
         Some(Self::from(raw))
     }
+    fn resolve(&self, _r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        owned(self)
+    }
     fn kind() -> FieldKind {
         FieldKind::Literal(ValueKind::Any)
     }
@@ -391,6 +438,9 @@ impl ConfigField for Value {
     const NULL_IS_VALUE: bool = true;
     fn compile(raw: &Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
         Some(raw.clone())
+    }
+    fn resolve(&self, _r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        Ok(Some(OwnedDataValue::from(self)))
     }
     fn kind() -> FieldKind {
         FieldKind::Literal(ValueKind::Any)
@@ -421,6 +471,9 @@ impl<T: FromValue> ConfigField for Expr<T> {
     fn visit(&self, v: &mut Visit<'_>) {
         v.expr(self.raw());
     }
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        r.eval(self).map(Some)
+    }
     fn kind() -> FieldKind {
         FieldKind::Expr(T::KIND)
     }
@@ -441,6 +494,12 @@ impl<T: ConfigField> ConfigField for Option<T> {
     fn visit(&self, v: &mut Visit<'_>) {
         if let Some(inner) = self {
             inner.visit(v);
+        }
+    }
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        match self {
+            Some(inner) => inner.resolve(r),
+            None => Ok(None),
         }
     }
     fn kind() -> FieldKind {
@@ -467,6 +526,13 @@ impl<T: ConfigField> ConfigField for Vec<T> {
             v.at(i, |v| item.visit(v));
         }
     }
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        let items = self
+            .iter()
+            .map(|item| Ok(item.resolve(r)?.unwrap_or(OwnedDataValue::Null)))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Some(OwnedDataValue::Array(items)))
+    }
     fn kind() -> FieldKind {
         FieldKind::List(T::kind)
     }
@@ -491,6 +557,16 @@ impl<T: ConfigField> ConfigField for BTreeMap<String, T> {
         for (key, item) in self {
             v.at(key.as_str(), |v| item.visit(v));
         }
+    }
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        let entries = self
+            .iter()
+            .map(|(key, item)| {
+                let value = item.resolve(r)?.unwrap_or(OwnedDataValue::Null);
+                Ok((key.clone(), value))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Some(OwnedDataValue::Object(entries)))
     }
     fn kind() -> FieldKind {
         FieldKind::Map(T::kind)

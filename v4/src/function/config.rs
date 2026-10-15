@@ -1,7 +1,8 @@
 //! `FunctionConfig`: a function's input, compiled once at build.
 
-use crate::base::IssueCode;
-use crate::expr::{CompileCx, ExprVisitor, FieldSpec, Output};
+use crate::base::{IssueCode, Result};
+use crate::expr::{CompileCx, ExprVisitor, FieldSpec, Output, Resolver};
+use datavalue::OwnedDataValue;
 use serde_json::Value;
 
 /// A function's `input`, compiled at build so a malformed one fails before any
@@ -116,6 +117,24 @@ use serde_json::Value;
 /// }
 /// ```
 ///
+/// A `serde` field whose type is not `Serialize`, which
+/// [`resolve`](Self::resolve) reads it through:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// # use dataflow_rs::function::FunctionConfig;
+/// #[derive(serde::Deserialize)]
+/// enum Mode {
+///     Fast,
+/// }
+///
+/// #[derive(FunctionConfig)]
+/// struct Unserialized {
+///     #[config(serde)]
+///     mode: Mode,
+/// }
+/// ```
+///
 /// A key given twice on one field:
 ///
 /// ```compile_fail
@@ -158,6 +177,22 @@ pub trait FunctionConfig: Sized + Send + Sync + 'static {
     /// hand-written config has none unless it says so.
     fn primary_output(&self) -> Option<&Output> {
         None
+    }
+
+    /// The config resolved for one call, through `r`: every field the input
+    /// set, keyed by its authored key, in declaration order. An expression
+    /// is evaluated, a document rendered, an output's path given as its
+    /// dotted text, a nested config resolved as an object, and a
+    /// `#[config(serde)]` field written as it serializes (unset when that is
+    /// `null`, as an `Option` left `None` is). The derive generates it; a
+    /// hand-written config resolves to `null` unless it says otherwise.
+    ///
+    /// # Errors
+    ///
+    /// The first field's that fails: an evaluation's, or a serde field that
+    /// does not serialize.
+    fn resolve(&self, _r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+        Ok(OwnedDataValue::Null)
     }
 }
 

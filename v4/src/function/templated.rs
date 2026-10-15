@@ -6,7 +6,7 @@ use crate::base::AuthoredPath;
 use crate::base::{IssueCode, Result};
 use crate::expr::{
     CompileCx, ConfigField, Expr, ExprVisitor, FieldKind, FieldSpec, Interpolated, Output, Path,
-    ValueKind, Visit,
+    Resolver, ValueKind, Visit,
 };
 use datavalue::OwnedDataValue;
 use serde_json::Value;
@@ -50,18 +50,34 @@ pub struct Templated {
 }
 
 impl TemplatedField {
+    /// The field's value through `r`, as the derive's field of the same kind
+    /// resolves: through that kind's [`ConfigField::resolve`].
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+        let value = match self {
+            Self::Expr(expr) => expr.resolve(r)?,
+            Self::Path(expr) => expr.resolve(r)?,
+            Self::Interpolated(doc) => doc.resolve(r)?,
+            Self::Literal(value) => value.resolve(r)?,
+            Self::Output(out) => out.resolve(r)?,
+        };
+        // Every kind a runtime field compiles to is set once compiled.
+        Ok(value.unwrap_or(OwnedDataValue::Null))
+    }
+
     /// The field's value for one call: a literal and a folded constant lent
-    /// from the config, anything else owned.
-    fn resolve(&self, ctx: &Ctx<'_>) -> Result<Cow<'_, OwnedDataValue>> {
-        Ok(match self {
-            Self::Expr(expr) => ctx.eval(expr)?,
-            Self::Path(expr) => Cow::Owned(OwnedDataValue::String(ctx.eval(expr)?.to_string())),
-            Self::Interpolated(doc) => Cow::Owned(ctx.render(doc).to_owned()),
-            Self::Literal(value) => Cow::Borrowed(value),
-            Self::Output(out) => {
-                Cow::Owned(OwnedDataValue::String(ctx.eval(out.path())?.to_string()))
+    /// from the config, anything else resolved, as [`Self::resolve`] gives
+    /// it, owned.
+    fn lend<'s>(&'s self, ctx: &Ctx<'_>) -> Result<Cow<'s, OwnedDataValue>> {
+        match self {
+            Self::Literal(value) => return Ok(Cow::Borrowed(value)),
+            Self::Expr(expr) => {
+                if let Some(constant) = expr.constant() {
+                    return Ok(Cow::Borrowed(constant));
+                }
             }
-        })
+            _ => {}
+        }
+        self.resolve(&mut &*ctx).map(Cow::Owned)
     }
 }
 
@@ -219,24 +235,30 @@ impl Templated {
         self.fields
             .iter()
             .find(|field| &*field.name == name)
-            .map(|field| field.value.resolve(ctx))
+            .map(|field| field.value.lend(ctx))
             .transpose()
     }
 
     /// Every field the input set, each as [`Self::get`] gives it, as an
-    /// object in declaration order.
+    /// object in declaration order: what a derived config with the same
+    /// fields resolves to ([`FunctionConfig::resolve`], on the same per-field
+    /// code). Secrets are read, as the call reads them.
     ///
     /// # Errors
     ///
     /// The first field's that fails, as [`Self::get`]'s.
     pub fn resolved(&self, ctx: &Ctx<'_>) -> Result<OwnedDataValue> {
+        self.resolve_fields(&mut &*ctx)
+    }
+
+    /// Every field the input set, through `r`, as an object in declaration
+    /// order: [`FunctionConfig::resolve`], which a derived config with the
+    /// same fields gives alike.
+    fn resolve_fields(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue> {
         let entries = self
             .fields
             .iter()
-            .map(|field| {
-                let value = field.value.resolve(ctx)?.into_owned();
-                Ok((field.name.to_string(), value))
-            })
+            .map(|field| Ok((field.name.to_string(), field.value.resolve(r)?)))
             .collect::<Result<Vec<_>>>()?;
         Ok(OwnedDataValue::Object(entries))
     }
@@ -308,6 +330,9 @@ impl ConfigField for Templated {
     fn visit(&self, v: &mut Visit<'_>) {
         self.walk(v);
     }
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        self.resolve_fields(r).map(Some)
+    }
     fn kind() -> FieldKind {
         FieldKind::Templated
     }
@@ -329,6 +354,11 @@ impl FunctionConfig for Templated {
             TemplatedField::Output(out) => Some(out),
             _ => None,
         }
+    }
+
+    /// [`Templated::resolved`], through `r`.
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+        self.resolve_fields(r)
     }
 }
 

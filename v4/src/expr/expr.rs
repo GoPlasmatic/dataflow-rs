@@ -12,6 +12,7 @@ use std::str::FromStr;
 
 mod sealed {
     pub trait Sealed {}
+    pub trait SealedExpr {}
 }
 
 /// A type an expression can resolve to.
@@ -37,6 +38,12 @@ pub trait FromValue: Sized + Send + Sync + 'static + sealed::Sealed {
     fn lend(c: &Self) -> Self::Out<'_>;
     #[doc(hidden)]
     fn give<'a>(v: Self) -> Self::Out<'a>;
+    /// A folded constant as an owned value, for a resolved config.
+    #[doc(hidden)]
+    fn to_value(c: &Self) -> OwnedDataValue;
+    /// An evaluated value as an owned one, for a resolved config.
+    #[doc(hidden)]
+    fn into_value(v: Self) -> OwnedDataValue;
     /// The type's name, for messages.
     #[doc(hidden)]
     fn type_name() -> &'static str;
@@ -62,6 +69,12 @@ impl FromValue for OwnedDataValue {
     fn give<'a>(v: Self) -> Self::Out<'a> {
         Cow::Owned(v)
     }
+    fn to_value(c: &Self) -> OwnedDataValue {
+        c.clone()
+    }
+    fn into_value(v: Self) -> OwnedDataValue {
+        v
+    }
     fn type_name() -> &'static str {
         "a value"
     }
@@ -84,6 +97,12 @@ impl FromValue for String {
     fn give<'a>(v: Self) -> Self::Out<'a> {
         Cow::Owned(v)
     }
+    fn to_value(c: &Self) -> OwnedDataValue {
+        OwnedDataValue::String(c.clone())
+    }
+    fn into_value(v: Self) -> OwnedDataValue {
+        OwnedDataValue::String(v)
+    }
     fn type_name() -> &'static str {
         "a string"
     }
@@ -103,6 +122,12 @@ impl FromValue for u64 {
     }
     fn give<'a>(v: Self) -> Self::Out<'a> {
         v
+    }
+    fn to_value(c: &Self) -> OwnedDataValue {
+        (*c).into()
+    }
+    fn into_value(v: Self) -> OwnedDataValue {
+        v.into()
     }
     fn type_name() -> &'static str {
         "a u64"
@@ -125,6 +150,12 @@ impl FromValue for i64 {
     fn give<'a>(v: Self) -> Self::Out<'a> {
         v
     }
+    fn to_value(c: &Self) -> OwnedDataValue {
+        (*c).into()
+    }
+    fn into_value(v: Self) -> OwnedDataValue {
+        v.into()
+    }
     fn type_name() -> &'static str {
         "an i64"
     }
@@ -146,6 +177,12 @@ impl FromValue for f64 {
     fn give<'a>(v: Self) -> Self::Out<'a> {
         v
     }
+    fn to_value(c: &Self) -> OwnedDataValue {
+        (*c).into()
+    }
+    fn into_value(v: Self) -> OwnedDataValue {
+        v.into()
+    }
     fn type_name() -> &'static str {
         "an f64"
     }
@@ -166,6 +203,12 @@ impl FromValue for bool {
     fn give<'a>(v: Self) -> Self::Out<'a> {
         v
     }
+    fn to_value(c: &Self) -> OwnedDataValue {
+        (*c).into()
+    }
+    fn into_value(v: Self) -> OwnedDataValue {
+        v.into()
+    }
     fn type_name() -> &'static str {
         "a bool"
     }
@@ -185,6 +228,12 @@ impl FromValue for Path {
     }
     fn give<'a>(v: Self) -> Self::Out<'a> {
         Cow::Owned(v)
+    }
+    fn to_value(c: &Self) -> OwnedDataValue {
+        OwnedDataValue::String(c.to_string())
+    }
+    fn into_value(v: Self) -> OwnedDataValue {
+        OwnedDataValue::String(v.to_string())
     }
     fn type_name() -> &'static str {
         "a path"
@@ -247,5 +296,52 @@ impl<T: FromValue> fmt::Debug for Expr<T> {
             .field("raw", &self.raw)
             .field("folded", &self.constant.is_some())
             .finish()
+    }
+}
+
+/// The object-safe face of an [`Expr`], which a
+/// [`Resolver`](super::Resolver) evaluates: its logic, and its type's
+/// conversion to an owned value (`u64`, `i64` and `f64` as numbers, `bool` as
+/// a boolean, `String` as a string, [`Path`] as its dotted text, and
+/// `OwnedDataValue` as itself).
+///
+/// Sealed: every `Expr<T>` is one, and nothing else is.
+pub trait ResolveExpr: Send + Sync + sealed::SealedExpr {
+    /// The authored JSON.
+    fn raw(&self) -> &Value;
+
+    /// The folded constant as an owned value, when the expression reads
+    /// nothing.
+    #[doc(hidden)]
+    fn constant_value(&self) -> Option<OwnedDataValue>;
+
+    /// The compiled logic.
+    #[doc(hidden)]
+    fn logic(&self) -> &Logic;
+
+    /// An evaluation's result as the expression's type, then as an owned
+    /// value: the [`ErrorKind::Eval`] error naming the expression when it is
+    /// not of that type.
+    #[doc(hidden)]
+    fn value_of(&self, view: &DataValue<'_>) -> crate::Result<OwnedDataValue>;
+}
+
+impl<T: FromValue> sealed::SealedExpr for Expr<T> {}
+
+impl<T: FromValue> ResolveExpr for Expr<T> {
+    fn raw(&self) -> &Value {
+        &self.raw
+    }
+
+    fn constant_value(&self) -> Option<OwnedDataValue> {
+        self.constant.as_ref().map(T::to_value)
+    }
+
+    fn logic(&self) -> &Logic {
+        &self.logic
+    }
+
+    fn value_of(&self, view: &DataValue<'_>) -> crate::Result<OwnedDataValue> {
+        self.convert(view).map(T::into_value)
     }
 }

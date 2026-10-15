@@ -10,7 +10,7 @@ use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
 use crate::state::{Edit, kind};
 use ::log::error;
 use datavalue::{DataValue, OwnedDataValue};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -47,7 +47,7 @@ pub struct Mapping {
 }
 
 /// What a [`Mapping`] does when its `logic` evaluates to `null`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum OnNull {
@@ -58,7 +58,7 @@ pub enum OnNull {
 }
 
 /// How a [`Mapping`] writes a non-null result.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum MapMode {

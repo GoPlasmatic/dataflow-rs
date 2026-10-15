@@ -6,9 +6,10 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 use syn::ext::IdentExt;
 use syn::parse::ParseStream;
+use syn::spanned::Spanned;
 use syn::{
     Attribute, Data, DeriveInput, Error, Expr, ExprLit, Fields, GenericArgument, Ident, Lit,
     LitStr, Meta, Path, PathArguments, Result, Token, Type,
@@ -26,7 +27,7 @@ use syn::{
 /// | `#[config(rename = "k")]` | field | The JSON key; the default is the field's name |
 /// | `#[config(default = <literal>)]` | field | A string, integer, float or bool, compiled through the field's type when the key is absent |
 /// | `#[config(default_json = "<json>")]` | field | Any JSON default, as text; text that is not JSON is a compile error |
-/// | `#[config(serde)]` | field | Read with `serde_json`; an error is `INPUT_PARSE`, and an absent key is read from `null` |
+/// | `#[config(serde)]` | field | Read with `serde_json`; an error is `INPUT_PARSE`, and an absent key is read from `null`. Resolved as it serializes, so the type is `Serialize` too |
 /// | `#[config(records)]` | field | The engine records the field's result; inherited by everything below it |
 /// | `#[output(default = "p")]` | output | The default when the key is absent or `null` |
 /// | `#[output(primary)]` | output | Required on exactly one output when there are several |
@@ -39,6 +40,10 @@ use syn::{
 /// The primary output, the one marked or the only one, is what
 /// `FunctionConfig::primary_output` returns, so its type is `Output` or
 /// `Option<Output>`; any other is refused.
+///
+/// `FunctionConfig::resolve` gives every set field, keyed by its key, in
+/// declaration order, each through its type's `ConfigField::resolve`, and a
+/// `serde` field as it serializes.
 #[proc_macro_derive(FunctionConfig, attributes(config, output))]
 pub fn derive_function_config(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as DeriveInput);
@@ -148,7 +153,8 @@ fn not_a_struct(input: &DeriveInput) -> Error {
     Error::new_spanned(
         &input.ident,
         "`#[derive(FunctionConfig)]` applies to a struct with named fields; for any other \
-         type, derive `serde::Deserialize` and read it through a `#[config(serde)]` field",
+         type, derive `serde::Deserialize` and `serde::Serialize`, and read it through a \
+         `#[config(serde)]` field",
     )
 }
 
@@ -495,6 +501,41 @@ fn generate(
         }
     });
 
+    // Every field in declaration order: a `serde` one through `Serialize`,
+    // spanned at its type so a missing impl is reported there.
+    let resolves: Vec<TokenStream2> = fields
+        .iter()
+        .map(|f| {
+            let (ident, key) = (f.ident, &f.key);
+            if f.serde {
+                quote_spanned! {f.ty.span()=>
+                    #p::resolve_serde(&mut __entries, #key, &self.#ident)?;
+                }
+            } else {
+                quote! {
+                    #p::resolve_field(&mut __entries, #key, &self.#ident, r)?;
+                }
+            }
+        })
+        .collect();
+    let r = if fields.iter().any(|f| !f.serde) {
+        quote!(r)
+    } else {
+        quote!(_r)
+    };
+    let capacity = fields.len();
+    let resolve = if fields.is_empty() {
+        quote!(::core::result::Result::Ok(#p::OwnedDataValue::Object(
+            ::std::vec::Vec::new()
+        )))
+    } else {
+        quote! {
+            let mut __entries: #p::Entries = ::std::vec::Vec::with_capacity(#capacity);
+            #(#resolves)*
+            ::core::result::Result::Ok(#p::OwnedDataValue::Object(__entries))
+        }
+    };
+
     let primary_output = primary.map(|(ident, optional)| {
         let output = if optional {
             quote!(::core::option::Option::as_ref(&self.#ident))
@@ -538,6 +579,13 @@ fn generate(
             }
 
             #primary_output
+
+            fn resolve(
+                &self,
+                #r: &mut dyn #p::Resolver,
+            ) -> #p::Result<#p::OwnedDataValue> {
+                #resolve
+            }
         }
 
         #[automatically_derived]
@@ -551,6 +599,16 @@ fn generate(
 
             fn visit(&self, #v: &mut #p::Visit<'_>) {
                 #(#visits)*
+            }
+
+            fn resolve(
+                &self,
+                r: &mut dyn #p::Resolver,
+            ) -> #p::Result<::core::option::Option<#p::OwnedDataValue>> {
+                ::core::result::Result::map(
+                    <Self as #p::FunctionConfig>::resolve(self, r),
+                    ::core::option::Option::Some,
+                )
             }
 
             fn kind() -> #p::FieldKind {

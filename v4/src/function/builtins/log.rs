@@ -4,7 +4,7 @@ use crate::base::Result;
 use crate::expr::Expr;
 use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
 use datavalue::OwnedDataValue;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// `log`'s input.
@@ -23,7 +23,7 @@ pub struct LogConfig {
 }
 
 /// The level a [`LogConfig`] line is emitted at.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum LogLevel {

@@ -1,8 +1,10 @@
 //! Write destinations.
 
-use super::config::{CompileCx, ConfigField, FieldKind, Visit};
+use super::config::{CompileCx, ConfigField, FieldKind, Resolver, Visit};
 use super::expr::Expr;
 use super::path::Path;
+use crate::base::Result;
+use datavalue::OwnedDataValue;
 use serde_json::Value;
 
 /// A write destination: an `Expr<Path>`, folded when literal.
@@ -33,6 +35,11 @@ impl ConfigField for Output {
     /// `Change` written through it, so it may not read a secret (break 16).
     fn visit(&self, v: &mut Visit<'_>) {
         v.recording(true, |v| v.expr(self.0.raw()));
+    }
+    /// The destination's dotted text, computed for this call when it is not
+    /// literal.
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        r.eval(&self.0).map(Some)
     }
     fn kind() -> FieldKind {
         FieldKind::Output

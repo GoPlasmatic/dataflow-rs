@@ -7,7 +7,10 @@ use crate::base::{
 };
 use crate::expr::arena::with_arena;
 use crate::expr::path;
-use crate::expr::{Expr, ExprEngine, Filled, FromValue, Interpolated, Output, Path, Rendered, Seg};
+use crate::expr::{
+    Expr, ExprEngine, Filled, FromValue, Interpolated, Output, Path, Rendered, ResolveExpr,
+    Resolver, Seg,
+};
 use crate::state::{Lookup, Reader, splice};
 use bumpalo::Bump;
 use datavalue::{DataValue, OwnedDataValue};
@@ -376,6 +379,20 @@ impl<'r> Ctx<'r> {
         })
     }
 
+    /// `expr` evaluated as [`Self::eval`] evaluates it, as an owned value: a
+    /// folded constant converted, anything else evaluated in a pooled arena
+    /// and converted before the arena goes back.
+    fn eval_owned(&self, expr: &dyn ResolveExpr) -> Result<OwnedDataValue> {
+        if let Some(constant) = expr.constant_value() {
+            return Ok(constant);
+        }
+        with_arena(|arena| {
+            let root = self.root_in(arena);
+            let view = self.exprs.eval_in(expr.logic(), root, arena)?;
+            expr.value_of(view)
+        })
+    }
+
     /// The root this call's evaluations see: the run's view, with the binding
     /// and then the call's writes spliced on in `arena` when there are any.
     fn root_in<'a>(&'a self, arena: &'a Bump) -> &'a DataValue<'a> {
@@ -519,6 +536,19 @@ impl<'r> Ctx<'r> {
     /// The call's writes, its `Change`s and the records it added.
     pub(crate) fn settle(self) -> (Overlay, Vec<Change>, Vec<ErrorRecord>) {
         (self.overlay, self.changes, self.errors)
+    }
+}
+
+/// A call's context resolves a config's fields against the context as the
+/// call sees it, as [`Ctx::eval`] and [`Ctx::render`] do, secrets read. So a
+/// function resolves its own config with `cfg.resolve(&mut &*ctx)`.
+impl Resolver for &Ctx<'_> {
+    fn eval(&mut self, expr: &dyn ResolveExpr) -> Result<OwnedDataValue> {
+        Ctx::eval_owned(self, expr)
+    }
+
+    fn render(&mut self, doc: &Interpolated) -> Result<OwnedDataValue> {
+        Ok(Ctx::render(self, doc).to_owned())
     }
 }
 
