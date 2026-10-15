@@ -300,7 +300,8 @@ impl<'r> Ctx<'r> {
     ///
     /// The first field's that fails: [`ErrorKind::Budget`] when the
     /// operation ceiling is exceeded, [`ErrorKind::Eval`] for any other
-    /// evaluation failure.
+    /// evaluation failure, [`ErrorKind::Config`] for a serde field that does
+    /// not serialize.
     pub fn input(&self) -> Result<OwnedDataValue> {
         let mut input = self.callee.resolve(&mut Redacted(self))?;
         // The walk the secret checks trust: whatever a field's resolve did,

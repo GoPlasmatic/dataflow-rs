@@ -311,7 +311,7 @@ impl fmt::Debug for CompileCx<'_> {
 /// What [`Resolver`] is sealed with: only the crate implements it.
 pub(crate) mod sealed {
     /// The seal: a type the crate resolves configs with.
-    pub trait Resolver {}
+    pub trait Sealed {}
 }
 
 /// What resolving a config needs from a call: an expression evaluated, and
@@ -339,7 +339,7 @@ pub(crate) mod sealed {
 ///     }
 /// }
 /// ```
-pub trait Resolver: sealed::Resolver {
+pub trait Resolver: sealed::Sealed {
     /// `expr` evaluated, as an owned value: a number for a `u64`, `i64` or
     /// `f64` expression, a boolean for a `bool` one, a string for a `String`
     /// one, a path's dotted text for a `Path` one, and the value itself for
@@ -450,12 +450,11 @@ pub trait ConfigField: Sized + Send + Sync + 'static {
     /// Reports the field's expressions.
     fn visit(&self, _v: &mut Visit<'_>) {}
 
-    /// The field's value for this call, through `r`; `None` when it has none,
-    /// as an `Option` the input left unset, with no default, has none. The
-    /// value sits where
-    /// [`Self::visit`] reports the field's expressions: a list's elements at
-    /// their indices, a map's values at their keys, and an element left
-    /// unset is `null`, keeping its place.
+    /// The field's value for this call, resolved through `r`, or `None` when
+    /// it has none (an `Option` the input left unset, with no default). The
+    /// value sits where [`Self::visit`] reports the field's expressions: a
+    /// list's elements at their indices, a map's values at their keys, and
+    /// an element left unset is `null`, keeping its place.
     ///
     /// # Errors
     ///

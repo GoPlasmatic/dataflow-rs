@@ -15,7 +15,7 @@ pub(crate) mod path;
 mod secrets;
 mod walk;
 
-pub(crate) use config::sealed::Resolver as SealedResolver;
+pub(crate) use config::sealed::Sealed as SealedResolver;
 pub use config::{
     CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, Resolver, ValueKind, Visit,
 };
