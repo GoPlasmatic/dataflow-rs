@@ -428,9 +428,10 @@ pub const MISSING: &str = "<missing>";
 /// held as [`RUN_DEVIATED`] holds the run record. Each pointer is one into
 /// v3's recorded trace, `/steps/<i>/run/trace/...`, and v4's JSON there is
 /// read from v4's trace as `tests/traces.rs` aligns it with v3's: each step
-/// v4 matches with v3's next as `{workflow_id, task_id, result,
-/// loop_counter?, element_index?, message?: {context}}`, its context the
-/// replay of v4's steps up to it, normalised. A pointer the aligned trace
+/// v4 matches with v3's next as `{workflow_id, task_id, result, status?,
+/// message?: {context}, loop_counter?, element_index?}`, its `status` where
+/// v3's step carries its own audit entry and its context the replay of v4's
+/// steps up to it, normalised. A pointer the aligned trace
 /// does not reach is [`MISSING`].
 ///
 /// **A step list that differs** (v4 runs workflows v3 did not, or skips

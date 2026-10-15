@@ -124,6 +124,7 @@ build (`expressions/budget` turns its trace off, and `families_on` and `families
 | v4 steps matched to nothing: a task's failure the workflow's policy took | 9 |
 | v4 steps matched to nothing: a workflow's own failure | 1 |
 | Deviated trace pointers, each held to its `TRACE_DEVIATED` row | 3 |
+| Of the matched steps, those whose `status` is held to v3's own audit entry | 214 |
 
 v3's recordings hold 87 traced runs. The other four are in cases v4 does not build (breaks 2a, 3
 and 15), whose `/steps` a deviation covers.
@@ -257,13 +258,22 @@ its `initial` with `replay::apply` over each step's changes, in order, and walke
 - **A `failed` step** is applied and matched to nothing. It is the step v3's trace drops (break 5):
   a call whose failure went to its workflow's policy, or a workflow's own failure.
 - **Every other step** is matched to v3's next step. The two must agree on `(workflow_id, task_id,
-  result, loop_counter, element_index)`. When that v3 step has a snapshot, the context rebuilt after
-  v4's step, normalised with the case's error-context path, must equal the snapshot's `context`,
-  key order included.
+  result, loop_counter, element_index)`. When that v3 step's snapshot `audit_trail` ends in its own
+  task's entry (the recordings' `snapshot_audit_trail: "own"`), v4's step `status` must equal that
+  entry's `status`. When the v3 step has a snapshot, the context rebuilt after v4's step,
+  normalised with the case's error-context path, must equal the snapshot's `context`, key order
+  included.
 
-Every v3 step must be matched. v3's `mapping_contexts`, `started_at`, `duration_us`, `changes`, and
-its snapshot's `audit_trail` and `errors`, are not compared. So break 4's records, which live in a
-snapshot's `errors`, need no trace deviation.
+Every v3 step must be matched. v3's `mapping_contexts`, `started_at`, `duration_us`, `changes`, the
+rest of its snapshot's `audit_trail`, and its snapshot's `errors`, are not compared. So break 4's
+records, which live in a snapshot's `errors`, need no trace deviation.
+
+A step's `error` is not held to the records v3's snapshot gained at that step, because the two are
+not one to one: v4's `error` is the recorder's record alone, while the records a v3 step gains
+include the call's own (`validation`'s, a host's, I96), and break 4's wrappers and a workflow's own
+failure land on the next step's snapshot. Measured over the snapshots, 35 agree on code and
+message, 7 differ by those shapes and one by break 4's own code (`fan_out/over_shapes`); the rest
+carry neither.
 
 **The replay invariant.** For every traced run, the replay of all of v4's steps from `initial`,
 normalised, must equal the traced message's own final context, normalised (I19: a trace replays to
@@ -272,7 +282,7 @@ holds, which is itself compared. The invariant does not depend on v3 and takes n
 
 **Trace deviations.** Both sides are compared in v3's coordinates. Each trace is read as
 `{outcome, steps, truncated, message_matches}`, each step as `{workflow_id, task_id, result,
-loop_counter?, element_index?, message?: {context}}`, with v4's steps as aligned. So a deviation
+status?, message?: {context}, loop_counter?, element_index?}`, with v4's steps as aligned. So a deviation
 names a pointer into v3's recorded trace, such as
 `/steps/0/run/trace/steps/0/message/context/data/partial`, and v4's JSON at that pointer in the
 aligned trace is its row (`MISSING` where the aligned trace has nothing).
