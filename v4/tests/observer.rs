@@ -7,6 +7,12 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // events its interest names, `elapsed` is `Some` only for one holding
 // `TIMINGS`, and the interest is read once per run.
 //
+// v3's `observer_durations_are_populated_and_with_handlers_reaches_the_builder`
+// has no twin: `with_handlers` is gone (a host function is registered
+// through `Engine::builder().register`), and the durations it read are
+// pinned by `each_observer_receives_only_its_interest` and
+// `no_clock_is_read_without_an_interest_in_timings`.
+//
 // A `Timeline` records each event as v3's timeline spelt it, with what a
 // task event carried and the event's `elapsed`. Two host functions stand in
 // for v3's fixtures: `logger` completes (in a fan-out, after yielding fewer
@@ -263,6 +269,60 @@ async fn every_recorded_call_reports_sync_builtins_included() {
     assert_eq!(functions, ["map", "validation", "log", "logger"]);
     assert!(tasks.iter().all(|t| t.status == Some(200)), "{tasks:?}");
     assert!(tasks.iter().all(|t| t.workflow_id == "w"), "{tasks:?}");
+}
+
+#[tokio::test]
+async fn the_sync_and_async_paths_emit_identical_sequences() {
+    // v3's hazard, in v4's form: a built-in and a host call build their
+    // record at two sites (`interp::call`, `call_host`), and an observer
+    // must not tell them apart. The same shape, a two-sweep loop of one
+    // task, over `map` and over a host function.
+    let looped = |task: Value| {
+        workflow(
+            "w",
+            vec![task],
+            &[("loop", json!({"counter": "i", "max": 2}))],
+        )
+    };
+    let shape = |timeline: &Timeline| {
+        let tasks: Vec<_> = timeline
+            .tasks()
+            .into_iter()
+            .map(|t| {
+                (
+                    t.workflow_id,
+                    t.task_id,
+                    t.status,
+                    t.loop_counter,
+                    t.element_index,
+                )
+            })
+            .collect();
+        (timeline.lines(), tasks)
+    };
+    let sync = Timeline::new(Interest::WORKFLOWS | Interest::TASKS);
+    let e = engine(&[looped(map("a"))], Some(&sync));
+    e.run(&mut message(json!({}))).await;
+    let hosted = Timeline::new(Interest::WORKFLOWS | Interest::TASKS);
+    let e = engine(&[looped(host("a", "logger"))], Some(&hosted));
+    e.run(&mut message(json!({}))).await;
+
+    assert_eq!(
+        sync.lines(),
+        lines(&[
+            "run_started(1)",
+            "workflow_started(w)",
+            "task_finished(w/a)",
+            "task_finished(w/a)",
+            "workflow_finished(w, sweeps=2, halted=false)",
+            "run_finished(stopped_early=false)",
+        ])
+    );
+    assert_eq!(
+        shape(&sync),
+        shape(&hosted),
+        "the two call sites must be indistinguishable to an observer"
+    );
 }
 
 #[tokio::test]
