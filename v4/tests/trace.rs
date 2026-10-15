@@ -1067,6 +1067,60 @@ async fn a_run_cut_short_returns_its_trace() {
     assert_replays(&trace, &m);
 }
 
+/// Cancels the run's token, then completes.
+struct Cancel;
+
+impl Function for Cancel {
+    type Config = ();
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+        ctx.cancel().expect("the run has a token").cancel();
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn a_run_stopped_as_a_sweep_starts_records_the_counter_it_wrote() {
+    // T2-C2: the next sweep's counter is written before the limits are
+    // checked, so the stop's engine step carries that write and the trace
+    // replays to the message. The token is cancelled from inside the call,
+    // which completes in the same poll: no clock.
+    let e = Engine::builder()
+        .register("cancel", Cancel)
+        .workflow_json(&workflow(
+            "w",
+            vec![json!({"id": "c", "function": {"name": "cancel"}})],
+            &[("loop", json!({"counter": "i", "max": 3}))],
+        ))
+        .build()
+        .unwrap();
+    let token = dataflow_rs::run::CancelToken::new();
+    let mut m = message(json!({}));
+    let opts = RunOptions::default()
+        .cancel(&token)
+        .trace(TraceOptions::default());
+    let (run, trace) = traced(&e, &mut m, &opts).await;
+    assert!(matches!(run.status(), RunStatus::Cancelled), "{run:?}");
+    assert_eq!(m.context().temp_data()["i"], dv(json!(1)));
+
+    use StepResult::Executed;
+    assert_eq!(
+        lines(&trace),
+        [
+            line("w", None, Executed, None),
+            line("w", Some("c"), Executed, Some(200)),
+            line("w", None, Executed, None),
+        ]
+    );
+    let stop = &trace.steps[2];
+    assert_eq!(stop.loop_counter, Some(1));
+    assert_eq!(
+        text(&stop.changes),
+        r#"[{"path":"temp_data.i","old_value":0,"new_value":1}]"#
+    );
+    assert_replays(&trace, &m);
+}
+
 #[tokio::test]
 async fn a_root_write_from_a_host_says_replaced_and_map_at_a_root_does_not() {
     let e = engine(&[workflow(

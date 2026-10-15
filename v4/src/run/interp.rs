@@ -15,7 +15,9 @@
 //! counter: it lives in the [`Frame`], and the context only gets a copy.
 //!
 //! The run's [`Limits`] are checked every 64 ops and as each sweep starts,
-//! when one is set; a stop there ends the run with nothing recorded.
+//! when one is set. A stop between ops ends the run with nothing recorded;
+//! one as a sweep starts, after the counter's write, with the engine's step
+//! for that write, so a trace still replays to the message's context.
 //!
 //! A workflow's `WorkflowStarted` goes to the run's observers once, when it
 //! is known to be selected: as it starts when it has no condition, or when
@@ -495,9 +497,9 @@ fn loop_next<'p>(
 ///
 /// None of these writes records a `Change` for the audit. A traced run
 /// gets the engine's step for them, `task: None` with the counter written,
-/// as each sweep is entered and as the loop exits on a counter it wrote,
-/// with each write's `Change` while the trace keeps changes. A stop makes
-/// no step.
+/// as each sweep is entered, as the loop exits on a counter it wrote, and as
+/// a limit stops the run after the counter's write (T2-C2), with each
+/// write's `Change` while the trace keeps changes.
 fn enter<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
@@ -535,6 +537,11 @@ fn enter<'p>(
         return Flow::Jump(exit_to);
     }
     if let Err(e) = env.limits.check() {
+        // Only the counter is written by now: its step, so a stopped run's
+        // trace replays to its context.
+        if site.counter.is_some() {
+            sweep_step(env, counter, changes);
+        }
         return Flow::Stop(e);
     }
     if let Some(item) = element.and_then(|i| env.frame.items.as_mut()?.get_mut(i)) {

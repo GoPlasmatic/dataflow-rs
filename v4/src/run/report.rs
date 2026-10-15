@@ -58,8 +58,9 @@ impl Run {
 
     /// The run's trace, when [`RunOptions::trace`](crate::RunOptions::trace())
     /// asked for one: on every status, the step that stopped the run
-    /// included. A run stopped between ops or as a sweep starts made no step
-    /// for the stop; its trace is as it stood.
+    /// included. A run stopped between ops made no step for the stop, and
+    /// one stopped as a sweep starts only the engine's step for the counter
+    /// it wrote; either way the trace replays to the message's context.
     pub fn trace(&self) -> Option<&Trace> {
         self.trace.as_ref()
     }

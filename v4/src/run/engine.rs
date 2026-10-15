@@ -162,7 +162,10 @@ impl Engine {
     /// With [`opts.trace`](RunOptions::trace()) set, the [`Run`] carries the
     /// run's [`Trace`](crate::observe::Trace): the context after the stamps
     /// and the reset, then a step for every recorded call, skipped call or
-    /// workflow and sweep, the step that stopped the run included.
+    /// workflow and sweep, the step that stopped the run included: the call
+    /// a limit cut short, or, for a stop as a sweep starts, the engine's
+    /// step for the counter it wrote. Its replay is the message's context on
+    /// every status.
     pub async fn run_with(&self, msg: &mut Message, opts: &RunOptions<'_>) -> Run {
         let program = &self.inner.program;
         // Built in a block: a local the run borrowed would stay in its
