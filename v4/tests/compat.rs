@@ -380,9 +380,10 @@ fn the_integration_configs_are_left_as_written() {
 }
 
 #[test]
-fn an_alias_of_another_function_is_left_alone() {
-    // The aliases are per function: `output` is http_call's, not a custom
-    // function's, and `path_logic` is not publish_kafka's.
+fn a_host_functions_input_is_left_as_written() {
+    // A host function's input is the host's: keys v3's integration configs
+    // spelled the old way, such as `output` and `path_logic`, are left as
+    // written under any function name, a custom one's included.
     for json in [
         calling("f", json!({"output": "data.x", "path_logic": 1})),
         calling(

@@ -72,8 +72,9 @@ pub type Deviated = (
 ///
 /// `breaks/unknown_keys` and `builtins/pre39_spellings#1` are what `parse`
 /// reports, as phase 2's tests pin it: the typos in
-/// `v4/tests/repository_definitions.rs`, the UI's `path` in `v4/tests/parse.rs`,
-/// and, for `pre39_spellings#1`, an unregistered `http_call` (the reader leaves the aliases to the host).
+/// `v4/tests/repository_definitions.rs`, the UI's `path` in
+/// `v4/tests/parse.rs`, and, for `pre39_spellings#1`, an unregistered
+/// `http_call` (the reader leaves the aliases to the host).
 pub const DEVIATED: &[Deviated] = &[
     ("breaks/name_required", 0, &["6"], &[]),
     ("breaks/name_required", 1, &["6"], &[]),

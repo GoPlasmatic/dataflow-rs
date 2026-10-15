@@ -16,8 +16,8 @@
 //!
 //! Each rewrite is a `V3_SPELLING` Advisory at the v3 key, and a
 //! [`Rewrite`]. The integration configs (`http_call`, `enrich`,
-//! `publish_kafka`) are their hosts': their inputs are left as written. Two moves are not rewrites, and are reported as the keys they
-//! are:
+//! `publish_kafka`) are their hosts': their inputs are left as written. Two
+//! moves are not rewrites, and are reported as the keys they are:
 //!
 //! - **A key a built-in's input does not know (I54)** moves into the task's
 //!   `ext` as `function.input.<path>`, an `UNKNOWN_KEY` or a `LIKELY_TYPO`.
@@ -33,12 +33,12 @@
 //! The reader refuses a `continue_on_error` that is not a bool
 //! (`PARSE_FAILED`), a `halt_on` that is not `"never"` or `"failure"`
 //! (`INVALID_HALT_ON`, v3's message), and a v3 key written beside a v4 one
-//! (`PARSE_FAILED` at the v3 key): on one node,
-//! any v3 policy key (`continue_on_error`, a task's `halt_on`) beside any v4
-//! policy key (`on_failure`, a task's `on_rejection`). The two flags make one policy, so a v3 flag beside the v4 key of
-//! the other axis would be a guess at how the author meant them to combine. A
-//! refused key is taken out all the same, so the walk does not report it
-//! twice.
+//! (`PARSE_FAILED` at the v3 key): on one node, any v3 policy key
+//! (`continue_on_error`, a task's `halt_on`) beside any v4 policy key
+//! (`on_failure`, a task's `on_rejection`). The two flags make one policy,
+//! so a v3 flag beside the v4 key of the other axis would be a guess at how
+//! the author meant them to combine. A refused key is taken out all the
+//! same, so the walk does not report it twice.
 
 use super::MAX_GROUP_DEPTH;
 use super::keys::{
