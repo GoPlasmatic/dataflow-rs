@@ -142,3 +142,82 @@ impl Serialize for WorkflowRecord<'_> {
         o.end()
     }
 }
+
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    RunStatus,
+    "RunStatus",
+    [" How a run ended: a stopped run's error is its `error`."],
+    |_cfg| crate::base::ts::literals(&[
+        "completed",
+        "completed_with_errors",
+        "stopped",
+        "timed_out",
+        "cancelled",
+    ])
+);
+
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    Selection,
+    "Selection",
+    [
+        " Why a workflow did or did not run: a failed condition's error is its",
+        " record's `error`.",
+    ],
+    |_cfg| crate::base::ts::literals(&[
+        "ran",
+        "skipped_by_condition",
+        "condition_failed",
+        "skipped_by_rollout",
+    ])
+);
+
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    WorkflowExit,
+    "WorkflowExit",
+    [" How a workflow that ran ended."],
+    |_cfg| crate::base::ts::literals(&["completed", "halted", "failed", "stopped"])
+);
+
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    WorkflowRecord<'_>,
+    "WorkflowRecord",
+    [" One workflow's part in a run."],
+    |cfg| {
+        use crate::base::ts::{Prop, object};
+        object(&[
+            Prop::new("id", "string", &[" The workflow's id."]),
+            Prop::new(
+                "index",
+                WorkflowIx::name(cfg),
+                &[" The workflow's position in the program."],
+            ),
+            Prop::new(
+                "selection",
+                Selection::name(cfg),
+                &[" Whether it was selected."],
+            ),
+            Prop::optional(
+                "error",
+                Error::name(cfg),
+                &[" Why its condition failed to evaluate: `condition_failed` only."],
+            ),
+            Prop::new(
+                "sweeps",
+                "number",
+                &[
+                    " The sweeps begun: one for a workflow without a loop that ran, and for",
+                    " a loop each sweep its condition admitted.",
+                ],
+            ),
+            Prop::new(
+                "exit",
+                Option::<WorkflowExit>::name(cfg),
+                &[" How it ended; `null` when it did not run."],
+            ),
+        ])
+    }
+);

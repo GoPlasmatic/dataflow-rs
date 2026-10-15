@@ -9,16 +9,19 @@ use std::sync::Arc;
 ///
 /// A path that was absent before the write records `old_value` as `null`.
 #[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[non_exhaustive]
 pub struct Change {
     /// The dotted path written.
     pub path: Arc<str>,
     /// What the path held before; `null` when it was absent.
     #[serde(deserialize_with = "super::exact")]
+    #[cfg_attr(feature = "ts", ts(type = "JsonValue"))]
     pub old_value: OwnedDataValue,
     /// The value written; `null` for a removal (read [`Self::removed`] to tell
     /// a removal from a write of `null`).
     #[serde(deserialize_with = "super::exact")]
+    #[cfg_attr(feature = "ts", ts(type = "JsonValue"))]
     pub new_value: OwnedDataValue,
     /// The key at `path` was removed rather than written. Skipped when
     /// `false`, so a write's JSON is v3's.

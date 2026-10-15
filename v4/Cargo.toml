@@ -30,6 +30,9 @@ budget = ["datalogic-rs/budget"]
 # A platform switch, as v3's: the three crates' browser clocks and randomness,
 # which wasm32 needs and native targets must not pull in.
 wasm-web = ["chrono/wasmbind", "uuid/js", "datalogic-rs/wasm-clock"]
+# The TypeScript declarations of the wire shapes (I133), which
+# `tests/ts_types.rs` renders into `bindings/dataflow.d.ts`. Off by default.
+ts = ["dep:ts-rs"]
 
 [dependencies]
 # `rc`: serde's impls for `Arc<str>`, which ids and change paths are held as.
@@ -51,6 +54,9 @@ quick-xml = { version = "0.42", features = ["serialize"] }
 # A fan-out's bounded concurrent calls (`FuturesUnordered`), without spawning,
 # so the calls may borrow the run view and run on wasm. At v3's requirement.
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+# The `ts` feature's derives, with its default `serde-compat`, so a
+# `skip_serializing_if` field reads as optional and a `rename` is honoured.
+ts-rs = { version = "12.0.1", optional = true, features = ["no-serde-warnings"] }
 
 # Native-only: a thread-local PRNG instead of one `getrandom` per id, as v3 does.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

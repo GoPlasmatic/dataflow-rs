@@ -177,6 +177,53 @@ impl Serialize for Run {
     }
 }
 
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    Run,
+    "Run",
+    [
+        " A run as JSON: how it ended and what each workflow did. Neither the trace",
+        " nor the arena counters are part of it.",
+    ],
+    |cfg| {
+        use crate::base::ts::{Prop, object};
+        object(&[
+            Prop::new("status", RunStatus::name(cfg), &[" How the run ended."]),
+            Prop::optional(
+                "error",
+                Error::name(cfg),
+                &[" The error that stopped the run: `stopped` only."],
+            ),
+            Prop::new(
+                "retryable",
+                "boolean",
+                &[
+                    " May running the message again succeed? True for a timeout and for a",
+                    " stop whose error says so.",
+                ],
+            ),
+            Prop::new(
+                "partial",
+                "boolean",
+                &[" Did the run end before every workflow was considered?"],
+            ),
+            Prop::new(
+                "matched",
+                "number",
+                &[" How many workflows were selected and ran."],
+            ),
+            Prop::new(
+                "workflows",
+                Vec::<WorkflowRecord<'static>>::name(cfg),
+                &[
+                    " Every workflow considered, in program order, up to and including the",
+                    " one that stopped the run.",
+                ],
+            ),
+        ])
+    }
+);
+
 impl std::fmt::Debug for Run {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Run")

@@ -95,6 +95,24 @@ impl<'de> Deserialize<'de> for Context {
     }
 }
 
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    Context,
+    "Context",
+    [
+        " The context: `data`, `metadata` and `temp_data`, in that order. Each",
+        " root starts as an object; a trace's redacted root is `null`.",
+    ],
+    |_cfg| {
+        use crate::base::ts::{Prop, object};
+        object(&[
+            Prop::new("data", "JsonValue", &[" The `data` root."]),
+            Prop::new("metadata", "JsonValue", &[" The `metadata` root."]),
+            Prop::new("temp_data", "JsonValue", &[" The `temp_data` root."]),
+        ])
+    }
+);
+
 /// [`Context`]'s reader: the three roots, by name, once each.
 struct Roots;
 

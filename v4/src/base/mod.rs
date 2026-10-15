@@ -6,6 +6,8 @@ mod context;
 mod error;
 mod ids;
 mod issue;
+#[cfg(feature = "ts")]
+pub(crate) mod ts;
 pub(crate) mod typo;
 
 pub use cancel::CancelToken;

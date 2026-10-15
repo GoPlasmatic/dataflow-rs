@@ -24,6 +24,7 @@ impl ProgramId {
 /// The position of a workflow within a program. Serialized as its number,
 /// and read from one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(transparent)]
 pub struct WorkflowIx(u32);
 
@@ -43,6 +44,7 @@ impl WorkflowIx {
 /// read from one: any `u32`, so a position read for another program makes
 /// [`Program::task`](crate::program::Program::task) panic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(transparent)]
 pub struct TaskIx(u32);
 

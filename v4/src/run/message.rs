@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 /// One task's record, v3's `AuditTrail` on the wire.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[non_exhaustive]
 pub struct AuditEntry {
     /// The workflow the task belongs to.
@@ -18,6 +19,7 @@ pub struct AuditEntry {
     /// The task.
     pub task_id: Arc<str>,
     /// When the entry was recorded.
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub timestamp: DateTime<Utc>,
     /// The writes the task made, when changes are captured.
     pub changes: Vec<Change>,
@@ -25,9 +27,11 @@ pub struct AuditEntry {
     pub status: usize,
     /// The loop counter of the sweep that produced the entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub loop_counter: Option<i64>,
     /// The fan-out element the entry records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub element_index: Option<usize>,
 }
 
@@ -121,6 +125,38 @@ impl<'de> Deserialize<'de> for Message {
         })
     }
 }
+
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    Message,
+    "Message",
+    [" A message as JSON: `{id, payload, context, audit_trail, errors}`, in that order."],
+    |cfg| {
+        use crate::base::ts::{Prop, object};
+        object(&[
+            Prop::new("id", "string", &[" The id: a UUID v7 unless set."]),
+            Prop::new(
+                "payload",
+                "JsonValue",
+                &[
+                    " The payload the message arrived with. It is not part of the evaluation",
+                    " context.",
+                ],
+            ),
+            Prop::new("context", Context::name(cfg), &[" The context."]),
+            Prop::new(
+                "audit_trail",
+                Vec::<AuditEntry>::name(cfg),
+                &[" The audit entries the run kept."],
+            ),
+            Prop::new(
+                "errors",
+                Vec::<ErrorRecord>::name(cfg),
+                &[" The errors recorded while processing."],
+            ),
+        ])
+    }
+);
 
 /// The parts a run borrows separately (05: only `run` holds a `&mut Message`).
 #[derive(Debug)]

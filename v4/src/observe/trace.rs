@@ -95,6 +95,7 @@ impl TraceOptions {
 /// writes: the text a trace read back writes is the text it was read from,
 /// and its [`contexts`](Self::contexts) are the original's.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[non_exhaustive]
 pub struct Trace {
     /// The context after the run's stamps and the error context's reset,
@@ -159,6 +160,7 @@ fn apply(root: &mut OwnedDataValue, change: &Change) {
 
 /// What a step was. Serialized, and read, as its lowercase name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum StepResult {
@@ -182,6 +184,7 @@ pub enum StepResult {
 /// what it writes, so `elapsed` reads as the whole microseconds written, and
 /// a missing `mapping_ends` or `errors` as empty.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[non_exhaustive]
 pub struct TraceStep {
     /// The workflow's position in the program.
@@ -227,13 +230,16 @@ pub struct TraceStep {
         deserialize_with = "from_micros",
         skip_serializing_if = "Option::is_none"
     )]
+    #[cfg_attr(feature = "ts", ts(type = "number", optional))]
     pub elapsed: Option<Duration>,
     /// The loop counter of the sweep: the call's, or the one the engine's
     /// step wrote.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub loop_counter: Option<i64>,
     /// The fan-out element the call ran for.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub element_index: Option<usize>,
 }
 

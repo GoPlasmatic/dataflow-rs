@@ -679,6 +679,7 @@ impl<'de> serde::Deserialize<'de> for StepKind {
 /// code and severity as their strings, the path as it displays, the step kind
 /// as `task`, `group` or `setup`, and an absent part as `null`.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[non_exhaustive]
 pub struct Issue {
     /// What it is about.
@@ -733,6 +734,38 @@ impl Issue {
         self
     }
 }
+
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    IssueCode,
+    "IssueCode",
+    [" What an issue is about: its SCREAMING_SNAKE code, such as `UNKNOWN_FUNCTION`."],
+    |_cfg| "string".to_owned()
+);
+
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(Severity, "Severity", [" When an issue bites."], |_cfg| {
+    crate::base::ts::literals(&Severity::ALL.map(Severity::as_str))
+});
+
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    StepKind,
+    "StepKind",
+    [" What kind of step an issue sits in."],
+    |_cfg| crate::base::ts::literals(&StepKind::ALL.map(StepKind::as_str))
+);
+
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    AuthoredPath,
+    "AuthoredPath",
+    [
+        " A path in the authored JSON, as v3 spelled it: `tasks[1].tasks[0].id`.",
+        " The document itself is the empty string.",
+    ],
+    |_cfg| "string".to_owned()
+);
 
 impl fmt::Display for Issue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

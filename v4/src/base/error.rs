@@ -166,6 +166,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// v3's `ErrorInfo` on the wire: the same fields, in the same order, with the
 /// same serde attributes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[non_exhaustive]
 pub struct ErrorRecord {
     /// The error code.
@@ -176,24 +177,31 @@ pub struct ErrorRecord {
     pub path: Option<String>,
     /// The workflow it happened in.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub workflow_id: Option<String>,
     /// The task it happened in.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub task_id: Option<String>,
     /// When it happened.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub timestamp: Option<String>,
     /// Whether a retry was attempted.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub retry_attempted: Option<bool>,
     /// How many retries were attempted.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub retry_count: Option<u32>,
     /// Operator-only detail; never to be shown to an untrusted caller.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub detail: Option<String>,
     /// The fan-out element the error came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub element_index: Option<usize>,
 }
 
@@ -232,6 +240,26 @@ impl Serialize for Error {
         o.end()
     }
 }
+
+// `DataflowError`, not `Error`: a TypeScript `Error` would shadow the
+// global one wherever it is imported.
+#[cfg(feature = "ts")]
+crate::base::ts::ts_decl!(
+    Error,
+    "DataflowError",
+    [
+        " An error as JSON: `dataflow_rs::Error`'s code, message and whether a",
+        " retry may succeed.",
+    ],
+    |_cfg| {
+        use crate::base::ts::{Prop, object};
+        object(&[
+            Prop::new("code", "string", &[" The recorded code."]),
+            Prop::new("message", "string", &[" The human-readable message."]),
+            Prop::new("retryable", "boolean", &[" May a retry succeed?"]),
+        ])
+    }
+);
 
 #[cfg(test)]
 mod tests {
