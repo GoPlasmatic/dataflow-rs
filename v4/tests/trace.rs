@@ -1098,6 +1098,76 @@ async fn a_root_write_from_a_host_says_replaced_and_map_at_a_root_does_not() {
 }
 
 #[tokio::test]
+async fn an_append_that_creates_its_target_gives_the_trace_the_array_and_the_audit_v3s_rows() {
+    // Review A I-1: an append or extend onto a missing or `null` target
+    // makes it an array. The audit entry records the elements alone, as
+    // v3's; a replay of those alone writes nothing through a `null`, and an
+    // empty `extend` records none, so the trace records the array's
+    // creation first, `null` to `[]`, for itself alone.
+    let mapping =
+        |path: &str, logic: Value, mode: &str| json!({"path": path, "logic": logic, "mode": mode});
+    let workflows = [workflow(
+        "w",
+        vec![
+            json!({"id": "m", "function": {"name": "map", "input": {"mappings": [
+                mapping("data.list", json!(1), "append"),
+                mapping("data.ext", json!([1, 2]), "extend"),
+                mapping("data.empty", json!([]), "extend"),
+                mapping("data.nulled", json!([]), "extend"),
+                // A later mapping of the same call, over the array it created.
+                {"path": "data.list.1", "logic": 5},
+            ]}}}),
+        ],
+        &[],
+    )];
+    let seed = json!({"list": null, "ext": null, "nulled": null});
+    let mut m = message(seed.clone());
+    let (_, trace) = trace_of(&engine(&workflows), &mut m, TraceOptions::default()).await;
+    let written = m.context().data();
+    assert_eq!(written["list"], dv(json!([1, 5])));
+    assert_eq!(written["ext"], dv(json!([1, 2])));
+    assert_eq!(written["empty"], dv(json!([])));
+    assert_eq!(written["nulled"], dv(json!([])));
+    assert_eq!(
+        paths(&trace.steps[0]),
+        [
+            "data.list",
+            "data.list.0",
+            "data.ext",
+            "data.ext.0",
+            "data.ext.1",
+            "data.empty",
+            "data.nulled",
+            "data.list.1",
+            "metadata.progress",
+        ]
+    );
+    assert_eq!(
+        text(&trace.steps[0].changes[0]),
+        r#"{"path":"data.list","old_value":null,"new_value":[]}"#
+    );
+    assert_replays(&trace, &m);
+    // The audit entry holds the elements alone, as without a trace.
+    assert_eq!(
+        paths_of(&m),
+        [vec![
+            "data.list.0",
+            "data.ext.0",
+            "data.ext.1",
+            "data.list.1"
+        ]]
+    );
+
+    // v3's bytes, with a trace and without one.
+    let v3 = v3_engine(&workflows).unwrap();
+    let v4 = v4_engine(&workflows).unwrap();
+    let run = data(seed);
+    let (expected, _) = on_v3(&v3, &run).await;
+    assert_eq!(on_v4(&v4, &run).await.0, expected, "without a trace");
+    assert_eq!(on_v4_traced(&v4, &run).await, expected, "with a trace");
+}
+
+#[tokio::test]
 async fn the_serialized_shape() {
     let e = engine(&[
         workflow("w", vec![map("m", "data.a", json!(1))], &[]),

@@ -642,18 +642,23 @@ fn call<'p>(
         task: &env.task_ids[site.task as usize],
     };
     let errors_before = env.errors.len();
+    let traced = env.traces_changes();
     let started = env.watch.timed.then(record::now);
-    let result = builtin.call(&mut SyncCtx {
+    let mut cx = SyncCtx {
         rc: &mut *rc,
         exprs: env.exprs,
         payload: env.payload,
         workflow_id: &wf.id,
         task_id: &wf.tasks[site.task as usize].id,
         capture: env.capture,
+        traced,
         changes: &mut env.changes,
+        marked: false,
         errors: &mut *env.errors,
         now: env.now_text,
-    });
+    };
+    let result = builtin.call(&mut cx);
+    let marked = cx.marked;
     let elapsed = started.map(record::since);
     // An `Err` records no changes, as v3's recorder drops them; its writes
     // stand.
@@ -670,6 +675,7 @@ fn call<'p>(
         failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
         elapsed,
         errors_before,
+        marked,
     };
     record::record(rc, env, wf, done);
     decision.flow

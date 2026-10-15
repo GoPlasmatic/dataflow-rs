@@ -232,6 +232,7 @@ pub(crate) async fn call_host<'p>(
         failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
         elapsed,
         errors_before,
+        marked: false,
     };
     record::record(rc, env, wf, done);
     decision.flow

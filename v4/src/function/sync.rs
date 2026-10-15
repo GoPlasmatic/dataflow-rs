@@ -39,8 +39,14 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     pub(crate) task_id: &'p str,
     /// Whether `Change`s are recorded (I67).
     pub(crate) capture: bool,
+    /// Whether the run's trace keeps changes: only then does a built-in
+    /// record a write the trace alone needs ([`Change::for_trace`]).
+    pub(crate) traced: bool,
     /// This task's changes, read by the recorder.
     pub(crate) changes: &'c mut Vec<Change>,
+    /// Set by a built-in that recorded a change the trace alone keeps, so
+    /// the recorder makes the audit's copy without it, and only then.
+    pub(crate) marked: bool,
     /// The message's error list.
     pub(crate) errors: &'c mut Vec<ErrorRecord>,
     /// The run's clock reading, RFC 3339, for error records.
@@ -92,6 +98,7 @@ impl<'p> SyncCtx<'_, '_, 'p> {
                 new_value,
                 removed,
                 replaced: false,
+                trace_only: false,
             });
         }
     }
@@ -176,7 +183,9 @@ mod tests {
             workflow_id: "w",
             task_id: "t",
             capture,
+            traced: false,
             changes: &mut changes,
+            marked: false,
             errors: &mut errors,
             now: NOW,
         });

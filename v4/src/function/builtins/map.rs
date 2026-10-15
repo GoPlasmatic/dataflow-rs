@@ -166,13 +166,16 @@ impl SyncFunction for MapConfig {
             cx.changes.reserve(self.mappings.len());
         }
         for mapping in &self.mappings {
-            let (exprs, capture, changes) = (cx.exprs, cx.capture, &mut *cx.changes);
+            let (exprs, capture, traced) = (cx.exprs, cx.capture, cx.traced);
+            let (changes, marked) = (&mut *cx.changes, &mut cx.marked);
             failed |= !cx.rc.edit(|e| {
                 mapping.apply(&mut Writer {
                     e,
                     exprs,
                     capture,
+                    traced,
                     changes,
+                    marked,
                 })
             });
         }
@@ -192,7 +195,12 @@ struct Writer<'w, 'e, 'q, 'p> {
     e: &'w mut Edit<'e, 'q, 'p>,
     exprs: &'p ExprEngine,
     capture: bool,
+    /// The run's trace keeps changes: a write v3's audit has no row for is
+    /// recorded for it alone.
+    traced: bool,
     changes: &'w mut Vec<Change>,
+    /// Set once such a change is recorded ([`SyncCtx::marked`]).
+    marked: &'w mut bool,
 }
 
 /// A mapping's result: its view, and the folded constant it came from.
@@ -322,6 +330,11 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
     /// each element of an array for `extend`, recorded one change per
     /// element at its index. A missing or `null` target becomes an array;
     /// a root, another target, or an `extend` of a non-array fails.
+    ///
+    /// The audit entry records the elements alone, as v3's. A replay of
+    /// those alone cannot rebuild an array created where a `null` was, nor
+    /// an empty `extend`'s, so a traced run records the array's creation
+    /// first, `null` to `[]`, for the trace alone (I19).
     fn append(&mut self, path: &Path, mode: MapMode, result: MapValue<'q, 'p>) -> bool {
         if path.is_root() {
             error!("Map: Refusing to append to context root {path}");
@@ -338,9 +351,9 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
             }
             _ => std::slice::from_ref(&result.view),
         };
-        let start = match self.e.get(path) {
-            None | Some(DataValue::Null) => 0,
-            Some(DataValue::Array(old)) => old.len(),
+        let (start, creates) = match self.e.get(path) {
+            None | Some(DataValue::Null) => (0, true),
+            Some(DataValue::Array(old)) => (old.len(), false),
             Some(other) => {
                 error!(
                     "Map: Cannot append to {path}: it holds {}, not an array",
@@ -354,6 +367,14 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
             (_, item) => vec![item],
         });
         if let Some(items) = &owned {
+            if creates && self.traced {
+                self.changes.push(Change::for_trace(
+                    Arc::clone(path.dotted()),
+                    OwnedDataValue::Null,
+                    OwnedDataValue::Array(Vec::new()),
+                ));
+                *self.marked = true;
+            }
             for (i, item) in items.iter().enumerate() {
                 self.changes.push(Change::write(
                     format!("{path}.{}", start + i),

@@ -107,6 +107,9 @@ pub(crate) struct Completed<'p> {
     /// `env.errors.len()` before the call: the error context mirrors what
     /// came after.
     pub(crate) errors_before: usize,
+    /// A change of the call is the trace's alone ([`Change::for_trace`]):
+    /// only then is the audit's copy of the changes filtered.
+    pub(crate) marked: bool,
 }
 
 /// Records one completed call of `wf`, in this order: the audit entry, with
@@ -131,6 +134,7 @@ pub(crate) fn record<'p>(
         failed,
         elapsed,
         errors_before,
+        marked,
     } = done;
     // The step's changes, while the trace keeps them: the engine's writes
     // made for it first, then the call's, then the progress write, then the
@@ -147,8 +151,10 @@ pub(crate) fn record<'p>(
         if keeps_entries(env.mode) {
             let changes = match (env.capture_audit, traced) {
                 (false, _) => Vec::new(),
-                // Both want them.
+                // Both want them, the audit v3's rows alone.
+                (true, true) if marked => for_audit(&env.changes),
                 (true, true) => env.changes.clone(),
+                // Only a trace that keeps changes is given one of its own.
                 (true, false) => std::mem::take(&mut env.changes),
             };
             record_audit(
@@ -240,6 +246,12 @@ pub(crate) fn record<'p>(
             elapsed,
         });
     }
+}
+
+/// The audit entry's copy of a call's changes when the call marked one:
+/// without the changes the trace alone keeps, so the entry is v3's.
+fn for_audit(changes: &[Change]) -> Vec<Change> {
+    changes.iter().filter(|c| !c.trace_only).cloned().collect()
 }
 
 /// Records a workflow's own failure (I61), whatever its policy: one record

@@ -230,7 +230,9 @@ impl V4Task {
             workflow_id,
             task_id,
             capture,
+            traced: false,
             changes,
+            marked: false,
             errors: &mut *errors,
             now: NOW,
         });

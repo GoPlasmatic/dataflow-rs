@@ -186,6 +186,7 @@ pub(crate) async fn fan_out<'p>(
                 failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
                 elapsed: started.map(record::since),
                 errors_before,
+                marked: false,
             };
             record::record(rc, env, wf, done);
             return decision.flow;
@@ -258,6 +259,7 @@ pub(crate) async fn fan_out<'p>(
             failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
             elapsed,
             errors_before,
+            marked: false,
         };
         record::record(rc, env, wf, done);
         return decision.flow;
@@ -332,6 +334,7 @@ pub(crate) async fn fan_out<'p>(
             failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
             elapsed,
             errors_before,
+            marked: false,
         };
         record::record(rc, env, wf, done);
         rc.tick();
