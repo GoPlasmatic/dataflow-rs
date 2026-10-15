@@ -195,6 +195,9 @@ pub enum Event<'a> {
     },
     /// The run ended, whatever its status.
     RunFinished {
+        /// The message's id, as its `RunStarted` named it: what ties the end
+        /// to the start when one observer sees runs overlap.
+        message_id: &'a str,
         /// How the run ended.
         status: &'a RunStatus,
         /// How many error records the message holds.

@@ -15,20 +15,12 @@ use std::sync::Mutex;
 
 /// The recording observer: one per engine, drained per run step.
 #[derive(Debug, Default)]
-pub struct Recorder(Mutex<State>);
-
-#[derive(Debug, Default)]
-struct State {
-    events: Vec<Json>,
-    /// The id `RunStarted` named, for `message_finished`, whose v4 event
-    /// carries none.
-    message_id: String,
-}
+pub struct Recorder(Mutex<Vec<Json>>);
 
 impl Recorder {
     /// The events since the last call, in the order they fired.
     pub fn take(&self) -> Vec<Json> {
-        std::mem::take(&mut self.0.lock().expect("the recorder lock").events)
+        std::mem::take(&mut *self.0.lock().expect("the recorder lock"))
     }
 }
 
@@ -47,20 +39,16 @@ impl Observer for Recorder {
     }
 
     fn on(&self, event: &Event<'_>) {
-        let mut state = self.0.lock().expect("the recorder lock");
         let json = match event {
             Event::RunStarted {
                 message_id,
                 considered,
                 ..
-            } => {
-                state.message_id = (*message_id).to_owned();
-                object(vec![
-                    ("event", Json::str("message_started")),
-                    ("message_id", Json::str(*message_id)),
-                    ("workflows_considered", number(*considered)),
-                ])
-            }
+            } => object(vec![
+                ("event", Json::str("message_started")),
+                ("message_id", Json::str(*message_id)),
+                ("workflows_considered", number(*considered)),
+            ]),
             Event::WorkflowStarted { id, .. } => object(vec![
                 ("event", Json::str("workflow_started")),
                 ("workflow_id", Json::str(*id)),
@@ -81,10 +69,15 @@ impl Observer for Recorder {
                 ("sweeps", number(record.sweeps)),
                 ("workflow_id", Json::str(record.id)),
             ]),
-            Event::RunFinished { status, errors, .. } => object(vec![
+            Event::RunFinished {
+                message_id,
+                status,
+                errors,
+                ..
+            } => object(vec![
                 ("errors", number(*errors)),
                 ("event", Json::str("message_finished")),
-                ("message_id", Json::str(state.message_id.clone())),
+                ("message_id", Json::str(*message_id)),
                 (
                     "stopped_early",
                     Json::Bool(matches!(
@@ -95,6 +88,6 @@ impl Observer for Recorder {
             ]),
             _ => return,
         };
-        state.events.push(json);
+        self.0.lock().expect("the recorder lock").push(json);
     }
 }

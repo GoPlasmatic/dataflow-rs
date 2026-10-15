@@ -502,6 +502,60 @@ async fn a_fan_out_reports_each_folded_element_and_an_empty_over_once() {
     assert_eq!((tasks[4].element_index, tasks[4].status), (None, Some(500)));
 }
 
+/// Keeps each run event's message id, and the error count of each end.
+#[derive(Default)]
+struct Ends(Mutex<Vec<(&'static str, String, Option<usize>)>>);
+
+impl Observer for Ends {
+    fn interest(&self) -> Interest {
+        Interest::NONE
+    }
+
+    fn on(&self, event: &Event<'_>) {
+        let seen = match event {
+            Event::RunStarted { message_id, .. } => ("started", message_id.to_string(), None),
+            Event::RunFinished {
+                message_id, errors, ..
+            } => ("finished", message_id.to_string(), Some(*errors)),
+            _ => return,
+        };
+        self.0.lock().unwrap().push(seen);
+    }
+}
+
+#[tokio::test]
+async fn each_run_finished_names_its_own_message_when_runs_overlap() {
+    // Review B I-1: v3's `MessageFinished` carried the message's id, so one
+    // engine observer can tie each end to its start.
+    let ends = Arc::new(Ends::default());
+    let mut fails = host("boom", "fail");
+    fails["condition"] = json!({"var": "data.fail"});
+    fails["on_failure"] = json!("continue");
+    let e = Engine::builder()
+        .register("logger", Logger)
+        .register("fail", Failing)
+        .config(EngineConfig::default().observer(Arc::clone(&ends) as _))
+        .workflow_json(&workflow("w", vec![host("wait", "logger"), fails], &[]))
+        .build()
+        .unwrap();
+    let mut a = message(json!({"fail": true})).with_id("a");
+    let mut b = message(json!({})).with_id("b");
+    tokio::join!(e.run(&mut a), e.run(&mut b));
+    let seen = ends.0.lock().unwrap().clone();
+    let kinds: Vec<_> = seen.iter().map(|(kind, ..)| *kind).collect();
+    assert_eq!(
+        kinds,
+        ["started", "started", "finished", "finished"],
+        "the runs overlap: {seen:?}"
+    );
+    let mut finished: Vec<_> = seen
+        .iter()
+        .filter_map(|(_, id, errors)| errors.map(|n| (id.as_str(), n)))
+        .collect();
+    finished.sort_unstable();
+    assert_eq!(finished, [("a", 1), ("b", 0)]);
+}
+
 #[tokio::test]
 async fn each_observer_receives_only_its_interest() {
     let tasks_only = Timeline::new(Interest::TASKS);

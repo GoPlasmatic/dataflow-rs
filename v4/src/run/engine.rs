@@ -310,6 +310,7 @@ impl Engine {
             None => RunStatus::Completed,
         };
         watch.observers.emit(Event::RunFinished {
+            message_id: parts.id,
             status: &status,
             errors: parts.errors.len(),
             elapsed: started.map(record::since),

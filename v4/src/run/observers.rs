@@ -87,7 +87,13 @@ fn untimed<'a>(event: &Event<'a>) -> Event<'a> {
             record,
             elapsed: None,
         },
-        Event::RunFinished { status, errors, .. } => Event::RunFinished {
+        Event::RunFinished {
+            message_id,
+            status,
+            errors,
+            ..
+        } => Event::RunFinished {
+            message_id,
             status,
             errors,
             elapsed: None,
