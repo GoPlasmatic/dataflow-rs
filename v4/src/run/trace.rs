@@ -29,7 +29,8 @@ const NODE_SIZE: usize = size_of::<usize>();
 pub(crate) struct Capture {
     options: TraceOptions,
     steps: Vec<TraceStep>,
-    /// What `initial` and the changes kept so far cost.
+    /// What `initial` and the changes kept so far cost, counted only under a
+    /// byte budget.
     bytes: usize,
     truncated: bool,
     initial: Context,
@@ -41,11 +42,13 @@ pub(crate) struct Capture {
 
 impl Capture {
     /// A trace under `options` starting from `context`, the object holding
-    /// the three roots: `initial` is its redacted copy, charged. A budget
-    /// `initial` alone crosses truncates from the start.
+    /// the three roots: `initial` is its redacted copy, charged under a byte
+    /// budget. A budget `initial` alone crosses truncates from the start.
     pub(crate) fn new(options: TraceOptions, context: &OwnedDataValue) -> Self {
         let paths: Vec<&[Seg]> = options.redact.iter().map(Path::segs).collect();
-        let (initial, bytes) = redacting_clone(context, &paths);
+        let sized = options.max_bytes.is_some();
+        let (initial, bytes) = redacting_clone(context, &paths, sized);
+        let bytes = if sized { bytes } else { 0 };
         let truncated = options.max_bytes.is_some_and(|max| bytes > max);
         Self {
             options,
@@ -79,24 +82,29 @@ impl Capture {
         self.options.timings
     }
 
-    /// Pushes `step`: its changes redacted and charged, or dropped when the
-    /// trace keeps none or they would cross the budget, which truncates the
-    /// trace from this step on.
+    /// Pushes `step`: its changes redacted and, under a byte budget,
+    /// charged after the redaction, or dropped when the trace keeps none or
+    /// they would cross the budget, which truncates the trace from this step
+    /// on. Without a budget nothing is sized (A M-6).
     pub(crate) fn push(&mut self, mut step: TraceStep) {
         if !self.changes() {
             step.changes.clear();
         } else if !step.changes.is_empty() {
-            let mut size = 0usize;
             for change in &mut step.changes {
                 self.redact(change);
-                size = size.saturating_add(change_size(change));
             }
-            let total = self.bytes.saturating_add(size);
-            if self.options.max_bytes.is_some_and(|max| total > max) {
-                self.truncated = true;
-                step.changes.clear();
-            } else {
-                self.bytes = total;
+            if let Some(max) = self.options.max_bytes {
+                let size = step
+                    .changes
+                    .iter()
+                    .fold(0usize, |size, c| size.saturating_add(change_size(c)));
+                let total = self.bytes.saturating_add(size);
+                if total > max {
+                    self.truncated = true;
+                    step.changes.clear();
+                } else {
+                    self.bytes = total;
+                }
             }
         }
         self.steps.push(step);
@@ -183,15 +191,22 @@ fn below_index<'s>(paths: &[&'s [Seg]], index: usize) -> Vec<&'s [Seg]> {
 }
 
 /// v3's `redacting_clone`: `value` cloned with `null` for every node a path
-/// in `paths` names, which is never cloned, and the clone's size. An empty
-/// suffix names the node it reached; a suffix that matches nothing is
-/// dropped, so a path that resolves nothing creates nothing.
-fn redacting_clone(value: &OwnedDataValue, paths: &[&[Seg]]) -> (OwnedDataValue, usize) {
+/// in `paths` names, which is never cloned, and the clone's size, which,
+/// unless `sized`, leaves out every subtree no path enters, so it is not the
+/// size (no budget reads it then). An empty suffix names the node it
+/// reached; a suffix that matches nothing is dropped, so a path that
+/// resolves nothing creates nothing.
+fn redacting_clone(
+    value: &OwnedDataValue,
+    paths: &[&[Seg]],
+    sized: bool,
+) -> (OwnedDataValue, usize) {
+    let measure = |v: &OwnedDataValue| if sized { approx_size(v) } else { 0 };
     if paths.iter().any(|p| p.is_empty()) {
         return (OwnedDataValue::Null, NODE_SIZE);
     }
     if paths.is_empty() {
-        return (value.clone(), approx_size(value));
+        return (value.clone(), measure(value));
     }
     match value {
         OwnedDataValue::Object(pairs) => {
@@ -199,7 +214,7 @@ fn redacting_clone(value: &OwnedDataValue, paths: &[&[Seg]]) -> (OwnedDataValue,
             let pairs = pairs
                 .iter()
                 .map(|(key, child)| {
-                    let (child, child_size) = redacting_clone(child, &below_key(paths, key));
+                    let (child, child_size) = redacting_clone(child, &below_key(paths, key), sized);
                     size += key.len() + child_size;
                     (key.clone(), child)
                 })
@@ -212,14 +227,15 @@ fn redacting_clone(value: &OwnedDataValue, paths: &[&[Seg]]) -> (OwnedDataValue,
                 .iter()
                 .enumerate()
                 .map(|(index, child)| {
-                    let (child, child_size) = redacting_clone(child, &below_index(paths, index));
+                    let (child, child_size) =
+                        redacting_clone(child, &below_index(paths, index), sized);
                     size += child_size;
                     child
                 })
                 .collect();
             (OwnedDataValue::Array(items), size)
         }
-        other => (other.clone(), approx_size(other)),
+        other => (other.clone(), measure(other)),
     }
 }
 
@@ -342,9 +358,25 @@ mod tests {
         let context = dv(json!({"data": {"s": "secret", "k": [1, 2]}, "metadata": {}}));
         let redact = paths(&["data.s"]);
         let segs: Vec<&[Seg]> = redact.iter().map(Path::segs).collect();
-        let (clone, bytes) = redacting_clone(&context, &segs);
+        let (clone, bytes) = redacting_clone(&context, &segs, true);
         assert_eq!(bytes, approx_size(&clone));
         assert_eq!(bytes, approx_size(&context) - "secret".len());
+    }
+
+    #[test]
+    fn nothing_is_sized_without_a_budget() {
+        // A M-6: `initial` and the changes are charged only under
+        // `max_bytes`; a trace without one counts nothing.
+        let context = dv(json!({"data": {"s": "x".repeat(64)}, "metadata": {}}));
+        let mut c = Capture::new(TraceOptions::default(), &context);
+        c.push(step(vec![Change::write(
+            "data.a",
+            dv(json!(null)),
+            dv(json!("y".repeat(64))),
+        )]));
+        assert_eq!(c.bytes, 0);
+        let budget = TraceOptions::default().max_bytes(1 << 20);
+        assert_eq!(Capture::new(budget, &context).bytes, approx_size(&context));
     }
 
     fn step(changes: Vec<Change>) -> TraceStep {
