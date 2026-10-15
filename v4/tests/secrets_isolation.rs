@@ -50,8 +50,8 @@ const NESTED: &str = "nested-hmac-91c0";
 /// The store every test shares: one top-level key and one nested.
 fn secrets() -> Value {
     json!({
-        "partner_key": SECRET,
-        "partner": { "hmac": NESTED }
+        "partner": { "hmac": NESTED },
+        "partner_key": SECRET
     })
 }
 
@@ -845,8 +845,7 @@ fn build_errors_and_issues_never_carry_a_value() {
     // The store's own `Debug` and names mask values.
     let exprs = exprs();
     let names: Vec<&str> = exprs.secrets().names().collect();
-    // `serde_json` builds without `preserve_order`, so the store's keys are
-    // sorted.
+    // The store keeps the order the host gave it; `secrets()` spells it sorted.
     assert_eq!(names, ["partner", "partner_key"]);
     assert_clean("Secrets::names", &format!("{names:?}"));
 }

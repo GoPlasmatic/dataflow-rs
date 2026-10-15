@@ -340,8 +340,9 @@ mod tests {
 
     #[test]
     fn redacting_clone_prunes_by_key_and_index_and_creates_nothing() {
-        // `json!` sorts an object's keys.
-        let context = json!({"data": {"a": {"b": 1, "c": [10, {"d": 2}]}, "#7": "x", "7": "y"},
+        // The keys are written in the order the expectations read them, so the
+        // test means the same whether serde_json sorts keys or keeps their order.
+        let context = json!({"data": {"#7": "x", "7": "y", "a": {"b": 1, "c": [10, {"d": 2}]}},
                              "metadata": {}, "temp_data": {}});
         for (redact, expected) in [
             (
@@ -428,7 +429,7 @@ mod tests {
             write(
                 "data",
                 json!({}),
-                json!({"user": {"password": "p"}, "list": [0, 1, 2]}),
+                json!({"list": [0, 1, 2], "user": {"password": "p"}}),
             ),
             write("data.list", json!(null), json!([0, 1])),
             write("data.other", json!(null), json!("p")),

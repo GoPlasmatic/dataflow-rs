@@ -127,7 +127,7 @@ mod tests {
     fn context() -> Value {
         json!({
             "data": {
-                "obj": {"z": 1, "a": [1, {"k": "v & <w>"}], "m": null, "t": true},
+                "obj": {"a": [1, {"k": "v & <w>"}], "m": null, "t": true, "z": 1},
                 "data": {"inner": 1},
                 "num": 7, "text": "hi", "nothing": null,
                 "kind": "obj", "slot": "out_slot", "tag": "doc"

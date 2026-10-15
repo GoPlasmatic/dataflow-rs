@@ -316,7 +316,7 @@ mod tests {
     #[tokio::test]
     async fn an_empty_remainder_names_its_root_as_in_v3() {
         // `get_nested_value(x, "")` is `x`: `payload.` is the payload, `data.` is `data`.
-        let context = json!({"data": {"e": "", "p": "payload.", "d": "data.", "k": 1}});
+        let context = json!({"data": {"d": "data.", "e": "", "k": 1, "p": "payload."}});
         for source in [
             json!("payload."),
             json!("data."),

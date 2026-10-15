@@ -224,14 +224,15 @@ fn an_absent_output_takes_its_default() {
 
 #[test]
 fn the_broken_plugin_input_reports_every_issue_at_its_path() {
-    let input = json!({"reocrd": {"var": "data.r"}, "spec": "x", "output": 7, "extra": 1});
+    // Written in the key order the expectation reads: `extra` before `reocrd`.
+    let input = json!({"extra": 1, "reocrd": {"var": "data.r"}, "spec": "x", "output": 7});
     let (out, issues) = compile::<Templated>(&input, Some(&fixedwidth()));
     assert!(out.is_none());
     use IssueCode::*;
     use Severity::*;
-    // Unknown keys come first, in the input's key order, and a JSON object
-    // iterates in sorted key order here: `extra` before `reocrd`. Then the
-    // runtime fields, in declaration order.
+    // Unknown keys come first, in the input's key order (`extra` before
+    // `reocrd`, as written above). Then the runtime fields, in declaration
+    // order.
     assert_eq!(
         triples(&issues),
         [

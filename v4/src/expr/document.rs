@@ -422,14 +422,14 @@ mod tests {
         let raw = json!({
             "filter": { "_id": { "$oid": { "var": "data.payload.object.id" } } },
             "update": { "$set": {
+                "deleted": false,
                 "payload": { "var": "data.payload" },
-                "updated_at": { "$date": { "var": "metadata.timestamp" } },
-                "deleted": false
+                "updated_at": { "$date": { "var": "metadata.timestamp" } }
             } },
             "upsert": true
         });
         let c = ctx(json!({
-            "data": {"payload": {"object": {"id": "abc"}, "n": 1}},
+            "data": {"payload": {"n": 1, "object": {"id": "abc"}}},
             "metadata": {"timestamp": "2026-01-01"},
             "temp_data": {}
         }));
@@ -471,8 +471,8 @@ mod tests {
     fn a_val_and_an_operator_shaped_default_resolve_as_written() {
         let c = ctx(json!({"data": {"x": 5}, "metadata": {}, "temp_data": {}}));
         let d = doc(&json!({
-            "v": {"val": ["data", "x"]},
-            "h": {"var": ["data.missing", {"var": "data.x"}]}
+            "h": {"var": ["data.missing", {"var": "data.x"}]},
+            "v": {"val": ["data", "x"]}
         }));
         assert_eq!(
             render(&d, &c),

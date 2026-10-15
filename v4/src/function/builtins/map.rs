@@ -771,7 +771,7 @@ mod tests {
                 {"path": "data.fresh", "logic": [4, 5], "mode": "extend"},
                 {"path": "data.none", "logic": [], "mode": "extend"}
             ]),
-            &json!({"data": {"xs": [1], "more": [2, 3], "ys": [9]}}),
+            &json!({"data": {"more": [2, 3], "xs": [1], "ys": [9]}}),
         )
         .await;
         assert_eq!(
@@ -890,7 +890,7 @@ mod tests {
             "map",
             &input,
             &Value::Null,
-            &json!({"data": {"where": "extra.x", "n": 5}}),
+            &json!({"data": {"n": 5, "where": "extra.x"}}),
             true,
         );
         assert_eq!(

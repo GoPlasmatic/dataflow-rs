@@ -1033,15 +1033,15 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
         &[],
     )]);
     let mut m = message(json!({
-        "secret": "s0",
         "card": {"number": "4111", "exp": "12/30"},
+        "secret": "s0",
         "user": {"name": "n"},
         "vault": {"key": "v0"},
     }));
     let (_, trace) = trace_of(&e, &mut m, TraceOptions::default().redact(redact)).await;
 
     // `initial`: each redacted path that resolves reads `null`; one that does
-    // not creates nothing. (`json!` sorts the seed's keys.)
+    // not creates nothing. (The seed spells its keys in the order read here.)
     assert_eq!(
         text(trace.initial.data()),
         r#"{"card":null,"secret":null,"user":{"name":"n"},"vault":null}"#

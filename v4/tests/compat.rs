@@ -350,8 +350,8 @@ fn the_integration_aliases_are_rewritten_by_function_name() {
     for (name, input, aliases, rewritten) in [
         (
             "http_call",
-            json!({"connector": "c", "path_logic": {"var": "data.id"},
-                   "body_logic": {"var": "data.obj"}, "output": "data.resp"}),
+            json!({"connector": "c", "body_logic": {"var": "data.obj"},
+                   "output": "data.resp", "path_logic": {"var": "data.id"}}),
             vec![
                 ("body_logic", "body"),
                 ("output", "response_path"),
@@ -377,7 +377,7 @@ fn the_integration_aliases_are_rewritten_by_function_name() {
     ] {
         let json = calling(name, input);
         let parsed = compat(&json);
-        // In the input's key order, which serde_json keeps sorted here.
+        // In the input's key order, which the inputs above spell sorted, as `aliases` does.
         let expected: Vec<Row> = aliases
             .iter()
             .map(|(alias, _)| {
@@ -913,16 +913,16 @@ fn under_compat_a_near_miss_of_a_v3_key_is_a_likely_typo() {
 #[test]
 fn the_readers_issues_come_first_in_document_order() {
     let parsed = compat(&json!({
-        "id": "",
         "continue_on_error": true,
+        "id": "",
         "loop": {"max": 1, "setup": [{"id": "s", "halt_on": "x", "function": {"name": "f"}}]},
         "tasks": [
-            {"id": "t", "continue_on_error": true, "halt_on": "failure", "terminal": 1,
-             "function": {"name": "validate", "input": {"rules": []}}},
+            {"continue_on_error": true, "function": {"name": "validate", "input": {"rules": []}},
+             "halt_on": "failure", "id": "t", "terminal": 1},
             {"id": "u", "function": {"name": "http_call", "input": {"output": "data.x"}}}
         ]
     }));
-    // serde_json keeps keys sorted here, so `function` comes between a
+    // The input spells its keys in this order, so `function` comes between a
     // task's two flags, and `loop` before `tasks`.
     assert_eq!(
         rows(&parsed),
@@ -1097,8 +1097,8 @@ fn migrate_v3_writes_the_v4_spelling() {
         "continue_on_error": true,
         "path": "ui/folder",
         "tasks": [
-            {"id": "t", "name": "t", "continue_on_error": true, "halt_on": "failure",
-             "function": {"name": "validate", "input": {"rules": []}}},
+            {"continue_on_error": true, "function": {"name": "validate", "input": {"rules": []}},
+             "halt_on": "failure", "id": "t", "name": "t"},
             {"id": "g", "continue_on_error": true, "tasks": [
                 {"id": "p", "function": {"name": "publish_json",
                                          "input": {"source": "s", "target": "t", "x": 1}}}
