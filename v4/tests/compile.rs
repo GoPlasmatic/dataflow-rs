@@ -5,7 +5,7 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // functions below. The rows are `(code, severity, path)`, in walk order.
 
 use dataflow_rs::def::{ParseOptions, WorkflowDef, parse};
-use dataflow_rs::expr::{CompileCx, Output};
+use dataflow_rs::expr::{CompileCx, Output, Resolver};
 use dataflow_rs::function::{
     ExprVisitor, FieldKind, FieldSpec, FunctionConfig, FunctionSpec, Prepare, Reference, Templated,
     ValueKind,
@@ -14,6 +14,7 @@ use dataflow_rs::program::{
     CompileOptions, Compiler, Issue, IssueCode as C, ResourceOracle, Severity, StepKind,
 };
 use dataflow_rs::{Ctx, Expr, Function, Outcome, Registry, Result};
+use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -147,6 +148,10 @@ impl FunctionConfig for Refuses {
 
     fn fields() -> &'static [FieldSpec] {
         &[]
+    }
+
+    fn resolve(&self, _r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+        Ok(OwnedDataValue::Null)
     }
 }
 

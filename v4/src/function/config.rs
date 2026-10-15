@@ -159,6 +159,26 @@ use serde_json::Value;
 ///     extra: serde_json::Value,
 /// }
 /// ```
+///
+/// A hand-written config that does not say how it resolves:
+///
+/// ```compile_fail
+/// # extern crate dataflow_rs_v4 as dataflow_rs;
+/// use dataflow_rs::expr::{CompileCx, ExprVisitor, FieldSpec};
+/// use dataflow_rs::function::FunctionConfig;
+///
+/// struct Bare;
+///
+/// impl FunctionConfig for Bare {
+///     fn compile(_input: &serde_json::Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
+///         Some(Self)
+///     }
+///     fn visit(&self, _v: &mut dyn ExprVisitor) {}
+///     fn fields() -> &'static [FieldSpec] {
+///         &[]
+///     }
+/// }
+/// ```
 pub trait FunctionConfig: Sized + Send + Sync + 'static {
     /// Every issue in the config, each at its exact path below the
     /// [`CompileCx`]'s root. `None` when any is Rejected.
@@ -186,7 +206,9 @@ pub trait FunctionConfig: Sized + Send + Sync + 'static {
     /// dotted text, a nested config resolved as an object, and a
     /// `#[config(serde)]` field written as it serializes (unset when that is
     /// `null`, as an `Option` left `None` is). The derive generates it; a
-    /// hand-written config resolves to `null` unless it says otherwise.
+    /// hand-written config writes its own, as it writes
+    /// [`compile`](Self::compile) and [`visit`](Self::visit), so one that
+    /// forgets it fails to compile rather than resolving to nothing.
     ///
     /// [`Ctx::input`](crate::Ctx::input) is this over the call's context,
     /// with every field that reads a secret `null`.
@@ -195,9 +217,7 @@ pub trait FunctionConfig: Sized + Send + Sync + 'static {
     ///
     /// The first field's that fails: an evaluation's, or a serde field that
     /// does not serialize.
-    fn resolve(&self, _r: &mut dyn Resolver) -> Result<OwnedDataValue> {
-        Ok(OwnedDataValue::Null)
-    }
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue>;
 }
 
 /// The config of a function that takes no input: `{}` or `null`.
@@ -223,5 +243,10 @@ impl FunctionConfig for () {
 
     fn fields() -> &'static [FieldSpec] {
         &[]
+    }
+
+    /// No input, so nothing to resolve: `null`.
+    fn resolve(&self, _r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+        Ok(OwnedDataValue::Null)
     }
 }

@@ -5,7 +5,7 @@ extern crate dataflow_rs_v4 as dataflow_rs;
 // compiler, definition or engine assembled by hand (R59, I93).
 
 use dataflow_rs::datalogic_rs::{self, CustomOperator};
-use dataflow_rs::expr::{CompileCx, ExprEngine, ExprVisitor, FieldSpec, Output};
+use dataflow_rs::expr::{CompileCx, ExprEngine, ExprVisitor, FieldSpec, Output, Resolver};
 use dataflow_rs::function::testing::{self, Called, Write};
 use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next, Prepare};
 use dataflow_rs::program::{IssueCode, StepKind};
@@ -275,6 +275,9 @@ impl FunctionConfig for Silent {
     fn visit(&self, _v: &mut dyn ExprVisitor) {}
     fn fields() -> &'static [FieldSpec] {
         &[]
+    }
+    fn resolve(&self, _r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+        Ok(OwnedDataValue::Null)
     }
 }
 

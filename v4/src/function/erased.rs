@@ -320,6 +320,9 @@ mod tests {
         fn fields() -> &'static [FieldSpec] {
             &[]
         }
+        fn resolve(&self, _r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+            Ok(OwnedDataValue::Null)
+        }
     }
 
     /// Counts its `prepare` calls.

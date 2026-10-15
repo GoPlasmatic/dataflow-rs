@@ -20,10 +20,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dataflow_rs::def::{ParseOptions, StepDef, WorkflowDef, parse};
-use dataflow_rs::expr::CompileCx;
+use dataflow_rs::expr::{CompileCx, Resolver};
 use dataflow_rs::function::{ExprVisitor, FieldSpec, FunctionConfig};
 use dataflow_rs::program::{CompileOptions, IssueCode, Severity};
 use dataflow_rs::{Ctx, Function, Outcome, Registry};
+use datavalue::OwnedDataValue;
 use serde_json::Value;
 
 const MINIMUM_DEFINITIONS: usize = 150;
@@ -1016,6 +1017,10 @@ impl FunctionConfig for AcceptsAll {
 
     fn fields() -> &'static [FieldSpec] {
         &[]
+    }
+
+    fn resolve(&self, _r: &mut dyn Resolver) -> dataflow_rs::Result<OwnedDataValue> {
+        Ok(OwnedDataValue::Null)
     }
 }
 
