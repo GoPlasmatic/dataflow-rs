@@ -34,9 +34,11 @@ confidence-threshold = 0.93
 # so they stay visible without blocking releases on a transitive dep's choices.
 multiple-versions = "warn"
 wildcards = "deny"
-# Path dependencies of the publishable root are dev-dependencies of unpublished
-# workspace crates (`dataflow-corpus`), which `cargo publish` strips; a normal
-# dependency must still carry a version (the derive's does).
+# The publishable root's version-less path dependencies are dev-dependencies
+# on unpublished members (`dataflow-corpus`), which `cargo publish` strips; a
+# normal path dependency still needs a version (the derive's has one). The
+# setting also excuses the private members' path dependencies, which passed
+# before it as well.
 allow-wildcard-paths = true
 
 [sources]
