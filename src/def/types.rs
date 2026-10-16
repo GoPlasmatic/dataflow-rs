@@ -5,20 +5,22 @@ use crate::base::{AuthoredPath, StepKind};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 
-/// The value `parse` reads for an absent key, which `Serialize` leaves out.
-pub(super) mod defaults {
+/// The value [`parse`](super::parse) reads for an absent key, which
+/// `Serialize` leaves out. A tool that shows a definition reads them here
+/// rather than keeping its own copy.
+pub mod defaults {
     /// A workflow's `priority`.
-    pub(crate) const PRIORITY: u32 = 0;
+    pub const PRIORITY: u32 = 0;
     /// A workflow's `version`.
-    pub(crate) const VERSION: u32 = 1;
+    pub const VERSION: u32 = 1;
     /// A workflow's `channel`.
-    pub(crate) const CHANNEL: &str = "default";
+    pub const CHANNEL: &str = "default";
     /// A loop's `init`.
-    pub(crate) const INIT: i64 = 0;
+    pub const INIT: i64 = 0;
     /// A loop's `increment`.
-    pub(crate) const INCREMENT: i64 = 1;
+    pub const INCREMENT: i64 = 1;
     /// A `for_each`'s `max_concurrency`.
-    pub(crate) const MAX_CONCURRENCY: usize = 1;
+    pub const MAX_CONCURRENCY: usize = 1;
 }
 
 /// Raw JSONLogic as authored. Only a compiler turns it into an

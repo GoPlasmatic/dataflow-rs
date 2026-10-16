@@ -40,6 +40,7 @@ pub(crate) use parse::parse_steps;
 pub(crate) use parse::parse_with_rewrites;
 pub use parse::{ParseOptions, Parsed, parse};
 pub use rollout::{Rollout, RolloutError};
+pub use types::defaults;
 pub(crate) use types::fragment_is_setup;
 pub use types::{
     FailurePolicy, ForEachDef, FunctionRef, GroupDef, Logic, LoopDef, NodeHeader, RejectionPolicy,
