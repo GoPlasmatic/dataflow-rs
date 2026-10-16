@@ -70,6 +70,6 @@ fn replay_falls_short_exactly_where_measured() {
     assert!(
         new.is_empty() && gone.is_empty(),
         "replay gaps changed. New: {new:?}. No longer seen: {gone:?}. \
-         Run `cargo run -p dataflow-corpus --bin replay_report` and classify them."
+         Run `cargo run -p dataflow-corpus --bin replay-report` and classify them."
     );
 }

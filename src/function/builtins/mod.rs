@@ -164,9 +164,9 @@ impl BuiltinKind {
 }
 
 /// A built-in call site's callee: its typed config, which is what the
-/// runtime matches on, with no box and no vtable. The four parse and
-/// publish configs are boxed so a call site fits in 256 bytes; the hot
-/// ones stay inline.
+/// runtime matches on, with no trait object and no virtual call. The four
+/// parse and publish configs are boxed so a call site fits in 256 bytes; the
+/// hot ones stay inline.
 #[derive(Debug)]
 pub(crate) enum Builtin {
     Map(MapConfig),

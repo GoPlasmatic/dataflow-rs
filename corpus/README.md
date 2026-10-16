@@ -265,7 +265,7 @@ the exception: it adds no operator, so it is read from this crate's own feature.
 **What v4's trace holds.** It is the initial context plus each step's changes, and the UI rebuilds
 each snapshot by replaying them.
 
-**Measuring the gap.** `cargo run -p dataflow-corpus --bin replay_report` replays v3's own recorded
+**Measuring the gap.** `cargo run -p dataflow-corpus --bin replay-report` replays v3's own recorded
 traces and lists every snapshot path the changes do not reproduce. Each one is something v4's trace
 must carry, or its runner must derive. `tests/replay.rs` pins that list.
 

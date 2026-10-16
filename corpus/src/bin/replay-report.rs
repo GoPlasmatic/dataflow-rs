@@ -1,4 +1,4 @@
-//! What v3's trace changes do not rebuild: `cargo run -p dataflow-corpus --bin replay_report`.
+//! What v3's trace changes do not rebuild: `cargo run -p dataflow-corpus --bin replay-report`.
 //!
 //! For every recorded case with a trace, replays each run's steps from its
 //! input context and lists the snapshot paths the changes do not reproduce,

@@ -22,7 +22,7 @@
 //! Each runs at 250 and 1000 sweeps. The per-sweep figure at 1000 over the one
 //! at 250 shows whether a sweep pays for the log: 1.0x means it does not.
 //!
-//! It also reports the run's arena (I72): `arena.live_bytes` and
+//! It also reports the run's arena: `arena.live_bytes` and
 //! `arena.peak_bytes`, the largest view spine and the largest bytes in use
 //! any run saw, and asserts `peak <= 2 * max(64 KiB, live) + 64 KiB` on each
 //! run (05's bound plus one op's garbage).
@@ -144,7 +144,7 @@ fn message(base: &OwnedDataValue) -> Message {
     Message::from_parts(OwnedDataValue::Null, base.clone(), OwnedDataValue::Null)
 }
 
-/// The arena of one run, as I72 reports it: the largest view spine and the
+/// The arena of one run, as the engine reports it: the largest view spine and the
 /// largest bytes in use.
 #[derive(Clone, Copy, Default)]
 struct Arena {
