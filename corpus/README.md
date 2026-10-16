@@ -13,7 +13,7 @@ it. v3 is the oracle: a recording is what v3 did, never what someone expected it
   A row v3 cannot record is marked `"v3": false`, with the reason.
 - **`RECORDED.json`** says what the recordings were made with:
   - the engine version;
-  - the hash of the `src/` tree;
+  - `source`, the registry package it ran (`crates.io dataflow-rs <version>, checksum <sha256>`);
   - the datalogic-rs version;
   - the toolchain.
 
@@ -22,11 +22,12 @@ it. v3 is the oracle: a recording is what v3 did, never what someone expected it
 | Crate | What it holds |
 | --- | --- |
 | `corpus/` (`dataflow-corpus`) | The case format, an order-preserving JSON value, normalisation, the comparator, v3's path rules, trace replay, and the coverage tests. It does not depend on dataflow-rs |
-| `corpus/v3/` (`dataflow-corpus-v3`) | v3's driver, which runs a case and records it. Also the `script` host function, the observer recorder, the log capture, `record`, and the green test |
+| `corpus/v3/` (`dataflow-corpus-v3`) | v3's driver, which runs a case and records it, against the published 3.15.0 it pins (`dataflow-rs = "=3.15.0"`; I124, amending I14). Also the `script` host function, the observer recorder, the log capture, `record`, and the green test |
 | `corpus/v4/` (`dataflow-corpus-v4`) | v4's driver, which holds v4 to the recordings: `script` ported to v4's `Function`, the recording observer, the declared deviations (`expect`), the definitions check, the runs check and the traces check |
 
-When v4 replaces v3's API on `main`, `corpus/v3` stays on `v3-maintenance`, and `corpus/v4` goes on
-reading the same cases through `dataflow-corpus`.
+`corpus/v3` stays on `main`, on the published 3.15.0 (I124, amending I14), and `record.sh` records
+against that pin; `corpus/v4` reads the same cases through `dataflow-corpus`. A v3 fix on
+`v3-maintenance` that changes behaviour re-records there, and `main` bumps the pin and re-records.
 
 ## v4's driver
 
@@ -189,7 +190,7 @@ are refused.
 - an `outcome` template, evaluated last: `"success"`, `"skip"`, `"halt"`, `{"status": n}`, or
   `{"error": {"variant", "code", "message", "status", "retryable"}}`.
 
-See `v3/src/script.rs`. v4 ports this function to replay the corpus (`v4/src/script.rs`), with
+See `corpus/v3/src/script.rs`. v4 ports this function to replay the corpus (`corpus/v4/src/script.rs`), with
 four differences its module doc lists: one is break 2a, and no case exercises the other three.
 
 ## Recording
