@@ -17,10 +17,12 @@ interface DebugInfoBubbleProps {
 
 /**
  * What a step is, for its title: a task's call, the workflow's own skip or
- * failure, or the engine's writes as a loop sweep is entered.
+ * failure, or the engine's write of a loop's counter. The counter write
+ * does not say whether a sweep followed: a loop's last is the one it exited
+ * on, and a sweep the condition refused records no step.
  */
 function stepTitle(step: TraceStep): string {
-  if (isEngineStep(step)) return 'Loop Sweep';
+  if (isEngineStep(step)) return 'Loop counter';
   if (isWorkflowStep(step)) {
     return step.result === 'failed' ? 'Workflow Failed' : 'Workflow Skipped';
   }
@@ -118,10 +120,8 @@ export function DebugInfoBubble({
 
         {loop_counter !== undefined && (
           <div className="df-debug-bubble-row">
-            <span className="df-debug-bubble-label">Sweep:</span>
-            <span className="df-debug-bubble-value">
-              {engineStep ? `entering ${loop_counter}` : loop_counter}
-            </span>
+            <span className="df-debug-bubble-label">{engineStep ? 'Counter:' : 'Sweep:'}</span>
+            <span className="df-debug-bubble-value">{loop_counter}</span>
           </div>
         )}
 

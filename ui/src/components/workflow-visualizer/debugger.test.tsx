@@ -41,6 +41,8 @@ describe('the debugger', () => {
       return element!;
     });
     expect(status.textContent).toMatch(/^stopped/);
+    // ... and how many errors the message ended with: the failed append's.
+    expect(status.textContent).toMatch(/\b1 error$/);
 
     // At the ready state nothing has run yet; at the last step the failed
     // task is an error, the first is executed and the third still pending.

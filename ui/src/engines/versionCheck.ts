@@ -1,4 +1,5 @@
 import * as wasm from '@goplasmatic/dataflow-wasm';
+import { rethrowUninitialized } from './uninitialized';
 
 // Read off the namespace rather than `import { engine_version }`. An engine
 // released before the export existed would fail a *named* import at
@@ -33,7 +34,8 @@ function isOlder(a: Semver, b: Semver): boolean {
 
 // Memoised: the check is pure and the engine cannot change under us. A failure
 // caches the *error* rather than a "checked" flag, so a second call re-throws
-// instead of silently passing.
+// instead of silently passing. A call before `init()` caches nothing: it is
+// no verdict on the engine, and a later call, after it, must check.
 let result: { ok: true } | { ok: false; error: Error } | undefined;
 
 /**
@@ -49,10 +51,18 @@ let result: { ok: true } | { ok: false; error: Error } | undefined;
  * A **newer** engine is fine and passes silently: this package declares a
  * caret range on the wasm dependency, so npm may legitimately resolve one, and
  * the UI simply does not exercise whatever it added.
+ *
+ * The wasm package must be initialized first (`await init()`): a call made
+ * earlier throws an `Error` saying so, and decides nothing.
  */
 export function assertEngineVersion(): void {
   if (result === undefined) {
-    const engineVersion = engineVersionFn?.();
+    let engineVersion: string | undefined;
+    try {
+      engineVersion = engineVersionFn?.();
+    } catch (err) {
+      rethrowUninitialized(err, 'the UI checks its version');
+    }
     const uiVersion = __DATAFLOW_UI_VERSION__;
 
     // No `engine_version` at all means the engine predates the release that

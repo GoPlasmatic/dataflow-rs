@@ -12,13 +12,14 @@ interface MessageStatePanelProps {
 
 /**
  * Where a step happened, in one line: its workflow, its task, and the sweep
- * or fan-out element it ran for. The engine's own step is the sweep it
- * entered.
+ * or fan-out element it ran for. The engine's own step is the loop counter
+ * it wrote, and no more: a sweep may follow it, or the loop may end on it,
+ * and the step does not say which.
  */
 function describeStep(step: TraceStep): string {
   if (isEngineStep(step)) {
     return step.loop_counter !== undefined
-      ? `${step.workflow_id} · entering sweep ${step.loop_counter}`
+      ? `${step.workflow_id} · loop counter ${step.loop_counter}`
       : `${step.workflow_id} · engine`;
   }
   let text = step.workflow_id;

@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { WasmEngine, contexts, type JsonValue, type RunResult } from '@goplasmatic/dataflow-wasm';
+import {
+  WasmEngine,
+  contexts,
+  mapping_contexts,
+  type Context,
+  type JsonValue,
+  type RunOptions,
+  type RunResult,
+} from '@goplasmatic/dataflow-wasm';
 import {
   contextAtStep,
   findTaskStepIndex,
   getTaskState,
   getWorkflowState,
   isEngineStep,
+  isTaskCurrent,
   isWorkflowStep,
   stepErrors,
   stepState,
@@ -50,10 +59,41 @@ const LOOPING: JsonValue[] = [
   },
 ];
 
-async function run(workflows: JsonValue[], payload: JsonValue): Promise<RunResult> {
+/** A `map` task writing `value` at `path`, with any other task fields. */
+function write(id: string, path: string, value: JsonValue, fields: Record<string, JsonValue> = {}): JsonValue {
+  return { id, ...fields, function: { name: 'map', input: { mappings: [{ path, logic: value }] } } };
+}
+
+/** One `map` of three mappings; the second reads what the first wrote. */
+const THREE_MAPPINGS: JsonValue[] = [
+  {
+    id: 'w',
+    tasks: [
+      {
+        id: 'm',
+        function: {
+          name: 'map',
+          input: {
+            mappings: [
+              { path: 'data.a', logic: 1 },
+              { path: 'data.b', logic: { var: 'data.a' } },
+              { path: 'data.c', logic: 3 },
+            ],
+          },
+        },
+      },
+    ],
+  },
+];
+
+async function run(
+  workflows: JsonValue[],
+  payload: JsonValue,
+  options: RunOptions = { trace: true },
+): Promise<RunResult> {
   const engine = new WasmEngine(workflows);
   try {
-    return await engine.run(payload, { trace: true });
+    return await engine.run(payload, options);
   } finally {
     engine.free();
   }
@@ -85,6 +125,107 @@ describe('a failing run', () => {
     // Before the failing step is reached, the task is still pending.
     expect(getTaskState(trace, f - 1, 'w', 'f')).toBe('pending');
     expect(getWorkflowState(trace, f - 1, 'w')).toBe('executed');
+  });
+});
+
+describe('a workflow its condition refused', () => {
+  it("records one skipped step that is the workflow's own, and is skipped at it", async () => {
+    const result = await run([{ id: 'w', condition: false, tasks: [write('t', 'data.a', 1)] }], {});
+    expect(result.run.status).toBe('completed');
+    expect(result.run.workflows[0].selection).toBe('skipped_by_condition');
+    const trace = result.trace!;
+    expect(trace.steps).toHaveLength(1);
+
+    const [step] = trace.steps;
+    expect(step.result).toBe('skipped');
+    expect(step.task).toBeNull();
+    expect(step.task_id).toBeNull();
+    expect(isWorkflowStep(step)).toBe(true);
+    expect(isEngineStep(step)).toBe(false);
+    expect(stepState(step)).toBe('skipped');
+
+    expect(getWorkflowState(trace, trace.steps.length - 1, 'w')).toBe('skipped');
+    expect(getWorkflowState(trace, -1, 'w')).toBe('pending');
+    expect(getTaskState(trace, trace.steps.length - 1, 'w', 't')).toBe('pending');
+  });
+});
+
+describe('a task its condition refused', () => {
+  it('records a skipped step with its id, and is skipped at it while the workflow ran', async () => {
+    const result = await run(
+      [{ id: 'w', tasks: [write('t', 'data.a', 1, { condition: false }), write('u', 'data.b', 2)] }],
+      {},
+    );
+    expect(result.run.status).toBe('completed');
+    expect(result.run.workflows[0].selection).toBe('ran');
+    const trace = result.trace!;
+    expect(trace.steps).toHaveLength(2);
+
+    const t = findTaskStepIndex(trace, trace.steps.length - 1, 'w', 't');
+    expect(t).toBe(0);
+    expect(trace.steps[t].result).toBe('skipped');
+    expect(trace.steps[t].task_id).toBe('t');
+    expect(trace.steps[t].status).toBeNull();
+    expect(isWorkflowStep(trace.steps[t])).toBe(false);
+    expect(stepState(trace.steps[t])).toBe('skipped');
+
+    expect(getTaskState(trace, t, 'w', 't')).toBe('skipped');
+    expect(getTaskState(trace, t, 'w', 'u')).toBe('pending');
+    expect(getTaskState(trace, t + 1, 'w', 'u')).toBe('executed');
+    // A task's skip is not the workflow's.
+    expect(getWorkflowState(trace, t, 'w')).toBe('pending');
+    expect(getWorkflowState(trace, t + 1, 'w')).toBe('executed');
+  });
+});
+
+describe('isTaskCurrent', () => {
+  it("is true at the task's step and false one before", async () => {
+    const result = await run(FAILING, {});
+    const trace = result.trace!;
+    const f = findTaskStepIndex(trace, trace.steps.length - 1, 'w', 'f');
+    expect(f).toBeGreaterThan(0);
+    expect(isTaskCurrent(trace, f, 'w', 'f')).toBe(true);
+    expect(isTaskCurrent(trace, f - 1, 'w', 'f')).toBe(false);
+    // The step before is the first task's.
+    expect(isTaskCurrent(trace, f - 1, 'w', 'ok')).toBe(true);
+    expect(isTaskCurrent(trace, -1, 'w', 'ok')).toBe(false);
+  });
+});
+
+describe('traceIsReplayable', () => {
+  it('is false for a trace that crossed its byte budget, and true for one that did not', async () => {
+    const whole = await run(THREE_MAPPINGS, {});
+    expect(whole.trace!.truncated).toBe(false);
+    expect(traceIsReplayable(whole.trace!)).toBe(true);
+
+    const cut = await run(THREE_MAPPINGS, {}, { trace: { max_bytes: 10 } });
+    expect(cut.trace!.truncated).toBe(true);
+    expect(traceIsReplayable(cut.trace!)).toBe(false);
+    // The run and its steps are the same; only the changes are gone.
+    expect(cut.run.status).toBe(whole.run.status);
+    expect(cut.trace!.steps).toHaveLength(whole.trace!.steps.length);
+    expect(cut.trace!.steps[0].changes).toHaveLength(0);
+  });
+});
+
+describe('mapping_contexts', () => {
+  it('gives the context after each mapping, so mapping j was evaluated against [j - 1]', async () => {
+    const result = await run(THREE_MAPPINGS, {});
+    const trace = result.trace!;
+    const m = findTaskStepIndex(trace, trace.steps.length - 1, 'w', 'm');
+    expect(trace.steps[m].mapping_ends).toHaveLength(3);
+
+    const after = mapping_contexts(trace, m);
+    expect(after).toHaveLength(3);
+    const data = (context: Context) => context.data as Record<string, unknown>;
+    // What mapping 1 read: mapping 0's write, and not yet its own.
+    expect(data(after[0])).toHaveProperty('a', 1);
+    expect(data(after[0])).not.toHaveProperty('b');
+    // So it wrote `a`'s value, 1, to `b`.
+    expect(data(after[1])).toHaveProperty('b', 1);
+    expect(data(after[1])).not.toHaveProperty('c');
+    // The last holds every mapping's write.
+    expect(data(after[2])).toEqual({ a: 1, b: 1, c: 3 });
   });
 });
 

@@ -79,7 +79,14 @@ export function useWorkflowDebugState(workflow: Workflow): TreeNodeDebugState {
  * `skipped` step says the condition was false (or failed to evaluate, in
  * which case the step carries that failure's record), and any task step of
  * the workflow says it was true. A loop re-evaluates the condition every
- * sweep, so the latest of those at or before the current position decides.
+ * sweep, so the latest of those at or before the current position decides;
+ * but only a refusal before the first sweep records a step. A later sweep
+ * the condition refused ends the loop with nothing beyond the counter
+ * write, so this node cannot see it and keeps the last sweep's result.
+ *
+ * A workflow its rollout refused has the same `skipped` step, with no
+ * condition behind it: only the run's record (`selection`) tells the two
+ * apart, and the node then reports no result at all.
  */
 export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebugState {
   const dbgContext = useDebuggerOptional();
@@ -94,7 +101,7 @@ export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebu
       return nullState;
     }
 
-    const { trace, currentStepIndex } = dbgContext.state;
+    const { trace, run, currentStepIndex } = dbgContext.state;
 
     let lastSkip = -1;
     let lastTask = -1;
@@ -103,8 +110,8 @@ export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebu
       const s = trace.steps[i];
       if (s.workflow_id !== workflow.id) continue;
       if (isWorkflowStep(s)) {
-        // The engine's steps (a sweep entered) and the workflow's own
-        // failure are the workflow's too, but say nothing about its
+        // The engine's steps (its loop's counter writes) and the workflow's
+        // own failure are the workflow's too, but say nothing about its
         // condition.
         if (s.result === 'skipped') lastSkip = i;
       } else {
@@ -117,6 +124,20 @@ export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebu
     }
 
     if (lastSkip > lastTask) {
+      // Skipped by the rollout, not by the condition: the condition was
+      // never read, so there is no result to show, and the step is the
+      // workflow's rather than this node's.
+      const record = run?.workflows.find((w) => w.id === workflow.id);
+      if (record?.selection === 'skipped_by_rollout') {
+        return {
+          state: 'skipped',
+          isCurrent: false,
+          isExecuted: false,
+          isSkipped: true,
+          hasError: false,
+        };
+      }
+
       const isCurrent = lastSkip === currentStepIndex;
       const hasError = stepErrors(trace.steps[lastSkip]).length > 0;
       return {
@@ -332,7 +353,8 @@ export function useValidationRuleDebugState(task: Task, workflow: Workflow, rule
       const rulesList = (rules?.rules as Array<{ message: string }>) || [];
       const rule = rulesList[ruleIndex];
       if (rule) {
-        hasError = errors.some(e => e.message.includes(rule.message));
+        // The engine records the rule's message verbatim, under this code.
+        hasError = errors.some((e) => e.code === 'VALIDATION_ERROR' && e.message === rule.message);
       }
     }
 

@@ -85,17 +85,24 @@ export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
   // current position: for a task, the task's latest step at or before it
   // (the current sweep's, for a loop; a skipped step's condition read the
   // context before it too); for a workflow, see above. A step after the
-  // position shows nothing, as the tree marks it pending.
+  // position shows nothing, as the tree marks it pending. Nor does a
+  // workflow its rollout refused: its `skipped` step looks like the
+  // condition's, but the condition was never read, and only the run's
+  // record (`selection`) says so.
   let conditionDebugData: Context | undefined;
   if (dbgContext?.state.isActive && dbgContext.state.trace && dbgContext.state.currentStepIndex >= 0) {
-    const { trace, contexts, currentStepIndex } = dbgContext.state;
+    const { trace, run, contexts, currentStepIndex } = dbgContext.state;
 
     let stepIndex = -1;
     if (selection.type === 'task-condition') {
       stepIndex = findTaskStepIndex(trace, currentStepIndex, selection.workflow.id, selection.task.id);
       if (stepIndex > currentStepIndex) stepIndex = -1;
     } else if (selection.type === 'workflow-condition') {
-      stepIndex = workflowConditionStepIndex(trace, currentStepIndex, selection.workflow.id);
+      const workflowId = selection.workflow.id;
+      const record = run?.workflows.find((w) => w.id === workflowId);
+      if (record?.selection !== 'skipped_by_rollout') {
+        stepIndex = workflowConditionStepIndex(trace, currentStepIndex, workflowId);
+      }
     }
     if (stepIndex !== -1) {
       conditionDebugData = contextAtStep(trace, contexts, stepIndex - 1);

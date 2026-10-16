@@ -1511,6 +1511,17 @@
   border-radius: 0 4px 4px 0;
 }
 
+/* The three severities, strongest first. REJECTED takes the error signal,
+   DEFECT the warning one, ADVISORY the muted board. */
+.df-debug-issue-rejected {
+  background: color-mix(in srgb, var(--df-error) 10%, transparent);
+  border-left-color: var(--df-error);
+}
+
+.df-debug-issue-rejected .df-debug-issue-code {
+  color: var(--df-error);
+}
+
 .df-debug-issue-defect {
   background: color-mix(in srgb, var(--df-warning) 6%, transparent);
   border-left-color: var(--df-warning);

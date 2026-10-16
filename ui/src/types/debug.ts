@@ -157,7 +157,7 @@ export function traceIsReplayable(trace: Trace): boolean {
 
 /**
  * Whether a step is the workflow's own, not a task's: its skip, its
- * failure, or the engine's writes as a loop sweep is entered.
+ * failure, or the engine's writes for its loop (see `isEngineStep`).
  */
 export function isWorkflowStep(step: TraceStep): boolean {
   return step.task === null;
@@ -165,8 +165,10 @@ export function isWorkflowStep(step: TraceStep): boolean {
 
 /**
  * Whether a step is the engine's: the writes of a loop's counter, `as` and
- * `scratch` as a sweep is entered, or as a limit stops the run. It belongs
- * to no task and skips no workflow.
+ * `scratch` before a sweep, or the counter write on which the loop exits
+ * (its `max` reached, or a limit stopping the run). The step does not say
+ * which: no sweep follows the last one, and a sweep the condition refused
+ * records no step. It belongs to no task and skips no workflow.
  */
 export function isEngineStep(step: TraceStep): boolean {
   return step.task === null && step.result === 'executed';
@@ -278,8 +280,8 @@ export function getWorkflowState(
     const step = trace.steps[stepIndex];
 
     // The workflow's own skipped step: its condition or its rollout refused
-    // it. The engine's steps (a sweep entered) are the workflow's too, but
-    // they are executed, not skipped.
+    // it. The engine's steps (its loop's counter writes) are the workflow's
+    // too, but they are executed, not skipped.
     if (isWorkflowStep(step) && step.result === 'skipped') {
       skipped = true;
     }

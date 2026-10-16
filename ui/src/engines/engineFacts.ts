@@ -1,5 +1,6 @@
 import * as wasm from '@goplasmatic/dataflow-wasm';
 import type { EngineFacts } from '@goplasmatic/dataflow-wasm';
+import { rethrowUninitialized } from './uninitialized';
 
 // Read off the namespace, as versionCheck.ts does. An engine released before
 // `engine_facts` existed would fail a *named* import at module-link time, with
@@ -34,17 +35,7 @@ export function engineFacts(): EngineFacts {
     try {
       facts = engineFactsFn();
     } catch (err) {
-      // Before `init()` the generated wrapper reads its export off an
-      // instance that is still undefined, which surfaces as a TypeError that
-      // names no cause. Anything else is the engine's own error, passed on.
-      if (err instanceof TypeError) {
-        throw new Error(
-          '@goplasmatic/dataflow-wasm must be initialized (`await init()`) before the UI ' +
-            "reads the engine's facts.",
-          { cause: err },
-        );
-      }
-      throw err;
+      rethrowUninitialized(err, "the UI reads the engine's facts");
     }
   }
   return facts;
