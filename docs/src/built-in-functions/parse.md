@@ -1,60 +1,28 @@
 # Parse Functions
 
-The parse functions convert payload data into structured context data. They are typically used at the start of a workflow to load input data into the processing context.
+`parse_json` and `parse_xml` bring input into the context. A workflow
+typically starts with one of them, because the payload is not part of the
+JSONLogic evaluation context: an expression reads `data`, `metadata` and
+`temp_data`, and nothing else. The parse functions are the only built-ins
+that read the payload.
+
+Both take the same two parameters:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `source` | string \| JSONLogic | Yes | What to read: `payload`, `payload.<path>`, or a context path such as `data.raw` |
+| `target` | string \| JSONLogic | Yes | Where to write, relative to `data`: `request` is `data.request` |
+
+`source` names a location, never a value. `target` is always under `data`, so
+a target spelled `data.t` lands at `data.data.t`. Either parameter may be
+computed from the message; a computed `source` may name the payload too.
 
 ## parse_json
 
-Extracts JSON data from the payload or data context and stores it in a target field.
-
-### Configuration
+Reads the value the source names and writes it at the target.
 
 ```json
 {
-    "function": {
-        "name": "parse_json",
-        "input": {
-            "source": "payload",
-            "target": "input_data"
-        }
-    }
-}
-```
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `source` | string \| JSONLogic | Yes | Path to read from: `payload`, `payload.field`, or `data.field` |
-| `target` | string \| JSONLogic | Yes | Field name in data where the result will be stored |
-
-Both are JSONLogic, so either can be computed per message:
-
-```json
-{
-    "source": {"cat": ["data.batches.", {"var": "temp_data.i"}]},
-    "target": {"cat": ["parsed_", {"var": "temp_data.i"}]}
-}
-```
-
-`source` resolves to the *name* of a location, never to the value at one.
-`payload` is not part of the JSONLogic evaluation context, so an expression
-could not read it even if it tried. The static spelling of either parameter is a
-plain string, which is JSONLogic for itself: it folds to a constant at build
-time and keeps the precomputed path split, so nothing changes for the ordinary
-case.
-
-Both name where the engine itself writes, and the destination is recorded in
-`Change.path` and on the audit trail, so neither may read `{"secret": …}`. See
-[Secrets](../advanced/secrets.md).
-
-### Examples
-
-#### Parse Entire Payload
-
-```json
-{
-    "id": "load_payload",
-    "name": "Load payload",
     "function": {
         "name": "parse_json",
         "input": {
@@ -65,131 +33,97 @@ Both name where the engine itself writes, and the destination is recorded in
 }
 ```
 
-**Input:**
+What is written depends on what the source holds:
+
+| The source holds | Written at `data.<target>` |
+|------------------|----------------------------|
+| A string that parses as JSON | The parsed value |
+| Any other string | The string, unchanged |
+| An object, array, number, boolean or `null` | A copy of the value |
+| Nothing (the path does not exist) | `null` |
+
+So `parse_json` never fails on its input. A payload that arrives as JSON text
+is parsed; one that arrives already structured is copied as it is.
+
+### Examples
+
+The whole payload, a path into it, a JSON string in the context, a context
+path, and a missing source:
+
 ```json
 {
-    "payload": {"name": "Alice", "age": 30}
+    "id": "w",
+    "tasks": [
+        {"id": "whole", "function": {"name": "parse_json", "input": {"source": "payload", "target": "request"}}},
+        {"id": "nested", "function": {"name": "parse_json", "input": {"source": "payload.body.user", "target": "user"}}},
+        {"id": "string", "function": {"name": "parse_json", "input": {"source": "data.raw", "target": "parsed"}}},
+        {"id": "plain", "function": {"name": "parse_json", "input": {"source": "data.plain", "target": "kept"}}},
+        {"id": "context", "function": {"name": "parse_json", "input": {"source": "temp_data.t", "target": "data.t"}}},
+        {"id": "missing", "function": {"name": "parse_json", "input": {"source": "payload.nothing", "target": "absent"}}}
+    ]
 }
 ```
 
-**Result:**
+Run over the payload `{"body": {"user": {"id": 123, "name": "Bob"}}, "n": 1}`
+and the data `{"raw": "{\"r\": 1, \"s\": [true]}", "plain": "not json"}`,
+every task records `200` and `data` ends as:
+
 ```json
 {
-    "data": {
-        "request": {"name": "Alice", "age": 30}
-    }
+    "raw": "{\"r\": 1, \"s\": [true]}",
+    "plain": "not json",
+    "request": {"body": {"user": {"id": 123, "name": "Bob"}}, "n": 1},
+    "user": {"id": 123, "name": "Bob"},
+    "parsed": {"r": 1, "s": [true]},
+    "kept": "not json",
+    "data": {"t": null},
+    "absent": null
 }
 ```
 
-#### Parse Nested Payload Field
+Note `data.data.t`: the target `data.t` is relative to `data`, like every
+other target. And `temp_data.t` was not set, so `null` was written.
+
+### Computed parameters
+
+Both parameters are JSONLogic, so one task can pick its source and target per
+message:
 
 ```json
 {
-    "id": "extract_body",
-    "name": "Extract body",
     "function": {
         "name": "parse_json",
         "input": {
-            "source": "payload.body.user",
-            "target": "user_data"
+            "source": {"cat": ["data.batches.", {"var": "temp_data.i"}]},
+            "target": {"cat": ["batch_", {"var": "temp_data.i"}]}
         }
     }
 }
 ```
 
-**Input:**
-```json
-{
-    "payload": {
-        "headers": {},
-        "body": {
-            "user": {"id": 123, "name": "Bob"}
-        }
-    }
-}
-```
+With `temp_data.i` at `2` and `data.batches` at `["a", "b", {"k": "c"}]`,
+this writes `data.batch_2 = {"k": "c"}`.
 
-**Result:**
-```json
-{
-    "data": {
-        "user_data": {"id": 123, "name": "Bob"}
-    }
-}
-```
+A literal `source` is checked when the engine is built: `"source": "extra.x"`
+names no payload path and no context root, so the definition is refused with
+`INVALID_PATH` at `tasks[0].function.input.source`. A computed source is
+checked when it is evaluated: one that resolves to `extra.x` fails the call
+with `CONFIG_ERROR` (``Task p error: path `extra.x` must start at `data`, `metadata` or `temp_data` ``),
+the audit entry records `500`, and the task's `on_failure` decides what
+happens next. A computed parameter that fails to
+evaluate fails the call the same way, with `LOGIC_ERROR`.
 
----
+Both parameters name where the engine writes, and the destination is recorded
+in each `Change`, so neither may read `{"secret": …}`. See
+[Secrets](../advanced/secrets.md).
 
 ## parse_xml
 
-Parses an XML string from the source path, converts it to JSON, and stores it in the target field.
-
-### Configuration
-
-```json
-{
-    "function": {
-        "name": "parse_xml",
-        "input": {
-            "source": "payload",
-            "target": "xml_data"
-        }
-    }
-}
-```
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `source` | string \| JSONLogic | Yes | Path to XML string: `payload`, `payload.field`, or `data.field` |
-| `target` | string \| JSONLogic | Yes | Field name in data where the parsed JSON will be stored |
-
-Both accept a computed value, exactly as for [`parse_json`](#parameters).
-
-### XML to JSON Conversion
-
-`parse_xml` converts XML with [`quick-xml`](https://docs.rs/quick-xml)'s serde
-deserializer, which reserves two key prefixes:
-
-Rows show whole documents, since that is what `source` hands the parser:
-
-| XML document | JSON at `data.<target>` |
-|-----|------|
-| `<root><name>Alice</name></root>` | `{"name": {"$text": "Alice"}}` |
-| `<root><person id="1" role="admin"/></root>` | `{"person": {"@id": "1", "@role": "admin"}}` |
-| `<root><empty/></root>` | `{"empty": {}}` |
-| `<root><a><b>x</b></a></root>` | `{"a": {"b": {"$text": "x"}}}` |
-
-Four consequences are worth planning for before you write the mappings that
-read the result:
-
-- **The outermost element is consumed, not represented.** `from_str`
-  deserializes the document *into* the target, so the root tag contributes no
-  key of its own: `<a><b>x</b></a>` on its own parses to `{"b": {"$text": "x"}}`.
-  Paths into the result start at the root's children, which is why every row
-  above needs a wrapper to show the element key at all.
-- **Text content lives under `$text`, not directly under the element key.** A
-  leaf element deserializes to an *object*, so the path to Alice's name is
-  `data.request.name.$text`; reading `data.request.name` hands you
-  `{"$text": "Alice"}`, and a condition comparing it to `"Alice"` is silently
-  false.
-- **Every value is a string.** `<age>30</age>` yields `{"$text": "30"}`: XML
-  carries no type information, so compare against `"30"` or convert explicitly.
-- **Repeated sibling elements do not become an array; only the last one
-  survives.** `<root><item>a</item><item>b</item></root>` parses to
-  `{"item": {"$text": "b"}}`, dropping `a`. For documents with repeated
-  elements, parse them in a [custom handler](../advanced/custom-functions.md)
-  that controls its own XML deserialization rather than using `parse_xml`.
-
-### Examples
-
-#### Parse XML Payload
+Reads the string the source names, parses it as an XML document, and writes
+the result at the target.
 
 ```json
 {
-    "id": "parse_xml_request",
-    "name": "Parse XML request",
     "function": {
         "name": "parse_xml",
         "input": {
@@ -200,84 +134,71 @@ read the result:
 }
 ```
 
-**Input:**
-```json
-{
-    "payload": "<user><name>Alice</name><email>alice@example.com</email></user>"
-}
-```
+The source must hold a string, and the string must be a document. Anything
+else fails the call with `VALIDATION_ERROR`:
 
-**Result:**
-```json
-{
-    "data": {
-        "request": {
-            "name": {"$text": "Alice"},
-            "email": {"$text": "alice@example.com"}
-        }
-    }
-}
-```
+| The source holds | Result |
+|------------------|--------|
+| A string holding an XML document | The document, converted as below |
+| A string that is not a document | `Validation error: Failed to parse XML: …` |
+| Anything but a string, or nothing | `Validation error: ParseXml: Source 'data.obj' is not a string` |
 
-To lift those leaves into plain scalars, follow the parse with a `map`:
+The audit entry records `500`, the message gets the record as
+`Task <id> error: <message>`, and the task's `on_failure` decides: by default
+the failure reaches the workflow and stops the run; with
+`"on_failure": "continue"` the next task runs.
 
-```json
-{
-    "id": "flatten_request",
-    "name": "Flatten request",
-    "function": {
-        "name": "map",
-        "input": {
-            "mappings": [
-                {"path": "data.user.name", "logic": {"var": "data.request.name.$text"}},
-                {"path": "data.user.email", "logic": {"var": "data.request.email.$text"}}
-            ]
-        }
-    }
-}
-```
+### XML to JSON conversion
 
-#### Parse Nested XML String
+The document is read with [`quick-xml`](https://docs.rs/quick-xml)'s serde
+reader. Text lands under `$text` and attributes under `@name`; the root
+element is consumed, so paths into the result start at its children. Each row
+shows a whole document, since that is what the source holds:
 
-```json
-{
-    "id": "parse_xml_body",
-    "name": "Parse XML body",
-    "function": {
-        "name": "parse_xml",
-        "input": {
-            "source": "payload.xmlContent",
-            "target": "parsed"
-        }
-    }
-}
-```
+| XML document | Written at `data.<target>` |
+|--------------|----------------------------|
+| `<root><name>Alice</name></root>` | `{"name": {"$text": "Alice"}}` |
+| `<root><person id="1" role="admin"/></root>` | `{"person": {"@id": "1", "@role": "admin"}}` |
+| `<root><person id="7">Ann</person></root>` | `{"person": {"@id": "7", "$text": "Ann"}}` |
+| `<root><empty/></root>` | `{"empty": {}}` |
+| `<root><a><b>x</b></a></root>` | `{"a": {"b": {"$text": "x"}}}` |
+| `<root><z>1</z><a>2</a><m>3</m></root>` | `{"z": {"$text": "1"}, "a": {"$text": "2"}, "m": {"$text": "3"}}` |
+| `<root><item>a</item><item>b</item></root>` | `{"item": {"$text": "b"}}` |
 
----
+Four consequences to plan for before writing the mappings that read the
+result:
 
-## Common Patterns
+- **A leaf is an object, not a string.** The path to Alice's name is
+  `data.request.name.$text`. A condition comparing `data.request.name` to
+  `"Alice"` is false, since the value there is `{"$text": "Alice"}`.
+- **Every value is a string.** `<age>30</age>` gives `{"$text": "30"}`. XML
+  carries no types; compare against `"30"` or convert.
+- **Elements keep document order, in every build.** The keys of the sixth
+  row come out as `z`, `a`, `m`, however the build's `serde_json` is
+  configured. 3.x's default build sorted them.
+- **A repeated element does not become an array.** It keeps its first
+  position and its last value, so the last row drops `a`. For a document with
+  repeated elements, parse it in a [host function](./host-functions.md) that
+  controls its own XML reader.
 
-### Load and Transform Pipeline
+### Example
 
 ```json
 {
+    "id": "w",
     "tasks": [
         {
-            "id": "load",
-            "name": "Load",
-            "function": {
-                "name": "parse_json",
-                "input": {"source": "payload", "target": "input"}
-            }
+            "id": "parse",
+            "function": {"name": "parse_xml", "input": {"source": "payload", "target": "request"}}
         },
         {
-            "id": "transform",
-            "name": "Transform",
+            "id": "flatten",
             "function": {
                 "name": "map",
                 "input": {
                     "mappings": [
-                        {"path": "data.output.name", "logic": {"var": "data.input.name"}}
+                        {"path": "data.user.name", "logic": {"var": "data.request.name.$text"}},
+                        {"path": "data.user.email", "logic": {"var": "data.request.email.$text"}}
                     ]
                 }
             }
@@ -286,48 +207,62 @@ To lift those leaves into plain scalars, follow the parse with a `map`:
 }
 ```
 
-### Handle XML API Response
+With the payload `"<user><name>Alice</name><email>alice@example.com</email></user>"`,
+`data` ends as:
 
 ```json
 {
+    "request": {
+        "name": {"$text": "Alice"},
+        "email": {"$text": "alice@example.com"}
+    },
+    "user": {
+        "name": "Alice",
+        "email": "alice@example.com"
+    }
+}
+```
+
+The `map` lifts the `$text` leaves into plain strings, which is the usual
+second step after `parse_xml`.
+
+## Failures
+
+`parse_json` fails only on a computed source that names no source, or a
+computed parameter that does not evaluate. `parse_xml` fails on a source that
+is not a string or not a document. Each failure records `500` on the audit
+trail and a record on the message; `on_failure` on the task decides whether
+the workflow goes on:
+
+```json
+{
+    "id": "w",
     "tasks": [
         {
-            "id": "parse_response",
-            "name": "Parse response",
-            "function": {
-                "name": "parse_xml",
-                "input": {"source": "payload.response", "target": "apiResponse"}
-            }
+            "id": "broken",
+            "on_failure": "continue",
+            "function": {"name": "parse_xml", "input": {"source": "data.broken", "target": "doc"}}
         },
         {
-            "id": "extract_data",
-            "name": "Extract data",
-            "function": {
-                "name": "map",
-                "input": {
-                    "mappings": [
-                        {"path": "data.result", "logic": {"var": "data.apiResponse.result.$text"}}
-                    ]
-                }
-            }
+            "id": "after",
+            "function": {"name": "map", "input": {"mappings": [{"path": "data.after", "logic": true}]}}
         }
     ]
 }
 ```
 
-## Error Handling
+With `data.broken` at `"<a><b></a>"`, `broken` records `500`, the message
+gets a `VALIDATION_ERROR` record with the text
 
-- **parse_json**: Never fails. A string source is parsed as JSON; if it does not
-  parse, the string is stored as-is. A non-string source is stored unchanged.
-- **parse_xml**: Returns an error if the source is not a string or if XML parsing fails
+```text
+Task broken error: Validation error: Failed to parse XML: ill-formed document: expected `</b>`, but `</a>` was found
+```
 
-A *successful* `parse_xml` can still lose data: repeated sibling elements
-collapse to the last one, as described under
-[XML to JSON Conversion](#xml-to-json-conversion). `parse_xml` does not report
-that as an error.
+and `after` still runs. Without `"on_failure": "continue"` the run stops at
+`broken`, with that error as the run's status.
 
 ## Next Steps
 
-- [Map Function](./map.md) - Transform the parsed data
-- [Validation Function](./validation.md) - Validate the data structure
-- [Publish Functions](./publish.md) - Serialize data for output
+- [Map](./map.md): transform the parsed data
+- [Validation](./validation.md): check it
+- [Publish](./publish.md): serialize it for output

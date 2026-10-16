@@ -1,34 +1,84 @@
 # Publish Functions
 
-The publish functions serialize structured data into string formats (JSON or XML). A workflow typically calls them last, to prepare output data for transmission or storage.
+`publish_json` and `publish_xml` serialize a value under `data` into a string
+under `data`. A workflow typically calls one last, to prepare the text it
+sends on.
+
+Both share one config:
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `source` | string \| JSONLogic | Yes | | What to serialize, relative to `data`: `response` is `data.response`, `response.user` is `data.response.user` |
+| `target` | string \| JSONLogic | Yes | | Where the text is written, relative to `data` |
+| `pretty` | boolean | No | `false` | Indent the JSON. `publish_json` only |
+| `root_element` | string \| JSONLogic | No | `"root"` | The document's root element. `publish_xml` only |
+
+`source` and `target` name locations, never values, and either may be
+computed from the message. A `source` that begins with `data.` is read with
+3.x's fallback: `data.response` reads `data.data.response` and, when that is
+missing, `data.response`.
+
+The source must exist and not be `null`. Otherwise the call fails with
+`VALIDATION_ERROR`:
+
+```text
+Validation error: PublishJson: Source 'data.absent' not found or is null
+```
+
+The audit entry records `500`, the message gets the record as
+`Task <id> error: <message>`, and the task's `on_failure` decides: by default
+the failure reaches the workflow and stops the run; with
+`"on_failure": "continue"` the next task runs. A computed parameter that
+fails to evaluate fails the call the same way, with `LOGIC_ERROR`.
+
+Both parameters name where the engine writes, and the destination is recorded
+in each `Change`, so neither may read `{"secret": …}`, and nor may
+`root_element`, which is written into the document. See
+[Secrets](../advanced/secrets.md).
 
 ## publish_json
 
-Serializes data from the source field to a JSON string.
-
-### Configuration
+Serializes the source to JSON text: compact, or indented with `pretty`.
 
 ```json
 {
     "function": {
         "name": "publish_json",
         "input": {
-            "source": "output",
-            "target": "json_string"
+            "source": "response",
+            "target": "body"
         }
     }
 }
 ```
 
-### Parameters
+With `data.response` at `{"status": "success", "count": 42}`:
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `source` | string \| JSONLogic | Yes | - | Field name in data to serialize (e.g., `output` or `nested.field`) |
-| `target` | string \| JSONLogic | Yes | - | Field name where the JSON string will be stored |
-| `pretty` | boolean | No | `false` | Whether to pretty-print the JSON output. **Static**, so the output shape is known at build time |
+```json
+{
+    "response": {"status": "success", "count": 42},
+    "body": "{\"status\":\"success\",\"count\":42}"
+}
+```
 
-`source` and `target` are JSONLogic, so either can be computed per message:
+With `"pretty": true`:
+
+```json
+{
+    "pretty_body": "{\n  \"status\": \"success\",\n  \"count\": 42\n}"
+}
+```
+
+A scalar source serializes too: `"source": "response.count"` writes `"42"`.
+
+### Key order
+
+Compact and pretty JSON both keep the source's key order, in every build. A
+value written as `z` then `a` publishes as `{"z":1,"a":…}`, compact or
+indented. 3.x's default build sorted the keys of pretty JSON, and of XML,
+unless `serde_json`'s `preserve_order` was on; 4.0 does not depend on it.
+
+### Computed parameters
 
 ```json
 {
@@ -37,208 +87,84 @@ Serializes data from the source field to a JSON string.
 }
 ```
 
-Both resolve to the *name* of a location, not to the value at one. The static
-spelling is a plain string, which is JSONLogic for itself: it folds to a
-constant at build time and keeps the precomputed path split, so nothing changes
-for the ordinary case.
-
-Both name where the engine itself writes, and the destination is recorded in
-`Change.path` and on the audit trail, so neither may read `{"secret": …}`. See
-[Secrets](../advanced/secrets.md).
-
-### Examples
-
-#### Serialize Data to JSON
-
-```json
-{
-    "id": "publish_response",
-    "name": "Publish response",
-    "function": {
-        "name": "publish_json",
-        "input": {
-            "source": "response",
-            "target": "responseBody"
-        }
-    }
-}
-```
-
-**Input:**
-```json
-{
-    "data": {
-        "response": {"status": "success", "count": 42}
-    }
-}
-```
-
-**Result:**
-```json
-{
-    "data": {
-        "response": {"status": "success", "count": 42},
-        "responseBody": "{\"status\":\"success\",\"count\":42}"
-    }
-}
-```
-
-#### Pretty-Print JSON
-
-```json
-{
-    "id": "publish_pretty",
-    "name": "Publish pretty",
-    "function": {
-        "name": "publish_json",
-        "input": {
-            "source": "user",
-            "target": "userJson",
-            "pretty": true
-        }
-    }
-}
-```
-
-**Result:**
-```json
-{
-    "data": {
-        "userJson": "{\n  \"name\": \"Alice\",\n  \"age\": 30\n}"
-    }
-}
-```
-
----
+With `data.format` at `"a"`, this serializes `data.outputs.a` into
+`data.rendered_a`.
 
 ## publish_xml
 
-Serializes data from the source field to an XML string.
-
-### Configuration
+Serializes the source to an XML document under the root element.
 
 ```json
 {
-    "function": {
-        "name": "publish_xml",
-        "input": {
-            "source": "output",
-            "target": "xml_string",
-            "root_element": "Response"
-        }
-    }
-}
-```
-
-### Parameters
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `source` | string \| JSONLogic | Yes | - | Field name in data to serialize |
-| `target` | string \| JSONLogic | Yes | - | Field name where the XML string will be stored |
-| `root_element` | string \| JSONLogic | No | `root` | Name of the root XML element |
-
-`source` and `target` accept a computed value exactly as for
-[`publish_json`](#parameters), and so does `root_element`, so one task can name
-the document after the message it is serializing:
-
-```json
-{"source": "output", "target": "xml", "root_element": {"var": "data.doc_type"}}
-```
-
-`root_element` is written into the serialized document that lands in
-`data.{target}`, so it may not read a secret either.
-
-### JSON to XML Conversion
-
-The serializer follows these rules:
-- Object keys become XML element names
-- Array items are wrapped in `<item>` elements
-- Special characters are escaped (`<`, `>`, `&`, `"`, `'`)
-- Invalid XML element names are sanitized (e.g., names starting with numbers get an underscore prefix)
-
-`publish_xml` is **not** the inverse of `parse_xml`. It has no notion of the
-`$text` and `@name` keys `parse_xml` produces. They are ordinary object keys,
-and sanitization turns them into `<_text>` and `<_name>` *elements* rather than
-a text node or an attribute. Lift the `$text` leaves with a `map` before
-publishing; see
-[XML to JSON Conversion](./parse.md#xml-to-json-conversion).
-
-### Examples
-
-#### Serialize Data to XML
-
-```json
-{
-    "id": "publish_xml_response",
-    "name": "Publish XML response",
     "function": {
         "name": "publish_xml",
         "input": {
             "source": "user",
-            "target": "userXml",
+            "target": "user_xml",
             "root_element": "User"
         }
     }
 }
 ```
 
-**Input:**
-```json
-{
-    "data": {
-        "user": {"name": "Alice", "age": 30}
-    }
-}
-```
-
-**Result:**
-```json
-{
-    "data": {
-        "user": {"name": "Alice", "age": 30},
-        "userXml": "<User><name>Alice</name><age>30</age></User>"
-    }
-}
-```
-
-#### Serialize Nested Data
+With `data.user` at `{"name": "Alice", "age": 30, "tags": ["a", "b"], "active": true, "note": null}`:
 
 ```json
 {
-    "id": "publish_nested",
-    "name": "Publish nested",
-    "function": {
-        "name": "publish_xml",
-        "input": {
-            "source": "response.data",
-            "target": "xmlOutput",
-            "root_element": "Data"
-        }
-    }
+    "user_xml": "<User><name>Alice</name><age>30</age><tags><item>a</item><item>b</item></tags><active>true</active><note></note></User>"
 }
 ```
 
----
+Without `root_element` the document is wrapped in `<root>`. `root_element`
+is JSONLogic too, so one task can name the document after the message:
 
-## Common Patterns
+```json
+{"source": "user", "target": "doc", "root_element": {"var": "data.doc_type"}}
+```
 
-### Complete API Pipeline
+### JSON to XML conversion
+
+| Value | Written as |
+|-------|------------|
+| An object | One element per key, in the object's order, named after the key |
+| An array | One `<item>` element per element |
+| A string | Its text, with `&`, `<`, `>`, `"` and `'` escaped |
+| A number or boolean | Its text |
+| `null` | An empty element |
+
+A key that is not an XML name is sanitized: a first character that is not a
+letter or `_` gets a `_` in front, any other character that is not a letter,
+digit, `-`, `_` or `.` becomes `_`, and an empty key becomes `_element`.
+
+| Key | Element |
+|-----|---------|
+| `123field` | `<_123field>` |
+| `field name` | `<field_name>` |
+| `field@attr` | `<field_attr>` |
+| `ok-name_1.x` | `<ok-name_1.x>` |
+| (empty) | `<_element>` |
+
+`publish_xml` is not the inverse of `parse_xml`. The `$text` and `@name` keys
+`parse_xml` produces are ordinary keys here, and sanitization turns them into
+`<_text>` and `<_name>` elements, not a text node or an attribute:
+`{"name": {"$text": "Alice"}}` publishes as
+`<root><name><_text>Alice</_text></name></root>`. Lift the `$text` leaves
+with a `map` first; see
+[XML to JSON conversion](./parse.md#xml-to-json-conversion).
+
+## Common patterns
+
+### Request in, response out
 
 ```json
 {
     "tasks": [
         {
             "id": "parse_request",
-            "name": "Parse request",
-            "function": {
-                "name": "parse_json",
-                "input": {"source": "payload", "target": "request"}
-            }
+            "function": {"name": "parse_json", "input": {"source": "payload", "target": "request"}}
         },
         {
             "id": "process",
-            "name": "Process",
             "function": {
                 "name": "map",
                 "input": {
@@ -250,32 +176,23 @@ publishing; see
         },
         {
             "id": "publish_response",
-            "name": "Publish response",
-            "function": {
-                "name": "publish_json",
-                "input": {"source": "response", "target": "body"}
-            }
+            "function": {"name": "publish_json", "input": {"source": "response", "target": "body"}}
         }
     ]
 }
 ```
 
-### XML-to-XML Transformation
+### XML in, XML out
 
 ```json
 {
     "tasks": [
         {
-            "id": "parse_xml",
-            "name": "Parse XML",
-            "function": {
-                "name": "parse_xml",
-                "input": {"source": "payload", "target": "input"}
-            }
+            "id": "parse",
+            "function": {"name": "parse_xml", "input": {"source": "payload", "target": "input"}}
         },
         {
             "id": "transform",
-            "name": "Transform",
             "function": {
                 "name": "map",
                 "input": {
@@ -286,60 +203,55 @@ publishing; see
             }
         },
         {
-            "id": "publish_xml",
-            "name": "Publish XML",
-            "function": {
-                "name": "publish_xml",
-                "input": {"source": "output", "target": "xmlResponse", "root_element": "Result"}
-            }
+            "id": "publish",
+            "function": {"name": "publish_xml", "input": {"source": "output", "target": "xml", "root_element": "Result"}}
         }
     ]
 }
 ```
 
-### Generate Both JSON and XML Outputs
+### Both formats
 
 ```json
 {
     "tasks": [
         {
             "id": "publish_json",
-            "name": "Publish JSON",
-            "function": {
-                "name": "publish_json",
-                "input": {"source": "response", "target": "jsonOutput"}
-            }
+            "function": {"name": "publish_json", "input": {"source": "response", "target": "json_output"}}
         },
         {
             "id": "publish_xml",
-            "name": "Publish XML",
-            "function": {
-                "name": "publish_xml",
-                "input": {"source": "response", "target": "xmlOutput", "root_element": "Response"}
-            }
+            "function": {"name": "publish_xml", "input": {"source": "response", "target": "xml_output", "root_element": "Response"}}
         }
     ]
 }
 ```
 
-## Error Handling
+### A missing source, without stopping the run
 
-- **publish_json**: Returns an error if the source field is not found or is null
-- **publish_xml**: Returns an error if the source field is not found or is null
+```json
+{
+    "id": "w",
+    "tasks": [
+        {
+            "id": "publish",
+            "on_failure": "continue",
+            "function": {"name": "publish_json", "input": {"source": "absent", "target": "body"}}
+        },
+        {
+            "id": "after",
+            "function": {"name": "map", "input": {"mappings": [{"path": "data.after", "logic": true}]}}
+        }
+    ]
+}
+```
 
-## XML Element Name Sanitization
-
-XML has strict rules for element names. The publish_xml function automatically sanitizes invalid names:
-
-| Original | Sanitized |
-|----------|-----------|
-| `123field` | `_123field` |
-| `field name` | `field_name` |
-| `field@attr` | `field_attr` |
-| `` (empty) | `_element` |
+`publish` records `500` and the record
+`VALIDATION_ERROR` `Task publish error: Validation error: PublishJson: Source 'data.absent' not found or is null`,
+and `after` runs. The run ends `CompletedWithErrors`.
 
 ## Next Steps
 
-- [Parse Functions](./parse.md) - Parse input data
-- [Map Function](./map.md) - Transform data
-- [Validation Function](./validation.md) - Validate before publishing
+- [Parse](./parse.md): read the input
+- [Map](./map.md): shape the value to publish
+- [Validation](./validation.md): check it before publishing

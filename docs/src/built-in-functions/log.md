@@ -1,17 +1,8 @@
-# Log (Structured Logging)
+# Log Function
 
-The `log` function emits structured log records from inside a workflow through the Rust `log` crate. Log messages and fields accept JSONLogic expressions for dynamic content.
-
-## Overview
-
-With `log` you can:
-
-- Emit structured log messages at any point in a workflow
-- Use JSONLogic expressions for dynamic message content
-- Attach structured fields for machine-readable log data
-- Debug data flow without modifying the message
-
-## Configuration
+`log` emits a log line through the Rust [`log`](https://docs.rs/log) crate,
+with a message and structured fields computed from the message. It writes
+nothing to the context and always returns `200`.
 
 ```json
 {
@@ -19,65 +10,9 @@ With `log` you can:
         "name": "log",
         "input": {
             "level": "info",
-            "message": "JSONLogic expression or static string",
-            "fields": {
-                "field_name": "JSONLogic expression"
-            }
-        }
-    }
-}
-```
-
-### Fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `level` | string | No | Log level: `trace`, `debug`, `info` (default), `warn`, `error` |
-| `message` | JSONLogic | Yes | The log message (evaluated as JSONLogic against message context) |
-| `fields` | object | No | Key-value pairs where values are JSONLogic expressions |
-
-## Log Levels
-
-| Level | Use Case |
-|-------|----------|
-| `trace` | Very detailed debugging (function entry/exit, variable values) |
-| `debug` | Debugging information (intermediate processing state) |
-| `info` | General informational messages (processing milestones) |
-| `warn` | Warning conditions (unusual but not erroneous states) |
-| `error` | Error conditions (failures that are handled) |
-
-## Examples
-
-### Simple Static Message
-
-```json
-{
-    "id": "log_start",
-    "name": "Log start",
-    "function": {
-        "name": "log",
-        "input": {
-            "level": "info",
-            "message": "Starting order processing"
-        }
-    }
-}
-```
-
-### Dynamic Message with JSONLogic
-
-```json
-{
-    "id": "log_order",
-    "name": "Log order",
-    "function": {
-        "name": "log",
-        "input": {
-            "level": "info",
-            "message": {"cat": ["Processing order ", {"var": "data.order.id"}, " for $", {"var": "data.order.total"}]},
+            "message": {"cat": ["Processing order ", {"var": "data.order.id"}]},
             "fields": {
                 "order_id": {"var": "data.order.id"},
-                "customer": {"var": "data.customer.name"},
                 "total": {"var": "data.order.total"}
             }
         }
@@ -85,32 +20,100 @@ With `log` you can:
 }
 ```
 
-### Debug Logging
+## Configuration
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `level` | string | No | `trace`, `debug`, `info` (the default), `warn` or `error` |
+| `message` | JSONLogic | Yes | The line's text |
+| `fields` | object | No | Structured fields, each JSONLogic, emitted in key order |
+
+## The line
+
+The line is `message [key=value, ...]`, the fields sorted by key. A result
+that is a string is written as it is; anything else as compact JSON. Over
+`{"order": {"id": "ORD-7", "total": 99.5, "items": [1, 2]}, "customer": {"name": "Ada"}}`,
 
 ```json
 {
-    "id": "debug_state",
-    "name": "Debug state",
-    "function": {
-        "name": "log",
-        "input": {
-            "level": "debug",
-            "message": {"cat": ["Current data state: ", {"var": "data"}]},
-            "fields": {
-                "has_email": {"!!": {"var": "data.email"}},
-                "item_count": {"var": "data.items.length"}
-            }
-        }
+    "level": "info",
+    "message": {"cat": ["Processing order ", {"var": "data.order.id"}, " for ", {"var": "data.order.total"}]},
+    "fields": {
+        "order_id": {"var": "data.order.id"},
+        "customer": {"var": "data.customer.name"},
+        "total": {"var": "data.order.total"},
+        "items": {"var": "data.order.items"}
     }
 }
 ```
 
-### Warning on Edge Cases
+emits, at `info` under the target `dataflow::log`:
+
+```text
+Processing order ORD-7 for 99.5 [customer=Ada, items=[1,2], order_id=ORD-7, total=99.5]
+```
+
+An expression that fails to evaluate is written as `<eval error>`, in the
+message or in a field, and the failure is logged at `error` by the engine
+itself. The task still returns `200`:
+
+```text
+<eval error> [x=<eval error>]
+```
+
+## Levels
+
+| Level | Use |
+|-------|-----|
+| `trace` | Very detailed tracing: every value on the way through |
+| `debug` | Intermediate state while developing a workflow |
+| `info` | Processing milestones |
+| `warn` | Unusual but handled states |
+| `error` | Failures the workflow handled |
+
+A level the logger filters out costs nothing: when `dataflow::log` is not
+enabled at the task's level, no expression is evaluated and the call returns
+`200`. A `trace` task under an `info` logger does no work at all.
+
+## The target
+
+Every line is emitted under the target `dataflow::log`, so a logging
+configuration can address it on its own. With `env_logger`:
+
+```bash
+RUST_LOG=dataflow::log=info cargo run
+```
+
+Or in code:
+
+```rust
+env_logger::Builder::new()
+    .filter_module("dataflow::log", log::LevelFilter::Debug)
+    .init();
+```
+
+The engine's own lines, such as a `map` mapping's failure or a `log`
+expression's evaluation error, go under the engine's module targets, not
+under `dataflow::log`.
+
+## Examples
+
+### A static message
+
+```json
+{
+    "id": "log_start",
+    "function": {"name": "log", "input": {"message": "Starting order processing"}}
+}
+```
+
+### A warning on an edge case
+
+A task `condition` keeps the line for the messages it is about:
 
 ```json
 {
     "id": "warn_missing",
-    "name": "Warn missing",
     "condition": {"!": {"var": "data.shipping_address"}},
     "function": {
         "name": "log",
@@ -122,30 +125,39 @@ With `log` you can:
 }
 ```
 
-## Log Target
+### Debugging a context
 
-Every log message uses the target `dataflow::log`, so you can filter on it in your logging configuration.
-
-Filter via `RUST_LOG` when running:
-
-```bash
-RUST_LOG=dataflow::log=info cargo run
+```json
+{
+    "id": "debug_state",
+    "function": {
+        "name": "log",
+        "input": {
+            "level": "debug",
+            "message": "Current state",
+            "fields": {
+                "data": {"var": "data"},
+                "has_email": {"!!": {"var": "data.email"}}
+            }
+        }
+    }
+}
 ```
 
-Or configure the filter in code:
+The `data` field writes the whole of `data` as compact JSON.
 
-```rust
-env_logger::Builder::new()
-    .filter_module("dataflow::log", log::LevelFilter::Debug)
-    .init();
-```
+## Secrets
+
+A log line leaves the engine, so neither `message` nor any field may read
+`{"secret": "name"}`: the definition is refused with
+`SECRET_IN_MESSAGE_WRITE` at the expression. See
+[Secrets](../advanced/secrets.md).
 
 ## Notes
 
-- The log function **never modifies the message**; it is read-only
-- The log function **never fails**; it always returns status 200 with no changes
-- The engine **pre-compiles** all JSONLogic expressions in `message` and `fields` at startup
-- If the configured level is **filtered out** for the `dataflow::log` target (e.g. via `RUST_LOG`), the task short-circuits before evaluating any expression, so a disabled log task costs effectively nothing
-- If a JSONLogic expression fails to evaluate, the task logs the raw expression value instead
-- The `fields` are formatted as `key=value` pairs appended to the log message
-- Neither `message` nor any field may read `{"secret": "name"}`. A log line is an exit the engine does not control, so `Engine::build()` rejects it with `SECRET_IN_MESSAGE_WRITE`. See [Secrets](../advanced/secrets.md)
+- `log` never modifies the message and never fails: every call records
+  `200` with no changes.
+- The expressions are compiled when the engine is built; a static message
+  folds to a constant.
+- The fields are a `BTreeMap`, so they are emitted sorted by key whatever
+  order they were written in.
