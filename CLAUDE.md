@@ -240,6 +240,36 @@ failure records into the context and resets that path at run start (break
 observer, trace or error context, a call takes the plain recorder: the
 unobserved path pays one branch per call.
 
+**v4's surface is settled for its hosts** (phase 7a). The wire shapes read
+back: `Message`, `Context` (now in the private `base`, re-exported as
+`run::Context`) and `Trace` implement `Deserialize`, and every message and
+trace v4 writes reads back byte for byte, a whole-number float staying a float
+and serde_json built with `float_roundtrip`, so a computed float reads back to
+its bits. A context holds only `data`, `metadata` and `temp_data`: a fourth
+key, a context that is not an object and a root named twice are refused, and
+the roots are written in that order however they were read (break 22). `Run`
+serializes as `{status, error?, retryable, partial, matched, workflows}`, and
+`Error` as `{code, message, retryable}`. A `TraceStep` carries `errors`, every
+record it added, in place of `error`, and a `map` step carries
+`mapping_ends`, where each mapping's changes end; only a trace makes either.
+The `wasm-web` feature (v3's name) builds the library for
+`wasm32-unknown-unknown`, which CI clippies, and `run::Instant` is
+`web_time::Instant`. A config resolves through one derived resolver:
+`Ctx::input()`, for layers and dry runs, is the callee's config resolved with
+every secret-reading field `null` and never evaluated, and `Ctx::resolve(&cfg)`
+is its unredacted counterpart; `Resolver` is sealed and implemented for
+`&Ctx`, and a hand-written config must implement `FunctionConfig::resolve`, as
+a field type must `ConfigField::resolve`. A host function's write of anything
+but an object at a root is refused (break 21). `--features ts` writes
+`v4/bindings/dataflow.d.ts` from the wire types (`DATAFLOW_TS_WRITE=1 cargo
+test -p dataflow-rs-v4 --features ts --test ts_types`), and a drift test holds
+the committed file, doc comments included, so a doc edit on a wire type means
+regenerating it. Pretty `publish_json`, `publish_xml` and `parse_xml` keep the
+source's key order in every build (break 23), so v4's bytes do not depend on
+serde_json's `preserve_order`, which Orion's graph turns on; CI holds that with
+`cargo test -p dataflow-rs-v4 --features serde_json/preserve_order` and
+`cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order`.
+
 v4's own checks, beside the workspace-wide ones above:
 
 ```bash
@@ -247,6 +277,9 @@ cargo clippy -p dataflow-rs-v4 --all-targets -- -D warnings
 cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
 cargo test -p dataflow-rs-v4
 cargo test -p dataflow-corpus-v4
+cargo test -p dataflow-rs-v4 --features serde_json/preserve_order
+cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order
+cargo test -p dataflow-rs-v4 --features ts --test ts_types
 for f in datetime ext-string ext-array ext-math ext-control ext-object \
          error-handling all-operators tensor budget; do
   cargo test -p dataflow-rs-v4 --no-default-features --features "$f"
@@ -703,14 +736,14 @@ alters what a message ends up as re-records the affected cases and is read
 before it is committed; never edit a `.v3.json` by hand. The comparator is
 order-sensitive, because key order is wire data.
 
-`cargo test --workspace --all-features` should report 1716 passing: the
+`cargo test --workspace --all-features` should report 1787 passing: the
 engine's 867 plus the corpus's 36 (its case checks are one test each way),
-v4's 790, the derive's 2 and v4's corpus driver's 21.
+v4's 858, the derive's 2 and v4's corpus driver's 24.
 `cargo test -p dataflow-rs` (default features) should report 753,
-`cargo test -p dataflow-corpus-v3` 3, `cargo test -p dataflow-rs-v4` 771 and
-`cargo test -p dataflow-corpus-v4` 21. The operator families are
+`cargo test -p dataflow-corpus-v3` 3, `cargo test -p dataflow-rs-v4` 833 and
+`cargo test -p dataflow-corpus-v4` 24. The operator families are
 `#[cfg]`-gated on both sides, so the counts legitimately differ: v4 reports
-781 under `--no-default-features --features all-operators`.
+843 under `--no-default-features --features all-operators`.
 The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
 `tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and
 `with_ops_budget`'s doctest is gated too.
