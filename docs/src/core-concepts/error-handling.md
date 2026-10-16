@@ -1,235 +1,307 @@
 # Error Handling
 
-Dataflow-rs handles errors at the action, rule and engine levels.
+Dataflow-rs handles errors at the task, workflow and run levels.
 
-## Two complementary error channels
+## One Error List and a Run Report
 
-Every error encountered during `process_message` flows through two
-complementary channels:
+Every error recorded during a run lands in one place, and the run reports
+how it ended:
 
-- **`message.errors()`** **always** contains every error encountered:
-  validation failures, task panics, 5xx-status outcomes, workflow
-  wrappers. Scan this list for a uniform view.
-- **`Result::Err` from `process_message`** signals **only** that the
-  engine stopped before processing every workflow. Match on it for
-  fail-fast behaviour; the error pushed to `message.errors()` for the
-  same failure carries the workflow context that the bare `Err` doesn't.
+- **`message.errors()`** holds every error recorded: validation failures,
+  `5xx` outcomes, a host function's `Err`, and any record a function added
+  itself. Each record carries its `code`, its `message`, and the
+  `workflow_id` and `task_id` it came from.
+- **`Run::status()`** says how the run ended. `Completed` and
+  `CompletedWithErrors` mean every considered workflow finished, the second
+  with records on the message. `Stopped(error)` means a task's failure
+  stopped the run before every workflow was considered, and carries the
+  error that stopped it. `TimedOut` and `Cancelled` are the run's own
+  limits.
 
-A workflow with `continue_on_error: true` records its errors to
-`message.errors()` and returns `Ok(())`. A workflow with
-`continue_on_error: false` records to `message.errors()` *and* returns
-`Result::Err` (which short-circuits the rest of `process_message`).
-
-## Error Levels
-
-Errors can be handled at three levels:
-
-1. **Action Level** - Individual action (task) error handling
-2. **Rule Level** - Rule-wide (workflow) error policy
-3. **Engine Level** - Processing errors
-
-## Action-Level Error Handling
-
-### Stop on Error (Default)
-
-```json
-{
-    "id": "critical_action",
-    "continue_on_error": false,
-    "function": { ... }
-}
-```
-
-If the action fails:
-- Error is recorded in `message.errors()`
-- Rule execution stops
-- No further actions execute
-
-### Continue on Error
-
-```json
-{
-    "id": "optional_action",
-    "continue_on_error": true,
-    "function": { ... }
-}
-```
-
-If the action fails:
-- Error is recorded in `message.errors()`
-- Rule continues to next action
-
-## Rule-Level Error Handling
-
-The two `continue_on_error` flags answer **different questions**, and the
-rule-level one is not a default for its actions:
-
-| Flag | Question it answers |
-|------|--------------------|
-| on an **action** | When this action fails, do the *remaining actions in this rule* still run? |
-| on a **rule** | When this rule fails, do the *subsequent rules* still run, and does `process_message` return `Ok`? |
-
-There is no third level. A [task group](../advanced/control-flow.md#groups)
-carrying `continue_on_error` parses and does nothing (a group gates a span; it
-does not handle errors), and `check_workflow` reports it as
-`GROUP_CONTINUE_ON_ERROR`.
-
-Written out as a matrix, where "action fails" means it returned an error or a
-`5xx` status:
-
-| action flag | rule flag | Later actions in the rule | Later rules | `process_message` |
-|---|---|---|---|---|
-| `false` | `false` | stop | stop | `Err` |
-| `false` | `true` | stop | run | `Ok` |
-| `true` | *(either)* | run | run | `Ok` |
-
-So a rule marked `continue_on_error: true` whose actions leave the flag unset
-still stops at its first failing action, but it does not take the rest of the
-engine down with it:
-
-```json
-{
-    "id": "resilient_rule",
-    "continue_on_error": true,
-    "tasks": [
-        {"id": "action1", "continue_on_error": true, "function": { ... }},
-        {"id": "action2", "continue_on_error": true, "function": { ... }},
-        {"id": "action3", "function": { ... }}
-    ]
-}
-```
-
-Because each action opts in, the rule runs to the end even if `action1` and
-`action2` fail; `action3` leaves the flag unset, so a failure there still stops
-the rule. The rule-level flag keeps later rules running.
-
-### Mixing the two levels
-
-```json
-{
-    "id": "mixed_rule",
-    "continue_on_error": true,
-    "tasks": [
-        {"id": "optional_action", "continue_on_error": true, "function": { ... }},
-        {
-            "id": "critical_action",
-            "continue_on_error": false,
-            "function": { ... }
-        }
-    ]
-}
-```
-
-`optional_action` may fail without consequence. If `critical_action` fails, the
-rest of this rule is abandoned, but the engine moves on to the next rule and
-`process_message` still returns `Ok`; the engine reports the failure through
-`message.errors()` only. Set the rule's flag to `false` as well to make that
-failure stop the run and surface as `Err`.
-
-## Accessing Errors
-
-After processing, walk `message.errors()`:
+A run that stops adds no extra record: the failing task's own record carries
+the workflow id, and the `Run` carries the error.
 
 ```rust
 # use dataflow_rs::{Engine, Message};
 # async fn _demo(engine: Engine, mut message: Message) {
-let result = engine.process_message(&mut message).await;
+use dataflow_rs::run::RunStatus;
+
+let run = engine.run(&mut message).await;
 
 for error in message.errors() {
-    println!("Error: {} in {}/{}",
-        error.message,
-        error.workflow_id.as_deref().unwrap_or("unknown"),
-        error.task_id.as_deref().unwrap_or("unknown")
+    println!(
+        "{} in {}/{}: {}",
+        error.code,
+        error.workflow_id.as_deref().unwrap_or("-"),
+        error.task_id.as_deref().unwrap_or("-"),
+        error.message
     );
 }
 
-// Fail-fast signal — true when the engine stopped before all workflows ran.
-if let Err(e) = result {
-    eprintln!("engine stopped early: {e}");
+// The fail-fast signal: the engine stopped before every workflow ran.
+if let RunStatus::Stopped(error) = run.status() {
+    eprintln!("stopped early: {error} ({})", error.code());
 }
+// Or, for a caller that wants a `?`:
+let run = run.into_result();
+# let _ = run;
 # }
 ```
 
-Common error codes you'll see:
+`into_result()` is `Ok(run)` for `Completed` and `CompletedWithErrors`, and
+`Err` for a stopped, timed-out or cancelled run.
 
-- `VALIDATION_ERROR`: from the `validation` built-in, or a handler returning
-  `DataflowError::Validation`
-- `TASK_ERROR`: handler returned `DataflowError::Task`
-- `TASK_STATUS_ERROR`: handler returned `TaskOutcome::Status(s)` with `s >= 500`
-- `WORKFLOW_ERROR`: wrapper recording workflow context for the failure above
+## Failures and Rejections
 
-Every other engine variant contributes its own code the same way:
-`FUNCTION_NOT_FOUND`, `FUNCTION_ERROR`, `LOGIC_ERROR`, `HTTP_ERROR`,
-`TIMEOUT_ERROR`, `IO_ERROR`, `DESERIALIZATION_ERROR`, `UNKNOWN_ERROR`.
+A function call's result is classified before any policy applies:
 
-> **Changed in 3.5.0.** Before this release every variant except
-> `Service` collapsed to `TASK_ERROR` on the live path, so a timeout, a dropped
-> connection and a rejected request were indistinguishable. If you were matching
-> on `TASK_ERROR` to mean "the handler returned `Err`", match the specific codes
-> instead, or return `DataflowError::Task`, which still maps to `TASK_ERROR`.
+| Result | Class | Recorded |
+|---|---|---|
+| `Ok(Outcome::Ok)`, or a status below `400` | success | nothing |
+| a `4xx` status | **rejection** | nothing by the engine; a `validation` records its own failing rules |
+| a `5xx` status | **failure** | `TASK_STATUS_ERROR`: `Task <id> returned status <s>` |
+| `Err(error)` | **failure** | the error's code: `Task <id> error: <message>` |
+| `Outcome::Skip` | | nothing, and no audit entry |
+| `Outcome::Halt` | | nothing; the workflow ends |
 
-That list is not closed: a handler returning a **service-classified** error
-contributes its own code (see below). Switch on `code` with a default arm.
+Two policies on the task say what each class does, and one on the workflow
+says what a failure that reaches it does.
 
-## Service-classified errors
+## Task-Level Policies
 
-The engine's error variants describe engine concerns. When your handler fails for
-a reason only your service understands (a circuit breaker opened, a tenant hit a
-rate limit), classify it yourself:
+### `on_failure`
+
+```json
+{
+    "id": "optional_task",
+    "on_failure": "continue",
+    "function": { ... }
+}
+```
+
+- **`fail`** (default): the failure passes to the workflow's `on_failure`
+- **`continue`**: the failure is recorded in `message.errors()` and the next
+  task runs
+- **`halt`**: the failure is recorded and the workflow ends; later workflows
+  still run, and the workflow's exit is `Halted`
+
+### `on_rejection`
+
+```json
+{
+    "id": "validate_input",
+    "on_rejection": "halt",
+    "function": { "name": "validation", "input": { ... } }
+}
+```
+
+- **`continue`** (default): the next task runs
+- **`halt`**: the workflow ends at the rejected task; later workflows still run
+
+A rejection is not an error to the engine: a host function returning
+`Outcome::Status(404)` leaves a `404` on the audit entry and nothing in
+`message.errors()`. A failing `validation` is different only because it
+records its own rules: `VALIDATION_ERROR` per failing rule, then `400`.
+
+## Workflow-Level Policy
+
+The workflow's `on_failure` answers a **different question** from the task's,
+and is not a default for its tasks:
+
+| Key | Question it answers |
+|------|--------------------|
+| `on_failure` on a **task** | When this task fails, do the *remaining tasks in this workflow* still run? |
+| `on_failure` on a **workflow** | When this workflow fails, do the *later workflows* still run, or does the run stop? |
+
+There is no third level. A [task group](../advanced/control-flow.md#groups)
+gates a span; it carries no policy of its own.
+
+### The Policy Matrix
+
+"Task fails" means it returned `Err` or a `5xx` status:
+
+| task `on_failure` | workflow `on_failure` | Later tasks in the workflow | Later workflows | `Run::status()` |
+|---|---|---|---|---|
+| `fail` (default) | `fail` (default) | stop | stop | `Stopped(error)` |
+| `fail` | `continue` | stop | run | `CompletedWithErrors`; the workflow's exit is `Failed` |
+| `halt` | *(either)* | stop | run | `CompletedWithErrors`; the exit is `Halted` |
+| `continue` | *(either)* | run | run | `CompletedWithErrors` |
+
+The failure is recorded in `message.errors()` on every row.
+
+So a workflow marked `on_failure: continue` whose tasks leave their policy
+unset still stops at its first failing task, but it does not take the rest of
+the run down with it:
+
+```json
+{
+    "id": "resilient_workflow",
+    "on_failure": "continue",
+    "tasks": [
+        {"id": "task1", "on_failure": "continue", "function": { ... }},
+        {"id": "task2", "on_failure": "continue", "function": { ... }},
+        {"id": "task3", "function": { ... }}
+    ]
+}
+```
+
+Because each task opts in, the workflow runs to the end even if `task1` and
+`task2` fail; `task3` leaves the policy unset, so a failure there ends the
+workflow with the exit `Failed`. The workflow's `continue` keeps later
+workflows running.
+
+### Seeing the matrix run
+
+A host function that fails shows the two rows a host meets most:
 
 ```rust
-# use dataflow_rs::DataflowError;
-# fn _demo() -> DataflowError {
-DataflowError::service("circuit_open", "upstream unavailable")
-    .detail("connector 'billing' breaker open since 12:04")
-    .retryable(true)
-    .build()
+use dataflow_rs::run::{RunStatus, WorkflowExit};
+use dataflow_rs::{Ctx, Engine, Error, Function, Message, Outcome, Result};
+use serde_json::json;
+
+/// Always fails with a code of its own.
+struct Flaky;
+
+impl Function for Flaky {
+    type Config = ();
+
+    async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+        Err(Error::service("PARTNER_DOWN", "the partner is down").with_retryable(true))
+    }
+}
+
+# #[tokio::main]
+# async fn main() {
+let engine = |on_failure: &str| {
+    Engine::builder()
+        .register("flaky", Flaky)
+        .workflow_json(&json!({"id": "w", "tasks": [
+            {"id": "call", "on_failure": on_failure, "function": {"name": "flaky"}},
+            {"id": "after", "function": {"name": "map", "input": {
+                "mappings": [{"path": "data.after", "logic": true}]}}}
+        ]}))
+        .workflow_json(&json!({"id": "next", "priority": 1, "tasks": [
+            {"id": "t", "function": {"name": "map", "input": {
+                "mappings": [{"path": "data.next", "logic": true}]}}}
+        ]}))
+        .build()
+        .expect("the workflows build")
+};
+
+// The default: the failure stops the run. `after` and `next` never run.
+let mut message = Message::from_json(&json!({}));
+let run = engine("fail").run(&mut message).await;
+let RunStatus::Stopped(error) = run.status() else { panic!("stopped") };
+assert_eq!(error.code(), "PARTNER_DOWN");
+assert!(run.retryable() && run.partial());
+assert_eq!(message.errors()[0].code, "PARTNER_DOWN");
+assert_eq!(message.errors()[0].message, "Task call error: the partner is down");
+assert_eq!(message.errors()[0].task_id.as_deref(), Some("call"));
+assert!(message.context().get(&"data.next".parse().unwrap()).is_none());
+
+// `continue`: recorded, and both `after` and `next` run.
+let mut message = Message::from_json(&json!({}));
+let run = engine("continue").run(&mut message).await;
+assert!(matches!(run.status(), RunStatus::CompletedWithErrors));
+assert_eq!(message.errors().len(), 1);
+assert_eq!(serde_json::to_string(message.context().data()).unwrap(), r#"{"after":true,"next":true}"#);
+
+// `halt`: recorded, the workflow ends, and `next` still runs.
+let mut message = Message::from_json(&json!({}));
+let run = engine("halt").run(&mut message).await;
+assert_eq!(run.workflows().next().unwrap().exit, Some(WorkflowExit::Halted));
+assert_eq!(serde_json::to_string(message.context().data()).unwrap(), r#"{"next":true}"#);
 # }
+```
+
+## Error Codes
+
+Common error codes you'll see in `message.errors()`:
+
+- `VALIDATION_ERROR`: from the `validation` built-in, one per failing rule;
+  also from `parse_xml`, `publish_json` and `publish_xml` when the source is
+  not what they need
+- `EVALUATION_ERROR`: a `validation` rule that failed to evaluate
+- `TASK_STATUS_ERROR`: a task returned `Outcome::Status(s)` with `s >= 500`
+
+A host function's `Err` is recorded under its `Error::code()`:
+
+- the code a **service error** chose (`Error::service(code, message)`), or
+  `TASK_ERROR` when that code is empty
+- `LOGIC_ERROR` (`ErrorKind::Eval`), `BUDGET_EXCEEDED` (`Budget`),
+  `FUNCTION_NOT_FOUND`, `DESERIALIZATION_ERROR` (`Parse`), `TIMEOUT_ERROR`
+  (`TimedOut`), `CANCELLED`, `CONFIG_ERROR` (`Config`) and
+  `COMPILATION_ERROR` (`Compile`)
+
+When a `5xx` stops the run, `Run::status()` carries a `TASK_ERROR` reading
+`Task <id> failed with status <s>`; when an `Err` stops it, the error itself.
+A run cut short by its own deadline or token is `TimedOut` or `Cancelled`,
+and the call it cut short is recorded as `TIMEOUT_ERROR` or `CANCELLED` on
+its task.
+
+That list is not closed: a function returning a service error contributes
+its own code. Switch on `code` with a default arm.
+
+## Service Errors
+
+`ErrorKind` describes engine concerns. When your function fails for a reason
+only your service understands (a circuit breaker opened, a tenant hit a rate
+limit), classify it yourself:
+
+```rust
+use dataflow_rs::Error;
+use dataflow_rs::run::ErrorKind;
+
+let error = Error::service("circuit_open", "upstream unavailable")
+    .with_retryable(true)
+    .with_source(std::io::Error::other("connection refused"));
+
+assert_eq!(error.code(), "circuit_open");
+assert_eq!(error.to_string(), "upstream unavailable");
+assert!(error.is_retryable());
+assert!(matches!(error.kind(), ErrorKind::Service { .. }));
 ```
 
 Three things this buys you:
 
-- **`kind` becomes the `ErrorInfo::code`** on `message.errors()`, passed through
-  **verbatim** (not upper-cased), so the string you switch on is the string you
-  wrote. An empty `kind` falls back to `TASK_ERROR`.
-- **`detail` is a separate, operator-only channel.** `Display` renders `message`
-  alone, so `to_string()` is always safe to hand to an untrusted caller; the detail
-  is reachable through `Debug`, `DataflowError::detail()` and `ErrorInfo::detail`.
-  It is omitted from the serialized form when absent, so nothing changes for errors
-  that do not carry one.
-- **`retryable` is declared, not inferred** from the variant. The engine never
-  retries a task on its own, but the flag is not inert: `retry_with_policy` and
-  `retry_with_attempts` (added in 3.7.0) read `retryable()` to decide whether a
-  failed attempt is worth repeating, so those loops depend on you declaring
-  it correctly. Anywhere else, it is carriage for your own retry policy.
+- **The code is passed through verbatim** (not upper-cased) as the record's
+  `code`, so the string you switch on is the string you wrote. An empty code
+  falls back to `TASK_ERROR`.
+- **`retryable` is declared, not inferred.** Only a timeout is retryable
+  unless told otherwise. The engine never retries a task on its own, but a
+  stop's retryability is what `Run::retryable()` reports, so a host's retry
+  loop depends on you declaring it correctly.
+- **The source is kept.** `with_source` attaches the cause for
+  `std::error::Error::source`; `wrap(context)` prefixes the message and keeps
+  the kind, the retryability and the source.
 
-Everything else is unchanged: `continue_on_error`, the audit-trail entry, and the
-`Result::Err` short-circuit behave exactly as for any other error. The
-`WORKFLOW_ERROR` wrapper still records workflow context and keeps its own code, so
-counting errors by code does not double-count. No built-in ever returns this
-variant.
+`Display` renders the message alone, so `to_string()` is safe to hand to a
+caller. The built-ins record `VALIDATION_ERROR` and `EVALUATION_ERROR`
+themselves; every other code in the list above comes from the engine's
+classification of a call's result.
 
-## Branching on why a task failed
+## Branching on Why a Task Failed
 
 `message.errors()` is host-side only: the JSONLogic evaluation context is
 exactly `{data, metadata, temp_data}`, so `{"var": "errors"}` resolves to
-nothing. To let a workflow branch on *why* a step failed, point the engine at a
-context path:
+nothing. To let a workflow branch on *why* a step failed, point the engine at
+a context path:
 
 ```rust
-# use dataflow_rs::{Engine, Workflow};
-# fn _demo(workflows: Vec<Workflow>) -> dataflow_rs::Result<()> {
-let engine = Engine::builder()
-    .with_workflows(workflows)
-    .with_error_context_path("metadata.errors")
-    .build()?;
+use dataflow_rs::run::{EngineConfig, ErrorContext};
+use dataflow_rs::Engine;
+
+# fn main() -> dataflow_rs::Result<()> {
+let config = EngineConfig::default()
+    .error_context(ErrorContext::new("metadata.errors".parse()?, 32)?);
+let builder = Engine::builder().config(config);
+# let _ = builder;
 # Ok(()) }
 ```
 
-The option is off unless you call it. With no path configured the engine writes
-nothing, and the whole
-mechanism is one `Option` check on a path that only runs after a task has
-already failed.
+The option is off unless you configure it. With no path configured the
+engine writes nothing, and the whole mechanism is one `Option` check on a
+path that only runs after a task has already failed.
 
 One record is appended per error a task contributes:
 
@@ -244,47 +316,79 @@ so a later task, or a later workflow, can route on the reason:
 { "in": [ { "var": "metadata.errors.0.code" }, ["TIMEOUT_ERROR", "IO_ERROR"] ] }
 ```
 
+End to end, with a validation that fails and a task that reads the record:
+
+```rust
+use dataflow_rs::run::{EngineConfig, ErrorContext};
+use dataflow_rs::{Engine, Message};
+use serde_json::json;
+
+# #[tokio::main]
+# async fn main() -> dataflow_rs::Result<()> {
+let engine = Engine::builder()
+    .config(EngineConfig::default()
+        .error_context(ErrorContext::new("metadata.errors".parse()?, 32)?))
+    .workflow_json(&json!({"id": "w", "tasks": [
+        {"id": "check", "function": {"name": "validation", "input": {"rules": [
+            {"logic": {"!!": {"var": "data.email"}}, "message": "Email is required"}
+        ]}}},
+        {"id": "route",
+         "condition": {"in": [{"var": "metadata.errors.0.code"}, ["VALIDATION_ERROR"]]},
+         "function": {"name": "map", "input": {
+             "mappings": [{"path": "data.routed", "logic": "rejected"}]}}}
+    ]}))
+    .build()
+    .expect("the workflow builds");
+
+let mut message = Message::from_json(&json!({}));
+engine.run(&mut message).await;
+
+let records = message.context().get(&"metadata.errors".parse()?).expect("one record");
+assert_eq!(
+    serde_json::to_string(records).unwrap(),
+    r#"[{"workflow_id":"w","task_id":"check","code":"VALIDATION_ERROR","status":400}]"#
+);
+let routed = message.context().get(&"data.routed".parse()?).expect("routed");
+assert_eq!(serde_json::to_string(routed).unwrap(), r#""rejected""#);
+# Ok(()) }
+```
+
 ### What is recorded
 
-Coverage matches `errors()`: a handler returning `Err`, a task returning a 5xx
-outcome, each failing rule of the `validation` built-in, and anything a handler
-adds through `TaskContext::add_error`. Two deliberate exclusions:
+Coverage matches `errors()`: a function returning `Err`, a task returning a
+`5xx` outcome, each failing rule of the `validation` built-in, and anything a
+function adds through `Ctx::record_error`. A task returning `Outcome::Skip`
+opts out of the per-task record entirely: no audit entry, no
+`metadata.progress` write, no record.
 
-- **The `WORKFLOW_ERROR` wrapper.** It re-reports the same underlying failure, so
-  mirroring it would double-count. A task failure with `continue_on_error: false`
-  therefore puts *two* entries on `message.errors()` but *one* record here.
-- **Tasks returning `TaskOutcome::Skip`.** Skip opts out of the per-task record
-  entirely: no audit entry, no `metadata.progress` write, no record.
-
-`status` is the task's own status: `500` when the handler returned `Err`,
+`status` is the task's own status: `500` when the function returned `Err`,
 otherwise the status the outcome carried (`400` for `validation`, `200` for a
-handler that recorded an error and still succeeded). `metadata.progress` cannot
-make that distinction: its failure arm hard-codes `500`.
+function that recorded an error and still succeeded). `metadata.progress`
+cannot make that distinction: its failure arm hard-codes `500`.
 
-The engine does **not** record the error `message` or the operator-only
-`detail`. This value lands in `Message.context`, which is serialized straight back to callers;
-read those from `message.errors()` host-side instead. This applies to
-`temp_data` too: it is part of `context` and ships on the wire like everything
-else, so it is not private scratch space.
+The engine does **not** record the error `message`. This value lands in the
+message's context, which is serialized straight back to callers; read the
+message from `message.errors()` host-side instead. This applies to
+`temp_data` too: it is part of the context and ships on the wire like
+everything else, so it is not private scratch space.
 
 ### Practical notes
 
-- The key is **absent**, not `[]`, when nothing failed, so a clean message keeps
-  the exact wire shape it had before the option existed.
-- The engine keeps at most 32 records by default, newest retained; change the
-  limit with `.with_error_context_limit(n)`. The bound keeps the cost independent of
-  a looping workflow's iteration count, since `Message.context` is deep-cloned
-  into every trace snapshot.
-- **The engine owns the configured path.** It replaces a non-array found there.
-  `build()` rejects `metadata.progress`, and any path that does not start
-  with `data`, `metadata` or `temp_data`, since such a path would write somewhere the
-  evaluation context cannot see, giving you a condition that is silently never
-  true.
-- Prefer `metadata.*` or `temp_data.*` over `data.*`: the first append into a
-  `data.*` path costs a one-time re-arena of the whole `data` subtree, which is
-  the heavy payload side.
-- The append is engine bookkeeping, not a task mutation, so the audit trail does not
-  record it as a `Change`.
+- **The path is reset at run start.** The engine removes the key before any
+  workflow runs, so a message never brings records in, and the key is
+  **absent**, not `[]`, when nothing failed.
+- The engine keeps at most 32 records by default
+  (`ErrorContext::DEFAULT_LIMIT`), newest retained; the limit must be at least
+  1. The bound keeps the cost independent of a looping workflow's iteration
+  count.
+- **The engine owns the configured path.** It replaces a non-array found
+  there, and anything but an object on the way to it. `ErrorContext::new`
+  refuses a bare root (`data`, `metadata` or `temp_data`) and any path at or
+  below the `metadata` slots the engine writes itself: `progress`,
+  `processed_at`, `engine_version` and `channel`.
+- The append is engine bookkeeping, not a task mutation: the task's audit
+  entry does not record it as a `Change`. A trace does, so a replay rebuilds
+  the context.
 
 ## Error Types
 
@@ -308,69 +412,65 @@ Generated by the `validation` function when rules fail:
 }
 ```
 
-### Execution Errors
+Only a literal `true` passes a rule. The message is evaluated only when the
+rule fails, and a rule whose logic fails to evaluate records
+`EVALUATION_ERROR` instead.
 
-Generated when function execution fails:
+### Evaluation Errors
 
-- JSONLogic evaluation errors
-- Data type mismatches
-- Missing required fields
+A `map` mapping or a `log` expression that fails to evaluate logs the failure
+and goes on. A workflow or task condition that fails to evaluate counts as
+false; the `Run` reports a workflow's as `Selection::ConditionFailed(error)`.
 
-### Custom Function Errors
+### Host Function Errors
 
-Return errors from custom functions via `Result::Err`:
+Return errors from a host function via `Result::Err`:
 
-```rust,ignore
-use dataflow_rs::prelude::*;
+```rust
+use dataflow_rs::{Ctx, Error, Function, Outcome, Result};
 
-impl AsyncFunctionHandler for MyFunction {
-    type Input = serde_json::Value;
+struct Charge;
 
-    async fn execute(
-        &self,
-        ctx: &mut TaskContext<'_>,
-        _input: &serde_json::Value,
-    ) -> Result<TaskOutcome> {
-        if some_condition {
-            return Err(DataflowError::Task(
-                "Custom error message".to_string()
-            ));
+impl Function for Charge {
+    type Config = ();
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+        let amount = ctx.get(&"data.amount".parse()?).and_then(|v| v.as_f64());
+        let Some(amount) = amount else {
+            return Err(Error::service("MISSING_AMOUNT", "data.amount is not a number"));
+        };
+        if amount > 10_000.0 {
+            // A rejection, not a failure: `on_rejection` decides.
+            return Ok(Outcome::Status(422));
         }
-        Ok(TaskOutcome::Success)
+        Ok(Outcome::Ok)
     }
 }
 ```
 
-`DataflowError` provides typed variants for the most common cases:
-`Validation`, `Task`, `Workflow`, `FunctionExecution`, `FunctionNotFound`,
-`Http`, `Timeout`, `Io`, `LogicEvaluation`, `Deserialization`, `Unknown`.
-See the [API reference](../api/reference.md#dataflowerror) for the full list.
+An `Err` drops every write the call made and keeps the records it added
+through `Ctx::record_error`; the engine then records the error under its
+code, as `Task <id> error: <message>`.
 
 ## Error Recovery Patterns
 
 ### Fallback Values
 
-Use conditions to provide fallback values:
+Use `on_failure: continue` and a condition to provide fallback values:
 
 ```json
 {
     "tasks": [
         {
             "id": "try_primary",
-            "name": "Try primary",
-            "continue_on_error": true,
+            "on_failure": "continue",
             "function": {
-                "name": "map",
-                "input": {
-                    "mappings": [
-                        {"path": "temp_data.result", "logic": {"var": "data.primary"}}
-                    ]
-                }
+                "name": "fetch_primary",
+                "input": { "output": "temp_data.result" }
             }
         },
         {
             "id": "use_fallback",
-            "name": "Use fallback",
             "condition": {"!": {"var": "temp_data.result"}},
             "function": {
                 "name": "map",
@@ -385,6 +485,10 @@ Use conditions to provide fallback values:
 }
 ```
 
+A host function's writes are dropped when it returns `Err`, so
+`temp_data.result` is absent after a failed `fetch_primary`, and the fallback
+runs.
+
 ### Validation Before Processing
 
 Validate data before critical operations, and gate on the result:
@@ -393,8 +497,8 @@ Validate data before critical operations, and gate on the result:
 {
     "tasks": [
         {
-            "id": "validate",
-            "halt_on": "failure",
+            "id": "validate_input",
+            "on_rejection": "halt",
             "function": {
                 "name": "validation",
                 "input": {
@@ -412,16 +516,16 @@ Validate data before critical operations, and gate on the result:
 }
 ```
 
-A failing `validation` returns status `400`, and `continue_on_error` covers only
-`5xx` and `Err`, so without `halt_on` the `process` task would still run.
-`halt_on: "failure"` stops the rule at the failed validation. See
-[Control Flow](../advanced/control-flow.md#halt_on).
+A failing `validation` returns status `400`, a rejection, and the default
+`on_rejection: continue` lets the `process` task run. `on_rejection: "halt"`
+stops the workflow at the failed validation. See
+[Control Flow](../advanced/control-flow.md).
 
 ## Try It
 
 > **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
 
-<div class="playground-widget" data-workflows='[{"id":"error_demo","name":"Error Demo","continue_on_error":true,"tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"validate_email","name":"Validate Email","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.email"}]},"message":"Email is required"}]}}},{"id":"greet","name":"Greet User","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"John"}'>
+<div class="playground-widget" data-workflows='[{"id":"error_demo","name":"Error Demo","on_failure":"continue","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"validate_email","name":"Validate Email","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.email"}]},"message":"Email is required"}]}}},{"id":"greet","name":"Greet User","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"John"}'>
 </div>
 
 The engine records the validation error, and processing continues.
@@ -429,18 +533,28 @@ The engine records the validation error, and processing continues.
 ## Best Practices
 
 1. **Validate Early**
-   - Add validation actions at the start of rules
-   - Set `halt_on: "failure"` on a validation that must stop the rule; a
-     failing validation alone records `400` and lets the next action run
+   - Add validation tasks at the start of workflows
+   - Set `on_rejection: "halt"` on a validation that must stop the workflow; a
+     failing validation alone records `400` and lets the next task run
 
-2. **Use continue_on_error Wisely**
-   - Only for optional actions
-   - Critical operations should stop on error
+2. **Use `on_failure: continue` Wisely**
+   - Only for optional tasks
+   - Critical operations should stop on failure
 
-3. **Check Errors**
-   - Always check `message.errors()` after processing
-   - Log errors for monitoring
+3. **Check Both the Message and the Run**
+   - Walk `message.errors()` after every run
+   - Match `Run::status()` for a run that stopped early, and `retryable()` before retrying
 
 4. **Provide Context**
    - Include meaningful error messages
-   - Include field paths in validation errors
+   - Include field paths in validation messages
+
+## From 3.x
+
+In 3.x the two channels were `message.errors()` and the `Err` that
+`process_message` returned, every stop added a `WORKFLOW_ERROR` wrapper
+record, the policies were `continue_on_error` and `halt_on`, and errors were
+`DataflowError` variants. In 4.0 the `Run` replaces the `Err`, no wrapper is
+added, the policies are `on_failure` and `on_rejection`, and errors are
+`Error` with an `ErrorKind`. The compat reader rewrites the old keys when a
+3.x definition loads. See [Migrating from 3.x](../migration/from-3.md).

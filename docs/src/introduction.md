@@ -12,17 +12,20 @@
   [![Crates.io](https://img.shields.io/crates/v/dataflow-rs.svg)](https://crates.io/crates/dataflow-rs)
 </div>
 
-**Dataflow-rs** is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. The engine evaluates rules with pre-compiled JSONLogic for zero runtime overhead, and actions execute asynchronously for high throughput.
+**Dataflow-rs** is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. A definition is parsed and linted once, compiled into a program, and run over messages; every JSONLogic expression is compiled at build time, and a run reads the clock once.
 
 Use it to route events, validate data, power REST APIs, or build automation pipelines.
 
-### ⚡ Blazing Fast Performance
+### ⚡ Performance
 
-Dataflow-rs targets high-throughput hot paths. It pre-compiles every JSONLogic expression at startup, so execution runs with zero runtime allocations or JSON parsing overhead. On a 10-core Apple M2 Pro, the multi-threaded release benchmark yields:
-*   **Throughput:** **~630,000 messages/sec**
-*   **Median (P50) Latency:** **6 μs**
-*   **Tail (P99) Latency:** **52 μs**
-*   **Tail (P99.9) Latency:** **94 μs**
+Dataflow-rs targets high-throughput hot paths:
+
+*   **Every expression is compiled at build time.** A workflow that does not compile is rejected before any message runs; a constant expression is evaluated once and kept.
+*   **One context view per run.** The built-ins run inline over one view of the message's context, and a host function reads that same view and writes to an overlay of its own, so no view is built per call.
+*   **One clock read per run.** `metadata.processed_at`, every audit entry and every error record carry that one reading. The clock is read again only for an observer or a trace that asks for timings.
+*   **No tracing cost unless asked for.** With no observer, trace or error context attached, a call takes the plain recorder.
+
+See [Performance](./advanced/performance.md) for the benchmarks and how to run them.
 
 ### 🧩 Why Choose dataflow-rs?
 
@@ -30,7 +33,7 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 
 | Feature | Hardcoded Rust | dataflow-rs | Orchestrators (Temporal/Zeebe) |
 |---|---|---|---|
-| **Hot Reload Rules** | ❌ Recompile & redeploy | ✅ Instant JSON update | ❌ Deploy new worker code |
+| **Reload Rules** | ❌ Recompile & redeploy | ✅ Compile new JSON into a new engine | ❌ Deploy new worker code |
 | **Execution Overhead** | None | **Zero (pre-compiled)** | ❌ DB reads/writes (tens of ms) |
 | **Browser Execution** | ❌ WASM compile size | ✅ Run rules via WASM | ❌ Server round-trip required |
 | **Visual Debugger** | ❌ Build your own UI | ✅ Included React UI components | ✅ Included Dashboard |
@@ -38,57 +41,59 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 
 ## Key Features
 
-- **IF → THEN → THAT Model** - Define rules with JSONLogic conditions, execute actions, chain with priority ordering
-- **Async-First Architecture** - Native async/await support with Tokio for high-throughput processing
-- **Zero Runtime Compilation** - All JSONLogic expressions pre-compiled at startup
-- **Full Context Access** - Conditions can access any field: `data`, `metadata`, `temp_data`
-- **Secrets Outside the Record** - `{"secret": "name"}` reads an engine-scoped store that no trace, snapshot or serialized message ever contains
-- **Execution Tracing** - Step-by-step debugging with message snapshots after each action
-- **Built-in Functions** - Parse, Map, Validate, Filter, Log, and Publish for complete data pipelines
-- **Task Groups** - Nest actions under one shared condition, with a terminal action that ends a rule early
-- **Rejecting Assertions** - `halt_on: "failure"` ends a rule once an action has run and failed, so a `validation` can gate the tasks after it
-- **Bounded Loops** - Re-run a rule's action list a fixed number of times, with the sweep counter in `temp_data`
-- **Traffic Splits** - Roll a rule out to a percentage of messages with `rollout`
-- **Retry Policies** - Retry a failing action with exponential backoff and a wall-clock deadline (native targets)
-- **Authoring-Time Validation** - Check a definition before it reaches an engine; reports every problem at the coordinate the author typed
-- **Pipeline Control Flow** - Filter/gate function to halt workflows or skip tasks based on conditions
-- **Channel Routing** - Route messages to specific workflow channels with O(1) lookup
-- **Workflow Lifecycle** - Manage workflow status (active/paused/archived), versioning, and tagging
-- **Hot Reload** - Swap workflows at runtime without re-registering custom functions
-- **Extensible** - Add custom async actions to the engine
-- **Typed Integration Configs** - Pre-validated configs for HTTP, Enrich, and Kafka integrations
+- **IF → THEN → THAT Model** - Define workflows with JSONLogic conditions, execute tasks, chain workflows with priority ordering
+- **Parse and Lint in One Pass** - `def::parse` reads a definition and reports every issue at the path the author typed, before anything is compiled
+- **Compiled Once** - A `Compiler` compiles each workflow on its own, so one rejected workflow never takes the others down, and links them into an immutable `Program`
+- **A Report for Every Run** - `engine.run(&mut message).await` returns a `Run` on every outcome: how it ended, which workflows matched, and what each did
+- **Full Context Access** - Conditions and mappings read any field of `data`, `metadata` and `temp_data`
+- **Typed Host Functions** - Implement `Function` with a `#[derive(FunctionConfig)]` config; the config is compiled at build time, and a call's writes reach the message only when it returns `Ok`
+- **Layers** - Wrap every host call at registry or run scope: logging, stubbing, dry runs
+- **Deadlines and Cancellation** - A run ends `TimedOut` or `Cancelled` at the next check, and a host call is raced against both
+- **Fan-Out** - Run one task's function once per element of an array, isolated, folded in element order
+- **Task Groups** - Nest tasks under one shared condition, with a terminal group that ends a workflow early
+- **Outcome Policies** - A task's `on_failure` and `on_rejection` say what a failure or a rejection does; a workflow's `on_failure` says whether a failure stops the run
+- **Bounded Loops** - Re-run a workflow's task list a fixed number of times, with the sweep counter in `temp_data`
+- **Traffic Splits** - Roll a workflow out to a slice of its channel's traffic with `rollout`
+- **Observers** - One `on(&Event)` callback with a declared interest; the clock is read only for an observer that asks for timings
+- **Traces** - The initial context plus each step's changes, on every status, replayable to the context after any step
+- **Error Context** - Mirror each failure's code into the context, so a later condition can branch on why a task failed
+- **Secrets Outside the Record** - `{"secret": "name"}` reads an engine-scoped store that no trace, message or log ever contains
+- **Built-in Functions** - Parse, Map, Validation, Filter, Log and Publish for complete data pipelines
+- **Channels and Lifecycle** - Route a run to one channel's workflows; pause or archive a workflow without deleting it
+- **3.x Definitions Load** - The compat reader rewrites 3.x spellings and reports each one, so an installed base migrates at its own pace
 - **WebAssembly Support** - Run rules in the browser with `@goplasmatic/dataflow-wasm`
 - **React UI Components** - Visualize and debug rules with `@goplasmatic/dataflow-ui`
-- **Auditing** - Track all changes to your data as it moves through the pipeline
+- **Auditing** - Every write a task makes is recorded on the message's audit trail
 
 ## Try It Now
 
-Run dataflow-rs in your browser. Define a rule and message, then see the processing result.
+Run dataflow-rs in your browser. Define a workflow and message, then see the processing result.
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution, breakpoints, and rule visualization.
+> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution, breakpoints, and workflow visualization.
 
-<div class="playground-widget" data-workflows='[{"id":"transform","name":"Transform Rule","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"map_data","name":"Map Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}},{"path":"data.processed","logic":true}]}}}]}]' data-payload='{"name":"World"}'>
+<div class="playground-widget" data-workflows='[{"id":"transform","name":"Transform","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"map_data","name":"Map Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}},{"path":"data.processed","logic":true}]}}}]}]' data-payload='{"name":"World"}'>
 </div>
 
 ## How It Works
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│  Rule (Workflow)                                                │
+│  Workflow                                                       │
 │                                                                 │
 │  IF    condition matches        →  JSONLogic against any field  │
-│  THEN  execute actions (tasks)  →  map, validate, custom logic  │
-│  THAT  chain more rules         →  priority-ordered execution   │
+│  THEN  execute tasks            →  map, validation, host logic  │
+│  THAT  chain more workflows     →  priority-ordered execution   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Define Rules** - Create JSON-based rule definitions with conditions and actions
-2. **Create an Engine** - Initialize the rules engine (all logic compiled once at startup)
-3. **Process Messages** - Send messages through the engine for evaluation
-4. **Get Results** - Receive transformed data with full audit trail
+1. **Define Workflows** - Write JSON definitions with conditions and tasks
+2. **Build an Engine** - `Engine::builder().workflow_json(&json).build()` parses, compiles and links every definition; a rejected one fails the build with its issues
+3. **Run Messages** - `engine.run(&mut message).await` runs the message through every matching workflow
+4. **Read the Result** - The `Run` says how it ended and what each workflow did; the message carries the transformed context, its audit trail and its errors
 
 ## Next Steps
 
 - [Installation](./getting-started/installation.md) - Add dataflow-rs to your project
-- [Quick Start](./getting-started/quick-start.md) - Build your first rule
-- [Playground](./playground.md) - Experiment with rules interactively
+- [Quick Start](./getting-started/quick-start.md) - Build your first workflow
+- [Playground](./playground.md) - Experiment with workflows interactively
+- [Migrating from 3.x](./migration/from-3.md) - What changed, and what the compat reader rewrites for you
