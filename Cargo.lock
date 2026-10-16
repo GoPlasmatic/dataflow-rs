@@ -235,8 +235,7 @@ dependencies = [
 name = "dataflow-docs-tests"
 version = "0.0.0"
 dependencies = [
- "async-trait",
- "dataflow-rs 3.15.0",
+ "dataflow-rs 4.0.0-dev",
  "env_logger",
  "log",
  "serde",

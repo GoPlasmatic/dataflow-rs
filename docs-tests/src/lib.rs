@@ -68,7 +68,7 @@ doc_pages! {
     BuiltInsFilter => "../../docs/src/built-in-functions/filter.md",
     BuiltInsLog => "../../docs/src/built-in-functions/log.md",
     BuiltInsPublish => "../../docs/src/built-in-functions/publish.md",
-    BuiltInsIntegrations => "../../docs/src/built-in-functions/integrations.md",
+    BuiltInsHostFunctions => "../../docs/src/built-in-functions/host-functions.md",
 
     AdvancedCustomFunctions => "../../docs/src/advanced/custom-functions.md",
     AdvancedJsonLogic => "../../docs/src/advanced/jsonlogic.md",
@@ -82,11 +82,13 @@ doc_pages! {
 
     ApiReference => "../../docs/src/api/reference.md",
 
+    MigrationFrom3 => "../../docs/src/migration/from-3.md",
+
     WasmOverview => "../../docs/src/wasm/overview.md",
     UiOverview => "../../docs/src/ui/overview.md",
 }
 
-/// `README.md`'s Rust examples, compiled against the published 3.15.0 the
-/// README describes, until 7e rewrites it for 4.0.
+/// `README.md`'s Rust examples, compiled against the root crate the README
+/// describes.
 #[doc = include_str!("../../README.md")]
 pub struct ReadmeDoctests;

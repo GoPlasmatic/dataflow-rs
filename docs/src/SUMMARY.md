@@ -27,7 +27,7 @@
 - [Filter](./built-in-functions/filter.md)
 - [Log](./built-in-functions/log.md)
 - [Publish](./built-in-functions/publish.md)
-- [Integrations](./built-in-functions/integrations.md)
+- [Host Functions](./built-in-functions/host-functions.md)
 
 # JavaScript/TypeScript
 
@@ -49,3 +49,7 @@
 # Reference
 
 - [API Reference](./api/reference.md)
+
+# Migration
+
+- [From 3.x](./migration/from-3.md)
