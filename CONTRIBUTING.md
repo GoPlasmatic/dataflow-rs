@@ -1,34 +1,39 @@
 # Contributing to dataflow-rs
 
-> **`main` is dataflow-rs 4.0, under construction.** This file describes 3.x, whose source
-> and documentation site are on the `v3-maintenance` branch. Its commands, too, are
-> `v3-maintenance`'s, except the `wasm/` and `ui/` checks, which are `main`'s: since
-> phase 7d both packages build on the 4.0 crate at the root.
-
 Thanks for your interest in contributing. This guide covers what you need to
 get a change merged.
 
 ## Repository Layout
 
-This is a Cargo workspace with three published artifacts that share a version
-number:
+This is a Cargo workspace with four published artifacts that share one
+version number, and five members that are never published:
 
 | Path | Artifact | Registry |
 |---|---|---|
-| `.` | `dataflow-rs` | crates.io |
-| `wasm/` | `@goplasmatic/dataflow-wasm` | npm |
-| `ui/` | `@goplasmatic/dataflow-ui` (React debugger) | npm |
+| `.` | `dataflow-rs`, the engine | crates.io |
+| `derive/` | `dataflow-rs-derive`, the `#[derive(FunctionConfig)]` macro behind it | crates.io |
+| `wasm/` | `@goplasmatic/dataflow-wasm`, the engine for the browser and Node | npm |
+| `ui/` | `@goplasmatic/dataflow-ui`, the React debugger | npm |
 | `docs/` | mdBook user guide, deployed to GitHub Pages | — |
+| `docs-tests/` | Compiles the book's and the README's Rust examples as doctests | — |
+| `corpus/` | The golden corpus: the cases, the comparator and the coverage tests | — |
+| `corpus/v3/` | The corpus recorder, on the published 3.15.0 | — |
+| `corpus/v4/` | The corpus driver that holds the engine at the root to the recordings | — |
+
+`wasm/` and `derive/` are workspace members; `ui/` is a separate npm project
+driven by the release workflow. The root depends on the derive by path *and*
+by version, because `cargo publish` refuses a path dependency without one, so
+a release publishes the derive first.
 
 ## Prerequisites
 
-- **Rust 1.98 or later** (Edition 2024). This is the crate's declared MSRV and
-  CI enforces it. The floor is inherited rather than chosen: `datalogic-rs`
-  5.5 and `datavalue-rs` 0.3 both declare `rust-version = "1.98"`, so the
-  crate cannot build on less. Let-chains (`if let ... && let ...`, stable
-  since 1.88) are therefore allowed, and clippy's `collapsible_if` now asks
-  for them.
-- **Node.js 20+**, only if you are touching `ui/`.
+- **Rust 1.98 or later** (Edition 2024). This is the declared MSRV and CI
+  enforces it. The floor is inherited rather than chosen: `datalogic-rs` 5.7
+  and `datavalue-rs` 0.3.1 both declare `rust-version = "1.98"`, so the crate
+  cannot build on less. Let-chains (`if let ... && let ...`, stable since
+  1.88) are therefore allowed, and clippy's `collapsible_if` asks for them.
+- **Node.js 22**, only if you are touching `ui/`. CI and the release
+  workflow run that version.
 - **wasm-pack**, if you are touching `wasm/` or running the `ui/` debugger
   against unreleased engine changes (see *Running the debugger against your
   engine changes*).
@@ -41,8 +46,9 @@ cd dataflow-rs
 cargo test --workspace --all-features
 ```
 
-You should see 845 passing tests (368 unit, 338 integration, 44 doc, 94 docs-page
-doctests, 1 docs coverage).
+You should see 1024 passing tests: the root's 862 (828 tests and 34 doctests),
+the derive's 2, `corpus/v4`'s 24, `corpus/`'s 33, `corpus/v3`'s 4 and
+`docs-tests`' (the book's and the README's doctests, and its coverage test).
 
 The count is feature-dependent. The optional operator families are `#[cfg]`-gated
 on both sides: some tests only exist when a family is on, others only when it is
@@ -52,10 +58,14 @@ off. The default build therefore reports a different number:
 cargo test
 ```
 
-should report 733 passing (361 unit, 329 integration, 43 doc). Use the bare command,
-not `--workspace`: `dataflow-wasm` depends on `dataflow-rs` with `all-operators`,
-and cargo unifies features across workspace members, so `--workspace` would turn
-every family back on.
+should report 837 passing. A bare cargo command at the root selects the root
+package; every other member takes `-p`, as in `cargo test -p dataflow-corpus-v4`
+or `cargo test -p dataflow-docs-tests`. Use the bare command for the default
+build, not `--workspace`: `wasm/` depends on the root with `all-operators`, and
+cargo unifies features across the members one invocation selects, so
+`--workspace` would turn every family back on. `-p dataflow-rs` cannot do it
+either: beside the published 3.15.0 that `corpus/v3` and the root's own
+differential tests pull in, the name is ambiguous and cargo refuses it.
 
 ### Running the debugger against your engine changes
 
@@ -66,9 +76,9 @@ just-published engine instead of overlaying a local build, so the release
 validates what consumers receive. A plain `npm run dev` therefore runs the
 debugger against the last release, not your checkout.
 
-The mismatch can hide bugs. `Workflow` does not set `deny_unknown_fields`, so
-the published wasm silently ignores a field it has never heard of rather than
-rejecting it.
+The mismatch can hide bugs. An older engine reads a key it predates as an
+unknown key: the definition still loads, with the key kept in the node's `ext`
+and an issue reported, and does something other than what it says.
 
 Two mechanisms keep that from biting you:
 
@@ -116,23 +126,60 @@ push:
 ```bash
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
 `--all-targets` covers examples, tests, and benches. `--all-features` covers the
-`wasm-web` feature, which is otherwise silently skipped.
+`wasm-web` feature, which is otherwise silently skipped. The second clippy line
+is not redundant: bare at the root, it lints the root's **default** build,
+which is what `cargo add dataflow-rs` delivers, and `--workspace` cannot reach
+it for the feature-unification reason above.
 
 Do not skip the `cargo doc` line. Clippy does not lint rustdoc, so nothing above
 catches a broken intra-doc link, a link from public docs into a private item, or
 an unbackticked generic like `Arc<Logic>` that rustdoc parses as an HTML tag.
 All of these ship silently to docs.rs as dead or mangled text.
-CI runs it under `-D warnings` like everything else.
+CI runs it under `-D warnings` like everything else. `src/lib.rs` also warns on
+`missing_docs` and `missing_debug_implementations`, which `-D warnings` makes
+errors: every public item needs a doc comment and every public type a `Debug`
+impl.
 
 Lint *policy* lives in `[workspace.lints]` in the root `Cargo.toml` and is
-inherited by all three members, so a bare `cargo clippy` and rust-analyzer
+inherited by every member, so a bare `cargo clippy` and rust-analyzer
 enforce what CI enforces. Adding a lint there means fixing every existing
 violation in the same change; CI's `-D warnings` gives no grace period.
+
+The root has checks of its own beside the workspace-wide ones. CI runs all of
+them; run the ones your change touches:
+
+```bash
+cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
+cargo test
+cargo test -p dataflow-corpus-v4
+cargo test -p dataflow-docs-tests
+cargo test --features serde_json/preserve_order
+cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order
+cargo test --features ts --test ts_types
+for f in datetime ext-string ext-array ext-math ext-control ext-object \
+         error-handling all-operators tensor budget; do
+  cargo test --no-default-features --features "$f"
+done
+```
+
+The `preserve_order` runs hold the engine's bytes independent of serde_json's
+key ordering, which a host's dependency graph may turn on. The `ts` run holds
+`bindings/dataflow.d.ts`, generated from the wire types, to the committed
+file, doc comments included: a doc edit on a wire type means regenerating it
+with `DATAFLOW_TS_WRITE=1 cargo test --features ts --test ts_types`. The
+per-family loop exists because enabling an operator family is not a no-op,
+so a family must pass alone, not only under `--all-features`.
+
+`cargo test` at the root must stay under a minute, rebuild included. The
+run-context model test runs once in the default build, at 150 sequences per
+tuning; `DATAFLOW_V4_DEEP=1 cargo test --lib state::` runs its full 2,000.
+Run it after any change under `src/state/`.
 
 If you touched `wasm/`:
 
@@ -182,55 +229,111 @@ not tracked. To preview:
 mdbook serve docs
 ```
 
-Rust snippets in **both** `README.md` and `docs/src/` are compiled as doctests
-by `cargo test`:
+Every Rust snippet in **both** `README.md` and `docs/src/` compiles against
+the crate at the root, through the `dataflow-docs-tests` workspace member:
 
-- `README.md`: via the `ReadmeDoctests` hook at the bottom of `src/lib.rs`.
-- `docs/src/**.md`: via the `dataflow-docs-tests` workspace member, which
-  includes each book page with `#[doc = include_str!(…)]`.
+- `README.md`: as `ReadmeDoctests` in `docs-tests/src/lib.rs`.
+- `docs/src/**.md`: through the same crate, which includes each book page with
+  `#[doc = include_str!(…)]`. Its `tests/coverage.rs` fails if a page is
+  missing from the page list.
 
 (`mdbook test` cannot do this. It only passes `-L` to rustdoc, and an
 edition-2018+ `use dataflow_rs::…` needs `--extern`, which mdBook has no flag
-for. Routing through Cargo makes the crate resolvable.)
+for. Routing through Cargo makes the crate resolvable. The crate is separate
+from the root because `docs/` is not shipped in the published package.)
 
-So an edit to either can break the build. Two conventions when writing snippets:
+So an edit to either can break the build:
+
+```bash
+cargo test -p dataflow-docs-tests
+```
+
+Three conventions when writing snippets:
+
+- **Every Rust fence compiles.** Do not tag a fence `ignore`: an `ignore` is an
+  unverified claim in user-facing docs. A snippet that would not compile on
+  its own gets a hidden preamble instead.
 
 - **Fragments need a hidden preamble.** Lines prefixed with `# ` are compiled by
   rustdoc but hidden from readers by mdBook, so a snippet that assumes an
   `engine` or `message` binding can declare one invisibly:
 
   ```text
-  # use dataflow_rs::{Engine, Message};
-  # async fn _demo(engine: Engine, mut message: Message) -> dataflow_rs::Result<()> {
-  engine.process_message(&mut message).await?;
-  # Ok(()) }
+  # use dataflow_rs::{Engine, Message, RunOptions};
+  # async fn _demo(engine: Engine, mut message: Message) {
+  let run = engine.run_with(&mut message, &RunOptions::default()).await;
+  # let _ = run;
+  # }
   ```
 
   A hidden wrapper that is never called type-checks the snippet without
   executing it, which suits examples containing placeholder JSON
-  like `"tasks": [...]`.
+  like `"tasks": [...]`. A snippet that shows a value asserts it, so the
+  doctest verifies what the prose claims.
 
-- **Tag non-compilable blocks `ignore`.** API signature listings
-  (`pub fn f() -> T` with no body) are the main legitimate case. Prefer a hidden
-  preamble over `ignore` wherever possible; an `ignore` is an unverified claim
-  in user-facing docs.
+- **Tag every other fence with its language.** Unlabelled fences (```` ``` ````
+  with no language) are treated as **Rust** by rustdoc. Tag definitions `json`,
+  commands `bash`, manifests `toml`, and ASCII diagrams and sample output
+  `text`. Only ```` ```rust ```` fences are compiled, so the JSON in a page is
+  not checked; read it against the definition types in `src/def/types.rs`.
 
-Unlabelled fences (```` ``` ```` with no language) are treated as **Rust** by
-rustdoc. Tag ASCII diagrams and sample output as `text`.
+## The Golden Corpus
+
+`corpus/cases/<area>/<name>.json` records what 3.x does to a message, case by
+case, and each case's recording sits beside it as `<name>.v3.json`. The engine
+at the root is held to those recordings by `cargo test -p dataflow-corpus-v4`:
+it compiles every definition and runs every case against the recording, or
+against a deviation it declares. See `corpus/README.md`.
+
+Two rules:
+
+- **Never edit a `.v3.json` by hand**, and never to match the engine at the
+  root. A recording is what 3.x did. Where 4.0 deliberately differs, declare
+  the deviation in `corpus/v4` against the break it belongs to.
+- **Recordings come from `corpus/record.sh`**, which runs the recorder against
+  the published 3.15.0 that `corpus/v3` pins. A 3.x fix lands on
+  `v3-maintenance` and is released from there; `main` then bumps the pins
+  together (`corpus/v3`'s and the root's `dataflow_rs_v3` dev-dependency, which
+  `corpus/v3/tests/pins.rs` holds to one version) and re-records. Read each
+  new or changed recording before committing it. The comparator is
+  order-sensitive, because key order is wire data.
 
 ## Benchmarks
 
-Always build benchmarks with `--release`; a debug build measures nothing useful.
+The root's examples are its fourteen benchmarks. Always build them with
+`--release`; a debug build measures nothing useful.
 
 ```bash
-cargo run --example benchmark --release
-cargo run --example realistic_benchmark --release
+cargo run --example realistic_benchmark --release        # ISO 20022 -> SwiftMT-style workload
+cargo run --example benchmark --release                  # Throughput + latency percentiles
+cargo run --example micro_cond_bench --release           # Condition-eval / trivially-true folding
+cargo run --example micro_aggregate_bench --release      # Aggregate-heavy (reduce/map)
+cargo run --example micro_subtree_write_bench --release  # k map writes into one depth-2 subtree
+cargo run --example micro_multiworkflow_bench --release  # N chained workflows, one message
+cargo run --example async_handler_benchmark --release    # Marginal cost of one host function call
+cargo run --example host_call_floor --release            # One host call's own cost, v3 and v4 in one binary
+cargo run --example map_performance_test --release       # 10 chained mappings across all 3 roots
+cargo run --example loop_scaling --release               # 1000-sweep append loop over a large context
+cargo run --example large_context_handler --release      # Five expression fields over a 2 MiB context, per call
+cargo run --example fan_out --release                    # for_each over 100 elements on a 2 MiB context
+cargo run --example orion_connector --release            # Connector-shaped host function: document folds, output, a layer
+cargo run --example observed_run --release               # The realistic workload with a counting observer
 ```
+
+Every benchmark checks its result before it times anything, so a workload
+that silently does less than it says fails rather than reporting a plausible
+number, and prints one machine-readable `GATE {...}` line last.
+`bench/gate.py` builds the examples, runs them round-robin and compares two
+builds. `host_call_floor` is the self-judged row: it runs the published 3.x
+and the engine at the root in one binary, in interleaved rounds. The
+examples share `examples/shared/`, which is not an example itself.
 
 Results carry roughly ±2–3% run-to-run noise plus occasional transient P99
 spikes. **Compare the mean of at least 3 runs** before claiming a regression or
-an improvement, and include your machine's core count with any numbers you
-quote. The headline figures in the README are from a 10-core machine.
+an improvement, and **interleave A/B runs**: running all the "before" runs and
+then all the "after" runs conflates the change with thermal drift. Build both
+binaries first, discard the first run of each as cold, and alternate. Include
+your machine's core count with any numbers you quote.
 
 Performance changes do not need to beat the baseline to be merged, but a PR that
 knowingly regresses the hot path should say so and explain the tradeoff.
@@ -239,11 +342,11 @@ knowingly regresses the hot path should say so and explain the tradeoff.
 
 The repository follows [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
-feat(engine): add channel routing for workflow dispatch
+```text
+feat(run): the run's deadline is checked at every host call
 fix(map): preserve array structure on nested writes
 docs: correct MSRV in installation guide
-chore(deps): bump quick-xml to 0.41
+chore(deps): bump quick-xml to 0.42
 ```
 
 Release notes are generated from commit history, so a clear subject line ends up
@@ -251,9 +354,10 @@ in front of users.
 
 ## Pull Requests
 
-**Which branch.** `main` is the next major version, 4.0, under construction. A
-fix for the 3.x release on crates.io and npm goes to `v3-maintenance`, which
-takes fixes only; a feature goes to `main`.
+**Which branch.** `main` is dataflow-rs 4.0. A fix for the 3.x release on
+crates.io and npm goes to `v3-maintenance`, which takes fixes only and
+deploys the documentation site until 4.0 is released; a feature goes to
+`main`.
 
 1. Fork the repository and branch from `main`, or from `v3-maintenance` for a
    3.x fix
@@ -263,55 +367,81 @@ takes fixes only; a feature goes to `main`.
 
 Add tests next to the code they cover in a `mod tests` block for unit-level
 changes. Behaviour that spans the engine goes in `tests/`, which is split by
-topic, one binary per file (`engine_execution.rs`, `mapping_semantics.rs`,
-`map_unset.rs`, `error_handling.rs`, `tracing.rs`, `trace_options.rs`,
-`observer.rs`, `public_api.rs`, `rollout.rs`, `templates.rs`, `workflow_loop.rs`,
-`loop_over.rs`, `for_each.rs`, `task_groups.rs`, `task_identity.rs`,
-`operator_vocabulary.rs`, `retry.rs`, `authoring_validation.rs`, `secrets.rs`,
-`secrets_isolation.rs`, `template_keys.rs`, `jsonlogic_params.rs`, and the
-feature-gated `ops_budget.rs` and `tensor.rs`). The table in `CLAUDE.md` gives
-each file's topic. Pick the file whose topic already matches; add a new one only
-for a new area.
+topic, one binary per file: the engine end to end (`run_basics.rs`,
+`run_loops.rs`, `host_calls.rs`, `fan_out.rs`, `deadline.rs`,
+`error_context.rs`, `observer.rs`, `trace.rs`, `acceptance.rs`), the
+definitions and the compiler (`parse.rs`, `compat.rs`, `compile.rs`,
+`checks.rs`, `fingerprint.rs`, `program.rs`, `registry.rs`,
+`repository_definitions.rs`), functions and their configs (`derive.rs`,
+`config_fields.rs`, `documents.rs`, `function_testing.rs`, `expr.rs`,
+`path.rs`, `operators.rs`, `secrets_isolation.rs`), the wire shapes
+(`wire.rs`, `run_json.rs`, `ts_types.rs`, `vocabulary.rs`), the
+differentials that hold the engine to the published 3.x (`run_vs_v3.rs`,
+`map_vs_v3.rs`, `parse_vs_v3.rs`), and the feature-gated `ops_budget.rs`.
+Pick the file whose topic already matches; add a new one only for a new area.
 
 Because each file is its own crate, a fixture needed by more than one of them
-belongs in `tests/common/mod.rs` (declared `pub`, pulled in with `mod common;`).
+belongs in `tests/support/`, pulled in with a `#[path]` module.
 
 CI skips docs-only and Markdown-only changes by design, so a PR
 touching only those paths will not show Rust checks.
 
-## Adding a Built-in Function
+## Adding a Function
 
-Built-ins live in `src/engine/functions/`. Implement `AsyncFunctionHandler` with
-a typed `Input`:
+A host function implements `Function` with a `#[derive(FunctionConfig)]`
+config, and a task names it by the name it is registered under:
 
 ```rust
-#[async_trait]
-impl AsyncFunctionHandler for MyFunction {
-    type Input = MyInput;
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::expr::Output;
+use dataflow_rs::function::FunctionConfig;
+use dataflow_rs::{Ctx, Expr, Function, Outcome, Result};
 
-    async fn execute(
-        &self,
-        ctx: &mut TaskContext<'_>,
-        input: &MyInput,
-    ) -> Result<TaskOutcome> {
-        ctx.set("data.result", OwnedDataValue::from(&json!(42)));
-        Ok(TaskOutcome::Success)
+#[derive(FunctionConfig)]
+struct MyConfig {
+    query: Expr<String>,
+    #[output(default = "data.result")]
+    output: Output,
+}
+
+struct MyFunction;
+
+impl Function for MyFunction {
+    type Config = MyConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &MyConfig) -> Result<Outcome> {
+        let query = ctx.eval(&cfg.query)?;
+        ctx.emit_default(OwnedDataValue::String(query.into_owned()))?;
+        Ok(Outcome::Ok)
     }
 }
 ```
 
-Write through `ctx.set` so audit-trail changes are recorded for you, and return
-the `TaskOutcome` variant that matches intent rather than encoding control flow
-in a status code. Register the function in `src/engine/functions/mod.rs` and
-document it in `docs/src/built-in-functions/` and the README table.
+Write through `ctx.emit_default`, `ctx.emit` or `ctx.set`, so the audit trail's
+changes are recorded for you and the writes land only when the call returns
+`Ok`, and return the `Outcome` variant that matches intent rather than encoding
+control flow in a status code. `function::testing::call` runs one call through
+the real compile, overlay and layers, for a unit test without a workflow.
+
+The eight built-ins (`src/function/builtins/`) are different: they run inline
+on the run's view, their names are reserved, and each is a row of the
+contract the corpus records, so adding one is a contract change, not a
+registration. It needs a case in the corpus, a row in `BUILTIN_FUNCTIONS`
+(which the wasm package's `engine_facts()` and the UI read), a page in
+`docs/src/built-in-functions/` and a row in the README's table.
 
 ## Releases
 
 Releases are tag-gated and maintainer-run. Pushing to `main` runs CI; the
-documentation site deploys from `v3-maintenance`, and a push never publishes.
-A `v*` tag triggers `.github/workflows/release.yml`, which validates that the
-tag matches the root `Cargo.toml` version, then publishes the crate and both
-npm packages. Contributors do not need to bump versions in a PR.
+documentation site deploys from `v3-maintenance` until 4.0 is released, and a
+push never publishes. A `v*` tag triggers `.github/workflows/release.yml`,
+which validates that the tag matches the root `Cargo.toml` version and that
+`wasm/` (its own version and its `dataflow-rs` requirement), `ui/` and the
+install snippets in `README.md` and `docs/src/` agree, then publishes the
+crate and both npm packages. The four published versions move together, the
+derive's included: the root's manifest names `dataflow-rs-derive` from
+crates.io, so the derive is published before the root. Contributors do not
+need to bump versions in a PR. 3.x releases are tagged on `v3-maintenance`.
 
 ## Security
 
