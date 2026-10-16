@@ -1,294 +1,726 @@
-//! WebAssembly bindings for dataflow-rs workflow engine.
+//! WebAssembly bindings for dataflow-rs 4: the engine in JavaScript and
+//! TypeScript, as `@goplasmatic/dataflow-wasm`.
 //!
-//! This crate provides WASM bindings that allow using dataflow-rs from JavaScript/TypeScript.
+//! A thin binding over [`Engine::run_with`]: one `WasmEngine` class, one
+//! `run`, the trace's replay and the engine's facts. JSON crosses the
+//! boundary as text (`JSON.stringify` in, `JSON.parse` out), so `null` stays
+//! `null` and a plain object stays a plain object. Every result is typed: the
+//! package's `.d.ts` carries the crate's wire shapes (`Message`, `Run`,
+//! `Trace`, `Issue` and the rest) and the package's own option and result
+//! types.
 //!
 //! # Usage
 //!
 //! ```javascript
-//! import init, { WasmEngine } from 'dataflow-wasm';
+//! import init, { WasmEngine, contexts } from '@goplasmatic/dataflow-wasm';
 //!
 //! await init();
 //!
-//! // Define workflows
-//! const workflows = JSON.stringify([{
-//!     id: "example",
-//!     name: "Example Workflow",
-//!     priority: 1,
-//!     tasks: [{
-//!         id: "parse_payload",
-//!         name: "Parse Payload",
-//!         function: {
-//!             name: "parse_json",
-//!             input: { source: "payload", target: "input" }
-//!         }
-//!     }, {
-//!         id: "task1",
-//!         name: "Transform Data",
-//!         function: {
-//!             name: "map",
-//!             input: {
-//!                 mappings: [{
-//!                     path: "data.result",
-//!                     logic: { "var": "data.input" }
-//!                 }]
-//!             }
-//!         }
-//!     }]
+//! const engine = new WasmEngine([{
+//!   id: "example",
+//!   tasks: [{
+//!     id: "greet",
+//!     function: {
+//!       name: "map",
+//!       input: { mappings: [{ path: "data.greeting", logic: { cat: ["hello ", { var: "data.name" }] } }] }
+//!     }
+//!   }]
 //! }]);
 //!
-//! // Create engine
-//! const engine = new WasmEngine(workflows);
-//!
-//! // Process a payload (raw string, parsed by the parse plugin)
-//! const payload = '{"input": "hello"}';
-//! const result = await engine.process(payload);
-//! console.log(JSON.parse(result));
+//! const { message, run, trace } = await engine.run({ name: "world" }, {
+//!   data: { name: "world" },
+//!   trace: true,
+//! });
+//! console.log(run.status);                    // "completed"
+//! console.log(message.context.data.greeting); // "hello world"
+//! console.log(contexts(trace).at(-1).data);   // the context after the last step
 //! ```
+//!
+//! A definition the engine refuses throws an `EngineError`: a JS `Error` whose
+//! `code` is `"REJECTED"` and whose `issues` are the engine's, each at its
+//! authored path. A run never rejects for what the message does: a stopped,
+//! timed-out or failing run resolves, with `run.status` saying how it ended
+//! and `trace` holding the failing step.
 
-use dataflow_rs::{Engine, Message, Workflow};
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::def::{self, ParseOptions};
+use dataflow_rs::expr::{ExprEngine, Path, Secrets};
+use dataflow_rs::observe::{Trace, TraceOptions};
+use dataflow_rs::run::{AuditMode, Context, Engine, Instant, Message, Run, RunOptions};
+use dataflow_rs::{Issue, Registry};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
 
-/// Initialize the WASM module.
-///
-/// This is automatically called when the module loads.
-/// Sets up the panic hook for better error messages in the browser console.
+/// The crate's wire shapes, embedded whole: what `message`, `run`, `trace`
+/// and an issue are, as `bindings/dataflow.d.ts` declares them.
+#[wasm_bindgen(typescript_custom_section)]
+const WIRE_TYPES: &str = include_str!("../../bindings/dataflow.d.ts");
+
+/// The package's own types: what each export takes and gives.
+#[wasm_bindgen(typescript_custom_section)]
+const PACKAGE_TYPES: &str = r#"
+/**
+ * What `new WasmEngine(workflows, options)` takes beside the definitions.
+ */
+export interface EngineOptions {
+  /**
+   * A secret store the workflows read through `{"secret": "name"}`. The
+   * values are held by the engine, never by a message, so they appear in no
+   * message, trace or error this engine returns.
+   */
+  secrets?: { [name: string]: JsonValue };
+}
+
+/**
+ * Which audit entries a run keeps on the message: every one (`"full"`, the
+ * default), none (`"off"`), or the most recent `last`.
+ */
+export type AuditMode = "full" | "off" | { last: number };
+
+/**
+ * What a run's trace records.
+ */
+export interface TraceOptions {
+  /** Time each call, into its step's `elapsed_us`. Off by default. */
+  timings?: boolean;
+  /** Record each step's changes, so the trace replays. On by default. */
+  changes?: boolean;
+  /**
+   * Context paths whose values read `null` in `initial` and in every change,
+   * such as `"metadata.headers"`. The message keeps the real values.
+   */
+  redact?: string[];
+  /**
+   * A ceiling on what the trace holds. The step that would cross it, and
+   * every later one, keeps everything but its changes, and `truncated` is set.
+   */
+  max_bytes?: number;
+}
+
+/**
+ * What `engine.run(payload, options)` takes beside the payload.
+ */
+export interface RunOptions {
+  /** The message id. A UUID v7 unless set. */
+  id?: string;
+  /** The `data` root the message starts with. An object, else ignored. */
+  data?: JsonValue;
+  /** The `metadata` root the message starts with. An object, else ignored. */
+  metadata?: JsonValue;
+  /** The channel whose workflows run. Every active workflow when unset. */
+  channel?: string;
+  /** The rollout bucket, 0 to 255. Every rollout admits an unset one. */
+  routing_bucket?: number;
+  /** Record each task's changes in the audit trail. On by default. */
+  capture_changes?: boolean;
+  /** Which audit entries the message keeps. `"full"` by default. */
+  audit?: AuditMode;
+  /** Trace the run: `true` for the default options, or the options. Off by default. */
+  trace?: boolean | TraceOptions;
+  /**
+   * A deadline, in milliseconds from the call. The run then ends
+   * `"timed_out"`, with its partial message and trace, rather than rejecting.
+   */
+  timeout_ms?: number;
+}
+
+/**
+ * What `engine.run` resolves with, on every status.
+ */
+export interface RunResult {
+  /** The message after the run. */
+  message: Message;
+  /** How the run ended and what each workflow did. */
+  run: Run;
+  /** The trace, when `trace` was asked for. */
+  trace?: Trace;
+}
+
+/**
+ * What the package throws: a JS `Error` with a `code`, and, for a refused
+ * definition, the engine's issues.
+ *
+ * - `"REJECTED"`: a definition did not load; `issues` holds every issue, the
+ *   Advisories too.
+ * - `"INVALID_ARGUMENT"`: an argument is not what the export takes; the
+ *   message names it.
+ * - `"INVALID_TRACE"`: a trace handed to `contexts` or `mapping_contexts` is
+ *   malformed.
+ */
+export interface EngineError extends Error {
+  code: "REJECTED" | "INVALID_ARGUMENT" | "INVALID_TRACE";
+  issues?: Issue[];
+}
+
+/**
+ * Facts about the engine a tool would otherwise keep a copy of.
+ */
+export interface EngineFacts {
+  /** The engine's version. */
+  version: string;
+  /** The built-in function names, which no registration may shadow. */
+  builtin_functions: string[];
+  /** The deepest group nesting a definition may use. */
+  max_group_depth: number;
+  /** What a `loop` reads for an absent `init` and `increment`. */
+  loop_defaults: { init: number; increment: number };
+  /** What a `for_each` reads for an absent `max_concurrency`. */
+  for_each_defaults: { max_concurrency: number };
+}
+
+/**
+ * What `parse(definition)` gives: the definition in the 4.0 spelling, or
+ * `null` when it was rejected, and every issue at its authored path.
+ */
+export interface ParseResult {
+  definition: JsonValue | null;
+  issues: Issue[];
+}
+"#;
+
+/// Initialize the module: installs the panic hook, so a panic reaches the
+/// console as a message rather than an `unreachable` trap. Called when the
+/// module loads.
 #[wasm_bindgen(start)]
 pub fn init() {
     console_error_panic_hook::set_once();
 }
 
-/// A WebAssembly-compatible workflow engine.
-///
-/// Wraps the dataflow-rs Engine to provide async message processing
-/// that returns JavaScript Promises.
+// ---------------------------------------------------------------------------
+// The boundary: JSON as text, errors as `EngineError`
+// ---------------------------------------------------------------------------
+
+/// An `EngineError`: a JS `Error` carrying `code` and, when given, `issues`.
+fn engine_error(code: &str, message: impl AsRef<str>, issues: Option<&[Issue]>) -> JsValue {
+    let error = js_sys::Error::new(message.as_ref());
+    // `Reflect::set` fails only on a frozen object, which a fresh `Error` is
+    // not; an unlikely failure would lose the property, not the error.
+    let _ = js_sys::Reflect::set(&error, &JsValue::from_str("code"), &JsValue::from_str(code));
+    if let Some(issues) = issues
+        && let Ok(issues) = to_js(issues)
+    {
+        let _ = js_sys::Reflect::set(&error, &JsValue::from_str("issues"), &issues);
+    }
+    error.into()
+}
+
+fn invalid(what: &str, detail: impl std::fmt::Display) -> JsValue {
+    engine_error("INVALID_ARGUMENT", format!("{what}: {detail}"), None)
+}
+
+/// The JSON text of a JS value: `JSON.stringify`, with `undefined` and `null`
+/// read as `null`.
+fn stringify(v: &JsValue) -> Result<String, JsValue> {
+    if v.is_undefined() || v.is_null() {
+        return Ok("null".to_owned());
+    }
+    let text = js_sys::JSON::stringify(v).map_err(|e| {
+        invalid(
+            "argument",
+            js_sys::Error::from(e)
+                .message()
+                .as_string()
+                .unwrap_or_else(|| "is not JSON".to_owned()),
+        )
+    })?;
+    // `JSON.stringify` of a function or a symbol is `undefined`, not text.
+    text.as_string()
+        .ok_or_else(|| invalid("argument", "is not JSON"))
+}
+
+/// A JS value read as `T`, through its JSON text. A JS string is taken as
+/// the string it is, not as JSON text to parse.
+fn from_js<T: DeserializeOwned>(v: &JsValue, what: &str) -> Result<T, JsValue> {
+    let text = stringify(v)?;
+    serde_json::from_str(&text).map_err(|e| invalid(what, e))
+}
+
+/// A Rust value handed to JS: its JSON text through `JSON.parse`, so the
+/// object's keys are in wire order and `null` is `null`.
+fn to_js<T: Serialize + ?Sized>(v: &T) -> Result<JsValue, JsValue> {
+    let text = serde_json::to_string(v).map_err(|e| invalid("result", e))?;
+    js_sys::JSON::parse(&text)
+}
+
+/// The definitions argument: JSON text, or an array of definitions.
+fn definitions(workflows: &JsValue) -> Result<Vec<Value>, JsValue> {
+    let raw: Value = match workflows.as_string() {
+        Some(text) => serde_json::from_str(&text).map_err(|e| invalid("workflows", e))?,
+        None => from_js(workflows, "workflows")?,
+    };
+    match raw {
+        Value::Array(items) => Ok(items),
+        other => Err(invalid(
+            "workflows",
+            format!("must be an array of definitions, not {}", kind(&other)),
+        )),
+    }
+}
+
+/// A definition argument: one definition, as an object.
+fn definition(v: &JsValue, what: &str) -> Result<Value, JsValue> {
+    let raw: Value = from_js(v, what)?;
+    if raw.is_object() {
+        Ok(raw)
+    } else {
+        Err(invalid(
+            what,
+            format!("must be a definition object, not {}", kind(&raw)),
+        ))
+    }
+}
+
+fn kind(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// The payload argument: a JS string is the string it is (so a `parse_json`
+/// from `payload` reads it as 3.x did), `undefined` is `null`, and anything
+/// else is the JSON it is.
+fn payload(v: &JsValue) -> Result<OwnedDataValue, JsValue> {
+    if let Some(text) = v.as_string() {
+        return Ok(OwnedDataValue::from(&Value::String(text)));
+    }
+    let raw: Value = from_js(v, "payload")?;
+    Ok(OwnedDataValue::from(&raw))
+}
+
+// ---------------------------------------------------------------------------
+// The options and results, as read and written
+// ---------------------------------------------------------------------------
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EngineOptionsIn {
+    secrets: Option<Value>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunOptionsIn {
+    id: Option<String>,
+    data: Option<Value>,
+    metadata: Option<Value>,
+    channel: Option<String>,
+    routing_bucket: Option<u8>,
+    capture_changes: Option<bool>,
+    audit: Option<AuditIn>,
+    trace: Option<TraceIn>,
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AuditIn {
+    Mode(String),
+    Last { last: usize },
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TraceIn {
+    On(bool),
+    Options(TraceOptionsIn),
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TraceOptionsIn {
+    timings: Option<bool>,
+    changes: Option<bool>,
+    redact: Option<Vec<String>>,
+    max_bytes: Option<usize>,
+}
+
+/// The run options, owned, so the future that runs the message holds them.
+struct Prepared {
+    message: Message,
+    channel: Option<String>,
+    routing_bucket: Option<u8>,
+    capture_changes: Option<bool>,
+    audit: Option<AuditMode>,
+    trace: Option<TraceOptions>,
+    deadline: Option<Instant>,
+}
+
+impl RunOptionsIn {
+    fn prepare(self, payload: OwnedDataValue) -> Result<Prepared, JsValue> {
+        let seed = |v: Option<Value>| v.map_or(OwnedDataValue::Null, |v| OwnedDataValue::from(&v));
+        let mut message = Message::from_parts(payload, seed(self.data), seed(self.metadata));
+        if let Some(id) = self.id {
+            message = message.with_id(id);
+        }
+        let audit = match self.audit {
+            None => None,
+            Some(AuditIn::Mode(mode)) => Some(match mode.as_str() {
+                "full" => AuditMode::Full,
+                "off" => AuditMode::Off,
+                other => {
+                    return Err(invalid(
+                        "options.audit",
+                        format!("must be \"full\", \"off\" or {{ last: n }}, not {other:?}"),
+                    ));
+                }
+            }),
+            Some(AuditIn::Last { last }) => Some(AuditMode::Last(last)),
+        };
+        let trace = match self.trace {
+            None | Some(TraceIn::On(false)) => None,
+            Some(TraceIn::On(true)) => Some(TraceOptions::default()),
+            Some(TraceIn::Options(opts)) => {
+                let mut trace = TraceOptions::default();
+                if let Some(on) = opts.timings {
+                    trace = trace.timings(on);
+                }
+                if let Some(on) = opts.changes {
+                    trace = trace.changes(on);
+                }
+                if let Some(max) = opts.max_bytes {
+                    trace = trace.max_bytes(max);
+                }
+                let mut redact = Vec::with_capacity(opts.redact.as_ref().map_or(0, Vec::len));
+                for raw in opts.redact.unwrap_or_default() {
+                    let path: Path = raw
+                        .parse()
+                        .map_err(|e| invalid("options.trace.redact", format!("{raw:?}: {e}")))?;
+                    redact.push(path);
+                }
+                Some(trace.redact(redact))
+            }
+        };
+        let deadline = self
+            .timeout_ms
+            .map(|ms| Instant::now() + Duration::from_millis(ms));
+        Ok(Prepared {
+            message,
+            channel: self.channel,
+            routing_bucket: self.routing_bucket,
+            capture_changes: self.capture_changes,
+            audit,
+            trace,
+            deadline,
+        })
+    }
+}
+
+/// What `run` resolves with, written in wire order.
+#[derive(Serialize)]
+struct RunResult<'a> {
+    message: &'a Message,
+    run: &'a Run,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace: Option<&'a Trace>,
+}
+
+#[derive(Serialize)]
+struct ParseResult {
+    definition: Option<Value>,
+    issues: Vec<Issue>,
+}
+
+#[derive(Serialize)]
+struct EngineFacts {
+    version: &'static str,
+    builtin_functions: [&'static str; 8],
+    max_group_depth: usize,
+    loop_defaults: LoopDefaults,
+    for_each_defaults: ForEachDefaults,
+}
+
+#[derive(Serialize)]
+struct LoopDefaults {
+    init: i64,
+    increment: i64,
+}
+
+#[derive(Serialize)]
+struct ForEachDefaults {
+    max_concurrency: usize,
+}
+
+// ---------------------------------------------------------------------------
+// The engine
+// ---------------------------------------------------------------------------
+
+/// A workflow engine in WebAssembly: a set of definitions, compiled once, that
+/// runs messages and returns Promises.
+#[derive(Debug)]
 #[wasm_bindgen]
 pub struct WasmEngine {
-    inner: Arc<Engine>,
-}
-
-/// Build the message every entry point processes: the payload is stored as a
-/// raw string, so a `parse_json` / `parse_xml` task in the workflow is what
-/// turns it into structured `data`. The engine never parses it.
-fn raw_string_message(payload: &str) -> Message {
-    Message::from_value(&Value::String(payload.to_string()))
-}
-
-/// Render an engine result as a JSON string `JsValue` — what every entry
-/// point resolves its Promise with.
-fn to_js_json<T: serde::Serialize>(value: &T) -> Result<JsValue, JsValue> {
-    serde_json::to_string(value)
-        .map(|s| JsValue::from_str(&s))
-        .map_err(js_err)
-}
-
-/// Reject a Promise with `e`'s `Display` form.
-fn js_err(e: impl std::fmt::Display) -> JsValue {
-    JsValue::from_str(&e.to_string())
+    inner: Engine,
 }
 
 #[wasm_bindgen]
 impl WasmEngine {
-    /// Create a new WasmEngine from a JSON array of workflow definitions.
+    /// `new WasmEngine(workflows, options?)`: the definitions, as JSON text
+    /// or an array, with an optional secret store.
     ///
-    /// # Arguments
-    /// * `workflows_json` - JSON string containing an array of workflow definitions
-    ///
-    /// # Example
-    /// ```javascript
-    /// const workflows = JSON.stringify([{
-    ///     id: "workflow1",
-    ///     name: "My Workflow",
-    ///     priority: 1,
-    ///     tasks: [...]
-    /// }]);
-    /// const engine = new WasmEngine(workflows);
-    /// ```
+    /// Throws an `EngineError`: `"REJECTED"` with `issues` when a definition
+    /// does not load, `"INVALID_ARGUMENT"` when an argument is not what this
+    /// takes.
     #[wasm_bindgen(constructor)]
-    pub fn new(workflows_json: &str) -> Result<Self, String> {
-        Self::build(workflows_json, None)
-    }
-
-    /// As the constructor, with a secret store the workflows can read through
-    /// `{"secret": "name"}`.
-    ///
-    /// A second constructor rather than an optional argument, so `new`'s
-    /// signature — and every existing caller — is untouched. The values are
-    /// held by the engine, never by a message, so they appear in no processed
-    /// message and no trace this engine returns.
-    ///
-    /// # Arguments
-    /// * `workflows_json` - JSON array of workflow definitions
-    /// * `secrets_json` - JSON object of name → value
-    ///
-    /// # Example
-    /// ```javascript
-    /// const engine = WasmEngine.with_secrets(workflows, JSON.stringify({ token: "…" }));
-    /// ```
-    #[wasm_bindgen]
-    pub fn with_secrets(workflows_json: &str, secrets_json: &str) -> Result<Self, String> {
-        Self::build(workflows_json, Some(secrets_json))
-    }
-
-    fn build(workflows_json: &str, secrets_json: Option<&str>) -> Result<Self, String> {
-        let workflows_value: Value = serde_json::from_str(workflows_json)
-            .map_err(|e| format!("Invalid workflows JSON: {}", e))?;
-
-        let workflows_array = workflows_value
-            .as_array()
-            .ok_or_else(|| "Workflows must be a JSON array".to_string())?;
-
-        let mut workflows = Vec::with_capacity(workflows_array.len());
-        for (i, workflow_value) in workflows_array.iter().enumerate() {
-            let workflow_str = serde_json::to_string(workflow_value).map_err(|e| e.to_string())?;
-            let workflow = Workflow::from_json(&workflow_str)
-                .map_err(|e| format!("Invalid workflow at index {}: {}", i, e))?;
-            workflows.push(workflow);
+    pub fn new(
+        #[wasm_bindgen(unchecked_param_type = "string | JsonValue[]")] workflows: JsValue,
+        #[wasm_bindgen(unchecked_optional_param_type = "EngineOptions")] options: Option<
+            js_sys::Object,
+        >,
+    ) -> Result<Self, JsValue> {
+        let definitions = definitions(&workflows)?;
+        let options: EngineOptionsIn = match options {
+            Some(o) => from_js(&o.into(), "options")?,
+            None => EngineOptionsIn::default(),
+        };
+        let mut exprs = ExprEngine::builder();
+        if let Some(secrets) = options.secrets {
+            let store = Secrets::new(OwnedDataValue::from(&secrets))
+                .map_err(|e| invalid("options.secrets", e))?;
+            exprs = exprs.secrets(store);
         }
-
-        let mut builder = Engine::builder().with_workflows(workflows);
-        if let Some(secrets_json) = secrets_json {
-            let secrets: Value = serde_json::from_str(secrets_json)
-                .map_err(|e| format!("Invalid secrets JSON: {}", e))?;
-            builder = builder.with_secrets_json(&secrets);
+        let exprs = exprs.build().map_err(|e| invalid("options", e))?;
+        let mut builder = Engine::builder().registry(Registry::new(exprs));
+        for raw in &definitions {
+            builder = builder.workflow_json(raw);
         }
-        let engine = builder
-            .build()
-            .map_err(|e| format!("Engine construction failed: {}", e))?;
-        Ok(Self {
-            inner: Arc::new(engine),
-        })
+        let inner = builder.build().map_err(|issues| {
+            let rejected = issues
+                .iter()
+                .filter(|i| i.severity == dataflow_rs::program::Severity::Rejected)
+                .count();
+            let first = issues
+                .iter()
+                .find(|i| i.severity == dataflow_rs::program::Severity::Rejected)
+                .or(issues.first());
+            let message = match first {
+                Some(issue) => format!(
+                    "{rejected} definition issue(s) rejected the workflows; the first: {} at `{}`: {}",
+                    issue.code, issue.path, issue.message
+                ),
+                None => "the workflows were rejected".to_owned(),
+            };
+            engine_error("REJECTED", message, Some(&issues))
+        })?;
+        Ok(Self { inner })
     }
 
-    /// Process a payload through the engine's workflows.
+    /// `engine.run(payload, options?)`: runs one message and resolves, on
+    /// every status, with `{ message, run, trace? }`.
     ///
-    /// This is an async operation that returns a Promise.
-    /// The payload is stored as a raw string and should be parsed by a parse plugin
-    /// in the workflow if JSON parsing is needed.
-    ///
-    /// # Arguments
-    /// * `payload` - Raw string payload to process (not parsed by the engine)
-    ///
-    /// # Returns
-    /// A Promise that resolves to the processed message as a JSON string
-    ///
-    /// # Example
-    /// ```javascript
-    /// const payload = '{"name": "John", "email": "john@example.com"}';
-    /// const result = await engine.process(payload);
-    /// const processed = JSON.parse(result);
-    /// console.log(processed.context.data);
-    /// ```
-    #[wasm_bindgen]
-    pub fn process(&self, payload: &str) -> js_sys::Promise {
-        let mut message = raw_string_message(payload);
-        // Clone the Arc for the async block
-        let engine = Arc::clone(&self.inner);
-
+    /// The payload is any value: a string stays a string, so a `parse_json`
+    /// task reading `payload` parses it; an object is stored as the object it
+    /// is. The promise rejects only for a malformed argument
+    /// (`"INVALID_ARGUMENT"`); a run that stops, times out or fails resolves,
+    /// with `run.status` saying how and `trace`, when asked for, holding the
+    /// failing step.
+    #[wasm_bindgen(unchecked_return_type = "Promise<RunResult>")]
+    pub fn run(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "JsonValue")] payload: JsValue,
+        #[wasm_bindgen(unchecked_optional_param_type = "RunOptions")] options: Option<
+            js_sys::Object,
+        >,
+    ) -> js_sys::Promise {
+        let prepared = (|| {
+            let payload = self::payload(&payload)?;
+            let options: RunOptionsIn = match options {
+                Some(o) => from_js(&o.into(), "options")?,
+                None => RunOptionsIn::default(),
+            };
+            options.prepare(payload)
+        })();
+        let Prepared {
+            mut message,
+            channel,
+            routing_bucket,
+            capture_changes,
+            audit,
+            trace,
+            deadline,
+        } = match prepared {
+            Ok(p) => p,
+            Err(e) => return js_sys::Promise::reject(&e),
+        };
+        let engine = self.inner.clone();
         future_to_promise(async move {
-            engine.process_message(&mut message).await.map_err(js_err)?;
-            to_js_json(&message)
+            let mut opts = RunOptions::default();
+            if let Some(channel) = &channel {
+                opts = opts.channel(channel);
+            }
+            if let Some(bucket) = routing_bucket {
+                opts = opts.routing_bucket(bucket);
+            }
+            if let Some(on) = capture_changes {
+                opts = opts.capture_changes(on);
+            }
+            if let Some(mode) = audit {
+                opts = opts.audit(mode);
+            }
+            if let Some(trace) = trace {
+                opts = opts.trace(trace);
+            }
+            if let Some(deadline) = deadline {
+                opts = opts.deadline(deadline);
+            }
+            let run = engine.run_with(&mut message, &opts).await;
+            to_js(&RunResult {
+                message: &message,
+                run: &run,
+                trace: run.trace(),
+            })
         })
     }
 
-    /// Process a payload with step-by-step execution tracing.
-    ///
-    /// This is an async operation that returns a Promise with the execution trace.
-    /// The trace contains message snapshots after each step, including which
-    /// workflows/tasks were executed or skipped.
-    /// The payload is stored as a raw string and should be parsed by a parse plugin.
-    ///
-    /// # Arguments
-    /// * `payload` - Raw string payload to process (not parsed by the engine)
-    ///
-    /// # Returns
-    /// A Promise that resolves to the execution trace as a JSON string
-    ///
-    /// # Example
-    /// ```javascript
-    /// const payload = '{"name": "John", "email": "john@example.com"}';
-    /// const trace = await engine.process_with_trace(payload);
-    /// const traceData = JSON.parse(trace);
-    /// console.log(traceData.steps); // Array of execution steps
-    /// ```
-    #[wasm_bindgen]
-    pub fn process_with_trace(&self, payload: &str) -> js_sys::Promise {
-        let mut message = raw_string_message(payload);
-        // Clone the Arc for the async block
-        let engine = Arc::clone(&self.inner);
-
-        future_to_promise(async move {
-            let trace = engine
-                .process_message_with_trace(&mut message)
-                .await
-                .map_err(js_err)?;
-            to_js_json(&trace)
-        })
+    /// `engine.check(definition)`: every issue the definition has, parsed and
+    /// checked against this engine's functions, each at its authored path.
+    /// An empty array means it would load.
+    #[wasm_bindgen(unchecked_return_type = "Issue[]")]
+    pub fn check(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "JsonValue")] definition: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let raw = self::definition(&definition, "definition")?;
+        let mut parsed = def::parse(&raw, ParseOptions::default());
+        if let Some(def) = &parsed.def {
+            parsed.issues.extend(self.inner.compiler().check(def));
+        }
+        to_js(&parsed.issues)
     }
 
-    /// Get the number of workflows registered in the engine.
-    #[wasm_bindgen]
+    /// How many workflows the engine holds.
     pub fn workflow_count(&self) -> usize {
-        self.inner.workflows().len()
+        self.inner.program().workflows().len()
     }
 
-    /// Get the list of workflow IDs.
-    ///
-    /// # Returns
-    /// JSON array of workflow IDs as a string
-    #[wasm_bindgen]
-    pub fn workflow_ids(&self) -> String {
-        let ids: Vec<&str> = self
-            .inner
+    /// The workflows' ids, in program order.
+    pub fn workflow_ids(&self) -> Vec<String> {
+        self.inner
+            .program()
             .workflows()
             .iter()
-            .map(|w| w.id.as_str())
-            .collect();
-        serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string())
+            .map(|w| w.id.clone())
+            .collect()
     }
 }
 
+// ---------------------------------------------------------------------------
+// Free functions
+// ---------------------------------------------------------------------------
+
 /// The version of the engine compiled into this module.
 ///
-/// Matches the published npm package version — the release workflow stamps
-/// both from the root `Cargo.toml`.
-///
-/// Callers pair a wasm build with a UI build, and a mismatch is otherwise
-/// invisible: [`Workflow`] does not set `deny_unknown_fields`, so an older
-/// engine *ignores* a field it predates rather than rejecting it. The workflow
-/// then runs and quietly does something other than what it says. Compare this
-/// against the version your frontend was built for and fail loudly instead.
+/// Matches the published npm package version: the release workflow stamps
+/// both from the root `Cargo.toml`. Pair a wasm build with a UI build on it:
+/// an older engine reads a key it predates as an unknown key, kept in `ext`
+/// and reported, so a workflow using a newer feature loads and does something
+/// other than what it says.
 #[wasm_bindgen]
 pub fn engine_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// Process a payload through a one-off engine (convenience function).
-///
-/// Creates an engine with the given workflows and processes a single payload.
-/// Use WasmEngine class for better performance when processing multiple payloads.
-/// The payload is stored as a raw string and should be parsed by a parse plugin.
-///
-/// # Arguments
-/// * `workflows_json` - JSON string containing an array of workflow definitions
-/// * `payload` - Raw string payload to process (not parsed by the engine)
-///
-/// # Returns
-/// A Promise that resolves to the processed message as a JSON string
-///
-/// # Example
-/// ```javascript
-/// const payload = '{"name": "John", "email": "john@example.com"}';
-/// const result = await process_message(workflowsJson, payload);
-/// console.log(JSON.parse(result));
-/// ```
-#[wasm_bindgen]
-pub fn process_message(workflows_json: &str, payload: &str) -> js_sys::Promise {
-    let engine_result = WasmEngine::new(workflows_json);
-    match engine_result {
-        Ok(engine) => engine.process(payload),
-        Err(e) => future_to_promise(async move { Err(JsValue::from_str(&e)) }),
+/// Facts about the engine a tool would otherwise keep a copy of: the
+/// built-in names, the group depth limit and the loop and fan-out defaults.
+#[wasm_bindgen(unchecked_return_type = "EngineFacts")]
+pub fn engine_facts() -> Result<JsValue, JsValue> {
+    to_js(&EngineFacts {
+        version: dataflow_rs::VERSION,
+        builtin_functions: def::BUILTIN_FUNCTIONS,
+        max_group_depth: def::MAX_GROUP_DEPTH,
+        loop_defaults: LoopDefaults {
+            init: def::defaults::INIT,
+            increment: def::defaults::INCREMENT,
+        },
+        for_each_defaults: ForEachDefaults {
+            max_concurrency: def::defaults::MAX_CONCURRENCY,
+        },
+    })
+}
+
+/// `parse(definition)`: the definition read as the engine reads it, 3.x
+/// spellings rewritten, and every issue at its authored path. `definition`
+/// is `null` when the definition was rejected.
+#[wasm_bindgen(unchecked_return_type = "ParseResult")]
+pub fn parse(
+    #[wasm_bindgen(unchecked_param_type = "JsonValue")] definition: JsValue,
+) -> Result<JsValue, JsValue> {
+    let raw = self::definition(&definition, "definition")?;
+    let parsed = def::parse(&raw, ParseOptions::default());
+    let definition = match &parsed.def {
+        Some(def) => Some(serde_json::to_value(def).map_err(|e| invalid("definition", e))?),
+        None => None,
+    };
+    to_js(&ParseResult {
+        definition,
+        issues: parsed.issues,
+    })
+}
+
+/// A trace read back, its `mapping_ends` checked before anything indexes by
+/// them.
+fn read_trace(trace: &JsValue) -> Result<Trace, JsValue> {
+    let trace: Trace = from_js(trace, "trace")?;
+    for (i, step) in trace.steps.iter().enumerate() {
+        let mut before = 0u32;
+        for &end in &step.mapping_ends {
+            if end < before || end as usize > step.changes.len() {
+                return Err(engine_error(
+                    "INVALID_TRACE",
+                    format!(
+                        "step {i}'s mapping_ends {:?} do not fit its {} change(s)",
+                        step.mapping_ends,
+                        step.changes.len()
+                    ),
+                    None,
+                ));
+            }
+            before = end;
+        }
     }
+    Ok(trace)
+}
+
+/// `contexts(trace)`: the context after each step, replaying the steps'
+/// changes from `trace.initial`; one per step, in order. The last one is the
+/// message's context after the run, unless the trace is `truncated`.
+///
+/// Throws `"INVALID_TRACE"` for a trace whose `mapping_ends` do not fit its
+/// changes, and `"INVALID_ARGUMENT"` for one that does not read as a trace.
+#[wasm_bindgen(unchecked_return_type = "Context[]")]
+pub fn contexts(
+    #[wasm_bindgen(unchecked_param_type = "Trace")] trace: JsValue,
+) -> Result<JsValue, JsValue> {
+    let trace = read_trace(&trace)?;
+    let contexts: Vec<Context> = trace.contexts().collect();
+    to_js(&contexts)
+}
+
+/// `mapping_contexts(trace, step)`: for a `map` step, the context after each
+/// of its mappings, in order; an empty array for any other step.
+///
+/// Throws `"INVALID_ARGUMENT"` for a step past the trace's last, and
+/// `"INVALID_TRACE"` as `contexts` does.
+#[wasm_bindgen(unchecked_return_type = "Context[]")]
+pub fn mapping_contexts(
+    #[wasm_bindgen(unchecked_param_type = "Trace")] trace: JsValue,
+    step: usize,
+) -> Result<JsValue, JsValue> {
+    let trace = read_trace(&trace)?;
+    if step >= trace.steps.len() {
+        return Err(invalid(
+            "step",
+            format!("{step} is past the trace's {} step(s)", trace.steps.len()),
+        ));
+    }
+    let contexts = trace.mapping_contexts(step).unwrap_or_default();
+    to_js(&contexts)
 }

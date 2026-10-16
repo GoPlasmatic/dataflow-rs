@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-wasm"
-version = "3.15.0"
+version = "4.0.0-dev"
 edition = "2024"
 license = "Apache-2.0"
 description = "WebAssembly bindings for the dataflow-rs rules engine"
@@ -32,11 +32,14 @@ wasm-opt = [
 ]
 
 [dependencies]
-# `all-operators` on the dependency line, not via `--features` at release time,
-# so `wasm-pack test` and any from-source build get the same operator set the
-# published npm artifact has. JS consumers have no cargo-feature knob.
-# v3, the published 3.15.0, until 7d: v3's source is on `v3-maintenance` (I124).
-dataflow-rs = { version = "=3.15.0", features = ["wasm-web", "all-operators"] }
+# The root crate, v4, at the root's version: phase 8 bumps the two together.
+# `wasm-web` is the browser's clock and randomness, which wasm32-unknown-unknown
+# needs. `all-operators` on the dependency line, not via `--features` at release
+# time, so `wasm-pack test` and any from-source build get the same operator set
+# the published npm artifact has; JS consumers have no cargo-feature knob.
+# `tensor` stays off: its operator names (`shape`, `cast`, `concat`) are
+# ordinary JSON keys in workflows that already ship.
+dataflow-rs = { path = "..", version = "=4.0.0-dev", features = ["wasm-web", "all-operators"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

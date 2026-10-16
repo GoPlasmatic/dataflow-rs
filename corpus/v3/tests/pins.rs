@@ -1,11 +1,12 @@
-//! The four requirements on the published v3 name one exact version.
+//! The three requirements on the published v3 name one exact version.
 //!
 //! `corpus/record.sh` records against `corpus/v3`'s pin, and a v3 fix that
-//! re-records the corpus bumps it. The other three move with it: the root's
-//! `dataflow_rs_v3` (v4's differential tests and `host_call_floor`),
-//! `docs-tests`' and `wasm/`'s `dataflow-rs`. A bump that misses one leaves
-//! `Cargo.lock` quietly carrying two 3.x versions, and holds part of the
-//! repository to a v3 the corpus was not recorded from.
+//! re-records the corpus bumps it. The other two move with it: the root's
+//! `dataflow_rs_v3` (v4's differential tests and `host_call_floor`) and
+//! `docs-tests`' `dataflow-rs`. A bump that misses one leaves `Cargo.lock`
+//! quietly carrying two 3.x versions, and holds part of the repository to a
+//! v3 the corpus was not recorded from. `wasm/` left the list in phase 7d,
+//! when it moved onto the root crate; `docs-tests` leaves it in 7e.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -13,11 +14,10 @@ use std::path::Path;
 
 /// The manifests, relative to the repository's root, and the dependency key
 /// each names v3 by.
-const PINS: [(&str, &str); 4] = [
+const PINS: [(&str, &str); 3] = [
     ("Cargo.toml", "dataflow_rs_v3"),
     ("corpus/v3/Cargo.toml", "dataflow-rs"),
     ("docs-tests/Cargo.toml", "dataflow-rs"),
-    ("wasm/Cargo.toml", "dataflow-rs"),
 ];
 
 /// The version requirement of every line that declares `key`, in either
@@ -55,7 +55,7 @@ fn is_exact(req: &str) -> bool {
 }
 
 #[test]
-fn the_four_v3_pins_name_one_exact_version() {
+fn the_v3_pins_name_one_exact_version() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut by_requirement: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut problems = Vec::new();

@@ -90,6 +90,38 @@ if (missing.length > 0) {
   console.log(`  ✓ all ${referenced.size} glue-referenced exports exist in the binary`);
 }
 
+// --- Check 3: the declarations carry the engine's types -----------------------
+// The package's `.d.ts` embeds the crate's wire shapes (bindings/dataflow.d.ts)
+// and the package's own option and result types through wasm-bindgen's
+// typescript_custom_section. A build that lost either would still run and
+// still publish, and every consumer's `tsc` would break at install time.
+const dtsName = files.find((f) => f.endsWith('.d.ts') && !f.endsWith('_bg.wasm.d.ts'));
+if (!dtsName) {
+  fail(`no .d.ts found in ${pkgDir}`);
+} else {
+  const dts = readFileSync(join(pkgDir, dtsName), 'utf8');
+  const wanted = [
+    'export type Message =',
+    'export type Trace =',
+    'export type Run =',
+    'export type Issue =',
+    'export interface RunOptions',
+    'export interface RunResult',
+    'export interface EngineError',
+    'export class WasmEngine',
+  ];
+  const absent = wanted.filter((decl) => !dts.includes(decl));
+  if (absent.length > 0) {
+    fail(
+      `${dtsName} lacks ${absent.length} declaration(s):\n` +
+        absent.map((d) => `    ${d}`).join('\n') +
+        `\n  The wire shapes or the package's own types did not reach the declarations.`,
+    );
+  } else {
+    console.log(`  ✓ ${dtsName} declares the wire shapes and the package's types`);
+  }
+}
+
 if (process.exitCode) {
   console.error('\nRefusing to publish a broken wasm artifact.');
 } else {
