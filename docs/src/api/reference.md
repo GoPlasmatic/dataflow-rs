@@ -1,1101 +1,421 @@
 # API Reference
 
-Quick reference for the main dataflow-rs types and methods.
+dataflow-rs 4 is seven public modules and fifteen names re-exported at the
+crate root. This page is the map: what each module holds, the one-line
+purpose of each type, and the handful of calls a host makes most, with their
+signatures. The full rustdoc is on docs.rs at
+`https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/<module>/`; the crate is
+unpublished today, so those links resolve from the 4.0.0 release.
 
-## Type Aliases
+A definition enters through [`def::parse`](#checking-a-definition), compiles
+through a [`program::Compiler`](#program-compiling), runs on a
+[`run::Engine`](#run-running) over a `run::Message`, and reports through an
+[`observe::Observer`](#observe-observers-and-traces) or a trace. Host
+functions implement [`function::Function`](#a-host-function).
 
-Dataflow-rs provides rules-engine aliases alongside the original workflow terminology:
+## The root
 
-| Rules Engine | Workflow Engine | Import |
+Fifteen names, enough for a host that registers functions and runs messages:
+
+| Name | Lives in | Purpose |
 |---|---|---|
-| `RulesEngine` | `Engine` | `use dataflow_rs::RulesEngine;` |
-| `Rule` | `Workflow` | `use dataflow_rs::Rule;` |
-| `Action` | `Task` | `use dataflow_rs::Action;` |
+| `Engine` | `run` | A compiled program and its config; runs messages |
+| `Message` | `run` | A payload, the three-root context, the audit trail and the error records |
+| `Run` | `run` | The report of one run: its status, each workflow's record, its trace |
+| `RunOptions` | `run` | What one run chooses: channel, bucket, audit, deadline, cancel, layers, observer, trace |
+| `Error` | `run` | Why a run, a compile or a call failed; `code()` is the recorded code |
+| `Result<T>` | `run` | `std::result::Result<T, Error>` |
+| `Issue` | `program` | One finding about a definition: code, severity, authored path, message |
+| `WorkflowDef` | `def` | A parsed definition: plain data with raw expressions |
+| `Expr<T>` | `expr` | Compiled JSONLogic that evaluates to a `T` |
+| `Path` | `expr` | A context path, parsed once: a root plus segments |
+| `Function` | `function` | The trait a host function implements |
+| `Ctx` | `function` | A function's view of one call: reads, writes, its config |
+| `Outcome` | `function` | What a call returns: `Ok`, `Status(u16)`, `Skip` or `Halt` |
+| `Registry` | `function` | The functions and layers a program compiles against |
+| `Observer` | `observe` | What a run tells a host as it goes |
 
-Both names refer to the same types; use whichever fits your mental model.
+Beside them, `VERSION` is the crate version (stamped on every message as
+`metadata.engine_version`), and the `datalogic_rs` and `datavalue` crates
+are re-exported so a host names one version of each.
 
-## Engine (RulesEngine)
+## `def`: definitions
 
-The central component that evaluates rules and processes messages.
+The authored form. A definition is plain data with raw `Logic`; it enters
+only through `parse`, which is also the linter, and serializes back in the
+4.0 spelling. [docs.rs](https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/def/)
 
-```rust
-use dataflow_rs::Engine;  // or: use dataflow_rs::RulesEngine;
-```
+| Name | Purpose |
+|---|---|
+| `parse`, `ParseOptions`, `Parsed` | Read one definition; every problem is an `Issue`, and `Parsed::def` is `Some` exactly when none is Rejected. `ParseOptions::compat` (default `true`) runs the v3 reader first |
+| `WorkflowDef` | Id, header, priority, condition, steps, `on_failure`, channel, status, version, rollout, loop, tags, timestamps; `walk()` visits every step with its authored path |
+| `StepDef` | One element of a step list: `Task` or `Group`. A closed enum |
+| `TaskDef` | One function call with its `on_failure`, `on_rejection`, `terminal` and `for_each` |
+| `GroupDef` | A span of steps sharing one condition, evaluated once on entry |
+| `NodeHeader` | `name`, `description` and `ext`, the keys every node shares; `ext` holds host data verbatim |
+| `FunctionRef` | The registered name and the raw `input` |
+| `Logic` | Raw JSONLogic as authored; only a compiler turns it into an `Expr` |
+| `LoopDef`, `ForEachDef` | A workflow's bounded loop; a task's fan-out |
+| `FailurePolicy`, `RejectionPolicy`, `WorkflowFailurePolicy` | `fail` / `halt` / `continue` for a 5xx or `Err`; `continue` / `halt` for a 4xx; `fail` / `continue` for the workflow |
+| `Status` | `active`, `paused` or `archived`; only `active` workflows run |
+| `Rollout`, `RolloutError` | A workflow's slice of its channel's traffic |
+| `defaults` | The values `parse` reads for an absent key (`PRIORITY`, `VERSION`, `CHANNEL`, `INIT`, `INCREMENT`, `MAX_CONCURRENCY`) |
+| `MAX_GROUP_DEPTH`, `BUILTIN_FUNCTIONS` | The nesting limit (8); the eight reserved names |
 
-### Constructors
+## `expr`: expressions
 
-```rust,ignore
-// Recommended path — fluent builder.
-pub fn builder() -> EngineBuilder
+The JSONLogic surface a definition is written in, and the field types a
+function's config is made of. [docs.rs](https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/expr/)
 
-// Lower-level entry. Use HashMap::new() for the no-handler case.
-pub fn new(
-    workflows: Vec<Workflow>,
-    custom_functions: HashMap<String, BoxedFunctionHandler>,
-) -> Result<Engine>
-```
+| Name | Purpose |
+|---|---|
+| `ExprEngine`, `ExprEngineBuilder` | Compiles and evaluates expressions; the builder takes custom operators, `Secrets` and (with the `budget` feature) an ops ceiling |
+| `Expr<T>`, `FromValue`, `Evaluated`, `ResolveExpr` | Compiled JSONLogic resolving to a `T` (`OwnedDataValue`, `String`, `u64`, `i64`, `f64`, `bool` or `Path`); a constant folds at compile |
+| `Path`, `Root`, `MAX_ARRAY_INDEX` | A context path; `get`, `set` and `remove` over the context by v3's segment rules; a bare numeric segment is an array index up to 1,048,575 |
+| `Output` | A write destination: an `Expr<Path>` a function emits through |
+| `Interpolated`, `Rendered` | A document of `var` holes in literal data, and one filled for a call |
+| `Secrets` | Values an expression reads through `{"secret": "name"}` and the engine never records |
+| `OperatorInfo`, `Family` | One operator an engine evaluates, and the feature family it belongs to |
+| `ConfigField`, `Resolver`, `CompileCx`, `Visit`, `ExprVisitor`, `FieldSpec`, `FieldKind`, `ValueKind` | The machinery behind `#[derive(FunctionConfig)]`: how a field compiles, resolves and is walked |
+| `EvalRoot` | What an evaluation runs against (`&OwnedDataValue` or `&serde_json::Value`) |
+| `escaped_keys`, `secret_refs` | Walks over raw JSON: every `$`-escaped template key; every secret reference |
 
-`EngineBuilder` (`#[must_use]`) chains
-`.register("name", handler)`, `.register_boxed(name, boxed)`,
-`.with_workflow(w)`, `.with_workflows(iter)`, `.with_handlers(map)`,
-`.with_observer(obs)`, `.with_datalogic_operator(name, op)`,
-`.with_error_context_path(path)`, `.with_error_context_limit(n)`,
-`.with_secrets(value)` / `.with_secrets_json(&json)`, then
-`.build() -> Result<Engine>`. `.build()` compiles all JSONLogic and
-pre-parses Custom inputs into their typed `Self::Input`, so config-shape
-errors fail there, not on first message. An error-context
-path that the JSONLogic evaluation context cannot see fails there too, as
-does a workflow that reads an undeclared secret or reads any secret from a
-`map` or `log` expression (see [Secrets](../advanced/secrets.md)).
+## `function`: host functions
 
-### Methods
+The typed units of work a task runs. The eight built-ins are here too, but
+run inline; a host function is one `Function` with one derived config.
+[docs.rs](https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/function/)
 
-```rust,ignore
-// Process a message through all matching rules
-pub async fn process_message(&self, message: &mut Message) -> Result<()>
+| Name | Purpose |
+|---|---|
+| `Function` | `type Config`, `spec()`, `prepare()` at build, and `call()` per task run |
+| `FunctionConfig` (trait and derive) | A function's `input`, compiled once at build; `#[config(default, default_json, rename, serde, records)]` and `#[output(default, primary)]` on fields |
+| `FunctionSpec`, `RetrySafety`, `Reference` | What a function says about itself, for tooling: description, category, retry safety, the config fields that name resources |
+| `Ctx`, `CallInfo` | The call's view: `get`, `set`, `remove`, `eval`, `render`, `emit`, `input`, `resolve`, `record_error`, `deadline`, `cancel`; `info()` is the call's static facts |
+| `Outcome` | `Ok` (200), `Status(u16)`, `Skip` (no entry) or `Halt` (299) |
+| `Prepare` | What `prepare` is told: the name, workflow id, task id and spec |
+| `CallLayer`, `Next`, `BoxFuture` | Around-call middleware for host calls, at registry or run scope |
+| `layers::Answer` | A ready-made layer answering calls from a closure, for a dry run |
+| `Registry`, `FunctionInfo` | Functions and layers plus the `ExprEngine` they compile against; `catalogue()` lists them |
+| `Templated`, `Rendered` | A plugin's config whose fields a manifest declares at runtime; a filled document |
+| `testing` | `call(f, input)` runs one call through the real compile, overlay and layers; `config` compiles a config alone |
 
-// Process with execution trace for debugging (trace is lost if this returns Err)
-pub async fn process_message_with_trace(&self, message: &mut Message) -> Result<ExecutionTrace>
+## `program`: compiling
 
-// Process with tracing into a caller-owned trace, so steps survive a hard failure
-pub async fn process_message_tracing(&self, message: &mut Message, trace: &mut ExecutionTrace) -> Result<()>
+A `Compiler` comes from a `Registry` and compiles one workflow at a time, so
+a host owns quarantine: a Rejected issue rejects only its own workflow.
+[docs.rs](https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/program/)
 
-// Process with tracing under an explicit capture policy (snapshot budget,
-// audit-trail scope, redaction, per-step diff)
-pub async fn process_message_with_trace_options(&self, message: &mut Message, options: TraceOptions) -> Result<ExecutionTrace>
+| Name | Purpose |
+|---|---|
+| `Compiler`, `CompileOptions` | `check(&def)` returns every issue; `compile_one(&def)` returns a `Compiled` or every issue; `link(workflows)` makes a `Program` |
+| `Compiled`, `CompiledWorkflow` | An accepted workflow with its Defects and Advisories; `fingerprint()` |
+| `Program`, `WorkflowInfo`, `TaskInfo` | Linked workflows, immutable, with dense indices; what the program lists about each |
+| `ProgramId`, `WorkflowIx`, `TaskIx` | The identity of a build and the positions within it |
+| `Issue`, `IssueCode`, `Severity` | A finding; its code (v3's 34 and v4's 8, `as_str()` is the stable spelling); `Rejected`, `Defect` or `Advisory` |
+| `AuthoredPath`, `PathSeg`, `StepKind` | Where in the authored JSON, as v3 spelled it (`tasks[1].tasks[0].id`); the kind of step it sits in |
+| `ResourceOracle` | A host's answer to "does this connector exist", checked against `Reference` fields |
+| `Fingerprint` | The operators and data keys a workflow's expressions use; `Display` and `FromStr` |
+| `ParseIssueCodeError`, `ParsePathError`, `ParseFingerprintError` | The `FromStr` errors |
 
-// Process only workflows on a specific channel (O(1) lookup)
-pub async fn process_message_for_channel(&self, channel: &str, message: &mut Message) -> Result<()>
+## `run`: running
 
-// Channel routing with execution trace
-pub async fn process_message_for_channel_with_trace(&self, channel: &str, message: &mut Message) -> Result<ExecutionTrace>
+Executing a program over a message. [docs.rs](https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/run/)
 
-// Channel routing, recording into a caller-owned trace
-pub async fn process_message_for_channel_tracing(&self, channel: &str, message: &mut Message, trace: &mut ExecutionTrace) -> Result<()>
+| Name | Purpose |
+|---|---|
+| `Engine`, `EngineBuilder`, `EngineConfig` | `Engine::builder()` for a host that does not quarantine; `Engine::new(program, config)` for one that does; `compiler()` and `with_program()` reload |
+| `ErrorContext` | Where failure records are mirrored into the context, and how many are kept |
+| `RunOptions` | Per-run choices; `Default` is every active workflow, changes captured, full audit, no limits |
+| `Run`, `RunStatus` | `status()`, `workflows()`, `matched()`, `partial()`, `retryable()`, `trace()`, `take_trace()`, `into_result()`; `Completed`, `CompletedWithErrors`, `Stopped(Error)`, `TimedOut`, `Cancelled` |
+| `WorkflowRecord`, `Selection`, `WorkflowExit` | One workflow's part in a run: whether it was selected, how many sweeps, how it ended |
+| `Message` | `new`, `from_parts`, `from_json`; `payload()`, `context()`, `context_mut()`, `audit()`, `errors()`; serializes as `{id, payload, context, audit_trail, errors}` |
+| `Context` | The three roots, always `data`, `metadata` and `temp_data` in that order; `get`, `set`, `remove` by `Path` |
+| `AuditEntry`, `Change`, `AuditMode` | One task's audit record; one recorded write or removal; `Full`, `Last(n)` or `Off` |
+| `ErrorRecord` | One recorded error, on v3's wire shape |
+| `Error`, `ErrorKind`, `Result` | The error type and its class; `Error::service(code, message)` is a host's own |
+| `CancelToken` | A cancellation flag; a `child()` is cancelled with its parent |
+| `Instant` | The clock a deadline is read on: `std::time::Instant` natively, a browser clock on wasm32 |
 
-// Channel routing under an explicit capture policy
-pub async fn process_message_for_channel_with_trace_options(&self, channel: &str, message: &mut Message, options: TraceOptions) -> Result<ExecutionTrace>
+## `observe`: observers and traces
 
-// Get registered rules (sorted by priority)
-pub fn workflows(&self) -> &Arc<Vec<Workflow>>
+What a run reports about itself, inline to an `Observer` and, once it ends,
+on its `Run`. [docs.rs](https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/observe/)
 
-// Find a workflow by ID
-pub fn workflow_by_id(&self, id: &str) -> Option<&Workflow>
+| Name | Purpose |
+|---|---|
+| `Observer`, `Interest` | `interest()` (read once per run) and `on(&Event)` (inline, synchronous); `WORKFLOWS`, `TASKS`, `TIMINGS` decide which events arrive and whether a clock is read |
+| `Event` | `RunStarted`, `WorkflowStarted`, `TaskFinished`, `WorkflowFinished`, `RunFinished`; every variant is `#[non_exhaustive]`, so match with `..` |
+| `TraceOptions` | `timings`, `changes`, `redact`, `max_bytes` |
+| `Trace`, `TraceStep`, `StepResult` | The initial context plus one step per call, skip, failure and engine write; `contexts()` replays them; `executed`, `skipped` or `failed` |
 
-// Create a new engine with different workflows, preserving custom functions.
-// Fallible: the new definitions are compiled and validated here.
-pub fn with_new_workflows(&self, workflows: Vec<Workflow>) -> Result<Self>
+## `compat`: 3.x definitions
 
-// Attach a lifecycle observer, consuming and returning the engine
-pub fn with_observer(self, observer: Arc<dyn ExecutionObserver>) -> Self
+[docs.rs](https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/compat/)
 
-// Borrow the underlying JSONLogic engine
-pub fn datalogic(&self) -> &Arc<datalogic_rs::Engine>
-```
+| Name | Purpose |
+|---|---|
+| `migrate_v3` | Parses with the compat reader on and writes the definition in the 4.0 spelling; `Err` holds every issue when any is Rejected |
+| `Migrated`, `Rewrite` | The result: the JSON, each rewrite (its path, the v3 and v4 spellings) and every issue |
 
-### Introspection
+See [Migrating from 3.x](../migration/from-3.md) for what the reader rewrites.
 
-Added in 3.7.0, for hosts that store, validate and operate workflow
-definitions. `can_dispatch`, `dispatchable_functions` and `check_workflow` are
-available on both `Engine` and `EngineBuilder`, so a definition can be checked
-before anything is built. `operator_names` and `declared_secrets` are on
-`Engine` only.
+## The calls a host makes most
 
-```rust,ignore
-// Will a task named `name` actually run? `false` guarantees it fails with
-// FunctionNotFound on the first message that reaches it.
-pub fn can_dispatch(&self, name: &str) -> bool
-
-// The full vocabulary this engine dispatches. Aliases are grouped, so
-// `validate` appears once carrying ["validation"]. Ordering is not meaningful.
-pub fn dispatchable_functions(&self) -> impl Iterator<Item = DispatchableFunction<'_>>
-
-// Check a workflow against the registered handlers and the secret store
-// without building anything. Reports rather than aborts; empty means build()
-// will not reject it for these reasons. Covers UnknownFunction,
-// MissingHandler, InputParse, TemplateCompile, UnknownSecret,
-// SecretInMessageWrite, InvalidSecretStore, DuplicateTemplateKey — plus
-// UnguardedValidation, GroupContinueOnError, EscapedTemplateKey and
-// NullMapping, which are Severity::Advisory and never refused by build(), and MissingHandler, which
-// is Severity::Defect: build() accepts it and every message then fails.
-pub fn check_workflow(&self, workflow: &Workflow) -> Vec<WorkflowIssue>
-
-// The names in the secret store — what {"secret": "name"} can resolve. Names
-// only, never values. Ordering is not meaningful.
-pub fn declared_secrets(&self) -> impl Iterator<Item = &str>
-
-// Every operator name this build evaluates: core, plus enabled families, plus
-// custom registrations. See the JSONLogic page on operator families.
-pub fn operator_names(&self) -> impl Iterator<Item = &str> + '_
-
-// The prefix that escapes a template key, so the key is emitted as data
-// instead of resolving as an operator. '$' on every build, fixed for the life
-// of the engine — this exists so an authoring tool renders and validates the
-// spelling without hardcoding it, not because it varies.
-pub fn template_key_escape(&self) -> char
-```
-
-`template_key_escape` is the companion to `operator_names`: that answers *which
-names are live*, this answers *how to opt a key out of being one*. See
-[Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape).
-
-```rust,ignore
-pub struct DispatchableFunction<'a> {
-    pub name: &'a str,
-    /// `Some(..)` for a built-in; `None` for a registered custom handler.
-    pub kind: Option<BuiltinKind>,
-    pub aliases: &'static [&'static str],
-}
-```
-
-`can_dispatch` answers the half of the question `builtin_function_kind` cannot:
-that function reports `enrich` *needs* a handler, but not whether one is
-registered. A workflow using a config-only integration with nothing behind it
-still builds cleanly (deliberately), so `can_dispatch` catches it before
-activation rather than on the first request.
-
-## Authoring-time validation
-
-Check a definition before it ever reaches an engine. See
-[Authoring-Time Validation](../advanced/authoring-validation.md) for the
-submission-time sequence.
-
-```rust,ignore
-// Check a definition's JSON without building an engine. Collects *every*
-// problem rather than failing at the first, each carrying the coordinate the
-// author typed (`tasks[1].tasks[0].id`), a stable code, and a message.
-//
-// Returns empty if and only if the JSON parses into a Workflow and that
-// workflow validates.
-impl Workflow {
-    pub fn validate_authored(json: &serde_json::Value) -> Vec<WorkflowIssue>
-}
-
-pub struct WorkflowIssue {
-    pub code: IssueCode,
-    /// Human-readable. Not stable — branch on `code`.
-    pub message: String,
-    /// Authored coordinate, e.g. `tasks[1].tasks[0].id`.
-    pub path: Option<String>,
-    /// The step this concerns. Ids are unique across tasks and groups.
-    pub task_id: Option<String>,
-}
-
-impl WorkflowIssue {
-    pub fn severity(&self) -> Severity
-}
-
-#[non_exhaustive]
-pub enum IssueCode { /* ... */ }
-
-impl IssueCode {
-    pub fn as_str(&self) -> &'static str
-    pub fn severity(self) -> Severity
-}
-
-// When an issue bites. Not #[non_exhaustive]: build time / first message /
-// never exhausts the axis, so a host can match it and stay correct.
-pub enum Severity {
-    /// build() refuses it, or it never parsed.
-    Rejected,
-    /// Builds cleanly, then fails every message. MissingHandler only.
-    Defect,
-    /// Loads and runs. The only class a host may safely ignore.
-    Advisory,
-}
-
-impl Severity {
-    pub fn as_str(&self) -> &'static str
-}
-```
-
-`IssueCode` is an enum rather than string codes because a host branching on a
-string literal has no protection against a typo that compiles and silently
-never matches. Its variants cover the structural rules (`EmptyWorkflowId`,
-`EmptyWorkflowName`, `NoTasks`, `MissingStepId`, `DuplicateStepId`,
-`EmptyGroup`, `GroupTooDeep`, `MissingFunction`, `InvalidFunctionName`,
-`InvalidTerminal`, `InvalidHaltOn`, `InvalidMapping`, `LoopIncrementTooSmall`,
-`LoopBoundEmpty`, `LoopCounterInvalid`, `LoopSlotInvalid`,
-`LoopItemWithoutOver`, `LoopSlotCollision`, `LoopOverInvalid`,
-`InvalidForEach`); the lints `check_workflow` adds (`UnguardedValidation`,
-`GroupContinueOnError`, `NullMapping`); the registry and secret rules
-(`UnknownFunction`, `MissingHandler`, `InputParse`, `TemplateCompile`,
-`UnknownSecret`, `SecretInMessageWrite`, `InvalidSecretStore`,
-`DuplicateTemplateKey`, `EscapedTemplateKey`); and the two backstops,
-`ParseFailed` and `ValidateFailed`.
-
-Four codes are `Severity::Advisory`: `EscapedTemplateKey`,
-`UnguardedValidation`, `GroupContinueOnError` and `NullMapping`.
-`check_workflow` reports them and `build()` never refuses them. `EscapedTemplateKey` lists every `$`-prefixed
-template key, so a host upgrading to 3.9 can find each place the escape changed
-what a template emits. `DuplicateTemplateKey`, by contrast, is always a bug and
-is refused. Ask `severity()` rather than keeping a list of which codes are
-which. See [Severity](../advanced/authoring-validation.md#severity).
-
-`MissingHandler` is deliberately distinct from `UnknownFunction`: `enrich`,
-`http_call` and `publish_kafka` are real names awaiting a registration, and
-reporting them as unknown would send an author hunting a typo that is not there.
-
-`check_workflow` receives an already-flattened workflow, so its issues anchor on
-`task_id` with a task-relative path (`function.input`) rather than an authored
-coordinate. Join them with the walker to recover one:
-
-```rust,ignore
-// Walk the authored step tree — tasks and groups, in document order — yielding
-// each step with the coordinate the author typed.
-pub fn walk_authored_steps(tasks: &serde_json::Value) -> AuthoredSteps<'_>
-
-// The same walk with paths rooted at `prefix` — `"loop.setup"` for a loop's
-// setup list, whose issues point at `loop.setup[i]…`.
-pub fn walk_authored_steps_at<'a>(steps: &'a serde_json::Value, prefix: &str) -> AuthoredSteps<'a>
-```
-
-## Retry
-
-Native only: the loop uses tokio time, so it is not compiled for
-`wasm32-unknown-unknown`. Nothing in the engine retries a task for you; this is
-the loop to wrap your own fallible calls in, typically inside a custom handler.
-
-```rust,ignore
-pub struct RetryPolicy {
-    /// Retries *after* the first attempt. `0` means try once and give up.
-    pub max_retries: u32,
-    /// Base delay in milliseconds. Doubles per attempt, capped at 60s.
-    pub retry_delay_ms: u64,
-    /// Wall-clock ceiling for the whole loop, sleeps included.
-    pub deadline: Option<Duration>,
-}
-
-impl RetryPolicy {
-    /// Three retries, 100ms base delay, no deadline.
-    fn default() -> Self
-    /// Never retries — an explicit opt-out at a call site that takes a policy.
-    pub fn none() -> Self
-}
-
-// Run `operation`, retrying while it fails *retryably* and budget remains.
-pub async fn retry_with_policy<T, F, Fut>(policy: RetryPolicy, label: &str, operation: F) -> Result<T>
-
-// As above, also reporting how many attempts were made — the count that fills
-// ErrorInfo::retry_attempted and retry_count.
-pub async fn retry_with_attempts<T, F, Fut>(policy: RetryPolicy, label: &str, operation: F) -> (Result<T>, u32)
-```
-
-Two behaviours worth knowing:
-
-- **Retryability is declared, not inferred.** The loop consults
-  `DataflowError::retryable()`, so a validation error fails once and returns
-  immediately. For your own failures, use
-  `DataflowError::service(..).retryable(true).build()`.
-- **A backoff that would cross the deadline is skipped, not slept**, and the
-  loop ends with the last error. The deadline bounds the sleeps; it does not
-  abort an attempt already in flight, so pair it with a per-attempt timeout if
-  your operation can hang.
-
-## Workflow (Rule)
-
-A collection of actions with optional conditions and priority.
+### Building an engine
 
 ```rust
-use dataflow_rs::Workflow;  // or: use dataflow_rs::Rule;
+use dataflow_rs::Engine;
+use dataflow_rs::run::EngineBuilder;
+# use serde_json::json;
+
+let builder: EngineBuilder = Engine::builder();
+let engine: Engine = builder
+    .workflow_json(&json!({"id": "w", "tasks": [
+        {"id": "t", "function": {"name": "map", "input": {
+            "mappings": [{"path": "data.greeting", "logic": "hello"}]}}}
+    ]}))
+    .build()
+    .expect("Err holds every rejected definition's issues");
+# assert_eq!(engine.program().workflows().len(), 1);
 ```
 
-### Constructors
-
-```rust,ignore
-// Parse from JSON string
-pub fn from_json(json: &str) -> Result<Workflow>
-
-// Load from file
-pub fn from_file(path: &str) -> Result<Workflow>
-
-// Convenience constructor for rules-engine pattern
-pub fn rule(id: &str, name: &str, condition: Value, tasks: Vec<Task>) -> Self
-```
-
-### JSON Schema
-
-```json
-{
-    "id": "string (required)",
-    "name": "string (required)",
-    "description": "string (optional)",
-    "priority": "number (optional, default: 0)",
-    "condition": "JSONLogic (optional, evaluated against full context)",
-    "continue_on_error": "boolean (optional, default: false)",
-    "tasks": "array of Task or TaskGroup (required)",
-    "channel": "string (optional, default: 'default')",
-    "version": "number (optional, default: 1)",
-    "status": "'active' | 'paused' | 'archived' (optional, default: 'active')",
-    "tags": "array of string (optional, default: [])",
-    "rollout": "{bucket_start, bucket_end} over 0..100 (optional, default: none)",
-    "loop": "{max, init, increment, counter, setup, over, as, scratch} (optional, default: none)",
-    "created_at": "ISO 8601 datetime (optional)",
-    "updated_at": "ISO 8601 datetime (optional)"
-}
-```
-
-## Task (Action)
-
-An individual processing unit within a rule.
+`EngineBuilder` chains `register(name, function)`, `layer(l)`,
+`registry(r)`, `options(CompileOptions)`, `config(EngineConfig)`,
+`workflow(WorkflowDef)` and `workflow_json(&Value)`, then
+`build() -> Result<Engine, Vec<Issue>>`. A host that quarantines compiles
+each workflow on its own instead:
 
 ```rust
-use dataflow_rs::Task;  // or: use dataflow_rs::Action;
+use dataflow_rs::program::{CompileOptions, Compiler, Program};
+use dataflow_rs::run::EngineConfig;
+use dataflow_rs::{Engine, Registry};
+# use dataflow_rs::def::{ParseOptions, parse};
+# use serde_json::json;
+# let def = parse(&json!({"id": "w", "tasks": [
+#     {"id": "t", "function": {"name": "log", "input": {"message": "hi"}}}
+# ]}), ParseOptions::default()).def.unwrap();
+
+let compiler: Compiler = Registry::default().compiler(CompileOptions::default());
+let compiled = compiler.compile_one(&def).expect("Err holds every issue");
+let program: Program = compiler.link([compiled.workflow]);
+let engine = Engine::new(program, EngineConfig::default());
+# assert_eq!(engine.program().workflows()[0].id, "w");
 ```
 
-### Constructor
+A reload is `engine.compiler()`, then `link`, then
+`engine.with_program(program)`; the old engine stays valid for runs in
+flight.
 
-```rust,ignore
-// Convenience constructor for rules-engine pattern
-pub fn action(id: &str, name: &str, function: FunctionConfig) -> Self
+### Running a message
+
+```rust
+# tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+use dataflow_rs::{Engine, Message, Run, RunOptions};
+# use serde_json::json;
+# let engine = Engine::builder()
+#     .workflow_json(&json!({"id": "w", "tasks": [
+#         {"id": "t", "function": {"name": "map", "input": {
+#             "mappings": [{"path": "data.greeting", "logic": "hello"}]}}}
+#     ]}))
+#     .build().unwrap();
+
+let mut message = Message::from_json(&json!({"name": "Ada"}));
+
+// With the default options.
+let run: Run = engine.run(&mut message).await;
+
+// With options: a channel, a routing bucket, a deadline, a trace, ...
+let opts = RunOptions::default().channel("default");
+let run: Run = engine.run_with(&mut message, &opts).await;
+# assert_eq!(run.matched(), 1);
+# });
 ```
 
-### JSON Schema
+`run(&self, &mut Message)` and `run_with(&self, &mut Message, &RunOptions)`
+are both `async` and return a `Run` on every outcome. A deadline is raced on a Tokio timer, so a run with one needs a
+Tokio runtime with its time driver.
 
-```json
-{
-    "id": "string (required)",
-    "name": "string (required)",
-    "description": "string (optional)",
-    "condition": "JSONLogic (optional, evaluated against full context)",
-    "continue_on_error": "boolean (optional, default: false)",
-    "terminal": "boolean (optional, default: false)",
-    "halt_on": "string (optional, one of never|failure, default: never)",
-    "for_each": "{over, as, max_concurrency, collect, into} (optional, default: none) — handler-backed functions only",
-    "function": {
-        "name": "string (required)",
-        "input": "object (required)"
-    }
+### Reading the result
+
+```rust
+# tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+use dataflow_rs::run::RunStatus;
+# use dataflow_rs::{Engine, Message};
+# use serde_json::json;
+# let engine = Engine::builder()
+#     .workflow_json(&json!({"id": "w", "tasks": [
+#         {"id": "t", "function": {"name": "map", "input": {
+#             "mappings": [{"path": "data.greeting", "logic": "hello"}]}}}
+#     ]}))
+#     .build().unwrap();
+# let mut message = Message::from_json(&json!({}));
+# let run = engine.run(&mut message).await;
+
+match run.status() {
+    RunStatus::Completed => {}
+    RunStatus::CompletedWithErrors => { /* read message.errors() */ }
+    RunStatus::Stopped(error) => eprintln!("{}: {}", error.code(), error.message()),
+    RunStatus::TimedOut | RunStatus::Cancelled => {}
+    _ => {}
 }
-```
-
-A step carrying a `tasks` key parses as a **group** instead, whose members share
-one condition evaluated once on entry:
-
-```json
-{
-    "id": "string (required)",
-    "name": "string (optional)",
-    "description": "string (optional)",
-    "condition": "JSONLogic (optional, evaluated once on entry)",
-    "terminal": "boolean (optional, default: false)",
-    "tasks": "array of Task or TaskGroup (required)"
+for workflow in run.workflows() {
+    println!("{} {:?} {:?}", workflow.id, workflow.selection, workflow.exit);
 }
+# assert!(matches!(run.status(), RunStatus::Completed));
+# });
 ```
 
-`halt_on` is **task-only**: a group has no outcome of its own, and carrying it
-is a parse error. `continue_on_error` is task- and workflow-only: on a group it
-parses and does nothing, and `check_workflow` reports it as
-`GROUP_CONTINUE_ON_ERROR`.
+`Run::status(&self) -> &RunStatus`. `into_result()` turns a stopped, timed
+out or cancelled run into `Err`, dropping the report and its trace; take the
+trace first with `take_trace()` when it is wanted on every status.
 
-## Message
-
-The data container that flows through rules. The context tree is held as
-`datavalue::OwnedDataValue` (not `serde_json::Value`) so the JSONLogic
-evaluator can borrow it into its arena without a `serde_json` round-trip.
+### Building a message
 
 ```rust
 use dataflow_rs::Message;
 use dataflow_rs::datavalue::OwnedDataValue;
+use serde_json::json;
 use std::sync::Arc;
+
+// From JSON: the payload converted.
+let m = Message::from_json(&json!({"name": "Ada"}));
+
+// From an owned value, or an `Arc` shared across messages.
+let payload = Arc::new(OwnedDataValue::from(&json!({"name": "Ada"})));
+let m = Message::new(Arc::clone(&payload));
+
+// Seeded `data` and `metadata`; a seed that is not an object is ignored.
+let m = Message::from_parts(
+    payload,
+    OwnedDataValue::from(&json!({"stage": "intake"})),
+    OwnedDataValue::Null,
+);
+# assert_eq!(m.context().data(), &OwnedDataValue::from(&json!({"stage": "intake"})));
 ```
 
-### Constructors
+`Message::new(payload: impl Into<Arc<OwnedDataValue>>)` and
+`Message::from_parts(payload, data: OwnedDataValue, metadata: OwnedDataValue)`.
+The id is a UUID v7; `with_id` replaces it. The payload is not part of the
+evaluation context: a `parse_json` task copies it into `data`.
 
-```rust,ignore
-// Fluent builder — recommended path for richer cases (custom id,
-// capture_changes off, etc.).
-pub fn builder() -> MessageBuilder
-
-// Native zero-conversion entry point — perf path.
-pub fn new(payload: Arc<OwnedDataValue>) -> Message
-
-// Convenience: bridge from a serde_json::Value payload.
-pub fn from_value(payload: &serde_json::Value) -> Message
-```
-
-`MessageBuilder` (`#[must_use]`) chains
-`.id(...)`, `.payload(Arc<OwnedDataValue>)` /
-`.payload_json(&serde_json::Value)`, `.capture_changes(bool)`,
-`.data(..)` / `.data_json(..)`, `.metadata(..)` / `.metadata_json(..)`,
-`.temp_data(..)` / `.temp_data_json(..)`, `.routing_bucket(u8)`,
-`.audit_mode(AuditMode)`, then `.build() -> Message`.
-
-`capture_changes` defaults to `true`. Its copies are held until
-`process_message` returns, so turn it off in long loops unless you read
-`changes`. See [Memory in long loops](../advanced/loops.md#memory-in-long-loops).
-
-`audit_mode` defaults to `AuditMode::Full`. `AuditMode::Last(n)` keeps the most
-recent `n` entries and `AuditMode::Off` keeps none; only the trail changes,
-never control flow.
-
-The three context setters seed `context.data` / `metadata` / `temp_data`
-directly, so a workflow condition reading `data.*` fires without needing a
-`parse_json` task first. Keys are taken **literally**: unlike
-`set_nested_value`, a key containing `.` stays one key and a leading `#` is not
-stripped. A non-`Object` value is ignored, preserving the invariant that the
-three root fields are always objects. Seeding records no audit entry and no
-`Change`; it is initial state, not a mutation.
-
-### Structure
-
-```rust,ignore
-pub struct Message {
-    pub context: OwnedDataValue,    // Always Object {data, metadata, temp_data}
-    // ... encapsulated fields ...
-}
-```
-
-`context` is the only `pub` field, and it is the legitimate read surface
-(tests do `message.context["data"]["x"]` lookups). You read every other
-field through accessors and mutate it through `add_error` (errors) or
-`TaskContext::set` (context), so audit-trail changes are recorded.
-
-### Methods
-
-```rust,ignore
-// Identity + payload
-pub fn id(&self) -> &str
-pub fn payload(&self) -> &OwnedDataValue
-pub fn payload_arc(&self) -> &Arc<OwnedDataValue>
-
-// Context accessors
-pub fn data(&self) -> &OwnedDataValue
-pub fn metadata(&self) -> &OwnedDataValue
-pub fn temp_data(&self) -> &OwnedDataValue
-
-// Error + audit views
-pub fn errors(&self) -> &[ErrorInfo]
-pub fn audit_trail(&self) -> &[AuditTrail]
-pub fn capture_changes(&self) -> bool
-pub fn routing_bucket(&self) -> Option<u8>
-
-// Mutation (constructive)
-pub fn add_error(&mut self, error: ErrorInfo)
-
-// Predicates
-pub fn has_errors(&self) -> bool
-```
-
-Inside a custom `AsyncFunctionHandler`, mutate the context via
-[`TaskContext::set`](#taskcontext); it records audit-trail changes
-automatically.
-
-## AsyncFunctionHandler
-
-Trait for implementing custom action handlers. See
-[Custom Functions](../advanced/custom-functions.md) for the full
-walk-through.
+### A host function
 
 ```rust
-use dataflow_rs::prelude::*;
-```
+use dataflow_rs::expr::Output;
+use dataflow_rs::function::FunctionConfig;
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::{Ctx, Expr, Function, Outcome, Result};
+# use serde_json::json;
 
-### Trait Definition
-
-```rust,ignore
-use serde::de::DeserializeOwned;
-
-#[async_trait]
-pub trait AsyncFunctionHandler: Send + Sync + 'static {
-    /// Typed configuration shape for this handler. Use
-    /// `serde_json::Value` for freeform JSON.
-    type Input: DeserializeOwned + Send + Sync + 'static;
-
-    /// Parse the raw `FunctionConfig::Custom { input }` JSON into
-    /// `Self::Input`. Default impl uses `serde_json::from_value`;
-    /// override only for custom validation beyond what serde provides.
-    fn parse_input(input: &serde_json::Value) -> Result<Self::Input> { ... }
-
-    /// Compile the `Template` fields of a just-parsed input. Called once per
-    /// task at engine construction, right after `parse_input`. Default is a
-    /// no-op, so a handler with no `Template` fields needs no override.
-    fn compile_input(input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> { ... }
-
-    /// Receiver-taking twin of `parse_input`. This is what the engine calls;
-    /// the default delegates to `parse_input`. Override when the parse depends
-    /// on the instance — one type registered under several names.
-    fn parse_input_with(&self, input: &serde_json::Value) -> Result<Self::Input> { ... }
-
-    /// Receiver-taking twin of `compile_input`, same rule: the engine calls
-    /// this and the default delegates. If both are overridden, this one wins.
-    fn compile_input_with(&self, input: &mut Self::Input, c: &TemplateCompiler) -> Result<()> { ... }
-
-    /// Execute the handler.
-    async fn execute(
-        &self,
-        ctx: &mut TaskContext<'_>,
-        input: &Self::Input,
-    ) -> Result<TaskOutcome>;
-}
-```
-
-The engine pre-parses each `FunctionConfig::Custom { input }` JSON into
-the registered handler's typed `Self::Input` at `Engine::builder().build()`
-(or `Engine::new`), through `parse_input_with` then `compile_input_with`
-(whose defaults delegate to the associated forms), so config-shape errors fail
-there, not on first message. See
-[One handler type, several registrations](../advanced/custom-functions.md#one-handler-type-several-registrations).
-
-### Template
-
-A config field whose authored JSON is JSONLogic. Every parameter of every
-built-in is one, and custom handlers declare them for their own config. A
-literal is JSONLogic for itself, so the static spelling an author already writes
-folds to a constant at `build()` and is cached.
-
-```rust,ignore
-pub struct Template { /* opaque */ }
-
-impl Template {
-    // Called from `AsyncFunctionHandler::compile_input` (or `compile_input_with`).
-    pub fn compile(&mut self, c: &TemplateCompiler, label: &str) -> Result<()>
-
-    // The sanctioned reads: the cached constant when the expression folded,
-    // otherwise a fresh evaluation.
-    pub fn resolve(&self, ctx: &TaskContext<'_>) -> Result<OwnedDataValue>
-    pub fn resolve_string(&self, ctx: &TaskContext<'_>) -> Result<String>
-    pub fn resolve_u64(&self, ctx: &TaskContext<'_>, label: &str) -> Result<u64>
-
-    pub fn eval(&self, ctx: &TaskContext<'_>) -> Result<OwnedDataValue>
-    pub fn eval_into<T: serde::de::DeserializeOwned>(&self, ctx: &TaskContext<'_>) -> Result<T>
-
-    pub fn as_json(&self) -> &serde_json::Value
-    pub fn is_compiled(&self) -> bool
-    // Whether the expression folded to a compile-time constant, so every
-    // resolve_* returns a cached value instead of evaluating.
-    pub fn is_constant(&self) -> bool
-    pub fn constant_string(&self) -> Option<String>
+#[derive(FunctionConfig)]
+struct FetchConfig {
+    url: Expr<String>,
+    #[output(default = "data.response")]
+    output: Output,
 }
 
-// A config field naming a *write destination*. `R` fixes the rooting:
-// ContextRoot for a path that names its own root (`data.x`), DataRoot for one
-// relative to `data`. A constant destination precomputes its split write path
-// at build(), which is what keeps the map hot loop allocation-free.
-pub struct PathTemplate<R: PathRoot = ContextRoot> { /* opaque */ }
-
-// Handed to `compile_input` / `compile_input_with`; wraps the same shared datalogic engine
-// `LogicCompiler` uses internally, so a compiled `Template` evaluates against
-// the same engine that will run the message.
-pub struct TemplateCompiler { /* opaque */ }
-impl TemplateCompiler {
-    pub fn engine(&self) -> &datalogic_rs::Engine
-}
-```
-
-Any config field may be a `Template`. The engine compiles with templating
-enabled, so a single-key object whose key matches an operator name evaluates as
-that operator; write `{"$cat": …}` for the literal object. A `Template` that
-folds to a constant is evaluated once at `build()` and cached. See
-[Config fields that are JSONLogic](../advanced/custom-functions.md#config-fields-that-are-jsonlogic-template)
-and [Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape).
-
-### Boxing
-
-```rust,ignore
-pub type BoxedFunctionHandler = Box<dyn DynAsyncFunctionHandler + Send + Sync>;
-```
-
-The engine stores these in its registry. You construct one via
-`Box::new(handler)` (or via `Engine::builder().register("name", handler)`),
-and the dyn-trait plumbing stays out of your code.
-
-## TaskContext
-
-Per-call context handed to every `AsyncFunctionHandler::execute` call.
-
-```rust,ignore
-pub struct TaskContext<'a> { /* ... */ }
-
-impl<'a> TaskContext<'a> {
-    // Execution identity. `None` only where the engine has no task to name —
-    // e.g. a handler invoked outside a workflow run in a host's own test.
-    pub fn workflow_id(&self) -> Option<&str>
-    pub fn task_id(&self) -> Option<&str>
-    /// Counter value of the sweep this call belongs to, for a looping
-    /// workflow; `None` otherwise.
-    pub fn loop_counter(&self) -> Option<i64>
-    /// Index of the element this call runs for, inside a task's `for_each`;
-    /// `None` otherwise.
-    pub fn element_index(&self) -> Option<usize>
-
-    // A secret by dotted name, from the store the host configured with
-    // `with_secrets`. `None` when undeclared, and always `None` for a context
-    // built with `TaskContext::new`. See the Secrets page for the contract.
-    pub fn secret(&self, name: &str) -> Option<&OwnedDataValue>
-
-    // Read accessors
-    pub fn message(&self) -> &Message
-    pub fn message_mut(&mut self) -> &mut Message
-    pub fn datalogic(&self) -> &Arc<datalogic_rs::Engine>
-    pub fn data(&self) -> &OwnedDataValue
-    pub fn metadata(&self) -> &OwnedDataValue
-    pub fn temp_data(&self) -> &OwnedDataValue
-    pub fn context(&self) -> &OwnedDataValue      // the whole {data, metadata, temp_data} tree
-    pub fn get(&self, path: &str) -> Option<&OwnedDataValue>
-
-    // Value-returning evaluation on the worker thread's pooled arena.
-    // Unlike `executor::evaluate_condition`, these return the value rather than
-    // collapsing to a bool, and surface failures as Err rather than false.
-    pub fn eval(&self, logic: &Logic) -> Result<OwnedDataValue>
-    pub fn eval_json(&self, logic: &Logic) -> Result<serde_json::Value>
-    pub fn eval_to_plain_string(&self, logic: &Logic) -> Result<String>
-
-    // Audit-trail-aware mutation
-    pub fn set(&mut self, path: &str, value: OwnedDataValue)
-    pub fn set_json(&mut self, path: &str, value: &serde_json::Value)
-    pub fn add_error(&mut self, error: ErrorInfo)
-}
-```
-
-`set` records a `Change` on the audit trail when `message.capture_changes`
-is `true`, then writes through `set_nested_value` (auto-creates
-intermediate objects/arrays, handles `#`-prefix escapes).
-
-`eval_to_plain_string` **deliberately disagrees** with datalogic-rs's own string
-projection: `Session::eval_str` keeps the JSON quoting, so a string result comes
-back from it as `"\"abc\""`, whereas this returns `abc`. The name says
-`plain_string` rather than `to_string` so the difference is visible at the call
-site, because these values end up in URL paths and message keys. A test pins both sides.
-
-`eval_json` projects straight from the arena to `serde_json::Value` in one walk,
-skipping the `OwnedDataValue` intermediate and the `from_value` rebuild.
-
-## Path helpers (`engine::utils`)
-
-Dot-path read, write and remove over the `OwnedDataValue` tree behind
-`Message::context`. Numeric segments index arrays; one leading `#` escapes a
-numerically-named object key (`data.#20` is the object key `"20"`).
-
-```rust,ignore
-pub fn get_nested_value<'b>(data: &'b OwnedDataValue, path: &str) -> Option<&'b OwnedDataValue>
-pub fn get_nested_value_cloned(data: &OwnedDataValue, path: &str) -> Option<OwnedDataValue>
-pub fn set_nested_value(data: &mut OwnedDataValue, path: &str, value: OwnedDataValue)
-
-// Remove and return. `None` — leaving the tree untouched — for a missing key,
-// an out-of-bounds or non-numeric index, descent through a non-container, or
-// an empty path. Never panics.
-pub fn remove_nested_value(data: &mut OwnedDataValue, path: &str) -> Option<OwnedDataValue>
-```
-
-`remove_nested_value` deletes the entry, whereas
-`set_nested_value(path, OwnedDataValue::Null)` leaves an explicit `null` behind,
-which survives serialization because `Message` emits `context` whole. Object
-removal preserves the order of the surviving keys; array removal shifts the tail
-rather than leaving a hole.
-
-## Connector introspection
-
-Which function configs carry a connector is this crate's fact, so the crate
-exposes it and hosts need not reimplement it.
-
-```rust,ignore
-// `Some` for http_call / enrich / publish_kafka (typed field), and for a
-// `Custom` input whose `connector` key holds a string. `None` otherwise.
-pub fn FunctionConfig::connector(&self) -> Option<ConnectorName<'_>>
-
-// A connector parameter is JSONLogic, so it names something only once a
-// message is in hand.
-pub enum ConnectorName<'a> {
-    Static(&'a str),    // authored as a literal string; known without a message
-    Computed(&'a Value),// authored as an expression; carries the authored JSON
-}
-
-impl<'a> ConnectorName<'a> {
-    // The literal name, or None when the connector is computed. The narrowing
-    // accessor for callers that genuinely only handle static connectors.
-    pub fn as_static(&self) -> Option<&'a str>
-}
-
-// Every connector reference in a workflow, in task order. One item per task,
-// not deduplicated. Works on an uncompiled `Workflow::from_json` result.
-pub fn Workflow::connector_refs(&self) -> impl Iterator<Item = ConnectorRef<'_>>
-
-pub struct ConnectorRef<'a> {
-    pub workflow_id: &'a str,
-    pub task_id: &'a str,
-    pub function: &'a str,
-    pub connector: ConnectorName<'a>,
-    pub config: &'a FunctionConfig,   // for cross-field rules
-}
-```
-
-> **Changed in 3.9.0.** `connector()` and `ConnectorRef::connector` were
-> `&str`. Every parameter became JSONLogic, so a computed connector names
-> nothing until a message arrives. Returning the enum makes a host enumerating
-> connectors decide what to do with those, rather than have them silently vanish
-> from `connector_refs`. Prefer matching the enum; `as_static()` is there for
-> the cases that only handle literals. Resolve a computed one per
-> message with the config's `resolve_connector(ctx)?`.
-
-Across a whole engine, `engine.workflows().iter().flat_map(Workflow::connector_refs)`
-covers it. There is deliberately no `Engine::connector_refs()`, since the engine
-has no stake in connectors.
-
-## TaskOutcome
-
-Return value of every handler:
-
-```rust
-pub enum TaskOutcome {
-    Success,         // audit status 200, continue
-    Status(u16),     // audit status = code; 5xx pushes TASK_STATUS_ERROR
-    Skip,            // no audit entry, continue
-    Halt,            // audit status 299 (HALT_STATUS_CODE), stop workflow
-}
-```
-
-## FunctionConfig
-
-`FunctionConfig` is an enum: every built-in is a typed variant, and unknown
-function names deserialize into `Custom { name, input }`. Custom handlers
-typically destructure the `Custom` variant to access their config.
-
-```rust,ignore
-pub enum FunctionConfig {
-    Map { input: MapConfig, .. },
-    Validation { input: ValidationConfig, .. },
-    ParseJson { input: ParseConfig, .. },
-    ParseXml { input: ParseConfig, .. },
-    PublishJson { input: PublishConfig, .. },
-    PublishXml { input: PublishConfig, .. },
-    Filter { input: FilterConfig, .. },
-    Log { input: LogConfig, .. },
-    HttpCall { input: HttpCallConfig, .. },
-    Enrich { input: EnrichConfig, .. },
-    PublishKafka { input: PublishKafkaConfig, .. },
-    Custom {
-        name: String,
-        input: serde_json::Value,
-        // #[serde(skip)] — populated by the engine at .build() with the
-        // typed Self::Input for the registered handler.
-        compiled_input: Option<CompiledCustomInput>,
-    },
-}
-```
-
-### Classifying a function name
-
-Which names get a typed variant is a fact about this crate, so the crate exposes
-it and you need not copy it or scrape it out of an error message:
-
-```rust,ignore
-// Every name that resolves to a typed variant instead of `Custom`.
-pub const BUILTIN_FUNCTION_NAMES: &[&str]
-
-// How a built-in reaches an implementation.
-pub enum BuiltinKind {
-    SelfContained,    // executed by this crate; no registration needed
-    RequiresHandler,  // config schema only; needs a registered handler
-}
-
-// `None` means the name lands in `FunctionConfig::Custom`.
-pub fn builtin_function_kind(name: &str) -> Option<BuiltinKind>
-
-// Equivalent to `builtin_function_kind(name).is_some()`.
-pub fn is_builtin_function(name: &str) -> bool
-```
-
-`RequiresHandler` covers `http_call`, `enrich` and `publish_kafka`. These parse
-without complaint and fail on the first message if no handler is registered, so a
-validator that treats them like `SelfContained` will accept a workflow that fails
-every request. See
-[Integration Functions](../built-in-functions/integrations.md#detecting-a-missing-handler-before-it-fails).
-
-Matching is exact: `"HTTP_CALL"` and `"htttp_call"` are both `None`.
-
-### Service-classified errors
-
-```rust,ignore
-// Build a handler-owned error. `kind` becomes ErrorInfo::code verbatim.
-pub fn DataflowError::service(kind: impl Into<String>, message: impl Into<String>)
-    -> ServiceErrorBuilder
-
-impl ServiceErrorBuilder {
-    pub fn detail(self, detail: impl Into<String>) -> Self   // operator-only
-    pub fn retryable(self, retryable: bool) -> Self          // default false
-    pub fn build(self) -> DataflowError
-}
-
-// None for every engine-owned variant.
-pub fn DataflowError::kind(&self) -> Option<&str>
-pub fn DataflowError::detail(&self) -> Option<&str>
-```
-
-`Display` on `DataflowError::Service` renders `message` alone, so `to_string()`
-never leaks the detail. `DataflowError` and `ErrorInfo` are `#[non_exhaustive]`.
-See [Service-classified errors](../core-concepts/error-handling.md#service-classified-errors).
-
-## Change
-
-Represents a single data modification recorded in the audit trail.
-
-```rust,ignore
-pub struct Change {
-    pub path: Arc<str>,
-    pub old_value: OwnedDataValue,
-    pub new_value: OwnedDataValue,
-    /// A removal (`map`'s `unset`); `new_value` is then null. Omitted from
-    /// JSON when false.
-    pub removed: bool,
-}
-```
-
-`old_value` and `new_value` are owned (not `Arc<OwnedDataValue>`), which saves
-one heap allocation per recorded mutation. Wrap them yourself if you need
-to share a `Change` across threads.
-
-## AuditTrail
-
-Records changes made by an action. `workflow_id` / `task_id` are
-`Arc<str>` mirrors of the workflow/task ids; the engine clones them by
-refcount bump rather than allocating per audit entry.
-
-```rust,ignore
-pub struct AuditTrail {
-    pub workflow_id: Arc<str>,
-    pub task_id: Arc<str>,
-    pub timestamp: DateTime<Utc>,
-    pub changes: Vec<Change>,
-    pub status: usize,
-    /// Counter value of the sweep that produced this entry, for workflows
-    /// carrying a `loop`; `None` otherwise. Omitted when serializing, so a
-    /// non-looping workflow's audit JSON is unchanged.
-    pub loop_counter: Option<i64>,
-    /// Index of the element this entry records, for a task carrying a
-    /// `for_each`; `None` otherwise, and omitted when serializing.
-    pub element_index: Option<usize>,
-}
-```
-
-## ErrorInfo
-
-Error information recorded in the message.
-
-```rust
-pub struct ErrorInfo {
-    pub code: String,
-    pub message: String,
-    pub path: Option<String>,
-    pub workflow_id: Option<String>,
-    pub task_id: Option<String>,
-    pub timestamp: Option<String>,
-    pub retry_attempted: Option<bool>,
-    pub retry_count: Option<u32>,
-}
-```
-
-## DataflowError
-
-Main error type for the library.
-
-```rust
-use dataflow_rs::engine::error::DataflowError;
-```
-
-### Variants
-
-```rust
-pub enum DataflowError {
-    Validation(String),
-    FunctionExecution { context: String, source: Option<Box<DataflowError>> },
-    Workflow(String),
-    Task(String),
-    FunctionNotFound(String),
-    Deserialization(String),
-    Io(String),
-    LogicEvaluation(String),
-    Http { status: u16, message: String },
-    Timeout(String),
-    Unknown(String),
-}
-```
-
-`DataflowError::retryable()` returns `true` for transient infrastructure
-failures (5xx HTTP, 429, 408, timeouts, IO) and `false` for data/logic/
-configuration errors.
-
-## WorkflowStatus
-
-Lifecycle status for workflows.
-
-```rust
-use dataflow_rs::WorkflowStatus;
-```
-
-### Variants
-
-```rust
-pub enum WorkflowStatus {
-    Active,    // Default — workflow executes normally
-    Paused,    // Excluded from channel routing
-    Archived,  // Permanently retired
-}
-```
-
-## Rollout
-
-Traffic split for a workflow, compared against `Message::routing_bucket()`.
-
-```rust,ignore
-pub struct Rollout {
-    pub bucket_start: u8,   // inclusive
-    pub bucket_end: u8,     // exclusive; 100 means "up to and including 99"
-}
-
-impl Rollout {
-    // `[0,100)` accepts everything; an empty or inverted range accepts nothing.
-    pub fn accepts(&self, bucket: u8) -> bool
-
-    // Ordered percentages -> contiguous ranges covering exactly 0..100, in
-    // traffic order. A `0` entry yields an empty range that accepts nothing.
-    pub fn partition(percentages: &[u8]) -> Result<Vec<Rollout>, RolloutError>
-
-    // Check that a set — typically the live versions of one logical workflow —
-    // partitions 0..100: every bucket served, none served twice.
-    // Order-independent.
-    pub fn validate_set<'a>(
-        rollouts: impl IntoIterator<Item = &'a Rollout>,
-    ) -> Result<(), RolloutError>
-}
-
-// Its own error type rather than a DataflowError variant: pure arithmetic over
-// the bucket space, with no engine involvement and no retryability to classify.
-pub enum RolloutError {
-    Under { total: u32 },        // percentages sum below 100 — traffic silently dropped
-    Over { total: u32 },         // sum above 100 — later entries can never match
-    Gap { bucket: u8 },          // no range serves this bucket
-    Overlap { bucket: u8 },      // more than one range serves it
-    InvalidRange { rollout: Rollout },  // inverted, or reaching past bucket 100
-}
-```
-
-`partition` and `validate_set` are the two halves of keeping a *set* correct:
-build the ranges from percentages, or check ranges you already hold. The engine runs
-neither: it never validates a single workflow's `rollout` at build time, so an
-inverted range serves nobody.
-
-`Workflow::rollout` is `Option<Rollout>`, defaulting to `None` (not part of a
-split). A message with **no** bucket is admitted by every workflow. See
-[Traffic Splits](../core-concepts/workflow.md#traffic-splits-rollout).
-
-## Built-in Functions
-
-`map`, `validation`/`validate`, `parse_json`, `parse_xml`, `publish_json`,
-`publish_xml`, `filter` and `log` are executed by the crate itself
-(`BuiltinKind::SelfContained`). `http_call`, `enrich` and `publish_kafka` ship as
-typed config only and require a registered handler
-(`BuiltinKind::RequiresHandler`). See
-[Classifying a function name](#classifying-a-function-name).
-
-### map
-
-Data transformation using JSONLogic.
-
-```json
-{
-    "name": "map",
-    "input": {
-        "mappings": [
-            {
-                "path": "string",
-                "logic": "JSONLogic expression"
-            }
-        ]
+struct Fetch;
+
+impl Function for Fetch {
+    type Config = FetchConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &FetchConfig) -> Result<Outcome> {
+        let url = ctx.eval(&cfg.url)?;
+        let response = OwnedDataValue::from(&json!({"url": &*url, "status": 200}));
+        ctx.emit(&cfg.output, response)?;
+        Ok(Outcome::Ok)
     }
 }
+# let _ = Fetch;
 ```
 
-### validation
+`fn call(&self, ctx: &mut Ctx<'_>, cfg: &Self::Config) -> impl Future<Output = Result<Outcome>> + Send`,
+so `async fn` works. The config compiles once at build, and a malformed one
+is an `INPUT_PARSE` issue before any message runs. A call's writes go to an
+overlay and reach the message only when the call returns `Ok`; an `Err`
+drops them and keeps the records the call added.
+`function::testing::call(f, input)` runs one call outside any workflow.
 
-Rule-based data validation.
+### Checking a definition
 
-```json
-{
-    "name": "validation",
-    "input": {
-        "rules": [
-            {
-                "logic": "JSONLogic expression",
-                "message": "string"
-            }
-        ]
-    }
-}
+```rust
+use dataflow_rs::def::{ParseOptions, Parsed, parse};
+use dataflow_rs::program::{CompileOptions, Issue, Severity};
+use dataflow_rs::Registry;
+# use serde_json::json;
+
+let json = json!({"id": "w", "tasks": [
+    {"id": "t", "function": {"name": "map", "input": {
+        "mappings": [{"path": "data.x", "logic": {"var": "payload.x"}}]}}}
+]});
+
+// Structure: never fails, `def` is `Some` when nothing is Rejected.
+let parsed: Parsed = parse(&json, ParseOptions::default());
+let def = parsed.def.expect("the structure is fine");
+
+// Meaning: functions, expressions, paths, secrets.
+let compiler = Registry::default().compiler(CompileOptions::default());
+let issues: Vec<Issue> = compiler.check(&def);
+let rejected = issues.iter().filter(|i| i.severity == Severity::Rejected).count();
+# assert_eq!(rejected, 0);
+# assert_eq!(issues[0].code.as_str(), "PAYLOAD_VAR");
+# assert_eq!(issues[0].path.to_string(), "tasks[0].function.input.mappings[0].logic");
 ```
 
-### filter
+`def::parse(json: &Value, opts: ParseOptions) -> Parsed` and
+`Compiler::check(&self, def: &WorkflowDef) -> Vec<Issue>`. Every issue
+carries an `AuthoredPath` the author typed, such as
+`tasks[0].function.input.mappings[0].logic`. See
+[Authoring-Time Validation](../advanced/authoring-validation.md) for the
+codes.
 
-Pipeline control flow: halt workflow or skip task.
+## Error codes
 
-```json
-{
-    "name": "filter",
-    "input": {
-        "condition": "JSONLogic expression",
-        "on_reject": "halt | skip (default: halt)"
-    }
-}
+`Error::code()` is what an `ErrorRecord` on `message.errors()` carries, what
+a `Run`'s `error` writes, and what an `Err` from a host function records:
+
+| `ErrorKind` | Code | When |
+|---|---|---|
+| `Eval` | `LOGIC_ERROR` | An expression failed to evaluate |
+| `Budget` | `BUDGET_EXCEEDED` | The operation ceiling was exceeded (`budget` feature) |
+| `FunctionNotFound` | `FUNCTION_NOT_FOUND` | No function is registered under the name |
+| `Parse` | `DESERIALIZATION_ERROR` | A document or payload did not parse |
+| `TimedOut` | `TIMEOUT_ERROR` | A deadline passed; retryable by default |
+| `Cancelled` | `CANCELLED` | The run's token was cancelled |
+| `Config` | `CONFIG_ERROR` | A configuration is invalid |
+| `Compile` | `COMPILATION_ERROR` | An expression or definition did not compile |
+| `Service { code }` | the code, verbatim | A host function's own, from `Error::service(code, message)`; an empty code records `TASK_ERROR` |
+
+`Error::service` is the one public constructor: a host names its own code,
+such as `HTTP_ERROR`, and the engine keeps it. `is_retryable()` is `false` unless
+`with_retryable(true)` says otherwise, except for a timeout.
+
+Three codes are records only, never an `Error`:
+
+| Code | Recorded when |
+|---|---|
+| `TASK_STATUS_ERROR` | A call returned `Status(5xx)`; the stop error, when the policy stops the run, is `TASK_ERROR` |
+| `VALIDATION_ERROR` | A `validation` rule evaluated to anything but `true` |
+| `EVALUATION_ERROR` | A `validation` rule failed to evaluate |
+
+A call that returns `Err(e)` records `e.code()` with status 500. There is no
+`WORKFLOW_ERROR` wrapper: the task's record carries the workflow id.
+
+## Features
+
+None is on by default.
+
+| Feature | What it turns on |
+|---|---|
+| `datetime`, `ext-string`, `ext-array`, `ext-math`, `ext-control`, `ext-object`, `error-handling` | The seven `datalogic-rs` operator families. Not a no-op: an operator whose family is off is literal data, so `{"length": ...}` starts evaluating once `ext-string` is on, and `{"$length": ...}` pins the literal. `datetime` also changes `==` and the ordering operators on date-shaped strings |
+| `all-operators` | The seven families |
+| `tensor` | The `Tensor` value and its operators. Not in `all-operators`: `shape`, `full`, `cast` and `concat` are ordinary JSON keys |
+| `budget` | A ceiling on one evaluation's operations, set by `ExprEngineBuilder::ops_budget` |
+| `wasm-web` | The browser's clock and randomness, for `wasm32-unknown-unknown` |
+| `ts` | Derives `ts_rs::TS` on the wire shapes, from which `bindings/dataflow.d.ts` is rendered. Outside semver |
+
+```toml
+[dependencies]
+dataflow-rs = { version = "4.0", features = ["all-operators"] }
 ```
-
-Returns `TaskOutcome::Success` (pass), `TaskOutcome::Skip` (no audit
-entry, continue), or `TaskOutcome::Halt` (audit status 299, stop
-workflow) depending on the condition and `on_reject`.
-
-### log
-
-Structured logging with JSONLogic expressions.
-
-```json
-{
-    "name": "log",
-    "input": {
-        "level": "trace | debug | info | warn | error (default: info)",
-        "message": "JSONLogic expression",
-        "fields": {
-            "key": "JSONLogic expression"
-        }
-    }
-}
-```
-
-Always returns `TaskOutcome::Success` and never modifies the message.
-
-## WASM API (@goplasmatic/dataflow-wasm)
-
-For browser/JavaScript usage. Everything crossing the boundary is a string.
-See the [WASM Package](../wasm/overview.md) page for the full contract.
-
-```javascript
-import init, { WasmEngine, process_message, engine_version } from '@goplasmatic/dataflow-wasm';
-
-// Initialize the module once, before touching any other export
-await init();
-
-// Create engine
-const engine = new WasmEngine(workflowsJson);
-
-// Process a payload string; resolves to a serialized Message
-const result = JSON.parse(await engine.process(payloadStr));
-
-// Same run, with the execution trace instead
-const traced = JSON.parse(await engine.process_with_trace(payloadStr));
-
-// One-off convenience function (no engine needed)
-const result2 = JSON.parse(await process_message(workflowsJson, payloadStr));
-
-// Get rule info
-const count = engine.workflow_count();          // number
-const ids = JSON.parse(engine.workflow_ids());  // JSON array, returned as a string
-const version = engine_version();               // e.g. "3.7.0"
-```
-
-## Full API Documentation
-
-For complete API documentation, run:
-
-```bash
-cargo doc --open
-```
-
-This generates detailed documentation from the source code comments.
