@@ -204,13 +204,13 @@ pub enum IssueCode {
     /// `terminal` is present but not a boolean.
     InvalidTerminal,
     /// A `validation` task whose failure cannot stop anything: it is not
-    /// `terminal`, has no `halt_on`, and every task after it in the workflow is
-    /// unguarded. A failing rule returns `400`, which `continue_on_error` does
-    /// not cover, so the pipeline proceeds as if it had passed.
+    /// `terminal`, its `on_rejection` is `continue`, and every task after it in
+    /// the workflow is unguarded. A failing rule returns `400`, a rejection,
+    /// so the pipeline proceeds as if it had passed.
     ///
     /// [`Severity::Advisory`] — reported by
-    /// `check_workflow` and never by
-    /// `build`. Validating purely to record errors is a
+    /// `Compiler::check` and never a reason to
+    /// refuse. Validating purely to record errors is a
     /// legitimate shape; this only says the assertion is not acting as a gate.
     UnguardedValidation,
     /// `halt_on` is present and is not one of the accepted strings, or is
@@ -221,8 +221,8 @@ pub enum IssueCode {
     /// handling is per task and per workflow; a group only gates a span.
     ///
     /// [`Severity::Advisory`] — reported by
-    /// `check_workflow` and never by
-    /// `build`. Unlike [`Self::InvalidHaltOn`], which
+    /// `Compiler::check` and never a reason to
+    /// refuse. Unlike [`Self::InvalidHaltOn`], which
     /// the parser refuses outright, this key is real at the other two levels
     /// and may already sit on a host's group nodes; refusing it would abort
     /// every workflow in the build.
@@ -240,8 +240,8 @@ pub enum IssueCode {
     /// path, which is `"unset": true`.
     ///
     /// [`Severity::Advisory`] — reported by
-    /// `check_workflow` and never by
-    /// `build`. The mapping is a no-op, not an error,
+    /// `Compiler::check` and never a reason to
+    /// refuse. The mapping is a no-op, not an error,
     /// and refusing it would fail every build that already carries one.
     NullMapping,
     /// `loop.increment` is below 1 — the counter would never reach `max`.
@@ -285,8 +285,8 @@ pub enum IssueCode {
     /// A `Template` field of a custom task's input does not compile.
     TemplateCompile,
     /// An expression reads `{"secret": "name"}` and no secret of that name is
-    /// declared on the engine (`EngineBuilder::with_secrets`). Only literal
-    /// names are checked; a dynamic name fails at evaluation instead.
+    /// in the `ExprEngine`'s store (`ExprEngineBuilder::secrets`). Only
+    /// literal names are checked; a dynamic name fails at evaluation instead.
     UnknownSecret,
     /// An expression whose result the engine writes to the message or emits to
     /// a log reads a secret — a `map` mapping, or a `log` message or field. The
@@ -294,12 +294,9 @@ pub enum IssueCode {
     /// record it is refused outright, derived or not. Compute derived values in
     /// a custom handler.
     SecretInMessageWrite,
-    /// The store passed to
-    /// `EngineBuilder::with_secrets` is
-    /// not a JSON object, so no name resolves and
-    /// `EngineBuilder::build` will fail.
-    /// Reported by
-    /// `EngineBuilder::check_workflow`
+    /// The secret store is not a JSON object, so no name resolves. v4's
+    /// `Secrets::new` refuses such a store before any workflow compiles, so
+    /// this code is v3's, kept for the corpus; it would be reported
     /// *instead of* the [`Self::UnknownSecret`] issues every literal name would
     /// otherwise produce — the workflow is not what is wrong.
     ///
@@ -314,8 +311,8 @@ pub enum IssueCode {
     DuplicateTemplateKey,
     /// A template key carries the escape prefix, so it is emitted with one
     /// prefix stripped: `$type` emits `type`. [`Severity::Advisory`] — reported
-    /// by `check_workflow` and never by
-    /// `build`.
+    /// by `Compiler::check` and never a reason to
+    /// refuse.
     ///
     /// Exists for migration. The escape strips uniformly from every template
     /// key, so a workflow written before 3.9 that emits genuinely `$`-prefixed
