@@ -48,14 +48,17 @@ impl Context {
         Self { root }
     }
 
-    /// A context over the three roots' values, in [`ROOTS`]' order.
-    fn from_roots(values: [OwnedDataValue; 3]) -> Self {
-        let pairs = ROOTS
-            .iter()
-            .zip(values)
-            .map(|(key, value)| ((*key).to_owned(), value))
-            .collect();
-        Self::from_root(OwnedDataValue::Object(pairs))
+    /// A context over the three roots' values, in [`ROOTS`]' order. A
+    /// literal, not an iterator over `ROOTS`: every message is built through
+    /// it, and the zipped iterator cost about 0.5% of `micro_cond_bench`'s
+    /// instructions.
+    fn from_roots([data, metadata, temp_data]: [OwnedDataValue; 3]) -> Self {
+        let [d, m, t] = ROOTS;
+        Self::from_root(OwnedDataValue::Object(vec![
+            (d.to_owned(), data),
+            (m.to_owned(), metadata),
+            (t.to_owned(), temp_data),
+        ]))
     }
 
     fn root(&self, key: &str) -> &OwnedDataValue {
