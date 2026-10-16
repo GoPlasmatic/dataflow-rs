@@ -1,189 +1,81 @@
-import type { JsonLogicValue } from './workflow';
-
 /**
- * Message structure for workflow execution
- * Mirrors the Rust Message struct from WASM output
- */
-export interface Message {
-  /** Unique message ID */
-  id: string;
-  /**
-   * Original payload, exactly as handed to the engine.
-   *
-   * Not necessarily an object: the WASM engine stores the payload as the raw
-   * **string** it was given, leaving parsing to a `parse_json` / `parse_xml`
-   * task. It is also not part of the JSONLogic evaluation context, which sees
-   * `context` only.
-   */
-  payload: unknown;
-  /** Context containing data, metadata, temp_data */
-  context: {
-    data: Record<string, unknown>;
-    metadata: Record<string, unknown>;
-    temp_data: Record<string, unknown>;
-  };
-  /** List of errors that occurred during processing */
-  errors: ErrorInfo[];
-  /** Audit trail of changes made during processing */
-  audit_trail: AuditTrail[];
-}
-
-/**
- * Error information captured during execution
- */
-export interface ErrorInfo {
-  /** Error code or identifier */
-  code: string;
-  /** Human-readable error message */
-  message: string;
-  /**
-   * Context path the error refers to, when the error is about one.
-   * Always serialized, so it may be `null`.
-   */
-  path?: string | null;
-  /**
-   * Workflow ID where the error occurred.
-   *
-   * Absent for errors raised without executor identity — notably `validation`
-   * failures and errors a custom handler adds through `TaskContext::add_error`.
-   */
-  workflow_id?: string;
-  /** Task ID where the error occurred. Absent for the same reasons. */
-  task_id?: string;
-  /** RFC 3339 timestamp, when the producer set one. */
-  timestamp?: string;
-  /** Whether a retry was attempted, for errors produced by a retry loop. */
-  retry_attempted?: boolean;
-  /** Number of retries performed, for errors produced by a retry loop. */
-  retry_count?: number;
-  /**
-   * Operator-only detail. Deliberately excluded from the error's `Display`
-   * form, so treat it as diagnostic output rather than a user-facing message.
-   */
-  detail?: string;
-  /** Index of the fan-out element this error came from, when it came from one. */
-  element_index?: number;
-}
-
-/**
- * Audit trail entry for tracking changes (matches Rust AuditTrail)
- */
-export interface AuditTrail {
-  /** Workflow ID where change occurred */
-  workflow_id: string;
-  /** Task ID where change occurred */
-  task_id: string;
-  /** Timestamp of the change */
-  timestamp: string;
-  /** Changes made by the task */
-  changes: Change[];
-  /** Status code (e.g., 200 for success) */
-  status: number;
-  /**
-   * Loop counter value for the sweep that produced this entry, when the
-   * workflow carries a `loop`. Absent for non-looping workflows. Strictly
-   * increasing across sweeps, so it both identifies the iteration and carries
-   * its meaning (the array index, for per-item loops).
-   */
-  loop_counter?: number;
-  /**
-   * Index of the element this entry records, for one call of a task's
-   * `for_each`. Absent otherwise. A fan-out records one entry per element.
-   */
-  element_index?: number;
-}
-
-/**
- * A single change in the audit trail
- */
-export interface Change {
-  /** Path to the changed field (e.g., "data.user.name") */
-  path: string;
-  /** Previous value */
-  old_value: unknown;
-  /** New value — `null` when `removed` */
-  new_value: unknown;
-  /**
-   * The key was removed rather than written. Present only on a removal;
-   * `new_value` is then `null`.
-   */
-  removed?: boolean;
-}
-
-/**
- * Result of a step (executed or skipped)
- */
-export type StepResult = 'executed' | 'skipped';
-
-/**
- * A single step in the execution trace (matches Rust ExecutionStep)
- */
-export interface ExecutionStep {
-  /** ID of the workflow this step belongs to */
-  workflow_id: string;
-  /**
-   * ID of the task.
-   *
-   * `null` for workflow-level skips — the Rust field is always serialized, so
-   * the key is present either way. Test it for truthiness rather than with
-   * `'task_id' in step` or `=== undefined`.
-   */
-  task_id?: string | null;
-  /** Result of the step execution */
-  result: StepResult;
-  /**
-   * Message snapshot after this step. Absent for skipped steps, when the host
-   * ran with `TraceOptions { snapshots: false }`, and for executed steps
-   * recorded after `max_snapshot_bytes` was exceeded.
-   */
-  message?: Message;
-  /** Context snapshots before each mapping (map tasks only, trace mode) */
-  mapping_contexts?: Record<string, unknown>[];
-  /** RFC 3339 wall-clock start of the task body. Executed steps only. */
-  started_at?: string;
-  /** Task body duration in microseconds. Executed steps only. */
-  duration_us?: number;
-  /**
-   * This task's own writes, when the host ran with `TraceOptions { changes: true }`.
-   * Preferred over reading the last `audit_trail` entry, which mis-attributes
-   * on a skip-outcome step.
-   */
-  changes?: Change[];
-  /**
-   * Loop counter of the sweep this step belongs to, when the workflow carries
-   * a `loop`. Absent otherwise. Group steps by it to reconstruct per-iteration
-   * execution.
-   */
-  loop_counter?: number;
-  /**
-   * Index of the element this step ran for, inside a task's `for_each`.
-   * Absent otherwise.
-   */
-  element_index?: number;
-}
-
-/**
- * Complete execution trace (matches Rust ExecutionTrace)
- */
-export interface ExecutionTrace {
-  /** All execution steps in order */
-  steps: ExecutionStep[];
-  /**
-   * Set when the host's snapshot budget was exceeded, meaning one or more
-   * executed steps carry no `message`. Absent on a complete trace.
-   */
-  truncated?: boolean;
-}
-
-/**
- * Whether this trace carries message snapshots at all.
+ * The debugger's types and the helpers that read a trace.
  *
- * A host running with `TraceOptions { snapshots: false }` (e.g. `timings_only()`)
- * produces steps with ids, result and timing but no state to inspect, so the
- * step-detail views have nothing to render.
+ * The wire shapes are the engine's: `Message`, `Trace`, `Run` and the rest
+ * come from `@goplasmatic/dataflow-wasm`, whose `.d.ts` is generated from
+ * the dataflow-rs crate, and are re-exported here for consumers. This file
+ * adds only what the debugger keeps beside them.
+ *
+ * A dataflow-rs 4 trace holds `initial`, the context before any workflow, and
+ * one step per call, skip, failure and engine write, each with its changes.
+ * There is no per-step message snapshot: the context at a step is rebuilt by
+ * replaying the changes, which the engine does (`contexts(trace)` from the
+ * wasm package) so that the UI and the engine never disagree on the rules.
  */
-export function traceHasSnapshots(trace: ExecutionTrace): boolean {
-  return trace.steps.some((s) => s.result === 'executed' && s.message !== undefined);
+import type {
+  Context,
+  ErrorRecord,
+  Issue,
+  Message,
+  Run,
+  RunResult,
+  Trace,
+  TraceStep,
+} from '@goplasmatic/dataflow-wasm';
+
+export type {
+  AuditEntry,
+  AuditMode,
+  Change,
+  Context,
+  DataflowError,
+  EngineError,
+  EngineFacts,
+  ErrorRecord,
+  Issue,
+  JsonValue,
+  Message,
+  ParseResult,
+  Run,
+  RunOptions,
+  RunResult,
+  RunStatus,
+  Selection,
+  StepResult,
+  Trace,
+  TraceOptions,
+  TraceStep,
+  WorkflowExit,
+  WorkflowRecord,
+} from '@goplasmatic/dataflow-wasm';
+
+/**
+ * Why a run could not start: what the engine threw.
+ *
+ * `code` is the engine's (`"REJECTED"` for a definition that does not load,
+ * with its `issues`; `"INVALID_ARGUMENT"` for a malformed argument), or
+ * `"ERROR"` for anything else thrown on the way.
+ */
+export interface ExecutionError {
+  code: string;
+  message: string;
+  issues?: Issue[];
+}
+
+/**
+ * An `ExecutionError` from whatever was thrown: an `EngineError` keeps its
+ * `code` and `issues`; any other `Error` its message.
+ */
+export function toExecutionError(err: unknown): ExecutionError {
+  if (err instanceof Error) {
+    const engineError = err as Error & { code?: unknown; issues?: unknown };
+    return {
+      code: typeof engineError.code === 'string' ? engineError.code : 'ERROR',
+      message: err.message,
+      ...(Array.isArray(engineError.issues) ? { issues: engineError.issues as Issue[] } : {}),
+    };
+  }
+  return { code: 'ERROR', message: String(err) };
 }
 
 /**
@@ -197,18 +89,6 @@ export type DebugNodeState =
   | 'error';     // Execution failed
 
 /**
- * Result of evaluating a condition
- */
-export interface ConditionResult {
-  /** The condition that was evaluated */
-  condition: JsonLogicValue;
-  /** The result of evaluation */
-  result: boolean;
-  /** Data context used for evaluation */
-  context: Record<string, unknown>;
-}
-
-/**
  * Playback state for the debugger
  */
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
@@ -219,9 +99,18 @@ export type PlaybackState = 'stopped' | 'playing' | 'paused';
 export interface DebuggerState {
   /** Whether debug mode is active */
   isActive: boolean;
-  /** Current execution trace */
-  trace: ExecutionTrace | null;
-  /** Current step index being viewed */
+  /** The trace of the last run, when it was traced */
+  trace: Trace | null;
+  /** How the last run ended and what each workflow did */
+  run: Run | null;
+  /** The message after the last run */
+  message: Message | null;
+  /**
+   * The context after each step of `trace`, replayed once per run through
+   * the engine's `contexts`. Empty when the trace cannot be replayed.
+   */
+  contexts: Context[];
+  /** Current step index being viewed; -1 is the ready state, before step 0 */
   currentStepIndex: number;
   /** Playback state */
   playbackState: PlaybackState;
@@ -231,8 +120,8 @@ export interface DebuggerState {
   inputPayload: Record<string, unknown> | null;
   /** Whether the debugger is currently executing */
   isExecuting: boolean;
-  /** Error during execution */
-  executionError: string | null;
+  /** Why the last run could not start, if it could not */
+  executionError: ExecutionError | null;
   /** Whether to skip steps with failed conditions (result: 'skipped') */
   skipFailedConditions: boolean;
 }
@@ -245,8 +134,8 @@ export type DebuggerAction =
   | { type: 'DEACTIVATE' }
   | { type: 'SET_INPUT_PAYLOAD'; payload: Record<string, unknown> }
   | { type: 'START_EXECUTION' }
-  | { type: 'EXECUTE_TRACE'; trace: ExecutionTrace }
-  | { type: 'EXECUTION_ERROR'; error: string }
+  | { type: 'EXECUTE_RESULT'; result: RunResult; contexts: Context[] }
+  | { type: 'EXECUTION_ERROR'; error: ExecutionError }
   | { type: 'PLAY' }
   | { type: 'PAUSE' }
   | { type: 'STOP' }
@@ -258,172 +147,59 @@ export type DebuggerAction =
   | { type: 'SET_SKIP_FAILED_CONDITIONS'; skip: boolean };
 
 /**
- * Create an empty message
+ * Whether a trace can be replayed: its byte budget was not crossed, so every
+ * step carries its changes. A trace recorded with `changes: false` is not
+ * truncated and replays to `initial` at every step, which is what it holds.
  */
-export function createEmptyMessage(): Message {
-  return {
-    id: '',
-    payload: {},
-    context: {
-      data: {},
-      metadata: {},
-      temp_data: {},
-    },
-    errors: [],
-    audit_trail: [],
-  };
+export function traceIsReplayable(trace: Trace): boolean {
+  return !trace.truncated;
 }
 
 /**
- * Deep clone a message
+ * Whether a step is the workflow's own, not a task's: its skip, its
+ * failure, or the engine's writes as a loop sweep is entered.
  */
-export function cloneMessage(message: Message): Message {
-  return JSON.parse(JSON.stringify(message));
+export function isWorkflowStep(step: TraceStep): boolean {
+  return step.task === null;
 }
 
 /**
- * Get the message at a specific step in the trace
- * Returns the message snapshot from the last executed step at or before the given index
+ * Whether a step is the engine's: the writes of a loop's counter, `as` and
+ * `scratch` as a sweep is entered, or as a limit stops the run. It belongs
+ * to no task and skips no workflow.
  */
-export function getMessageAtStep(trace: ExecutionTrace, stepIndex: number): Message | null {
-  // Find the last executed step at or before the given index
-  for (let i = stepIndex; i >= 0; i--) {
-    const step = trace.steps[i];
-    if (step.result === 'executed' && step.message) {
-      return step.message;
-    }
-  }
-  return null;
+export function isEngineStep(step: TraceStep): boolean {
+  return step.task === null && step.result === 'executed';
 }
 
 /**
- * Get the changes made at a specific step.
- *
- * Prefers the step's own `changes` field, which the engine attributes to this
- * task exactly. Falls back to the last `audit_trail` entry for traces recorded
- * without `TraceOptions { changes: true }` — note that fallback mis-attributes
- * on a skip-outcome step, because a skip records no audit entry and the last
- * entry then belongs to an earlier task.
+ * The records a step added to the message: a `validation`'s per-rule
+ * records, a function's own, then the engine's. Absent on the wire when
+ * empty.
  */
-export function getChangesAtStep(trace: ExecutionTrace, stepIndex: number): Change[] {
-  const step = trace.steps[stepIndex];
-  if (!step || step.result !== 'executed') {
-    return [];
-  }
-
-  // Exact attribution when the host enabled it.
-  if (step.changes !== undefined) {
-    return step.changes;
-  }
-
-  // Fallback: the last audit_trail entry usually corresponds to this step.
-  if (!step.message) {
-    return [];
-  }
-  const auditTrail = step.message.audit_trail;
-  if (auditTrail.length === 0) {
-    return [];
-  }
-
-  return auditTrail[auditTrail.length - 1].changes;
+export function stepErrors(step: TraceStep): ErrorRecord[] {
+  return step.errors ?? [];
 }
 
 /**
- * Check if a step is for a specific workflow
+ * The state a step shows: `failed` is an error (the failure went to the
+ * workflow's policy or stopped the run), an executed step that recorded
+ * errors is one too, and a skip is `skipped`.
  */
-export function isStepForWorkflow(step: ExecutionStep, workflowId: string): boolean {
-  return step.workflow_id === workflowId;
+export function stepState(step: TraceStep): DebugNodeState {
+  if (step.result === 'failed') return 'error';
+  if (step.result === 'skipped') return 'skipped';
+  return stepErrors(step).length > 0 ? 'error' : 'executed';
 }
 
 /**
- * Check if a step is for a specific task
+ * The context at a step: `contexts[index]`, the context after that step, or
+ * `trace.initial` before the first step (`index` -1) and when the replay has
+ * nothing for the step.
  */
-export function isStepForTask(step: ExecutionStep, workflowId: string, taskId: string): boolean {
-  return step.workflow_id === workflowId && step.task_id === taskId;
-}
-
-/**
- * Get the context snapshot for a specific mapping within a step.
- * For map tasks, returns the context before that mapping executed.
- * Falls back to the step's message context if mapping_contexts is not available.
- */
-export function getMappingContext(
-  step: ExecutionStep,
-  mappingIndex: number
-): Record<string, unknown> | undefined {
-  return (step.mapping_contexts?.[mappingIndex] as Record<string, unknown>) ?? step.message?.context;
-}
-
-/**
- * Error count to diff `stepIndex`'s snapshot against, or `null` when there is
- * no usable baseline.
- *
- * A *skipped* step ran nothing and so introduced nothing: walk back past it.
- * An *executed* step with no snapshot is a hole punched by
- * `max_snapshot_bytes` — that budget is checked per step and is not monotone,
- * so a large snapshot is dropped while a later smaller one is still kept.
- * Errors raised in the hole are folded into this step's cumulative list and
- * cannot be separated out by counting, which is what `null` reports.
- */
-function errorBaselineAt(trace: ExecutionTrace, stepIndex: number): number | null {
-  for (let i = stepIndex - 1; i >= 0; i--) {
-    const earlier = trace.steps[i];
-    if (earlier.message) return earlier.message.errors.length;
-    if (earlier.result === 'executed') return null;
-  }
-  return 0;
-}
-
-/** Whether an error belongs to this step by the ids its producer recorded. */
-function matchesStepIds(error: ErrorInfo, step: ExecutionStep): boolean {
-  return error.workflow_id === step.workflow_id && error.task_id === step.task_id;
-}
-
-/**
- * Errors that first appear at `stepIndex`.
- *
- * `Message.errors` is cumulative for the whole run, so a snapshot taken during
- * workflow B still carries workflow A's failures. Comparing against the most
- * recent earlier snapshot isolates the ones this step actually produced.
- *
- * This is also the only way to attribute a `validation` failure or an error a
- * custom handler added through `TaskContext::add_error`: those carry no
- * `workflow_id` / `task_id`, so they cannot be matched by id. Where a dropped
- * snapshot leaves no baseline, id matching is the fallback — exact for errors
- * that do carry ids, and silent rather than wrong for the ones that do not.
- *
- * Returns `[]` when snapshots are disabled, since there is then nothing to diff.
- */
-export function errorsIntroducedAt(trace: ExecutionTrace, stepIndex: number): ErrorInfo[] {
-  const step = trace.steps[stepIndex];
-  if (!step?.message) return [];
-
-  const baseline = errorBaselineAt(trace, stepIndex);
-  return baseline === null
-    ? step.message.errors.filter(e => matchesStepIds(e, step))
-    : step.message.errors.slice(baseline);
-}
-
-/**
- * How many errors first appear at `stepIndex`.
- *
- * The allocation-free form of [`errorsIntroducedAt`], for callers that only
- * ask whether the step introduced anything. `getWorkflowState` runs this once
- * per step of the workflow on every playback tick.
- */
-export function errorCountIntroducedAt(trace: ExecutionTrace, stepIndex: number): number {
-  const step = trace.steps[stepIndex];
-  if (!step?.message) return 0;
-
-  const errors = step.message.errors;
-  const baseline = errorBaselineAt(trace, stepIndex);
-  if (baseline !== null) return errors.length - baseline;
-
-  let count = 0;
-  for (const error of errors) {
-    if (matchesStepIds(error, step)) count++;
-  }
-  return count;
+export function contextAtStep(trace: Trace, contexts: Context[], index: number): Context {
+  if (index < 0) return trace.initial;
+  return contexts[index] ?? trace.initial;
 }
 
 /**
@@ -437,7 +213,7 @@ export function errorCountIntroducedAt(trace: ExecutionTrace, stepIndex: number)
  * Returns `-1` when the task has no step in the trace.
  */
 export function findTaskStepIndex(
-  trace: ExecutionTrace,
+  trace: Trace,
   currentStepIndex: number,
   workflowId: string,
   taskId: string
@@ -466,7 +242,7 @@ export function findTaskStepIndex(
  * Note: Workflows don't show as 'current' - only individual tasks do
  */
 export function getWorkflowState(
-  trace: ExecutionTrace,
+  trace: Trace,
   currentStepIndex: number,
   workflowId: string
 ): DebugNodeState {
@@ -501,17 +277,18 @@ export function getWorkflowState(
     }
     const step = trace.steps[stepIndex];
 
-    // No task_id means a workflow-level skip.
-    if (!step.task_id && step.result === 'skipped') {
+    // The workflow's own skipped step: its condition or its rollout refused
+    // it. The engine's steps (a sweep entered) are the workflow's too, but
+    // they are executed, not skipped.
+    if (isWorkflowStep(step) && step.result === 'skipped') {
       skipped = true;
     }
     if (step.result === 'executed') {
       hasExecuted = true;
     }
-    // Whether this step introduced an error *of its own*. Testing
-    // `errors.length > 0` would report every workflow after the first failure
-    // as failed, since `Message.errors` is cumulative.
-    if (!hasError && errorCountIntroducedAt(trace, stepIndex) > 0) {
+    // A step's own records, not the message's cumulative `errors`: the latter
+    // would report every workflow after the first failure as failed.
+    if (!hasError && stepState(step) === 'error') {
       hasError = true;
     }
   }
@@ -530,7 +307,7 @@ export function getWorkflowState(
  * Note: Tasks show as 'executed' when on their step (completed state)
  */
 export function getTaskState(
-  trace: ExecutionTrace,
+  trace: Trace,
   currentStepIndex: number,
   workflowId: string,
   taskId: string
@@ -542,36 +319,19 @@ export function getTaskState(
     return 'pending';
   }
 
-  const taskStep = trace.steps[taskStepIndex];
-
   // If task step is after current viewing position, it's pending
   if (taskStepIndex > currentStepIndex) {
     return 'pending';
   }
 
-  // For steps at or before current position, show actual result
-  if (taskStep.result === 'skipped') {
-    return 'skipped';
-  }
-
-  if (taskStep.result === 'executed') {
-    // Errors this step introduced, rather than every error accumulated so far.
-    // Matching on `error.task_id` alone would miss `validation` failures, which
-    // carry no ids.
-    if (errorCountIntroducedAt(trace, taskStepIndex) > 0) {
-      return 'error';
-    }
-    return 'executed';
-  }
-
-  return 'pending';
+  return stepState(trace.steps[taskStepIndex]);
 }
 
 /**
  * Check if a task is the currently viewed step
  */
 export function isTaskCurrent(
-  trace: ExecutionTrace,
+  trace: Trace,
   currentStepIndex: number,
   workflowId: string,
   taskId: string

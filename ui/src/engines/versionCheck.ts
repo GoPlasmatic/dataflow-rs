@@ -40,11 +40,11 @@ let result: { ok: true } | { ok: false; error: Error } | undefined;
  * Throws when the loaded WASM engine is older than this build of
  * `@goplasmatic/dataflow-ui` expects.
  *
- * An older engine is not a cosmetic mismatch. `Workflow` does not set
- * `deny_unknown_fields`, so it silently *ignores* any workflow field added
- * after its release instead of rejecting it — a workflow using a newer feature
- * appears to run correctly while doing something else entirely. Failing here
- * converts that into an error at the point of use.
+ * An older engine is not a cosmetic mismatch. A definition key the engine
+ * predates is an *unknown key* to it: kept in the node's `ext` and reported
+ * as an Advisory, or refused as a likely typo, never run — so a workflow
+ * using a newer feature loads and does something other than what it says.
+ * Failing here converts that into an error at the point of use.
  *
  * A **newer** engine is fine and passes silently: this package declares a
  * caret range on the wasm dependency, so npm may legitimately resolve one, and

@@ -1,4 +1,4 @@
-import type { EngineFactory, ExecutionTrace } from './index';
+import type { EngineFactory, ExecutionError, RunResult } from './index';
 
 /**
  * Configuration for integrated debug mode in WorkflowVisualizer.
@@ -32,12 +32,15 @@ export interface DebugConfig {
   autoExecute?: boolean;
 
   /**
-   * Callback fired when execution completes successfully.
+   * Callback fired when a run completes, on every status: the message, the
+   * run and its trace. A run that stopped or timed out completes too; read
+   * `result.run.status`.
    */
-  onExecutionComplete?: (trace: ExecutionTrace) => void;
+  onExecutionComplete?: (result: RunResult) => void;
 
   /**
-   * Callback fired when execution encounters an error.
+   * Callback fired when a run could not start: the engine refused a
+   * definition (`code: "REJECTED"`, with its `issues`) or an argument.
    */
-  onExecutionError?: (error: string) => void;
+  onExecutionError?: (error: ExecutionError) => void;
 }
