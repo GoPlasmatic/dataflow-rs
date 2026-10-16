@@ -1,5 +1,5 @@
-//! Compiles the Rust examples in `docs/src` (the mdBook user guide) as
-//! doctests.
+//! Compiles the Rust examples in `docs/src` (the mdBook user guide) and
+//! `README.md` as doctests.
 //!
 //! # Why this crate exists
 //!
@@ -9,8 +9,8 @@
 //! examples had never been compiled against the crate.
 //!
 //! Routing them through `#[doc = include_str!(…)]` instead hands the job to
-//! Cargo, which wires up `--extern` for every dependency automatically. It is
-//! the same mechanism `ReadmeDoctests` in `dataflow-rs` uses for `README.md`.
+//! Cargo, which wires up `--extern` for every dependency automatically.
+//! `README.md`'s examples go through it too, as `ReadmeDoctests` below.
 //!
 //! # Why it is a separate crate
 //!
@@ -85,3 +85,8 @@ doc_pages! {
     WasmOverview => "../../docs/src/wasm/overview.md",
     UiOverview => "../../docs/src/ui/overview.md",
 }
+
+/// `README.md`'s Rust examples, compiled against the published 3.15.0 the
+/// README describes, until 7e rewrites it for 4.0.
+#[doc = include_str!("../../README.md")]
+pub struct ReadmeDoctests;
