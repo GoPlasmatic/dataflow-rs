@@ -1,6 +1,6 @@
 //! # Single-threaded run microbenchmark
 //!
-//! Isolates the per-message CPU cost of `Engine::run_with` with **no tokio
+//! Isolates the per-message CPU cost of `Engine::run` with **no tokio
 //! task-spawn overhead** — the macro benchmarks (`benchmark.rs`) are dominated
 //! by Tokio scheduling and can't resolve a sub-100ns/message change. This runs
 //! a tight single-threaded loop so the signal of interest (condition-eval

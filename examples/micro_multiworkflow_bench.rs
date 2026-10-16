@@ -1,4 +1,4 @@
-//! # Multi-workflow chained `run_with` microbenchmark
+//! # Multi-workflow chained `Engine::run` microbenchmark
 //!
 //! Isolates the per-message cost of running a message through several chained
 //! workflows with no tokio task-spawn overhead (`current_thread` runtime, tight
@@ -195,7 +195,7 @@ fn build_payload() -> Value {
     })
 }
 
-/// Time `run_with` over an already-built engine. Returns ns/msg.
+/// Time `Engine::run` over an already-built engine. Returns ns/msg.
 /// `expected_audit` asserts the full task chain executed (1 parse + N×2 tasks).
 async fn time_engine(label: &str, engine: &Engine, payload: &Value, expected_audit: usize) -> f64 {
     {

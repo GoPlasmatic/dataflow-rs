@@ -25,7 +25,7 @@
 //! It also reports the run's arena: `arena.live_bytes` and
 //! `arena.peak_bytes`, the largest view spine and the largest bytes in use
 //! any run saw, and asserts `peak <= 2 * max(64 KiB, live) + 64 KiB` on each
-//! run (05's bound plus one op's garbage).
+//! run (the run arena's bound plus one op's garbage).
 //!
 //! Run with: `cargo run --example loop_scaling --release`
 
@@ -47,7 +47,7 @@ const CONTEXT_BYTES: usize = 256 * 1024;
 /// (sweeps per message, timed messages).
 const CONFIGS: &[(u64, usize)] = &[(250, 40), (1000, 10)];
 
-/// 05's bound on the run arena: twice the live view or 64 KiB, whichever is
+/// The run arena's bound: twice the live view or 64 KiB, whichever is
 /// larger, plus 64 KiB for one operation's garbage.
 const FLOOR: usize = 64 * 1024;
 
@@ -153,7 +153,7 @@ struct Arena {
 }
 
 impl Arena {
-    /// Takes the run's counters and holds them to 05's bound.
+    /// Takes the run's counters and holds them to the run arena's bound.
     fn of(run: &dataflow_rs::Run, sweeps: u64) -> Self {
         let stats = run.arena_stats();
         let arena = Self {

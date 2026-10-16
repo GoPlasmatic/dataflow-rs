@@ -178,7 +178,7 @@ doctests, 11 README doctests and its coverage test). `cargo test` at the
 root (the default build) should report 837, `cargo test -p dataflow-corpus-v3`
 4, `cargo test -p dataflow-corpus-v4` 24 and `cargo test -p
 dataflow-docs-tests` 129. The operator families are `#[cfg]`-gated, so the
-counts legitimately differ by feature set: the root reports 846 under
+counts legitimately differ by feature set: the root reports 847 under
 `--no-default-features --features all-operators`.
 
 ### Examples
@@ -425,7 +425,8 @@ Each rule lives once in the code; the test named beside it is what pins it.
   template key, so a template emitting `$`-prefixed keys doubles them. A
   single-key object with an unknown key is not inert: it is the ordinary
   output-template shape, which is why there is no "unknown operator" lint
-  (the escape in `tests/checks.rs`; the shape in `src/expr/engine.rs`'s docs).
+  (the escape in `tests/checks.rs`; the shape in `src/expr/engine.rs`'s
+  `an_unrecognised_operator_is_not_an_error_under_templating`).
 - **Operator families are opt-in, and enabling one is not a no-op.** The
   engine evaluates in templating mode, so an operator whose family is off is
   literal data; turning a family on makes `{"length": …}` live, and `datetime`
