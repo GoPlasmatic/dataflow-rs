@@ -1,349 +1,452 @@
 # Authoring-Time Validation
 
-The engine checks a workflow when `Engine::build()` runs. For a service that
-*stores* definitions (accepting them from an API, holding them in a database,
-building one engine over many rows), that is the wrong moment. One bad row
-aborts the whole build, at reload, for every workflow in the process, and the
-author who submitted it got no feedback at all.
+A service that *stores* definitions (accepting them from an API, holding
+them in a database, building one engine over many rows) wants to know what
+is wrong with a definition when it is submitted, not when the engine is
+next built. Two stages answer that, and both report every problem at the
+path the author typed:
 
-Two APIs move those checks to submission time.
+1. **`def::parse`** reads the JSON into a `WorkflowDef` and is the linter:
+   every structural rule, every unknown key, every 3.x spelling.
+2. **`Compiler`** compiles a parsed definition against a registry: does
+   every task name a function this engine has, does every config compile,
+   does every expression pass the checks.
 
-## Checking a definition
+`Engine::builder().build()` runs both and fails if any definition is
+rejected. That is right for a host with a fixed set of workflows; a host
+that quarantines bad rows and runs the rest uses the two stages directly.
 
-`Workflow::validate_authored` takes the JSON a host stored and returns every
-problem with it:
+## Parsing a definition
+
+`parse` never fails. It returns a `Parsed` whose `issues` lists every
+problem and whose `def` is `Some` exactly when none of them is Rejected:
 
 ```rust
-use dataflow_rs::{IssueCode, Workflow};
+use dataflow_rs::def::{ParseOptions, parse};
+use dataflow_rs::program::IssueCode;
 use serde_json::json;
 
 let submitted = json!({
-    "id": "", "name": "checkout",
+    "id": "",
     "tasks": [
-        {"id": "charge", "name": "charge",
-         "function": {"name": "map", "input": {"mappings": []}}},
-        {"id": "charge", "name": "again",
-         "function": {"name": "map", "input": {"mappings": []}}}
+        {"id": "charge", "function": {"name": "map", "input": {"mappings": []}}},
+        {"id": "charge", "function": {"name": "map", "input": {"mappings": []}}}
     ]
 });
 
-let issues = Workflow::validate_authored(&submitted);
+let parsed = parse(&submitted, ParseOptions::default());
+assert!(parsed.def.is_none());
 
 // Both problems, not just the first.
-let codes: Vec<IssueCode> = issues.iter().map(|i| i.code).collect();
-assert!(codes.contains(&IssueCode::EmptyWorkflowId));
-assert!(codes.contains(&IssueCode::DuplicateStepId));
+let codes: Vec<IssueCode> = parsed.issues.iter().map(|i| i.code).collect();
+assert_eq!(codes, [IssueCode::EmptyWorkflowId, IssueCode::DuplicateStepId]);
 ```
 
-Each issue carries the coordinate the author typed, so a `400` can point at the
-exact field:
+Each issue carries the coordinate the author typed, so a `400` can point at
+the exact field, and the step it sits in:
 
 ```rust
-# use dataflow_rs::{IssueCode, Workflow};
+# use dataflow_rs::def::{ParseOptions, parse};
+# use dataflow_rs::program::{IssueCode, StepKind};
 # use serde_json::json;
 let nested = json!({
-    "id": "w", "name": "w",
+    "id": "w",
     "tasks": [
-        {"id": "first", "name": "first",
-         "function": {"name": "map", "input": {"mappings": []}}},
+        {"id": "first", "function": {"name": "map", "input": {"mappings": []}}},
         {"id": "guard", "condition": true, "tasks": [
-            {"id": "first", "name": "collides",
-             "function": {"name": "map", "input": {"mappings": []}}}
+            {"id": "first", "function": {"name": "map", "input": {"mappings": []}}}
         ]}
     ]
 });
 
-let issues = Workflow::validate_authored(&nested);
-assert_eq!(issues[0].code, IssueCode::DuplicateStepId);
-assert_eq!(issues[0].path.as_deref(), Some("tasks[1].tasks[0].id"));
-assert_eq!(issues[0].task_id.as_deref(), Some("first"));
+let parsed = parse(&nested, ParseOptions::default());
+let issue = &parsed.issues[0];
+assert_eq!(issue.code, IssueCode::DuplicateStepId);
+assert_eq!(issue.path.to_string(), "tasks[1].tasks[0].id");
+assert_eq!(issue.step_kind, Some(StepKind::Task));
+assert_eq!(issue.step_id.as_deref(), Some("first"));
 ```
 
-The path is `tasks[1].tasks[0]`, where the author wrote it, not the flat
-index that task ends up at once the engine flattens the group.
+The path is `tasks[1].tasks[0].id`, where the author wrote it. The
+definition keeps the authored tree (`WorkflowDef::walk` yields it in the
+same coordinates), so nothing is ever reported at a flattened index.
 
-### The guarantee
+A missing or ill-typed key is `PARSE_FAILED` at its own path, carrying what
+was expected, so a host needs no round-trip check of its own as a safety
+net.
 
-> `validate_authored` returns empty **if and only if** the JSON parses into a
-> `Workflow` and that workflow validates.
+### What an issue carries
 
-That answers the *shape* question completely, but shape is not the same as
-"this engine can run it". `Engine::build()` also resolves every task to
-a handler, so a structurally perfect definition naming an unregistered function
-still aborts a build. The next section covers that half.
+| Field | Holds |
+|---|---|
+| `code` | An `IssueCode`; `as_str()` is its stable `SCREAMING_SNAKE` form |
+| `severity` | `Rejected`, `Defect` or `Advisory`: the code's own, unless overridden |
+| `path` | An `AuthoredPath` into the submitted JSON, `tasks[1].tasks[0].id` |
+| `step_kind`, `step_id` | The step it sits in: a `task`, a `group`, or a `setup` step under `loop.setup` |
+| `field` | Inside a config, the first key under `function.input` |
+| `message` | What is wrong, in words |
 
-The guarantee still matters, because the schema is much larger than the semantic
-rules: `"priority": "high"`, a `map` task missing its `mappings`, a misspelled
-`status`: none of these break a *rule*, and none of them can load.
+An `Issue` serializes as an object of those seven fields, the code and
+severity as their strings and the path as it displays, and `Display`
+renders `tasks[0].id: every step needs a non-empty id [MISSING_STEP_ID]`.
 
-Rather than mirror the whole schema, `validate_authored` finishes by
-parsing the document and reports any failure as `IssueCode::ParseFailed`,
-carrying the parser's own message:
+## Severity
+
+Not every issue is a refusal. `Severity` says when an issue bites, and
+`IssueCode::severity()` gives each code's default:
 
 ```rust
-# use dataflow_rs::{IssueCode, Workflow};
-# use serde_json::json;
-let issues = Workflow::validate_authored(&json!({
-    "id": "w", "name": "w", "priority": 0,
-    "tasks": [{"id": "t", "name": "t", "function": {"name": "map", "input": {}}}]
-}));
+use dataflow_rs::program::{IssueCode, Severity};
 
-assert_eq!(issues[0].code, IssueCode::ParseFailed);
-assert!(issues[0].message.contains("mappings"));
+// Reported, and the workflow loads and runs.
+assert_eq!(IssueCode::UnguardedValidation.severity(), Severity::Advisory);
+// Loads, then does not do what it says.
+assert_eq!(IssueCode::LikelyTypo.severity(), Severity::Defect);
+// Never loads.
+assert_eq!(IssueCode::DuplicateStepId.severity(), Severity::Rejected);
+
+assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
+assert_eq!(Severity::Defect.as_str(), "DEFECT");
 ```
 
-A host therefore does **not** need its own round-trip check as a safety net:
-this is that safety net, inside the crate where it cannot drift.
+- **Rejected**: the definition never runs. `parse` gives no `def`, or the
+  compiler gives no workflow.
+- **Defect**: it loads, then fails or misbehaves on messages. A near miss of
+  a known key (`LIKELY_TYPO`), a `var` reading the payload (`PAYLOAD_VAR`),
+  a connector no deployment declares (`UNRESOLVED_REFERENCE`). A host
+  screening on "would this build" alone waves these through.
+- **Advisory**: it loads and runs; the shape deserves an author's attention.
+
+`Severity::Advisory` is the only class a host may safely ignore, so
+screening a definition before activating it is one pass over its issues.
+Both `IssueCode` and `Severity` are `#[non_exhaustive]`, so match the codes
+you care about and let the rest fall through.
+
+## Unknown keys and the compat reader
+
+`ParseOptions::default()` has the **compat reader** on. It reads 3.x's
+spellings of the policies and of the `validation` function's name and
+rewrites each into the 4.0 spelling, reporting a `V3_SPELLING` advisory at
+the 3.x key; see [Control Flow](./control-flow.md#coming-from-3x). It also
+decides what an unknown key becomes:
+
+| Key | Code | Severity | What happens |
+|---|---|---|---|
+| A near miss of a known key at its level (`conditon`, `on_failrue`) | `LIKELY_TYPO` | Defect | Loads; the key is kept in the node's `ext` |
+| Any other unknown key | `UNKNOWN_KEY` | Advisory | Loads; the key is kept in the node's `ext` |
+
+A key under `loop`, `for_each`, `rollout` or `function` is kept as
+`loop.<key>` and so on, and a key a built-in's input does not know as
+`function.input.<key>`. `ext` is the node's slot for host and UI data: the
+authored `ext` object first, then what moved there.
+
+```rust
+use dataflow_rs::def::{ParseOptions, parse};
+use dataflow_rs::program::{IssueCode, Severity};
+use serde_json::json;
+
+let json = json!({"id": "w", "tasks": [
+    {"id": "t", "conditon": true, "colour": "teal", "function": {"name": "map", "input": {"mappings": []}}}
+]});
+
+// With the reader on, both keys load, and each is reported as what it is,
+// in the object's key order.
+let parsed = parse(&json, ParseOptions::default());
+let rows: Vec<(IssueCode, Severity, String)> = parsed
+    .issues
+    .iter()
+    .map(|i| (i.code, i.severity, i.path.to_string()))
+    .collect();
+assert_eq!(rows, [
+    (IssueCode::UnknownKey, Severity::Advisory, "tasks[0].colour".to_owned()),
+    (IssueCode::LikelyTypo, Severity::Defect, "tasks[0].conditon".to_owned()),
+]);
+let def = parsed.def.unwrap();
+let dataflow_rs::def::StepDef::Task(task) = &def.tasks[0] else { unreachable!() };
+assert_eq!(task.header.ext["colour"], json!("teal"));
+
+// With it off, every unknown key is refused, and nothing moves.
+let strict = parse(&json, ParseOptions::default().compat(false));
+assert!(strict.def.is_none());
+assert!(strict.issues.iter().all(|i| i.severity == Severity::Rejected));
+```
+
+Inside a host function's `input` the rule is stricter: a derived config
+refuses an unknown key outright (`LIKELY_TYPO` or `UNKNOWN_KEY`, Rejected),
+since the function could not honour it.
 
 ## Issue codes
 
-`IssueCode` is `#[non_exhaustive]` (a later minor may add a rule), so match the
-codes you care about and let the rest fall through. `as_str()` gives the stable
-string form for an API response:
-
-```rust
-use dataflow_rs::IssueCode;
-
-assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
-```
+### Structure
 
 | Code | Severity | Means |
 |---|---|---|
-| `EMPTY_WORKFLOW_ID` / `EMPTY_WORKFLOW_NAME` | Rejected | Required identity field missing or blank |
+| `EMPTY_WORKFLOW_ID` | Rejected | `id` is missing or empty |
 | `NO_TASKS` | Rejected | `tasks` missing, not an array, or empty |
 | `MISSING_STEP_ID` | Rejected | A task or group carries no `id` |
-| `DUPLICATE_STEP_ID` | Rejected | Two steps share an id; groups share the task namespace |
+| `DUPLICATE_STEP_ID` | Rejected | Two steps share an id; groups share the task namespace, and `loop.setup` shares it with `tasks` |
 | `EMPTY_GROUP` | Rejected | A group's `tasks` is not a non-empty array |
-| `GROUP_TOO_DEEP` | Rejected | Groups nested past `MAX_GROUP_DEPTH` |
+| `GROUP_TOO_DEEP` | Rejected | Groups nested past `MAX_GROUP_DEPTH` (8) |
 | `MISSING_FUNCTION` | Rejected | A task carries no `function` |
 | `INVALID_FUNCTION_NAME` | Rejected | `function` is not an object with a non-empty `name` |
 | `INVALID_TERMINAL` | Rejected | `terminal` is present but not a boolean |
-| `INVALID_HALT_ON` | Rejected | `halt_on` is not `"never"`/`"failure"`, or is on a group |
-| `INVALID_MAPPING` | Rejected | A `map` mapping has neither or both of `logic` and `unset`, carries `on_null` or `mode` without `logic`, or removes or appends to a context root; see [Removing a Path](../built-in-functions/map.md#removing-a-path) |
-| `GROUP_CONTINUE_ON_ERROR` | Advisory | A group carries `continue_on_error`, which the engine does not honour |
-| `UNGUARDED_VALIDATION` | Advisory | A `validation` whose failure stops nothing |
-| `NULL_MAPPING` | Advisory | A `map` mapping whose `logic` is always `null`, so it never writes; use `"unset": true` to remove a path |
+| `PARSE_FAILED` | Rejected | A key is missing or of the wrong type; the message says what was expected |
+| `VALIDATE_FAILED` | Rejected | A backstop for a rule none of the codes above model |
+
+### Loops and fan-out
+
+| Code | Severity | Means |
+|---|---|---|
 | `LOOP_INCREMENT_TOO_SMALL` | Rejected | `increment < 1`: the counter would never reach `max` |
 | `LOOP_BOUND_EMPTY` | Rejected | `max <= init`: no sweep could ever run |
 | `LOOP_COUNTER_INVALID` | Rejected | `counter` is not a non-empty dotted path |
 | `LOOP_SLOT_INVALID` | Rejected | `as` or `scratch` is not a non-empty dotted path |
 | `LOOP_ITEM_WITHOUT_OVER` | Rejected | `as` is set but there is no `over` to take elements from |
 | `LOOP_SLOT_COLLISION` | Rejected | Two of `counter` / `as` / `scratch` name the same path, or one lies inside the other |
-| `LOOP_OVER_INVALID` | Rejected | `over` is a scalar literal that can never be an array, or `init < 0` alongside `over`; see [Iterating an array](./loops.md#iterating-an-array) |
+| `LOOP_OVER_INVALID` | Rejected | `over` is a scalar literal that can never be an array, or `init < 0` alongside `over`; see [Loops](./loops.md) |
 | `INVALID_FOR_EACH` | Rejected | A task's `for_each` breaks one of its rules, or sits on a built-in or a group (reported at the offending key); see [Fan-Out](./for-each.md#validation) |
-| `PARSE_FAILED` | Rejected | Does not deserialize; message carries the field and type |
-| `VALIDATE_FAILED` | Rejected | Backstop: parses, but `validate()` still rejects it |
-| `UNKNOWN_FUNCTION` | Rejected | No handler registered, and not a built-in; usually a typo |
-| `MISSING_HANDLER` | Defect | A config-only integration with nothing registered under its name |
-| `INPUT_PARSE` | Rejected | A custom task's `input` does not match its handler's `Input` type |
-| `TEMPLATE_COMPILE` | Rejected | A handler rejected the input at construction time |
+
+### Functions and their inputs
+
+| Code | Severity | Means |
+|---|---|---|
+| `UNKNOWN_FUNCTION` | Rejected | No function is registered under the name, and it is not a built-in; the message names the nearest registered name when one is close |
+| `INPUT_PARSE` | Rejected | A config refused its input: a missing field, a wrong type, a rule between fields, or a function's own `prepare` |
+| `TEMPLATE_COMPILE` | Rejected | An expression does not compile |
+| `INVALID_MAPPING` | Rejected | A `map` mapping breaks a rule between its keys; see [Map](../built-in-functions/map.md) |
+| `NULL_MAPPING` | Advisory | A `map` mapping whose `logic` always evaluates to `null`, so it never writes; use `"unset": true` to remove a path |
+| `UNGUARDED_VALIDATION` | Advisory | A `validation` whose rejection nothing acts on; reported at its `on_rejection` |
+| `INVALID_PATH` | Rejected | A literal context path not rooted at `data`, `metadata` or `temp_data`, or a document hole whose path is not one |
+| `PAYLOAD_VAR` | Defect | A literal `var` rooted at `payload`, which is not in the evaluation context |
+| `UNRESOLVED_REFERENCE` | Defect | A field a function's spec names as a `Reference` holds a literal the host's `ResourceOracle` does not resolve |
+| `MISSING_HANDLER` | Defect | 3.x's code for its three config-only integrations with nothing registered; 4.0 never reports it, since an unregistered name is `UNKNOWN_FUNCTION` |
+
+### Secrets, template keys and documents
+
+| Code | Severity | Means |
+|---|---|---|
 | `UNKNOWN_SECRET` | Rejected | An expression names a secret the engine does not declare; see [Secrets](./secrets.md) |
-| `SECRET_IN_MESSAGE_WRITE` | Rejected | An expression whose result the engine records reads a secret; see [Secrets](./secrets.md#what-a-secret-may-not-do) for the full set |
-| `INVALID_SECRET_STORE` | Rejected | The store given to `with_secrets` is not an object (reported in place of the `UNKNOWN_SECRET` issues every name would otherwise produce) |
+| `SECRET_IN_MESSAGE_WRITE` | Rejected | An expression whose result the engine records reads a secret; see [Secrets](./secrets.md#what-a-secret-may-not-do) |
+| `INVALID_SECRET_STORE` | Rejected | 3.x's code for a store that is not an object; 4.0 refuses such a store when the `ExprEngine` is built, so never reports it |
 | `DUPLICATE_TEMPLATE_KEY` | Rejected | Two keys in one template object collapse to the same name once the `$` escape is stripped |
-| `ESCAPED_TEMPLATE_KEY` | Advisory | A `$`-prefixed template key, reported as a migration audit and never refused |
+| `ESCAPED_TEMPLATE_KEY` | Advisory | A `$`-prefixed template key, listed so the audit is mechanical |
+| `OPERATOR_IN_DOCUMENT` | Advisory | An operator-shaped node inside an `Interpolated` document, which stays data |
+| `SECRET_IN_DOCUMENT` | Rejected | A `{"secret": …}` node inside an `Interpolated` document, which would never be substituted |
 
-## Severity
+### Keys and spellings
 
-Not every code is a refusal, and the two sets have grown apart: before 3.9 every
-code `check_workflow` reported was also one `build()` refused, so "has an issue"
-and "cannot run" were the same question, and they no longer are. Ask `Severity`
-rather than keeping a list: a list can only ever be wrong in one direction,
-silently, on upgrade.
+| Code | Severity | Means |
+|---|---|---|
+| `LIKELY_TYPO` | Defect | An unknown key within edit distance of a known key at its level |
+| `UNKNOWN_KEY` | Advisory | An unknown key that resembles no known key; kept in `ext` |
 
-```rust
-use dataflow_rs::{IssueCode, Severity};
+### Codes for 3.x spellings
 
-// Reported, and the workflow still builds and runs.
-assert_eq!(IssueCode::UnguardedValidation.severity(), Severity::Advisory);
-// Builds cleanly, then fails every message.
-assert_eq!(IssueCode::MissingHandler.severity(), Severity::Defect);
-// `build()` refuses it.
-assert_eq!(IssueCode::DuplicateTemplateKey.severity(), Severity::Rejected);
-```
+Only the compat reader reports these, for a definition written in 3.x's
+spelling:
 
-`Severity::Advisory` is the only class a host may safely ignore, so screening a
-definition before activating it is one pass:
+| Code | Severity | Means |
+|---|---|---|
+| `V3_SPELLING` | Advisory | A 3.x key was read as its 4.0 policy, or `validate` as `validation` |
+| `GROUP_CONTINUE_ON_ERROR` | Advisory | A group carries `continue_on_error`, which 3.x never honoured either; kept in the group's `ext` |
+| `INVALID_HALT_ON` | Rejected | A `halt_on` that is not `"never"` or `"failure"`, or one on a group |
 
-```rust
-# use dataflow_rs::{Engine, Severity, Workflow};
-# let workflow = Workflow::from_json(r#"{
-#     "id": "w", "name": "w", "priority": 0,
-#     "tasks": [{"id": "t", "name": "t",
-#                "function": {"name": "map", "input": {"mappings": []}}}]
-# }"#).unwrap();
-let issues = Engine::builder().check_workflow(&workflow);
+See [Control Flow](./control-flow.md#coming-from-3x) for the rewrite table.
 
-let usable = issues.iter().all(|i| i.severity() == Severity::Advisory);
-assert!(usable);
-```
+## Compiling against the registry
 
-Unlike `IssueCode`, `Severity` is **not** `#[non_exhaustive]`: the axis is *when*
-a definition goes wrong (build time, first message, never), which is closed by
-construction, so you can `match` it exhaustively and stay correct.
-
-`Severity` needs engine **3.11.0** or newer. Before it, the distinction existed
-only in prose, and a host had to carry its own list of the codes `build()` does
-not refuse, a list that could only ever be wrong in one direction, silently, on
-upgrade.
-
-### Why each advisory code is advisory
-
-- `ESCAPED_TEMPLATE_KEY`: stripping the [`$` escape](./jsonlogic.md#literal-keys-and-the--escape)
-  is uniform rather than conditional on a collision, so every escaped key is
-  worth seeing once when upgrading to 3.9; after that they are deliberate.
-- `UNGUARDED_VALIDATION`: validating to *record* errors rather than to gate is
-  a legitimate shape, so the ungated form is reported, not refused. See
-  [`halt_on`](./control-flow.md#halt_on).
-- `GROUP_CONTINUE_ON_ERROR`: the key is real on a task and on a workflow, so a
-  host may already carry it on group nodes; refusing it would abort every
-  workflow in the build over a key that was never honoured anyway.
-- `NULL_MAPPING`: `"logic": null` loaded long before
-  [`unset`](../built-in-functions/map.md#removing-a-path) existed, and the
-  mapping is a no-op rather than an error, so refusing it would fail builds that
-  run today. It is almost always an attempted clear, so the message points at
-  `unset`. Only logic that *folds* to `null` is reported:
-  `{"var": "data.x"}` is null only when the path misses, and stays silent.
-
-### The one `Defect`
-
-`MISSING_HANDLER` is the other code `Engine::build()` accepts, and it is the
-reason severity has three classes rather than two. It names a real defect the
-builder cannot catch: the config parses into a typed variant, so nothing fails
-until a message arrives. A host screening on "would this build" alone waves it
-through and then serves a channel that fails every message. See
-[Why `MISSING_HANDLER` is its own code](#why-missing_handler-is-its-own-code).
-
-Every remaining code in the table is a `Rejected`. One stands out:
-`INVALID_SECRET_STORE` is a rejection, but the definition is not what is wrong.
-Quarantining the workflow will not make the build succeed, because the store is
-the broken part.
-
-## Checking against the handlers
-
-Shape is only half the question. The other half needs the *registry*: will every
-task name a function this engine can run, with an input its handler can parse?
-`Engine::build()` decides that, and a host that lets it decide finds out at
-reload, when one bad row takes down every workflow in the process.
-
-`check_workflow` asks the same questions and reports instead of aborting:
+Shape is half the question. The other half needs the registry: will every
+task name a function this engine can run, with an input its config
+compiles? A `Compiler` comes from a `Registry`, or from a running engine
+(`engine.compiler()`, with the program's registry and options), and
+compiles one workflow at a time:
 
 ```rust
-use dataflow_rs::{Engine, IssueCode, Workflow};
-
-let workflow = Workflow::from_json(r#"{
-    "id": "w", "name": "w", "priority": 0,
-    "tasks": [{"id": "lookup", "name": "lookup",
-               "function": {"name": "enrich",
-                            "input": {"connector": "c", "merge_path": "data.out"}}}]
-}"#).unwrap();
-
-let issues = Engine::builder().check_workflow(&workflow);
-
-assert_eq!(issues[0].code, IssueCode::MissingHandler);
-assert_eq!(issues[0].task_id.as_deref(), Some("lookup"));
-```
-
-Both `EngineBuilder` and `Engine` carry it, with identical semantics: screen
-before you build, or against the engine you are already running. The second is
-usually what a live host wants: the submission endpoint holds a built engine
-behind its reload mechanism, not the builder that made it.
-
-### Why `MISSING_HANDLER` is its own code
-
-`enrich`, `http_call` and `publish_kafka` ship as config schemas with no
-implementation. A workflow using one deserializes into a *typed* variant, so
-`Engine::build()` accepts it without complaint, and then every message fails
-with `FunctionNotFound`. Reporting that as `UNKNOWN_FUNCTION` would send the
-author hunting for a typo that isn't there; the fix is a registration, and the
-code says so.
-
-### Anchoring and paths
-
-`check_workflow` anchors each issue on `task_id` (step ids are unique across
-tasks and groups), with a path *relative to that task*:
-
-```text
-task_id: "lookup"
-path:    "function.input"
-```
-
-To point at the authored document, join it with the coordinate
-`walk_authored_steps` reports for that id:
-
-```text
-tasks[1].tasks[0]  +  function.input
-```
-
-`check_workflow` works this way because it receives an already-parsed
-`Workflow`, whose `tasks` is flattened; the authored nesting is gone. Emitting a
-flat `tasks[3]` would point at the wrong element in the author's document, which
-is worse than not pointing at all.
-
-The flattening also means `check_workflow` checks tasks inside groups
-automatically, with no extra traversal.
-
-## Walking the authored tree yourself
-
-For anything the checks above do not cover (your own lint rules, dependency
-extraction, a renderer), `walk_authored_steps` gives you the authored tree with
-the engine's own grammar:
-
-```rust
-use dataflow_rs::engine::steps::{StepKind, walk_authored_steps};
+use dataflow_rs::def::{ParseOptions, parse};
+use dataflow_rs::program::{CompileOptions, IssueCode};
+use dataflow_rs::Registry;
 use serde_json::json;
 
-let tasks = json!([
-    {"id": "load", "function": {"name": "map", "input": {"mappings": []}}},
-    {"id": "guard", "condition": true, "tasks": [
-        {"id": "greet", "function": {"name": "map", "input": {"mappings": []}}}
-    ]}
+let compiler = Registry::default().compiler(CompileOptions::default());
+
+let def = parse(
+    &json!({"id": "w", "tasks": [{"id": "t", "function": {"name": "fetch"}}]}),
+    ParseOptions::default(),
+)
+.def
+.unwrap();
+
+// `compile_one` is `Err` with every issue when any is Rejected, and `Ok`
+// with the workflow and its Defects and Advisories otherwise.
+let issues = compiler.compile_one(&def).unwrap_err();
+assert_eq!(issues[0].code, IssueCode::UnknownFunction);
+assert_eq!(issues[0].path.to_string(), "tasks[0].function.name");
+assert_eq!(issues[0].step_id.as_deref(), Some("t"));
+
+// `check` is every issue, whether or not the workflow is rejected.
+assert_eq!(compiler.check(&def), issues);
+```
+
+A config's issues sit below the task's `function.input`, each with the
+`field` it is in: `tasks[0].function.input.timeout_ms`, field `timeout_ms`.
+The compile also runs the expression checks over every expression:
+secrets, template keys and `payload` reads.
+
+### Fragments
+
+An editor that checks one branch of a workflow as the author types asks for
+the issues of a fragment: a list of steps as it would sit at a path such as
+`tasks[2].tasks` or `loop.setup`. `check_steps` parses it as `parse` reads
+a workflow's steps and compiles it, every path under the root given:
+
+```rust
+use dataflow_rs::program::{CompileOptions, IssueCode};
+use dataflow_rs::Registry;
+use serde_json::json;
+
+let compiler = Registry::default().compiler(CompileOptions::default());
+let steps = json!([
+    {"id": "t", "function": {"name": "fetch", "input": {}}}
 ]);
-
-let leaves: Vec<&str> = walk_authored_steps(&tasks)
-    .filter(|s| s.kind == StepKind::Leaf)
-    .map(|s| s.node["id"].as_str().unwrap())
-    .collect();
-
-assert_eq!(leaves, vec!["load", "greet"]);
+let issues = compiler.check_steps(&steps, "tasks[2].tasks");
+assert_eq!(issues[0].code, IssueCode::UnknownFunction);
+assert_eq!(issues[0].path.to_string(), "tasks[2].tasks[0].function.name");
 ```
 
-A loop's `setup` is a second step list on the same workflow, with the same
-grammar. `walk_authored_steps_at(setup, "loop.setup")` walks it with paths
-rooted where the author typed them, `loop.setup[1].tasks[0]`, and is what
-`validate_authored` itself uses:
+A fragment under `loop.setup` makes setup steps, and each `tasks` key in
+the root past the first counts one group of depth, so a group too deep is
+reported as it would be in the whole.
+
+### Resources a config names
+
+A host function's `FunctionSpec` can name the config fields that refer to
+another definition, a connector say, with `Reference::new(field, kind)`.
+Given a `ResourceOracle` through `CompileOptions::resources`, the compiler
+checks each one whose value is a literal string, and reports one the oracle
+does not resolve as `UNRESOLVED_REFERENCE`, a defect: the workflow would
+load and then fail every call.
 
 ```rust
-use dataflow_rs::engine::steps::walk_authored_steps_at;
+use dataflow_rs::def::{ParseOptions, parse};
+use dataflow_rs::function::{FunctionConfig, FunctionSpec, Reference};
+use dataflow_rs::program::{CompileOptions, IssueCode, ResourceOracle, Severity};
+use dataflow_rs::{Ctx, Function, Outcome, Registry, Result};
 use serde_json::json;
+use std::sync::Arc;
 
-let workflow = json!({
-    "loop": {"max": 10, "setup": [
-        {"id": "claim", "function": {"name": "map", "input": {"mappings": []}}}
-    ]}
-});
+#[derive(FunctionConfig)]
+struct QueryConfig {
+    connector: String,
+    sql: String,
+}
 
-let paths: Vec<String> = walk_authored_steps_at(&workflow["loop"]["setup"], "loop.setup")
-    .map(|s| s.path)
-    .collect();
-assert_eq!(paths, vec!["loop.setup[0]"]);
+struct Query;
+
+impl Function for Query {
+    type Config = QueryConfig;
+
+    fn spec(&self) -> FunctionSpec {
+        FunctionSpec::default().with_references(vec![Reference::new("connector", "connector")])
+    }
+
+    async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &QueryConfig) -> Result<Outcome> {
+        Ok(Outcome::Ok)
+    }
+}
+
+/// The deployment's connectors.
+struct Connectors;
+
+impl ResourceOracle for Connectors {
+    fn resolve(&self, _kind: &str, name: &str) -> std::result::Result<(), String> {
+        if name == "orders" { Ok(()) } else { Err(String::new()) }
+    }
+}
+
+let mut registry = Registry::default();
+registry.register("query", Query);
+let compiler = registry.compiler(CompileOptions::default().resources(Arc::new(Connectors)));
+
+let def = parse(
+    &json!({"id": "w", "tasks": [{"id": "t", "function": {"name": "query",
+        "input": {"connector": "sessions", "sql": "select 1"}}}]}),
+    ParseOptions::default(),
+)
+.def
+.unwrap();
+let compiled = compiler.compile_one(&def).unwrap();
+assert_eq!(compiled.issues[0].code, IssueCode::UnresolvedReference);
+assert_eq!(compiled.issues[0].severity, Severity::Defect);
+assert_eq!(compiled.issues[0].path.to_string(), "tasks[0].function.input.connector");
 ```
 
-See [Control Flow](./control-flow.md#inspecting-the-authored-shape) for the full
-walker contract.
+An `Err(why)` with a non-empty `why` leads the issue's message; an empty one
+gives the plain `` no connector named `sessions` resolves ``.
+
+## Quarantine: run what compiles
+
+`Engine::builder().build()` fails when any definition is rejected, with
+every rejected definition's issues, parse issues before compile issues, in
+input order. A host that holds many rows and wants the good ones running
+compiles each on its own and links the ones that compile:
+
+```rust
+use dataflow_rs::def::{ParseOptions, parse};
+use dataflow_rs::program::{CompileOptions, Issue};
+use dataflow_rs::run::EngineConfig;
+use dataflow_rs::{Engine, Registry};
+use serde_json::{Value, json};
+
+let submitted: Vec<Value> = vec![
+    json!({"id": "good", "tasks": [{"id": "t", "function": {"name": "map",
+        "input": {"mappings": [{"path": "data.ok", "logic": true}]}}}]}),
+    json!({"id": "bad", "tasks": [{"id": "t", "function": {"name": "fetch"}}]}),
+];
+
+let compiler = Registry::default().compiler(CompileOptions::default());
+let mut accepted = Vec::new();
+let mut quarantined: Vec<(usize, Vec<Issue>)> = Vec::new();
+for (row, raw) in submitted.iter().enumerate() {
+    let parsed = parse(raw, ParseOptions::default());
+    let Some(def) = parsed.def else {
+        quarantined.push((row, parsed.issues));
+        continue;
+    };
+    match compiler.compile_one(&def) {
+        Ok(compiled) => accepted.push(compiled.workflow),
+        Err(issues) => quarantined.push((row, issues)),
+    }
+}
+
+let engine = Engine::new(compiler.link(accepted), EngineConfig::default());
+assert_eq!(engine.program().workflows().len(), 1);
+assert_eq!(quarantined.len(), 1);
+assert_eq!(quarantined[0].0, 1);
+```
+
+`link` sorts the workflows by `priority` and never fails. A reload is the
+same loop over the new rows with `engine.compiler()`, then
+`engine.with_program(program)`: the engine returned runs the new program,
+and the old one, with any run in flight, keeps the old.
+
+One function's config can be checked alone, with no definition around it:
+`function::testing::config::<C>(input)` compiles it and returns every issue
+at its path below the input. See
+[Testing a function](./custom-functions.md#testing-a-function).
 
 ## Putting it together
 
 A submission endpoint checks in this order, stopping at the first stage that
-reports anything:
+reports anything Rejected:
 
-1. **`Workflow::validate_authored(&json)`**: shape, with field paths. Reject
-   with a `400` listing every issue.
-2. **`Workflow::from_json(&text)`**: now guaranteed to succeed if step 1 was
-   empty, so `unwrap` is honest here if you prefer.
-3. **`engine.check_workflow(&workflow)`**: will this engine run it? Reject
-   with a `400` naming the tasks and what each needs.
+1. **`def::parse(&json, ParseOptions::default())`**: shape, with field
+   paths. Reject with a `400` listing every issue; show the Defects and
+   Advisories to the author either way.
+2. **`compiler.compile_one(&def)`** against the engine the definition will
+   run on: will this engine run it? Reject with a `400` naming the steps and
+   what each needs.
 
-Only then store and activate the definition. `Engine::build()` stays
-deliberately permissive. It is not a validation gate, and a host that treats it
-as one discovers its problems at reload rather than at submission.
+Only then store and activate the definition, and keep the compiled
+workflow for the next `link`. A host that lets `Engine::builder().build()`
+decide instead finds out at reload, when one bad row takes every workflow
+in the build down with it.

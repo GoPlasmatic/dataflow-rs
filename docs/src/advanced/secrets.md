@@ -6,89 +6,112 @@ value can live.
 
 ## The problem
 
-`Message.context` is one object, `{data, metadata, temp_data}`, and it plays
-two roles at once. Every expression evaluates against it, and it is also
-what the engine records: `Serialize for Message` writes it, every
-[trace](../core-concepts/engine.md#execution-tracing) step snapshots it, and a
-`map` task clones it once per mapping when mapping contexts are on.
+A message's context is one object, `{data, metadata, temp_data}`, and it
+plays two roles at once. Every expression evaluates against it, and it is
+also what the engine records: `Serialize for Message` writes it, a trace
+starts from it and records every change to it, and every audit entry holds
+the values a task wrote.
 
 So "what a workflow may read" and "what the engine records" are the same
 decision. For almost every value that is right. For a signing key it is
-wrong, and nothing inside the context can say so.
-`TraceOptions::redact_paths` prunes named subtrees *after* the fact, which is
-the tool you reach for when a value should not have been there in the first
-place.
+wrong, and nothing inside the context can say so. `TraceOptions::redact`
+masks named paths in a trace *after* the fact, which is the tool you reach
+for when a value should not have been there in the first place.
 
 ## The store
 
-Secrets do not go in the context at all. They go in a store on the engine,
-and expressions reach them through one reserved operator:
+Secrets do not go in the context at all. They go in a `Secrets` store on the
+expression engine, and expressions reach them through one reserved operator:
 
 ```rust
-# use dataflow_rs::{Engine, Message, Workflow};
-# use serde_json::json;
-# async fn run() -> dataflow_rs::Result<()> {
-let workflow = Workflow::from_json(r#"{
-    "id": "verify", "name": "verify", "priority": 0,
-    "condition": {
-        "==": [ { "var": "metadata.headers.x-token" }, { "secret": "webhook_token" } ]
-    },
-    "tasks": [
-        { "id": "accept", "name": "accept", "function": {
-            "name": "map",
-            "input": { "mappings": [ { "path": "data.accepted", "logic": true } ] } } }
-    ]
-}"#)?;
+# tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::expr::{ExprEngine, Secrets};
+use dataflow_rs::{Engine, Message, Registry};
+use serde_json::json;
+
+// The host owns resolution: an environment variable, a vault, a file. Here
+// the webhook accepts the current token and the next one, mid-rotation.
+let store = Secrets::new(OwnedDataValue::from(&json!({
+    "webhook_tokens": ["tok-7f2a", "tok-next-91c0"],
+    "partner": {"hmac": "hmac-3d4e"}   // nested is fine: {"secret": "partner.hmac"}
+})))
+.unwrap();
+let exprs = ExprEngine::builder().secrets(store).build().unwrap();
 
 let engine = Engine::builder()
-    .with_secrets_json(&json!({
-        "webhook_token": "tok-…",
-        "partner": { "hmac": "…" }          // nested is fine: {"secret": "partner.hmac"}
+    .registry(Registry::new(exprs))
+    .workflow_json(&json!({
+        "id": "verify",
+        "condition": {
+            "in": [{"var": "metadata.headers.x-token"}, {"secret": "webhook_tokens"}]
+        },
+        "tasks": [
+            {"id": "accept", "function": {"name": "map", "input": {
+                "mappings": [{"path": "data.accepted", "logic": true}]}}}
+        ]
     }))
-    .with_workflow(workflow)
-    .build()?;
+    .build()
+    .unwrap();
 
-let mut message = Message::builder()
-    .metadata_json(&json!({ "headers": { "x-token": "tok-…" } }))
-    .build();
-engine.process_message(&mut message).await?;
-assert_eq!(message.data()["accepted"], json!(true).into());
-# Ok(()) }
+let mut message = Message::from_parts(
+    OwnedDataValue::Null,
+    OwnedDataValue::Null,
+    OwnedDataValue::from(&json!({"headers": {"x-token": "tok-7f2a"}})),
+);
+engine.run(&mut message).await;
+assert_eq!(message.to_json()["context"]["data"]["accepted"], json!(true));
+
+// The condition read the whole list, and the message carries none of it:
+// the token it holds is the one the request itself brought in.
+let wire = serde_json::to_string(&message).unwrap();
+assert!(!wire.contains("tok-next-91c0") && !wire.contains("hmac-3d4e"));
+assert!(!wire.contains("secret"));
+# });
 ```
 
-`with_secrets` takes the *resolved values*; the host owns resolution, whether
-that is an environment variable, a vault call, or a file. The store must be an
-object; nested objects are allowed so a host can namespace, and a dotted name
-walks into them.
+`Secrets::new` takes the *resolved values*. The store must be an object
+(anything else is a `Config` error); nested objects are allowed so a host can
+namespace, and a dotted name walks into them. The `ExprEngine` holding the
+store is what a `Registry` compiles against, so every workflow the registry's
+engine runs shares one store.
 
 `{"secret": "name"}` works anywhere JSONLogic runs on this engine: workflow,
-group and task conditions, `validation` rules, `filter`, a custom handler's
-[`Template`](./custom-functions.md) fields, every parameter of the integration
-configs (including `http_call`'s `headers` values, which is usually where a
-credential belongs), and a handler's own `ctx.eval(..)`. A handler configured
-with a key *name* rather than an expression reads it directly:
+group and task conditions, `validation` rules, `filter`, and any field of a
+host function's config, which is usually where a credential belongs. A host
+function configured with a key *name* rather than an expression reads it
+directly:
 
-```rust,ignore
-let key = ctx.secret(&input.key_name);   // Option<&OwnedDataValue>
+```rust
+# use dataflow_rs::Ctx;
+# fn _demo(ctx: &Ctx<'_>, key_name: &str) {
+let key = ctx.secret(key_name);   // Option<&OwnedDataValue>
+# let _ = key;
+# }
 ```
 
 ## The guarantee
 
-A secret cannot appear in `Serialize for Message`, in an `ExecutionTrace`
-snapshot, in a `mapping_contexts` clone, or in anything a host derives from a
-message, because the store is never part of a `Message`. There is nothing to
-exclude. The types enforce this, so no code path has to, and the crate pins it
-with a test: a workflow reads a secret from a condition, a validation
-rule, a filter and a `Template`, runs under `TraceOptions::default()`, and the
-serialized trace and message are checked for the value.
+A secret cannot appear in `Serialize for Message`, in a trace's `initial`
+context or any of its changes, in an audit entry, or in anything a host
+derives from a message, because the store is never part of a `Message`.
+There is nothing to exclude. The types enforce this, so no code path has to,
+and the crate pins it with a test that reads a secret from every place one
+is allowed, runs under every trace policy, and searches every surface a host
+can observe for the value.
 
-Two things follow from that shape:
+Three things follow from that shape:
 
 - **No hot-path cost.** Nothing about evaluation changes for an expression
-  that does not invoke the operator. An engine with a store and a workflow
-  that never reads it runs exactly as before.
-- **`Debug` on the store prints names with the values masked**, and the store
-  implements neither `Serialize` nor `Clone`.
+  that does not invoke the operator.
+- **`Debug` on the store prints names with the values masked**, and the
+  store implements neither `Serialize` nor `Clone`. `Secrets::names` lists
+  the top-level keys, never a value.
+- **A layer reads the input without the secret.** `Ctx::input`, the config
+  resolved for a call as a logging or dry-run layer reads it, gives `null`
+  for every field whose expression reads a secret, and never evaluates it,
+  so not even its error can carry the value. The function's own
+  `Ctx::resolve` is the unredacted counterpart.
 
 ## What a secret may not do
 
@@ -99,13 +122,12 @@ Placement does not stop a workflow *copying* a secret into a recorded root:
 ```
 
 No principled static line separates a verbatim copy from a derived value
-(`cat`, `substr` and `if` all copy), so the rule is blunt. **An expression whose result the engine writes to the
-message or emits to a log may not read a secret at all.** That holds even
-through a custom operator, and for a dynamic name (`{"secret": {"var": "…"}}`)
-as much as a literal one.
+(`cat`, `substr` and `if` all copy), so the rule is blunt. **An expression
+whose result the engine records may not read a secret at all.** That holds
+for a dynamic name (`{"secret": {"var": "…"}}`) as much as a literal one.
 
-Since 3.9 every parameter is JSONLogic, so the rule covers destinations as well
-as values. A path is recorded in `Change.path` and on the audit trail, and both
+Every parameter is JSONLogic, so the rule covers destinations as well as
+values. A path is recorded in `Change.path` and on the audit trail, and both
 are serialized along with the value written there:
 
 | Parameter | Why it is recorded |
@@ -117,87 +139,125 @@ are serialized along with the value written there:
 | `parse_*`: `source`, `target` | Name where the engine itself reads and writes |
 | `publish_*`: `source`, `target` | Same |
 | `publish_xml`: `root_element` | Written into the serialized document that lands in `data.{target}` |
+| Any `Output` of a host function's config | A destination, recorded in every `Change` written through it |
+| A host function's `#[config(records)]` field | The function declared that the engine records its result |
 
-Everything handed to a *handler* may read a secret, because what happens to it
-from there is the handler's business: every `http_call`, `enrich` and
-`publish_kafka` parameter (`headers` values above all), a custom task's whole
-`input`, and any condition, which yields a boolean rather than a recorded value.
+Everything else handed to a *host function* may read a secret, because what
+happens to it from there is the function's business: every other field of
+its config, and any condition, which yields a boolean rather than a recorded
+value. An `Interpolated` document may not hold a `{"secret": …}` node at all
+(`SECRET_IN_DOCUMENT`): a document is never evaluated, so the secret would
+be handed on as written.
 
-The check runs at authoring time and at construction, from one implementation:
+The check runs at authoring time and at build, from one implementation:
 
 | Code | Fires when |
 |---|---|
 | `SECRET_IN_MESSAGE_WRITE` | Any recorded parameter above reads a secret |
-| `UNKNOWN_SECRET` | An expression names a secret the engine does not declare |
+| `UNKNOWN_SECRET` | An expression names, literally, a secret the engine does not declare |
 
-`Engine::build()` refuses a workflow with either; `check_workflow` reports them
-with the task id and a path such as `function.input.mappings[1].logic`:
+Both are Rejected: `Engine::builder().build()` refuses a workflow with
+either, and `Compiler::check` reports them at the authored path:
 
 ```rust
-use dataflow_rs::{Engine, IssueCode, Workflow};
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::def::{ParseOptions, parse};
+use dataflow_rs::expr::{ExprEngine, Secrets};
+use dataflow_rs::program::{CompileOptions, IssueCode};
+use dataflow_rs::Registry;
 use serde_json::json;
 
-let leaky = Workflow::from_json(r#"{
-    "id": "w", "name": "w", "priority": 0,
-    "tasks": [ { "id": "sign", "name": "sign", "function": {
-        "name": "map",
-        "input": { "mappings": [ { "path": "data.sig", "logic": { "secret": "k" } } ] } } } ]
-}"#).unwrap();
+let store = Secrets::new(OwnedDataValue::from(&json!({"k": "v"}))).unwrap();
+let exprs = ExprEngine::builder().secrets(store).build().unwrap();
+let compiler = Registry::new(exprs).compiler(CompileOptions::default());
 
-let builder = Engine::builder().with_secrets_json(&json!({ "k": "…" }));
-let issues = builder.check_workflow(&leaky);
+let leaky = parse(
+    &json!({"id": "w", "tasks": [{"id": "sign", "function": {"name": "map", "input": {
+        "mappings": [{"path": "data.sig", "logic": {"secret": "k"}}]}}}]}),
+    ParseOptions::default(),
+)
+.def
+.unwrap();
+let issues = compiler.check(&leaky);
 assert_eq!(issues[0].code, IssueCode::SecretInMessageWrite);
-assert_eq!(issues[0].path.as_deref(), Some("function.input.mappings[0].logic"));
-assert!(builder.with_workflow(leaky).build().is_err());
+assert_eq!(issues[0].path.to_string(), "tasks[0].function.input.mappings[0].logic");
+assert!(compiler.compile_one(&leaky).is_err());
+
+let undeclared = parse(
+    &json!({"id": "w", "condition": {"==": [{"var": "data.t"}, {"secret": "nope"}]},
+            "tasks": [{"id": "t", "function": {"name": "map", "input": {"mappings": []}}}]}),
+    ParseOptions::default(),
+)
+.def
+.unwrap();
+let issues = compiler.check(&undeclared);
+assert_eq!(issues[0].code, IssueCode::UnknownSecret);
+assert_eq!(issues[0].path.to_string(), "condition");
 ```
 
-Derived values (an HMAC over the body, a signed URL) belong in a custom
-handler, which reads the key through a `Template` and writes only the result:
+Derived values (an HMAC over the body, a signed URL) belong in a host
+function, which reads the key through an `Expr` and writes only the result:
 
 ```rust
-# use async_trait::async_trait;
-# use dataflow_rs::engine::functions::AsyncFunctionHandler;
-# use dataflow_rs::{Result, TaskContext, TaskOutcome, Template, TemplateCompiler};
-#[derive(serde::Deserialize)]
-struct SignInput {
-    key: Template,                       // {"secret": "partner.hmac"} in the workflow
-    body: Template,                      // {"var": "data.body"}
+# tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::expr::{ExprEngine, Output, Secrets};
+use dataflow_rs::function::{FunctionConfig, testing};
+use dataflow_rs::{Ctx, Expr, Function, Message, Outcome, Result};
+use serde_json::json;
+
+#[derive(FunctionConfig)]
+struct SignConfig {
+    key: Expr<String>,     // {"secret": "partner.hmac"} in the workflow
+    body: Expr<String>,    // {"var": "data.body"}
+    #[output(default = "data.signature")]
+    output: Output,
 }
 
 struct Sign;
 
-#[async_trait]
-impl AsyncFunctionHandler for Sign {
-    type Input = SignInput;
+impl Function for Sign {
+    type Config = SignConfig;
 
-    fn compile_input(input: &mut SignInput, c: &TemplateCompiler) -> Result<()> {
-        input.key.compile(c, "key")?;
-        input.body.compile(c, "body")
-    }
-
-    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &SignInput) -> Result<TaskOutcome> {
-        let key: String = input.key.eval_into(ctx)?;
-        let body: String = input.body.eval_into(ctx)?;
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &SignConfig) -> Result<Outcome> {
+        let key = ctx.eval(&cfg.key)?;
+        let body = ctx.eval(&cfg.body)?;
+        // What a layer would see: the secret-reading field is `null`.
+        assert_eq!(ctx.input()?.get("key"), Some(&OwnedDataValue::Null));
         let signature = hmac_hex(&key, &body);
-        ctx.set("data.signature", signature.into());   // derived, not the key
-        Ok(TaskOutcome::Success)
+        ctx.emit(&cfg.output, OwnedDataValue::from(&json!(signature)))?;   // derived, not the key
+        Ok(Outcome::Ok)
     }
 }
-# fn hmac_hex(_key: &str, body: &str) -> String { body.len().to_string() }
+# fn hmac_hex(key: &str, body: &str) -> String { format!("{}:{}", body.len(), key.len()) }
+
+let store = Secrets::new(OwnedDataValue::from(&json!({"partner": {"hmac": "hmac-91c0"}}))).unwrap();
+let exprs = ExprEngine::builder().secrets(store).build().unwrap();
+let data = OwnedDataValue::from(&json!({"body": "hello"}));
+let called = testing::call(
+    Sign,
+    json!({"key": {"secret": "partner.hmac"}, "body": {"var": "data.body"}}),
+)
+.exprs(exprs)
+.message(Message::from_parts(OwnedDataValue::Null, data, OwnedDataValue::Null))
+.await;
+assert_eq!(called.outcome.unwrap(), Outcome::Ok);
+assert_eq!(called.message.to_json()["context"]["data"]["signature"], json!("5:9"));
+# });
 ```
 
-The contract for a handler author is one line: **a handler must not write a
-secret-derived value into the message.** The engine cannot see past the
-handler boundary; whether `key` stays unrecorded from here is the handler's
+The contract for a function author is one line: **a function must not write
+a secret-derived value into the message.** The engine cannot see past the
+function boundary; whether `key` stays unrecorded from here is the function's
 business.
 
 ## Unknown names
 
-A literal name the engine does not declare fails `build()`, so a typo surfaces
-before the first message. Nothing that was working can break, since the name
-never resolved. A dynamic name that resolves to nothing fails at
-evaluation: a condition evaluates `false`, a `validation` rule records
-`EVALUATION_ERROR`, a `Template::eval` returns `Err`. It is never `null`:
+A literal name the engine does not declare is refused at build, so a typo
+surfaces before the first message. Nothing that was working can break, since
+the name never resolved. A dynamic name that resolves to nothing fails at
+evaluation: a condition evaluates `false`, a `validation` rule records an
+error, a host function's `Ctx::eval` returns `Err`. It is never `null`:
 silently signing with an empty key is worse than an error.
 
 Error text names the key, never a value.
@@ -205,16 +265,19 @@ Error text names the key, never a value.
 ## Limits, stated plainly
 
 - **Static, not taint.** The check refuses expressions the engine itself
-  records. A handler can still leak; see the contract above.
+  records. A function can still leak; see the contract above.
 - **Other operators' errors.** A datalogic operator that fails may echo its
   operands in the message (the `datetime` family does). Do not feed a secret
   to an operator whose failure formats its input; the `secret` operator's own
   errors never do.
 - **In-process memory is trusted.** A value is copied into the evaluation
   arena when read and is not zeroized afterwards.
-- **Process-wide.** One store per engine, fixed at `build()`. It is carried
-  across [`with_new_workflows`](../core-concepts/engine.md#enginewith_new_workflowsworkflows),
-  so rotation is a rebuild.
+- **One store per expression engine, fixed when it is built.** A registry and
+  every program compiled from it share it, and a reload through
+  `engine.compiler()` keeps it. Rotation is a new `ExprEngine`, a new
+  `Registry`, and a recompile of the definitions.
 - **`secret` is a reserved operator name.** Registering a host operator under
-  it fails `build()`; otherwise adding a store later would silently shadow it.
-  `Engine::operator_names()` lists it on every engine.
+  it fails `ExprEngineBuilder::build`; otherwise adding a store later would
+  silently shadow it. `ExprEngine::operators` lists it on every engine, with
+  or without a store, so `{"secret": "x"}` on an engine with no store is an
+  error, never literal data.
