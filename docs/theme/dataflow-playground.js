@@ -1,6 +1,11 @@
 /**
  * Dataflow Playground - Interactive workflow processing
- * Provides inline "Try It" widgets and a full playground page
+ * Provides inline "Try It" widgets and a full playground page.
+ *
+ * Runs on the @goplasmatic/dataflow-wasm 4.0 API: a `WasmEngine` built from
+ * the workflows' JSON text, `engine.run(payload)` resolving with
+ * `{ message, run }` on every status, and an `EngineError` with `issues`
+ * when the workflows are refused.
  */
 
 // WASM module state
@@ -57,13 +62,41 @@ async function initWasm() {
     return initPromise;
 }
 
-// Process message through workflows
-async function processMessage(workflowsJson, payloadStr) {
+// The payload the engine gets: the JSON the text holds when it parses, else
+// the text itself as a string (a `parse_json` task reading `payload` copies
+// an object and parses a string, so either shape reaches `data.input`).
+function parsePayload(payloadText) {
+    try {
+        return JSON.parse(payloadText);
+    } catch {
+        return payloadText;
+    }
+}
+
+// Run one message through the workflows: build an engine from the JSON text,
+// run the payload, free the engine. Resolves with the engine's
+// `{ message, run }` on every status; a stopped run resolves too, with
+// `run.status` saying so. Throws the engine's `EngineError` (its `code` and,
+// for a refused definition, its `issues`) when the workflows do not load.
+async function runMessage(workflowsText, payloadText) {
     if (!wasmReady || !wasmModule) {
         throw new Error('WASM module not initialized');
     }
 
-    return await wasmModule.process_message(workflowsJson, payloadStr);
+    const engine = new wasmModule.WasmEngine(workflowsText);
+    try {
+        return await engine.run(parsePayload(payloadText), { trace: false });
+    } finally {
+        engine.free();
+    }
+}
+
+// Escape text for insertion as HTML
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 // Format JSON for display
@@ -185,15 +218,10 @@ function createWidget(container) {
         const workflowsStr = workflowsInput.value.trim();
         const payloadStr = payloadInput.value.trim();
 
-        // Validate JSON
+        // Validate the workflows' JSON; the payload may be any JSON, or a plain string
         if (!isValidJson(workflowsStr)) {
             resultDiv.className = 'playground-result error';
             resultDiv.textContent = 'Invalid workflows JSON';
-            return;
-        }
-        if (!isValidJson(payloadStr)) {
-            resultDiv.className = 'playground-result error';
-            resultDiv.textContent = 'Invalid payload JSON';
             return;
         }
 
@@ -201,12 +229,12 @@ function createWidget(container) {
             resultDiv.className = 'playground-result loading';
             resultDiv.textContent = 'Processing...';
 
-            const result = await processMessage(workflowsStr, payloadStr);
+            const result = await runMessage(workflowsStr, payloadStr);
             resultDiv.className = 'playground-result success';
-            resultDiv.innerHTML = formatResultWithSections(result);
+            resultDiv.innerHTML = formatResultWithSections(result, payloadStr);
         } catch (error) {
             resultDiv.className = 'playground-result error';
-            resultDiv.textContent = 'Error: ' + error.message;
+            resultDiv.innerHTML = formatError(error);
         }
     }
 
@@ -249,45 +277,91 @@ function createWidget(container) {
     }
 }
 
-// Format result with collapsible sections for audit trail
-function formatResultWithSections(resultStr) {
+// One line per workflow the run considered: why it ran or did not, and how it ended
+function formatWorkflowRecords(records) {
+    return records.map(record => {
+        let line = escapeHtml(record.id) + ': ' + escapeHtml(record.selection);
+        if (record.exit) {
+            line += ', ' + escapeHtml(record.exit);
+        }
+        if (record.error) {
+            line += ' (' + escapeHtml(record.error.code) + ': ' + escapeHtml(record.error.message) + ')';
+        }
+        return line;
+    }).join('\n');
+}
+
+// Format the engine's `{ message, run }` with a section per part
+function formatResultWithSections(result, payloadStr) {
     try {
-        const result = JSON.parse(resultStr);
+        const message = result.message || {};
+        const run = result.run || {};
         let html = '';
 
+        // How the run ended
+        html += '<div class="result-section' + (run.status === 'stopped' || run.status === 'timed_out' ? ' result-errors' : '') + '">';
+        html += '<div class="result-section-header">Run: ' + escapeHtml(run.status || 'unknown') + '</div>';
+        let summary = '';
+        if (run.error) {
+            summary += escapeHtml(run.error.code) + ': ' + escapeHtml(run.error.message) + '\n';
+        }
+        if (Array.isArray(run.workflows) && run.workflows.length > 0) {
+            summary += formatWorkflowRecords(run.workflows);
+        }
+        if (payloadStr !== undefined && !isValidJson(payloadStr)) {
+            summary += (summary ? '\n' : '') + 'The payload is not JSON, so it was sent as a string.';
+        }
+        if (summary) {
+            html += '<pre class="result-json">' + summary + '</pre>';
+        }
+        html += '</div>';
+
         // Context (data, metadata, temp_data)
-        if (result.context) {
+        if (message.context) {
             html += '<div class="result-section">';
             html += '<div class="result-section-header">Context</div>';
-            html += '<pre class="result-json">' + highlightJson(JSON.stringify(result.context, null, 2)) + '</pre>';
+            html += '<pre class="result-json">' + highlightJson(JSON.stringify(message.context, null, 2)) + '</pre>';
             html += '</div>';
         }
 
         // Errors
-        if (result.errors && result.errors.length > 0) {
+        if (message.errors && message.errors.length > 0) {
             html += '<div class="result-section result-errors">';
-            html += '<div class="result-section-header">Errors (' + result.errors.length + ')</div>';
-            html += '<pre class="result-json">' + highlightJson(JSON.stringify(result.errors, null, 2)) + '</pre>';
+            html += '<div class="result-section-header">Errors (' + message.errors.length + ')</div>';
+            html += '<pre class="result-json">' + highlightJson(JSON.stringify(message.errors, null, 2)) + '</pre>';
             html += '</div>';
         }
 
         // Audit Trail
-        if (result.audit_trail && result.audit_trail.length > 0) {
+        if (message.audit_trail && message.audit_trail.length > 0) {
             html += '<div class="result-section result-audit">';
-            html += '<div class="result-section-header">Audit Trail (' + result.audit_trail.length + ' entries)</div>';
-            html += '<pre class="result-json">' + highlightJson(JSON.stringify(result.audit_trail, null, 2)) + '</pre>';
+            html += '<div class="result-section-header">Audit Trail (' + message.audit_trail.length + ' entries)</div>';
+            html += '<pre class="result-json">' + highlightJson(JSON.stringify(message.audit_trail, null, 2)) + '</pre>';
             html += '</div>';
-        }
-
-        // If no structured result, show raw
-        if (!html) {
-            html = '<pre class="result-json">' + highlightJson(formatJson(resultStr)) + '</pre>';
         }
 
         return html;
     } catch {
-        return '<pre class="result-json">' + highlightJson(formatJson(resultStr)) + '</pre>';
+        return '<pre class="result-json">' + highlightJson(JSON.stringify(result, null, 2)) + '</pre>';
     }
+}
+
+// Format what the engine threw: a refused definition's issues (code, path,
+// message), or the error's message
+function formatError(error) {
+    const issues = error && Array.isArray(error.issues) ? error.issues : null;
+    if (issues && issues.length > 0) {
+        let html = '<div class="result-section result-errors">';
+        html += '<div class="result-section-header">Workflows refused (' + issues.length + ' issue' + (issues.length === 1 ? '' : 's') + ')</div>';
+        html += '<pre class="result-json">' + issues.map(issue =>
+            escapeHtml(issue.severity) + ' ' + escapeHtml(issue.code) +
+            ' at ' + escapeHtml(issue.path || '(document)') + ': ' + escapeHtml(issue.message)
+        ).join('\n') + '</pre>';
+        html += '</div>';
+        return html;
+    }
+    const code = error && typeof error.code === 'string' ? error.code + ': ' : '';
+    return 'Error: ' + code + escapeHtml(error && error.message ? error.message : String(error));
 }
 
 // Initialize all playground widgets on the page
@@ -326,11 +400,11 @@ function initFullPlayground() {
             payload: '{"name":"John","tier":"premium"}'
         },
         'Multi-Workflow': {
-            workflows: '[{"id":"enrich","name":"Enrich Data","priority":1,"tasks":[' + parseTask + ',{"id":"add_timestamp","name":"Add Timestamp","function":{"name":"map","input":{"mappings":[{"path":"temp_data.processed_at","logic":"2024-01-01T00:00:00Z"}]}}}]},{"id":"transform","name":"Transform Data","priority":2,"tasks":[{"id":"build_output","name":"Build Output","function":{"name":"map","input":{"mappings":[{"path":"data.output","logic":{"cat":["Processed: ",{"var":"data.input.value"}," at ",{"var":"temp_data.processed_at"}]}}]}}}]}]',
+            workflows: '[{"id":"enrich","name":"Enrich Data","priority":1,"tasks":[' + parseTask + ',{"id":"add_timestamp","name":"Add Timestamp","function":{"name":"map","input":{"mappings":[{"path":"temp_data.received_at","logic":"2024-01-01T00:00:00Z"}]}}}]},{"id":"transform","name":"Transform Data","priority":2,"tasks":[{"id":"build_output","name":"Build Output","function":{"name":"map","input":{"mappings":[{"path":"data.output","logic":{"cat":["Processed: ",{"var":"data.input.value"}," at ",{"var":"temp_data.received_at"}]}}]}}}]}]',
             payload: '{"value":"test data"}'
         },
         'Error Handling': {
-            workflows: '[{"id":"resilient","name":"Resilient Workflow","continue_on_error":true,"tasks":[' + parseTask + ',{"id":"validate","name":"Validate","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.required_field"}]},"message":"Required field missing"}]}}},{"id":"process","name":"Process Anyway","function":{"name":"map","input":{"mappings":[{"path":"data.processed","logic":true}]}}}]}]',
+            workflows: '[{"id":"resilient","name":"Resilient Workflow","on_failure":"continue","tasks":[' + parseTask + ',{"id":"validate","name":"Validate","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.required_field"}]},"message":"Required field missing"}]}}},{"id":"process","name":"Process Anyway","function":{"name":"map","input":{"mappings":[{"path":"data.processed","logic":true}]}}}]}]',
             payload: '{"other_field":"value"}'
         },
         'Arithmetic': {
@@ -346,7 +420,7 @@ function initFullPlayground() {
             payload: '{"amount":150,"item":"widget"}'
         },
         'Complete Example': {
-            workflows: '[{"id":"process_order","name":"Process Order","priority":1,"tasks":[' + parseTask + ',{"id":"validate_order","name":"Validate Order","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.customer_id"}]},"message":"Customer ID required"},{"logic":{">":[{"var":"data.input.amount"},0]},"message":"Amount must be positive"}]}}},{"id":"calculate_total","name":"Calculate Total","function":{"name":"map","input":{"mappings":[{"path":"data.tax","logic":{"*":[{"var":"data.input.amount"},0.1]}},{"path":"data.total","logic":{"+":[{"var":"data.input.amount"},{"var":"data.tax"}]}},{"path":"data.status","logic":"processed"},{"path":"temp_data.order_time","logic":"2024-01-01T12:00:00Z"}]}}},{"id":"set_metadata","name":"Set Metadata","function":{"name":"map","input":{"mappings":[{"path":"metadata.processed_at","logic":{"var":"temp_data.order_time"}},{"path":"metadata.processor","logic":"workflow-engine"}]}}}]}]',
+            workflows: '[{"id":"process_order","name":"Process Order","priority":1,"tasks":[' + parseTask + ',{"id":"validate_order","name":"Validate Order","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.customer_id"}]},"message":"Customer ID required"},{"logic":{">":[{"var":"data.input.amount"},0]},"message":"Amount must be positive"}]}}},{"id":"calculate_total","name":"Calculate Total","function":{"name":"map","input":{"mappings":[{"path":"data.tax","logic":{"*":[{"var":"data.input.amount"},0.1]}},{"path":"data.total","logic":{"+":[{"var":"data.input.amount"},{"var":"data.tax"}]}},{"path":"data.status","logic":"processed"},{"path":"temp_data.order_time","logic":"2024-01-01T12:00:00Z"}]}}},{"id":"set_metadata","name":"Set Metadata","function":{"name":"map","input":{"mappings":[{"path":"metadata.order_time","logic":{"var":"temp_data.order_time"}},{"path":"metadata.processor","logic":"workflow-engine"}]}}}]}]',
             payload: '{"customer_id":"cust-123","amount":99.99,"items":["item1","item2"]}'
         }
     };
@@ -430,22 +504,16 @@ function initFullPlayground() {
             return;
         }
 
-        if (!isValidJson(payloadStr)) {
-            resultDiv.className = 'full-playground-result error';
-            resultDiv.textContent = 'Invalid payload JSON';
-            return;
-        }
-
         try {
             resultDiv.className = 'full-playground-result loading';
             resultDiv.textContent = 'Processing...';
 
-            const result = await processMessage(workflowsStr, payloadStr);
+            const result = await runMessage(workflowsStr, payloadStr);
             resultDiv.className = 'full-playground-result success';
-            resultDiv.innerHTML = formatResultWithSections(result);
+            resultDiv.innerHTML = formatResultWithSections(result, payloadStr);
         } catch (error) {
             resultDiv.className = 'full-playground-result error';
-            resultDiv.textContent = 'Error: ' + error.message;
+            resultDiv.innerHTML = formatError(error);
         }
     }
 
