@@ -103,15 +103,24 @@ fn seg_key(raw: &str) -> &str {
     raw.strip_prefix('#').unwrap_or(raw)
 }
 
-/// A raw segment's index on an array: the raw segment parsed as `usize`, so
-/// `#20` is never one.
+/// The largest index a bare numeric segment names on an array. A larger
+/// number is a key, so no path can make a write pad an array past it: a
+/// trace read from outside the engine, or a computed path, could otherwise
+/// name `data.list.4294967295` and have a write allocate for every slot
+/// before it, which overflows on wasm32 and exhausts memory anywhere.
+pub const MAX_ARRAY_INDEX: usize = (1 << 20) - 1;
+
+/// A raw segment's index on an array: the raw segment parsed as `usize`, at
+/// most [`MAX_ARRAY_INDEX`], so `#20` is never one and nor is a number past
+/// the cap.
 fn seg_index(raw: &str) -> Option<usize> {
-    raw.parse().ok()
+    raw.parse().ok().filter(|&i| i <= MAX_ARRAY_INDEX)
 }
 
 /// A root plus typed segments, parsed once. A segment is a key on an object
 /// (one leading `#` stripped) and an index on an array (the raw segment parsed
-/// as `usize`), resolved at parse.
+/// as `usize`, up to [`MAX_ARRAY_INDEX`]; a larger number is a key), resolved
+/// at parse.
 ///
 /// `Debug` prints the dotted text, `Path("metadata.errors")`.
 #[derive(Clone, PartialEq, Eq)]
@@ -617,6 +626,30 @@ mod tests {
             .expect_err("65 segments are refused");
         assert_eq!(*err.kind(), ErrorKind::Config);
         assert!(err.to_string().contains("at most 64"), "{err}");
+    }
+
+    #[test]
+    fn an_index_stops_at_the_cap_and_a_larger_number_is_a_key() {
+        let at_cap = path(&format!("data.list.{MAX_ARRAY_INDEX}"));
+        assert_eq!(at_cap.segs().last().unwrap().index, Some(MAX_ARRAY_INDEX));
+        let past = path(&format!("data.list.{}", MAX_ARRAY_INDEX + 1));
+        assert_eq!(past.segs().last().unwrap().index, None);
+        assert_eq!(&*past.segs().last().unwrap().key, "1048576");
+
+        // On an array a key writes nothing, so the array cannot be grown past
+        // the cap; a small index pads with `null` as before.
+        let mut ctx = json(r#"{"data":{"list":[]}}"#);
+        assert!(!path("data.list.4294967295").assign(&mut ctx, json("7")));
+        assert!(!path("data.list.3000000000").assign(&mut ctx, json("7")));
+        assert_eq!(text(&ctx), r#"{"data":{"list":[]}}"#);
+        assert!(path("data.list.2").assign(&mut ctx, json("7")));
+        assert_eq!(text(&ctx), r#"{"data":{"list":[null,null,7]}}"#);
+        // Where there is no array, the number is an ordinary key.
+        assert!(path("data.obj.4294967295").assign(&mut ctx, json("1")));
+        assert_eq!(
+            get_dotted(&ctx, "data.obj.4294967295").map(text),
+            Some("1".into())
+        );
     }
 
     #[test]

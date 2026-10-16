@@ -137,12 +137,14 @@ impl Trace {
     /// `initial` through the steps before it and then the step's changes up
     /// to each of its [`mapping_ends`](TraceStep::mapping_ends), by
     /// [`contexts`](Self::contexts)'s rules: one context per mapping, in
-    /// order, a mapping that wrote nothing repeating the one before it, and
-    /// the last equal to the context `contexts` yields for the step. `None`
-    /// when `step` is past the last step, when the step has no
-    /// `mapping_ends`, or when an end exceeds the step's `changes` or
-    /// precedes the end before it, as a trace edited or read from another
-    /// build may have.
+    /// order, a mapping that wrote nothing repeating the one before it. The
+    /// last is the context after the last mapping and before the step's own
+    /// trailing changes (the progress write, and the error context's), so it
+    /// differs from the context [`contexts`](Self::contexts) yields for the
+    /// step by those alone. `None` when `step` is past the last step, when
+    /// the step has no `mapping_ends`, or when an end exceeds the step's
+    /// `changes` or precedes the end before it, as a trace edited or read
+    /// from another build may have.
     pub fn mapping_contexts(&self, step: usize) -> Option<Vec<Context>> {
         let at = self.steps.get(step)?;
         if at.mapping_ends.is_empty() {
@@ -331,9 +333,10 @@ mod tests {
     }
 
     /// `initial` with an empty `data`, one earlier step writing `data.z`,
-    /// then I136's four mappings: a plain write, a skipped `null`, an
-    /// `append` creating its array, and a root merge of two keys, ending at
-    /// `[1, 1, 3, 4]`.
+    /// then a `map` step of four mappings: a plain write, a skipped `null`,
+    /// an `append` creating its array, and a root merge of two keys, ending
+    /// at `[1, 1, 3, 4]`, followed by the recorder's progress write, which no
+    /// mapping end covers.
     fn trace() -> Trace {
         let id: Arc<str> = Arc::from("w");
         let mut earlier = TraceStep::new(WorkflowIx::new(0), &id, StepResult::Executed);
@@ -344,6 +347,11 @@ mod tests {
             write("data.list.0", json!(null), json!("x")),
             write("data.list.1", json!(null), json!("y")),
             write("data", json!({}), json!({"b": 2, "c": 3})),
+            write(
+                "metadata.progress",
+                json!(null),
+                json!({"workflow_id": "w", "task_id": "m", "status_code": 200}),
+            ),
         ];
         map.mapping_ends = vec![1, 1, 3, 4];
         Trace {
@@ -372,8 +380,16 @@ mod tests {
                 json!({"z": 0, "a": 1, "list": ["x", "y"], "b": 2, "c": 3}),
             ]
         );
+        // The last mapping context is the step's context without the
+        // trailing progress write, which `contexts` includes.
         let after = trace.contexts().nth(1).unwrap();
-        assert_eq!(contexts.last().unwrap(), &after);
+        let last = contexts.last().unwrap();
+        assert_eq!(last.data(), after.data());
+        assert!(last.metadata().as_object().is_some_and(|m| m.is_empty()));
+        assert_eq!(
+            serde_json::to_value(after.metadata()).unwrap()["progress"]["status_code"],
+            json!(200)
+        );
     }
 
     #[test]
@@ -386,7 +402,7 @@ mod tests {
     #[test]
     fn a_malformed_mapping_end_gives_none() {
         let mut past = trace();
-        past.steps[1].mapping_ends = vec![1, 5];
+        past.steps[1].mapping_ends = vec![1, 6];
         assert!(past.mapping_contexts(1).is_none());
         let mut backwards = trace();
         backwards.steps[1].mapping_ends = vec![3, 1];

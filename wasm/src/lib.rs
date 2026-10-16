@@ -212,15 +212,15 @@ fn invalid(what: &str, detail: impl std::fmt::Display) -> JsValue {
     engine_error("INVALID_ARGUMENT", format!("{what}: {detail}"), None)
 }
 
-/// The JSON text of a JS value: `JSON.stringify`, with `undefined` and `null`
-/// read as `null`.
-fn stringify(v: &JsValue) -> Result<String, JsValue> {
+/// The JSON text of a JS value named `what`: `JSON.stringify`, with
+/// `undefined` and `null` read as `null`.
+fn stringify(v: &JsValue, what: &str) -> Result<String, JsValue> {
     if v.is_undefined() || v.is_null() {
         return Ok("null".to_owned());
     }
     let text = js_sys::JSON::stringify(v).map_err(|e| {
         invalid(
-            "argument",
+            what,
             js_sys::Error::from(e)
                 .message()
                 .as_string()
@@ -228,14 +228,13 @@ fn stringify(v: &JsValue) -> Result<String, JsValue> {
         )
     })?;
     // `JSON.stringify` of a function or a symbol is `undefined`, not text.
-    text.as_string()
-        .ok_or_else(|| invalid("argument", "is not JSON"))
+    text.as_string().ok_or_else(|| invalid(what, "is not JSON"))
 }
 
 /// A JS value read as `T`, through its JSON text. A JS string is taken as
 /// the string it is, not as JSON text to parse.
 fn from_js<T: DeserializeOwned>(v: &JsValue, what: &str) -> Result<T, JsValue> {
-    let text = stringify(v)?;
+    let text = stringify(v, what)?;
     serde_json::from_str(&text).map_err(|e| invalid(what, e))
 }
 
@@ -315,23 +314,18 @@ struct RunOptionsIn {
     channel: Option<String>,
     routing_bucket: Option<u8>,
     capture_changes: Option<bool>,
-    audit: Option<AuditIn>,
-    trace: Option<TraceIn>,
+    /// `"full"`, `"off"` or `{ last: n }`: read by hand below, so a mistake
+    /// inside it is named rather than reported as an unmatched variant.
+    audit: Option<Value>,
+    /// `true`, `false` or the trace options: read by hand below, as `audit`.
+    trace: Option<Value>,
     timeout_ms: Option<u64>,
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum AuditIn {
-    Mode(String),
-    Last { last: usize },
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum TraceIn {
-    On(bool),
-    Options(TraceOptionsIn),
+#[serde(deny_unknown_fields)]
+struct AuditLast {
+    last: usize,
 }
 
 #[derive(Default, Deserialize)]
@@ -341,6 +335,57 @@ struct TraceOptionsIn {
     changes: Option<bool>,
     redact: Option<Vec<String>>,
     max_bytes: Option<usize>,
+}
+
+/// `options.audit`: `"full"`, `"off"` or `{ last: n }`.
+fn audit_mode(raw: Value) -> Result<AuditMode, JsValue> {
+    let shape = || invalid("options.audit", "must be \"full\", \"off\" or { last: n }");
+    match raw {
+        Value::String(mode) => match mode.as_str() {
+            "full" => Ok(AuditMode::Full),
+            "off" => Ok(AuditMode::Off),
+            _ => Err(shape()),
+        },
+        Value::Object(_) => serde_json::from_value::<AuditLast>(raw)
+            .map(|a| AuditMode::Last(a.last))
+            .map_err(|e| invalid("options.audit", e)),
+        _ => Err(shape()),
+    }
+}
+
+/// `options.trace`: `true` (the default options), `false` (no trace) or the
+/// options object.
+fn trace_options(raw: Value) -> Result<Option<TraceOptions>, JsValue> {
+    let opts = match raw {
+        Value::Bool(false) => return Ok(None),
+        Value::Bool(true) => TraceOptionsIn::default(),
+        Value::Object(_) => serde_json::from_value::<TraceOptionsIn>(raw)
+            .map_err(|e| invalid("options.trace", e))?,
+        _ => {
+            return Err(invalid(
+                "options.trace",
+                "must be true, false or an object of trace options",
+            ));
+        }
+    };
+    let mut trace = TraceOptions::default();
+    if let Some(on) = opts.timings {
+        trace = trace.timings(on);
+    }
+    if let Some(on) = opts.changes {
+        trace = trace.changes(on);
+    }
+    if let Some(max) = opts.max_bytes {
+        trace = trace.max_bytes(max);
+    }
+    let mut redact = Vec::with_capacity(opts.redact.as_ref().map_or(0, Vec::len));
+    for raw in opts.redact.unwrap_or_default() {
+        let path: Path = raw
+            .parse()
+            .map_err(|e| invalid("options.trace.redact", format!("{raw:?}: {e}")))?;
+        redact.push(path);
+    }
+    Ok(Some(trace.redact(redact)))
 }
 
 /// The run options, owned, so the future that runs the message holds them.
@@ -361,44 +406,8 @@ impl RunOptionsIn {
         if let Some(id) = self.id {
             message = message.with_id(id);
         }
-        let audit = match self.audit {
-            None => None,
-            Some(AuditIn::Mode(mode)) => Some(match mode.as_str() {
-                "full" => AuditMode::Full,
-                "off" => AuditMode::Off,
-                other => {
-                    return Err(invalid(
-                        "options.audit",
-                        format!("must be \"full\", \"off\" or {{ last: n }}, not {other:?}"),
-                    ));
-                }
-            }),
-            Some(AuditIn::Last { last }) => Some(AuditMode::Last(last)),
-        };
-        let trace = match self.trace {
-            None | Some(TraceIn::On(false)) => None,
-            Some(TraceIn::On(true)) => Some(TraceOptions::default()),
-            Some(TraceIn::Options(opts)) => {
-                let mut trace = TraceOptions::default();
-                if let Some(on) = opts.timings {
-                    trace = trace.timings(on);
-                }
-                if let Some(on) = opts.changes {
-                    trace = trace.changes(on);
-                }
-                if let Some(max) = opts.max_bytes {
-                    trace = trace.max_bytes(max);
-                }
-                let mut redact = Vec::with_capacity(opts.redact.as_ref().map_or(0, Vec::len));
-                for raw in opts.redact.unwrap_or_default() {
-                    let path: Path = raw
-                        .parse()
-                        .map_err(|e| invalid("options.trace.redact", format!("{raw:?}: {e}")))?;
-                    redact.push(path);
-                }
-                Some(trace.redact(redact))
-            }
-        };
+        let audit = self.audit.map(audit_mode).transpose()?;
+        let trace = self.trace.map(trace_options).transpose()?.flatten();
         let deadline = self
             .timeout_ms
             .map(|ms| Instant::now() + Duration::from_millis(ms));
@@ -525,7 +534,7 @@ impl WasmEngine {
     #[wasm_bindgen(unchecked_return_type = "Promise<RunResult>")]
     pub fn run(
         &self,
-        #[wasm_bindgen(unchecked_param_type = "JsonValue")] payload: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "JsonValue | undefined")] payload: JsValue,
         #[wasm_bindgen(unchecked_optional_param_type = "RunOptions")] options: Option<
             js_sys::Object,
         >,
@@ -712,15 +721,18 @@ pub fn contexts(
 #[wasm_bindgen(unchecked_return_type = "Context[]")]
 pub fn mapping_contexts(
     #[wasm_bindgen(unchecked_param_type = "Trace")] trace: JsValue,
-    step: usize,
+    step: f64,
 ) -> Result<JsValue, JsValue> {
     let trace = read_trace(&trace)?;
-    if step >= trace.steps.len() {
+    // A JS number, checked here rather than wrapped by the glue: `NaN`, a
+    // fraction, a negative number and one past the last step are refused.
+    let len = trace.steps.len();
+    if !step.is_finite() || step.fract() != 0.0 || step < 0.0 || step >= len as f64 {
         return Err(invalid(
             "step",
-            format!("{step} is past the trace's {} step(s)", trace.steps.len()),
+            format!("{step} is not a step of the trace, which has {len}"),
         ));
     }
-    let contexts = trace.mapping_contexts(step).unwrap_or_default();
+    let contexts = trace.mapping_contexts(step as usize).unwrap_or_default();
     to_js(&contexts)
 }

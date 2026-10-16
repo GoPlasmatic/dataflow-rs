@@ -26,6 +26,6 @@ pub use expr::{Evaluated, Expr, FromValue, ResolveExpr};
 pub use operators::{Family, OperatorInfo};
 pub use output::Output;
 pub(crate) use path::Seg;
-pub use path::{Path, Root};
+pub use path::{MAX_ARRAY_INDEX, Path, Root};
 pub use secrets::Secrets;
 pub use walk::{escaped_keys, secret_refs};

@@ -435,7 +435,7 @@ async fn mapping_contexts_give_the_context_after_each_mapping() {
     let engine = traced_engine();
     let result = run(&engine, JsValue::NULL, Some(r#"{"trace": true}"#)).await;
     let trace = js(&result["trace"].to_string());
-    let after = json_of(&mapping_contexts(trace.clone(), 0).unwrap());
+    let after = json_of(&mapping_contexts(trace.clone(), 0.0).unwrap());
     let after = after.as_array().unwrap();
     assert_eq!(after.len(), 4);
     assert_eq!(after[0]["data"]["a"], 1);
@@ -447,12 +447,16 @@ async fn mapping_contexts_give_the_context_after_each_mapping() {
     let steps = result["trace"]["steps"].as_array().unwrap();
     let v = steps.iter().position(|s| s["task_id"] == "v").unwrap();
     assert_eq!(
-        json_of(&mapping_contexts(trace.clone(), v).unwrap()),
+        json_of(&mapping_contexts(trace.clone(), v as f64).unwrap()),
         json!([])
     );
-    // Past the end.
-    let (code, _, _) = error_parts(&mapping_contexts(trace, steps.len()).unwrap_err());
-    assert_eq!(code, "INVALID_ARGUMENT");
+    // Past the end, and a number that is not a step: each refused, none
+    // wrapped by the glue.
+    for bad in [steps.len() as f64, -1.0, 1.5, f64::NAN, 4294967296.0] {
+        let (code, message, _) = error_parts(&mapping_contexts(trace.clone(), bad).unwrap_err());
+        assert_eq!(code, "INVALID_ARGUMENT", "{bad}");
+        assert!(message.starts_with("step: "), "{message}");
+    }
 }
 
 #[wasm_bindgen_test]
@@ -467,6 +471,93 @@ async fn a_malformed_trace_is_refused_before_it_is_indexed() {
 
     let (code, _, _) = error_parts(&contexts(js(r#"{"steps": "no"}"#)).unwrap_err());
     assert_eq!(code, "INVALID_ARGUMENT");
+
+    // Ends that go backwards are refused too.
+    let mut backwards = result["trace"].clone();
+    backwards["steps"][0]["mapping_ends"] = json!([3, 1]);
+    let (code, _, _) = error_parts(&contexts(js(&backwards.to_string())).unwrap_err());
+    assert_eq!(code, "INVALID_TRACE");
+
+    // A change at an index past the engine's cap cannot grow an array: the
+    // path names a key there, which writes nothing on an array, so the replay
+    // neither allocates nor panics and the context is unchanged.
+    let mut hostile = result["trace"].clone();
+    hostile["steps"][0]["changes"] = json!([
+        {"path": "data.list.4294967295", "old_value": null, "new_value": 7},
+        {"path": "data.list.3000000000", "old_value": null, "new_value": 7}
+    ]);
+    hostile["steps"][0]["mapping_ends"] = json!([]);
+    hostile["initial"]["data"] = json!({"list": []});
+    let replayed = json_of(&contexts(js(&hostile.to_string())).unwrap());
+    assert_eq!(replayed[0]["data"], json!({"list": []}));
+}
+
+#[wasm_bindgen_test]
+async fn an_unredacted_trace_replays_to_the_whole_context() {
+    let engine = traced_engine();
+    let result = run(&engine, JsValue::NULL, Some(r#"{"trace": true}"#)).await;
+    let replayed = json_of(&contexts(js(&result["trace"].to_string())).unwrap());
+    let replayed = replayed.as_array().unwrap();
+    assert_eq!(
+        replayed.len(),
+        result["trace"]["steps"].as_array().unwrap().len()
+    );
+    assert_eq!(replayed.last().unwrap(), &result["message"]["context"]);
+}
+
+#[wasm_bindgen_test]
+async fn the_trace_option_takes_false_the_changes_switch_and_a_byte_budget() {
+    let engine = traced_engine();
+    let off = run(&engine, JsValue::NULL, Some(r#"{"trace": false}"#)).await;
+    assert!(off.get("trace").is_none());
+
+    let profile = run(
+        &engine,
+        JsValue::NULL,
+        Some(r#"{"trace": {"changes": false}}"#),
+    )
+    .await;
+    let steps = profile["trace"]["steps"].as_array().unwrap();
+    assert!(
+        steps
+            .iter()
+            .all(|s| s["changes"] == json!([]) && s.get("mapping_ends").is_none())
+    );
+
+    let capped = run(
+        &engine,
+        JsValue::NULL,
+        Some(r#"{"trace": {"max_bytes": 1}}"#),
+    )
+    .await;
+    assert_eq!(capped["trace"]["truncated"], true);
+
+    // A mistake inside the options names the key, and a bad shape says what
+    // the option takes.
+    for (options, needle) in [
+        (r#"{"trace": {"bogus": 1}}"#, "options.trace"),
+        (r#"{"trace": "yes"}"#, "must be true, false or an object"),
+        (r#"{"audit": {"last": -1}}"#, "options.audit"),
+        (
+            r#"{"audit": 5}"#,
+            "must be \"full\", \"off\" or { last: n }",
+        ),
+    ] {
+        let promise = engine.run(JsValue::NULL, Some(obj(options)));
+        let (code, message, _) = error_parts(&JsFuture::from(promise).await.unwrap_err());
+        assert_eq!(code, "INVALID_ARGUMENT", "{options}");
+        assert!(message.contains(needle), "{options}: {message}");
+    }
+}
+
+#[wasm_bindgen_test]
+async fn a_payload_that_is_not_json_is_refused_by_name() {
+    let engine = engine(json!([mapping_workflow("w", "data.x", json!(1))]));
+    let function = js_sys::Function::new_no_args("return 1");
+    let promise = engine.run(function.into(), None);
+    let (code, message, _) = error_parts(&JsFuture::from(promise).await.unwrap_err());
+    assert_eq!(code, "INVALID_ARGUMENT");
+    assert!(message.starts_with("payload: "), "{message}");
 }
 
 // ---------------------------------------------------------------------------
