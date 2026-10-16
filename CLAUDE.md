@@ -8,8 +8,10 @@ Dataflow-rs is a lightweight, rule-driven workflow engine for building data
 processing pipelines and nanoservices in Rust. It provides an async-first
 execution model with pre-compiled JSONLogic for high performance.
 
-This is a **Cargo workspace with three published artifacts**, all version-locked
-to the root `Cargo.toml` version by the release workflow:
+This is a **Cargo workspace with three published artifacts**, version-locked to
+the root `Cargo.toml` version by the release workflow from phase 8; until then
+the root's version moves alone, and `wasm/` and `ui/` stay at 3.15.0 on the
+published crate:
 
 | Path | Artifact | Registry |
 |---|---|---|
@@ -18,13 +20,13 @@ to the root `Cargo.toml` version by the release workflow:
 | `ui/` | `@goplasmatic/dataflow-ui` (React debugger) | npm |
 
 `wasm/` is a workspace member; `ui/` is a separate npm project driven by the
-release workflow. Bumping a version means bumping all three.
+release workflow. From phase 8, bumping a version means bumping all three.
 
 The other workspace members are not published: `docs-tests/` (the docs' and
 the README's doctests, on the published 3.15.0 until 7e), `corpus/` and
 `corpus/v3` (the golden corpus and v3's driver, on the published 3.15.0), and
-v4's `corpus/v4` (its corpus driver) and `derive/` (`dataflow-rs-derive`). See
-"v4 at the root" below.
+v4's `corpus/v4` (its corpus driver) and `derive/` (`dataflow-rs-derive`,
+which phase 8 publishes before the root). See "v4 at the root" below.
 
 The sections marked **(v3)** describe 3.x, whose source is on `v3-maintenance`
 since phase 7b, not the crate at the root. 7e rewrites them for v4.
@@ -198,15 +200,16 @@ a break instead.
 ### v4 at the root
 
 **v4 is the root crate since 7b**: `dataflow-rs` 4.0.0-dev, in `src/`,
-`tests/`, `examples/` and `bindings/`, with `derive/` (`dataflow-rs-derive`)
-and `corpus/v4` (`dataflow-corpus-v4`) as its corpus driver, which parses and
-compiles every corpus definition and holds each to v3's issues or to its
-declared deviation, and runs every case it builds against v3's recording or a
-declared `RUN_DEVIATED` row, comparing its observer events and replaying its
-traces (or holding them to a declared `TRACE_DEVIATED` row). v3's source is on
-`v3-maintenance`. On `main`, v3 is the published 3.15.0: as `dataflow_rs_v3`
-in v4's differential tests and `host_call_floor`, and as `dataflow-rs` in
-`corpus/v3`, `docs-tests` and `wasm/`.
+`tests/`, `examples/` and `bindings/`. Its proc-macro is `derive/`
+(`dataflow-rs-derive`), and its corpus driver is `corpus/v4`
+(`dataflow-corpus-v4`), which parses and compiles every corpus definition and
+holds each to v3's issues or to its declared deviation, and runs every case it
+builds against v3's recording or a declared `RUN_DEVIATED` row, comparing its
+observer events and replaying its traces (or holding them to a declared
+`TRACE_DEVIATED` row). v3's source is on `v3-maintenance`. On `main`, v3 is the
+published 3.15.0: as `dataflow_rs_v3` in v4's differential tests and
+`host_call_floor`, and as `dataflow-rs` in `corpus/v3`, `docs-tests` and
+`wasm/`.
 
 The root follows the design documents (`design-v4/`, untracked), not this
 file's v3 rulebook: the sections marked (v3) describe v3's `src/`.
@@ -219,10 +222,13 @@ where a field is not `Debug`).
 The derive emits `::dataflow_rs::` paths: the crate itself says
 `extern crate self as dataflow_rs` in `src/lib.rs`, and a dependent such as
 `corpus/v4` names its dependency `dataflow-rs`. The root depends on the derive
-with a version (`{ path = "derive", version = "=4.0.0-dev" }`) because
-`deny.toml` bans wildcard requirements: its `allow-wildcard-paths` excuses a
-publishable crate's version-less path dependency only as a dev-dependency, such
-as the root's on `dataflow-corpus`, which `cargo publish` strips.
+with a version (`{ path = "derive", version = "=4.0.0-dev" }`) first because
+`cargo publish` refuses a normal path dependency without one. `deny.toml`
+guards it: `wildcards = "deny"`, and its `allow-wildcard-paths` excuses a
+publishable crate's version-less path dependency only as a dev-dependency,
+such as the root's on `dataflow-corpus`, which `cargo publish` strips. Since
+the root's published manifest names the derive from crates.io, phase 8 must
+publish the derive first and drop its `publish = false`.
 
 **v4 runs built-in workflows** (phase 4): `Engine::builder()` (or
 `Engine::new(program, config)`), then `engine.run_with(&mut message, &opts)`,
@@ -373,10 +379,10 @@ every error code. Each `corpus/cases/<area>/<name>.json` has its recording,
 pinned 3.15.0 (default build, then all-features);
 `cargo test -p dataflow-corpus-v3` and the `--workspace --all-features` run
 check that every recording still holds, and `corpus/tests/coverage.rs` that
-every contract row has a case. A v3 change that alters what a message ends up as re-records the
-affected cases (see "Branches"), and the re-recording is read before it is
-committed; never edit a `.v3.json` by hand. The comparator is order-sensitive,
-because key order is wire data.
+every contract row has a case. A v3 change that alters what a message ends
+up as re-records the affected cases (see "Branches"), and the re-recording is
+read before it is committed; never edit a `.v3.json` by hand. The comparator
+is order-sensitive, because key order is wire data.
 
 `cargo test --workspace --all-features` should report 1021 passing: the
 root's 858 (824 tests and 34 doctests), the derive's 2, v4's corpus driver's
@@ -386,8 +392,9 @@ default build) should report 833, `cargo test -p dataflow-corpus-v3` 4,
 `cargo test -p dataflow-corpus-v4` 24 and `cargo test -p dataflow-docs-tests`
 100. The operator families are `#[cfg]`-gated, so the counts legitimately
 differ by feature set: the root reports 843 under
-`--no-default-features --features all-operators`. v3's own counts (the engine's 867 under
-`--all-features` and 753 in its default build) are `v3-maintenance`'s.
+`--no-default-features --features all-operators`. v3's own counts (the
+engine's 867 under `--all-features` and 753 in its default build) are
+`v3-maintenance`'s.
 
 ### Release Process
 
