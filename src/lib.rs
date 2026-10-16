@@ -1,7 +1,6 @@
 //! dataflow-rs 4, under construction on `main`.
 //!
-//! The 3.x line is on the `v3-maintenance` branch, which takes its fixes
-//! until 4.0 is released.
+//! The 3.x line is on the `v3-maintenance` branch, which takes its fixes.
 //!
 //! # Features
 //!
@@ -22,10 +21,11 @@
 //!   `ExprEngineBuilder::ops_budget` sets.
 //! - `wasm-web`: the browser's clock and randomness, which
 //!   `wasm32-unknown-unknown` needs and native targets must not pull in.
-//! - `ts`: the TypeScript declarations of the wire shapes, rendered into
-//!   `bindings/dataflow.d.ts`. **`ts` is outside semver:** the shapes it
-//!   declares are the wire shapes, which are, but the generator, its output's
-//!   layout and this feature's dependencies may change in any release.
+//! - `ts`: derives `ts_rs::TS` on the wire shapes, from which
+//!   `tests/ts_types.rs` renders `bindings/dataflow.d.ts`, which ships in the
+//!   package. **`ts` is outside semver:** the wire shapes are covered by
+//!   semver, but the generator, its output's layout and this feature's
+//!   dependencies may change in any release.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, missing_debug_implementations)]

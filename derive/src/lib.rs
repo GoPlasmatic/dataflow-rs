@@ -1,8 +1,10 @@
 //! The proc-macro behind `#[derive(FunctionConfig)]` (design R44).
 //!
 //! The generated code names nothing but `::dataflow_rs::function::__private`,
-//! `::core` and `::std`, so a dependent renames the v4 library to
-//! `dataflow_rs` (inside v4, `extern crate self as dataflow_rs` does it).
+//! `::core` and `::std`, so the library must be reachable as `::dataflow_rs`.
+//! A dependent keeps the dependency key `dataflow-rs`, and renames v3, not
+//! v4, when both are in scope. Inside the crate, `extern crate self as
+//! dataflow_rs` does it.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;

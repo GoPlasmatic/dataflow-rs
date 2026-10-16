@@ -67,10 +67,10 @@ budget = ["datalogic-rs/budget"]
 # A platform switch: the browser's clock and randomness, which
 # wasm32-unknown-unknown needs and native targets must not pull in.
 wasm-web = ["chrono/wasmbind", "uuid/js", "datalogic-rs/wasm-clock"]
-# The TypeScript declarations of the wire shapes, which `tests/ts_types.rs`
-# renders into `bindings/dataflow.d.ts`. **Outside semver:** the shapes it
-# declares are the wire shapes, which are, but the generator, its output's
-# layout and this feature's dependencies may change in any release.
+# Derives `ts_rs::TS` on the wire shapes, from which `tests/ts_types.rs`
+# renders `bindings/dataflow.d.ts`, which ships in the package. **Outside
+# semver:** the wire shapes are covered by semver, but the generator, its
+# output's layout and this feature's dependencies may change in any release.
 ts = ["dep:ts-rs"]
 
 [dependencies]
