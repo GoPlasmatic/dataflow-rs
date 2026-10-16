@@ -424,7 +424,7 @@
     "source": "06",
     "row": "2b",
     "v3": false,
-    "reason": "v3 checked a custom handler's input only for unknown secrets, so no v3 case can show a host field's template keys or payload read refused; v4 pins both in v4/tests/checks.rs"
+    "reason": "v3 checked a custom handler's input only for unknown secrets, so no v3 case can show a host field's template keys or payload read refused; v4 pins both in tests/checks.rs"
   },
   {
     "id": "break.3",
@@ -509,7 +509,7 @@
     "source": "06",
     "row": "16",
     "v3": false,
-    "reason": "The corpus's one host function has no computed destination, so v3 cannot record a secret read in one; v4 pins the refusal in v4/tests/checks.rs"
+    "reason": "The corpus's one host function has no computed destination, so v3 cannot record a secret read in one; v4 pins the refusal in tests/checks.rs"
   },
   {
     "id": "break.23",
