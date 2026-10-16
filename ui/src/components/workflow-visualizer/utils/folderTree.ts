@@ -28,6 +28,19 @@ export interface FolderTree {
 }
 
 /**
+ * The folder path a workflow is filed under, if any.
+ *
+ * `path` is not an engine key: the engine's reader keeps it in the
+ * workflow's `ext` (`ext.path`), so a definition the engine has written
+ * carries it there, while an authored one carries it at the top level. Read
+ * from either place, `ext` first, and only when it is a string.
+ */
+export function workflowFolderPath(workflow: Workflow): string | undefined {
+  const ext = workflow.ext?.path;
+  return typeof ext === 'string' ? ext : workflow.path;
+}
+
+/**
  * Parses a path string into segments, handling edge cases
  */
 function parsePath(path: string | undefined): string[] {
@@ -79,7 +92,7 @@ export function buildFolderTree(workflows: Workflow[]): FolderTree {
   const sortedWorkflows = [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
 
   for (const workflow of sortedWorkflows) {
-    const segments = parsePath(workflow.path);
+    const segments = parsePath(workflowFolderPath(workflow));
 
     if (segments.length === 0) {
       // No path - add to root level

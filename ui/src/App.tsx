@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Sun, Moon, BookOpen, ChevronDown, PanelLeftClose, PanelLeft, Braces } from 'lucide-react';
 
 const GithubIcon = ({ size = 16 }: { size?: number }) => (
@@ -19,7 +19,7 @@ import type { Workflow, EngineFactory } from './types';
 import { SAMPLE_WORKFLOWS } from './data/sampleWorkflows';
 import './App.css';
 
-function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefined }) {
+function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
   const { resolvedTheme, setTheme } = useTheme();
 
   const [workflowsText, setWorkflowsText] = useState('');
@@ -306,7 +306,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
                 theme={resolvedTheme}
                 debugConfig={{
                   enabled: true,
-                  engineFactory: engineFactory!,
+                  engineFactory,
                   autoExecute: true,
                 }}
                 debugPayload={(() => {
@@ -334,29 +334,42 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory | undefine
 }
 
 function App() {
-  const [wasmReady, setWasmReady] = useState(false);
+  const [wasmState, setWasmState] = useState<
+    { status: 'loading' } | { status: 'ready' } | { status: 'failed'; error: string }
+  >({ status: 'loading' });
 
-  // Initialize WASM module
+  // Initialize the WASM module. Nothing below renders until it is ready: the
+  // visualizer reads the engine's facts (its built-in list and loop
+  // defaults) while rendering, and those come from the initialized module.
   useEffect(() => {
     initWasm()
       .then(() => {
-        setWasmReady(true);
+        setWasmState({ status: 'ready' });
         console.log('WASM module initialized');
       })
       .catch((err) => {
         console.error('Failed to initialize WASM:', err);
+        setWasmState({ status: 'failed', error: err instanceof Error ? err.message : String(err) });
       });
   }, []);
 
-  // Only provide engineFactory once WASM is ready
-  const engineFactory = useMemo(
-    () => (wasmReady ? defaultEngineFactory : undefined),
-    [wasmReady]
-  );
+  if (wasmState.status !== 'ready') {
+    return (
+      <ThemeProvider defaultTheme="system">
+        <div className="app">
+          <main className="app-main">
+            {wasmState.status === 'failed'
+              ? `Failed to initialize the engine: ${wasmState.error}`
+              : 'Loading the engine…'}
+          </main>
+        </div>
+      </ThemeProvider>
+    );
+  }
 
   return (
     <ThemeProvider defaultTheme="system">
-      <AppContent engineFactory={engineFactory} />
+      <AppContent engineFactory={defaultEngineFactory} />
     </ThemeProvider>
   );
 }

@@ -5,12 +5,11 @@ import {
   FileCode,
   FileJson,
   Filter,
-  Globe,
   ScrollText,
   Send,
-  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
+import { engineFacts } from '../engines/engineFacts';
 
 /**
  * JSONLogic value type - can be any valid JSON value or JSONLogic expression
@@ -32,9 +31,9 @@ export interface FunctionConfig {
   /**
    * Function-specific input configuration.
    *
-   * Required: the engine's `FunctionConfig` deserializer reads `{name, input}`
-   * with no default for `input`, so a task omitting it fails to load.
-   * Functions that take no configuration still need `input: {}`.
+   * The engine reads an absent `input` as `{}`. The UI keeps it required so
+   * every renderer can read it without a guard; a function that takes no
+   * configuration is written with `input: {}`.
    */
   input: Record<string, unknown>;
 }
@@ -53,35 +52,84 @@ export interface Task {
   condition?: JsonLogicValue;
   /** Function to execute */
   function: FunctionConfig;
-  /** Whether to continue workflow if this task fails */
+  /**
+   * What a failure (an error or a 5xx status) does. Defaults to `"fail"`.
+   *
+   * `"fail"` passes the failure to the workflow's `on_failure`; `"continue"`
+   * records it and runs the next task; `"halt"` ends this workflow, and the
+   * run goes on.
+   */
+  on_failure?: 'fail' | 'continue' | 'halt';
+  /**
+   * What a rejection (a 4xx status, which a failing `validation` returns)
+   * does. Defaults to `"continue"`: the rejection is recorded and the next
+   * task runs. `"halt"` ends this workflow, and the run goes on.
+   */
+  on_rejection?: 'continue' | 'halt';
+  /**
+   * The 3.x spelling of `on_failure: "continue"` (and, alone, of
+   * `on_rejection: "continue"`). The engine still reads it, rewriting it on
+   * load; new definitions write `on_failure`. Render through
+   * {@link taskContinuesOnFailure}, which reads both.
+   */
   continue_on_error?: boolean;
   /**
    * End the workflow once this task has run. Defaults to `false`.
    *
    * A statement about *position*, not outcome: a false `condition` or a
    * `Skip` outcome does not halt, but a task that failed under
-   * `continue_on_error` still does. Halting stops this workflow only.
+   * `on_failure: "continue"` still does. Halting stops this workflow only.
    */
   terminal?: boolean;
   /**
-   * End the workflow when this task *failed*. Defaults to `"never"`.
-   *
-   * The outcome axis to `terminal`'s position axis: `"failure"` halts on a
-   * recorded status of 400 or above (a failing `validation` returns 400) and
-   * lets a success fall through. Task-only — a group carrying it is a parse
-   * error.
+   * The 3.x spelling of `on_rejection: "halt"` (and, beside
+   * `continue_on_error: true`, of `on_failure: "halt"`). `"failure"` halted
+   * on a recorded status of 400 or above; the engine still reads it,
+   * rewriting it on load. Render through {@link taskHaltsOnFailure}, which
+   * reads both spellings.
    */
-  halt_on?: "never" | "failure";
+  halt_on?: 'never' | 'failure';
   /**
    * Run this task's function once per element of an array. Absent runs it
-   * once. Only handler-backed functions (`http_call`, `enrich`,
-   * `publish_kafka`, custom) may fan out.
+   * once. Refused on a built-in, which runs inline; a host's function may
+   * fan out.
    */
   for_each?: ForEach;
+  /**
+   * Host and UI data the engine keeps verbatim and never reads. The engine's
+   * reader also moves a key it does not know here.
+   */
+  ext?: Record<string, unknown>;
 }
 
 /**
- * A task's fan-out. Mirrors `ForEach` in `src/engine/for_each.rs`.
+ * Whether a task's failure is recorded and the next task runs:
+ * `on_failure: "continue"`, or 3.x's `continue_on_error: true` on its own.
+ * Beside `halt_on: "failure"` that flag reads as `on_failure: "halt"`
+ * instead, which {@link taskHaltsOnFailure} renders. The one place the two
+ * spellings meet.
+ */
+export function taskContinuesOnFailure(task: Task): boolean {
+  return (
+    task.on_failure === 'continue' ||
+    (task.continue_on_error === true && task.halt_on !== 'failure')
+  );
+}
+
+/**
+ * Whether the task's failing ends its workflow: `on_rejection: "halt"` (a
+ * 4xx, which a failing `validation` returns), `on_failure: "halt"` (an error
+ * or a 5xx), or 3.x's `halt_on: "failure"`, which the engine reads as the
+ * former, or as both beside `continue_on_error: true`.
+ */
+export function taskHaltsOnFailure(task: Task): boolean {
+  return (
+    task.on_rejection === 'halt' || task.on_failure === 'halt' || task.halt_on === 'failure'
+  );
+}
+
+/**
+ * A task's fan-out. Mirrors `ForEachDef` in the engine's `src/def/types.rs`.
  *
  * Every call runs against its own copy of the message, and the calls are
  * folded back in element order — so `max_concurrency` changes timing, never
@@ -92,7 +140,10 @@ export interface ForEach {
   over: JsonLogicValue;
   /** `temp_data` field holding the element in each call; the index is at `<as>_index`. */
   as: string;
-  /** Calls in flight at once. Defaults to 1. */
+  /**
+   * Calls in flight at once. Absent takes the engine's default
+   * (`engineFacts().for_each_defaults.max_concurrency`, 1).
+   */
   max_concurrency?: number;
   /** Context path each call writes its result to. Requires `into`. */
   collect?: string;
@@ -103,10 +154,11 @@ export interface ForEach {
 /**
  * A contiguous run of tasks sharing one condition.
  *
- * Mirrors `TaskGroup` in `src/engine/task.rs`. In a workflow's `tasks` array a
- * group is an element carrying a `tasks` key; a plain task carries `function`.
- * The group condition is evaluated **once, on entry** — a false result skips
- * the whole span without evaluating the members' own conditions.
+ * Mirrors `GroupDef` in the engine's `src/def/types.rs`. In a workflow's
+ * `tasks` array a group is an element carrying a `tasks` key; a plain task
+ * carries `function`. The group condition is evaluated **once, on entry** — a
+ * false result skips the whole span without evaluating the members' own
+ * conditions.
  */
 export interface TaskGroup {
   /** Unique identifier, sharing the task ID namespace */
@@ -121,13 +173,19 @@ export interface TaskGroup {
   terminal?: boolean;
   /**
    * **Not honoured on a group.** Error handling is per task and per workflow;
-   * a group only gates a span. The key parses and does nothing, and
-   * `check_workflow` reports it as `GROUP_CONTINUE_ON_ERROR`. Present here so
-   * a tool can surface what the author wrote.
+   * a group only gates a span, and has no policy key in the v4 spelling. The
+   * engine's reader moves this 3.x key into the group's `ext` and reports a
+   * `true` as `GROUP_CONTINUE_ON_ERROR`. Present here so a tool can surface
+   * what the author wrote.
    */
   continue_on_error?: boolean;
   /** The nested steps. Must not be empty. */
   tasks: Step[];
+  /**
+   * Host and UI data the engine keeps verbatim and never reads. The engine's
+   * reader also moves a key it does not know here.
+   */
+  ext?: Record<string, unknown>;
 }
 
 /** One element of a workflow's `tasks` array: a task or a group of them. */
@@ -137,10 +195,10 @@ export type Step = Task | TaskGroup;
  * Whether a step is a group rather than a plain task.
  *
  * The test is **presence of a `tasks` key, nothing else** — the same test the
- * engine's parser makes (`is_group` in `src/engine/steps.rs`). A `tasks` key
- * holding a non-array is still a group, and a malformed one; reading it as a
- * task instead would classify it differently from the engine that has to run
- * it.
+ * engine's parser makes (`src/def/parse.rs`: an element carrying `tasks` is
+ * a group). A `tasks` key holding a non-array is still a group, and a
+ * malformed one; reading it as a task instead would classify it differently
+ * from the engine that has to run it.
  */
 export function isTaskGroup(step: Step): step is TaskGroup {
   return (step as TaskGroup).tasks !== undefined;
@@ -150,10 +208,10 @@ export function isTaskGroup(step: Step): step is TaskGroup {
  * The members of a group, or none when `tasks` is malformed.
  *
  * `isTaskGroup` tests only for the presence of the key, so a group whose
- * `tasks` is not an array is still a group — with no members. The engine
- * rejects such a workflow at parse time; a renderer must not iterate the value
- * (a string would iterate character by character). Mirrors the walker in
- * `src/engine/steps.rs`, which descends only into a real array.
+ * `tasks` is not an array is still a group — with no members. The engine's
+ * parser refuses such a workflow; a renderer must not iterate the value (a
+ * string would iterate character by character). Mirrors the parser, which
+ * descends only into a real array.
  */
 export function groupMembers(group: TaskGroup): Step[] {
   return Array.isArray(group.tasks) ? group.tasks : [];
@@ -192,7 +250,7 @@ export function countLeafSteps(steps: Step[]): number {
 /**
  * Engine-managed `for` loop over a workflow's task list.
  *
- * Mirrors `LoopConfig` in `src/engine/workflow.rs`. A workflow carrying a
+ * Mirrors `LoopDef` in the engine's `src/def/types.rs`. A workflow carrying a
  * `loop` runs its task list once per *sweep* rather than once. Per sweep the
  * engine writes the counter into `temp_data`, checks `counter < max`
  * (half-open), re-evaluates the workflow condition, runs the task list, then
@@ -209,9 +267,15 @@ export interface LoopConfig {
    * count is simply not exposed to conditions or tasks.
    */
   counter?: string;
-  /** First counter value. Defaults to 0. */
+  /**
+   * First counter value. Absent takes the engine's default
+   * (`engineFacts().loop_defaults.init`, 0).
+   */
   init?: number;
-  /** Added to the counter after each sweep. Defaults to 1; must be >= 1. */
+  /**
+   * Added to the counter after each sweep; must be >= 1. Absent takes the
+   * engine's default (`engineFacts().loop_defaults.increment`, 1).
+   */
   increment?: number;
   /**
    * Required upper bound — sweeps run while `counter < max`. Half-open, so
@@ -248,7 +312,11 @@ export interface Workflow {
   priority?: number;
   /** Optional description */
   description?: string;
-  /** Optional folder path for grouping (e.g., "orders/processing") */
+  /**
+   * Optional folder path for grouping (e.g., "orders/processing"). Not an
+   * engine key: the engine's reader keeps it in `ext.path`, and the folder
+   * tree reads it from either place.
+   */
   path?: string;
   /** JSONLogic condition (evaluated against full context: data, metadata, temp_data) */
   condition?: JsonLogicValue;
@@ -257,12 +325,22 @@ export interface Workflow {
    * {@link TaskGroup}. Use {@link flattenSteps} for the leaf tasks.
    */
   tasks: Step[];
-  /** Whether to continue processing other workflows if this one fails */
+  /**
+   * What a task's failure that reaches the workflow does. Defaults to
+   * `"fail"`, which stops the run; `"continue"` runs the next sweep, or the
+   * next workflow.
+   */
+  on_failure?: 'fail' | 'continue';
+  /**
+   * The 3.x spelling of `on_failure` (`true` is `"continue"`, `false` is
+   * `"fail"`). The engine still reads it, rewriting it on load; new
+   * definitions write `on_failure`. Render through
+   * {@link workflowContinuesOnFailure}, which reads both.
+   */
   continue_on_error?: boolean;
   /**
    * Engine-managed bounded loop over this workflow's task list. Absent runs
-   * the task list exactly once. The JSON key is `loop` (Rust
-   * `#[serde(rename = "loop")]`).
+   * the task list exactly once.
    */
   loop?: LoopConfig;
   /** Channel this workflow is routed on. Defaults to `"default"`. */
@@ -282,12 +360,26 @@ export interface Workflow {
   created_at?: string;
   /** Last-update timestamp (RFC 3339). */
   updated_at?: string;
+  /**
+   * Host and UI data the engine keeps verbatim and never reads. The engine's
+   * reader also moves a key it does not know here, `path` included.
+   */
+  ext?: Record<string, unknown>;
+}
+
+/**
+ * Whether a failure that reaches the workflow lets the run go on, to the
+ * next sweep or the next workflow: `on_failure: "continue"`, or 3.x's
+ * `continue_on_error: true`. The one place the two spellings meet.
+ */
+export function workflowContinuesOnFailure(workflow: Workflow): boolean {
+  return workflow.on_failure === 'continue' || workflow.continue_on_error === true;
 }
 
 /**
  * Workflow lifecycle status.
  *
- * Mirrors `WorkflowStatus` in `src/engine/workflow.rs`.
+ * Mirrors `Status` in the engine's `src/def/types.rs`.
  */
 export type WorkflowStatus = 'active' | 'paused' | 'archived';
 
@@ -318,7 +410,7 @@ export interface MapMapping {
   /**
    * JSONLogic expression to compute the value. Absent on an `unset` mapping,
    * which has none. A `null` result is skipped, so logic that is always `null`
-   * never writes; `check_workflow` reports it as `NULL_MAPPING`.
+   * never writes; the engine reports it as `NULL_MAPPING`.
    */
   logic?: JsonLogicValue;
   /** Remove the key at `path` instead of writing it. */
@@ -357,9 +449,9 @@ export interface ValidationRule {
   /**
    * Error message recorded when the rule fails.
    *
-   * Required, like `logic`: the engine's `ValidationRule` gives neither field a
-   * serde default, so a rule missing either one is rejected when the engine is
-   * built.
+   * Required, like `logic`: the engine's `validation` config gives neither
+   * field a default, so a rule missing either one is refused when the
+   * workflow is compiled.
    */
   message: string;
 }
@@ -372,62 +464,41 @@ export interface ValidationFunctionInput {
 }
 
 /**
- * Built-in function names the engine recognises.
+ * The eight built-in functions, which the engine runs inline. Their names
+ * are reserved: no registration shadows one, and a task running one cannot
+ * carry `for_each`. The list itself is the engine's
+ * (`engineFacts().builtin_functions`); this type names its members for
+ * display code.
  *
- * Mirrors `BUILTIN_FUNCTION_NAMES` in `src/engine/functions/config.rs`.
- * `validate` is an alias of `validation`.
- *
- * The last three are **config-only**: the crate supplies their schema but ships
- * no handler, so a workflow using one loads cleanly and then fails at dispatch
- * unless the host has registered an implementation.
+ * `validation` is the one spelling: 3.x's alias `validate` is rewritten on
+ * load, and a definition still carrying it renders as a custom function.
+ * 3.x's integration configs (`http_call`, `enrich`, `publish_kafka`) left the
+ * engine and are a host's functions, rendered as custom too.
  */
 export type BuiltinFunctionType =
   | 'map'
   | 'validation'
-  | 'validate'
   | 'parse_json'
   | 'parse_xml'
   | 'publish_json'
   | 'publish_xml'
   | 'filter'
-  | 'log'
-  | 'http_call'
-  | 'enrich'
-  | 'publish_kafka';
-
-const BUILTIN_FUNCTION_NAMES: readonly BuiltinFunctionType[] = [
-  'map',
-  'validation',
-  'validate',
-  'parse_json',
-  'parse_xml',
-  'publish_json',
-  'publish_xml',
-  'filter',
-  'log',
-  'http_call',
-  'enrich',
-  'publish_kafka',
-];
+  | 'log';
 
 /**
- * Built-ins that need a handler registered by the host before they can run.
- */
-export const INTEGRATION_FUNCTION_NAMES: readonly BuiltinFunctionType[] = [
-  'http_call',
-  'enrich',
-  'publish_kafka',
-];
-
-/**
- * Check if a function is a built-in type
+ * Whether `name` is one of the engine's built-ins, by the loaded engine's own
+ * list. Needs the wasm package initialized (see `engineFacts`).
  */
 export function isBuiltinFunction(name: string): name is BuiltinFunctionType {
-  return (BUILTIN_FUNCTION_NAMES as readonly string[]).includes(name);
+  return engineFacts().builtin_functions.includes(name);
 }
 
 /**
- * Get display info for a function type including the Lucide icon component
+ * Get display info for a function type including the Lucide icon component.
+ *
+ * The eight built-ins have a label and an icon of their own; every other
+ * name, a host's functions and 3.x's `validate` included, renders as a
+ * custom function under its own name.
  */
 export function getFunctionDisplayInfo(name: string): {
   label: string;
@@ -437,7 +508,6 @@ export function getFunctionDisplayInfo(name: string): {
   switch (name) {
     case 'map':
       return { label: 'Map', colorClass: 'df-function-badge-map', Icon: ArrowRightLeft };
-    case 'validate':
     case 'validation':
       return { label: 'Validation', colorClass: 'df-function-badge-validation', Icon: CheckCircle };
     case 'parse_json':
@@ -452,26 +522,15 @@ export function getFunctionDisplayInfo(name: string): {
       return { label: 'Filter', colorClass: 'df-function-badge-builtin', Icon: Filter };
     case 'log':
       return { label: 'Log', colorClass: 'df-function-badge-builtin', Icon: ScrollText };
-    case 'http_call':
-      return { label: 'HTTP Call', colorClass: 'df-function-badge-builtin', Icon: Globe };
-    case 'enrich':
-      return { label: 'Enrich', colorClass: 'df-function-badge-builtin', Icon: Sparkles };
-    case 'publish_kafka':
-      return { label: 'Publish Kafka', colorClass: 'df-function-badge-builtin', Icon: Send };
     default:
       return { label: name, colorClass: 'df-function-badge-custom', Icon: Box };
   }
 }
 
-/** Engine default for `init` when the field is absent. */
-const LOOP_INIT_DEFAULT = 0;
-/** Engine default for `increment` when the field is absent. */
-const LOOP_INCREMENT_DEFAULT = 1;
-
 /**
  * Short chip text for a loop badge: `i: 0..10000`, or `0..10000` when the
  * loop leaves its counter unnamed. Appends ` step N` when the increment is
- * not 1.
+ * not the engine's default.
  *
  * Shows the counter *range*, never a sweep count: with `increment: 2` the
  * range `0..10000` runs 5,000 sweeps, so a `×10000` form would be wrong.
@@ -480,9 +539,10 @@ export function loopBadgeLabel(loop: LoopConfig): string {
   if (loop.over !== undefined) {
     return `${loop.as ?? 'each'} in over, max ${loop.max}`;
   }
-  const init = loop.init ?? LOOP_INIT_DEFAULT;
-  const increment = loop.increment ?? LOOP_INCREMENT_DEFAULT;
-  const step = increment === LOOP_INCREMENT_DEFAULT ? '' : ` step ${increment}`;
+  const defaults = engineFacts().loop_defaults;
+  const init = loop.init ?? defaults.init;
+  const increment = loop.increment ?? defaults.increment;
+  const step = increment === defaults.increment ? '' : ` step ${increment}`;
   const range = `${init}..${loop.max}`;
   return loop.counter ? `${loop.counter}: ${range}${step}` : `${range}${step}`;
 }
@@ -504,7 +564,7 @@ export function loopGuardLabel(loop: LoopConfig): string {
  * each sweep: `i += 1`, or `next sweep` when the counter is unnamed.
  */
 export function loopStepLabel(loop: LoopConfig): string {
-  const increment = loop.increment ?? LOOP_INCREMENT_DEFAULT;
+  const increment = loop.increment ?? engineFacts().loop_defaults.increment;
   return loop.counter ? `${loop.counter} += ${increment}` : 'next sweep';
 }
 
@@ -513,13 +573,15 @@ export function loopStepLabel(loop: LoopConfig): string {
  * concurrently.
  */
 export function forEachBadgeLabel(forEach: ForEach): string {
-  const concurrency = forEach.max_concurrency ?? 1;
+  const concurrency =
+    forEach.max_concurrency ?? engineFacts().for_each_defaults.max_concurrency;
   return concurrency > 1 ? `each ${forEach.as} ×${concurrency}` : `each ${forEach.as}`;
 }
 
 /** Full-sentence description of a fan-out, for a `title` tooltip. */
 export function forEachDescription(forEach: ForEach): string {
-  const concurrency = forEach.max_concurrency ?? 1;
+  const concurrency =
+    forEach.max_concurrency ?? engineFacts().for_each_defaults.max_concurrency;
   const pace =
     concurrency > 1 ? `up to ${concurrency} calls at a time` : 'one call at a time';
   const results = forEach.into
@@ -533,8 +595,9 @@ export function forEachDescription(forEach: ForEach): string {
 
 /** Full-sentence description of the loop contract, for a `title` tooltip. */
 export function loopDescription(loop: LoopConfig): string {
-  const init = loop.init ?? LOOP_INIT_DEFAULT;
-  const increment = loop.increment ?? LOOP_INCREMENT_DEFAULT;
+  const defaults = engineFacts().loop_defaults;
+  const init = loop.init ?? defaults.init;
+  const increment = loop.increment ?? defaults.increment;
   const subject = loop.counter ? `temp_data.${loop.counter}` : 'the sweep count';
   const setupCount = loop.setup ? countLeafSteps(loop.setup) : 0;
   const setup = setupCount > 0 ? `Runs ${setupCount} setup step(s) once first. ` : '';

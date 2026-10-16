@@ -5,7 +5,12 @@ import { flattenSteps } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useDebuggerOptional } from '../context';
 import { TreeNode, WorkflowNode, FolderNode, TREE_COLORS } from '../components';
-import { buildFolderTree, getFirstLevelFolderIds, getParentFolderIds } from '../utils/folderTree';
+import {
+  buildFolderTree,
+  getFirstLevelFolderIds,
+  getParentFolderIds,
+  workflowFolderPath,
+} from '../utils/folderTree';
 import { NODE_IDS, PLAYBACK } from '../constants';
 
 interface TreeViewProps {
@@ -78,7 +83,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
         const next = new Set(prev);
         next.add(NODE_IDS.workflow(allWorkflows[0].id));
         // Also expand parent folders if needed
-        getParentFolderIds(allWorkflows[0].path).forEach(id => next.add(id));
+        getParentFolderIds(workflowFolderPath(allWorkflows[0])).forEach(id => next.add(id));
         return next;
       });
     }
@@ -114,8 +119,9 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
       const next = new Set(prev);
       next.add(NODE_IDS.ROOT);
       // Expand parent folders if workflow has a path
-      if (workflow?.path) {
-        getParentFolderIds(workflow.path).forEach(id => next.add(id));
+      const folderPath = workflow && workflowFolderPath(workflow);
+      if (folderPath) {
+        getParentFolderIds(folderPath).forEach(id => next.add(id));
       }
       next.add(NODE_IDS.workflow(workflow_id));
       if (task_id) {

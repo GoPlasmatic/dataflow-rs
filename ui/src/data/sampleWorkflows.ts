@@ -660,7 +660,7 @@ export const SAMPLE_WORKFLOWS: Record<string, { workflows: Workflow[]; payload: 
         name: 'Audit Trail',
         path: 'output',
         priority: 6,
-        continue_on_error: true,
+        on_failure: 'continue',
         tasks: [
           {
             id: 'create-audit',

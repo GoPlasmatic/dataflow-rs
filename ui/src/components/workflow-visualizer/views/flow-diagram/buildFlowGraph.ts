@@ -2,7 +2,14 @@ import dagre from '@dagrejs/dagre';
 import { assignBranchSides } from './assignBranchSides';
 import type { Node, Edge } from '@xyflow/react';
 import type { Workflow, Task, Step, TaskGroup } from '../../../../types';
-import { groupMembers, isTaskGroup, loopGuardLabel, loopStepLabel } from '../../../../types';
+import {
+  groupMembers,
+  isTaskGroup,
+  loopGuardLabel,
+  loopStepLabel,
+  taskContinuesOnFailure,
+  taskHaltsOnFailure,
+} from '../../../../types';
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT_PILL = 40;
@@ -52,9 +59,11 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
     taskName: task.name,
     functionName: task.function.name,
     description: task.description,
-    continueOnError: task.continue_on_error,
+    // Resolved here, through the one reader of both policy spellings, so
+    // the node renders a fact rather than a key.
+    continuesOnFailure: taskContinuesOnFailure(task),
     terminal: task.terminal,
-    haltOn: task.halt_on,
+    haltsOnFailure: taskHaltsOnFailure(task),
     forEach: task.for_each,
     taskId: task.id,
     workflowId: workflow.id,

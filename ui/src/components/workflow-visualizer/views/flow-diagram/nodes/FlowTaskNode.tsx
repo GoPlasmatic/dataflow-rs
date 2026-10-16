@@ -9,25 +9,37 @@ export interface FlowTaskData {
   taskName: string;
   functionName: string;
   description?: string;
-  continueOnError?: boolean;
+  /** `on_failure: "continue"` in either spelling (see `taskContinuesOnFailure`). */
+  continuesOnFailure?: boolean;
   terminal?: boolean;
-  haltOn?: 'never' | 'failure';
+  /** A halting policy in either spelling (see `taskHaltsOnFailure`). */
+  haltsOnFailure?: boolean;
   /** The task's fan-out, when it runs once per element. */
   forEach?: ForEach;
   [key: string]: unknown;
 }
 
 export const FlowTaskNode = memo(function FlowTaskNode({ data }: NodeProps) {
-  const { taskName, functionName, description, continueOnError, terminal, haltOn, forEach } =
-    data as FlowTaskData;
+  const {
+    taskName,
+    functionName,
+    description,
+    continuesOnFailure,
+    terminal,
+    haltsOnFailure,
+    forEach,
+  } = data as FlowTaskData;
 
   return (
     <div className="df-flow-task-node">
       <Handle type="target" position={Position.Top} className="df-flow-handle" />
       <div className="df-flow-task-node-header">
         <span className="df-flow-task-node-name">{taskName}</span>
-        {continueOnError && (
-          <span className="df-flow-task-node-coe" title="Continue on error">
+        {continuesOnFailure && (
+          <span
+            className="df-flow-task-node-coe"
+            title="on_failure: continue — a failure is recorded and the next task runs"
+          >
             <AlertTriangle size={12} />
           </span>
         )}
@@ -36,10 +48,10 @@ export const FlowTaskNode = memo(function FlowTaskNode({ data }: NodeProps) {
             <CircleStop size={12} />
           </span>
         )}
-        {haltOn === 'failure' && (
+        {haltsOnFailure && (
           <span
             className="df-flow-task-node-halt-on"
-            title="halt_on: failure — ends the workflow when this task fails"
+            title="Halts the workflow on failure (on_rejection: halt, or on_failure: halt)"
           >
             <ShieldX size={12} />
           </span>

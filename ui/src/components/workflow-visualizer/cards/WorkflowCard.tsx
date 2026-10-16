@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Task, Workflow } from '../../../types';
-import { flattenSteps } from '../../../types';
+import { flattenSteps, workflowContinuesOnFailure } from '../../../types';
 import { TaskRow } from './TaskRow';
 import { ConditionBadge } from './ConditionBadge';
 import { LoopBadge } from './LoopBadge';
@@ -89,10 +89,13 @@ export function WorkflowCard({
             </div>
           </div>
 
-          {workflow.continue_on_error && (
+          {workflowContinuesOnFailure(workflow) && (
             <div className="df-workflow-footer">
-              <span className="df-continue-on-error">
-                Continue on error enabled
+              <span
+                className="df-continue-on-error"
+                title="on_failure: continue — a task's failure that reaches this workflow lets the run go on"
+              >
+                Continues on failure
               </span>
             </div>
           )}

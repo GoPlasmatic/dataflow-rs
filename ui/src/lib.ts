@@ -110,7 +110,9 @@ export {
   countLeafSteps,
   isBuiltinFunction,
   getFunctionDisplayInfo,
-  INTEGRATION_FUNCTION_NAMES,
+  taskContinuesOnFailure,
+  taskHaltsOnFailure,
+  workflowContinuesOnFailure,
   loopBadgeLabel,
   loopGuardLabel,
   loopStepLabel,
@@ -131,8 +133,12 @@ export {
   isTaskCurrent,
 } from './types';
 
-// Engine adapters
-export { WasmEngineAdapter, defaultEngineFactory, assertEngineVersion } from './engines';
+// Engine adapters, and the engine's facts (the built-in names, the loop
+// defaults), read from the initialized wasm package
+export { WasmEngineAdapter, defaultEngineFactory, assertEngineVersion, engineFacts } from './engines';
+
+// The folder a workflow sits in: `ext.path`, as the engine keeps it, or `path`
+export { workflowFolderPath } from './components/workflow-visualizer/utils/folderTree';
 
 // Styles
 import './components/workflow-visualizer/styles/index.css';
