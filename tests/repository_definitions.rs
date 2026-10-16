@@ -35,10 +35,9 @@ const MINIMUM_DEFINITIONS: usize = 150;
 
 /// Docs-class definitions that parse Rejected, as `(file, id, reason)`. None is
 /// shown as a refusal: each is a sketch whose subject is another key and
-/// whose `"tasks": []` is filler, which v3 refuses as `NO_TASKS` too (it is
-/// in `authoring::refuse_authoring_issues`). Reported to the owner as a docs
-/// finding; v4 is not at fault, so they are named here rather than fixed in
-/// this task (nothing under `docs/` is edited in this phase).
+/// whose `"tasks": []` is filler, which v3 refuses as `NO_TASKS` too. Each
+/// entry must match a definition, so a page that drops its sketch drops its
+/// row here.
 const DELIBERATELY_REJECTED: &[(&str, &str, &str)] = &[
     (
         "corpus/README.md",
@@ -59,11 +58,6 @@ const DELIBERATELY_REJECTED: &[(&str, &str, &str)] = &[
         "docs/src/advanced/loops.md",
         "paginate",
         "FINDING: loop-shape sketch with `\"tasks\": [ ]`; NO_TASKS",
-    ),
-    (
-        "docs/src/built-in-functions/validation.md",
-        "exchange",
-        "FINDING: condition sketch with `\"tasks\": []`; NO_TASKS",
     ),
 ];
 

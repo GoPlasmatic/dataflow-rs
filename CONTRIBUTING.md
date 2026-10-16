@@ -6,7 +6,7 @@ get a change merged.
 ## Repository Layout
 
 This is a Cargo workspace with four published artifacts that share one
-version number, and five members that are never published:
+version number, four members that are never published, and the book:
 
 | Path | Artifact | Registry |
 |---|---|---|
@@ -46,9 +46,10 @@ cd dataflow-rs
 cargo test --workspace --all-features
 ```
 
-You should see 1024 passing tests: the root's 862 (828 tests and 34 doctests),
+You should see 1054 passing tests: the root's 862 (828 tests and 34 doctests),
 the derive's 2, `corpus/v4`'s 24, `corpus/`'s 33, `corpus/v3`'s 4 and
-`docs-tests`' (the book's and the README's doctests, and its coverage test).
+`docs-tests`' 129 (117 page doctests, 11 README doctests and its coverage
+test).
 
 The count is feature-dependent. The optional operator families are `#[cfg]`-gated
 on both sides: some tests only exist when a family is on, others only when it is
@@ -185,6 +186,8 @@ If you touched `wasm/`:
 
 ```bash
 cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+cargo clippy --target wasm32-unknown-unknown --features wasm-web -- -D warnings
+cargo clippy --target wasm32-unknown-unknown --features wasm-web,all-operators -- -D warnings
 cd wasm
 wasm-pack test --node
 wasm-pack build --target web --out-dir pkg --release && node scripts/verify-wasm.mjs pkg
@@ -377,7 +380,8 @@ definitions and the compiler (`parse.rs`, `compat.rs`, `compile.rs`,
 `path.rs`, `operators.rs`, `secrets_isolation.rs`), the wire shapes
 (`wire.rs`, `run_json.rs`, `ts_types.rs`, `vocabulary.rs`), the
 differentials that hold the engine to the published 3.x (`run_vs_v3.rs`,
-`map_vs_v3.rs`, `parse_vs_v3.rs`), and the feature-gated `ops_budget.rs`.
+`map_vs_v3.rs`, `parse_vs_v3.rs`), the feature-gated `ops_budget.rs`, and
+`smoke.rs` for the crate version.
 Pick the file whose topic already matches; add a new one only for a new area.
 
 Because each file is its own crate, a fixture needed by more than one of them
@@ -440,8 +444,9 @@ which validates that the tag matches the root `Cargo.toml` version and that
 install snippets in `README.md` and `docs/src/` agree, then publishes the
 crate and both npm packages. The four published versions move together, the
 derive's included: the root's manifest names `dataflow-rs-derive` from
-crates.io, so the derive is published before the root. Contributors do not
-need to bump versions in a PR. 3.x releases are tagged on `v3-maintenance`.
+crates.io, so the 4.0.0 release adds the derive's publish before the root's
+(the derive is `publish = false` until then). Contributors do not need to
+bump versions in a PR. 3.x releases are tagged on `v3-maintenance`.
 
 ## Security
 

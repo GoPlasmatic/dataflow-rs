@@ -258,10 +258,11 @@ one-thread rows and the instructions retired, and re-run a spawned row at
 seven rounds before calling it WORSE.
 
 Orion's baseline is `bench/baseline/orion-1.12.0.json`, from `bench/orion.sh`
-(a tag, or `ORION_COMMIT=<sha>` for a branch), which runs Orion's own `bench.sh`
-scenarios with the server's peak RSS; `bench/orion_compare.py` judges a run
-against it. Its `cluster` scenario brings Orion's HA stack up as its own compose
-project on a free loopback port, never 8080.
+(`ORION_TAG=v1.12.0`), which runs Orion's own `bench.sh` scenarios with the
+server's peak RSS; phase 7c's branch adds `ORION_COMMIT=<sha>` for a branch and
+`bench/orion_compare.py`, which judges a run against the baseline. Its
+`cluster` scenario brings Orion's HA stack up as its own compose project on a
+free loopback port, never 8080.
 
 ### Branches and the pins
 
@@ -409,7 +410,7 @@ Each rule lives once in the code; the test named beside it is what pins it.
   `Service` code verbatim (an empty one is `TASK_ERROR`). The record codes
   `TASK_STATUS_ERROR`, `VALIDATION_ERROR` and `EVALUATION_ERROR` are the
   recorder's and the built-ins'. There is no `WORKFLOW_ERROR` wrapper
-  (`src/base/error.rs`, `tests/vocabulary.rs`).
+  (`src/base/error.rs`'s unit tests; `tests/run_basics.rs`).
 - **Reserved names cannot be registered.** `Registry::register` panics on a
   name in `def::BUILTIN_FUNCTIONS` and on `validate`, 3.x's alias the compat
   reader rewrites to `validation`; and on a malformed spec (a `Reference` that
@@ -424,7 +425,7 @@ Each rule lives once in the code; the test named beside it is what pins it.
   template key, so a template emitting `$`-prefixed keys doubles them. A
   single-key object with an unknown key is not inert: it is the ordinary
   output-template shape, which is why there is no "unknown operator" lint
-  (`tests/checks.rs`, `tests/operators.rs`).
+  (the escape in `tests/checks.rs`; the shape in `src/expr/engine.rs`'s docs).
 - **Operator families are opt-in, and enabling one is not a no-op.** The
   engine evaluates in templating mode, so an operator whose family is off is
   literal data; turning a family on makes `{"length": …}` live, and `datetime`
@@ -432,7 +433,8 @@ Each rule lives once in the code; the test named beside it is what pins it.
   `all-operators`: its names (`shape`, `cast`, `concat`) are ordinary JSON keys
   in workflows that already ship. `budget` is a config knob, not a family:
   `ExprEngineBuilder::ops_budget` installs the ceiling, exceeded as
-  `ErrorKind::Budget` (`tests/operators.rs`, `tests/ops_budget.rs`).
+  `ErrorKind::Budget` (`src/expr/engine.rs`'s gated-operator tests,
+  `tests/operators.rs`, `tests/ops_budget.rs`).
 - **Secrets are an operator, not a context root.** `{"secret": "name"}` reads
   the `ExprEngine`'s `Secrets`; nothing is composed into the message, a `map`
   mapping, a `log` expression and an `Output` may not read one, `Ctx::input()`
@@ -537,7 +539,7 @@ binary per topic under `tests/`, with shared fixtures in `tests/support/`:
 | `smoke.rs` | The crate version |
 | `trace.rs` | The trace: steps, changes, redaction, the budget, replay |
 | `ts_types.rs` | The bindings' drift and the wire check (needs `ts`) |
-| `vocabulary.rs` | Every error code the corpus writes is one the engine names |
+| `vocabulary.rs` | Every error record the corpus writes reads back byte for byte |
 | `wire.rs` | Messages and traces read back byte for byte |
 
 A host tests one function with `function::testing::call(f, json!({..}))`,
@@ -563,7 +565,7 @@ are tagged on `v3-maintenance`.
 ## The machine
 
 The owner's Docker stack runs permanently and is never stopped, paused or
-pruned; its `soma` container holds 127.0.0.1:8080, so nothing here binds 8080.
+pruned; its services have held 127.0.0.1:8080, so nothing here binds 8080.
 It is the machine's permanent load: judge benchmarks on paired ratios with the
 instructions retired beside them. The repository's `target/` grows past 90 GB;
 below 20 GiB free, delete `target/debug/incremental` (a cache that rebuilds)

@@ -27,7 +27,7 @@ Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF 
 ### ⚡ Blazing Fast Performance
 Dataflow-rs targets high-throughput hot paths. Every expression, every task config and every write path is compiled once at build time; a run evaluates against one view of the message and reads the clock once.
 
-Measured at the 4.0 gate against 3.15.0, 16 of the 49 rows were judged faster and 25 better, 6 not slower, and `loop_scaling`, a 1000-sweep append loop over a large context, ran in 2% of 3.15's time. The [Performance](#performance) section says how the gate measures and how to run the benchmarks yourself.
+Measured at the 4.0 gate against 3.15.0, 16 of the 49 rows were judged faster and 25 better, 6 not slower, and the two that read worse at five rounds read not slower at seven; `loop_scaling`, a 1000-sweep append loop over a large context, ran in 1 to 3% of 3.15's time. The [Performance](#performance) section says how the gate measures and how to run the benchmarks yourself.
 
 ### 🧩 Full-Stack Ecosystem
 The same rule definitions run across your stack, not only in backend services:
@@ -377,8 +377,8 @@ that compile, and `link` sorts them by priority into an immutable `Program`.
 workflow in priority order: its rollout, then its condition. Built-ins run
 inline over one view of the context; a host function gets a `Ctx` whose
 writes land when the call returns `Ok` and are dropped whole on `Err`. After
-every task the engine writes `metadata.progress`, so a later rule can read
-what the previous one did. The `Run` says how it ended and what each workflow
+every call that does not skip, the engine writes `metadata.progress`, so a
+later rule can read what the previous one did. The `Run` says how it ended and what each workflow
 did; an `Observer` sees it as it goes, and a `Trace` records it when asked.
 
 ## Performance
@@ -391,8 +391,9 @@ Why it's fast:
 - **Async I/O:** Non-blocking host functions on Tokio; a fan-out runs its calls concurrently without spawning
 
 Measured at the 4.0 gate against 3.15.0, 16 of the 49 rows were judged faster
-and 25 better, 6 not slower (the other two are reported without a verdict),
-and `loop_scaling` ran in 2% of 3.15's time. The gate alternates the two
+and 25 better, 6 not slower, and the two `micro_subtree_write_bench` rows that
+read worse at five rounds read not slower at seven; `loop_scaling` ran in 1 to
+3% of 3.15's time. The gate alternates the two
 builds within each round and judges each metric on the median of its
 per-round ratios, with a noise floor of 3% or half the inter-quartile range,
 whichever is larger; `bench/gate.py` runs it.
