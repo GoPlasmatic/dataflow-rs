@@ -61,7 +61,9 @@ const engine = new WasmEngine([
 const { message, run } = await engine.run({ name: 'World' });
 
 console.log(run.status);                    // "completed"
-console.log(message.context.data.greeting); // "Hello, World"
+// A context root is `JsonValue`: narrow it to read a key under strict TS.
+const data = message.context.data as { greeting: string };
+console.log(data.greeting);                 // "Hello, World"
 ```
 
 The payload is any JSON value. An object is stored as the object it is, and a `parse_json` task reading `payload` copies it; a string stays a string, and `parse_json` parses it. Either way the payload is not in the JSONLogic evaluation context, which is `{data, metadata, temp_data}` only: `{"var": "payload.name"}` resolves to nothing. To skip the parse step, seed `data` directly: `engine.run(null, { data: { name: 'World' } })`.
@@ -176,6 +178,7 @@ A trace is `{ initial, steps, truncated }`: the context before any workflow, red
 import { contexts, mapping_contexts } from '@goplasmatic/dataflow-wasm';
 
 const { trace } = await engine.run(payload, { trace: true });
+if (!trace) throw new Error('the run was not traced'); // `trace` is optional on RunResult
 
 const after = contexts(trace);   // Context[]: the context after each step, in order
 after[0];                        // after the first step

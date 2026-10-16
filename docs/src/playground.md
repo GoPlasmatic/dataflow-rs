@@ -12,7 +12,7 @@ Try dataflow-rs in your browser. Define workflows, give them a payload, and see 
 2. **Edit Workflows** - Modify the workflow JSON on the left panel
 3. **Edit Payload** - Customize the input payload on the right panel
 4. **Process** - Click "Process", or press `Ctrl`/`Cmd`+`Enter` with the cursor in either editor
-5. **View Results** - See how the run ended (`completed`, `completed_with_errors`, `stopped` or `timed_out`, and why each workflow ran or did not), then the message's context, errors and audit trail
+5. **View Results** - See how the run ended (`completed`, `completed_with_errors` or `stopped`, and why each workflow ran or did not), then the message's context, errors and audit trail
 
 ## Tips
 
@@ -22,5 +22,5 @@ Try dataflow-rs in your browser. Define workflows, give them a payload, and see 
 - **Multiple Tasks** - Add multiple tasks to a workflow for sequential processing
 - **Multiple Workflows** - Define multiple workflows that execute in priority order
 - **Conditions** - Add conditions to tasks or workflows to control when they execute (conditions can access `data`, `metadata`, and `temp_data`)
-- **Failure Policies** - A task failure stops the run unless a policy says otherwise: `"on_failure": "continue"` on a workflow runs the next task, and a `validation` whose rules fail records its errors and continues by default
+- **Failure Policies** - A task failure stops the run unless a policy says otherwise: `"on_failure": "continue"` on a task records the failure and runs the next task; on a workflow it lets the run go on to the next workflow. A `validation` whose rules fail is a rejection, not a failure: it records its errors and the next task runs by default (`"on_rejection": "continue"`), and `"on_rejection": "halt"` ends the workflow instead
 - **Audit Trail** - The output shows all changes made during processing

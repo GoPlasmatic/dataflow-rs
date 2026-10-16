@@ -404,7 +404,7 @@ function initFullPlayground() {
             payload: '{"value":"test data"}'
         },
         'Error Handling': {
-            workflows: '[{"id":"resilient","name":"Resilient Workflow","on_failure":"continue","tasks":[' + parseTask + ',{"id":"validate","name":"Validate","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.required_field"}]},"message":"Required field missing"}]}}},{"id":"process","name":"Process Anyway","function":{"name":"map","input":{"mappings":[{"path":"data.processed","logic":true}]}}}]}]',
+            workflows: '[{"id":"resilient","name":"Resilient Workflow","tasks":[' + parseTask + ',{"id":"validate","name":"Validate","on_rejection":"continue","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.required_field"}]},"message":"Required field missing"}]}}},{"id":"process","name":"Process Anyway","function":{"name":"map","input":{"mappings":[{"path":"data.processed","logic":true}]}}}]}]',
             payload: '{"other_field":"value"}'
         },
         'Arithmetic': {

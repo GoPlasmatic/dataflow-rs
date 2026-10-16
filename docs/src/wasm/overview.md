@@ -44,7 +44,9 @@ const engine = new WasmEngine([
 const { message, run } = await engine.run({ name: 'World' });
 
 console.log(run.status);                    // "completed"
-console.log(message.context.data.greeting); // "Hello, World"
+// A context root is `JsonValue`: narrow it to read a key under strict TS.
+const data = message.context.data as { greeting: string };
+console.log(data.greeting);                 // "Hello, World"
 ```
 
 JSON crosses the boundary as values, not text: the definitions may be an
@@ -348,6 +350,7 @@ engine never disagree on the rules:
 
 ```typescript
 const { trace } = await engine.run(payload, { trace: true });
+if (!trace) throw new Error('the run was not traced'); // `trace` is optional on RunResult
 
 const after = contexts(trace);   // one Context per step, in order
 trace.initial;                   // before the first step

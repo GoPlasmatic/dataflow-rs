@@ -183,7 +183,8 @@ interface DebugConfig {
 }
 
 interface ExecutionError {
-  code: string;        // "REJECTED", "INVALID_ARGUMENT", or "ERROR" for anything else thrown
+  code: string;        // "REJECTED", "INVALID_ARGUMENT", "INVALID_TRACE" (a custom engine's
+                       // trace the package cannot replay), or "ERROR" for anything else thrown
   message: string;
   issues?: Issue[];    // for a refused definition: every issue, at its authored path
 }
@@ -215,8 +216,9 @@ from the wasm package), so the UI and the engine never disagree on the rules.
   (`mapping_contexts(trace, i)`).
 - **At the end**, the final message's `errors` and `audit_trail`.
 
-A trace whose byte budget was crossed (`trace.truncated`) cannot be replayed
-past the step that crossed it; `traceIsReplayable(trace)` says so.
+A trace whose byte budget was crossed (`trace.truncated`) is not replayed: the
+debugger shows `trace.initial` at every step and says so in the state panel;
+`traceIsReplayable(trace)` is the test.
 
 ### `debugConfig` is what turns debug mode on
 
@@ -459,6 +461,7 @@ function MyComponent() {
 | `WasmEngineAdapter` | The default engine, over `@goplasmatic/dataflow-wasm`; traces every run unless the options say otherwise |
 | `defaultEngineFactory` | Factory producing `WasmEngineAdapter` |
 | `assertEngineVersion` | Throws when the loaded engine is older than this UI build |
+| `engineFacts` | The loaded engine's facts (the built-in names, the group depth, the loop and fan-out defaults), read once after `init()` |
 | `DataflowEngine`, `EngineFactory` | Types for custom engines |
 
 ### Helpers
@@ -468,6 +471,8 @@ Exported alongside the types, for code that walks definitions or traces:
 - **Steps:** `isTaskGroup`, `groupMembers`, `flattenSteps`, `countLeafSteps`.
   A workflow's `tasks` array holds *steps*, so an element may be a task or a
   nested group. `countLeafSteps` is `flattenSteps(..).length` without the list.
+- **Folders:** `workflowFolderPath`, a workflow's `ext.path` as the engine
+  keeps it, else its `path`
 - **Functions:** `isBuiltinFunction`, `getFunctionDisplayInfo`
 - **Policies:** `taskContinuesOnFailure`, `taskHaltsOnFailure`,
   `workflowContinuesOnFailure`

@@ -132,7 +132,7 @@ function DebugView() {
 
 `debugPayload` is the **payload**, passed to the engine as the object it is. It is not part of the JSONLogic evaluation context, so the workflow needs a `parse_json` task (`{"source": "payload", "target": "input"}`) before any expression can read it as `data.input.…`; `parse_json` copies an object payload as it is.
 
-`onExecutionComplete` fires on every status with the engine's `RunResult`: a run that stopped or timed out completes too, so read `result.run.status`. `onExecutionError` fires when a run could not start: the engine refused a definition (`code: "REJECTED"`, with its `issues`) or an argument (`"INVALID_ARGUMENT"`), or something else threw (`"ERROR"`).
+`onExecutionComplete` fires on every status with the engine's `RunResult`: a run that stopped or timed out completes too, so read `result.run.status`. `onExecutionError` fires when a run could not start: the engine refused a definition (`code: "REJECTED"`, with its `issues`) or an argument (`"INVALID_ARGUMENT"`), a custom engine's trace could not be replayed (`"INVALID_TRACE"`), or something else threw (`"ERROR"`).
 
 The visualizer header shows the debug controls (play, pause, step forward and backward) when `debugConfig.enabled` is true.
 
@@ -236,10 +236,12 @@ The built-in function names and the loop defaults come from the engine (`engine_
 - `WasmEngineAdapter`: the default engine, over `@goplasmatic/dataflow-wasm`; traces every run unless the options say otherwise
 - `defaultEngineFactory`: factory producing `WasmEngineAdapter`
 - `assertEngineVersion`: throws when the loaded engine predates this UI build
+- `engineFacts`: the loaded engine's facts (the built-in names, the group depth, the loop and fan-out defaults), read once after `init()`
 - `DataflowEngine`, `EngineFactory`: types for custom engines
 
 ### Helpers
 - Steps: `isTaskGroup`, `groupMembers`, `flattenSteps`, `countLeafSteps`
+- Folders: `workflowFolderPath`, a workflow's `ext.path` as the engine keeps it, else its `path`
 - Functions: `isBuiltinFunction`, `getFunctionDisplayInfo`
 - Policies: `taskContinuesOnFailure`, `taskHaltsOnFailure`, `workflowContinuesOnFailure`, reading either spelling
 - Loops: `loopBadgeLabel`, `loopGuardLabel`, `loopStepLabel`, `loopDescription`

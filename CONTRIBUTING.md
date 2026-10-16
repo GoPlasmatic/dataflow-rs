@@ -138,8 +138,9 @@ If you touched `wasm/`:
 
 ```bash
 cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
-cd wasm && wasm-pack test --node
-cd wasm && wasm-pack build --target web --out-dir pkg --release && node scripts/verify-wasm.mjs pkg
+cd wasm
+wasm-pack test --node
+wasm-pack build --target web --out-dir pkg --release && node scripts/verify-wasm.mjs pkg
 ```
 
 `wasm-pack test --node` runs the engine on wasm32 under Node; the release build
