@@ -424,8 +424,8 @@ functions `engine_version`, `engine_facts`, `parse`, `contexts(trace)` and
 the lock and `null` stays `null`. `run` **resolves on every status** with
 `{message, run, trace?}`; what the package throws is an `EngineError`, a JS
 `Error` with a `code`: `REJECTED` with `issues` from the constructor,
-`INVALID_ARGUMENT` from the constructor or a rejected `run`, and
-`INVALID_TRACE` from the replay exports. The package's
+`INVALID_ARGUMENT` from any export handed an argument that is not what it
+takes, and `INVALID_TRACE` from the replay exports alone. The package's
 `.d.ts` embeds `bindings/dataflow.d.ts` whole through a
 `typescript_custom_section`, so the generated wire types reach the UI from
 one package; `wasm/scripts/verify-wasm.mjs` checks the declarations are

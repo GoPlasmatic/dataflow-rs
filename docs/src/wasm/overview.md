@@ -76,7 +76,7 @@ class WasmEngine {
   constructor(workflows: string | JsonValue[], options?: EngineOptions);
 
   /** Runs one message; resolves on every status with { message, run, trace? }. */
-  run(payload: JsonValue, options?: RunOptions): Promise<RunResult>;
+  run(payload: JsonValue | undefined, options?: RunOptions): Promise<RunResult>;
 
   /** Every issue a definition has, checked against this engine's functions. */
   check(definition: JsonValue): Issue[];
@@ -349,6 +349,8 @@ The package replays a trace's changes from `initial`, so the UI and the
 engine never disagree on the rules:
 
 ```typescript
+import { contexts, mapping_contexts } from '@goplasmatic/dataflow-wasm';
+
 const { trace } = await engine.run(payload, { trace: true });
 if (!trace) throw new Error('the run was not traced'); // `trace` is optional on RunResult
 

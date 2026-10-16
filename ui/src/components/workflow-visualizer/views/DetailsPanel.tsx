@@ -24,10 +24,13 @@ interface DetailsPanelProps {
  * it.
  *
  * A trace records no evaluation of its own, so it is placed: the condition
- * ran just before the workflow's first step, and, in a loop, again after the
- * engine's writes as each sweep is entered (its counter, `as` and
+ * ran just before the workflow's first step, and, in a loop, after each of
+ * the engine's counter writes that a sweep followed (its counter, `as` and
  * `scratch`), before the sweep's tasks. From the workflow's latest step at or
- * before the position, walk back through its steps to that point.
+ * before the position, walk back through its steps to that point. The wire
+ * does not say whether a sweep followed a counter write: at the write on
+ * which a loop exited no condition was read, and the panel still places one
+ * there (K51 in the design's register).
  */
 function workflowConditionStepIndex(trace: Trace, currentStepIndex: number, workflowId: string): number {
   let i = -1;
@@ -39,7 +42,7 @@ function workflowConditionStepIndex(trace: Trace, currentStepIndex: number, work
   }
   if (i === -1) return -1;
   for (;;) {
-    // A sweep entered: the condition read what the engine's writes left.
+    // The engine's counter write: a sweep's condition read what it left.
     if (isEngineStep(trace.steps[i])) return i + 1;
     // The workflow's first step: the condition read what came before it.
     if (i === 0 || trace.steps[i - 1].workflow_id !== workflowId) return i;
