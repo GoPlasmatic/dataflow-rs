@@ -1,16 +1,15 @@
 [package]
 name = "dataflow-rs"
-version = "3.15.0"
+version = "4.0.0-dev"
 edition = "2024"
 rust-version = "1.98"
-# Allowlist of what ships in the published .crate: the library, its examples
-# and tests, and the user-facing root docs. An allowlist fails safe — future
-# repo-root additions (CI config, tooling, the npm-published ui/, the GitHub
-# Pages docs/) stay out without anyone remembering to add an exclude entry.
+# Allowlist of what ships in the published .crate: the library, the TypeScript
+# declarations of its wire shapes (`bindings/`), and the user-facing root docs.
+# The tests and examples stay in the repository: they need crates that are not
+# published (the corpus) and the gate's shared files.
 include = [
     "/src",
-    "/examples",
-    "/tests",
+    "/bindings",
     "/README.md",
     "/CHANGELOG.md",
     "/CONTRIBUTING.md",
@@ -25,9 +24,7 @@ keywords = ["rules-engine", "ifttt", "automation", "jsonlogic", "workflow"]
 categories = ["data-structures", "development-tools", "config"]
 
 # docs.rs renders the operator families so their operator docs resolve, plus
-# `budget` so `EngineBuilder::with_ops_budget` appears at all.
-# `wasm-web` is deliberately excluded — it is a platform switch, not API
-# surface — which is why this is an explicit list rather than `all-features`.
+# `budget`. `wasm-web` (a platform switch) and `ts` (a generator) are not API.
 [package.metadata.docs.rs]
 features = ["all-operators", "budget"]
 
@@ -35,28 +32,13 @@ features = ["all-operators", "budget"]
 default = []
 
 # Optional `datalogic-rs` operator families, each forwarding to the identically
-# named feature there. The names deliberately mirror datalogic's so they need no
-# translation when reading its documentation.
-#
-# NOTE `error-handling` here means the JSONLogic `try`/`throw` *operators*. It
-# has nothing to do with dataflow-rs's own error handling (`DataflowError`,
-# `continue_on_error`, `message.errors()`), which is unconditional.
-#
-#   datetime        datetime, timestamp, parse_date, format_date, date_diff, now
-#   ext-string      length, starts_with, ends_with, upper, lower, trim, split
-#   ext-array       sort, slice, group_by, distinct
-#   ext-math        abs, ceil, floor
-#   ext-control     exists, ??, switch (alias match), type
-#   ext-object      keys, values, entries
-#   error-handling  try, throw
-#
-# Off by default, and enabling one is *not* a no-op for existing workflows: this
-# crate always runs datalogic in templating mode, where an unknown operator name
-# passes through as literal data. A `{"length": ...}` value that used to survive
-# a `map` mapping intact starts evaluating instead — write `{"$length": ...}` to
-# pin the literal reading whatever is enabled. `datetime` goes further and
-# changes `==` and the ordering operators on plain date-shaped strings. Enable
-# only the families your rules actually use.
+# named feature there. Off by default, and enabling one is *not* a no-op for
+# existing workflows: the engine evaluates in templating mode, where an unknown
+# operator name passes through as literal data, so a `{"length": ...}` value
+# starts evaluating once `ext-string` is on (`{"$length": ...}` pins the
+# literal). `datetime` also changes `==` and the ordering operators on plain
+# date-shaped strings. `error-handling` is JSONLogic's `try`/`throw`, not the
+# engine's own error handling.
 datetime = ["datalogic-rs/datetime"]
 ext-string = ["datalogic-rs/ext-string"]
 ext-array = ["datalogic-rs/ext-array"]
@@ -64,11 +46,8 @@ ext-math = ["datalogic-rs/ext-math"]
 ext-control = ["datalogic-rs/ext-control"]
 ext-object = ["datalogic-rs/ext-object"]
 error-handling = ["datalogic-rs/error-handling"]
-
-# Every family this crate exposes. Deliberately not datalogic's `flagd`
-# (`fractional`, `sem_ver`): it is feature-flag-evaluation specific, and it is
-# the only family that pulls an extra dependency. Adding a family here later is
-# a semver-minor change.
+# Every family above. Not datalogic's `flagd`, which is feature-flag specific
+# and the one family with an extra dependency.
 all-operators = [
     "datetime",
     "ext-string",
@@ -78,69 +57,76 @@ all-operators = [
     "ext-object",
     "error-handling",
 ]
-
-# The `Tensor` value plus 20 marshalling operators over it. Pulls no extra
-# dependency. Forwards `datavalue/tensor` as well as datalogic's, since the
-# `Tensor` variant it adds to `DataValue`/`OwnedDataValue` is datavalue's and
-# this crate matches on those enums directly.
-#
-# The one family deliberately **not** in `all-operators`: names like `shape`,
-# `full`, `cast` and `concat` are ordinary JSON keys, and in templating mode a
-# live operator key evaluates rather than passing through. Full rationale and
-# the `{"$shape": ...}` escape: docs/src/advanced/jsonlogic.md.
+# The `Tensor` value and its 20 operators. Deliberately not in `all-operators`:
+# names like `shape`, `full`, `cast` and `concat` are ordinary JSON keys, which
+# a live operator would start evaluating.
 tensor = ["datalogic-rs/tensor", "datavalue/tensor"]
-
-# Per-evaluation operation ceiling. Not in `all-operators`: a runtime config
-# knob, not an operator family — it adds no operator name and changes no
-# expression's meaning. Unlocks `EngineBuilder::with_ops_budget`; without that
-# call evaluation stays semantically unbounded.
-#
-# Not free, though: the counter lives in datalogic's `EvalContext::charge`
-# behind this same feature, so enabling it costs an add-and-compare per
-# dispatched node and per iterated item whether or not a ceiling is set. That
-# is why it is off by default and out of the wasm bundle — benchmarks run on
-# default features and stay comparable.
+# The per-evaluation operation ceiling: a config knob, not a family. Costs an
+# add-and-compare per dispatched node whether or not a ceiling is set.
 budget = ["datalogic-rs/budget"]
-
-# `uuid/js` is what supplies randomness on wasm32-unknown-unknown: uuid's own
-# `getrandom` dependency is target-gated *off* for that triple, and its `js`
-# feature routes through wasm-bindgen/js-sys instead.
-#
-# `datalogic-rs/wasm-clock` forwards `chrono?/wasmbind` — weak, so it is a no-op
-# unless `datetime` turned datalogic's optional chrono on. It is redundant today
-# with `chrono/wasmbind` above (both dependents resolve to one chrono unit and
-# cargo unions their feature sets), but it states the requirement at the crate
-# that actually has it, so datalogic's `now` keeps working on wasm32 even if
-# this crate's own chrono edge later changes shape.
+# A platform switch: the browser's clock and randomness, which
+# wasm32-unknown-unknown needs and native targets must not pull in.
 wasm-web = ["chrono/wasmbind", "uuid/js", "datalogic-rs/wasm-clock"]
+# The TypeScript declarations of the wire shapes, which `tests/ts_types.rs`
+# renders into `bindings/dataflow.d.ts`. **Outside semver:** the shapes it
+# declares are the wire shapes, which are, but the generator, its output's
+# layout and this feature's dependencies may change in any release.
+ts = ["dep:ts-rs"]
 
 [dependencies]
+# `rc`: serde's impls for `Arc<str>`, which ids and change paths are held as.
 serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
+# `float_roundtrip`: a float reads back as the bits it was written from, so a
+# message and a trace v4 writes read back byte for byte (I125). The default
+# parser can land one ULP off on a 17-digit float, which arithmetic makes.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 datalogic-rs = { version = "5.7", features = ["serde_json", "templating"] }
 datavalue = { package = "datavalue-rs", version = "0.3.1", features = ["serde", "serde_json"] }
+# `Instant` that works on wasm32; `std::time::Instant` natively (I86).
+web-time = "1.1"
 bumpalo = "3.20"
-uuid = { version = "1.26", default-features = false, features = ["v7", "std"] }
+self_cell = "1.3"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
-thiserror = "2.0"
+dataflow-rs-derive = { path = "derive", version = "=4.0.0-dev" }
+uuid = { version = "1.26", default-features = false, features = ["v7", "std"] }
+# The `log` built-in's target, and `map`'s failing-mapping lines (I73).
 log = "0.4"
-tokio = { version = "1", features = ["rt", "macros"] }
-async-trait = "0.1"
-# `FuturesUnordered` drives a `for_each` task's bounded concurrent calls
-# without spawning, so the calls may borrow the handler and run on wasm.
-# Already in the lockfile through `js-sys` and the dev-dependencies.
-futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+# `parse_xml` and `publish_xml`, at v3's requirement.
 quick-xml = { version = "0.42", features = ["serialize"] }
+# A fan-out's bounded concurrent calls (`FuturesUnordered`), without spawning,
+# so the calls may borrow the run view and run on wasm. At v3's requirement.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+# The `ts` feature's derives, with its default `serde-compat`, so a
+# `skip_serializing_if` field reads as optional and a `rename` is honoured.
+ts-rs = { version = "12.0.1", optional = true, features = ["no-serde-warnings"] }
+
+# Native-only: a thread-local PRNG instead of one `getrandom` per id, as v3 does.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+uuid = { version = "1.26", default-features = false, features = ["fast-rng"] }
+# Native-only: a host call's race against the run's deadline and token (I92),
+# with the timer, the token's `Notify` and `select!`. On wasm only the checks run.
+tokio = { version = "1", default-features = false, features = ["time", "sync", "macros"] }
+
+[lints]
+workspace = true
 
 [dev-dependencies]
+dataflow-corpus = { path = "corpus" }
+# v3, the published 3.15.0 (v3's source is on `v3-maintenance`), for the
+# differential tests that hold v4 to its rules and `host_call_floor`'s twin.
+# A v3 fix that re-records the corpus bumps this pin with `corpus/v3`'s.
+dataflow_rs_v3 = { package = "dataflow-rs", version = "=3.15.0" }
+# v3's handler trait, for the twins `tests/fan_out.rs` and
+# `examples/host_call_floor.rs` register on v3.
+async-trait = "0.1"
 tokio = { version = "1", features = ["full", "test-util"] }
-env_logger = "0.11"
-axum = "0.8"
+# The gate's ports (`examples/*.rs`), at the versions v3's examples use.
 futures = "0.3"
+env_logger = "0.11"
 num_cpus = "1.17"
 
 [workspace]
-members = [".", "wasm", "docs-tests", "corpus", "corpus/v3", "corpus/v4", "v4", "derive"]
+members = [".", "wasm", "docs-tests", "corpus", "corpus/v3", "corpus/v4", "derive"]
 
 # Lint policy lives here rather than only in the CI command line, so a local
 # `cargo clippy` and rust-analyzer enforce exactly what CI does. CI still passes
@@ -149,20 +135,6 @@ members = [".", "wasm", "docs-tests", "corpus", "corpus/v3", "corpus/v4", "v4", 
 # Spell the type as `Self` inside its own `impl`. Was inconsistent across the
 # crate — most modules already did, `config.rs` and `error.rs` did not.
 use_self = "warn"
-
-[lints]
-workspace = true
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# `time` drives the `retry` module's backoff and deadline. Native-only: tokio's
-# time driver does not run on wasm32-unknown-unknown, which is why `retry` is
-# itself `cfg`-gated off that target.
-tokio = { version = "1", features = ["rt-multi-thread", "time"] }
-# `fast-rng`: thread-local PRNG seeded once from the OS instead of one
-# `getrandom` syscall per `Uuid::now_v7()` — appropriate for v7 ids
-# (uniqueness, not secrecy). Native-only; features are additive per-target,
-# so the wasm build keeps the lean `v7`+`std` set from the main table.
-uuid = { version = "1.26", default-features = false, features = ["fast-rng"] }
 
 # Native release profile: maximize throughput. `lto = "fat"` plus
 # `codegen-units = 1` lets the compiler propagate inlining across crate

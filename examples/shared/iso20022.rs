@@ -1,12 +1,13 @@
 //! The ISO 20022 pacs.008 → MT103-shaped workload: one `parse_json`, one `map`
 //! with 25 mappings, one `validation` with 12 rules. `realistic_benchmark`
-//! measures it alone; `observed_run` measures it with an observer attached.
+//! measures it alone. v4's port of v3's `examples/shared/iso20022.rs`, with the
+//! same definition and payload.
 //!
 //! Not an example: pulled in with `#[path = "shared/iso20022.rs"] mod iso20022;`.
 
 #![allow(dead_code)]
 
-use dataflow_rs::{Message, Workflow};
+use dataflow_rs::Message;
 use serde_json::{Value, json};
 
 /// Checks a message the workload ran on: every rule passed and the document
@@ -20,13 +21,14 @@ pub fn check(message: &Message) {
         "errors: {:?}",
         message.errors()
     );
-    let mt103 = Value::from(&message.context["data"]["MT103"]);
+    let data = Value::from(message.context().data());
+    let mt103 = &data["MT103"];
     assert!(mt103.is_object(), "data.MT103 is an object, not {mt103}");
     assert_eq!(mt103["20"], json!("MSG-20260511-000001"));
     assert_eq!(mt103["32A"]["currency"], json!("EUR"));
 }
 
-pub fn workflow() -> Workflow {
+pub fn workflow() -> Value {
     let json = r#"
     {
         "id": "iso20022_to_swiftmt103",
@@ -171,7 +173,7 @@ pub fn workflow() -> Workflow {
         ]
     }
     "#;
-    Workflow::from_json(json).expect("workflow parses")
+    serde_json::from_str(json).expect("workflow parses")
 }
 
 /// ISO 20022 pacs.008-shaped payload, ~80 fields across 4-5 levels.

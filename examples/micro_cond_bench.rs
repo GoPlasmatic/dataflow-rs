@@ -11,11 +11,13 @@
 //! directly exercises the "fold trivially-true condition to None" path
 //! (4 folded conditions/message).
 //!
+//! This is v4's port of v3's `micro_cond_bench`: the same definition, count
+//! and single-threaded loop, run through dataflow-rs 4.
+//!
 //! Run with: `cargo run --example micro_cond_bench --release`
 
-use dataflow_rs::{Engine, Message, Workflow};
-use serde_json::json;
-use std::sync::Arc;
+use dataflow_rs::{Engine, Message};
+use serde_json::{Value, json};
 use std::time::Instant;
 
 #[path = "shared/gate.rs"]
@@ -74,8 +76,11 @@ async fn main() {
     }
     "#;
 
-    let workflow = Workflow::from_json(workflow_json).unwrap();
-    let engine = Arc::new(Engine::builder().with_workflow(workflow).build().unwrap());
+    let workflow: Value = serde_json::from_str(workflow_json).unwrap();
+    let engine = Engine::builder()
+        .workflow_json(&workflow)
+        .build()
+        .expect("the engine builds");
 
     // The raw inbound document; the parse_json task loads it at `data.input`.
     let data = json!({
@@ -86,9 +91,9 @@ async fn main() {
     // references or unprefixed write paths would silently null-skip every
     // mapping and fail every validation without erroring the run).
     {
-        let mut m = Message::from_value(&data);
-        engine.process_message(&mut m).await.unwrap();
-        let d = serde_json::to_value(m.data()).unwrap();
+        let mut m = Message::from_json(&data);
+        engine.run(&mut m).await.into_result().unwrap();
+        let d = Value::from(m.context().data());
         assert!(
             d["user"]["id"].as_i64() == Some(12345) && m.errors().is_empty(),
             "workload is not computing: data={d}, errors={:?}",
@@ -97,14 +102,14 @@ async fn main() {
     }
 
     for _ in 0..WARMUP {
-        let mut m = Message::from_value(&data);
-        engine.process_message(&mut m).await.unwrap();
+        let mut m = Message::from_json(&data);
+        engine.run(&mut m).await.into_result().unwrap();
     }
 
     let start = Instant::now();
     for _ in 0..N {
-        let mut m = Message::from_value(&data);
-        engine.process_message(&mut m).await.unwrap();
+        let mut m = Message::from_json(&data);
+        engine.run(&mut m).await.into_result().unwrap();
     }
     let el = start.elapsed();
 

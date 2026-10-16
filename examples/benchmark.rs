@@ -4,14 +4,15 @@
 //! using Tokio's multi-threaded runtime. It measures throughput and latency
 //! percentiles when processing messages concurrently.
 //!
+//! This is v4's port of v3's `benchmark`: the same definition, message count
+//! and concurrency, run through dataflow-rs 4.
+//!
 //! Run with: `cargo run --example benchmark --release`
 
-use dataflow_rs::engine::utils::set_nested_value;
-use dataflow_rs::{Engine, Message, Workflow};
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::{Engine, Message};
 use futures::future::join_all;
-use serde_json::json;
-use std::sync::Arc;
+use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
 #[path = "shared/gate.rs"]
@@ -67,6 +68,10 @@ impl LatencyStats {
     }
 }
 
+fn cpus() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -74,8 +79,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("ASYNC ENGINE BENCHMARK (Tokio Multi-threaded Runtime)");
     println!("=====================================================");
     println!("Total messages: {}", TOTAL_MESSAGES);
-    println!("CPU cores: {}", num_cpus::get());
-    println!("Tokio worker threads: {}", num_cpus::get());
+    println!("CPU cores: {}", cpus());
+    println!("Tokio worker threads: {}", cpus());
     println!();
 
     // Create workflow
@@ -168,8 +173,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     "#;
 
-    let workflow = Workflow::from_json(workflow_json)?;
-    let engine = Arc::new(Engine::builder().with_workflow(workflow).build().unwrap());
+    let workflow: Value = serde_json::from_str(workflow_json)?;
+    let engine = Engine::builder()
+        .workflow_json(&workflow)
+        .build()
+        .expect("the engine builds");
 
     // The raw inbound document; the parse_json task loads it at `data.input`.
     let sample_data = json!({
@@ -184,9 +192,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // references or unprefixed write paths would silently null-skip every
     // mapping and fail every validation without erroring the run).
     {
-        let mut message = Message::from_value(&sample_data);
-        engine.process_message(&mut message).await?;
-        let data = serde_json::to_value(message.data())?;
+        let mut message = Message::from_json(&sample_data);
+        engine.run(&mut message).await.into_result()?;
+        let data = Value::from(message.context().data());
         assert!(
             data["user"]["id"].as_i64() == Some(12345) && message.errors().is_empty(),
             "workload is not computing: data={data}, errors={:?}",
@@ -199,11 +207,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let warmup_start = Instant::now();
     let warmup_handles: Vec<_> = (0..WARMUP_MESSAGES)
         .map(|_| {
-            let engine = Arc::clone(&engine);
+            let engine = engine.clone();
             let data = sample_data.clone();
             tokio::spawn(async move {
-                let mut message = Message::from_value(&data);
-                engine.process_message(&mut message).await.unwrap();
+                let mut message = Message::from_json(&data);
+                engine.run(&mut message).await.into_result().unwrap();
             })
         })
         .collect();
@@ -225,20 +233,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handles = Vec::with_capacity(TOTAL_MESSAGES);
 
     for i in 0..TOTAL_MESSAGES {
-        let engine = Arc::clone(&engine);
+        let engine = engine.clone();
         let data = sample_data.clone();
 
         let handle = tokio::spawn(async move {
             let msg_start = Instant::now();
 
-            let mut message = Message::from_value(&data);
-            set_nested_value(
-                &mut message.context,
-                "metadata",
+            // v3 builds the message from the payload, then replaces its
+            // `metadata`; v4 seeds `metadata` at construction.
+            let mut message = Message::from_parts(
+                OwnedDataValue::from(&data),
+                OwnedDataValue::Null,
                 OwnedDataValue::from(&json!({ "iteration": i })),
             );
 
-            engine.process_message(&mut message).await.unwrap();
+            engine.run(&mut message).await.into_result().unwrap();
 
             msg_start.elapsed()
         });

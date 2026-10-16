@@ -19,11 +19,13 @@
 //! parse-then-map idiom from `realistic_benchmark.rs` (payload → `data.input`,
 //! mappings read `data.input.*` and write `data.*`).
 //!
+//! This is v4's port of v3's `micro_aggregate_bench`: the same definition,
+//! count and single-threaded loop, run through dataflow-rs 4.
+//!
 //! Run with: `cargo run --example micro_aggregate_bench --release`
 
-use dataflow_rs::{Engine, Message, Workflow};
+use dataflow_rs::{Engine, Message};
 use serde_json::{Value, json};
-use std::sync::Arc;
 use std::time::Instant;
 
 #[path = "shared/gate.rs"]
@@ -106,8 +108,10 @@ async fn main() {
         ]
     });
 
-    let workflow = Workflow::from_json(&workflow_json.to_string()).unwrap();
-    let engine = Arc::new(Engine::builder().with_workflow(workflow).build().unwrap());
+    let engine = Engine::builder()
+        .workflow_json(&workflow_json)
+        .build()
+        .expect("the engine builds");
 
     let items: Vec<Value> = (0..ITEMS)
         .map(|i| {
@@ -123,9 +127,9 @@ async fn main() {
     // Sanity-check once: the aggregates must actually compute (a silent
     // null-skip in the map task would turn this bench into a no-op).
     {
-        let mut m = Message::from_value(&data);
-        engine.process_message(&mut m).await.unwrap();
-        let ctx = serde_json::to_value(m.data()).unwrap();
+        let mut m = Message::from_json(&data);
+        engine.run(&mut m).await.into_result().unwrap();
+        let ctx = Value::from(m.context().data());
         let subtotal = ctx["cart"]["subtotal"].as_f64().unwrap_or(0.0);
         assert!(
             subtotal > 0.0 && m.errors().is_empty(),
@@ -135,14 +139,14 @@ async fn main() {
     }
 
     for _ in 0..WARMUP {
-        let mut m = Message::from_value(&data);
-        engine.process_message(&mut m).await.unwrap();
+        let mut m = Message::from_json(&data);
+        engine.run(&mut m).await.into_result().unwrap();
     }
 
     let start = Instant::now();
     for _ in 0..N {
-        let mut m = Message::from_value(&data);
-        engine.process_message(&mut m).await.unwrap();
+        let mut m = Message::from_json(&data);
+        engine.run(&mut m).await.into_result().unwrap();
     }
     let el = start.elapsed();
 

@@ -1,33 +1,27 @@
 //! # Large-context handler
 //!
-//! A row of the v4 performance gate: a host handler that resolves five
-//! `Template` fields against a 2 MiB context. In 3.15 each view of the context
-//! costs its spines, one per node, whether the fields read them or not. A v4
-//! handler evaluates against the run's single view and builds none per call,
-//! so the gate requires v4 to beat this benchmark's own `with_view` row.
+//! v4's port of v3's `large_context_handler`, a row of the v4 performance
+//! gate: a host function that evaluates five expression fields against a
+//! 2 MiB context. In 3.15 each view of the context costs its spines, one per
+//! node, whether the fields read them or not. A v4 function evaluates against
+//! the run's single view and builds none per call, so the gate requires v4 to
+//! beat v3's `with_view` row here.
 //!
-//! #66 measured the same call on 3.15.0 at 174 µs per call, or 36 µs inside
-//! one `with_view`, over a context whose shape it did not record. This one is
-//! node-dense (catalogue records of 14 nodes each), so its figures are higher
-//! and are the ones to compare against.
-//!
-//! The handler is the only task of a 1000-sweep counter loop, so one message
+//! The function is the only task of a 1000-sweep counter loop, so one message
 //! makes 1000 calls against one large context, and every figure is per call.
-//! Three handlers write the same five values:
+//! Three functions write the same five values:
 //!
-//! - **write only** resolves nothing: the floor of a call and a sweep;
-//! - **per field** resolves each field on its own, one view each;
-//! - **with_view** resolves all five inside one view.
+//! - **write only** evaluates nothing: the floor of a call and a sweep;
+//! - **per field** evaluates each field through `Ctx::eval`;
+//! - **with_view** does the same: v4 has no view per call, so the two v3
+//!   modes are one call shape here, and the names stay for the gate.
 //!
 //! Run with: `cargo run --example large_context_handler --release`
 
-use async_trait::async_trait;
-use dataflow_rs::{
-    AsyncFunctionHandler, DataflowError, Engine, Message, Result, TaskContext, TaskOutcome,
-    Template, TemplateCompiler, Workflow,
-};
-use datavalue::OwnedDataValue;
-use serde::Deserialize;
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::expr::Output;
+use dataflow_rs::function::FunctionConfig;
+use dataflow_rs::{Ctx, Engine, Expr, Function, Message, Outcome, Path, Result};
 use serde_json::{Value, json};
 use std::time::Instant;
 
@@ -40,13 +34,17 @@ const CONTEXT_BYTES: usize = 2 * 1024 * 1024;
 const CALLS: usize = 1000;
 const MESSAGES: usize = 5;
 
-#[derive(Deserialize)]
+/// The five fields, and where every mode writes: v3's literal `data.out`,
+/// folded to a path at build.
+#[derive(FunctionConfig)]
 struct Fields {
-    order_id: Template,
-    url: Template,
-    tenant: Template,
-    qty: Template,
-    tier: Template,
+    order_id: Expr<String>,
+    url: Expr<String>,
+    tenant: Expr<String>,
+    qty: Expr<u64>,
+    tier: Expr<String>,
+    #[output(default = "data.out")]
+    target: Output,
 }
 
 #[derive(Clone, Copy)]
@@ -65,7 +63,7 @@ const MODES: &[(&str, Mode)] = &[
 struct Resolve(Mode);
 
 /// What every mode writes.
-fn output(order_id: String, url: String, tenant: String, qty: u64, tier: String) -> OwnedDataValue {
+fn output(order_id: &str, url: &str, tenant: &str, qty: u64, tier: &str) -> OwnedDataValue {
     OwnedDataValue::from(&json!({
         "order_id": order_id, "url": url, "tenant": tenant, "qty": qty, "tier": tier
     }))
@@ -81,51 +79,35 @@ fn expected() -> Value {
     })
 }
 
-#[async_trait]
-impl AsyncFunctionHandler for Resolve {
-    type Input = Fields;
+impl Function for Resolve {
+    type Config = Fields;
 
-    fn compile_input(f: &mut Fields, c: &TemplateCompiler) -> Result<()> {
-        f.order_id.compile(c, "order_id")?;
-        f.url.compile(c, "url")?;
-        f.tenant.compile(c, "tenant")?;
-        f.qty.compile(c, "qty")?;
-        f.tier.compile(c, "tier")
-    }
-
-    async fn execute(&self, ctx: &mut TaskContext<'_>, f: &Fields) -> Result<TaskOutcome> {
+    async fn call(&self, ctx: &mut Ctx<'_>, f: &Fields) -> Result<Outcome> {
         let out = match self.0 {
             Mode::WriteOnly => output(
-                "ORD-42".into(),
-                "https://api.example.com/orders/ORD-42/lines".into(),
-                "acme".into(),
+                "ORD-42",
+                "https://api.example.com/orders/ORD-42/lines",
+                "acme",
                 3,
-                "priority".into(),
+                "priority",
             ),
-            Mode::PerField => output(
-                f.order_id.resolve_string(ctx)?,
-                f.url.resolve_string(ctx)?,
-                f.tenant.resolve_string(ctx)?,
-                f.qty.resolve_u64(ctx, "qty")?,
-                f.tier.resolve_string(ctx)?,
+            // One call shape for both: each field evaluated against the run's
+            // view, which no call builds.
+            Mode::PerField | Mode::WithView => output(
+                &ctx.eval(&f.order_id)?,
+                &ctx.eval(&f.url)?,
+                &ctx.eval(&f.tenant)?,
+                ctx.eval(&f.qty)?,
+                &ctx.eval(&f.tier)?,
             ),
-            Mode::WithView => ctx.with_view(|view| {
-                Ok::<_, DataflowError>(output(
-                    f.order_id.resolve_string_in(view)?,
-                    f.url.resolve_string_in(view)?,
-                    f.tenant.resolve_string_in(view)?,
-                    f.qty.resolve_u64_in(view, "qty")?,
-                    f.tier.resolve_string_in(view)?,
-                ))
-            })?,
         };
-        ctx.set("data.out", out);
-        Ok(TaskOutcome::Success)
+        ctx.emit(&f.target, out)?;
+        Ok(Outcome::Ok)
     }
 }
 
-fn workflow(function: &str) -> Workflow {
-    let workflow = json!({
+fn workflow(function: &str) -> Value {
+    json!({
         "id": "calls",
         "name": "One handler call per sweep",
         "loop": { "counter": "i", "max": CALLS },
@@ -136,15 +118,11 @@ fn workflow(function: &str) -> Workflow {
             "qty": { "var": "data.order.qty" },
             "tier": { "if": [{ ">": [{ "var": "data.order.total" }, 100] }, "priority", "standard"] }
         }}}]
-    });
-    Workflow::from_json(&workflow.to_string()).expect("the workflow parses")
+    })
 }
 
 fn message(data: &OwnedDataValue, metadata: &OwnedDataValue) -> Message {
-    Message::builder()
-        .data(data.clone())
-        .metadata(metadata.clone())
-        .build()
+    Message::from_parts(OwnedDataValue::Null, data.clone(), metadata.clone())
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -160,28 +138,41 @@ async fn main() {
         "order": { "id": "ORD-42", "total": 250.75, "qty": 3 }
     }));
     let metadata = OwnedDataValue::from(&json!({ "tenant": "acme" }));
+    let out: Path = "data.out".parse().expect("a path");
 
     let mut means = Vec::new();
     let mut gate = gate::Gate::new("large_context_handler");
     for &(name, mode) in MODES {
         let engine = Engine::builder()
-            .with_workflow(workflow(name))
+            .workflow_json(&workflow(name))
             .register(name, Resolve(mode))
             .build()
             .expect("the engine builds");
 
         // The check, which also warms the engine up.
         let mut m = message(&data, &metadata);
-        engine.process_message(&mut m).await.expect("the loop runs");
+        engine
+            .run(&mut m)
+            .await
+            .into_result()
+            .expect("the loop runs");
         assert!(m.errors().is_empty(), "errors: {:?}", m.errors());
-        assert_eq!(Value::from(&m.context["data"]["out"]), expected(), "{name}");
-        assert_eq!(m.audit_trail().len(), CALLS, "one call per sweep");
+        assert_eq!(
+            m.context().get(&out).map(Value::from),
+            Some(expected()),
+            "{name}"
+        );
+        assert_eq!(m.audit().len(), CALLS, "one call per sweep");
 
         let mut samples = bench::Samples::with_capacity(MESSAGES);
         for _ in 0..MESSAGES {
             let mut m = message(&data, &metadata);
             let start = Instant::now();
-            engine.process_message(&mut m).await.expect("the loop runs");
+            engine
+                .run(&mut m)
+                .await
+                .into_result()
+                .expect("the loop runs");
             samples.push(start.elapsed());
         }
         let row = samples.row(name, CALLS, "call");

@@ -1,12 +1,12 @@
 //! # Async Handler Benchmark
 //!
-//! Measures the marginal cost of one custom `AsyncFunctionHandler` task on
-//! top of a small sync-builtin pipeline. The delta isolates the framework
-//! overhead added by the dyn-Any dispatch path: typed-input downcast,
-//! `TaskContext` allocation, change-buffer drain, and the async/await
-//! boundary that breaks the workflow's sync stretch.
+//! Measures the marginal cost of one custom host function task on top of a
+//! small sync-builtin pipeline. The delta isolates the framework overhead of
+//! one host call: the boxed call future, the `Ctx` over the run's view, the
+//! call's overlay and `Change`s, the settle into the run, and the audit
+//! entry.
 //!
-//! There is **no I/O** in the handler (no `tokio::time::sleep`, no
+//! There is **no I/O** in the function (no `tokio::time::sleep`, no
 //! network) so the reported number reflects pure framework cost — not
 //! external latency. To put the dispatch overhead in real-world context,
 //! production handlers usually do tens to hundreds of microseconds of
@@ -14,16 +14,20 @@
 //!
 //! Two configurations run back-to-back on the same payload:
 //! - **Sync only**       — `parse_json` + `map` (3 mappings) + `validation` (2 rules)
-//! - **Sync + custom**   — same + 1 custom `EchoHandler` task at the end
+//! - **Sync + custom**   — same + 1 custom `Echo` task at the end
+//!
+//! This is v4's port of v3's `async_handler_benchmark`: the same
+//! definitions, payload, message counts and concurrency, run through
+//! dataflow-rs 4, with v3's `EchoHandler` as a v4 `Function`.
 //!
 //! Run with: `cargo run --example async_handler_benchmark --release`
 
-use async_trait::async_trait;
-use dataflow_rs::prelude::*;
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::expr::Output;
+use dataflow_rs::function::FunctionConfig;
+use dataflow_rs::{Ctx, Engine, Function, Message, Outcome, Result};
 use futures::future::join_all;
-use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -73,35 +77,34 @@ impl LatencyStats {
     }
 }
 
-/// Typed input for the echo handler. Pre-parsed by the engine at
-/// `Engine::new()` via `serde_json::from_value` (per the new typed
-/// `AsyncFunctionHandler::Input` contract); per-message cost is a
-/// `downcast_ref::<EchoInput>()`.
-#[derive(Debug, Deserialize)]
-pub struct EchoInput {
-    target: String,
+/// The echo function's config, compiled once at build: the target is a
+/// literal, so it folds to a path then.
+#[derive(FunctionConfig)]
+struct EchoConfig {
+    #[output(default = "data.echoed")]
+    target: Output,
     value: String,
 }
 
-/// Minimal handler — one `ctx.set` to exercise the change-buffer drain
-/// path, then return `Success`. No `.await` work; we want to measure
-/// dispatch overhead, not external latency.
-struct EchoHandler;
+/// Minimal function — one write to exercise the overlay and its settle,
+/// then `Ok`. No `.await` work; we want to measure dispatch overhead, not
+/// external latency.
+struct Echo;
 
-#[async_trait]
-impl AsyncFunctionHandler for EchoHandler {
-    type Input = EchoInput;
+impl Function for Echo {
+    type Config = EchoConfig;
 
-    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &EchoInput) -> Result<TaskOutcome> {
-        ctx.set(&input.target, OwnedDataValue::String(input.value.clone()));
-        Ok(TaskOutcome::Success)
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &EchoConfig) -> Result<Outcome> {
+        // The literal target is lent, not evaluated.
+        ctx.emit(&cfg.target, OwnedDataValue::String(cfg.value.clone()))?;
+        Ok(Outcome::Ok)
     }
 }
 
 /// Common task list — three transformation mappings + two validations,
-/// fed by `parse_json`. Kept short so a single async-handler task is a
+/// fed by `parse_json`. Kept short so a single host function task is a
 /// large fraction of total work and the dispatch overhead is visible
-/// in the delta. Append the `echo_task` variant for the with-custom
+/// in the delta. Append the `echo` task for the with-custom
 /// configuration.
 fn task_json(include_custom: bool) -> String {
     let mut tasks = String::from(
@@ -158,7 +161,7 @@ fn task_json(include_custom: bool) -> String {
     tasks
 }
 
-fn build_workflow(include_custom: bool) -> Workflow {
+fn build_workflow(include_custom: bool) -> Value {
     let id = if include_custom {
         "with_custom"
     } else {
@@ -170,7 +173,7 @@ fn build_workflow(include_custom: bool) -> Workflow {
         id,
         task_json(include_custom)
     );
-    Workflow::from_json(&json).expect("workflow parses")
+    serde_json::from_str(&json).expect("workflow parses")
 }
 
 fn build_payload() -> serde_json::Value {
@@ -182,12 +185,42 @@ fn build_payload() -> serde_json::Value {
     })
 }
 
+/// Runs one message and checks the workload did its work before anything
+/// is timed: the mappings landed, both rules passed, and with the custom
+/// task, its write landed and it has its audit entry.
+async fn check(engine: &Engine, payload: &Arc<OwnedDataValue>, include_custom: bool) {
+    let mut message = Message::new(Arc::clone(payload));
+    engine
+        .run(&mut message)
+        .await
+        .into_result()
+        .expect("the workflow runs");
+    let data = Value::from(message.context().data());
+    assert!(
+        message.errors().is_empty(),
+        "errors: {:?}",
+        message.errors()
+    );
+    assert_eq!(data["user_id"], json!("user_42"), "the mappings landed");
+    assert_eq!(data["amount"], json!(1500.5), "the mappings landed");
+    let tasks = if include_custom { 4 } else { 3 };
+    assert_eq!(message.audit().len(), tasks, "one audit entry per task");
+    if include_custom {
+        assert_eq!(data["echoed"], json!("ok"), "the echo's write landed");
+    } else {
+        assert!(
+            data.get("echoed").is_none(),
+            "no echo without the custom task"
+        );
+    }
+}
+
 /// Run a benchmark over `total` messages against `engine`. Returns the
 /// observed throughput and per-message latency stats.
 async fn run_benchmark(
     label: &str,
     ops_per_msg: usize,
-    engine: Arc<Engine>,
+    engine: Engine,
     payload: Arc<OwnedDataValue>,
 ) -> (
     f64,
@@ -197,11 +230,11 @@ async fn run_benchmark(
     println!("[{label}] Warmup ({} messages)...", WARMUP_MESSAGES);
     let warmup_handles: Vec<_> = (0..WARMUP_MESSAGES)
         .map(|_| {
-            let engine = Arc::clone(&engine);
+            let engine = engine.clone();
             let payload = Arc::clone(&payload);
             tokio::spawn(async move {
                 let mut message = Message::new(payload);
-                engine.process_message(&mut message).await.unwrap();
+                engine.run(&mut message).await.into_result().unwrap();
             })
         })
         .collect();
@@ -212,12 +245,12 @@ async fn run_benchmark(
     let mut handles = Vec::with_capacity(TOTAL_MESSAGES);
 
     for _ in 0..TOTAL_MESSAGES {
-        let engine = Arc::clone(&engine);
+        let engine = engine.clone();
         let payload = Arc::clone(&payload);
         handles.push(tokio::spawn(async move {
             let msg_start = Instant::now();
             let mut message = Message::new(payload);
-            engine.process_message(&mut message).await.unwrap();
+            engine.run(&mut message).await.into_result().unwrap();
             msg_start.elapsed()
         }));
     }
@@ -267,24 +300,24 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let payload: Arc<OwnedDataValue> = Arc::new(OwnedDataValue::from(&payload_json));
 
     // Baseline: sync-only stretch (parse_json + map + validation = 6 ops).
-    let sync_engine = Arc::new(
-        Engine::builder()
-            .with_workflow(build_workflow(false))
-            .build()?,
-    );
+    let sync_engine = Engine::builder()
+        .workflow_json(&build_workflow(false))
+        .build()
+        .expect("the engine builds");
+    check(&sync_engine, &payload, false).await;
     let (sync_tp, sync_avg, sync_pcts) =
         run_benchmark("sync only", 6, sync_engine, Arc::clone(&payload)).await;
 
     println!();
 
-    // With custom: same + 1 EchoHandler dispatched via the dyn-Any path
-    // (downcast_ref::<EchoInput>, TaskContext alloc, change-buffer drain).
-    let async_engine = Arc::new(
-        Engine::builder()
-            .with_workflow(build_workflow(true))
-            .register("echo", EchoHandler)
-            .build()?,
-    );
+    // With custom: same + 1 host call to `Echo` (its `Ctx`, one write into
+    // its overlay, the settle into the run).
+    let async_engine = Engine::builder()
+        .workflow_json(&build_workflow(true))
+        .register("echo", Echo)
+        .build()
+        .expect("the engine builds");
+    check(&async_engine, &payload, true).await;
     let (async_tp, async_avg, async_pcts) =
         run_benchmark("sync + custom", 7, async_engine, payload).await;
 

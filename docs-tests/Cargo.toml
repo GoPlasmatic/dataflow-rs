@@ -17,7 +17,8 @@ description = "Compiles the Rust examples in docs/src as doctests. Not published
 test = false # no unit tests to harness; the doctests are the whole point
 
 [dependencies]
-dataflow-rs = { path = ".." }
+# v3, the published 3.15.0, until 7e: v3's source is on `v3-maintenance` (I124).
+dataflow-rs = "=3.15.0"
 
 [dev-dependencies]
 async-trait = "0.1"

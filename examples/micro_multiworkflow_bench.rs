@@ -39,11 +39,13 @@
 //! recovers, and `split-progress − grouped` what it recovers plus the in-arena
 //! condition eval. Both should now be small.
 //!
+//! This is v4's port of v3's `micro_multiworkflow_bench`: the same three
+//! layouts, stage count and message counts, run through dataflow-rs 4.
+//!
 //! Run with: `cargo run --example micro_multiworkflow_bench --release`
 
-use dataflow_rs::{Engine, Message, Workflow};
+use dataflow_rs::{Engine, Message};
 use serde_json::{Value, json};
-use std::sync::Arc;
 use std::time::Instant;
 
 #[path = "shared/gate.rs"]
@@ -55,7 +57,17 @@ const NUM_STAGES: usize = 5;
 
 /// JSON for a `map` + `validation` pair operating on stage `i`: reads the heavy
 /// `data.input.*` (loaded once by the parse task) and writes a small
-/// `data.stage{i}.*` subtree (a distinct `refresh_for_path` slot per stage).
+/// subtree `stage{i}` (a distinct `refresh_for_path` slot per stage).
+///
+/// v3's benchmark writes OUTSIDE `data`: its `map` roots an unprefixed path
+/// `stage{i}.id` at the whole context, so the write lands at the top-level
+/// key `context.stage{i}`, while its rules read `data.stage{i}.*` and so fail
+/// on every message (5 tasks at status 400, 10 `VALIDATION_ERROR` records).
+/// That is a defect in v3's benchmark (reported to the owner), but it is the
+/// work the gate's baseline measures. v4 refuses a path outside the three
+/// roots, so the port reproduces that work through `temp_data.stage{i}.*`, a
+/// root no rule reads, and keeps the rules reading `data.stage{i}.*` so the
+/// same 10 fail.
 fn stage_tasks_json(i: usize) -> String {
     format!(
         r#"
@@ -66,12 +78,12 @@ fn stage_tasks_json(i: usize) -> String {
                     "name": "map",
                     "input": {{
                         "mappings": [
-                            {{ "path": "stage{i}.id",     "logic": {{ "var": "data.input.id" }} }},
-                            {{ "path": "stage{i}.name",   "logic": {{ "var": "data.input.party.name" }} }},
-                            {{ "path": "stage{i}.amount", "logic": {{ "var": "data.input.amount.value" }} }},
-                            {{ "path": "stage{i}.ccy",    "logic": {{ "var": "data.input.amount.currency" }} }},
-                            {{ "path": "stage{i}.adj",    "logic": {{ "+": [ {{ "var": "data.input.amount.value" }}, {i} ] }} }},
-                            {{ "path": "stage{i}.flag",   "logic": {{ ">": [ {{ "var": "data.input.amount.value" }}, 0 ] }} }}
+                            {{ "path": "temp_data.stage{i}.id",     "logic": {{ "var": "data.input.id" }} }},
+                            {{ "path": "temp_data.stage{i}.name",   "logic": {{ "var": "data.input.party.name" }} }},
+                            {{ "path": "temp_data.stage{i}.amount", "logic": {{ "var": "data.input.amount.value" }} }},
+                            {{ "path": "temp_data.stage{i}.ccy",    "logic": {{ "var": "data.input.amount.currency" }} }},
+                            {{ "path": "temp_data.stage{i}.adj",    "logic": {{ "+": [ {{ "var": "data.input.amount.value" }}, {i} ] }} }},
+                            {{ "path": "temp_data.stage{i}.flag",   "logic": {{ ">": [ {{ "var": "data.input.amount.value" }}, 0 ] }} }}
                         ]
                     }}
                 }}
@@ -105,7 +117,7 @@ fn parse_task_json() -> &'static str {
 
 /// `grouped` layout: one workflow, `parse + N×(map+validate)` in a single sync
 /// stretch → one `from_owned` per message.
-fn grouped_workflow() -> Workflow {
+fn grouped_workflow() -> Value {
     let stages: Vec<String> = (0..NUM_STAGES).map(stage_tasks_json).collect();
     let json = format!(
         r#"{{
@@ -118,13 +130,13 @@ fn grouped_workflow() -> Workflow {
         parse_task_json(),
         stages.join(",")
     );
-    Workflow::from_json(&json).unwrap()
+    serde_json::from_str(&json).unwrap()
 }
 
 /// `split` layout: N workflows, one stage each (workflow 0 also parses).
 /// `conditioned` gates every workflow after the first on the previous workflow's
 /// `metadata.progress.workflow_id` (a real compiled condition → owned-path eval).
-fn split_workflows(conditioned: bool) -> Vec<Workflow> {
+fn split_workflows(conditioned: bool) -> Vec<Value> {
     (0..NUM_STAGES)
         .map(|i| {
             let condition = if conditioned && i > 0 {
@@ -149,7 +161,7 @@ fn split_workflows(conditioned: bool) -> Vec<Workflow> {
                     "tasks": [ {tasks} ]
                 }}"#
             );
-            Workflow::from_json(&json).unwrap()
+            serde_json::from_str(&json).unwrap()
         })
         .collect()
 }
@@ -187,25 +199,50 @@ fn build_payload() -> Value {
 /// `expected_audit` asserts the full task chain executed (1 parse + N×2 tasks).
 async fn time_engine(label: &str, engine: &Engine, payload: &Value, expected_audit: usize) -> f64 {
     {
-        let mut m = Message::from_value(payload);
-        engine.process_message(&mut m).await.unwrap();
+        let mut m = Message::from_json(payload);
+        engine.run(&mut m).await.into_result().unwrap();
         assert_eq!(
-            m.audit_trail().len(),
+            m.audit().len(),
             expected_audit,
             "[{label}] expected {expected_audit} audit entries, got {} — chain did not fully execute",
-            m.audit_trail().len()
+            m.audit().len()
         );
+        // What v3's benchmark produces: the maps write, the rules (which read
+        // `data.stage{i}`) all fail.
+        let temp = Value::from(m.context().temp_data());
+        assert_eq!(
+            temp[format!("stage{}", NUM_STAGES - 1)]["amount"],
+            json!(250),
+            "[{label}] the last stage's mappings did not write"
+        );
+        assert_eq!(
+            m.errors().len(),
+            2 * NUM_STAGES,
+            "[{label}] expected one VALIDATION_ERROR per rule, got {:?}",
+            m.errors()
+        );
+        assert!(
+            m.errors().iter().all(|e| e.code == "VALIDATION_ERROR"),
+            "[{label}] errors: {:?}",
+            m.errors()
+        );
+        let rejected = m
+            .audit()
+            .iter()
+            .filter(|a| a.task_id.starts_with("validate_") && a.status == 400)
+            .count();
+        assert_eq!(rejected, NUM_STAGES, "[{label}] validation tasks at 400");
     }
 
     for _ in 0..WARMUP {
-        let mut m = Message::from_value(payload);
-        engine.process_message(&mut m).await.unwrap();
+        let mut m = Message::from_json(payload);
+        engine.run(&mut m).await.into_result().unwrap();
     }
 
     let start = Instant::now();
     for _ in 0..N {
-        let mut m = Message::from_value(payload);
-        engine.process_message(&mut m).await.unwrap();
+        let mut m = Message::from_json(payload);
+        engine.run(&mut m).await.into_result().unwrap();
     }
     let el = start.elapsed();
     let ns = el.as_nanos() as f64 / N as f64;
@@ -222,24 +259,16 @@ async fn main() {
     let payload = build_payload();
     let expected_audit = 1 + NUM_STAGES * 2; // 1 parse + N×(map+validate)
 
-    let grouped = Arc::new(
-        Engine::builder()
-            .with_workflow(grouped_workflow())
+    let build = |workflows: Vec<Value>| {
+        workflows
+            .iter()
+            .fold(Engine::builder(), |b, w| b.workflow_json(w))
             .build()
-            .unwrap(),
-    );
-    let split_true = Arc::new(
-        Engine::builder()
-            .with_workflows(split_workflows(false))
-            .build()
-            .unwrap(),
-    );
-    let split_prog = Arc::new(
-        Engine::builder()
-            .with_workflows(split_workflows(true))
-            .build()
-            .unwrap(),
-    );
+            .expect("the engine builds")
+    };
+    let grouped = build(vec![grouped_workflow()]);
+    let split_true = build(split_workflows(false));
+    let split_prog = build(split_workflows(true));
 
     println!(
         "Multi-workflow bench: {NUM_STAGES} stages (parse + {NUM_STAGES}x map+validate), heavy data.input\n"

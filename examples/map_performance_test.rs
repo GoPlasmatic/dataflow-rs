@@ -4,10 +4,13 @@
 //! wrote, across `data` / `temp_data` / `metadata`. Measures per-message cost
 //! when every mapping resolves and writes.
 //!
+//! This is v4's port of v3's `map_performance_test`: the same definition,
+//! iteration counts and loop, run through dataflow-rs 4.
+//!
 //! Run with: `cargo run --example map_performance_test --release`
 
-use dataflow_rs::engine::{Engine, Message, Workflow};
-use serde_json::json;
+use dataflow_rs::{Engine, Message};
+use serde_json::{Value, json};
 use std::time::Instant;
 
 #[path = "shared/gate.rs"]
@@ -60,29 +63,28 @@ async fn main() {
         }
     ]);
 
-    let workflows: Vec<Workflow> = workflows_json
+    let engine = workflows_json
         .as_array()
         .unwrap()
         .iter()
-        .map(|w| serde_json::from_value(w.clone()).unwrap())
-        .collect();
-
-    let engine = Engine::builder().with_workflows(workflows).build().unwrap();
+        .fold(Engine::builder(), |b, w| b.workflow_json(w))
+        .build()
+        .expect("the engine builds");
 
     // Warmup
     println!("Warming up...");
     for _ in 0..1000 {
-        let mut message = Message::from_value(&json!({
+        let mut message = Message::from_json(&json!({
             "source": "test_value"
         }));
-        engine.process_message(&mut message).await.unwrap();
+        engine.run(&mut message).await.into_result().unwrap();
 
         // Fail loudly rather than reporting a throughput number for ten
         // mappings that resolved to nothing. `data.result` is the end of the
         // chain, so it only holds the seed value if all ten fired.
         assert_eq!(
-            message.data()["result"],
-            json!("test_value").into(),
+            Value::from(message.context().data())["result"],
+            json!("test_value"),
             "the mapping chain did not resolve — this benchmark would be measuring no-ops"
         );
     }
@@ -96,10 +98,10 @@ async fn main() {
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let mut message = Message::from_value(&json!({
+        let mut message = Message::from_json(&json!({
             "source": "test_value"
         }));
-        engine.process_message(&mut message).await.unwrap();
+        engine.run(&mut message).await.into_result().unwrap();
     }
     let duration = start.elapsed();
 

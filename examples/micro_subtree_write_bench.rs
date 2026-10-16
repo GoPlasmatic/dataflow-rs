@@ -22,9 +22,13 @@
 //! Methodology matches `micro_multiworkflow_bench.rs`: `current_thread`
 //! runtime, tight single-threaded loop, default `capture_changes = true`.
 //!
+//! This is v4's port of v3's `micro_subtree_write_bench`: the same definition,
+//! k-sweep and message counts, run through dataflow-rs 4 (default audit,
+//! `capture_changes` on).
+//!
 //! Run with: `cargo run --example micro_subtree_write_bench --release`
 
-use dataflow_rs::{Engine, Message, Workflow};
+use dataflow_rs::{Engine, Message};
 use serde_json::{Value, json};
 use std::time::Instant;
 
@@ -38,7 +42,7 @@ const CONFIGS: &[(usize, usize)] = &[(5, 150_000), (25, 60_000), (100, 15_000)];
 /// One workflow: parse the payload into `data.input`, then a single map task
 /// whose k mappings all write string values into `data.DOC.f{i}` — same
 /// depth-2 subtree, accumulating k fields per message.
-fn subtree_workflow(k: usize) -> Workflow {
+fn subtree_workflow(k: usize) -> Value {
     let mappings: Vec<String> = (0..k)
         .map(|i| {
             format!(
@@ -69,7 +73,7 @@ fn subtree_workflow(k: usize) -> Workflow {
         }}"#,
         mappings.join(",")
     );
-    Workflow::from_json(&json).unwrap()
+    serde_json::from_str(&json).unwrap()
 }
 
 /// Small payload: the measurement targets the write path, not the
@@ -84,34 +88,35 @@ fn build_payload() -> Value {
 
 async fn time_config(k: usize, n: usize, payload: &Value) -> (f64, f64) {
     let engine = Engine::builder()
-        .with_workflow(subtree_workflow(k))
+        .workflow_json(&subtree_workflow(k))
         .build()
-        .unwrap();
+        .expect("the engine builds");
 
     // Correctness gate: the full chain ran and all k fields landed.
     {
-        let mut m = Message::from_value(payload);
-        engine.process_message(&mut m).await.unwrap();
-        assert_eq!(m.audit_trail().len(), 2, "parse + map must both run");
-        let doc = &m.context["data"]["DOC"];
+        let mut m = Message::from_json(payload);
+        engine.run(&mut m).await.into_result().unwrap();
+        assert_eq!(m.audit().len(), 2, "parse + map must both run");
+        let data = Value::from(m.context().data());
+        let doc = &data["DOC"];
         for i in 0..k {
             let field = doc.get(format!("f{i}"));
             assert!(
-                field.map(|v| v.as_str().is_some()).unwrap_or(false),
+                field.map(|v| v.is_string()).unwrap_or(false),
                 "data.DOC.f{i} missing or not a string — mappings did not execute"
             );
         }
     }
 
     for _ in 0..n / 10 {
-        let mut m = Message::from_value(payload);
-        engine.process_message(&mut m).await.unwrap();
+        let mut m = Message::from_json(payload);
+        engine.run(&mut m).await.into_result().unwrap();
     }
 
     let start = Instant::now();
     for _ in 0..n {
-        let mut m = Message::from_value(payload);
-        engine.process_message(&mut m).await.unwrap();
+        let mut m = Message::from_json(payload);
+        engine.run(&mut m).await.into_result().unwrap();
     }
     let el = start.elapsed();
     let ns_msg = el.as_nanos() as f64 / n as f64;

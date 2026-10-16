@@ -72,8 +72,8 @@ pub type Deviated = (
 ///
 /// `breaks/unknown_keys` and `builtins/pre39_spellings#1` are what `parse`
 /// reports, as phase 2's tests pin it: the typos in
-/// `v4/tests/repository_definitions.rs`, the UI's `path` in
-/// `v4/tests/parse.rs`, and, for `pre39_spellings#1`, an unregistered
+/// `tests/repository_definitions.rs`, the UI's `path` in
+/// `tests/parse.rs`, and, for `pre39_spellings#1`, an unregistered
 /// `http_call` (the reader leaves the aliases to the host).
 pub const DEVIATED: &[Deviated] = &[
     ("breaks/name_required", 0, &["6"], &[]),
@@ -483,7 +483,7 @@ const XML: &str = r#""<doc><b>1</b><a><item>1</item><item>x</item></a></doc>""#;
 /// rebuilds no snapshot, a redacted one replays to `null` where the message
 /// keeps the value, which the replay invariant forbids, and v4's budget
 /// truncates on its own scale, so its `truncated` and v3's snapshot cut-off
-/// would rarely agree. v4's own tests hold those three (`v4/tests/trace.rs`).
+/// would rarely agree. v4's own tests hold those three (`tests/trace.rs`).
 pub const TRACE_DEVIATED: &[RunDeviated] = &[
     (
         "breaks/handler_writes_then_err",
@@ -771,7 +771,7 @@ mod tests {
     /// `#[non_exhaustive]` and v4 exposes no list of its codes, so this reads
     /// the declaration itself.
     fn declared_variants() -> Vec<&'static str> {
-        let source = include_str!("../../../v4/src/base/issue.rs");
+        let source = include_str!("../../../src/base/issue.rs");
         let body = source
             .split_once("pub enum IssueCode {")
             .and_then(|(_, rest)| rest.split_once("\n}"))

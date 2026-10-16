@@ -1,339 +1,55 @@
-/*!
-# Dataflow-rs
+//! dataflow-rs 4, under construction on `main`.
+//!
+//! The 3.x line is on the `v3-maintenance` branch, which takes its fixes
+//! until 4.0 is released.
+//!
+//! # Features
+//!
+//! None is on by default.
+//!
+//! - `datetime`, `ext-string`, `ext-array`, `ext-math`, `ext-control`,
+//!   `ext-object` and `error-handling`: the seven operator families, each the
+//!   `datalogic-rs` feature of the same name. Enabling one is not a no-op: an
+//!   operator whose family is off is literal data, so a `{"length": ...}`
+//!   value starts evaluating once `ext-string` is on, and `{"$length": ...}`
+//!   pins the literal. `datetime` also changes `==` and the ordering
+//!   operators on date-shaped strings.
+//! - `all-operators`: the seven families.
+//! - `tensor`: the `Tensor` value and its operators. Not in `all-operators`,
+//!   since names like `shape`, `full`, `cast` and `concat` are ordinary JSON
+//!   keys.
+//! - `budget`: a ceiling on the operations of one evaluation, which
+//!   `ExprEngineBuilder::ops_budget` sets.
+//! - `wasm-web`: the browser's clock and randomness, which
+//!   `wasm32-unknown-unknown` needs and native targets must not pull in.
+//! - `ts`: the TypeScript declarations of the wire shapes, rendered into
+//!   `bindings/dataflow.d.ts`. **`ts` is outside semver:** the shapes it
+//!   declares are the wire shapes, which are, but the generator, its output's
+//!   layout and this feature's dependencies may change in any release.
 
-A lightweight rules engine for building IFTTT-style automation and data processing pipelines in Rust.
+#![forbid(unsafe_code)]
+#![warn(missing_docs, missing_debug_implementations)]
 
-## Overview
+extern crate self as dataflow_rs;
 
-Dataflow-rs provides a high-performance rules engine that follows the **IF → THEN → THAT** model:
+/// The crate version.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-- **IF** — Define conditions using JSONLogic expressions (evaluated against `data`, `metadata`, `temp_data`)
-- **THEN** — Execute actions: data transformation, validation, or custom async logic
-- **THAT** — Chain multiple actions and rules with priority ordering
+mod base;
+pub mod compat;
+pub mod def;
+pub mod expr;
+pub mod function;
+pub mod observe;
+pub mod program;
+pub mod run;
+mod state;
 
-Rules are defined declaratively in JSON and compiled once at startup for zero-overhead evaluation at runtime.
-
-## Key Components
-
-| Rules Engine | Workflow Engine | Description |
-|---|---|---|
-| **RulesEngine** | **Engine** | Central async component that evaluates rules and executes actions |
-| **Rule** | **Workflow** | A condition + actions bundle — IF condition THEN execute actions |
-| **Action** | **Task** | An individual processing step that performs a function on a message |
-
-* **AsyncFunctionHandler**: A trait implemented by action handlers to define custom async processing logic
-* **TaskContext**: Per-call context handed to handlers — typed data accessors, audit-trail-aware setters
-* **TaskOutcome**: Return value of a handler — `Success`, `Status(code)`, `Skip`, or `Halt`
-* **Message**: The data structure that flows through the engine, containing payload, metadata, and processing results
-
-## Built-in Functions
-
-The engine ships with the following pre-registered functions, available to
-any workflow without further setup:
-
-| Category | Function | Purpose |
-|---|---|---|
-| **Parse** | `parse_json` | Deserialize a JSON payload string into `data` |
-| **Parse** | `parse_xml` | Deserialize an XML payload string into `data` |
-| **Transform** | `map` | Assign JSONLogic-derived values to dot-paths within the message |
-| **Validate** | `validation` | Apply JSONLogic rules with custom error messages |
-| **Routing** | `filter` | Skip or halt processing based on a JSONLogic predicate |
-| **Routing** | `log` | Emit a log entry at a configurable level |
-| **Publish** | `publish_json` | Render `data` back out as a JSON payload |
-| **Publish** | `publish_xml` | Render `data` back out as an XML payload |
-
-In addition, dataflow-rs provides **typed config schemas** for three common
-service-layer integrations — `http_call`, `enrich`, and `publish_kafka`.
-These are *not* pre-registered: register an `AsyncFunctionHandler` under the
-matching name and the engine handles config validation and JSONLogic
-pre-compilation for you. See [`HttpCallConfig`], [`EnrichConfig`], and
-[`PublishKafkaConfig`].
-
-Custom functions are registered through `Engine::builder().register(...)`;
-see the **Extending with Custom Functions** section below.
-
-## Usage Example
-
-```rust,no_run
-use dataflow_rs::{Engine, Workflow};
-use dataflow_rs::engine::message::Message;
-use serde_json::json;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Define a workflow in JSON
-    let workflow_json = r#"
-    {
-        "id": "premium_order",
-        "name": "Premium Order Processing",
-        "condition": {">=": [{"var": "data.order.total"}, 1000]},
-        "tasks": [
-            {
-                "id": "apply_discount",
-                "name": "Apply Premium Discount",
-                "function": {
-                    "name": "map",
-                    "input": {
-                        "mappings": [
-                            {
-                                "path": "data.order.discount",
-                                "logic": {"*": [{"var": "data.order.total"}, 0.1]}
-                            }
-                        ]
-                    }
-                }
-            }
-        ]
-    }
-    "#;
-
-    // Parse the workflow
-    let workflow = Workflow::from_json(workflow_json)?;
-
-    // Create the workflow engine — builder is the recommended path; built-in
-    // functions are auto-registered.
-    let engine = Engine::builder().with_workflow(workflow).build()?;
-
-    // Create a message to process
-    let mut message = Message::from_value(&json!({
-        "order": {
-            "total": 1500
-        }
-    }));
-
-    // Process the message through the workflow
-    match engine.process_message(&mut message).await {
-        Ok(_) => {
-            println!("Discount: {}", message.data()["order"]["discount"]); // 150
-        }
-        Err(e) => {
-            println!("Error in workflow: {:?}", e);
-        }
-    }
-
-    Ok(())
-}
-```
-
-## Error Handling
-
-The library provides a comprehensive error handling system:
-
-```rust,no_run
-use dataflow_rs::{Engine, Result, DataflowError};
-use dataflow_rs::engine::message::Message;
-use serde_json::json;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // ... setup workflows ...
-    let engine = Engine::builder().build()?;
-
-    let mut message = Message::from_value(&json!({}));
-
-    // Process the message, errors will be collected but not halt execution
-    engine.process_message(&mut message).await?;
-
-    // Check if there were any errors during processing
-    if message.has_errors() {
-        for error in message.errors() {
-            println!("Error in workflow: {:?}, task: {:?}: {:?}",
-                     error.workflow_id, error.task_id, error.message);
-        }
-    }
-
-    Ok(())
-}
-```
-
-## Extending with Custom Functions
-
-Implement `AsyncFunctionHandler` with a typed `Input` so the engine deserializes
-your config once at startup; handlers then receive typed input and a
-`TaskContext` that records audit-trail changes automatically.
-
-```rust,no_run
-use dataflow_rs::{
-    AsyncFunctionHandler, Engine, Result, TaskContext, TaskOutcome, Workflow,
-};
-use dataflow_rs::datavalue::OwnedDataValue;
-use serde::Deserialize;
-use serde_json::json;
-use async_trait::async_trait;
-
-#[derive(Deserialize)]
-struct StatsInput {
-    /// Path inside `data` whose array of numbers to summarize.
-    source: String,
-    /// Path inside `data` to write the result to.
-    target: String,
-}
-
-struct Statistics;
-
-#[async_trait]
-impl AsyncFunctionHandler for Statistics {
-    type Input = StatsInput;
-
-    async fn execute(
-        &self,
-        ctx: &mut TaskContext<'_>,
-        input: &StatsInput,
-    ) -> Result<TaskOutcome> {
-        let count = ctx.data()
-            .get(input.source.as_str())
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.len())
-            .unwrap_or(0);
-
-        ctx.set(
-            &format!("data.{}", input.target),
-            OwnedDataValue::from(&json!({ "count": count })),
-        );
-        Ok(TaskOutcome::Success)
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let engine = Engine::builder()
-        .register("statistics", Statistics)
-        // .with_workflow(workflow)
-        .build()?;
-    // ...
-    Ok(())
-}
-```
-
-## Ecosystem
-
-Dataflow-rs is part of a small family of crates that share the same workflow
-and JSONLogic shape:
-
-| Crate | Purpose |
-|---|---|
-| [`dataflow-rs`](https://crates.io/crates/dataflow-rs) | This crate — async workflow engine in Rust |
-| [`@goplasmatic/dataflow-wasm`](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm) | WebAssembly bindings — run workflows in the browser or Node |
-| [`@goplasmatic/dataflow-ui`](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) | React components for visualizing and debugging workflows |
-| [`datalogic-rs`](https://crates.io/crates/datalogic-rs) | The JSONLogic compiler/evaluator used internally |
-
-Source for all four lives under <https://github.com/GoPlasmatic>.
-*/
-
-pub mod engine;
-pub mod prelude;
-
-// Re-export all public APIs for easier access
-pub use engine::authoring::{IssueCode, Severity, WorkflowIssue};
-pub use engine::error::{DataflowError, ErrorInfo, Result, ServiceErrorBuilder};
-pub use engine::functions::{
-    AsyncFunctionHandler, BUILTIN_FUNCTION_NAMES, BoxedFunctionHandler, BuiltinKind, ConnectorName,
-    ContextRoot, DataRoot, DispatchableFunction, EnrichConfig, FilterConfig, FunctionConfig,
-    HttpCallConfig, HttpMethod, LogConfig, MapConfig, MapMapping, MapMode, OnNull, PathRoot,
-    PathTemplate, PublishKafkaConfig, Template, TemplateCompiler, ValidationConfig, ValidationRule,
-    builtin_function_kind, is_builtin_function,
-};
-#[cfg(not(target_arch = "wasm32"))]
-pub use engine::retry::{RetryPolicy, retry_with_attempts, retry_with_policy};
-
-pub use engine::message::{AuditMode, AuditTrail, Change, Message, MessageBuilder};
-pub use engine::observer::{
-    ExecutionObserver, MessageFinished, MessageStarted, TaskEvent, WorkflowFinished,
-    WorkflowStarted,
-};
-pub use engine::steps::{
-    AuthoredStep, AuthoredSteps, MAX_GROUP_DEPTH, StepKind, is_group, walk_authored_steps,
-    walk_authored_steps_at,
-};
-pub use engine::task_context::{ContextView, TaskContext};
-pub use engine::task_outcome::{HALT_STATUS_CODE, TaskOutcome};
-pub use engine::trace::{AuditTrailScope, ExecutionStep, ExecutionTrace, StepResult, TraceOptions};
-pub use engine::{
-    ConnectorRef, Engine, EngineBuilder, ForEach, HaltOn, Rollout, RolloutError, Task, TaskGroup,
-    Workflow, WorkflowStatus,
-};
-
-/// The [`datalogic_rs`] JSONLogic engine, re-exported.
-///
-/// [`Engine::datalogic`] and [`TaskContext::datalogic`] both return
-/// `&Arc<datalogic_rs::Engine>`, [`TaskContext::eval`] takes a `&datalogic_rs::Logic`
-/// directly, and [`TemplateCompiler::engine`] returns a `&datalogic_rs::Engine` —
-/// so any crate implementing [`AsyncFunctionHandler`] with ad-hoc evaluation, or
-/// compiling a [`Template`] field itself, has to name these types. Reaching them
-/// through here locks their major version to whatever `dataflow-rs` depends on;
-/// prefer it over an independent `datalogic-rs` dependency, which can skew.
-///
-/// Two things to know:
-///
-/// - `datalogic_rs::Engine` and [`crate::Engine`] are both called `Engine`.
-///   This crate imports the former under an alias
-///   (`use datalogic_rs::Engine as DatalogicEngine;`); you will want to do the
-///   same.
-/// - The operator surface is feature-dependent, and the gate is compile-time —
-///   `datalogic-rs` `#[cfg]`s the opcodes themselves, so there is no runtime
-///   equivalent. `dataflow-rs` forwards each family as a cargo feature of the
-///   same name, all **off by default**:
-///
-///   | feature | operators |
-///   |---|---|
-///   | `ext-string` | `length`, `starts_with`, `ends_with`, `upper`, `lower`, `trim`, `split` |
-///   | `ext-array` | `sort`, `slice`, `group_by`, `distinct` |
-///   | `ext-math` | `abs`, `ceil`, `floor` |
-///   | `ext-control` | `exists`, `??`, `switch` (alias `match`), `type` |
-///   | `ext-object` | `keys`, `values`, `entries` |
-///   | `error-handling` | `try`, `throw` |
-///   | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
-///   | `all-operators` | all of the above |
-///
-///   `error-handling` names the JSONLogic `try`/`throw` operators. It is
-///   unrelated to this crate's own error handling ([`DataflowError`],
-///   `continue_on_error`, [`Message::errors`]), which is unconditional.
-///
-///   Enabling a family is **not** a no-op for existing workflows. This crate
-///   always runs `datalogic-rs` in templating mode, where an unrecognised
-///   operator name is not an error — the object echoes back verbatim. So a
-///   `{"length": …}` value that used to pass through a `map` mapping as literal
-///   data starts *evaluating* once `ext-string` is on. Writing it as
-///   `{"$length": …}` pins the literal reading whatever families are enabled —
-///   see [`Engine::template_key_escape`]. `datetime` goes further and changes
-///   core operators: with it enabled, `==` and the ordering operators parse
-///   plain date-shaped strings as instants, so
-///   `{"==": ["2024-01-15T00:00:00Z", "2024-01-15T01:00:00+01:00"]}` is `true`
-///   rather than `false`. Enable only the families your rules use.
-///
-///   A direct `datalogic-rs` dependency with the feature enabled still works
-///   via cargo's additive unification, but prefer the feature here — it cannot
-///   skew from the version this crate depends on.
+pub use crate::base::{Error, Issue, Result};
+pub use crate::def::WorkflowDef;
+pub use crate::expr::{Expr, Path};
+pub use crate::function::{Ctx, Function, Outcome, Registry};
+pub use crate::observe::Observer;
+pub use crate::run::{Engine, Message, Run, RunOptions};
 pub use datalogic_rs;
-
-/// The [`datavalue`] value-type crate, re-exported.
-///
-/// [`Message::context`], [`Message::data`], [`TaskContext::get`] /
-/// [`TaskContext::set`], [`Change::old_value`] and the [`engine::utils`] path
-/// helpers are all expressed in terms of `datavalue::OwnedDataValue`, so it is
-/// unavoidable for handler authors.
-///
-/// Note the crate is published as `datavalue-rs` and used here under the name
-/// `datavalue` via a `package =` rename, which makes the correct `Cargo.toml`
-/// line hard to guess — reach it as `dataflow_rs::datavalue` instead. Same
-/// major-version-skew argument as [`datalogic_rs`].
 pub use datavalue;
-
-/// Type alias for `Workflow` — a Rule represents an IF-THEN unit: IF condition THEN execute actions.
-pub type Rule = Workflow;
-
-/// Type alias for `Task` — an Action is an individual processing step within a rule.
-pub type Action = Task;
-
-/// Type alias for `Engine` — the RulesEngine evaluates rules and executes their actions.
-pub type RulesEngine = Engine;
-
-/// Compiles the Rust snippets in `README.md` as doctests so the landing-page
-/// examples cannot drift from the API. Compiled only under `cargo test`; this
-/// type does not exist in a normal build and is not part of the public API.
-///
-/// Snippets that are illustrative fragments rather than runnable programs are
-/// tagged `ignore` in the README and are skipped here.
-#[cfg(doctest)]
-#[doc = include_str!("../README.md")]
-pub struct ReadmeDoctests;

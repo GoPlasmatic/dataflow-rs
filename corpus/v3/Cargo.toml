@@ -26,7 +26,8 @@ ext-object = ["dataflow-rs/ext-object"]
 error-handling = ["dataflow-rs/error-handling"]
 
 [dependencies]
-dataflow-rs = { path = "../.." }
+# v3, the published 3.15.0: v3's source is on `v3-maintenance` (I124).
+dataflow-rs = "=3.15.0"
 dataflow-corpus = { path = ".." }
 async-trait = "0.1"
 log = "0.4"

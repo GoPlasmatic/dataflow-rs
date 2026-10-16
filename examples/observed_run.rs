@@ -1,20 +1,22 @@
 //! # Observed run
 //!
-//! A row of the v4 performance gate: `realistic_benchmark`'s workload with an
-//! `ExecutionObserver` attached that counts tasks and workflows and never
-//! reads a duration, as an always-on metrics observer that counts only events
-//! does. In 3.15 an attached observer costs a clock read per task and per
-//! workflow whether it uses the time or not. v4 reads the clock only for an
-//! observer that asks for timings, so the gate requires the observed row to be
-//! faster.
+//! v4's port of v3's `observed_run`, a row of the v4 performance gate:
+//! `realistic_benchmark`'s workload with an `Observer` attached that counts
+//! tasks and workflows and never reads a duration, as an always-on metrics
+//! observer that counts only events does. In 3.15 an attached observer costs
+//! a clock read per task and per workflow whether it uses the time or not.
+//! v4 reads the clock only for an observer whose interest holds `TIMINGS`.
+//! The gate judges the row as every other: not slower (I4, I110).
 //!
 //! The workload runs twice: unobserved, which is `realistic_benchmark`, and
 //! observed. The unobserved row shows what observing costs on this line.
 //!
 //! Run with: `cargo run --example observed_run --release`
 
-use dataflow_rs::{Engine, ExecutionObserver, Message, TaskEvent, WorkflowFinished};
-use datavalue::OwnedDataValue;
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::observe::{Event, Interest, Observer};
+use dataflow_rs::run::EngineConfig;
+use dataflow_rs::{Engine, Message};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -35,40 +37,48 @@ struct Counts {
     workflows: AtomicU64,
 }
 
-impl ExecutionObserver for Counts {
-    fn task_finished(&self, _event: &TaskEvent<'_>) {
-        self.tasks.fetch_add(1, Ordering::Relaxed);
+impl Observer for Counts {
+    /// The point of the row: no `TIMINGS`, so v4 reads no clock for this
+    /// observer.
+    fn interest(&self) -> Interest {
+        Interest::WORKFLOWS | Interest::TASKS
     }
 
-    fn workflow_finished(&self, _event: &WorkflowFinished<'_>) {
-        self.workflows.fetch_add(1, Ordering::Relaxed);
+    fn on(&self, event: &Event<'_>) {
+        match event {
+            Event::TaskFinished { .. } => {
+                self.tasks.fetch_add(1, Ordering::Relaxed);
+            }
+            Event::WorkflowFinished { .. } => {
+                self.workflows.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
     }
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let payload = Arc::new(OwnedDataValue::from(&iso20022::payload()));
-    let unobserved = Arc::new(
-        Engine::builder()
-            .with_workflow(iso20022::workflow())
-            .build()
-            .expect("the engine builds"),
-    );
+    let workflow = iso20022::workflow();
+    let unobserved = Engine::builder()
+        .workflow_json(&workflow)
+        .build()
+        .expect("the engine builds");
     let counts = Arc::new(Counts::default());
-    let observed = Arc::new(
-        Engine::builder()
-            .with_workflow(iso20022::workflow())
-            .with_observer(counts.clone())
-            .build()
-            .expect("the engine builds"),
-    );
+    let observed = Engine::builder()
+        .workflow_json(&workflow)
+        .config(EngineConfig::default().observer(counts.clone()))
+        .build()
+        .expect("the engine builds");
 
     // The check: the workload ran, and the observer saw every task and the
     // workflow.
     let mut m = Message::new(Arc::clone(&payload));
     observed
-        .process_message(&mut m)
+        .run(&mut m)
         .await
+        .into_result()
         .expect("the workflow runs");
     iso20022::check(&m);
     assert_eq!(counts.tasks.load(Ordering::Relaxed), 3, "three task events");

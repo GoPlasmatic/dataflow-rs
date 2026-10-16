@@ -10,10 +10,13 @@
 //! see how the per-message framework overhead (UUID, audit drop, message
 //! construction) reweights when real eval work is added.
 //!
+//! This is v4's port of v3's `realistic_benchmark`: the same definition,
+//! payload, message count and concurrency, run through dataflow-rs 4.
+//!
 //! Run with: `cargo run --example realistic_benchmark --release`
 
+use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::{Engine, Message};
-use datavalue::OwnedDataValue;
 use futures::future::join_all;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -66,6 +69,10 @@ impl LatencyStats {
     }
 }
 
+fn cpus() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -73,8 +80,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("REALISTIC ENGINE BENCHMARK (ISO 20022 -> SwiftMT-shaped workload)");
     println!("=================================================================");
     println!("Total messages: {}", TOTAL_MESSAGES);
-    println!("CPU cores: {}", num_cpus::get());
-    println!("Tokio worker threads: {}", num_cpus::get());
+    println!("CPU cores: {}", cpus());
+    println!("Tokio worker threads: {}", cpus());
     println!();
 
     // -- Workflow: realistic transformation + validation ----------------------
@@ -83,23 +90,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1 validation task: 12 rules
     let workflow = iso20022::workflow();
 
-    let engine = Arc::new(Engine::builder().with_workflow(workflow).build().unwrap());
+    let engine = Engine::builder()
+        .workflow_json(&workflow)
+        .build()
+        .expect("the engine builds");
 
     // -- Sample payload: pacs.008-shaped, ~80 fields, 4-5 levels deep ---------
-    // Convert to `OwnedDataValue` ONCE at startup and share via `Arc`. Per-
-    // message construction goes through `Message::new(Arc::clone(...))`
-    // — a refcount bump, no serde_json clone or `OwnedDataValue::from(&Value)`
-    // walk. This is what callers with already-parsed inputs (e.g. an HTTP
-    // server holding parsed payloads) actually pay; the prior
-    // `Message::from_value(&data)` path measured the harness's serde_json
-    // churn as part of the engine cost.
+    // Convert to `OwnedDataValue` ONCE at startup and share via `Arc`. v4's
+    // `Message::new` takes an `Arc`, so per-message construction
+    // shares the `Arc` (a refcount bump, as v3); no serde_json walk either way.
     let sample_payload_json = iso20022::payload();
     let sample_payload: Arc<OwnedDataValue> = Arc::new(OwnedDataValue::from(&sample_payload_json));
 
     // Check the workload once before timing it: one that silently does less
     // than it says still reports a plausible number.
     let mut checked = Message::new(Arc::clone(&sample_payload));
-    engine.process_message(&mut checked).await.unwrap();
+    engine.run(&mut checked).await.into_result().unwrap();
     iso20022::check(&checked);
 
     // Warmup
@@ -107,11 +113,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let warmup_start = Instant::now();
     let warmup_handles: Vec<_> = (0..WARMUP_MESSAGES)
         .map(|_| {
-            let engine = Arc::clone(&engine);
+            let engine = engine.clone();
             let payload = Arc::clone(&sample_payload);
             tokio::spawn(async move {
                 let mut message = Message::new(payload);
-                engine.process_message(&mut message).await.unwrap();
+                engine.run(&mut message).await.into_result().unwrap();
             })
         })
         .collect();
@@ -132,12 +138,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handles = Vec::with_capacity(TOTAL_MESSAGES);
 
     for _ in 0..TOTAL_MESSAGES {
-        let engine = Arc::clone(&engine);
+        let engine = engine.clone();
         let payload = Arc::clone(&sample_payload);
         handles.push(tokio::spawn(async move {
             let msg_start = Instant::now();
             let mut message = Message::new(payload);
-            engine.process_message(&mut message).await.unwrap();
+            engine.run(&mut message).await.into_result().unwrap();
             msg_start.elapsed()
         }));
     }

@@ -1,5 +1,5 @@
-//! Measurement helpers for the benchmarks added as rows of the v4 performance
-//! gate.
+//! Measurement helpers for v4's ports of the performance gate's benchmarks: v3's
+//! `examples/shared/bench.rs`, with `spawned` over `Engine::run`.
 //!
 //! Not an example: a benchmark pulls it in with
 //! `#[path = "shared/bench.rs"] mod bench;`, and no single benchmark uses all
@@ -7,8 +7,8 @@
 
 #![allow(dead_code)]
 
+use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::{Engine, Message};
-use datavalue::OwnedDataValue;
 use futures::future::join_all;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -52,7 +52,7 @@ impl Samples {
 /// tokio task, as `realistic_benchmark` does. Returns the latencies and the
 /// throughput in messages per second.
 pub async fn spawned(
-    engine: &Arc<Engine>,
+    engine: &Engine,
     payload: &Arc<OwnedDataValue>,
     warmup: usize,
     total: usize,
@@ -60,12 +60,12 @@ pub async fn spawned(
     let spawn = |count: usize| {
         (0..count)
             .map(|_| {
-                let engine = Arc::clone(engine);
+                let engine = engine.clone();
                 let payload = Arc::clone(payload);
                 tokio::spawn(async move {
                     let start = Instant::now();
                     let mut message = Message::new(payload);
-                    engine.process_message(&mut message).await.unwrap();
+                    engine.run(&mut message).await.into_result().unwrap();
                     start.elapsed()
                 })
             })

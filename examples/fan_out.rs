@@ -1,26 +1,24 @@
 //! # Fan-out
 //!
-//! A row of the v4 performance gate: one task fans out over 100 elements with
-//! `for_each`, on a message that carries a 2 MiB context. In 3.15 each call
-//! runs against its own fork of the message, so the fan-out copies the whole
-//! context once per element. v4 isolates an element with a binding layer and
-//! an overlay over the run's one view, so the gate requires this row to be
-//! faster.
+//! v4's port of v3's `fan_out`, a row of the v4 performance gate: one task
+//! fans out over 100 elements with `for_each`, on a message that carries a
+//! 2 MiB context. In 3.15 each call runs against its own fork of the
+//! message, so the fan-out copies the whole context once per element. v4
+//! binds each element beneath the call's own writes over the run's one view,
+//! which no call copies, so the gate requires this row to be faster.
 //!
-//! The handler is the pricing step of the v4 design's worked example: it
-//! resolves the element's `sku` and `qty` in one view and writes a price to
-//! `collect`, and the fold gathers the prices into `into` in element order.
+//! The function is the pricing step of the v4 design's worked example: it
+//! evaluates the element's `sku` and `qty` and writes a price to
+//! `temp_data.price`, which `collect` names, and the fold gathers the prices
+//! into `into` in element order.
 //!
 //! Run with: `cargo run --example fan_out --release`
 
-use async_trait::async_trait;
-use dataflow_rs::{
-    AsyncFunctionHandler, DataflowError, Engine, Message, Result, TaskContext, TaskOutcome,
-    Template, TemplateCompiler, Workflow,
-};
-use datavalue::OwnedDataValue;
-use serde::Deserialize;
+use dataflow_rs::datavalue::OwnedDataValue;
+use dataflow_rs::function::FunctionConfig;
+use dataflow_rs::{Ctx, Engine, Expr, Function, Message, Outcome, Path, Result};
 use serde_json::{Value, json};
+use std::sync::LazyLock;
 use std::time::Instant;
 
 #[path = "shared/bench.rs"]
@@ -32,35 +30,26 @@ const CONTEXT_BYTES: usize = 2 * 1024 * 1024;
 const ELEMENTS: usize = 100;
 const MESSAGES: usize = 10;
 
-#[derive(Deserialize)]
-struct PriceInput {
-    sku: Template,
-    qty: Template,
+/// Where every call writes its price, which `collect` names.
+static PRICE: LazyLock<Path> = LazyLock::new(|| "temp_data.price".parse().expect("a path"));
+
+/// The element's two fields, each an expression over its binding.
+#[derive(FunctionConfig)]
+struct PriceConfig {
+    sku: Expr<String>,
+    qty: Expr<u64>,
 }
 
 struct PriceItem;
 
-#[async_trait]
-impl AsyncFunctionHandler for PriceItem {
-    type Input = PriceInput;
+impl Function for PriceItem {
+    type Config = PriceConfig;
 
-    fn compile_input(input: &mut PriceInput, c: &TemplateCompiler) -> Result<()> {
-        input.sku.compile(c, "sku")?;
-        input.qty.compile(c, "qty")
-    }
-
-    async fn execute(&self, ctx: &mut TaskContext<'_>, input: &PriceInput) -> Result<TaskOutcome> {
-        let (sku, qty) = ctx.with_view(|view| {
-            Ok::<_, DataflowError>((
-                input.sku.resolve_string_in(view)?,
-                input.qty.resolve_u64_in(view, "qty")?,
-            ))
-        })?;
-        ctx.set(
-            "temp_data.price",
-            OwnedDataValue::from(&json!(price(&sku, qty))),
-        );
-        Ok(TaskOutcome::Success)
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &PriceConfig) -> Result<Outcome> {
+        let sku = ctx.eval(&cfg.sku)?;
+        let qty = ctx.eval(&cfg.qty)?;
+        ctx.set(&PRICE, OwnedDataValue::from(&json!(price(&sku, qty))))?;
+        Ok(Outcome::Ok)
     }
 }
 
@@ -77,8 +66,8 @@ fn item(i: usize) -> Value {
     json!({ "sku": format!("SKU-{:06}", i * 7), "qty": i % 4 + 1 })
 }
 
-fn workflow() -> Workflow {
-    let workflow = json!({
+fn workflow() -> Value {
+    json!({
         "id": "price_batch",
         "name": "Price a batch",
         "tasks": [{
@@ -95,8 +84,11 @@ fn workflow() -> Workflow {
                 "qty": { "var": "temp_data.item.qty" }
             }}
         }]
-    });
-    Workflow::from_json(&workflow.to_string()).expect("the workflow parses")
+    })
+}
+
+fn message(data: &OwnedDataValue) -> Message {
+    Message::from_parts(OwnedDataValue::Null, data.clone(), OwnedDataValue::Null)
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -109,37 +101,39 @@ async fn main() {
     );
     let items: Vec<Value> = (0..ELEMENTS).map(item).collect();
     let data = OwnedDataValue::from(&json!({ "catalog": catalog, "batch": { "items": items } }));
+    let prices: Path = "data.prices".parse().expect("a path");
 
     let engine = Engine::builder()
-        .with_workflow(workflow())
+        .workflow_json(&workflow())
         .register("price_item", PriceItem)
         .build()
         .expect("the engine builds");
 
     // The check, which also warms the engine up.
-    let mut m = Message::builder().data(data.clone()).build();
+    let mut m = message(&data);
     engine
-        .process_message(&mut m)
+        .run(&mut m)
         .await
+        .into_result()
         .expect("the fan-out runs");
     assert!(m.errors().is_empty(), "errors: {:?}", m.errors());
-    let prices = Value::from(&m.context["data"]["prices"]);
     let expected: Vec<Value> = (0..ELEMENTS)
         .map(|i| json!(price(&format!("SKU-{:06}", i * 7), (i % 4 + 1) as u64)))
         .collect();
     assert_eq!(
-        prices,
-        json!(expected),
+        m.context().get(&prices).map(Value::from),
+        Some(json!(expected)),
         "every element priced, in element order"
     );
 
     let mut samples = bench::Samples::with_capacity(MESSAGES);
     for _ in 0..MESSAGES {
-        let mut m = Message::builder().data(data.clone()).build();
+        let mut m = message(&data);
         let start = Instant::now();
         engine
-            .process_message(&mut m)
+            .run(&mut m)
             .await
+            .into_result()
             .expect("the fan-out runs");
         samples.push(start.elapsed());
     }
