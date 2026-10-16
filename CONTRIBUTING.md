@@ -2,7 +2,8 @@
 
 > **`main` is dataflow-rs 4.0, under construction.** This file describes 3.x, whose source
 > and documentation site are on the `v3-maintenance` branch. Its commands, too, are
-> `v3-maintenance`'s, except the `wasm/` lint, which holds on both branches.
+> `v3-maintenance`'s, except the `wasm/` and `ui/` checks, which are `main`'s: since
+> phase 7d both packages build on the 4.0 crate at the root.
 
 Thanks for your interest in contributing. This guide covers what you need to
 get a change merged.
@@ -138,13 +139,21 @@ If you touched `wasm/`:
 ```bash
 cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
 cd wasm && wasm-pack test --node
+cd wasm && wasm-pack build --target web --out-dir pkg --release && node scripts/verify-wasm.mjs pkg
 ```
+
+`wasm-pack test --node` runs the engine on wasm32 under Node; the release build
+plus `verify-wasm.mjs` is what the release pipeline runs, and it checks that
+the package's `.d.ts` carries the engine's wire types.
 
 If you touched `ui/`:
 
 ```bash
-cd ui && npm ci && npm run lint && npm run build:lib
+cd ui && npm ci && npm run wasm:local && npm run lint && npm test && npm run build:lib
 ```
+
+`npm test` is vitest over the engine `wasm:local` overlaid: the trace helpers
+over real runs, and the debugger rendering a failing run.
 
 `lint` runs with `--max-warnings 0`, so a single warning fails CI; `build:lib`
 is `tsc && vite build`, so it type-checks the whole package as well as producing

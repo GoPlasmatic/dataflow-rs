@@ -113,12 +113,11 @@ jobs:
       # Everything above is --all-features. These two steps are bare, with no
       # `--workspace` and no `-p`, on purpose: they compile the root the way
       # `cargo add dataflow-rs` delivers it. `--workspace` cannot: `wasm/`
-      # depends on the published 3.15.0 with `all-operators`, and cargo unifies
-      # features across the members one invocation selects, so the
-      # `datalogic-rs` both engines share has every operator family on. The
-      # root's own features stay off, and it sees the families only through
-      # that one shared `datalogic-rs`. Nor can `-p dataflow-rs`: it is
-      # ambiguous beside the published 3.15.0 the other members depend on
+      # depends on the root with `wasm-web` and `all-operators`, and cargo
+      # unifies features across the members one invocation selects, so under
+      # `--workspace` the root itself has every operator family on. Nor can
+      # `-p dataflow-rs`: it is ambiguous beside the published 3.15.0 that
+      # `corpus/v3`, `docs-tests` and the root's own dev-dependency pull in
       # (I156).
       - name: Run clippy (default features)
         run: cargo clippy --all-targets --locked -- -D warnings
@@ -186,7 +185,10 @@ jobs:
 
   # The native job above builds dataflow-wasm for the host only. This job is
   # what actually exercises the wasm32 target, where uuid/chrono take different
-  # code paths than they do natively.
+  # code paths than they do natively: `wasm-pack test --node` is the one run
+  # of the engine on wasm32-unknown-unknown (ids through `uuid/js`,
+  # `processed_at` through `chrono/wasmbind`, deadlines and timings through
+  # `web-time`).
   wasm:
     name: Wasm
     runs-on: ubuntu-latest
@@ -336,6 +338,13 @@ jobs:
 
       - name: Lint
         run: npm run lint
+        working-directory: ui
+
+      # vitest, against the engine overlaid above: the trace helpers over real
+      # runs, and the debugger rendering a failing run (the exit criterion the
+      # package's build alone cannot show).
+      - name: Test
+        run: npm test
         working-directory: ui
 
       # `build:lib` is `tsc && vite build`, so this type-checks the whole

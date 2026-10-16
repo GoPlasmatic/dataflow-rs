@@ -9,18 +9,18 @@ processing pipelines and nanoservices in Rust. It provides an async-first
 execution model with pre-compiled JSONLogic for high performance.
 
 This is a **Cargo workspace with three published artifacts**, version-locked to
-the root `Cargo.toml` version by the release workflow from phase 8; until then
-the root's version moves alone, and `wasm/` and `ui/` stay at 3.15.0 on the
-published crate:
+the root `Cargo.toml` version by the release workflow from phase 8; since 7d
+all three read `4.0.0-dev`:
 
 | Path | Artifact | Registry |
 |---|---|---|
 | `.` | `dataflow-rs` 4.0.0-dev: v4, under construction (nothing publishes from `main` until phase 8) | crates.io |
-| `wasm/` | `@goplasmatic/dataflow-wasm`, built on the published `dataflow-rs` 3.15.0 until 7d | npm |
-| `ui/` | `@goplasmatic/dataflow-ui` (React debugger) | npm |
+| `wasm/` | `@goplasmatic/dataflow-wasm` 4.0.0-dev, the root crate on `wasm32-unknown-unknown` with `wasm-web` and `all-operators` | npm |
+| `ui/` | `@goplasmatic/dataflow-ui` 4.0.0-dev (React debugger), on the wasm package's generated types | npm |
 
 `wasm/` is a workspace member; `ui/` is a separate npm project driven by the
-release workflow. From phase 8, bumping a version means bumping all three.
+release workflow. From phase 8, bumping a version means bumping all three (and
+the derive, below).
 
 The other workspace members are not published: `docs-tests/` (the docs' and
 the README's doctests, on the published 3.15.0 until 7e), `corpus/` and
@@ -90,12 +90,12 @@ warnings behind.
 
 The second line is not redundant: bare at the root, it lints the root's
 **default** build, which is what `cargo add dataflow-rs` delivers. `--workspace`
-cannot do it: `dataflow-wasm` depends on the published 3.15.0 with
+cannot do it: `dataflow-wasm` depends on the root with `wasm-web` and
 `all-operators`, and cargo unifies features across the members one invocation
-selects, so the `datalogic-rs` both engines share has every operator family on.
-Nor can `-p dataflow-rs`: beside the published 3.15.0 that `wasm/`,
-`corpus/v3`, `docs-tests` and the root's `dataflow_rs_v3` pull in, the name is
-ambiguous and cargo refuses it (I156). Same reasoning applies to `cargo test`.
+selects, so under `--workspace` the root itself has every operator family on.
+Nor can `-p dataflow-rs`: beside the published 3.15.0 that `corpus/v3`,
+`docs-tests` and the root's `dataflow_rs_v3` pull in, the name is ambiguous
+and cargo refuses it (I156). Same reasoning applies to `cargo test`.
 
 **MSRV is 1.98 and CI enforces it.** The floor is *inherited, not chosen*:
 `datalogic-rs` 5.7 and `datavalue-rs` 0.3.1 both declare
@@ -192,8 +192,8 @@ loopback port, never 8080: `bench.sh` clears every workflow at the cluster URL.
 documentation site. The corpus recordings (`corpus/cases/**/*.v3.json`) are
 v3's: `corpus/record.sh` on `main` records against the pinned 3.15.0, and a fix
 on `v3-maintenance` that changes behaviour re-records its cases there, after
-which `main` bumps the four pins together (`corpus/v3`'s, `docs-tests`' and
-`wasm/`'s `dataflow-rs`, and the root's `dataflow_rs_v3`, which
+which `main` bumps the three pins together (`corpus/v3`'s and `docs-tests`'
+`dataflow-rs`, and the root's `dataflow_rs_v3`, which
 `corpus/v3/tests/pins.rs` holds to one exact version) and re-records. Never
 edit a `.v3.json` by hand, and never to match v4: declare a deviation against
 a break instead.
@@ -209,8 +209,7 @@ builds against v3's recording or a declared `RUN_DEVIATED` row, comparing its
 observer events and replaying its traces (or holding them to a declared
 `TRACE_DEVIATED` row). v3's source is on `v3-maintenance`. On `main`, v3 is the
 published 3.15.0: as `dataflow_rs_v3` in v4's differential tests and
-`host_call_floor`, and as `dataflow-rs` in `corpus/v3`, `docs-tests` and
-`wasm/`.
+`host_call_floor`, and as `dataflow-rs` in `corpus/v3` and `docs-tests`.
 
 The root follows the design documents (`design-v4/`, untracked), not this
 file's v3 rulebook: the sections marked (v3) describe v3's `src/`.
@@ -283,8 +282,8 @@ serializes as `{status, error?, retryable, partial, matched, workflows}`, and
 record it added, in place of `error`, and a `map` step carries
 `mapping_ends`, where each mapping's changes end; only a trace makes either.
 The `wasm-web` feature (v3's name) builds the library for
-`wasm32-unknown-unknown`, which CI clippies, and `run::Instant` is
-`web_time::Instant`. A config resolves through one derived resolver:
+`wasm32-unknown-unknown`, which CI clippies and `wasm/` runs, and
+`run::Instant` is `web_time::Instant`. A config resolves through one derived resolver:
 `Ctx::input()`, for layers and dry runs, is the callee's config resolved with
 every secret-reading field `null` and never evaluated, and `Ctx::resolve(&cfg)`
 is its unredacted counterpart; `Resolver` is sealed and implemented for
@@ -385,14 +384,14 @@ up as re-records the affected cases (see "Branches"), and the re-recording is
 read before it is committed; never edit a `.v3.json` by hand. The comparator
 is order-sensitive, because key order is wire data.
 
-`cargo test --workspace --all-features` should report 1021 passing: the
-root's 858 (824 tests and 34 doctests), the derive's 2, v4's corpus driver's
+`cargo test --workspace --all-features` should report 1024 passing: the
+root's 861 (827 tests and 34 doctests), the derive's 2, v4's corpus driver's
 24, the corpus's 33, `corpus/v3`'s 4 and `docs-tests`' 100 (96 page doctests,
 3 README doctests and its coverage test). `cargo test` at the root (the
-default build) should report 833, `cargo test -p dataflow-corpus-v3` 4,
+default build) should report 836, `cargo test -p dataflow-corpus-v3` 4,
 `cargo test -p dataflow-corpus-v4` 24 and `cargo test -p dataflow-docs-tests`
 100. The operator families are `#[cfg]`-gated, so the counts legitimately
-differ by feature set: the root reports 843 under
+differ by feature set: the root reports 846 under
 `--no-default-features --features all-operators`. v3's own counts (the
 engine's 867 under `--all-features` and 753 in its default build) are
 `v3-maintenance`'s.
@@ -408,11 +407,46 @@ package, and the UI package, and cuts a GitHub release. Both
 `wasm/Cargo.toml` and `ui/package.json` must already carry the matching
 version.
 
-**No tag may be cut from `main` before phase 8.** `wasm/` (its version and its
-`dataflow-rs` requirement) and the docs (`docs-tests`' requirement, and the
-install snippets in `README.md` and `docs/src/`) are on 3.15.0, and
-`release.yml` checks that `wasm/`'s two and the snippets' minor match the tag.
-3.x releases are tagged on `v3-maintenance`.
+**No tag may be cut from `main` before phase 8.** The root, the derive,
+`wasm/` and `ui/` read `4.0.0-dev`, the docs (`docs-tests`' requirement, and
+the install snippets in `README.md` and `docs/src/`) are on 3.15.0 until 7e,
+and `release.yml` checks that `wasm/`'s two versions, `ui/`'s and the
+snippets' minor match the tag. 3.x releases are tagged on `v3-maintenance`.
+
+### The wasm and UI packages (v4, since 7d)
+
+`wasm/` is a thin binding over `Engine::run_with` (`wasm/src/lib.rs`): one
+`WasmEngine` with `new(workflows, options?)`, `run(payload, options?)`,
+`check(definition)`, `workflow_count` and `workflow_ids`, and the free
+functions `engine_version`, `engine_facts`, `parse`, `contexts(trace)` and
+`mapping_contexts(trace, step)`. JSON crosses the boundary as text through
+`js-sys` (`JSON.stringify` in, `JSON.parse` out), so no serde-wasm crate is in
+the lock and `null` stays `null`. `run` **resolves on every status** with
+`{message, run, trace?}`; it rejects, and the constructor throws, only an
+`EngineError` (a JS `Error` with `code` `REJECTED`, `INVALID_ARGUMENT` or
+`INVALID_TRACE`, and `issues` for a refused definition). The package's
+`.d.ts` embeds `bindings/dataflow.d.ts` whole through a
+`typescript_custom_section`, so the generated wire types reach the UI from
+one package; `wasm/scripts/verify-wasm.mjs` checks the declarations are
+there. **The replay lives once, in Rust** (`Trace::contexts`,
+`Trace::mapping_contexts`): the UI calls the exports and keeps no TypeScript
+copy of the rules. `wasm-pack test --node` in `wasm/` runs the package's
+tests, the one run of v4 on wasm32.
+
+`ui/` imports every wire type from `@goplasmatic/dataflow-wasm` and keeps the
+authored definition shape as its own (`src/types/workflow.ts`, in v4
+spellings with v3's still rendered). The debugger holds the trace, the run,
+the message and the replayed contexts; the context at step `i` is
+`contexts[i]`, before step 0 `trace.initial`; a `failed` step and an executed
+step with `errors` are errors; a step with `task: null` is the workflow's own
+(its skip, its failure, or the engine's sweep writes). The engine's facts
+(`engine_facts()`: the built-in names, the group depth, the loop defaults)
+replace the UI's hand-kept mirrors, so `await init()` of the wasm package
+comes before the UI reads them. The UI's checks are `npm ci`, `npm run
+wasm:local`, `npm run lint`, `npm test` (vitest over the overlaid engine),
+`npm run build:lib` and `npm run build`. The UI's `@goplasmatic/dataflow-wasm`
+requirement stays at the last published version; `wasm:local` overlays this
+checkout's build, and `release.yml` rewrites the requirement at publish.
 
 ## Code Structure (v3)
 
