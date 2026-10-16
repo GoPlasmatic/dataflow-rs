@@ -1,5 +1,9 @@
 # Contributing to dataflow-rs
 
+> **`main` is dataflow-rs 4.0, under construction.** This file describes 3.x, whose source
+> and documentation site are on the `v3-maintenance` branch; its examples compile against the
+> published 3.15.0.
+
 Thanks for your interest in contributing. This guide covers what you need to
 get a change merged.
 
@@ -44,10 +48,10 @@ on both sides: some tests only exist when a family is on, others only when it is
 off. The default build therefore reports a different number:
 
 ```bash
-cargo test -p dataflow-rs
+cargo test
 ```
 
-should report 733 passing (361 unit, 329 integration, 43 doc). Use `-p dataflow-rs`,
+should report 733 passing (361 unit, 329 integration, 43 doc). Use the bare command,
 not `--workspace`: `dataflow-wasm` depends on `dataflow-rs` with `all-operators`,
 and cargo unifies features across workspace members, so `--workspace` would turn
 every family back on.
@@ -132,7 +136,7 @@ violation in the same change; CI's `-D warnings` gives no grace period.
 If you touched `wasm/`:
 
 ```bash
-cargo clippy -p dataflow-rs --target wasm32-unknown-unknown --features wasm-web -- -D warnings
+cargo clippy --target wasm32-unknown-unknown --features wasm-web -- -D warnings
 cd wasm && wasm-pack test --node
 ```
 
