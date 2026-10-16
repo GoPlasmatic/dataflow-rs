@@ -1,0 +1,11 @@
+{
+  // The tests' type-check: the app's settings plus Node's types, which the
+  // setup file needs to read the wasm binary. The app's own tsconfig excludes
+  // the tests, so the library is checked with browser types only.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": []
+}
