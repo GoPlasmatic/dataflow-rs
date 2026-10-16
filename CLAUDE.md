@@ -171,8 +171,9 @@ last thing they print (`examples/shared/gate.rs`). `bench/gate.py` reads only
 that line. `build --out DIR` builds the root's examples in release from a clean
 tree and copies the fourteen to DIR, and `build --v3 --out DIR` copies v3's
 thirteen. `--v3` builds them in a git worktree of the freeze commit `2d3d8e9`
-at `target/gate-v3`, with its own target, reused while it is at that commit,
-since v3's examples left `main` in 7b (I159).
+at `target/gate-v3`, with its own target, since v3's examples left `main` in
+7b (I159). The worktree is reused only while it is at that commit and its
+tracked files are clean; otherwise it is recreated.
 `baseline --bins DIR --rounds 5 --out FILE` runs a build's binaries
 round-robin, discards the cold round, and writes every run with the build,
 machine and method. The freeze baseline is
