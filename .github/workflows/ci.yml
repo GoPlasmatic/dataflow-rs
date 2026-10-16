@@ -7,7 +7,7 @@ on:
     # branch-gated, so a 3.15.x tag on the maintenance branch still publishes.)
     branches: [main, v3-maintenance]
     # Neither README.md nor docs/** appear here on purpose. The Rust blocks in
-    # both are compiled as doctests (ReadmeDoctests in src/lib.rs, and the
+    # both are compiled as doctests (ReadmeDoctests in docs-tests, and the
     # dataflow-docs-tests member for the book), so edits to either can break
     # the build and must run CI. Only files with no compiled content belong
     # in this list. (Anchored here, aliased under pull_request.)
@@ -109,50 +109,41 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --all-features --locked
 
-      # Everything above is --all-features. `-p dataflow-rs` rather than
-      # `--workspace` is load-bearing: dataflow-wasm depends on dataflow-rs with
-      # `all-operators`, and cargo unifies features across workspace members
-      # selected in one invocation, so `--workspace` silently turns every
-      # operator family back on. These two steps are the only ones that compile
-      # the crate the way `cargo add dataflow-rs` delivers it.
+      # Everything above is --all-features. These two steps are bare, with no
+      # `--workspace` and no `-p`, on purpose: they compile the root the way
+      # `cargo add dataflow-rs` delivers it. `--workspace` unifies features
+      # across the members it selects (dataflow-wasm turns `all-operators` on),
+      # and `-p dataflow-rs` is ambiguous beside the published 3.15.0 that the
+      # other members depend on (I156).
       - name: Run clippy (default features)
-        run: cargo clippy -p dataflow-rs --all-targets --locked -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
-      # No `--all-targets`: that flag suppresses doctests, and the README
-      # snippets compiled by `ReadmeDoctests` are user-facing claims that must
-      # hold in the default configuration.
+      # No `--all-targets`: that flag suppresses doctests, and the crate's
+      # doctests are user-facing claims that must hold in the default
+      # configuration.
       - name: Run tests (default features)
-        run: cargo test -p dataflow-rs --locked
+        run: cargo test --locked
 
-      # The golden corpus in the default build. `--workspace` above turns every
-      # operator family on (through wasm/), so the cases that need a family
-      # off run only here; the all-features run above covers the rest.
+      # Orion's graph turns serde_json's `preserve_order` on, which unifies into
+      # the engine: its key order must be its own in both builds.
+      - name: Run tests (serde_json preserve_order)
+        run: cargo test --features serde_json/preserve_order --locked
+
+      # The golden corpus's v3 recordings, held against the published 3.15.0.
+      # `--workspace` above turns every operator family on (through wasm/), so
+      # the cases that need a family off run only here; the all-features run
+      # above covers the rest.
       - name: Run the corpus (default features)
         run: cargo test -p dataflow-corpus-v3 --locked
 
-      # v4 is built beside v3 and gets the same two default-feature steps for the
-      # same reason: `-p dataflow-rs-v4` compiles it the way its default build is
-      # delivered, while `--workspace` unifies features across members and turns
-      # every operator family back on.
-      - name: Run clippy, v4 (default features)
-        run: cargo clippy -p dataflow-rs-v4 --all-targets --locked -- -D warnings
-
-      - name: Run tests, v4 (default features)
-        run: cargo test -p dataflow-rs-v4 --locked
-
-      # Orion's graph turns serde_json's `preserve_order` on, which unifies into
-      # v4: its key order must be v4's own in both builds.
-      - name: Run tests, v4 (serde_json preserve_order)
-        run: cargo test -p dataflow-rs-v4 --features serde_json/preserve_order --locked
-
-      # v4's corpus driver reads the same cases as v3's. It checks that v4 parses
-      # and compiles every definition as v3 built it, runs every case as v3
-      # recorded it (observer events included), and traces every run as v3 did,
-      # compared by replay.
+      # The engine's corpus driver reads the same cases as v3's. It checks that
+      # the engine parses and compiles every definition as v3 built it, runs
+      # every case as v3 recorded it (observer events included), and traces
+      # every run as v3 did, compared by replay.
       - name: Run the corpus, v4 (default features)
         run: cargo test -p dataflow-corpus-v4 --locked
 
-      # The corpus under Orion's `preserve_order`: v4's differential tests
+      # The corpus under Orion's `preserve_order`: the differential tests
       # compare against a v3 built the same way, so only the recordings, which
       # are fixed bytes, show an order that follows serde_json's map type. The
       # feature's `indexmap`, `hashbrown` and `equivalent` are not in
@@ -163,21 +154,16 @@ jobs:
         run: cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order --locked
 
       # `--all-features` and the default build are the two endpoints; neither
-      # catches a family that only compiles when another one is also on. v4's
+      # catches a family that only compiles when another one is also on. The
       # list adds `tensor` (outside `all-operators`) and the `budget` knob.
+      # v3's families run on `v3-maintenance`.
       - name: Test each operator family in isolation
         run: |
           set -euo pipefail
           for f in datetime ext-string ext-array ext-math ext-control ext-object \
-                   error-handling all-operators; do
-            echo "::group::v3 $f"
-            cargo test -p dataflow-rs --no-default-features --features "$f" --locked
-            echo "::endgroup::"
-          done
-          for f in datetime ext-string ext-array ext-math ext-control ext-object \
                    error-handling all-operators tensor budget; do
-            echo "::group::v4 $f"
-            cargo test -p dataflow-rs-v4 --no-default-features --features "$f" --locked
+            echo "::group::$f"
+            cargo test --no-default-features --features "$f" --locked
             echo "::endgroup::"
           done
 
@@ -217,16 +203,14 @@ jobs:
 
       - name: Run clippy (wasm32)
         run: |
-          cargo clippy -p dataflow-rs --target wasm32-unknown-unknown \
-            --features wasm-web,all-operators -- -D warnings
           cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown \
             --all-targets -- -D warnings
-          # No `--all-targets`: v4's tests dev-depend on v3 without `wasm-web`,
-          # which wasm32 needs (uuid's randomness), so only the library builds.
-          # `wasm-web` is the platform switch; `all-operators` adds datetime.
-          cargo clippy -p dataflow-rs-v4 --target wasm32-unknown-unknown \
-            --features wasm-web --locked -- -D warnings
-          cargo clippy -p dataflow-rs-v4 --target wasm32-unknown-unknown \
+          # No `--all-targets` for the root: its tests dev-depend on the
+          # published v3 without `wasm-web`, which wasm32 needs (uuid's
+          # randomness), so only the library builds. `wasm-web` is the platform
+          # switch; `all-operators` adds datetime.
+          cargo clippy --target wasm32-unknown-unknown --features wasm-web --locked -- -D warnings
+          cargo clippy --target wasm32-unknown-unknown \
             --features wasm-web,all-operators --locked -- -D warnings
 
       # `--node` needs no browser driver; tests/web.rs is not browser-gated.

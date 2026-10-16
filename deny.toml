@@ -34,6 +34,10 @@ confidence-threshold = 0.93
 # so they stay visible without blocking releases on a transitive dep's choices.
 multiple-versions = "warn"
 wildcards = "deny"
+# Path dependencies of the publishable root are dev-dependencies of unpublished
+# workspace crates (`dataflow-corpus`), which `cargo publish` strips; a normal
+# dependency must still carry a version (the derive's does).
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
