@@ -10,11 +10,16 @@ this reads only that line.
         `host_call_floor`), target/release/examples/<name>, to DIR/<name>, and
         write DIR/build.json (commit, rustc, date, engine "v4").
         With --v3, build v3 instead, from a git worktree of REF (V3_REF, the
-        freeze commit, by default) at target/gate-v3, reused while it is at
-        REF: `cargo build --release --examples` there, with its own target,
-        and copy the 13 BENCHES from it. build.json then says engine "v3" and
-        holds REF's full sha. A v4 directory holds the names a v3 one does,
-        and `compare` reads the two alike.
+        freeze commit, by default; a tag names the commit it points at) at
+        target/gate-v3, reused while it is at REF with no tracked file changed
+        and recreated otherwise (a directory there that is no longer a
+        worktree is deleted first): `cargo build --release --examples` there,
+        with its own target, and copy the 13 BENCHES from it. build.json then
+        says engine "v3" and holds the full sha of REF's commit. A v4
+        directory holds the names a v3 one does, and `compare` reads the two
+        alike. Either build passes cargo `--target-dir <tree>/target` and
+        copies from there, so neither the environment nor a cargo config can
+        move the binaries away from where they are copied from.
 
     gate.py baseline --bins DIR --rounds N --out FILE [--only a,b]
         Run the gate binaries DIR holds (or --only's), as `compare` finds
@@ -160,40 +165,72 @@ def repo_root():
     return sh("git", "rev-parse", "--show-toplevel")
 
 
+def worktree_head(tree):
+    """The HEAD of the worktree at `tree`, or None when `tree` is not one of
+    its own: missing, unregistered, or without its `.git`, where git would
+    otherwise answer for the repository around it."""
+    if not os.path.isdir(tree):
+        return None
+    try:
+        top = sh("git", "-C", tree, "rev-parse", "--show-toplevel")
+        if os.path.realpath(top) != os.path.realpath(tree):
+            return None
+        return sh("git", "-C", tree, "rev-parse", "HEAD")
+    except subprocess.CalledProcessError:
+        return None
+
+
+def v3_worktree(root, tree, ref):
+    """A detached worktree of `ref` at `tree`: the one there when it is at
+    `ref` with no tracked file changed, else a new one. A directory that
+    `git worktree remove` cannot remove (it is no longer a registered
+    worktree) is deleted and the registrations pruned."""
+    sh("git", "worktree", "prune", cwd=root)
+    head = worktree_head(tree)
+    if head == ref and not sh("git", "-C", tree, "status", "--porcelain", "--untracked-files=no"):
+        return
+    if os.path.isdir(tree):
+        try:
+            sh("git", "worktree", "remove", "--force", tree, cwd=root)
+        except subprocess.CalledProcessError:
+            shutil.rmtree(tree)
+            sh("git", "worktree", "prune", cwd=root)
+    sh("git", "worktree", "add", "--detach", tree, ref, cwd=root)
+
+
 def build(args):
     root = repo_root()
     if sh("git", "status", "--porcelain", "--untracked-files=no", cwd=root):
         sys.exit("refusing to build: the tree has uncommitted changes")
     env = {k: v for k, v in os.environ.items() if k != "CARGO_TARGET_DIR"}
     if args.v3:
-        ref = sh("git", "rev-parse", args.v3_ref, cwd=root)
+        # `^{commit}`: an annotated tag's own sha is the tag object's, which
+        # never equals a worktree's HEAD.
+        ref = sh("git", "rev-parse", "--verify", f"{args.v3_ref}^{{commit}}", cwd=root)
         tree = os.path.join(root, "target", "gate-v3")
-        sh("git", "worktree", "prune", cwd=root)
-        head = None
-        if os.path.isdir(tree):
-            try:
-                head = sh("git", "-C", tree, "rev-parse", "HEAD")
-            except subprocess.CalledProcessError:
-                head = None
-        if head != ref:
-            if os.path.isdir(tree):
-                sh("git", "worktree", "remove", "--force", tree, cwd=root)
-            sh("git", "worktree", "add", "--detach", tree, ref, cwd=root)
-        subprocess.run(["cargo", "build", "--release", "--examples"], cwd=tree, env=env, check=True)
-        names, src, info_root, commit = BENCHES, tree, tree, ref
+        v3_worktree(root, tree, ref)
+        names, src, commit = BENCHES, tree, ref
     else:
-        subprocess.run(["cargo", "build", "--release", "--examples"], cwd=root, env=env, check=True)
-        names, src, info_root = V4_BENCHES, root, root
+        names, src = V4_BENCHES, root
         commit = sh("git", "rev-parse", "HEAD", cwd=root)
+    # An explicit target directory: `CARGO_BUILD_TARGET_DIR` or a
+    # `build.target-dir` in a cargo config would otherwise move the binaries.
+    target = os.path.join(src, "target")
+    subprocess.run(
+        ["cargo", "build", "--release", "--examples", "--target-dir", target],
+        cwd=src,
+        env=env,
+        check=True,
+    )
     os.makedirs(args.out, exist_ok=True)
     for name in names:
         shutil.copy2(
-            os.path.join(src, "target", "release", "examples", name),
+            os.path.join(target, "release", "examples", name),
             os.path.join(args.out, name),
         )
     info = {
         "commit": commit,
-        "describe": sh("git", "describe", "--tags", "--always", cwd=info_root),
+        "describe": sh("git", "describe", "--tags", "--always", cwd=src),
         "rustc": sh("rustc", "-V"),
         "date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "engine": "v3" if args.v3 else "v4",
