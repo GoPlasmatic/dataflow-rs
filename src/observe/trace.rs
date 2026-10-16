@@ -132,6 +132,41 @@ impl Trace {
             Context::from_root(root.clone())
         })
     }
+
+    /// The context after each mapping of the `map` step at `step`, replaying
+    /// `initial` through the steps before it and then the step's changes up
+    /// to each of its [`mapping_ends`](TraceStep::mapping_ends), by
+    /// [`contexts`](Self::contexts)'s rules: one context per mapping, in
+    /// order, a mapping that wrote nothing repeating the one before it, and
+    /// the last equal to the context `contexts` yields for the step. `None`
+    /// when `step` is past the last step, when the step has no
+    /// `mapping_ends`, or when an end exceeds the step's `changes` or
+    /// precedes the end before it, as a trace edited or read from another
+    /// build may have.
+    pub fn mapping_contexts(&self, step: usize) -> Option<Vec<Context>> {
+        let at = self.steps.get(step)?;
+        if at.mapping_ends.is_empty() {
+            return None;
+        }
+        let mut root = self.initial.as_value().clone();
+        for earlier in &self.steps[..step] {
+            for change in &earlier.changes {
+                apply(&mut root, change);
+            }
+        }
+        let mut out = Vec::with_capacity(at.mapping_ends.len());
+        let mut from = 0usize;
+        for &end in &at.mapping_ends {
+            let end = usize::try_from(end).ok()?;
+            let changes = at.changes.get(from..end)?;
+            for change in changes {
+                apply(&mut root, change);
+            }
+            out.push(Context::from_root(root.clone()));
+            from = end;
+        }
+        Some(out)
+    }
 }
 
 /// One change applied to `root`, the object holding the three roots, by
@@ -280,4 +315,81 @@ fn micros<S: Serializer>(elapsed: &Option<Duration>, s: S) -> Result<S::Ok, S::E
 /// `elapsed` from whole microseconds, as [`micros`] writes it.
 fn from_micros<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
     Ok(Option::<u64>::deserialize(d)?.map(Duration::from_micros))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn value(v: serde_json::Value) -> OwnedDataValue {
+        OwnedDataValue::from(&v)
+    }
+
+    fn write(path: &str, old: serde_json::Value, new: serde_json::Value) -> Change {
+        Change::write(path, value(old), value(new))
+    }
+
+    /// `initial` with an empty `data`, one earlier step writing `data.z`,
+    /// then I136's four mappings: a plain write, a skipped `null`, an
+    /// `append` creating its array, and a root merge of two keys, ending at
+    /// `[1, 1, 3, 4]`.
+    fn trace() -> Trace {
+        let id: Arc<str> = Arc::from("w");
+        let mut earlier = TraceStep::new(WorkflowIx::new(0), &id, StepResult::Executed);
+        earlier.changes = vec![write("data.z", json!(null), json!(0))];
+        let mut map = TraceStep::new(WorkflowIx::new(0), &id, StepResult::Executed);
+        map.changes = vec![
+            write("data.a", json!(null), json!(1)),
+            write("data.list.0", json!(null), json!("x")),
+            write("data.list.1", json!(null), json!("y")),
+            write("data", json!({}), json!({"b": 2, "c": 3})),
+        ];
+        map.mapping_ends = vec![1, 1, 3, 4];
+        Trace {
+            initial: Context::from_root(value(json!({
+                "data": {}, "metadata": {}, "temp_data": {}
+            }))),
+            steps: vec![earlier, map],
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn a_map_step_replays_mapping_by_mapping_from_the_steps_before_it() {
+        let trace = trace();
+        let contexts = trace.mapping_contexts(1).expect("a map step");
+        let data: Vec<serde_json::Value> = contexts
+            .iter()
+            .map(|c| serde_json::to_value(c.data()).unwrap())
+            .collect();
+        assert_eq!(
+            data,
+            vec![
+                json!({"z": 0, "a": 1}),
+                json!({"z": 0, "a": 1}),
+                json!({"z": 0, "a": 1, "list": ["x", "y"]}),
+                json!({"z": 0, "a": 1, "list": ["x", "y"], "b": 2, "c": 3}),
+            ]
+        );
+        let after = trace.contexts().nth(1).unwrap();
+        assert_eq!(contexts.last().unwrap(), &after);
+    }
+
+    #[test]
+    fn a_step_without_mapping_ends_and_one_out_of_range_give_none() {
+        let trace = trace();
+        assert!(trace.mapping_contexts(0).is_none());
+        assert!(trace.mapping_contexts(2).is_none());
+    }
+
+    #[test]
+    fn a_malformed_mapping_end_gives_none() {
+        let mut past = trace();
+        past.steps[1].mapping_ends = vec![1, 5];
+        assert!(past.mapping_contexts(1).is_none());
+        let mut backwards = trace();
+        backwards.steps[1].mapping_ends = vec![3, 1];
+        assert!(backwards.mapping_contexts(1).is_none());
+    }
 }
