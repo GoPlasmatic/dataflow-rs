@@ -5,62 +5,94 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 Dataflow-rs is a lightweight, rule-driven workflow engine for building data
-processing pipelines and nanoservices in Rust. It provides an async-first
-execution model with pre-compiled JSONLogic for high performance.
+processing pipelines and nanoservices in Rust. Workflows are JSON definitions
+whose tasks run built-in or host functions over a message's context, with
+JSONLogic conditions and expressions compiled once at build.
 
-This is a **Cargo workspace with three published artifacts**, version-locked to
-the root `Cargo.toml` version by the release workflow from phase 8; since 7d
-all three read `4.0.0-dev`:
+This is a **Cargo workspace with four published artifacts**, version-locked to
+the root `Cargo.toml` version; all four read `4.0.0-dev` until phase 8 sets
+4.0.0 from one tag:
 
 | Path | Artifact | Registry |
 |---|---|---|
-| `.` | `dataflow-rs` 4.0.0-dev: v4, under construction (nothing publishes from `main` until phase 8) | crates.io |
-| `wasm/` | `@goplasmatic/dataflow-wasm` 4.0.0-dev, the root crate on `wasm32-unknown-unknown` with `wasm-web` and `all-operators` | npm |
-| `ui/` | `@goplasmatic/dataflow-ui` 4.0.0-dev (React debugger), on the wasm package's generated types | npm |
+| `.` | `dataflow-rs`: the engine (nothing publishes from `main` until phase 8) | crates.io |
+| `derive/` | `dataflow-rs-derive`: `#[derive(FunctionConfig)]`, published first (`publish = false` until phase 8) | crates.io |
+| `wasm/` | `@goplasmatic/dataflow-wasm`: the root crate on `wasm32-unknown-unknown` with `wasm-web` and `all-operators` | npm |
+| `ui/` | `@goplasmatic/dataflow-ui`: the React debugger, on the wasm package's generated types | npm |
 
-`wasm/` is a workspace member; `ui/` is a separate npm project driven by the
-release workflow. From phase 8, bumping a version means bumping all three (and
-the derive, below).
+`wasm/` and `derive/` are workspace members; `ui/` is a separate npm project
+driven by the release workflow. Bumping a version means bumping all four.
 
-The other workspace members are not published: `docs-tests/` (the docs' and
-the README's doctests, on the published 3.15.0 until 7e), `corpus/` and
-`corpus/v3` (the golden corpus and v3's driver, on the published 3.15.0), and
-v4's `corpus/v4` (its corpus driver) and `derive/` (`dataflow-rs-derive`,
-which phase 8 publishes before the root). See "v4 at the root" below.
+The other workspace members are not published: `docs-tests/` (the book's and
+the README's doctests, against the root), `corpus/` (the golden corpus),
+`corpus/v3` (v3's driver, on the published 3.15.0) and `corpus/v4` (the
+engine's corpus driver). See "The corpus" below.
 
-The sections marked **(v3)** describe 3.x, whose source is on `v3-maintenance`
-since phase 7b, not the crate at the root. 7e rewrites them for v4.
+**`main` is 4.0**, under construction until 4.0.0. 3.x's source, tests,
+examples and documentation site are on `v3-maintenance`, which takes 3.x fixes
+only. The root follows the design documents (`design-v4/`, untracked): design
+questions are decided for Orion, the main host, in priority order: performance,
+then developer experience, then a compact engine.
 
-### Core Architecture (v3)
+## Layout
 
-- **Engine**: Central async component that processes messages through workflows sequentially
-- **Workflow (Rule)**: Collection of tasks with a JSONLogic condition
-- **Task (Action)**: Individual processing unit backed by an `AsyncFunctionHandler`
-- **Message**: Carries `payload`, a `context` (`data` / `metadata` / `temp_data`), audit trail, and errors
-- **TaskContext**: Per-call handle given to handlers: typed accessors plus audit-recording setters
-- **TaskOutcome**: What a handler returns: `Success`, `Status(u16)`, `Skip`, or `Halt`
-
-### Key Design Patterns (v3)
-
-- **Sequential Workflow Processing**: Workflows execute sequentially so later workflows can depend on earlier ones
-- **Pre-compiled JSONLogic**: All expressions compiled at `Engine::build()`, zero runtime parsing
-- **Typed Handler Config**: Each handler declares `type Input`; task config is deserialized once at startup, so malformed config fails at build time rather than on first message
-- **Audit Trails**: Change tracking via `TaskContext::set`, gated by `Message::capture_changes`
+- `src/lib.rs`: the crate doc, the features, and the fifteen root re-exports
+  (`Engine`, `Message`, `Run`, `RunOptions`, `Error`, `Issue`, `Result`,
+  `WorkflowDef`, `Expr`, `Path`, `Ctx`, `Function`, `Outcome`, `Registry`,
+  `Observer`). `extern crate self as dataflow_rs`, so the derive's
+  `::dataflow_rs::` paths resolve inside the crate.
+- `src/base/`: private, below everything: `Error` and `ErrorKind`,
+  `ErrorRecord`, `Change`, `Context`, `Issue` and its codes, the ids
+  (`ProgramId`, `WorkflowIx`, `TaskIx`), `CancelToken`, `Instant`, the typo
+  distance, and the `ts` feature's hand-written declarations.
+- `src/def/`: definitions. `parse` is the one entry and the linter; `types.rs`
+  the plain data (`WorkflowDef`, `TaskDef`, `GroupDef`, `LoopDef`,
+  `ForEachDef`, the policies, `defaults`); `reader.rs` the compat reader;
+  `keys.rs` the known-key tables; `ser.rs` the v4-spelling serializer.
+- `src/expr/`: expressions, only compiled. `ExprEngine` (operators, secrets,
+  the `$` escape, the ops budget), `Expr<T>`, `Interpolated` documents,
+  `Output`, `Path`, `Secrets`, `ConfigField` and `CompileCx`, the operator
+  table, the arena.
+- `src/function/`: `Function`, `FunctionConfig`, `Ctx` and `CallInfo`,
+  `Outcome`, the overlay, `CallLayer` and `layers::Answer`, `Registry`,
+  `FunctionSpec`, `Templated`, `testing`, and `builtins/` (the eight built-ins
+  on the crate-private `SyncFunction`).
+- `src/program/`: `Compiler` (`check`, `check_steps`, `compile_one`, `link`),
+  the checks, the lowering into six ops, fingerprints, `Program`.
+- `src/run/`: `Engine`, `EngineBuilder`, `EngineConfig`, `ErrorContext`,
+  `RunOptions`, `Message` and `AuditMode`, `Run`, the interpreter, the
+  recorder, host calls, fan-out, the deadline and token, observers, the trace
+  capture.
+- `src/state/`: `RunContext`, the one writer: the run view, the write log,
+  the splice and the checkpoint, with its model tests.
+- `src/observe/`: `Observer`, `Interest`, `Event`, `Trace`, `TraceStep`,
+  `TraceOptions`.
+- `src/compat/`: `migrate_v3`.
+- `derive/src/lib.rs`: the derive.
+- `tests/`: one binary per topic (the table under "Testing"); `tests/support/`
+  the shared fixtures.
+- `examples/`: the fourteen gate benchmarks, the six functional examples, and
+  `examples/shared/` (not an example).
+- `bindings/dataflow.d.ts`: the wire shapes as TypeScript, generated under the
+  `ts` feature and held by a drift test; the wasm package embeds it.
+- `corpus/`, `bench/`, `wasm/`, `ui/`, `docs/`, `docs-tests/`: below.
 
 ## Development Commands
 
 ### Build and Test
 
 ```bash
-cargo build                              # the root, v4
+cargo build                              # the root
 cargo test                               # the root's default build
 cargo test --workspace --all-features    # what CI runs
 cargo test -- --nocapture                # with output
 ```
 
-A bare cargo command at the root selects the root package, v4. Every other
-member takes `-p`, as in `cargo test -p dataflow-corpus-v4` or
-`cargo test -p dataflow-docs-tests`.
+A bare cargo command at the root selects the root package. Every other member
+takes `-p`, as in `cargo test -p dataflow-corpus-v4` or
+`cargo test -p dataflow-docs-tests`. `-p dataflow-rs` is ambiguous beside the
+published 3.15.0 that `corpus/v3` and the root's own dev-dependency pull in,
+and cargo refuses it.
 
 ### Code Quality
 
@@ -78,6 +110,11 @@ The doc check is not optional politeness. Clippy does not lint rustdoc, so
 nothing else catches a broken intra-doc link, a link from public docs into a
 private item, or an unbackticked generic like `Arc<Logic>` that rustdoc parses
 as an HTML tag. All of these ship silently to docs.rs as dead or mangled text.
+`src/lib.rs` warns on `missing_docs` and `missing_debug_implementations`, and
+CI's `-D warnings` makes both errors: every public item needs a doc comment and
+every public type a `Debug` impl (a manual one with `finish_non_exhaustive()`
+where a field is not `Debug`). Public doc comments cite reasons, never a design
+document's IDs, which no docs.rs reader can follow.
 
 Lint *policy* lives in `[workspace.lints]` in the root `Cargo.toml`, inherited
 by every member, so a bare `cargo clippy` and rust-analyzer enforce what CI
@@ -88,32 +125,67 @@ change: CI's `-D warnings` gives no grace period.
 `wasm-web` feature, which is otherwise silently skipped. Never leave clippy
 warnings behind.
 
-The second line is not redundant: bare at the root, it lints the root's
+The third line is not redundant: bare at the root, it lints the root's
 **default** build, which is what `cargo add dataflow-rs` delivers. `--workspace`
 cannot do it: `dataflow-wasm` depends on the root with `wasm-web` and
 `all-operators`, and cargo unifies features across the members one invocation
 selects, so under `--workspace` the root itself has every operator family on.
-Nor can `-p dataflow-rs`: beside the published 3.15.0 that `corpus/v3`,
-`docs-tests` and the root's `dataflow_rs_v3` pull in, the name is ambiguous
-and cargo refuses it (I156). Same reasoning applies to `cargo test`.
+Same reasoning applies to `cargo test`.
+
+The root's own checks, beside the workspace-wide ones above:
+
+```bash
+cargo clippy --all-targets -- -D warnings
+cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
+cargo clippy --target wasm32-unknown-unknown --features wasm-web -- -D warnings
+cargo clippy --target wasm32-unknown-unknown --features wasm-web,all-operators -- -D warnings
+cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+cargo test
+cargo test -p dataflow-corpus-v4
+cargo test --features serde_json/preserve_order
+cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order
+cargo test --features ts --test ts_types
+cargo test -p dataflow-corpus-v3
+cargo test -p dataflow-docs-tests
+for f in datetime ext-string ext-array ext-math ext-control ext-object \
+         error-handling all-operators tensor budget; do
+  cargo test --no-default-features --features "$f"
+done
+cargo +1.98 check --workspace --all-targets --all-features --locked
+cargo deny check
+```
 
 **MSRV is 1.98 and CI enforces it.** The floor is *inherited, not chosen*:
 `datalogic-rs` 5.7 and `datavalue-rs` 0.3.1 both declare
-`rust-version = "1.98"`,
-so it moves when they move and is not a knob this crate turns. Let-chains
-(`if let ... && let ...`, stable since 1.88) are consequently fine; clippy's
-`collapsible_if` now *asks* for them, so the nested `if let`s the old 1.85
-floor forced have been collapsed. Verify with:
+`rust-version = "1.98"`, so it moves when they move. Let-chains are fine.
 
-```bash
-cargo +1.98 check --workspace --all-targets --all-features --locked
-```
+**`cargo test` at the root must stay under a minute, rebuild included.** The
+run-context model test runs once, in the default build, at 150 sequences per
+tuning; `DATAFLOW_V4_DEEP=1 cargo test --lib state::` runs its full 2,000
+(about a minute on its own). Run it after any change under `src/state/`. Time
+the suite like for like, in a scratch worktree with its own target directory,
+and time a control commit beside the head whenever a reading crosses the
+minute: the owner's Docker stack doubled a reading once (34.6 s against 1:09,
+with `main` at 1:05 minutes later). In the repository's own `target/`, macOS
+scans each newly linked test binary on its first launch, which can add minutes.
+
+### The counts
+
+`cargo test --workspace --all-features` should report 1054 passing: the
+root's 862 (828 tests and 34 doctests), the derive's 2, the corpus driver's
+24, the corpus's 33, `corpus/v3`'s 4 and `docs-tests`' 129 (117 page
+doctests, 11 README doctests and its coverage test). `cargo test` at the
+root (the default build) should report 837, `cargo test -p dataflow-corpus-v3`
+4, `cargo test -p dataflow-corpus-v4` 24 and `cargo test -p
+dataflow-docs-tests` 129. The operator families are `#[cfg]`-gated, so the
+counts legitimately differ by feature set: the root reports 846 under
+`--no-default-features --features all-operators`.
 
 ### Examples
 
-The root's examples are v4's fourteen benchmarks: the gate's thirteen ports,
-each named for the v3 benchmark it ports, and `host_call_floor`. Always run
-them with `--release`; a debug build measures nothing useful:
+The root's examples are the fourteen gate benchmarks and the six functional
+examples. Always run a benchmark with `--release`; a debug build measures
+nothing useful:
 
 ```bash
 cargo run --example realistic_benchmark --release        # ISO 20022 -> SwiftMT-style workload
@@ -125,209 +197,41 @@ cargo run --example micro_multiworkflow_bench --release  # N chained workflows, 
 cargo run --example async_handler_benchmark --release    # Marginal cost of one host function call
 cargo run --example host_call_floor --release            # One host call's own cost, v3 and v4 in one binary
 cargo run --example map_performance_test --release       # 10 chained mappings across all 3 roots
-cargo run --example loop_scaling --release               # 1000-sweep append loop over a large context (#66-#69)
+cargo run --example loop_scaling --release               # 1000-sweep append loop over a large context
 cargo run --example large_context_handler --release      # Five expression fields over a 2 MiB context, per call
 cargo run --example fan_out --release                    # for_each over 100 elements on a 2 MiB context
 cargo run --example orion_connector --release            # Orion-shaped connector: document folds, output, a layer
 cargo run --example observed_run --release               # The realistic workload with a counting observer
 ```
 
-v3's examples are on `v3-maintenance`: its six functional ones (`hello_world`,
-`rules_engine`, `complete_workflow`, `custom_function`, `error_handling` and
-`async_migration`) and its thirteen benchmarks. 7e ports the six functional
-ones.
+The six functional examples run in a debug build and print a walk-through:
+`hello_world`, `rules_engine`, `complete_workflow`, `custom_function`,
+`error_handling` and `migration` (a 3.x definition through `migrate_v3`, and a
+3.x-style handler as a `Function`).
 
 `micro_subtree_write_bench`, `micro_multiworkflow_bench` and
-`map_performance_test` port v3's regression guards for optimizations that had
-already landed (the arena write-through splice and the shared-arena workflow
-run), not open investigations. Read them as "this must stay flat", not "this
-is the plan".
-
-`loop_scaling`, `large_context_handler`, `fan_out`, `orion_connector` and
-`observed_run` port the five rows of the v4 performance gate that were written
-against 3.15, so the floor existed before any v4 code did. They measure where
-3.15 pays per byte or node a message carries, or per clock read, which is where
-v4 claims its wins, so read v3's numbers there as the baseline v4 must beat.
-The examples share `examples/shared/`, which is not an example itself.
+`map_performance_test` are regression guards for optimizations that landed in
+3.x (the arena write-through splice and the shared-arena workflow run). Read
+them as "this must stay flat". `loop_scaling`, `large_context_handler`,
+`fan_out`, `orion_connector` and `observed_run` are the five gate rows written
+against 3.15 before any v4 code existed: they measure where 3.15 paid per byte
+or node a message carries, or per clock read, which is where v4 claims its
+wins.
 
 **A benchmark checks its result before it times anything.** A workload that
 silently does less than it says still reports a plausible number:
-`realistic_benchmark` wrote `data.MT103.20`, a bare numeric segment and so an
-array index, which turned `data.MT103` into a null-padded array, dropped every
-keyed write into it, and failed 8 of its 12 rules on every message until its
-paths were spelled `#20`, `#59` and `#70`.
+`realistic_benchmark` once wrote `data.MT103.20`, an array index, which turned
+`data.MT103` into a null-padded array and failed 8 of its 12 rules until the
+paths were spelled `#20`. Numbers carry ±2-3% run-to-run noise: compare the
+mean of 3+ runs, and **interleave A/B runs**, since all "before" then all
+"after" conflates the change with thermal drift.
 
-Benchmark numbers carry roughly ±2-3% run-to-run noise and occasional transient
-P99 spikes. Compare the mean of 3+ runs before claiming a regression or a win.
-
-**Interleave A/B runs.** Running all the "before" runs and then all the "after"
-runs conflates the change with thermal drift: a measured -8.5% on
-`realistic_benchmark` collapsed to +0.2% once the same two binaries were
-alternated round-robin instead. Build both binaries first, copy them out of
-`target/`, discard the first run of each as cold, and alternate.
-
-**The gate benchmarks print one machine-readable line each**, `GATE {...}`, the
-last thing they print (`examples/shared/gate.rs`). `bench/gate.py` reads only
-that line. `build --out DIR` builds the root's examples in release from a clean
-tree and copies the fourteen to DIR, and `build --v3 --out DIR` copies v3's
-thirteen. `--v3` builds them in a git worktree of the freeze commit `2d3d8e9`
-at `target/gate-v3`, with its own target, since v3's examples left `main` in
-7b (I159). The worktree is reused only while it is at that commit and its
-tracked files are clean; otherwise it is recreated.
-`baseline --bins DIR --rounds 5 --out FILE` runs a build's binaries
-round-robin, discards the cold round, and writes every run with the build,
-machine and method. The freeze baseline is
-`bench/baseline/3.15.0-freeze.json`. A metric's name is a contract: a port of a
-benchmark keeps it.
-
-Orion's baseline is `bench/baseline/orion-1.12.0.json`, from `bench/orion.sh`,
-which runs Orion's own `bench.sh` scenarios with the server's peak RSS. Its
-`cluster` brings Orion's HA stack up as its own compose project on a free
-loopback port, never 8080: `bench.sh` clears every workflow at the cluster URL.
-
-### Branches
-
-**`main` is v4**, at the root since 7b and under construction until 4.0.0.
-`v3-maintenance` holds v3's source, takes 3.x fixes only, and deploys the
-documentation site. The corpus recordings (`corpus/cases/**/*.v3.json`) are
-v3's: `corpus/record.sh` on `main` records against the pinned 3.15.0, and a fix
-on `v3-maintenance` that changes behaviour re-records its cases there, after
-which `main` bumps the three pins together (`corpus/v3`'s and `docs-tests`'
-`dataflow-rs`, and the root's `dataflow_rs_v3`, which
-`corpus/v3/tests/pins.rs` holds to one exact version) and re-records. Never
-edit a `.v3.json` by hand, and never to match v4: declare a deviation against
-a break instead.
-
-### v4 at the root
-
-**v4 is the root crate since 7b**: `dataflow-rs` 4.0.0-dev, in `src/`,
-`tests/`, `examples/` and `bindings/`. Its proc-macro is `derive/`
-(`dataflow-rs-derive`), and its corpus driver is `corpus/v4`
-(`dataflow-corpus-v4`), which parses and compiles every corpus definition and
-holds each to v3's issues or to its declared deviation, and runs every case it
-builds against v3's recording or a declared `RUN_DEVIATED` row, comparing its
-observer events and replaying its traces (or holding them to a declared
-`TRACE_DEVIATED` row). v3's source is on `v3-maintenance`. On `main`, v3 is the
-published 3.15.0: as `dataflow_rs_v3` in v4's differential tests and
-`host_call_floor`, and as `dataflow-rs` in `corpus/v3` and `docs-tests`.
-
-The root follows the design documents (`design-v4/`, untracked), not this
-file's v3 rulebook: the sections marked (v3) describe v3's `src/`.
-
-`src/lib.rs` warns on `missing_docs` and `missing_debug_implementations`, and
-CI's `-D warnings` makes both errors: every public item needs a doc comment and
-every public type a `Debug` impl (a manual one with `finish_non_exhaustive()`
-where a field is not `Debug`).
-
-The derive emits `::dataflow_rs::` paths: the crate itself says
-`extern crate self as dataflow_rs` in `src/lib.rs`, and a dependent such as
-`corpus/v4` names its dependency `dataflow-rs`. The root depends on the derive
-with a version (`{ path = "derive", version = "=4.0.0-dev" }`) first because
-`cargo publish` refuses a normal path dependency without one. `deny.toml`
-guards it: `wildcards = "deny"`, and its `allow-wildcard-paths` excuses a
-publishable crate's version-less path dependency only as a dev-dependency,
-such as the root's on `dataflow-corpus`, which `cargo publish` strips. Since
-the root's published manifest names the derive from crates.io, phase 8 must
-publish the derive first and drop its `publish = false`.
-
-**v4 runs built-in workflows** (phase 4): `Engine::builder()` (or
-`Engine::new(program, config)`), then `engine.run_with(&mut message, &opts)`,
-which returns a `Run` on every outcome. The eight built-ins run inline on the
-crate-private `SyncFunction`, through one interpreter over the compiled ops
-and one recorder. After the run-start stamps, every context write goes through
-`state::RunContext`: one arena view, a write log, and checkpoints.
-
-**v4 runs host functions and fan-outs** (phase 5). A host `Function` gets a
-`Ctx` over the run view; its writes go to a per-call overlay, the list of its
-writes, which the settle replays at their own paths, in order, and drops
-whole when the call returns `Err`. Layers wrap a call at registry scope
-(`EngineBuilder::layer`) and at run scope (`RunOptions::layers`). A
-`for_each` runs its calls under `FuturesUnordered`, each over its element's
-bindings, and folds them in element order at every `max_concurrency`.
-`RunOptions::deadline` and `cancel` (a `CancelToken`) are checked at every
-host call, fan-out element and sweep, and every 64th op; natively a host call
-also races them, so a deadline needs a Tokio runtime with its time driver.
-Only the run's own limits end it `TimedOut` or `Cancelled`: a function's own
-`TimedOut` or `Cancelled` error, a child run's included, ends it `Stopped`
-when its task's policies stop the run. `function::testing::call(f, input)`
-runs one function through the real compile, overlay and layers. Message ids
-come from a thread-local UUID v7 context: ordered per thread, but not across
-threads within one millisecond.
-
-**v4 observes a run** (phase 6). An `observe::Observer` (`interest()`, read
-once per run, and `on(&Event)`, called inline) is attached for every run
-(`EngineConfig::observer`, an `Arc`) or for one (`RunOptions::observer(&o)`);
-its `Interest` (`WORKFLOWS`, `TASKS`, `TIMINGS`) decides which events it gets
-and whether a clock is read at all. `RunOptions::trace(TraceOptions)` asks for
-a `Trace` (`Run::trace`, `Run::take_trace`): the redacted initial context and
-one `TraceStep` per call, skip, failure and engine write, whose changes replay
-(`Trace::contexts`) to the run's context on every status. `Change::replaced`
-is the trace's alone; an audit entry keeps v3's bytes.
-`EngineConfig::error_context(ErrorContext::new(path, limit)?)` mirrors the
-failure records into the context and resets that path at run start (break
-20); a path at or below the engine's own `metadata` slots is refused. With no
-observer, trace or error context, a call takes the plain recorder: the
-unobserved path pays one branch per call.
-
-**v4's surface is settled for its hosts** (phase 7a). The wire shapes read
-back: `Message`, `Context` (now in the private `base`, re-exported as
-`run::Context`) and `Trace` implement `Deserialize`, and every message and
-trace v4 writes reads back byte for byte, a whole-number float staying a float
-and serde_json built with `float_roundtrip`, so a computed float reads back to
-its bits. A context holds only `data`, `metadata` and `temp_data`: a fourth
-key, a context that is not an object and a root named twice are refused, and
-the roots are written in that order however they were read (break 22). `Run`
-serializes as `{status, error?, retryable, partial, matched, workflows}`, and
-`Error` as `{code, message, retryable}`. A `TraceStep` carries `errors`, every
-record it added, in place of `error`, and a `map` step carries
-`mapping_ends`, where each mapping's changes end; only a trace makes either.
-The `wasm-web` feature (v3's name) builds the library for
-`wasm32-unknown-unknown`, which CI clippies and `wasm/` runs, and
-`run::Instant` is `web_time::Instant`. A config resolves through one derived resolver:
-`Ctx::input()`, for layers and dry runs, is the callee's config resolved with
-every secret-reading field `null` and never evaluated, and `Ctx::resolve(&cfg)`
-is its unredacted counterpart; `Resolver` is sealed and implemented for
-`&Ctx`, and a hand-written config must implement `FunctionConfig::resolve`, as
-a field type must `ConfigField::resolve`. A host function's write of anything
-but an object at a root is refused (break 21). `--features ts` writes
-`bindings/dataflow.d.ts` from the wire types (`DATAFLOW_TS_WRITE=1 cargo test
---features ts --test ts_types`), and a drift test holds the committed file, doc
-comments included, so a doc edit on a wire type means regenerating it. Pretty
-`publish_json`, `publish_xml` and `parse_xml` keep the source's key order in
-every build (break 23), so v4's bytes do not depend on serde_json's
-`preserve_order`, which Orion's graph turns on; CI holds that with
-`cargo test --features serde_json/preserve_order` and
-`cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order`.
-
-The root's own checks, beside the workspace-wide ones above:
-
-```bash
-cargo clippy --all-targets -- -D warnings
-cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
-cargo test
-cargo test -p dataflow-corpus-v4
-cargo test --features serde_json/preserve_order
-cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order
-cargo test --features ts --test ts_types
-for f in datetime ext-string ext-array ext-math ext-control ext-object \
-         error-handling all-operators tensor budget; do
-  cargo test --no-default-features --features "$f"
-done
-```
-
-**`cargo test` at the root must stay under a minute, rebuild included.** The
-run-context model test runs once, in the default build, at 150 sequences per
-tuning; `DATAFLOW_V4_DEEP=1 cargo test --lib state::` runs its full 2,000
-(about a minute on its own). Run it after any change under `src/state/`. Time
-the suite like for like, in a scratch worktree with its own target directory:
-in the repository's `target/`, macOS scans each newly linked test binary on its
-first launch, which can add minutes.
+### The gate
 
 **The gate compares v4 with v3** through thirteen ports, `examples/<name>.rs`,
-each named for the v3 benchmark it ports: the eight sync benchmarks, phase 5's
-four host-call rows (`async_handler_benchmark`, `large_context_handler`,
-`fan_out`, `orion_connector`) and phase 6's `observed_run`. Each keeps its v3
-benchmark's workload, startup check, `GATE` name and metric names:
+each named for the v3 benchmark it ports and keeping its workload, startup
+check, `GATE` name and metric names. Each prints one machine-readable line,
+`GATE {...}`, last (`examples/shared/gate.rs`), which `bench/gate.py` reads:
 
 ```bash
 python3 bench/gate.py build --v3 --out /tmp/gate/v3   # v3's thirteen, from the freeze worktree
@@ -335,85 +239,232 @@ python3 bench/gate.py build --out /tmp/gate/v4        # the root's fourteen
 python3 bench/gate.py compare --a /tmp/gate/v3 --b /tmp/gate/v4 --rounds 5
 ```
 
-`compare` alternates the two builds within each round and judges each metric
-on the median of its per-round ratios, with noise `max(3%, half the IQR)`. It
-also reports instructions retired (`/usr/bin/time -l`), which separate load
-from work on a busy machine; they move with codegen too, so attribute a
-change to one item only with a same-binary toggle.
+`build --v3` builds v3's benchmarks in a git worktree of the freeze commit
+`2d3d8e9` at `target/gate-v3`, reused only while it is at that commit and its
+tracked files are clean. `compare` alternates the two builds within each round
+and judges each metric on the median of its per-round ratios, with noise
+`max(3%, half the IQR)`, and reports instructions retired (`/usr/bin/time -l`),
+which separate load from work on a busy machine; they move with codegen too, so
+attribute a change to one item only with a same-binary toggle.
+`baseline --bins DIR --rounds 5 --out FILE` writes every run with the build,
+machine and method; the freeze baseline is `bench/baseline/3.15.0-freeze.json`.
+A metric's name is a contract: a port of a benchmark keeps it.
 
-`host_call_floor` is the self-judged floor row: a v4-only example that runs
-v3 and v4 in one binary on one thread, in interleaved rounds. Plain `build`
-copies it and `compare` runs it from B only. Its `call.ratio`, a whole
-message with one host call, must be not slower; `sync.ratio` and
-`floor.ratio` are reported. A few metrics are reported without a verdict
-(`METRIC_RULES`: `async_handler_benchmark.marginal`,
-`large_context_handler.write_only`). On this machine the 3% noise floor holds
-for one-thread rows only: two copies of one binary read the spawned rows'
-means and p99s up to about 5% apart at five rounds. With the owner's Docker
-stack busy (a load of 4 to 5), the spawned throughputs spread 10 to 18%; read
-the one-thread rows and the instructions retired, and re-run a spawned row at
+`host_call_floor` is the self-judged floor row: v3 and v4 in one binary on
+one thread, in interleaved rounds; its `call.ratio` must be not slower. On
+this machine the 3% noise floor holds for one-thread rows only; with the
+owner's Docker stack busy, the spawned throughputs spread 10 to 18%: read the
+one-thread rows and the instructions retired, and re-run a spawned row at
 seven rounds before calling it WORSE.
 
-### Doctests, the corpus and the counts
+Orion's baseline is `bench/baseline/orion-1.12.0.json`, from `bench/orion.sh`
+(a tag, or `ORION_COMMIT=<sha>` for a branch), which runs Orion's own `bench.sh`
+scenarios with the server's peak RSS; `bench/orion_compare.py` judges a run
+against it. Its `cluster` scenario brings Orion's HA stack up as its own compose
+project on a free loopback port, never 8080.
 
-Documentation examples are compiled, so they cannot drift from the API they
-describe, which is 3.x's until 7e:
+### Branches and the pins
 
-- `README.md`: via `ReadmeDoctests` in `docs-tests/src/lib.rs`, against the
-  published 3.15.0.
-- `docs/src/**.md`: via the same `dataflow-docs-tests` workspace member, on
-  the same pin. It is a separate crate because `docs/` is not shipped in the
-  published crate (see the root `include` list), so an `include_str!` from
-  `src/lib.rs` would break the published package. Its `tests/coverage.rs`
-  fails if a docs page is missing from the page list.
+`main` is 4.0; `v3-maintenance` holds 3.x and deploys the documentation site
+until phase 8. v3 is on `main` only as the published 3.15.0: `dataflow_rs_v3`
+in the root's differential tests and `host_call_floor`, and `dataflow-rs` in
+`corpus/v3`, two pins that `corpus/v3/tests/pins.rs` holds to one exact
+version. A 3.x fix on `v3-maintenance` that changes behaviour re-records its
+corpus cases there, after which `main` bumps the two pins together and
+re-records. Never edit a `.v3.json` by hand, and never to match v4: declare a
+deviation against a break instead.
 
-When editing docs: fragments get a hidden `# ` preamble (compiled by rustdoc,
-hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
-are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
-conventions.
+### The corpus
 
-**The golden corpus** (`corpus/`, see its README) records what v3 does to a
-message, case by case: every row of the v4 feature contract, every break and
-every error code. Each `corpus/cases/<area>/<name>.json` has its recording,
+**The golden corpus** (`corpus/`, see its README) records what 3.15 does to a
+message, case by case: every row of the feature contract, every break and every
+error code. Each `corpus/cases/<area>/<name>.json` has its recording,
 `<name>.v3.json`, beside it. `corpus/record.sh [filter]` records against the
-pinned 3.15.0 (default build, then all-features);
-`cargo test -p dataflow-corpus-v3` and the `--workspace --all-features` run
-check that every recording still holds, and `corpus/tests/coverage.rs` that
-every contract row has a case. A v3 change that alters what a message ends
-up as re-records the affected cases (see "Branches"), and the re-recording is
-read before it is committed; never edit a `.v3.json` by hand. The comparator
+pinned 3.15.0 (default build, then all-features); `cargo test -p
+dataflow-corpus-v3` checks that every recording still holds, and
+`corpus/tests/coverage.rs` that every contract row has a case. The comparator
 is order-sensitive, because key order is wire data.
 
-`cargo test --workspace --all-features` should report 1024 passing: the
-root's 861 (827 tests and 34 doctests), the derive's 2, v4's corpus driver's
-24, the corpus's 33, `corpus/v3`'s 4 and `docs-tests`' 100 (96 page doctests,
-3 README doctests and its coverage test). `cargo test` at the root (the
-default build) should report 836, `cargo test -p dataflow-corpus-v3` 4,
-`cargo test -p dataflow-corpus-v4` 24 and `cargo test -p dataflow-docs-tests`
-100. The operator families are `#[cfg]`-gated, so the counts legitimately
-differ by feature set: the root reports 846 under
-`--no-default-features --features all-operators`. v3's own counts (the
-engine's 867 under `--all-features` and 753 in its default build) are
-`v3-maintenance`'s.
+**The engine's driver**, `corpus/v4` (`dataflow-corpus-v4`), parses and
+compiles every corpus definition and holds each to v3's issues or to its
+declared deviation (`expect.rs`), runs every case it builds against v3's
+recording or a declared `RUN_DEVIATED` row, comparing observer events, and
+replays every trace against v3's snapshots or a declared `TRACE_DEVIATED` row.
+Run it in its three builds: default, `--features budget`, and
+`--features serde_json/preserve_order`. A difference no break explains is a
+finding, never a rewritten expectation.
 
-### Release Process
+### The documentation
 
-Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI; it
-never publishes, and the documentation site deploys from `v3-maintenance`
-(`docs.yml` on `main` runs only by hand until phase 8).
-`.github/workflows/release.yml` fires only on a `v*` tag, validates that the
-tag matches the root `Cargo.toml` version, then publishes the crate, the wasm
-package, and the UI package, and cuts a GitHub release. Both
-`wasm/Cargo.toml` and `ui/package.json` must already carry the matching
-version.
+Every Rust example in `docs/src/**.md` and `README.md` compiles against the
+root crate through `docs-tests` (`cargo test -p dataflow-docs-tests`), a
+separate member because `docs/` is not in the published crate's `include`
+list. Its `tests/coverage.rs` fails if a page is missing from the page list in
+`docs-tests/src/lib.rs`. When editing docs: fragments get a hidden `# `
+preamble rather than an `ignore` tag; an unlabelled fence is compiled as Rust,
+so tag JSON `json` and diagrams `text`. JSON definitions in the docs are not
+compiled: copy them from a corpus case or a test that runs. `mdbook build docs`
+builds the book; `docs/build-with-debugger.sh` adds the UI.
 
-**No tag may be cut from `main` before phase 8.** The root, the derive,
-`wasm/` and `ui/` read `4.0.0-dev`, the docs (`docs-tests`' requirement, and
-the install snippets in `README.md` and `docs/src/`) are on 3.15.0 until 7e,
-and `release.yml` checks that `wasm/`'s two versions, `ui/`'s and the
-snippets' minor match the tag. 3.x releases are tagged on `v3-maintenance`.
+## Architecture
 
-### The wasm and UI packages (v4, since 7d)
+**Three types for three phases.** A `WorkflowDef` is raw data, entered only
+through `def::parse`, which is also the linter: one walk over the authored JSON
+reports every issue at the path the author typed, at v3's codes for v3's rules,
+after the compat reader has rewritten 3.x spellings (each an Advisory). A
+`Program` is compiled and immutable: a `Registry` (functions over an
+`ExprEngine`) gives a `Compiler`, `compile_one` compiles one workflow so a host
+owns quarantine, and the infallible `link` sorts by priority and numbers tasks.
+A `Run` is one message: `Engine::run_with` returns one on every outcome, with a
+typed `RunStatus`, each workflow's `Selection` and `WorkflowExit`, `matched`,
+`retryable`, `partial` and the trace.
+
+**One interpreter over six ops** (`Cond`, `Call`, `FanOut`, `LoopInit`,
+`LoopNext`, `Halt`): groups, loops and fan-outs are jumps, and one recorder
+writes, in order, the audit entry, the progress write, the error records and
+their mirror, the trace step and the observer event. With no observer, trace
+or error context, a call takes the plain recorder: the unobserved path pays
+one branch per call.
+
+**One writer, one view.** After the run-start stamps, every context write goes
+through `state::RunContext`: one arena view of the context, built at the run's
+first read; every write spliced into it and marked in a dirty-path trie; a
+checkpoint that converts only what changed. No step, call, sweep or fan-out
+element rebuilds the view.
+
+**Functions.** A host function implements `Function` (`type Config:
+FunctionConfig`, `spec`, `prepare`, `async fn call(&self, ctx: &mut Ctx<'_>,
+cfg: &Self::Config)`); its writes go to a per-call overlay, replayed at their
+paths in order on `Ok` and dropped whole on `Err`. The same overlay is the
+fan-out fork, so isolation costs no clone. The eight built-ins run inline on
+the crate-private `SyncFunction` and write through immediately. Layers wrap
+every host call at registry scope (`Registry::layer`, `EngineBuilder::layer`)
+and at run scope (`RunOptions::layers`); the built-ins are never wrapped.
+
+**Expressions exist only compiled.** `Expr<T>` holds JSONLogic; a folded
+constant is borrowed, never cloned. `Interpolated` holds documents (Mongo
+filters, SQL parameters) that substitute `var` holes and keep their `$` keys,
+rendered as a borrowed view straight into the host's serializer. A config's
+field type is its position: `#[derive(FunctionConfig)]` yields `compile`
+(every issue at its exact path, unknown keys refused), `visit`, `fields`,
+`primary_output` and `resolve`.
+
+**Observation.** An `Observer` declares its `interest()` once per run and gets
+`on(&Event)` inline; no clock is read without `TIMINGS`. A trace is the
+redacted initial context plus one `TraceStep` per call, skip, failure and
+engine write, each with its changes, so `Trace::contexts` replays to the
+context after every step and `Trace::mapping_contexts` to the context after
+each of a `map` step's mappings; the wasm package exports both, and the UI
+keeps no copy of the rules.
+
+## Rules that must hold
+
+Each rule lives once in the code; the test named beside it is what pins it.
+
+- **The eval context is `{data, metadata, temp_data}` only.** `payload` is a
+  field of `Message`, not of the context: a literal `var` path rooted at
+  `payload` is a `PAYLOAD_VAR` Defect at compile, and `parse_json` with
+  `"source": "payload"` is how the payload reaches `data` (`tests/checks.rs`).
+- **`metadata.progress` is written after every recorded call** that is not a
+  `Skip`, as `{workflow_id, task_id, status_code}`; cross-workflow chaining
+  reads it. Never gate or skip the write (`tests/run_basics.rs`, the corpus).
+- **A policy applies after the status is classified.** A task's `on_failure`
+  (`fail`, `continue`, `halt`) covers a 5xx or an `Err`, `on_rejection`
+  (`continue`, `halt`) a 4xx; `terminal` ends the workflow after either. A
+  failing `validation` returns 400 and records `VALIDATION_ERROR` per rule;
+  the next task runs unless `on_rejection: halt` (`src/run/policy.rs`,
+  `tests/run_basics.rs`, `corpus/cases/builtins/validation.json`).
+- **A `null` `map` result is skipped,** so `{"if": [c, v, null]}` means "set
+  or keep"; removal is `unset: true` or `on_null: "unset"`. `mode: "append"`
+  and `"extend"` stay O(entry): one `Change` per element at `path.<index>`,
+  never the whole array. A literal path outside the three roots is
+  `INVALID_PATH`; a root mapping merges; a path field given a non-string is
+  `INPUT_PARSE` (`tests/map_vs_v3.rs`, `src/function/builtins/map.rs`).
+- **A fan-out isolates every call and folds in element order.** Each element
+  runs over its own bindings and overlay; the fold applies overlays in element
+  order and stops at the first element that fails the task or halts, so
+  `max_concurrency` can never change results. `for_each` is refused on a
+  built-in (`tests/fan_out.rs`, `results_are_identical_at_every_concurrency`).
+- **A loop's slots are the engine's.** Per sweep the engine writes the counter
+  (and `as`, `scratch`) to `temp_data`, checks `counter < max`, re-evaluates
+  the condition and runs the task list; reaching `max` is normal completion; a
+  `Halt` ends the whole loop. A body task writing the counter's path is
+  overwritten at the next increment (`tests/run_loops.rs`).
+- **The deadline and the token are checked** at every host call, fan-out
+  element and sweep, and every 64th op while one is set; natively a host call
+  also races them, so a run with a deadline needs a Tokio runtime with its time
+  driver. Only the run's own limits end it `TimedOut` or `Cancelled`; a
+  function's own `TimedOut`, a child run's included, ends it `Stopped` when its
+  policies stop the run, and a host call that fails at or after the run's limit
+  is the limit's (`tests/deadline.rs`).
+- **A root takes only an object.** `Ctx::set`, `emit` and a replayed overlay
+  assign; at `data`, `metadata` or `temp_data` anything but an object is a
+  `Config` error. `map` merges at a root (`tests/host_calls.rs`).
+- **An array index stops at `MAX_ARRAY_INDEX`** (2^20 − 1): a larger bare
+  numeric segment is a key, so no path from a trace or a computed value can grow
+  an array without bound (`src/expr/path.rs`, the wasm `contexts` test).
+- **Error codes come from one classifier,** `Error::code`: `LOGIC_ERROR`,
+  `BUDGET_EXCEEDED`, `FUNCTION_NOT_FOUND`, `DESERIALIZATION_ERROR`,
+  `TIMEOUT_ERROR`, `CANCELLED`, `CONFIG_ERROR`, `COMPILATION_ERROR`, and a
+  `Service` code verbatim (an empty one is `TASK_ERROR`). The record codes
+  `TASK_STATUS_ERROR`, `VALIDATION_ERROR` and `EVALUATION_ERROR` are the
+  recorder's and the built-ins'. There is no `WORKFLOW_ERROR` wrapper
+  (`src/base/error.rs`, `tests/vocabulary.rs`).
+- **Reserved names cannot be registered.** `Registry::register` panics on a
+  name in `def::BUILTIN_FUNCTIONS` and on `validate`, 3.x's alias the compat
+  reader rewrites to `validation`; and on a malformed spec (a `Reference` that
+  reaches no field, `runtime_fields` on a config that is not `Templated`)
+  (`tests/registry.rs`).
+- **Every config parameter is JSONLogic, and the static spelling is free.** A
+  literal folds at compile and costs nothing per call; `Expr::constant`
+  borrows it. Resolution borrows: `Ctx::eval` lends a folded constant and
+  `Ctx::render` builds no tree (`tests/expr.rs`, `tests/documents.rs`).
+- **The template-key escape (`$`) is always on:** `{"$cat": …}` is the literal
+  object, `{"cat": …}` the operator; exactly one prefix is stripped from every
+  template key, so a template emitting `$`-prefixed keys doubles them. A
+  single-key object with an unknown key is not inert: it is the ordinary
+  output-template shape, which is why there is no "unknown operator" lint
+  (`tests/checks.rs`, `tests/operators.rs`).
+- **Operator families are opt-in, and enabling one is not a no-op.** The
+  engine evaluates in templating mode, so an operator whose family is off is
+  literal data; turning a family on makes `{"length": …}` live, and `datetime`
+  changes `==` on date-shaped strings. `tensor` is deliberately outside
+  `all-operators`: its names (`shape`, `cast`, `concat`) are ordinary JSON keys
+  in workflows that already ship. `budget` is a config knob, not a family:
+  `ExprEngineBuilder::ops_budget` installs the ceiling, exceeded as
+  `ErrorKind::Budget` (`tests/operators.rs`, `tests/ops_budget.rs`).
+- **Secrets are an operator, not a context root.** `{"secret": "name"}` reads
+  the `ExprEngine`'s `Secrets`; nothing is composed into the message, a `map`
+  mapping, a `log` expression and an `Output` may not read one, `Ctx::input()`
+  writes every secret-reading field `null` and never evaluates it, and a
+  context with a `secrets` key is refused (`tests/secrets_isolation.rs`).
+- **The wire shapes read back.** `Message`, `Context` and `Trace` read what
+  they write, byte for byte, a whole-number float staying a float (serde_json
+  with `float_roundtrip`); a context holds only the three roots and refuses a
+  fourth key, a non-object and a root twice; `Run` serializes as `{status,
+  error?, retryable, partial, matched, workflows}`; pretty `publish_json`,
+  `publish_xml` and `parse_xml` keep the source's key order in every build, so
+  nothing depends on serde_json's `preserve_order` (`tests/wire.rs`,
+  `tests/run_json.rs`, the corpus under `preserve_order`).
+- **`Change::replaced` is the trace's alone;** an audit entry keeps v3's bytes.
+  A trace records its own changes whatever `capture_changes` says
+  (`tests/trace.rs`).
+- **The error context is the engine's slot:** `ErrorContext::new(path, limit)`
+  refuses a root, a path at or below an engine `metadata` slot, and a limit of
+  0; the engine removes the key at run start and mirrors each failing call's
+  records there (`tests/error_context.rs`).
+- **The bindings are held by a drift test.** `bindings/dataflow.d.ts` is
+  rendered from the wire types under `ts` (`DATAFLOW_TS_WRITE=1 cargo test
+  --features ts --test ts_types`); a doc edit on a wire type means regenerating
+  it, and a wire check holds every key a corpus message, trace and `Run`
+  writes to its declaration (`tests/ts_types.rs`).
+- **`def::parse` reports every unknown key.** A near miss of a known key is a
+  `LIKELY_TYPO` Defect; any other unknown key an `UNKNOWN_KEY` Advisory, kept
+  in the node's `ext`; a v3 policy key beside a v4 one is refused; with the
+  reader off every unknown key is Rejected (`tests/parse.rs`, `tests/compat.rs`,
+  `tests/repository_definitions.rs` over every definition in the repository).
+
+## The wasm and UI packages
 
 `wasm/` is a thin binding over `Engine::run_with` (`wasm/src/lib.rs`): one
 `WasmEngine` with `new(workflows, options?)`, `run(payload, options?)`,
@@ -440,7 +491,7 @@ spellings with v3's still rendered). The debugger holds the trace, the run,
 the message and the replayed contexts; the context at step `i` is
 `contexts[i]`, before step 0 `trace.initial`; a `failed` step and an executed
 step with `errors` are errors; a step with `task: null` is the workflow's own
-(its skip, its failure, or the engine's sweep writes). The engine's facts
+(its skip, its failure, or the engine's counter write). The engine's facts
 (`engine_facts()`: the built-in names, the group depth, the loop defaults)
 replace the UI's hand-kept mirrors, so `await init()` of the wasm package
 comes before the UI reads them. The UI's checks are `npm ci`, `npm run
@@ -449,386 +500,71 @@ wasm:local`, `npm run lint`, `npm test` (vitest over the overlaid engine),
 requirement stays at the last published version; `wasm:local` overlays this
 checkout's build, and `release.yml` rewrites the requirement at publish.
 
-## Code Structure (v3)
+## Testing
 
-### Core Engine (`src/engine/`) (v3)
-
-- `mod.rs`: `Engine` and `EngineBuilder` (construction, hot reload, message entry points)
-- `compiler.rs`: JSONLogic compilation, priority sorting of workflows
-- `executor.rs`: Arena-backed context view; sync built-in dispatch and narrow refresh
-- `workflow_executor.rs`: Workflow orchestration, audit trail, progress metadata
-- `task_executor.rs`: Per-task execution and outcome handling
-- `for_each.rs`: `ForEach`, which holds a task's fan-out config, its rules
-  (`ForEach::problem`) and path pre-split. The driver is
-  `WorkflowExecutor::run_for_each`
-- `task_context.rs`: `TaskContext`, the accessors and audit-recording setters for handlers
-- `task_outcome.rs`: `TaskOutcome` and `HALT_STATUS_CODE`
-- `message.rs`: `Message`, `MessageBuilder`, `AuditTrail`, `Change`
-- `retry.rs`: `RetryPolicy` / `retry_with_policy`; native-only (tokio time)
-- `rollout.rs`: `Rollout` traffic-split range, `partition` / `validate_set`,
-  `RolloutError`
-- `secrets.rs`: `Secrets` store and the reserved `secret` operator, for values
-  expressions read but the engine never records
-- `workflow.rs`: `Workflow` definition, lifecycle fields, `LoopConfig`, validation
-- `task.rs`: `Task` and `TaskGroup`, both `#[non_exhaustive]`; construct via
-  `Task::action`
-- `authoring.rs`: `Workflow::validate_authored`, `WorkflowIssue`, `IssueCode`,
-  `Severity`, the authoring-time surface a host checks definitions against.
-  `IssueCode::severity` is a wildcard-free match on purpose: a new code must be
-  classified deliberately, never default into a host's pre-build screen
-- `steps.rs`: The authored step grammar, with `flatten` (the parser) and
-  `walk_authored_steps` / `walk_authored_steps_at` (the public walker, the
-  latter rooted at any prefix such as `loop.setup`), plus the `is_group` /
-  `MAX_GROUP_DEPTH` facts both read
-- `observer.rs`: `ExecutionObserver` and its event types (task, workflow and
-  message lifecycle callbacks)
-- `trace.rs`: `ExecutionTrace` / `ExecutionStep` for step-through debugging
-- `error.rs`: `DataflowError`, `ErrorInfo`, retryability classification
-- `utils.rs`: Path splitting and nested get/set helpers
-
-### Built-in Functions (`src/engine/functions/`) (v3)
-
-- `mod.rs`: `AsyncFunctionHandler` trait, object-safe `Dyn` sibling, registration
-- `parse.rs`: `parse_json`, `parse_xml`
-- `map.rs`: `map`, JSONLogic-driven assignment to dot-paths, and removal
-  (`unset`, `on_null`)
-- `validation.rs`: `validation`, rules with custom error messages
-- `filter.rs`: `filter`, pipeline control flow (`halt` / `skip`)
-- `log.rs`: `log`, structured logging at a configurable level
-- `publish.rs`: `publish_json`, `publish_xml`
-- `template.rs`: `Template` (the JSONLogic type behind *every* config
-  parameter), its compile-time constant cache, and `TemplateCompiler`
-- `path_template.rs`: `PathTemplate<R>`, a parameter naming a *write
-  destination*, with `ContextRoot`/`DataRoot` fixing the rooting in the type;
-  plus `ParamCtx`, the evaluation handle the sync built-ins resolve against
-- `integration.rs`: The three integration configs (`http_call`, `enrich`,
-  `publish_kafka`). Config only; no handler ships
-- `config.rs`: The `FunctionConfig` dispatch enum, `BUILTIN_FUNCTION_NAMES`,
-  `BuiltinKind` and `DispatchableFunction`
-
-### Key Implementation Details (v3)
-
-- **Eval context is `{data, metadata, temp_data}` only.** `payload` is a
-  separate field on `Message` and is *not* part of the JSONLogic evaluation
-  context. A `{"var": "payload.foo"}` expression silently resolves to nothing;
-  parse the payload into `data` first. This is an easy and invisible mistake to
-  make when writing examples or benchmarks.
-- **A workflow's `loop` makes its task list a bounded `for` loop.** Per sweep
-  the engine writes the counter to `temp_data`, checks `counter < max`
-  (half-open), re-evaluates the workflow condition, runs the task list
-  unchanged, then advances by `increment`. `max` is required because it makes
-  termination structural. Reaching it is *normal completion*, not an error.
-  `TaskOutcome::Halt` breaks the whole loop, not one sweep. The engine owns the
-  counter, so a body task writing that path is overwritten at the next
-  increment. Looping workflows are excluded from the shared-arena fully-sync
-  run (`joins_sync_run`) so bump-arena memory is freed between sweeps.
-- **A loop with `setup` or `over` runs a pre-phase; a counter-only loop does
-  not.** The pre-phase is the workflow condition plus the `setup` list, run
-  through the same `execute_pass` as a sweep (over a `PassList` naming that
-  list, not `workflow.tasks`), then `over` evaluated once. Only then does the
-  per-sweep sequence start, with two more engine-owned writes after the bound
-  checks: `over[counter]` into `temp_data.<as>` and `{}` into
-  `temp_data.<scratch>`, both before the condition. The counter *is* the
-  element index. Gating the pre-phase on `setup`/`over` is what keeps a
-  counter-only loop free of an extra condition evaluation; the existing loop
-  tests pin that. Setup is not a sweep: `PassCtx::once`, no `loop_counter`,
-  and `span.sweeps` reset after it.
-- **Every pass over a workflow's tasks goes through `Workflow::all_tasks()`**,
-  not `workflow.tasks`: the compiler, `precompile_custom_inputs`,
-  `Workflow::validate`, `connector_refs` and every `authoring::check_*` do.
-  Reading `tasks` alone silently skips a loop's setup steps, which would then
-  run uncompiled or unlinted. `loop.over` is a `Sink::Message` expression in
-  `for_each_expression`, since its elements land in `temp_data`. An explicit
-  `"over": null` is kept as `Some(Null)` (`present_value`) so the parser and
-  `check_loop` agree it is refused.
-- **A task's `for_each` runs every call isolated, then folds in element
-  order.** `run_element` takes `&Message`, not `&mut`, on purpose: each call
-  forks the same untouched message (`Message::fork_for_element`: context, id
-  and payload, with an empty audit trail and error list and `capture_changes`
-  forced on; the history grows every loop sweep and the fold never reads it,
-  #67), and
-  the fold (errors, replayed `Change`s, `into[i]`, then one
-  `handle_task_result` per element) runs only after every call has finished.
-  The fold stops at the first element that fails the task or halts; later
-  elements, finished or not, contribute nothing, which is what keeps a halt
-  identical at every `max_concurrency`. That is the whole reason
-  `max_concurrency` cannot change results; do not "optimise" sequential mode
-  into running in place. Per element,
-  `fan_out_pass` neutralises `terminal`/`halt_on`; `fan_out_flow` applies them
-  once to the whole fan-out. `for_each` is refused on sync built-ins
-  (`ForEach::problem`), which is what keeps it off the sync stretch: every
-  fan-out task is already an async boundary. The rules live once in
-  `ForEach::problem`, called by `Workflow::validate` and
-  `authoring::check_for_each`. Calls run under `futures_util`'s
-  `FuturesUnordered` without spawning; `process_message` must stay `Send`
-  (pinned by `process_message_stays_send_with_a_fan_out`).
-- **A group's condition is evaluated once, on entry, not per member.** An
-  element of `tasks` carrying a `tasks` key parses as a `TaskGroup`; the tree is
-  flattened into `Workflow::tasks` at parse time and each span is recorded on
-  the task that opens it (`Task::group_starts`, outermost first). `GroupGate`
-  closes spans by comparing `end` against the cursor, **not** by a per-task
-  close count: with `A { B { t } }` and `B` false, nothing inside `A` ever runs,
-  so the task that would carry "A closes here" is jumped straight over, yet `A`
-  was entered and, if terminal, must still halt. Do not replace that with a
-  counter.
-- **The two control-flow keys a group cannot honour are resolved differently, on
-  purpose.** `halt_on` on a group is **refused at parse time**
-  (`steps.rs`, in `walk`), the schema's one exception to "unknown keys are
-  ignored". `continue_on_error` on a group is **linted, not refused**: captured
-  by `GroupHeader` as `Option<Value>`, recorded on
-  `TaskGroup::continue_on_error`, and reported by `check_workflow` as
-  `GROUP_CONTINUE_ON_ERROR`. The difference is age, not principle: `halt_on`
-  was new in 3.10.0 with no installed base, while `continue_on_error` is real on
-  both `Task` and `Workflow` and may already sit on a host's group nodes, where
-  refusing it would fail `Engine::build` for every workflow in that build.
-  Honouring it was rejected too: propagating it to member tasks changes the
-  error semantics of definitions that load today, silently. The capture is
-  `Option<Value>` rather than `Option<bool>` precisely so a non-bool spelling
-  stays an ignored unknown key instead of becoming a new parse error, and only a
-  literal `true` is reported. Pinned by
-  `a_group_continue_on_error_is_recorded_but_never_honoured` (runtime) and
-  `a_group_without_continue_on_error_is_silent` (the trigger).
-- **`Task::terminal` and `Task::halt_on` are applied *after* the status
-  classification in `handle_task_result`, never before.** They only upgrade a
-  `Continue` to a `HaltWorkflow`. Folding either into the `let halt = …` that
-  starts the if-chain makes halting the first branch, so a terminal task
-  returning 500 stops without recording `TASK_STATUS_ERROR` and without
-  propagating when `continue_on_error` is false. Pinned by
-  `terminal_task_returning_5xx_still_records_and_propagates` and
-  `halt_on_failure_with_5xx_and_no_continue_on_error_still_propagates`.
-  `TaskPass::halts_at(status)` is the single definition of both: `terminal`
-  unconditionally, `halt_on` at `status >= 400`, the same threshold the
-  classification itself splits on. Do not open-code a second notion of "failed".
-- **A failing `validation` does not stop anything on its own.** It returns
-  `Status(400)`, and `continue_on_error` covers only `5xx` and `Err`, so the next
-  task runs. That is deliberate (plenty of workflows validate to record errors
-  rather than to gate), and `halt_on: "failure"` is how an author opts into
-  rejecting. Returning `TaskOutcome::Halt` instead would stamp `HALT_STATUS_CODE`
-  (299) over the `400` on both the audit trail and `metadata.progress`, losing the
-  status the host answers with; that is why the halt goes through the fold.
-  `IssueCode::UnguardedValidation` reports the ungated shape at authoring time and
-  is **informational**; never add it to `refuse_authoring_issues`.
-- **A null `map` result is skipped, and that is load-bearing.** It is what
-  makes `{"if": [cond, value, null]}` mean "set or keep", so `null` can never
-  mean "clear". `"logic": null` is a no-op, kept loadable for the installed
-  base and reported by `check_workflow` as the advisory `NULL_MAPPING` (logic
-  that folds to a constant `null`, under `on_null: "skip"` only). Removal is
-  explicit: `unset: true`, or `on_null: "unset"`.
-  The rules between `logic` / `unset` / `on_null` / `mode` (and "never remove
-  or append to a context root") live once, in `AuthoredMapping::problem`, which both
-  `MapMapping`'s hand-written `Deserialize` and `authoring::check_mappings`
-  call. Do not re-derive them in either place. A removal records a `Change`
-  with `removed: true` and `new_value: null`; the flag is skipped when false so
-  write JSON stays byte-identical. The arena cache follows a removal through
-  `ArenaContext::apply_removal_parts` (a narrow refresh, not a splice).
-- **`map`'s `mode: "append"` / `"extend"` must stay O(entry), not O(array)
-  (#69).** `append_at` pushes the already-converted owned result onto the
-  owned array and splices a shallow copy of the cached arena slice plus the
-  result's arena form (`ArenaContext::cached_at`), and records one `Change`
-  per element at `path.<index>`. Building the new array from the owned side,
-  or recording the whole array, reintroduces the quadratic cost the mode
-  exists to remove. A target that is neither missing, `null` nor an array
-  fails the mapping; never wrap it.
-- **`AuditMode` changes only what is kept (#68).** Every audit push goes
-  through `Message::record_audit`; `Last(n)` trims in batches of `n` (the Vec
-  holds up to `2n`) and `audit_trail()` shows the last `n`. Internal readers
-  of the trail (the trace's `own_audit_entry`, snapshots, `Serialize`) must go
-  through `audit_trail()`, never the raw field. Default is `Full`, for the same
-  reason `capture_changes` defaults to `true`.
-- **Several reads of the message cost one context view only inside
-  `TaskContext::with_view` (#66).** Every `TaskContext::eval` and every
-  `Template::resolve*` views the whole context into the arena, so each one
-  costs the message's array and object spines however little it reads. The
-  `_in` twins go through a private `Source` trait in `template.rs` with the
-  per-call path, so the two cannot drift; add a new resolution method as a
-  pair.
-- **A view borrows the leaves; only `ArenaContext` copies them.** Since
-  datalogic-rs 5.7 an `&OwnedDataValue` eval input goes through
-  `OwnedDataValue::view_in`, and `with_view` and `ValidationFunction::execute`
-  call it directly: strings, keys and tensor buffers point into
-  `message.context` and only the spines are allocated. `ArenaContext` cannot
-  do this and must keep `to_arena` — it caches arena values *across* the
-  owned writes of a sync stretch, so a borrow of `message.context` could not
-  coexist with the `&mut` those writes need. That is why a loop sweep's cost
-  still tracks the context's bytes while a handler's `eval` no longer does,
-  and why the rest of #66 is dataflow-side work, not an upstream version
-  bump.
-- **`capture_changes` defaults to `true`, and that was decided, not
-  inherited (#63).** The captured copies are retained until `process_message`
-  returns, so long loops grow memory with every sweep; the fix chosen was
-  documentation (`LoopConfig`, `MessageBuilder::capture_changes`, the Loops
-  guide's "Memory in long loops"), not a flip. The wasm debugger (via
-  `Message::from_value`), `TraceOptions { changes: true }` (which reports the
-  diff and never turns capture on) and every host reading
-  `AuditTrail::changes` depend on the default, and a flip would empty their
-  diffs silently. Pinned by
-  `capture_changes_defaults_to_true_on_every_constructor`.
-- **`metadata.progress` is load-bearing.** The workflow executor writes
-  `metadata.progress = {workflow_id, task_id, status_code}` after every task.
-  Cross-workflow chaining depends on downstream conditions reading it, so do not
-  gate, skip, or make this write conditional.
-- **Context writes from `handle_task_result` need an arena refresh.** It writes
-  `metadata.progress` always, and, when a host called
-  `EngineBuilder::with_error_context_path`, appends failure records at the
-  configured path. The sync stretch runs JSONLogic against a snapshot arena
-  cache, so each write needs a matching `refresh_for_path` in
-  `run_tasks_slice_in_arena`, placed **before** the `?`: an `Err` there does not
-  end the arena scope, since `execute_sync_workflow_run` carries the same
-  `ArenaContext` into the next workflow when the task has
-  `continue_on_error: false` inside a workflow with `continue_on_error: true`.
-  Appending to an *existing* array does not change the metadata child count, so
-  the divergence rebuild in `executor.rs` will not save you.
-- **Error codes come from one classifier.** `service_error_code`
-  (`src/engine/error.rs`) is the single mapping (a `Service` error's `kind`
-  verbatim, otherwise the variant's own code), and `ErrorInfo::new` routes
-  through it so the two cannot drift. Do not reintroduce a flat `TASK_ERROR`
-  fallback; that is what made every engine variant indistinguishable before
-  3.5.0.
-- **Operator families are opt-in, and enabling one is not a no-op.** The
-  `datalogic-rs` extension operators ship behind cargo features (`ext-string`,
-  `ext-array`, `ext-math`, `ext-control`, `ext-object`, `error-handling`,
-  `datetime`, `tensor`, `all-operators`), all off by default. Because the
-  engine always runs in templating mode, an operator whose family is off is
-  *not* an error; the object echoes back as literal data. So turning a family
-  on converts previously-inert values like `{"length": …}` into live operator
-  calls, and `datetime` additionally changes `==` and the ordering operators on
-  plain date-shaped strings. Both directions are pinned by `#[cfg]`-gated tests
-  in `src/engine/compiler.rs`; keep them that way, and never test only
-  `--all-features`.
-- **`tensor` is a family but is deliberately *not* in `all-operators`.** It is
-  the only exception, and the reason is collision, not size or dependencies
-  (it pulls none). Its 20 names include `shape`, `full`, `cast`, `pad`, `crop`,
-  `concat` and `stack` (ordinary JSON keys), and `all-operators` is what
-  `wasm/` ships to npm, so folding it in would silently change what
-  `{"shape": …}` means in workflows that already ship. There is no lint to
-  catch that: `check_template_keys` cannot distinguish an unknown single key
-  from the ordinary output-template shape. `{"$shape": …}` pins the literal
-  reading. `tests/tensor.rs::shape_is_a_live_operator_once_the_feature_is_on`
-  is the pinned trigger. If the family is ever folded in, that test is the
-  reminder of what it costs.
-- **`budget` is a config knob, not a family.** It forwards
-  `datalogic-rs/budget` and unlocks `EngineBuilder::with_ops_budget`, which is
-  the only thing that installs a ceiling; merely enabling the feature changes
-  no behaviour, which is what keeps it non-breaking. The budget is carried on
-  `Engine` alongside `secrets` and the custom operators *because* a hot reload
-  builds a fresh datalogic engine, and a bound that lifted itself on reload
-  would be worse than none. Exceeding it surfaces as
-  `DataflowError::BudgetExceeded` (code `BUDGET_EXCEEDED`, non-retryable),
-  classified in the one place `error::from_datalogic_eval`; compile-time
-  sites stay plain `LogicEvaluation`, since folding a constant charges nothing.
-  The ceiling binds every evaluation (it is on the datalogic engine), but only
-  the handler/`Template` path *reports* it as `BUDGET_EXCEEDED`: a condition
-  fails closed to `false` and `map`/`log`/`validation` log and continue, which
-  is how they have always treated an eval failure. Giving conditions an error
-  channel is a separate change: it would alter `VariableNotFound` handling in
-  every existing deployment.
-  The variant is **not** `#[cfg]`-gated even though only a `budget` build can
-  construct one: errors are serialized into `message.errors()` and travel to
-  hosts that need not share the producer's feature set.
-- **Every function parameter is JSONLogic, and the static spelling is free.**
-  A JSON literal *is* JSONLogic for itself, so `"path": "data.out"` and
-  `"timeout_ms": 5000` mean what they always did. `Template::compile` asks
-  `Logic::is_constant()` and, when the expression folded, evaluates it once at
-  construction and caches the result; `PathTemplate` additionally precomputes
-  the `(dotted, parts)` write pair. Only a parameter that reads the message
-  does per-message work. Use `is_constant`, **not** `is_static`: the latter is
-  true for rules that fail to fold *because they error* (`{"/": [1, 0]}`), so
-  pre-evaluating those would move a runtime error to build time.
-- **Resolution borrows; it must not clone.** `Template::resolve_str_in_arena`
-  returns `Cow<'_, str>` and `PathTemplate::resolve_in_arena` returns
-  `Cow<'_, ResolvedPath>`. Returning owned values instead costs a `String`
-  allocation per parse/publish task per message and two atomic `Arc` bumps per
-  `map` write, measured at ~9.6% of `realistic_benchmark` throughput. Borrowing
-  is why 3.9 is *faster* than 3.8 rather than slower.
-- **The template-key escape (`$`) is always on**:
-  `compiler::TEMPLATE_KEY_ESCAPE`, applied at the one
-  `datalogic_engine_builder()` every engine in this crate goes through, tests
-  included. `{"$cat": …}` is the literal object; `{"cat": …}` is still the
-  operator. Exactly one prefix is stripped from **every** template key, not only
-  colliding ones, so a template emitting `$`-prefixed keys must double
-  them. An escaped key does *not* constant-fold (pinned by
-  `an_escaped_key_does_not_fold_to_a_constant`).
-- **A single-key object with an unknown key is not inert.** It evaluates its
-  argument and emits a structured object: `{"result": {"var": "x"}}` yields
-  `{"result": 5}`. That is the ordinary single-key output template, which is why
-  there is no "unknown operator key" lint: it could not be distinguished from a
-  typo without firing on most correct workflows. Only *multi*-key objects and
-  escaped keys go through the template-key checks.
-- **Secrets are an operator, not a context root.** `{"secret": "name"}` reads
-  an engine-held `Secrets` store (`src/engine/secrets.rs`) through a custom
-  datalogic operator registered at every `LogicCompiler::with_operators` site.
-  Nothing is composed into `message.context`, so `ArenaContext`,
-  `evaluate_condition`, validation's raw `to_arena` and the trace code stay
-  untouched; that is the whole guarantee. Do not "simplify" it into a
-  `secrets` key on the context. `authoring::check_secrets` is the single
-  implementation behind both `build()` refusal and `check_workflow`; `map`
-  mappings and `log` expressions may not read a secret at all (blunt on
-  purpose: there is no static line between a copy and a derived value).
-- **Handler contract**: implement `AsyncFunctionHandler` with a
-  `type Input: DeserializeOwned`, and
-
-  ```rust
-  async fn execute(
-      &self,
-      ctx: &mut TaskContext<'_>,
-      input: &Self::Input,
-  ) -> Result<TaskOutcome>;
-  ```
-
-  Handlers do **not** return changes. Write through `ctx.set(path, value)`, which
-  records the audit-trail `Change` for you.
-- **Registration**: `Engine::builder().register("name", handler)` accepts any
-  `AsyncFunctionHandler` and boxes it internally. `Engine::new(workflows, map)`
-  is the lower-level escape hatch.
-- **Error Handling (two channels)**: `process_message` returns `Err` only when
-  the engine stopped early. Errors from tasks with `continue_on_error = true` are
-  recorded in `message.errors()` without producing an `Err`. Always check both.
-- **Hot Reload**: `engine.with_new_workflows(..)` swaps workflows while keeping
-  custom function registrations; the old engine stays valid for in-flight messages.
-- **Async-First**: all execution paths are async, on the Tokio runtime.
-
-### Testing Patterns (v3)
-
-Unit tests live in `mod tests` blocks alongside the code they cover (20 modules).
-The integration suite is split by topic across `tests/`, one binary per file:
+Unit tests live in `mod tests` blocks beside the code they cover; `src/state/`
+has its model tests under `src/state/tests/`. The integration suite is one
+binary per topic under `tests/`, with shared fixtures in `tests/support/`:
 
 | File | Covers |
 |---|---|
-| `engine_execution.rs` | Async handler path, sync stretch, shared-arena runs |
-| `mapping_semantics.rs` | `map` write semantics: replace vs. merge, `#` paths |
-| `map_unset.rs` | `map` removal: `unset`, `on_null`, `Change::removed`, the #59 loop slot |
-| `map_append.rs` | `map` `mode: "append"` / `"extend"`: in-place growth, per-element `Change`s, the rules |
-| `audit_mode.rs` | `AuditMode`: `Full` / `Last(n)` / `Off`, and that control flow is identical in each |
-| `error_handling.rs` | Single error channel, `DataflowError::Service` |
-| `tracing.rs` | Caller-owned `process_message_tracing` |
-| `trace_options.rs` | `TraceOptions`: timing, diffs, budget, redaction |
-| `observer.rs` | `ExecutionObserver` callbacks |
-| `public_api.rs` | Built-in classification, typed configs, re-exports, connectors |
-| `rollout.rs` | Traffic splits gated on `Message::routing_bucket` |
-| `templates.rs` | `Template` config fields on custom handlers |
-| `workflow_loop.rs` | `LoopConfig`: bounded per-sweep re-execution |
-| `loop_over.rs` | `loop.setup` / `over` / `as` / `scratch`: the array-iteration shape end to end |
-| `for_each.rs` | Task fan-out: isolation, element order, `null` on failure, halting, concurrency, loops, records |
-| `task_groups.rs` | `Task::terminal`, `Task::halt_on` and task groups: the guard-clause shape |
-| `task_identity.rs` | `TaskContext` workflow/task ids and `loop_counter` |
-| `operator_vocabulary.rs` | `operator_names`: every mirrored name checked live |
-| `retry.rs` | `RetryPolicy` backoff, deadline and retryability, under a paused clock |
-| `authoring_validation.rs` | `validate_authored` and `check_workflow`: codes, paths, the parse backstop |
-| `secrets.rs` | `{"secret": …}` resolution, the engine surface, and the static rules |
-| `secrets_isolation.rs` | The never-recorded guarantee, exit by exit: every `TraceOptions` shape, errors, observer, logs, and the access vectors that must not reach the store |
-| `template_keys.rs` | The `$` escape end-to-end, and the two template-key issue codes |
-| `jsonlogic_params.rs` | Computed parameters: map destinations, parse/publish targets, validation messages |
-| `ops_budget.rs` | `with_ops_budget`: the ceiling, its error code, and that it survives a hot reload (needs `budget`) |
-| `tensor.rs` | The `tensor` forward reaching the engine, the `OwnedDataValue` boundary, and the `shape` collision (needs `tensor`) |
+| `acceptance.rs` | Two acceptance configs: an Orion Mongo connector and a plugin's `Templated` |
+| `checks.rs` | The compile checks: secrets, template keys, `payload` vars, outputs |
+| `compat.rs` | The compat reader: every 3.x spelling, `migrate_v3`, mixed spellings refused |
+| `compile.rs` | `Compiler::check`, `check_steps`, `compile_one`, the oracle |
+| `config_fields.rs` | Every `ConfigField` type and the derive's attributes |
+| `deadline.rs` | The run's deadline and token, a child run's, a host call at the limit |
+| `derive.rs` | The derive: nested configs, defaults, outputs, `resolve` |
+| `documents.rs` | `Interpolated` rendering end to end |
+| `error_context.rs` | The error context: the mirror, the reset, the refused paths |
+| `expr.rs` | `Expr<T>` and `FromValue`: the conversions and their errors |
+| `fan_out.rs` | `for_each`: isolation, element order, `null` on failure, halting, every concurrency |
+| `fingerprint.rs` | `Fingerprint`: stable, scheme-tagged, the golden value |
+| `function_testing.rs` | `function::testing::call` and `config` |
+| `host_calls.rs` | Host functions end to end: the overlay, layers, roots, `Ctx` |
+| `map_vs_v3.rs`, `parse_vs_v3.rs`, `run_vs_v3.rs` | The differential tests against the published 3.15.0 |
+| `observer.rs` | `Observer`: interest, the events, timings |
+| `operators.rs` | The operator table and the families' switches |
+| `ops_budget.rs` | `ops_budget` and `BUDGET_EXCEEDED` (needs `budget`) |
+| `parse.rs` | `def::parse`: every issue code at its path |
+| `path.rs` | `Path` against v3's rules, by random paths |
+| `program.rs` | `link`: order, numbering, channels, statuses |
+| `registry.rs` | `Registry`: registration, reserved names, the catalogue |
+| `repository_definitions.rs` | Every definition in the repository parses and compiles |
+| `run_basics.rs`, `run_loops.rs` | The engine end to end: policies, groups, progress; loops |
+| `run_json.rs` | `Run` as JSON |
+| `secrets_isolation.rs` | The never-recorded guarantee, exit by exit |
+| `smoke.rs` | The crate version |
+| `trace.rs` | The trace: steps, changes, redaction, the budget, replay |
+| `ts_types.rs` | The bindings' drift and the wire check (needs `ts`) |
+| `vocabulary.rs` | Every error code the corpus writes is one the engine names |
+| `wire.rs` | Messages and traces read back byte for byte |
 
-Each file under `tests/` compiles as its own crate, so fixtures used by more
-than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
-That module is `#![allow(dead_code)]` because no single binary uses all of it.
+A host tests one function with `function::testing::call(f, json!({..}))`,
+which runs the real compile, overlay and layers with no engine assembled, and
+`testing::config::<C>(json)` for a config alone.
 
-When extending the engine:
+## Release Process
 
-1. Implement `AsyncFunctionHandler` with a typed `Input` for custom tasks
-2. Register via `Engine::builder().register(..)`
-3. Mutate through `TaskContext::set` so the audit trail stays correct
-4. Return the `TaskOutcome` variant that matches intent; don't encode control
-   flow in a status code
+Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI; it
+never publishes, and the documentation site deploys from `v3-maintenance`
+(`docs.yml` on `main` runs only by hand until phase 8).
+`.github/workflows/release.yml` fires only on a `v*` tag, validates that the
+tag matches the root `Cargo.toml` version, then publishes the crate, the wasm
+package and the UI package, and cuts a GitHub release. **Phase 8 adds the
+derive's publish, first,** and drops its `publish = false`: the root's
+published manifest names the derive from crates.io.
+
+**No tag may be cut from `main` before phase 8.** The root, the derive,
+`wasm/` and `ui/` read `4.0.0-dev`; `release.yml` checks that `wasm/`'s two
+versions, `ui/`'s and the install snippets' minor match the tag. 3.x releases
+are tagged on `v3-maintenance`.
+
+## The machine
+
+The owner's Docker stack runs permanently and is never stopped, paused or
+pruned; its `soma` container holds 127.0.0.1:8080, so nothing here binds 8080.
+It is the machine's permanent load: judge benchmarks on paired ratios with the
+instructions retired beside them. The repository's `target/` grows past 90 GB;
+below 20 GiB free, delete `target/debug/incremental` (a cache that rebuilds)
+between cargo runs, never during one, and check `df -h /` before a long build.
