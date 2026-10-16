@@ -4,18 +4,21 @@ CLAUDE.md's interleaved method. Every gate benchmark prints one line,
 `GATE {"bench": ..., "metrics": [{"name", "value", "unit", "better"}]}`, and
 this reads only that line.
 
-    gate.py build [--v4] --out DIR
-        Build every example in release from a clean tree, copy the 13 gate
-        binaries out of target/, and write DIR/build.json (commit, rustc, date).
-        With --v4, build `cargo build --release -p dataflow-rs-v4 --examples`
-        instead and copy the ports v4 has (V4_BENCHES: thirteen, every
-        bench, and the self-judged `host_call_floor`),
-        target/release/examples/v4_<name>, to DIR/<name>: a v4 directory then
-        holds the names a v3 one does, and `compare` reads the two alike.
+    gate.py build [--v3 [--v3-ref REF]] --out DIR
+        Build the root's examples in release (v4) from a clean tree, copy the
+        ports V4_BENCHES names (thirteen, every bench, and the self-judged
+        `host_call_floor`), target/release/examples/<name>, to DIR/<name>, and
+        write DIR/build.json (commit, rustc, date, engine "v4").
+        With --v3, build v3 instead, from a git worktree of REF (V3_REF, the
+        freeze commit, by default) at target/gate-v3, reused while it is at
+        REF: `cargo build --release --examples` there, with its own target,
+        and copy the 13 BENCHES from it. build.json then says engine "v3" and
+        holds REF's full sha. A v4 directory holds the names a v3 one does,
+        and `compare` reads the two alike.
 
     gate.py baseline --bins DIR --rounds N --out FILE [--only a,b]
         Run the gate binaries DIR holds (or --only's), as `compare` finds
-        them, so a `build --v4` directory runs its thirteen ports and
+        them, so a `build` directory runs its thirteen ports and
         `host_call_floor`, round-robin for
         N + 1 rounds, discard round 0 as cold, and write every run, each
         metric's mean, median and spread, with the build, the machine and the
@@ -45,7 +48,7 @@ this reads only that line.
         1 if any verdict is WORSE or NOT FASTER.
 
         A self-judged bench (SELF_JUDGED) compares v3 and v4 inside its own
-        process and has no v3 binary: `build --v4` copies it, and `compare`
+        process and has no v3 binary: `build` copies it, and `compare`
         runs it from B only, once per round, and lists its rows in the same
         table. Its judged metric is already a ratio, v4 over v3, so the
         verdict reads that value directly: over the kept rounds, WORSE when
@@ -69,6 +72,10 @@ import statistics
 import subprocess
 import sys
 
+# The freeze commit: v3 as the baseline measured it, whose examples `build --v3`
+# builds in a worktree (v3's source left `main` in phase 7b).
+V3_REF = "2d3d8e9"
+
 BENCHES = [
     "realistic_benchmark",
     "benchmark",
@@ -86,7 +93,7 @@ BENCHES = [
 ]
 
 
-# The benchmarks v4 ports (`v4/examples/v4_<name>.rs`), in BENCHES order: the
+# The benchmarks v4 ports (`examples/<name>.rs`), in BENCHES order: the
 # eight sync ones of phase 4, phase 5's four host-call rows and phase 6's
 # `observed_run`, thirteen ports,
 # with the self-judged `host_call_floor` beside the row whose floor it gates.
@@ -157,24 +164,39 @@ def build(args):
     root = repo_root()
     if sh("git", "status", "--porcelain", "--untracked-files=no", cwd=root):
         sys.exit("refusing to build: the tree has uncommitted changes")
-    if args.v4:
-        subprocess.run(["cargo", "build", "--release", "-p", "dataflow-rs-v4", "--examples"], cwd=root, check=True)
-        names, prefix = V4_BENCHES, "v4_"
+    env = {k: v for k, v in os.environ.items() if k != "CARGO_TARGET_DIR"}
+    if args.v3:
+        ref = sh("git", "rev-parse", args.v3_ref, cwd=root)
+        tree = os.path.join(root, "target", "gate-v3")
+        sh("git", "worktree", "prune", cwd=root)
+        head = None
+        if os.path.isdir(tree):
+            try:
+                head = sh("git", "-C", tree, "rev-parse", "HEAD")
+            except subprocess.CalledProcessError:
+                head = None
+        if head != ref:
+            if os.path.isdir(tree):
+                sh("git", "worktree", "remove", "--force", tree, cwd=root)
+            sh("git", "worktree", "add", "--detach", tree, ref, cwd=root)
+        subprocess.run(["cargo", "build", "--release", "--examples"], cwd=tree, env=env, check=True)
+        names, src, info_root, commit = BENCHES, tree, tree, ref
     else:
-        subprocess.run(["cargo", "build", "--release", "--examples"], cwd=root, check=True)
-        names, prefix = BENCHES, ""
+        subprocess.run(["cargo", "build", "--release", "--examples"], cwd=root, env=env, check=True)
+        names, src, info_root = V4_BENCHES, root, root
+        commit = sh("git", "rev-parse", "HEAD", cwd=root)
     os.makedirs(args.out, exist_ok=True)
     for name in names:
         shutil.copy2(
-            os.path.join(root, "target", "release", "examples", prefix + name),
+            os.path.join(src, "target", "release", "examples", name),
             os.path.join(args.out, name),
         )
     info = {
-        "commit": sh("git", "rev-parse", "HEAD", cwd=root),
-        "describe": sh("git", "describe", "--tags", "--always", cwd=root),
+        "commit": commit,
+        "describe": sh("git", "describe", "--tags", "--always", cwd=info_root),
         "rustc": sh("rustc", "-V"),
         "date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-        "engine": "v4" if args.v4 else "v3",
+        "engine": "v3" if args.v3 else "v4",
     }
     with open(os.path.join(args.out, "build.json"), "w") as f:
         json.dump(info, f, indent=2)
@@ -501,7 +523,8 @@ def main():
     sub = p.add_subparsers(dest="command", required=True)
     b = sub.add_parser("build")
     b.add_argument("--out", required=True)
-    b.add_argument("--v4", action="store_true", help="build v4's ports instead of v3's examples")
+    b.add_argument("--v3", action="store_true", help="build v3's examples from a worktree of --v3-ref instead of the root's")
+    b.add_argument("--v3-ref", default=V3_REF, help="the commit --v3 builds (default: the freeze commit)")
     m = sub.add_parser("baseline")
     m.add_argument("--bins", required=True)
     m.add_argument("--rounds", type=int, default=5)
