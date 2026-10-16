@@ -61,8 +61,9 @@ jobs:
           components: rustfmt, clippy
 
       # Crate downloads only — `target/` is deliberately absent. This job
-      # builds eleven distinct feature configurations (all-features, default,
-      # and seven families in isolation) across `--all-targets`, so its
+      # builds thirteen distinct feature configurations (all-features, default,
+      # serde_json's `preserve_order`, and the family loop's ten entries in
+      # isolation) across `--all-targets`, so its
       # `target/` reached 17 GB: `actions/cache` never prunes, and with
       # `restore-keys` every lockfile change restored the previous tree, added
       # another configuration's artifacts, and saved a larger superset.
@@ -111,10 +112,14 @@ jobs:
 
       # Everything above is --all-features. These two steps are bare, with no
       # `--workspace` and no `-p`, on purpose: they compile the root the way
-      # `cargo add dataflow-rs` delivers it. `--workspace` unifies features
-      # across the members it selects (dataflow-wasm turns `all-operators` on),
-      # and `-p dataflow-rs` is ambiguous beside the published 3.15.0 that the
-      # other members depend on (I156).
+      # `cargo add dataflow-rs` delivers it. `--workspace` cannot: `wasm/`
+      # depends on the published 3.15.0 with `all-operators`, and cargo unifies
+      # features across the members one invocation selects, so the
+      # `datalogic-rs` both engines share has every operator family on. The
+      # root's own features stay off, and it sees the families only through
+      # that one shared `datalogic-rs`. Nor can `-p dataflow-rs`: it is
+      # ambiguous beside the published 3.15.0 the other members depend on
+      # (I156).
       - name: Run clippy (default features)
         run: cargo clippy --all-targets --locked -- -D warnings
 
@@ -124,15 +129,27 @@ jobs:
       - name: Run tests (default features)
         run: cargo test --locked
 
+      # The README's and the book's Rust examples, in a default build. A single
+      # `-p` builds the published 3.15.0 with its default features, so they
+      # hold for a user who ran `cargo add dataflow-rs`, which `--workspace`
+      # cannot show: there 3.15.0 has every family on, `tensor` and `budget`
+      # included.
+      - name: Run the README's and the book's doctests (default features)
+        run: cargo test -p dataflow-docs-tests --locked
+
       # Orion's graph turns serde_json's `preserve_order` on, which unifies into
       # the engine: its key order must be its own in both builds.
       - name: Run tests (serde_json preserve_order)
         run: cargo test --features serde_json/preserve_order --locked
 
       # The golden corpus's v3 recordings, held against the published 3.15.0.
-      # `--workspace` above turns every operator family on (through wasm/), so
-      # the cases that need a family off run only here; the all-features run
-      # above covers the rest.
+      # In the `--workspace --all-features` run above, it is `--all-features`
+      # itself, through `corpus/v3`'s forwards, that turns every family on,
+      # `tensor` and `budget` included, and that run covers the cases that
+      # need one. This default-build step is the only run of the cases that
+      # need a family off. It also catches a lock bump of 3.15.0's
+      # dependencies (`datalogic-rs`, `serde_json`, `quick-xml`, `chrono`),
+      # which can change v3's output though its source is fixed by checksum.
       - name: Run the corpus (default features)
         run: cargo test -p dataflow-corpus-v3 --locked
 
@@ -205,10 +222,10 @@ jobs:
         run: |
           cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown \
             --all-targets -- -D warnings
-          # No `--all-targets` for the root: its tests dev-depend on the
-          # published v3 without `wasm-web`, which wasm32 needs (uuid's
-          # randomness), so only the library builds. `wasm-web` is the platform
-          # switch; `all-operators` adds datetime.
+          # No `--all-targets` for the root: its dev-dependency `tokio` has
+          # `full`, which tokio refuses on wasm targets, so its tests and
+          # examples do not build for wasm32 and only the library is linted.
+          # `wasm-web` is the platform switch; `all-operators` adds datetime.
           cargo clippy --target wasm32-unknown-unknown --features wasm-web --locked -- -D warnings
           cargo clippy --target wasm32-unknown-unknown \
             --features wasm-web,all-operators --locked -- -D warnings
@@ -232,7 +249,7 @@ jobs:
   # nothing else in CI verifies it — the other jobs run stable. This caught the
   # crate having silently required 1.88 (let-chains) while advertising 1.85.
   #
-  # The floor is 1.98: `datalogic-rs` 5.5 and `datavalue-rs` 0.3 both declare
+  # The floor is 1.98: `datalogic-rs` 5.7 and `datavalue-rs` 0.3.1 both declare
   # `rust-version = "1.98"`, so it is inherited, not chosen.
   msrv:
     name: MSRV (1.98)
