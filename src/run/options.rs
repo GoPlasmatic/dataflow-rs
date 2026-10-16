@@ -25,15 +25,17 @@ pub struct RunOptions<'a> {
     /// host call, every fan-out element's start, every sweep and every 64
     /// ops. Natively each host call also races it, on a Tokio timer, so a
     /// run with a deadline is polled inside a Tokio runtime with its time
-    /// driver enabled. A call it cuts short is recorded as `TIMEOUT_ERROR`
-    /// on its task; either way the run ends [`TimedOut`].
+    /// driver enabled. A call it cuts short, or that returns `Err` once it
+    /// has passed, is recorded as `TIMEOUT_ERROR` on its task; either way
+    /// the run ends [`TimedOut`].
     ///
     /// [`TimedOut`]: crate::observe::RunStatus::TimedOut
     pub deadline: Option<Instant>,
     /// A token that cancels the run when it, or an ancestor, is cancelled;
     /// `None` by default. It is checked and raced where the deadline is,
-    /// and first. A call it cuts short is recorded as `CANCELLED` on its
-    /// task; either way the run ends [`Cancelled`].
+    /// and first. A call it cuts short, or that returns `Err` once it is
+    /// cancelled, is recorded as `CANCELLED` on its task; either way the
+    /// run ends [`Cancelled`].
     ///
     /// [`Cancelled`]: crate::observe::RunStatus::Cancelled
     pub cancel: Option<&'a CancelToken>,

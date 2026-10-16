@@ -21,13 +21,17 @@ pub enum RunStatus {
     CompletedWithErrors,
     /// A workflow stopped the run with this error. A function's `Err` of
     /// kind `TimedOut` or `Cancelled`, such as a child run's propagated,
-    /// ends the run here when its task's policies stop the run: only the
-    /// run's own limits give the two statuses below.
+    /// ends the run here when its task's policies stop the run and it
+    /// returned before the run's own deadline passed or its token was
+    /// cancelled: only the run's own limits give the two statuses below.
     Stopped(Error),
     /// The run's deadline passed: at a check between ops or at a sweep, or
-    /// while a call it then cut short ran.
+    /// while a call ran that it then cut short or that returned `Err`
+    /// after it.
     TimedOut,
-    /// The run's token, or one of its ancestors, was cancelled.
+    /// The run's token, or one of its ancestors, was cancelled: before a
+    /// check, or while a call ran that it then cut short or that returned
+    /// `Err` after it.
     Cancelled,
 }
 

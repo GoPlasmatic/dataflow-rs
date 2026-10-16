@@ -9,7 +9,7 @@
 
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::run::{CancelToken, ErrorRecord, Instant, RunStatus, WorkflowExit};
-use dataflow_rs::{Ctx, Engine, Expr, Function, Message, Outcome, Result, Run, RunOptions};
+use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result, Run, RunOptions};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -581,4 +581,350 @@ async fn a_child_runs_stop_is_the_calls_error_not_the_runs_limit() {
         assert_eq!(data(&m), json!({"input": 1}));
         assert_eq!(considered(&run), [("w", 1, Some(WorkflowExit::Stopped))]);
     }
+}
+
+// -- A call's `Err` once its run's own limit has passed --
+//
+// Found by Orion's port of `channel_call` (phase 7c, Task O10): its tests
+// `the_runs_deadline_during_the_child_ends_the_run_timed_out` and
+// `the_runs_token_tripped_during_the_child_ends_the_run_cancelled`, in
+// `crates/orion-server/src/engine/functions/channel_call.rs`, ended the
+// parent run `Stopped` until the function awaited `pending()` to let the
+// race cut it short. A call that hands its child run the run's deadline and
+// a child of its token sees the child stop in the wake the limit fires in,
+// and returns the child's `Err` before the race, polled call first, can cut
+// it short; on wasm nothing races at all. A call's `Err` once its run's own
+// limit has passed is now the limit's, so the run ends on the limit.
+
+/// R60's child run as Orion's `channel_call` makes it: `nested` runs under
+/// the run's deadline, or the call's own `own` ms when that is strictly
+/// earlier (a tie is the run's), and a child of the run's token; the call
+/// returns its `into_result()?`, so the child's stop is the call's `Err`.
+struct Inherit {
+    nested: Engine,
+    own: Option<u64>,
+}
+
+impl Function for Inherit {
+    type Config = ();
+
+    async fn call(&self, ctx: &mut Ctx<'_>, _: &()) -> Result<Outcome> {
+        let token = ctx.cancel().map(CancelToken::child);
+        let deadline = match (self.own.map(after), ctx.deadline()) {
+            (Some(own), Some(run)) if own < run => Some(own),
+            (own, run) => run.or(own),
+        };
+        let mut opts = RunOptions::default();
+        if let Some(deadline) = deadline {
+            opts = opts.deadline(deadline);
+        }
+        if let Some(token) = &token {
+            opts = opts.cancel(token);
+        }
+        self.nested
+            .run_with(&mut message(), &opts)
+            .await
+            .into_result()?;
+        Ok(Outcome::Ok)
+    }
+}
+
+/// Cancels its token, then sleeps ten seconds: a call its run's token cuts
+/// short in the poll it trips it in.
+struct Trip(CancelToken);
+
+impl Function for Trip {
+    type Config = ();
+
+    async fn call(&self, _: &mut Ctx<'_>, _: &()) -> Result<Outcome> {
+        self.0.cancel();
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        Ok(Outcome::Ok)
+    }
+}
+
+/// `fail`'s config.
+#[derive(FunctionConfig)]
+struct FailConfig {
+    /// How long the call sleeps before it fails, in milliseconds.
+    ms: Expr<u64>,
+}
+
+/// Records `NOTED`, sleeps, then fails with `BOOM`: an `Err` of its own.
+struct Fail;
+
+impl Function for Fail {
+    type Config = FailConfig;
+
+    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &FailConfig) -> Result<Outcome> {
+        let ms = ctx.eval(&cfg.ms)?;
+        ctx.record_error(ErrorRecord::new("NOTED", "began"));
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+        Err(Error::service("BOOM", "it failed"))
+    }
+}
+
+/// A child engine whose one task sleeps ten seconds.
+fn sleeping_child() -> Engine {
+    engine(&[workflow("child", vec![slow("c", 10_000)])])
+}
+
+/// An engine whose workflow `w` holds `first`, then `after`, and then the
+/// workflow `next`; `inherit` calls `f` and `fail` is registered.
+fn calling(f: Inherit, first: Value) -> Engine {
+    Engine::builder()
+        .register("inherit", f)
+        .register("fail", Fail)
+        .workflow_json(&workflow(
+            "w",
+            vec![first, map("after", "data.after", json!(true))],
+        ))
+        .workflow_json(&workflow("next", vec![map("x", "data.x", json!(1))]))
+        .build()
+        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"))
+}
+
+/// The task `p` calling `inherit`, under `on_failure`.
+fn inherit(on_failure: &str) -> Value {
+    json!({"id": "p", "on_failure": on_failure,
+           "function": {"name": "inherit", "input": {}}})
+}
+
+/// The record of a call to `function` on `task` the run's deadline ended.
+fn deadline_during(task: &str, function: &str) -> (String, String) {
+    error(
+        "TIMEOUT_ERROR",
+        &format!("Task {task} error: Timeout error: the run's deadline passed during `{function}`"),
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_childs_timeout_once_the_runs_deadline_passed_ends_the_run_timed_out() {
+    // The child's deadline is the run's: inherited, or the call's own when
+    // that is later or tied. Its timer fires with the race's, and in that
+    // wake the call, polled first, returns the child's `TimedOut`. The run's
+    // deadline has passed by then, so the call is the deadline's: the run
+    // ends `TimedOut`, whatever the task's policies, and its task records
+    // what a call the deadline cut short records.
+    for own in [None, Some(1000), Some(5000)] {
+        let e = calling(
+            Inherit {
+                nested: sleeping_child(),
+                own,
+            },
+            inherit("continue"),
+        );
+        let mut m = message();
+        let start = tokio::time::Instant::now();
+        let run = e
+            .run_with(&mut m, &RunOptions::default().deadline(after(1000)))
+            .await;
+        assert_eq!(start.elapsed(), Duration::from_secs(1), "{own:?}");
+        assert!(
+            matches!(run.status(), RunStatus::TimedOut),
+            "{own:?}: {:?}",
+            run.status()
+        );
+        assert!(run.retryable() && run.partial());
+        assert_eq!(audit(&m), [("p".to_owned(), 500, None)]);
+        assert_eq!(errors(&m), [deadline_during("p", "inherit")]);
+        assert_eq!(data(&m), json!({"input": 1}));
+        assert_eq!(considered(&run), [("w", 1, Some(WorkflowExit::Stopped))]);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_childs_cancel_once_the_runs_token_tripped_ends_the_run_cancelled() {
+    // Tripped from another task, which wakes the call: the child's own race
+    // sees its token first and ends the child `Cancelled`. Tripped inside
+    // the child, by its task: the call returns in its first poll, with no
+    // timer and no wake, as every call returns on wasm. Either way the run's
+    // token is cancelled when the call returns the child's `Cancelled`, so
+    // the run ends `Cancelled`.
+    for inside in [false, true] {
+        let token = CancelToken::new();
+        let nested = if inside {
+            Engine::builder()
+                .register("trip", Trip(token.clone()))
+                .workflow_json(&workflow(
+                    "child",
+                    vec![json!({"id": "c", "function": {"name": "trip", "input": {}}})],
+                ))
+                .build()
+                .unwrap()
+        } else {
+            cancel_after(&token, 1000);
+            sleeping_child()
+        };
+        let e = calling(Inherit { nested, own: None }, inherit("continue"));
+        let opts = RunOptions::default().deadline(after(5000)).cancel(&token);
+        let mut m = message();
+        let run = e.run_with(&mut m, &opts).await;
+        assert!(
+            matches!(run.status(), RunStatus::Cancelled),
+            "inside {inside}: {:?}",
+            run.status()
+        );
+        assert!(!run.retryable() && run.partial());
+        assert_eq!(audit(&m), [("p".to_owned(), 500, None)]);
+        assert_eq!(
+            errors(&m),
+            [error(
+                "CANCELLED",
+                "Task p error: the run was cancelled during `inherit`"
+            )]
+        );
+        assert_eq!(data(&m), json!({"input": 1}));
+        assert_eq!(considered(&run), [("w", 1, Some(WorkflowExit::Stopped))]);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_childs_own_earlier_deadline_is_the_calls_failure_under_its_policy() {
+    // The call's own deadline, a second in, is strictly before the run's:
+    // the child ends `TimedOut` on it, and the call returns that while the
+    // run's limits hold. The call keeps its own error, and its task's
+    // policy decides: `fail` stops the run with it, `continue` goes on.
+    let token = CancelToken::new();
+    let opts = RunOptions::default().deadline(after(5000)).cancel(&token);
+    let child_timed_out = error(
+        "TIMEOUT_ERROR",
+        "Task p error: Timeout error: the run timed out",
+    );
+    let own = || Inherit {
+        nested: sleeping_child(),
+        own: Some(1000),
+    };
+
+    let mut m = message();
+    let run = calling(own(), inherit("fail"))
+        .run_with(&mut m, &opts)
+        .await;
+    match run.status() {
+        RunStatus::Stopped(e) => assert_eq!(
+            (e.code(), e.message()),
+            ("TIMEOUT_ERROR", "the run timed out")
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(audit(&m), [("p".to_owned(), 500, None)]);
+    assert_eq!(errors(&m), std::slice::from_ref(&child_timed_out));
+    assert_eq!(data(&m), json!({"input": 1}));
+    assert_eq!(considered(&run), [("w", 1, Some(WorkflowExit::Stopped))]);
+
+    let mut m = message();
+    let run = calling(own(), inherit("continue"))
+        .run_with(&mut m, &opts)
+        .await;
+    assert!(
+        matches!(run.status(), RunStatus::CompletedWithErrors),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(
+        audit(&m),
+        [
+            ("p".to_owned(), 500, None),
+            ("after".to_owned(), 200, None),
+            ("x".to_owned(), 200, None),
+        ]
+    );
+    assert_eq!(errors(&m), [child_timed_out]);
+    assert_eq!(data(&m), json!({"input": 1, "after": true, "x": 1}));
+    assert!(!token.is_cancelled());
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_err_before_the_runs_deadline_keeps_its_policy_and_one_at_it_is_the_deadlines() {
+    let fail = |ms: u64, on_failure: &str| {
+        json!({"id": "f", "on_failure": on_failure,
+               "function": {"name": "fail", "input": {"ms": ms}}})
+    };
+    let unused = || Inherit {
+        nested: sleeping_child(),
+        own: None,
+    };
+    let boom = error("BOOM", "Task f error: it failed");
+
+    // Half a second before the deadline: the call's own error, under its
+    // policy. `continue` goes on to the end; `fail` stops the run with it.
+    let mut m = message();
+    let run = calling(unused(), fail(500, "continue"))
+        .run_with(&mut m, &RunOptions::default().deadline(after(1000)))
+        .await;
+    assert!(
+        matches!(run.status(), RunStatus::CompletedWithErrors),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(
+        audit(&m),
+        [
+            ("f".to_owned(), 500, None),
+            ("after".to_owned(), 200, None),
+            ("x".to_owned(), 200, None),
+        ]
+    );
+    assert_eq!(errors(&m), [error("NOTED", "began"), boom.clone()]);
+
+    let mut m = message();
+    let run = calling(unused(), fail(500, "fail"))
+        .run_with(&mut m, &RunOptions::default().deadline(after(1000)))
+        .await;
+    match run.status() {
+        RunStatus::Stopped(e) => assert_eq!(e.code(), "BOOM"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(errors(&m), [error("NOTED", "began"), boom]);
+
+    // At the deadline itself, the instant counts as passed: the call is the
+    // deadline's, as the race would have made it had it been polled first.
+    // Its own records are kept, as a call cut short keeps them.
+    let mut m = message();
+    let run = calling(unused(), fail(1000, "continue"))
+        .run_with(&mut m, &RunOptions::default().deadline(after(1000)))
+        .await;
+    assert!(
+        matches!(run.status(), RunStatus::TimedOut),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(audit(&m), [("f".to_owned(), 500, None)]);
+    assert_eq!(
+        errors(&m),
+        [error("NOTED", "began"), deadline_during("f", "fail")]
+    );
+    assert_eq!(data(&m), json!({"input": 1}));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_fan_out_elements_err_once_the_runs_deadline_passed_cuts_the_fan_out_short() {
+    // Each element's call hands its child the run's deadline. The first to
+    // return, in the wake the deadline fires in, returns its child's
+    // `TimedOut`: the fan-out is cut short as an element's race cuts it,
+    // nothing folded and the task recorded once with no element, and the
+    // run ends `TimedOut`.
+    let task = json!({"id": "t", "on_failure": "continue",
+        "for_each": {"over": [1, 2, 3], "as": "p", "max_concurrency": 3},
+        "function": {"name": "inherit", "input": {}}});
+    let e = calling(
+        Inherit {
+            nested: sleeping_child(),
+            own: None,
+        },
+        task,
+    );
+    let mut m = message();
+    let run = e
+        .run_with(&mut m, &RunOptions::default().deadline(after(1000)))
+        .await;
+    assert!(
+        matches!(run.status(), RunStatus::TimedOut),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(audit(&m), [("t".to_owned(), 500, None)]);
+    assert_eq!(elements(&m), [(deadline_during("t", "inherit"), None)]);
+    assert_eq!(data(&m), json!({"input": 1}));
+    assert_eq!(considered(&run), [("w", 1, Some(WorkflowExit::Stopped))]);
 }

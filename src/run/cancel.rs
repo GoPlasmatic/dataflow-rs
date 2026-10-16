@@ -6,7 +6,9 @@
 //! set: a run with neither never reads the clock. The token is checked
 //! first. A stop between ops or at a sweep records nothing on the message;
 //! the [`Run`](super::Run) says why. Natively a host call also [`race`]s
-//! them, one timer per call; on wasm only the checks run.
+//! them, one timer per call; on wasm only the checks run. A host call that
+//! returns `Err` is checked again once it has, natively and on wasm alike:
+//! a limit that has passed by then is why it failed.
 
 use crate::base::{CancelToken, Error, ErrorKind, Instant, Result};
 
@@ -89,6 +91,8 @@ impl Limits<'_> {
 /// timer per call, created only once `call` is pending. The race is
 /// `biased`: `call` is polled first, so a call that finishes in the poll a
 /// limit fires in wins; then the token, as [`Limits::stop`] reads it first.
+/// A call that wins with an `Err` is still the limit's: its caller checks
+/// the limits again.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn race<F: Future>(
     call: F,
@@ -204,6 +208,54 @@ mod tests {
             ("TIMEOUT_ERROR", "the run's deadline passed")
         );
         assert!(e.is_retryable());
+    }
+
+    /// Returns `Ok`, or an `Err` of its own.
+    struct Answer(bool);
+
+    impl crate::Function for Answer {
+        type Config = ();
+
+        async fn call(&self, _: &mut crate::Ctx<'_>, _: &()) -> Result<crate::Outcome> {
+            if self.0 {
+                Ok(crate::Outcome::Ok)
+            } else {
+                Err(Error::service("BOOM", "it failed"))
+            }
+        }
+    }
+
+    /// How many times one run of a single `answer` call reads the clock.
+    async fn reads_of(ok: bool, opts: &RunOptions<'_>) -> u32 {
+        let engine = Engine::builder()
+            .register("answer", Answer(ok))
+            .workflow_json(&json!({"id": "w", "tasks": [{"id": "a",
+                "on_failure": "continue", "function": {"name": "answer", "input": {}}}]}))
+            .build()
+            .unwrap();
+        let before = reads();
+        engine
+            .run_with(&mut Message::from_json(&json!({})), opts)
+            .await;
+        reads() - before
+    }
+
+    #[tokio::test]
+    async fn only_a_host_calls_err_checks_the_limits_after_it() {
+        // An `Err` reads the clock once more than an `Ok`, after the call,
+        // to see whether the deadline had passed by then.
+        let far = now() + Duration::from_secs(3600);
+        let opts = RunOptions::default().deadline(far);
+        let ok = reads_of(true, &opts).await;
+        assert!(ok >= 1, "the check before the call reads it");
+        assert_eq!(reads_of(false, &opts).await, ok + 1);
+
+        // Neither reads it with no deadline, a token alone included.
+        let token = CancelToken::new();
+        for opts in [RunOptions::default(), RunOptions::default().cancel(&token)] {
+            assert_eq!(reads_of(true, &opts).await, 0);
+            assert_eq!(reads_of(false, &opts).await, 0);
+        }
     }
 
     #[tokio::test]
