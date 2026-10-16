@@ -55,8 +55,11 @@ jobs:
 
           check "wasm/Cargo.toml" \
             "$(grep '^version = ' wasm/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')"
+          # A requirement carries its operator (`=` for an exact pin, as
+          # wasm/ pins the crate, or `^`/`~`), which a tag never does: strip
+          # it, so the version the requirement names is what is compared.
           check "wasm/Cargo.toml dataflow-rs dep" \
-            "$(grep 'dataflow-rs = ' wasm/Cargo.toml | sed 's/.*version = "\([^"]*\)".*/\1/')"
+            "$(grep 'dataflow-rs = ' wasm/Cargo.toml | sed 's/.*version = "[=^~]*\([^"]*\)".*/\1/')"
           check "ui/package.json" \
             "$(node -p "require('./ui/package.json').version")"
 
