@@ -189,9 +189,11 @@ loopback port, never 8080: `bench.sh` clears every workflow at the cluster URL.
 documentation site. The corpus recordings (`corpus/cases/**/*.v3.json`) are
 v3's: `corpus/record.sh` on `main` records against the pinned 3.15.0, and a fix
 on `v3-maintenance` that changes behaviour re-records its cases there, after
-which `main` bumps the pin (`corpus/v3`'s `dataflow-rs`, the root's
-`dataflow_rs_v3`) and re-records. Never edit a `.v3.json` by hand, and never to
-match v4: declare a deviation against a break instead.
+which `main` bumps the four pins together (`corpus/v3`'s, `docs-tests`' and
+`wasm/`'s `dataflow-rs`, and the root's `dataflow_rs_v3`, which
+`corpus/v3/tests/pins.rs` holds to one exact version) and re-records. Never
+edit a `.v3.json` by hand, and never to match v4: declare a deviation against
+a break instead.
 
 ### v4 at the root
 
@@ -376,11 +378,11 @@ affected cases (see "Branches"), and the re-recording is read before it is
 committed; never edit a `.v3.json` by hand. The comparator is order-sensitive,
 because key order is wire data.
 
-`cargo test --workspace --all-features` should report 1020 passing: the
+`cargo test --workspace --all-features` should report 1021 passing: the
 root's 858 (824 tests and 34 doctests), the derive's 2, v4's corpus driver's
-24, the corpus's 33, `corpus/v3`'s 3 and `docs-tests`' 100 (96 page doctests,
+24, the corpus's 33, `corpus/v3`'s 4 and `docs-tests`' 100 (96 page doctests,
 3 README doctests and its coverage test). `cargo test` at the root (the
-default build) should report 833, `cargo test -p dataflow-corpus-v3` 3,
+default build) should report 833, `cargo test -p dataflow-corpus-v3` 4,
 `cargo test -p dataflow-corpus-v4` 24 and `cargo test -p dataflow-docs-tests`
 100. The operator families are `#[cfg]`-gated, so the counts legitimately
 differ by feature set: the root reports 843 under
