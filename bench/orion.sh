@@ -6,13 +6,21 @@
 #
 #   bench/orion.sh ORION_DIR OUT_DIR [PASSES]
 #
-#   ORION_TAG=v1.12.0     the tag ORION_DIR must be checked out at
+#   ORION_TAG=v1.12.0     the tag ORION_DIR must be checked out at (default)
+#   ORION_COMMIT=<sha>    instead of the tag: ORION_DIR's HEAD must be this
+#                         commit (any revision `git rev-parse` resolves to a
+#                         commit); the summary records the commit and the branch.
+#                         The tag check is skipped; the clean-tree check is not
 #   ORION_CLUSTER=1       also run `cluster` against Orion's HA compose stack
 #                         (docker-compose.ha.yml), brought up and down here as
 #                         the project dataflow-gate-orion on a free port; its
 #                         RSS is not sampled, since it runs in containers
 #   ORION_SCENARIOS="a b"  the local scenarios to run (default: all eight)
 #   BENCH_DURATION, BENCH_CONCURRENCY   passed through to bench.sh (10s, 50)
+#
+# The script never stops, prunes or binds anything it did not start: bench.sh
+# takes OS-assigned free loopback ports, and ORION_CLUSTER=1 owns only its own
+# compose project (dataflow-gate-orion), never another container.
 #
 # Writes OUT_DIR/<scenario>-<pass>/ (bench.sh's log, hey's raw output, the peak
 # RSS) and OUT_DIR/orion.json, the summary.
@@ -31,12 +39,26 @@ if [[ -n "$(git -C "$ORION_DIR" status --porcelain --untracked-files=no)" ]]; th
     echo "$ORION_DIR has local changes" >&2
     exit 1
 fi
-if [[ "$(git -C "$ORION_DIR" describe --tags --exact-match 2>/dev/null || true)" != "$TAG" ]]; then
+if [[ -n "${ORION_COMMIT:-}" ]]; then
+    want=$(git -C "$ORION_DIR" rev-parse --verify --quiet "$ORION_COMMIT^{commit}" || true)
+    if [[ -z "$want" || "$(git -C "$ORION_DIR" rev-parse HEAD)" != "$want" ]]; then
+        echo "$ORION_DIR is not at commit $ORION_COMMIT" >&2
+        exit 1
+    fi
+    REF="commit $want"
+    branch=$(git -C "$ORION_DIR" symbolic-ref -q --short HEAD || true)
+    [[ -z "$branch" ]] || REF="$REF (branch $branch)"
+    LABEL="commit ${want:0:12}"
+elif [[ "$(git -C "$ORION_DIR" describe --tags --exact-match 2>/dev/null || true)" != "$TAG" ]]; then
     echo "$ORION_DIR is not at $TAG" >&2
     exit 1
+else
+    REF="tag $TAG"
+    LABEL="$TAG"
 fi
+export REF
 
-echo "building Orion $TAG (release)" >&2
+echo "building Orion $LABEL (release)" >&2
 LOAD_BEFORE=$(sysctl -n vm.loadavg)
 export LOAD_BEFORE
 cargo build --release --manifest-path "$ORION_DIR/crates/orion-server/Cargo.toml" >&2
@@ -121,10 +143,10 @@ if [[ "${ORION_CLUSTER:-}" == 1 ]]; then
     fi
 fi
 
-python3 - "$ORION_DIR" "$OUT" "$TAG" "$PASSES" <<'PY'
+python3 - "$ORION_DIR" "$OUT" "$TAG" "$PASSES" "${ORION_COMMIT:-}" <<'PY'
 import json, os, re, statistics, subprocess, sys
 
-orion, out, tag, passes = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+orion, out, tag, passes, commit_mode = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), bool(sys.argv[5])
 ROW = re.compile(r"^\s*(.+?)\s+([\d.]+) req/s\s+avg=([\d.]+) ms\s+p99=([\d.]+) ms\s+errors=(\d+)", re.M)
 
 def sh(*cmd, cwd=None):
@@ -134,6 +156,15 @@ def lock_version(name):
     text = open(os.path.join(orion, "Cargo.lock")).read()
     m = re.search(r'name = "%s"\nversion = "([^"]+)"' % re.escape(name), text)
     return m.group(1) if m else None
+
+def dataflow_entries():
+    text = open(os.path.join(orion, "Cargo.lock")).read()
+    found = []
+    for block in text.split("[[package]]"):
+        m = re.search(r'^name = "dataflow-rs"\nversion = "([^"]+)"(?:\nsource = "([^"]+)")?', block, re.M)
+        if m:
+            found.append({"version": m.group(1), "source": m.group(2)})
+    return found
 
 scenarios = {}
 for entry in sorted(os.listdir(out)):
@@ -171,8 +202,10 @@ def ctl(key):
     return sh("sysctl", "-n", key)
 
 summary = {
-    "orion": {"tag": tag, "commit": sh("git", "rev-parse", "HEAD", cwd=orion),
-              "dataflow_rs": lock_version("dataflow-rs"), "datalogic_rs": lock_version("datalogic-rs")},
+    "orion": {**({} if commit_mode else {"tag": tag}), "ref": os.environ["REF"],
+              "commit": sh("git", "rev-parse", "HEAD", cwd=orion),
+              **({"branch": sh("git", "symbolic-ref", "-q", "--short", "HEAD", cwd=orion)} if commit_mode else {}),
+              "dataflow_rs": dataflow_entries(), "datalogic_rs": lock_version("datalogic-rs")},
     "machine": {"model": ctl("hw.model"), "cpu": ctl("machdep.cpu.brand_string"), "cores": int(ctl("hw.ncpu")),
                 "memory_gb": round(int(ctl("hw.memsize")) / 2**30), "os": "macOS " + sh("sw_vers", "-productVersion"),
                 "load_avg_before": [float(x) for x in os.environ["LOAD_BEFORE"].strip("{} ").split()]},
