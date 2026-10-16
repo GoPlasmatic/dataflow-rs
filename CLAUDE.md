@@ -13,19 +13,23 @@ to the root `Cargo.toml` version by the release workflow:
 
 | Path | Artifact | Registry |
 |---|---|---|
-| `.` | `dataflow-rs` | crates.io |
-| `wasm/` | `@goplasmatic/dataflow-wasm` | npm |
+| `.` | `dataflow-rs` 4.0.0-dev: v4, under construction (nothing publishes from `main` until phase 8) | crates.io |
+| `wasm/` | `@goplasmatic/dataflow-wasm`, built on the published `dataflow-rs` 3.15.0 until 7d | npm |
 | `ui/` | `@goplasmatic/dataflow-ui` (React debugger) | npm |
 
 `wasm/` is a workspace member; `ui/` is a separate npm project driven by the
 release workflow. Bumping a version means bumping all three.
 
-The other workspace members are never published: `docs-tests/` (the docs'
-doctests), `corpus/` and `corpus/v3` (the golden corpus and v3's driver), and,
-while v4 is built beside v3, `v4/`, `derive/` and `corpus/v4` (see "v4 under
-construction" below).
+The other workspace members are not published: `docs-tests/` (the docs' and
+the README's doctests, on the published 3.15.0 until 7e), `corpus/` and
+`corpus/v3` (the golden corpus and v3's driver, on the published 3.15.0), and
+v4's `corpus/v4` (its corpus driver) and `derive/` (`dataflow-rs-derive`). See
+"v4 at the root" below.
 
-### Core Architecture
+The sections marked **(v3)** describe 3.x, whose source is on `v3-maintenance`
+since phase 7b, not the crate at the root. 7e rewrites them for v4.
+
+### Core Architecture (v3)
 
 - **Engine**: Central async component that processes messages through workflows sequentially
 - **Workflow (Rule)**: Collection of tasks with a JSONLogic condition
@@ -34,7 +38,7 @@ construction" below).
 - **TaskContext**: Per-call handle given to handlers: typed accessors plus audit-recording setters
 - **TaskOutcome**: What a handler returns: `Success`, `Status(u16)`, `Skip`, or `Halt`
 
-### Key Design Patterns
+### Key Design Patterns (v3)
 
 - **Sequential Workflow Processing**: Workflows execute sequentially so later workflows can depend on earlier ones
 - **Pre-compiled JSONLogic**: All expressions compiled at `Engine::build()`, zero runtime parsing
@@ -46,10 +50,15 @@ construction" below).
 ### Build and Test
 
 ```bash
-cargo build
+cargo build                              # the root, v4
+cargo test                               # the root's default build
 cargo test --workspace --all-features    # what CI runs
 cargo test -- --nocapture                # with output
 ```
+
+A bare cargo command at the root selects the root package, v4. Every other
+member takes `-p`, as in `cargo test -p dataflow-corpus-v4` or
+`cargo test -p dataflow-docs-tests`.
 
 ### Code Quality
 
@@ -59,7 +68,7 @@ treats warnings as errors:
 ```bash
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo clippy -p dataflow-rs --all-targets -- -D warnings
+cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
@@ -77,11 +86,14 @@ change: CI's `-D warnings` gives no grace period.
 `wasm-web` feature, which is otherwise silently skipped. Never leave clippy
 warnings behind.
 
-The second line is not redundant: it lints the **default** build, which is what
-`cargo add dataflow-rs` delivers. `--workspace` cannot do it: `dataflow-wasm`
-depends on `dataflow-rs` with `all-operators`, and cargo unifies features across
-workspace members, so a `--workspace` invocation always has every operator
-family on. Same reasoning applies to `cargo test -p dataflow-rs`.
+The second line is not redundant: bare at the root, it lints the root's
+**default** build, which is what `cargo add dataflow-rs` delivers. `--workspace`
+cannot do it: `dataflow-wasm` depends on the published 3.15.0 with
+`all-operators`, and cargo unifies features across the members one invocation
+selects, so the `datalogic-rs` both engines share has every operator family on.
+Nor can `-p dataflow-rs`: beside the published 3.15.0 that `wasm/`,
+`corpus/v3`, `docs-tests` and the root's `dataflow_rs_v3` pull in, the name is
+ambiguous and cargo refuses it (I156). Same reasoning applies to `cargo test`.
 
 **MSRV is 1.98 and CI enforces it.** The floor is *inherited, not chosen*:
 `datalogic-rs` 5.7 and `datavalue-rs` 0.3.1 both declare
@@ -97,43 +109,44 @@ cargo +1.98 check --workspace --all-targets --all-features --locked
 
 ### Examples
 
-```bash
-cargo run --example hello_world           # Minimal getting-started example
-cargo run --example rules_engine          # IFTTT-style rules engine demo
-cargo run --example complete_workflow     # Parse -> Transform -> Validate
-cargo run --example custom_function       # Custom handler
-cargo run --example error_handling        # Error handling patterns
-cargo run --example async_migration       # Typed Input + TaskContext + TaskOutcome shape
-```
-
-Benchmarks (always `--release`; a debug build measures nothing useful):
+The root's examples are v4's fourteen benchmarks: the gate's thirteen ports,
+each named for the v3 benchmark it ports, and `host_call_floor`. Always run
+them with `--release`; a debug build measures nothing useful:
 
 ```bash
-cargo run --example benchmark --release             # Throughput + latency percentiles
-cargo run --example realistic_benchmark --release   # ISO 20022 -> SwiftMT-style workload
-cargo run --example micro_cond_bench --release      # Condition-eval / trivially-true folding
-cargo run --example micro_aggregate_bench --release # Aggregate-heavy (reduce/map)
-cargo run --example micro_subtree_write_bench --release   # k map writes into one depth-2 subtree
-cargo run --example micro_multiworkflow_bench --release   # N chained workflows, one message
-cargo run --example async_handler_benchmark --release     # Marginal cost of one custom handler
-cargo run --example map_performance_test --release        # 10 chained mappings across all 3 roots
-cargo run --example loop_scaling --release            # 1000-sweep append loop over a large context (#66-#69)
-cargo run --example large_context_handler --release   # Five Template fields over a 2 MiB context, per call
-cargo run --example fan_out --release                 # for_each over 100 elements on a 2 MiB context
-cargo run --example orion_connector --release         # Orion-shaped connector: document folds, output, a layer
-cargo run --example observed_run --release            # The realistic workload with a counting observer
+cargo run --example realistic_benchmark --release        # ISO 20022 -> SwiftMT-style workload
+cargo run --example benchmark --release                  # Throughput + latency percentiles
+cargo run --example micro_cond_bench --release           # Condition-eval / trivially-true folding
+cargo run --example micro_aggregate_bench --release      # Aggregate-heavy (reduce/map)
+cargo run --example micro_subtree_write_bench --release  # k map writes into one depth-2 subtree
+cargo run --example micro_multiworkflow_bench --release  # N chained workflows, one message
+cargo run --example async_handler_benchmark --release    # Marginal cost of one host function call
+cargo run --example host_call_floor --release            # One host call's own cost, v3 and v4 in one binary
+cargo run --example map_performance_test --release       # 10 chained mappings across all 3 roots
+cargo run --example loop_scaling --release               # 1000-sweep append loop over a large context (#66-#69)
+cargo run --example large_context_handler --release      # Five expression fields over a 2 MiB context, per call
+cargo run --example fan_out --release                    # for_each over 100 elements on a 2 MiB context
+cargo run --example orion_connector --release            # Orion-shaped connector: document folds, output, a layer
+cargo run --example observed_run --release               # The realistic workload with a counting observer
 ```
 
-`micro_subtree_write_bench` through `map_performance_test` are regression
-guards for optimizations that have already landed (the arena write-through
-splice and the shared-arena workflow run), not open investigations. Read them
-as "this must stay flat", not "this is the plan".
+v3's examples are on `v3-maintenance`: its six functional ones (`hello_world`,
+`rules_engine`, `complete_workflow`, `custom_function`, `error_handling` and
+`async_migration`) and its thirteen benchmarks. 7e ports the six functional
+ones.
 
-The five after them are rows of the v4 performance gate, written against 3.15
-so the floor exists before any v4 code does. They measure where 3.15 pays per
-byte or node a message carries, or per clock read, which is where v4 claims its
-wins, so read them as the baseline v4 must beat. They share `examples/shared/`,
-which is not an example itself.
+`micro_subtree_write_bench`, `micro_multiworkflow_bench` and
+`map_performance_test` port v3's regression guards for optimizations that had
+already landed (the arena write-through splice and the shared-arena workflow
+run), not open investigations. Read them as "this must stay flat", not "this
+is the plan".
+
+`loop_scaling`, `large_context_handler`, `fan_out`, `orion_connector` and
+`observed_run` port the five rows of the v4 performance gate that were written
+against 3.15, so the floor existed before any v4 code did. They measure where
+3.15 pays per byte or node a message carries, or per clock read, which is where
+v4 claims its wins, so read v3's numbers there as the baseline v4 must beat.
+The examples share `examples/shared/`, which is not an example itself.
 
 **A benchmark checks its result before it times anything.** A workload that
 silently does less than it says still reports a plausible number:
@@ -153,11 +166,16 @@ alternated round-robin instead. Build both binaries first, copy them out of
 
 **The gate benchmarks print one machine-readable line each**, `GATE {...}`, the
 last thing they print (`examples/shared/gate.rs`). `bench/gate.py` reads only
-that line: `build --out DIR` copies the 13 binaries out of a clean tree's
-`target/`, and `baseline --bins DIR --rounds 5 --out FILE` runs them
+that line. `build --out DIR` builds the root's examples in release from a clean
+tree and copies the fourteen to DIR, and `build --v3 --out DIR` copies v3's
+thirteen. `--v3` builds them in a git worktree of the freeze commit `2d3d8e9`
+at `target/gate-v3`, with its own target, reused while it is at that commit,
+since v3's examples left `main` in 7b (I159).
+`baseline --bins DIR --rounds 5 --out FILE` runs a build's binaries
 round-robin, discards the cold round, and writes every run with the build,
-machine and method. The freeze baseline is `bench/baseline/3.15.0-freeze.json`.
-A metric's name is a contract: a port of a benchmark keeps it.
+machine and method. The freeze baseline is
+`bench/baseline/3.15.0-freeze.json`. A metric's name is a contract: a port of a
+benchmark keeps it.
 
 Orion's baseline is `bench/baseline/orion-1.12.0.json`, from `bench/orion.sh`,
 which runs Orion's own `bench.sh` scenarios with the server's peak RSS. Its
@@ -166,40 +184,43 @@ loopback port, never 8080: `bench.sh` clears every workflow at the cluster URL.
 
 ### Branches
 
-**`main` is v4 under construction** from the freeze until 4.0.0. 3.x fixes go
-to `v3-maintenance`, which takes fixes only and deploys the documentation site.
-The corpus recordings (`corpus/cases/**/*.v3.json`) are owned by v3: a fix there
-that changes behaviour re-records its cases, and the recordings are copied here
-the same week. Never edit one to match v4; declare a deviation against a break
-instead.
+**`main` is v4**, at the root since 7b and under construction until 4.0.0.
+`v3-maintenance` holds v3's source, takes 3.x fixes only, and deploys the
+documentation site. The corpus recordings (`corpus/cases/**/*.v3.json`) are
+v3's: `corpus/record.sh` on `main` records against the pinned 3.15.0, and a fix
+on `v3-maintenance` that changes behaviour re-records its cases there, after
+which `main` bumps the pin (`corpus/v3`'s `dataflow-rs`, the root's
+`dataflow_rs_v3`) and re-records. Never edit a `.v3.json` by hand, and never to
+match v4: declare a deviation against a break instead.
 
-### v4 under construction
+### v4 at the root
 
-**v4 is built beside v3, not in place of it,** until phase 7: in `v4/`
-(`dataflow-rs-v4`, library `dataflow_rs_v4`) and `derive/`
-(`dataflow-rs-derive`), with `corpus/v4` (`dataflow-corpus-v4`) as its corpus
-driver, which parses and compiles every corpus definition and holds each to
-v3's issues or to its declared deviation, and runs every case it builds
-against v3's recording or a declared `RUN_DEVIATED` row, comparing its
-observer events and replaying its traces (or holding them to a declared
-`TRACE_DEVIATED` row). The reason is 08's
-phase 4 fallback, which ships phases 2 and 3 as a layer over v3: v3's root
-crate must keep building on `main`, with its tests, examples, docs-tests, wasm
-and `corpus/v3`.
+**v4 is the root crate since 7b**: `dataflow-rs` 4.0.0-dev, in `src/`,
+`tests/`, `examples/` and `bindings/`, with `derive/` (`dataflow-rs-derive`)
+and `corpus/v4` (`dataflow-corpus-v4`) as its corpus driver, which parses and
+compiles every corpus definition and holds each to v3's issues or to its
+declared deviation, and runs every case it builds against v3's recording or a
+declared `RUN_DEVIATED` row, comparing its observer events and replaying its
+traces (or holding them to a declared `TRACE_DEVIATED` row). v3's source is on
+`v3-maintenance`. On `main`, v3 is the published 3.15.0: as `dataflow_rs_v3`
+in v4's differential tests and `host_call_floor`, and as `dataflow-rs` in
+`corpus/v3`, `docs-tests` and `wasm/`.
 
-`v4/` follows the design documents (`design-v4/`, untracked), not this file's
-v3 rulebook: everything under "Code Structure" below describes v3's `src/`.
+The root follows the design documents (`design-v4/`, untracked), not this
+file's v3 rulebook: the sections marked (v3) describe v3's `src/`.
 
-`v4/src/lib.rs` warns on `missing_docs` and `missing_debug_implementations`,
-and CI's `-D warnings` makes both errors: every public item in v4 needs a doc
-comment and every public type a `Debug` impl (a manual one with
-`finish_non_exhaustive()` where a field is not `Debug`).
+`src/lib.rs` warns on `missing_docs` and `missing_debug_implementations`, and
+CI's `-D warnings` makes both errors: every public item needs a doc comment and
+every public type a `Debug` impl (a manual one with `finish_non_exhaustive()`
+where a field is not `Debug`).
 
-The derive emits `::dataflow_rs::` paths. v4 itself says
-`extern crate self as dataflow_rs`, every test in `v4/tests/` starts with
-`extern crate dataflow_rs_v4 as dataflow_rs;`, and a dependent renames the
-dependency (`dataflow-rs = { package = "dataflow-rs-v4", … }`, as `corpus/v4`
-does).
+The derive emits `::dataflow_rs::` paths: the crate itself says
+`extern crate self as dataflow_rs` in `src/lib.rs`, and a dependent such as
+`corpus/v4` names its dependency `dataflow-rs`. The root depends on the derive
+with a version (`{ path = "derive", version = "=4.0.0-dev" }`) because
+`deny.toml` bans wildcard requirements: its `allow-wildcard-paths` excuses a
+publishable crate's version-less path dependency only as a dev-dependency, such
+as the root's on `dataflow-corpus`, which `cargo publish` strips.
 
 **v4 runs built-in workflows** (phase 4): `Engine::builder()` (or
 `Engine::new(program, config)`), then `engine.run_with(&mut message, &opts)`,
@@ -261,49 +282,48 @@ is its unredacted counterpart; `Resolver` is sealed and implemented for
 `&Ctx`, and a hand-written config must implement `FunctionConfig::resolve`, as
 a field type must `ConfigField::resolve`. A host function's write of anything
 but an object at a root is refused (break 21). `--features ts` writes
-`v4/bindings/dataflow.d.ts` from the wire types (`DATAFLOW_TS_WRITE=1 cargo
-test -p dataflow-rs-v4 --features ts --test ts_types`), and a drift test holds
-the committed file, doc comments included, so a doc edit on a wire type means
-regenerating it. Pretty `publish_json`, `publish_xml` and `parse_xml` keep the
-source's key order in every build (break 23), so v4's bytes do not depend on
-serde_json's `preserve_order`, which Orion's graph turns on; CI holds that with
-`cargo test -p dataflow-rs-v4 --features serde_json/preserve_order` and
+`bindings/dataflow.d.ts` from the wire types (`DATAFLOW_TS_WRITE=1 cargo test
+--features ts --test ts_types`), and a drift test holds the committed file, doc
+comments included, so a doc edit on a wire type means regenerating it. Pretty
+`publish_json`, `publish_xml` and `parse_xml` keep the source's key order in
+every build (break 23), so v4's bytes do not depend on serde_json's
+`preserve_order`, which Orion's graph turns on; CI holds that with
+`cargo test --features serde_json/preserve_order` and
 `cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order`.
 
-v4's own checks, beside the workspace-wide ones above:
+The root's own checks, beside the workspace-wide ones above:
 
 ```bash
-cargo clippy -p dataflow-rs-v4 --all-targets -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
-cargo test -p dataflow-rs-v4
+cargo test
 cargo test -p dataflow-corpus-v4
-cargo test -p dataflow-rs-v4 --features serde_json/preserve_order
+cargo test --features serde_json/preserve_order
 cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order
-cargo test -p dataflow-rs-v4 --features ts --test ts_types
+cargo test --features ts --test ts_types
 for f in datetime ext-string ext-array ext-math ext-control ext-object \
          error-handling all-operators tensor budget; do
-  cargo test -p dataflow-rs-v4 --no-default-features --features "$f"
+  cargo test --no-default-features --features "$f"
 done
 ```
 
-**`cargo test -p dataflow-rs-v4` must stay under a minute, rebuild
-included.** The run-context model test runs once, in the default build, at
-150 sequences per tuning; `DATAFLOW_V4_DEEP=1 cargo test -p dataflow-rs-v4
---lib state::` runs its full 2,000 (about a minute on its own). Run it after
-any change under `v4/src/state/`. Time the suite like for like, in a scratch
-worktree with its own target directory: in the repository's `target/`, macOS
-scans each newly linked test binary on its first launch, which can add
-minutes.
+**`cargo test` at the root must stay under a minute, rebuild included.** The
+run-context model test runs once, in the default build, at 150 sequences per
+tuning; `DATAFLOW_V4_DEEP=1 cargo test --lib state::` runs its full 2,000
+(about a minute on its own). Run it after any change under `src/state/`. Time
+the suite like for like, in a scratch worktree with its own target directory:
+in the repository's `target/`, macOS scans each newly linked test binary on its
+first launch, which can add minutes.
 
-**The gate compares v4 with v3** through thirteen ports,
-`v4/examples/v4_<name>.rs`: the eight sync benchmarks, phase 5's four
-host-call rows (`async_handler_benchmark`, `large_context_handler`,
+**The gate compares v4 with v3** through thirteen ports, `examples/<name>.rs`,
+each named for the v3 benchmark it ports: the eight sync benchmarks, phase 5's
+four host-call rows (`async_handler_benchmark`, `large_context_handler`,
 `fan_out`, `orion_connector`) and phase 6's `observed_run`. Each keeps its v3
 benchmark's workload, startup check, `GATE` name and metric names:
 
 ```bash
-python3 bench/gate.py build --out /tmp/gate/v3        # v3's examples
-python3 bench/gate.py build --v4 --out /tmp/gate/v4
+python3 bench/gate.py build --v3 --out /tmp/gate/v3   # v3's thirteen, from the freeze worktree
+python3 bench/gate.py build --out /tmp/gate/v4        # the root's fourteen
 python3 bench/gate.py compare --a /tmp/gate/v3 --b /tmp/gate/v4 --rounds 5
 ```
 
@@ -314,7 +334,7 @@ from work on a busy machine; they move with codegen too, so attribute a
 change to one item only with a same-binary toggle.
 
 `host_call_floor` is the self-judged floor row: a v4-only example that runs
-v3 and v4 in one binary on one thread, in interleaved rounds. `build --v4`
+v3 and v4 in one binary on one thread, in interleaved rounds. Plain `build`
 copies it and `compare` runs it from B only. Its `call.ratio`, a whole
 message with one host call, must be not slower; `sync.ratio` and
 `floor.ratio` are reported. A few metrics are reported without a verdict
@@ -326,18 +346,67 @@ stack busy (a load of 4 to 5), the spawned throughputs spread 10 to 18%; read
 the one-thread rows and the instructions retired, and re-run a spawned row at
 seven rounds before calling it WORSE.
 
+### Doctests, the corpus and the counts
+
+Documentation examples are compiled, so they cannot drift from the API they
+describe, which is 3.x's until 7e:
+
+- `README.md`: via `ReadmeDoctests` in `docs-tests/src/lib.rs`, against the
+  published 3.15.0.
+- `docs/src/**.md`: via the same `dataflow-docs-tests` workspace member, on
+  the same pin. It is a separate crate because `docs/` is not shipped in the
+  published crate (see the root `include` list), so an `include_str!` from
+  `src/lib.rs` would break the published package. Its `tests/coverage.rs`
+  fails if a docs page is missing from the page list.
+
+When editing docs: fragments get a hidden `# ` preamble (compiled by rustdoc,
+hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
+are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
+conventions.
+
+**The golden corpus** (`corpus/`, see its README) records what v3 does to a
+message, case by case: every row of the v4 feature contract, every break and
+every error code. Each `corpus/cases/<area>/<name>.json` has its recording,
+`<name>.v3.json`, beside it. `corpus/record.sh [filter]` records against the
+pinned 3.15.0 (default build, then all-features);
+`cargo test -p dataflow-corpus-v3` and the `--workspace --all-features` run
+check that every recording still holds, and `corpus/tests/coverage.rs` that
+every contract row has a case. A v3 change that alters what a message ends up as re-records the
+affected cases (see "Branches"), and the re-recording is read before it is
+committed; never edit a `.v3.json` by hand. The comparator is order-sensitive,
+because key order is wire data.
+
+`cargo test --workspace --all-features` should report 1020 passing: the
+root's 858 (824 tests and 34 doctests), the derive's 2, v4's corpus driver's
+24, the corpus's 33, `corpus/v3`'s 3 and `docs-tests`' 100 (96 page doctests,
+3 README doctests and its coverage test). `cargo test` at the root (the
+default build) should report 833, `cargo test -p dataflow-corpus-v3` 3,
+`cargo test -p dataflow-corpus-v4` 24 and `cargo test -p dataflow-docs-tests`
+100. The operator families are `#[cfg]`-gated, so the counts legitimately
+differ by feature set: the root reports 843 under
+`--no-default-features --features all-operators`. v3's own counts (the engine's 867 under
+`--all-features` and 753 in its default build) are `v3-maintenance`'s.
+
 ### Release Process
 
-Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI and
-deploys the docs; it never publishes. `.github/workflows/release.yml` fires only
-on a `v*` tag, validates that the tag matches the root `Cargo.toml` version, then
-publishes the crate, the wasm package, and the UI package, and cuts a GitHub
-release. Both `wasm/Cargo.toml` and `ui/package.json` must already carry the
-matching version.
+Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI; it
+never publishes, and the documentation site deploys from `v3-maintenance`
+(`docs.yml` on `main` runs only by hand until phase 8).
+`.github/workflows/release.yml` fires only on a `v*` tag, validates that the
+tag matches the root `Cargo.toml` version, then publishes the crate, the wasm
+package, and the UI package, and cuts a GitHub release. Both
+`wasm/Cargo.toml` and `ui/package.json` must already carry the matching
+version.
 
-## Code Structure
+**No tag may be cut from `main` before phase 8.** `wasm/` (its version and its
+`dataflow-rs` requirement) and the docs (`docs-tests`' requirement, and the
+install snippets in `README.md` and `docs/src/`) are on 3.15.0, and
+`release.yml` checks that `wasm/`'s two and the snippets' minor match the tag.
+3.x releases are tagged on `v3-maintenance`.
 
-### Core Engine (`src/engine/`)
+## Code Structure (v3)
+
+### Core Engine (`src/engine/`) (v3)
 
 - `mod.rs`: `Engine` and `EngineBuilder` (construction, hot reload, message entry points)
 - `compiler.rs`: JSONLogic compilation, priority sorting of workflows
@@ -372,7 +441,7 @@ matching version.
 - `error.rs`: `DataflowError`, `ErrorInfo`, retryability classification
 - `utils.rs`: Path splitting and nested get/set helpers
 
-### Built-in Functions (`src/engine/functions/`)
+### Built-in Functions (`src/engine/functions/`) (v3)
 
 - `mod.rs`: `AsyncFunctionHandler` trait, object-safe `Dyn` sibling, registration
 - `parse.rs`: `parse_json`, `parse_xml`
@@ -392,7 +461,7 @@ matching version.
 - `config.rs`: The `FunctionConfig` dispatch enum, `BUILTIN_FUNCTION_NAMES`,
   `BuiltinKind` and `DispatchableFunction`
 
-### Key Implementation Details
+### Key Implementation Details (v3)
 
 - **Eval context is `{data, metadata, temp_data}` only.** `payload` is a
   separate field on `Message` and is *not* part of the JSONLogic evaluation
@@ -673,7 +742,7 @@ matching version.
   custom function registrations; the old engine stays valid for in-flight messages.
 - **Async-First**: all execution paths are async, on the Tokio runtime.
 
-### Testing Patterns
+### Testing Patterns (v3)
 
 Unit tests live in `mod tests` blocks alongside the code they cover (20 modules).
 The integration suite is split by topic across `tests/`, one binary per file:
@@ -710,43 +779,6 @@ The integration suite is split by topic across `tests/`, one binary per file:
 Each file under `tests/` compiles as its own crate, so fixtures used by more
 than one live in `tests/common/mod.rs` and are pulled in with `mod common;`.
 That module is `#![allow(dead_code)]` because no single binary uses all of it.
-
-Documentation examples are compiled, so they cannot drift from the API:
-
-- `README.md`: via the `ReadmeDoctests` hook at the bottom of `src/lib.rs`.
-- `docs/src/**.md`: via the `dataflow-docs-tests` workspace member. It is a
-  separate crate because `docs/` is not shipped in the published crate (see
-  the root `include` list), so an `include_str!` from `src/lib.rs` would break
-  the published package. Its `tests/coverage.rs` fails if a docs page is
-  missing from the page list.
-
-When editing docs: fragments get a hidden `# ` preamble (compiled by rustdoc,
-hidden from readers by mdBook) rather than an `ignore` tag; unlabelled fences
-are treated as Rust, so tag diagrams `text`. See CONTRIBUTING.md for the
-conventions.
-
-**The golden corpus** (`corpus/`, see its README) records what this engine does
-to a message, case by case: every row of the v4 feature contract, every break
-and every error code. Each `corpus/cases/<area>/<name>.json` has its recording,
-`<name>.v3.json`, beside it. `corpus/record.sh [filter]` records (default build,
-then all-features); `cargo test -p dataflow-corpus-v3` and the `--workspace
---all-features` run check that every recording still holds, and
-`corpus/tests/coverage.rs` that every contract row has a case. A change that
-alters what a message ends up as re-records the affected cases and is read
-before it is committed; never edit a `.v3.json` by hand. The comparator is
-order-sensitive, because key order is wire data.
-
-`cargo test --workspace --all-features` should report 1787 passing: the
-engine's 867 plus the corpus's 36 (its case checks are one test each way),
-v4's 858, the derive's 2 and v4's corpus driver's 24.
-`cargo test -p dataflow-rs` (default features) should report 753,
-`cargo test -p dataflow-corpus-v3` 3, `cargo test -p dataflow-rs-v4` 833 and
-`cargo test -p dataflow-corpus-v4` 24. The operator families are
-`#[cfg]`-gated on both sides, so the counts legitimately differ: v4 reports
-843 under `--no-default-features --features all-operators`.
-The gap widened when `budget`/`tensor` landed: `ops_budget.rs` (6) and
-`tensor.rs` (3) are whole-file `#![cfg(feature = ...)]`, and
-`with_ops_budget`'s doctest is gated too.
 
 When extending the engine:
 
