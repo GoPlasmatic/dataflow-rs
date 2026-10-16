@@ -62,8 +62,9 @@ Workflows provide:
 
 With the compat reader on (the default), an unknown key does not fail the
 definition: it moves into the owning node's `ext` and is reported as an
-`UNKNOWN_KEY` advisory, or as a `LIKELY_TYPO` defect when it is one edit away
-from a known key, so a misspelt `conditon` is caught rather than silently
+`UNKNOWN_KEY` advisory, or as a `LIKELY_TYPO` defect when it is a near miss
+of a known key (one edit for a key of up to five characters, two for a
+longer one), so a misspelt `conditon` is caught rather than silently
 ignored. With the reader off (`ParseOptions::default().compat(false)`), every
 unknown key is refused.
 

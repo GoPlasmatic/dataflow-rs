@@ -134,7 +134,10 @@ Parse, transform, validate, publish:
                 "name": "validation",
                 "input": {
                     "rules": [
-                        {"logic": {"!!": {"var": "data.user.full_name"}}, "message": "Full name required"}
+                        {
+                            "logic": {"and": [{"!!": {"var": "data.input.first_name"}}, {"!!": {"var": "data.input.last_name"}}]},
+                            "message": "Full name required"
+                        }
                     ]
                 }
             }
@@ -161,9 +164,10 @@ records `200` and `data.response` holds the pretty JSON of `data.user`:
 }
 ```
 
-With a payload that has no `first_name`, the mapping writes an empty name,
-`check` records `400` and a `VALIDATION_ERROR` with the message
-`Full name required`, and `on_rejection: "halt"` stops the workflow there:
+With the payload `{"last_name": "Lovelace"}`, the mapping writes
+`" Lovelace"` (a `cat` of a missing name is the empty string), `check`
+records `400` and a `VALIDATION_ERROR` with the message `Full name
+required`, and `on_rejection: "halt"` stops the workflow there:
 `publish` does not run, and `data.response` is never written. Without
 `on_rejection`, `publish` would have run on the invalid message, since a
 `400` lets the next task run by default.

@@ -245,8 +245,8 @@ it. Clear it at the end of the sweep with `unset`, or set it with
 A mapping that breaks one of these is refused when the engine is built, as
 `INVALID_MAPPING` at the key to change:
 
-| Rule | Reported at | Message |
-|------|-------------|---------|
+| Rule | Reported at | Means |
+|------|-------------|-------|
 | A mapping has `logic` or `"unset": true` | `logic` | a mapping needs `logic`, or `"unset": true` to remove the path |
 | Never both | `unset` | `unset` removes the path and takes no `logic`; to remove it only when the result is null, keep `logic` and use `"on_null": "unset"` |
 | `on_null` needs `logic` | `on_null` | `on_null` says what a null `logic` result does, and this mapping has no `logic` |

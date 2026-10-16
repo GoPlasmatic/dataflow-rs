@@ -386,18 +386,20 @@ a `Run`'s `error` writes, and what an `Err` from a host function records:
 | `Config` | `CONFIG_ERROR` | A configuration is invalid |
 | `Compile` | `COMPILATION_ERROR` | An expression or definition did not compile |
 | `Service { code }` | the code, verbatim | A host function's own, from `Error::service(code, message)`; an empty code records `TASK_ERROR` |
+| `Service { code }` | `VALIDATION_ERROR` | `parse_xml`, `publish_json` or `publish_xml` found the source not what it needs: missing, not a string, or not a document |
 
 `Error::service` is the one public constructor: a host names its own code,
 such as `HTTP_ERROR`, and the engine keeps it. `is_retryable()` is `false` unless
 `with_retryable(true)` says otherwise, except for a timeout.
 
-Three codes are records only, never an `Error`:
+Two codes are records only, never an `Error`, and `validation` records a
+third without an `Error` of its own:
 
 | Code | Recorded when |
 |---|---|
 | `TASK_STATUS_ERROR` | A call returned `Status(5xx)`; the stop error, when the policy stops the run, is `TASK_ERROR` |
-| `VALIDATION_ERROR` | A `validation` rule evaluated to anything but `true` |
 | `EVALUATION_ERROR` | A `validation` rule failed to evaluate |
+| `VALIDATION_ERROR` | A `validation` rule evaluated to anything but `true`: one record per failed rule, status `400`, no `Error` |
 
 A call that returns `Err(e)` records `e.code()` with status 500. There is no
 `WORKFLOW_ERROR` wrapper: the task's record carries the workflow id.

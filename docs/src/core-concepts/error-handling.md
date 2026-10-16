@@ -363,8 +363,8 @@ opts out of the per-task record entirely: no audit entry, no
 
 `status` is the task's own status: `500` when the function returned `Err`,
 otherwise the status the outcome carried (`400` for `validation`, `200` for a
-function that recorded an error and still succeeded). `metadata.progress`
-cannot make that distinction: its failure arm hard-codes `500`.
+function that recorded an error and still succeeded).
+`metadata.progress.status_code` carries the same value.
 
 The engine does **not** record the error `message`. This value lands in the
 message's context, which is serialized straight back to callers; read the
@@ -418,8 +418,10 @@ rule fails, and a rule whose logic fails to evaluate records
 
 ### Evaluation Errors
 
-A `map` mapping or a `log` expression that fails to evaluate logs the failure
-and goes on. A workflow or task condition that fails to evaluate counts as
+A `log` expression that fails to evaluate is written as `<eval error>`, and
+the task still returns `200`. A `map` mapping that fails to evaluate is
+logged, the remaining mappings still run, and the call ends with status
+`500`, a failure the task's `on_failure` decides. A workflow or task condition that fails to evaluate counts as
 false; the `Run` reports a workflow's as `Selection::ConditionFailed(error)`.
 
 ### Host Function Errors

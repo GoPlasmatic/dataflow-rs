@@ -142,9 +142,10 @@ evaluated once, and `metadata.progress` is still written after every task.
 - **`name` is optional** on every workflow, task and group.
 - **Only `active` workflows run,** with or without a channel. A `paused` or
   `archived` workflow is not considered, and appears in no run report.
-- **An unregistered function rejects its workflow at load,** as
-  `UNKNOWN_FUNCTION`. 3.x built the engine and failed every message with
-  `FUNCTION_NOT_FOUND`.
+- **An unregistered function rejects its workflow at load,** as an
+  `UNKNOWN_FUNCTION` issue at `tasks[i].function.name`. 3.x refused the
+  build too, with one `FUNCTION_NOT_FOUND` error naming the function; 4.0
+  reports every such task and rejects only the workflows that name one.
 - **The three integration configs left the engine.** `http_call`, `enrich`
   and `publish_kafka` are a host's functions now, registered like any other,
   and their 3.x spellings (`path_logic`, `body_logic`, `key_logic`,
