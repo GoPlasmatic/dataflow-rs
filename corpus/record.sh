@@ -15,6 +15,12 @@ cargo run -q -p dataflow-corpus-v3 --all-features --bin record -- "$@"
 version=$(sed -n 's/^dataflow-rs = "=\(.*\)"/\1/p' corpus/v3/Cargo.toml)
 checksum=$(awk -v v="$version" '/^\[\[package\]\]$/{n="";ver="";next} /^name = /{n=$3} /^version = /{ver=$3} /^checksum = /{if(n=="\"dataflow-rs\""&&ver=="\""v"\""){gsub(/"/,"",$3);print $3}}' Cargo.lock)
 datalogic=$(awk '/^name = "datalogic-rs"$/{getline; print}' Cargo.lock | sed 's/version = "\(.*\)"/\1/' | head -1)
+# Provenance that reads empty is a pattern that stopped matching (the pin
+# respelled, or the lock's layout changed), not a fact: refuse to write it.
+fail() { echo "record.sh: cannot read $1; RECORDED.json is unchanged" >&2; exit 1; }
+[ -n "$version" ] || fail "the dataflow-rs pin (dataflow-rs = \"=X.Y.Z\") in corpus/v3/Cargo.toml"
+[ -n "$checksum" ] || fail "the checksum of dataflow-rs $version in Cargo.lock"
+[ -n "$datalogic" ] || fail "datalogic-rs's version in Cargo.lock"
 cat > corpus/RECORDED.json <<JSON
 {
   "engine": "dataflow-rs $version",
