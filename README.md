@@ -14,8 +14,8 @@
 </div>
 
 > **`main` is dataflow-rs 4.0, under construction.** This file describes 3.x, whose source
-> and documentation site are on the `v3-maintenance` branch; its examples compile against the
-> published 3.15.0.
+> and documentation site are on the `v3-maintenance` branch. Its code samples compile against
+> the published 3.15.0; its commands are `v3-maintenance`'s.
 
 ---
 

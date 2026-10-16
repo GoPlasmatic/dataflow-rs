@@ -1,8 +1,8 @@
 # Contributing to dataflow-rs
 
 > **`main` is dataflow-rs 4.0, under construction.** This file describes 3.x, whose source
-> and documentation site are on the `v3-maintenance` branch; its examples compile against the
-> published 3.15.0.
+> and documentation site are on the `v3-maintenance` branch. Its commands, too, are
+> `v3-maintenance`'s, except the `wasm/` lint, which holds on both branches.
 
 Thanks for your interest in contributing. This guide covers what you need to
 get a change merged.
@@ -136,7 +136,7 @@ violation in the same change; CI's `-D warnings` gives no grace period.
 If you touched `wasm/`:
 
 ```bash
-cargo clippy --target wasm32-unknown-unknown --features wasm-web -- -D warnings
+cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
 cd wasm && wasm-pack test --node
 ```
 
@@ -297,11 +297,11 @@ document it in `docs/src/built-in-functions/` and the README table.
 
 ## Releases
 
-Releases are tag-gated and maintainer-run. Pushing to `main` runs CI and deploys
-docs; it never publishes. A `v*` tag triggers `.github/workflows/release.yml`,
-which validates that the tag matches the root `Cargo.toml` version, then
-publishes the crate and both npm packages. Contributors do not need to bump
-versions in a PR.
+Releases are tag-gated and maintainer-run. Pushing to `main` runs CI; the
+documentation site deploys from `v3-maintenance`, and a push never publishes.
+A `v*` tag triggers `.github/workflows/release.yml`, which validates that the
+tag matches the root `Cargo.toml` version, then publishes the crate and both
+npm packages. Contributors do not need to bump versions in a PR.
 
 ## Security
 
