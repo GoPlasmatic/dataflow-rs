@@ -1,4 +1,4 @@
-//! One host call (05, "A host `Function`"): a [`Ctx`] over the run's view,
+//! One host call: a [`Ctx`] over the run's view,
 //! the call through the layers, and the settle.
 //!
 //! The reader is taken in its own statement and the `Ctx` holds only it, so
@@ -9,7 +9,7 @@
 //! recorder runs as for a built-in.
 //!
 //! The run's limits are checked before each call and, natively, raced
-//! against it (I92). A call they cut short is dropped and settles as an
+//! against it. A call they cut short is dropped and settles as an
 //! `Err` of kind `TimedOut` or `Cancelled` does, its writes dropped and its
 //! records kept; then the run stops, whatever the task's policies.
 //!
@@ -87,7 +87,7 @@ pub(crate) struct Invoked {
     /// The records the call added.
     pub(crate) errors: Vec<ErrorRecord>,
     /// What the call saw at `collect` when it returned `Ok`: a fan-out
-    /// element's result (I91).
+    /// element's result.
     pub(crate) collected: Option<OwnedDataValue>,
     /// Whether the run's deadline or token cut the call short: `result` is
     /// then the `Err` that stops the run.
@@ -147,9 +147,9 @@ pub(crate) fn invoke<'r>(
     }
 }
 
-/// A record a call added, as given (I96): with the run's timestamp,
-/// `now_text`, when it carries none, and in a fan-out the element's index
-/// when it carries none.
+/// A record a call added, as given, stamped as v3 stamped it: with the
+/// run's timestamp, `now_text`, when it carries none, and in a fan-out the
+/// element's index when it carries none.
 pub(crate) fn stamp_record(
     mut record: ErrorRecord,
     now_text: &str,
@@ -181,7 +181,7 @@ pub(crate) fn keep_records(
 /// settle, the decision, the recorder; the flow.
 ///
 /// The records the call added go to the message first, as given, with the
-/// run's timestamp when they carry none (I96); the recorder's own follows.
+/// run's timestamp when they carry none; the recorder's own follows.
 /// A call the run's limits cut short is recorded as an `Err`, and then
 /// stops the run.
 pub(crate) async fn call_host<'p>(
@@ -237,7 +237,7 @@ pub(crate) async fn call_host<'p>(
     decision.flow
 }
 
-/// Whether a host call's `changes` replace a root (I106): the recorder then
+/// Whether a host call's `changes` replace a root: the recorder then
 /// clears the flag on the audit's copy, which keeps v3's bytes.
 pub(crate) fn replaces_a_root(changes: &[Change]) -> bool {
     changes.iter().any(|c| c.replaced)

@@ -119,7 +119,7 @@ impl Error {
 
 impl Error {
     /// The text of this error's record: what v3's `Display` prints for the
-    /// variant `kind` corresponds to (I77), which the recorder wraps as
+    /// variant `kind` corresponds to, which the recorder wraps as
     /// "Task {id} error: {text}". A kind v3 has no variant for, and a service
     /// error (v3's display is the bare message), give the message alone.
     pub(crate) fn record_text(&self) -> Cow<'_, str> {

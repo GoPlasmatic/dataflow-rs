@@ -15,13 +15,13 @@
 //! writes made for it (the capture's prelude), the call's changes, the
 //! progress write's `Change` and the error context's, and for a `map`, where
 //! each of its mappings ends in them; the audit entry carries the call's
-//! changes alone, and only under `capture_audit` (I107), so the engine's
+//! changes alone, and only under `capture_audit`, so the engine's
 //! writes never reach it. The step also carries every record the call
-//! added to the message, its own and the recorder's, in order (I127): the
+//! added to the message, its own and the recorder's, in order: the
 //! records after `errors_before`, read once the call has returned.
 //!
 //! A workflow's own failure, which no task made, records one error record,
-//! and the trace's `Failed` step for it, and nothing else (I61):
+//! and the trace's `Failed` step for it, and nothing else:
 //! [`workflow_failure`].
 //!
 //! Every clock reading for an elapsed time goes through [`now`] and
@@ -100,7 +100,7 @@ pub(crate) fn failing_after_its_writes(
     result
 }
 
-/// In the lib's own tests, one piece of the trace's own work done (I127): a
+/// In the lib's own tests, one piece of the trace's own work done: a
 /// step's records copied, or a mapping's end noted. A run without a trace
 /// does none.
 #[cfg(test)]
@@ -126,7 +126,7 @@ pub(crate) struct Completed<'p> {
     pub(crate) status: Option<u16>,
     /// The decision's error record: (code, message).
     pub(crate) record: Option<(Cow<'static, str>, String)>,
-    /// The decision's flow is `Fail` or `Stop`: the trace's `Failed` (I105).
+    /// The decision's flow is `Fail` or `Stop`: the trace's `Failed`.
     pub(crate) failed: bool,
     /// How long the call ran, when the run is timed.
     pub(crate) elapsed: Option<Duration>,
@@ -147,7 +147,7 @@ pub(crate) struct Completed<'p> {
 ///
 /// A call of an unwatched run ([`RunEnv::watched`]) that marked no change
 /// has only the first three to record, through [`plain`]: the run's other
-/// outputs cost it one branch (review A M-1).
+/// outputs cost it one branch.
 #[inline(always)]
 pub(crate) fn record<'p>(
     rc: &mut RunContext<'_, 'p>,
@@ -355,14 +355,15 @@ fn watched<'p>(
 
 /// Whether a change of a call that marked one stays in its audit entry,
 /// made as the entry carries it, so the entry is v3's bytes: a change the
-/// trace alone keeps does not, and `replaced` is the trace's alone (I106:
-/// the trace is the replay surface, R17), so it is cleared.
+/// trace alone keeps does not, and `replaced` is the trace's alone (the
+/// trace is the replay surface, and the audit trail keeps v3's bytes), so
+/// it is cleared.
 fn audited(change: &mut Change) -> bool {
     change.replaced = false;
     !change.trace_only
 }
 
-/// Records a workflow's own failure (I61), whatever its policy: one record
+/// Records a workflow's own failure, whatever its policy: one record
 /// with the error's code and message, the workflow's id, no task id, and the
 /// run's timestamp, and in a traced run the workflow's `Failed` step, with
 /// the record as the one it added. No audit entry and no progress write: no
@@ -591,7 +592,7 @@ mod tests {
         static COMPLETED: RefCell<Option<Vec<Done>>> = const { RefCell::new(None) };
         /// Every built-in call on this thread fails once it has written.
         pub(super) static FAIL_AFTER_WRITES: Cell<bool> = const { Cell::new(false) };
-        /// How much of the trace's own work this thread did (I127): a
+        /// How much of the trace's own work this thread did: a
         /// step's records copied, or a mapping's end noted.
         pub(super) static TRACE_WORK: Cell<u32> = const { Cell::new(0) };
     }

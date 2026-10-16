@@ -1,5 +1,5 @@
 //! `EngineBuilder`: an engine from definitions, for a host that does not
-//! quarantine (I68).
+//! quarantine.
 
 use super::engine::{Engine, EngineConfig};
 use crate::base::Issue;
@@ -71,7 +71,7 @@ impl EngineBuilder {
     }
 
     /// Adds a layer around every host call on the registry, as
-    /// [`Registry::layer`]: the first added is the outermost (I97).
+    /// [`Registry::layer`]: the first added is the outermost.
     #[must_use]
     pub fn layer<L: CallLayer>(mut self, l: L) -> Self {
         self.registry.layer(l);
@@ -120,7 +120,7 @@ impl EngineBuilder {
     ///
     /// Every issue of every definition that `parse` or
     /// [`compile_one`](crate::program::Compiler::compile_one) rejected, in
-    /// input order (I68), a rejected definition's parse issues before its
+    /// input order, a rejected definition's parse issues before its
     /// compile issues. On success the other issues are dropped: a host that
     /// wants them calls [`Compiler::check`](crate::program::Compiler::check).
     pub fn build(self) -> std::result::Result<Engine, Vec<Issue>> {

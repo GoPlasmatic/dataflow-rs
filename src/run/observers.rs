@@ -1,4 +1,4 @@
-//! The observers attached to one run (I104): the engine's and the run's,
+//! The observers attached to one run: the engine's and the run's,
 //! each with its interest read once, and the union of the two, which decides
 //! what the run computes for them. The clock is read per kind of event: a
 //! call's only for a slot that holds both `TASKS` and `TIMINGS`, a

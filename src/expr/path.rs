@@ -17,8 +17,8 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
-/// The most segments a [`Path`] holds, the root's own included (I74). The
-/// write log and the splice keep a path's resolved hops in a 64-bit mask.
+/// The most segments a [`Path`] holds, the root's own included. The write
+/// log and the splice keep a path's resolved hops in a 64-bit mask.
 pub(crate) const MAX_PATH_SEGMENTS: usize = 64;
 
 /// One of the three context roots a path starts at.
@@ -259,7 +259,7 @@ impl Path {
         Ok(remove(context, &self.segs))
     }
 
-    /// R52 for a write of `value` here: a root takes only an object.
+    /// Checks a write of `value` here: a root takes only an object.
     pub(crate) fn check_set(&self, value: &OwnedDataValue) -> Result<()> {
         if self.is_root() && !matches!(value, OwnedDataValue::Object(_)) {
             return Err(Error::new(
@@ -274,7 +274,7 @@ impl Path {
         Ok(())
     }
 
-    /// R52 for a removal here: a root cannot be removed.
+    /// Checks a removal here: a root cannot be removed.
     pub(crate) fn check_remove(&self) -> Result<()> {
         if self.is_root() {
             return Err(Error::new(

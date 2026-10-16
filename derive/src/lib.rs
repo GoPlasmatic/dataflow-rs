@@ -1,4 +1,6 @@
-//! The proc-macro behind `#[derive(FunctionConfig)]` (design R44).
+//! The proc-macro behind `#[derive(FunctionConfig)]`: a derive must live in
+//! a proc-macro crate of its own, and one derive serves the built-ins and
+//! hosts alike.
 //!
 //! The generated code names nothing but `::dataflow_rs::function::__private`,
 //! `::core` and `::std`, so the library must be reachable as `::dataflow_rs`.

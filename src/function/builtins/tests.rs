@@ -620,7 +620,7 @@ enum Why {
     /// A literal path outside `data`, `metadata` and `temp_data` (break 15):
     /// v3 read it as a top-level context key.
     Break15,
-    /// A literal path that is not a string (break 15, widened by I55): v3
+    /// A literal path that is not a string (the widened break 15): v3
     /// read `7` or `null` as the name `"7"` or `"null"`.
     Break15Widened,
 }
@@ -683,7 +683,7 @@ fn v3_accepts(name: &str, input: &Value) -> bool {
     })
 }
 
-/// Every issue v4 reports: `def::parse` with the compat reader on (I54), then,
+/// Every issue v4 reports: `def::parse` with the compat reader on, then,
 /// when it loaded, the config compile of the parsed task's input. Each as
 /// `(path below the input, code, severity)`.
 fn v4_issues(name: &str, input: &Value) -> Vec<(String, IssueCode, Severity)> {

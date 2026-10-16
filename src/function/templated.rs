@@ -273,7 +273,7 @@ impl Templated {
     /// `null` as a value: an expression, a document, or a literal of any
     /// JSON. On any other kind it reads as absent without the default, so a
     /// required field is missing even when it declares one; an output alone
-    /// keeps its default, as a derived config's does (decision I53).
+    /// keeps its default, as a derived config's does.
     fn one(
         spec: &FieldSpec,
         raw: Option<&Value>,

@@ -124,7 +124,7 @@ impl Serialize for Filled<'_> {
 }
 
 /// An [`Interpolated`] document with its holes resolved, borrowed from the
-/// compiled document and the context the call sees (R54).
+/// compiled document and the context the call sees.
 ///
 /// Made by [`Ctx::render`](crate::function::Ctx::render). Each hole was
 /// looked up once, when it was made; serializing writes the document's

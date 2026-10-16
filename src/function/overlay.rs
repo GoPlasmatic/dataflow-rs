@@ -1,7 +1,7 @@
 //! A host call's overlay: the writes one call makes, kept apart from the run
-//! until the call settles (05, "A host `Function`").
+//! until the call settles.
 //!
-//! It is the list of the call's writes as it made them (I87): each a path
+//! It is the list of the call's writes as it made them: each a path
 //! and the value written there, or a removal. [`Ctx`](super::Ctx) uses it
 //! through the operations below, so a change of structure touches this file
 //! only.

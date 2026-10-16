@@ -1,4 +1,5 @@
-//! Observers: what a run tells a host as it goes, inline (R9).
+//! Observers: what a run tells a host as it goes, inline from the
+//! recorder, so an attached observer adds no await.
 
 use super::{RunStatus, WorkflowRecord};
 use crate::base::{ProgramId, WorkflowIx};

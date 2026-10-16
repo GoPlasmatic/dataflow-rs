@@ -75,8 +75,9 @@ pub(crate) struct CallSite {
     pub(crate) terminal: bool,
 }
 
-/// What a call site calls (I42): a built-in's typed config (the parse and
-/// publish ones boxed, I71), or a host function bound to its config.
+/// What a call site calls: a built-in's typed config (the parse and
+/// publish ones boxed, so the site stays small), or a host function bound
+/// to its config.
 pub(crate) enum Callee {
     Builtin(Builtin),
     Host(Box<dyn BoundCall>),

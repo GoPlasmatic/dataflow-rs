@@ -1,4 +1,4 @@
-//! The trace (R17, I105): a run's initial context, then one step per
+//! The trace: a run's initial context, then one step per
 //! recorded call, skipped step and engine write, each with its changes, so a
 //! replay from `initial` rebuilds the context after every step.
 
@@ -29,8 +29,9 @@ pub struct TraceOptions {
     pub timings: bool,
     /// Record each step's changes. `true` by default. A trace records its
     /// own changes whatever `RunOptions::capture_changes` says, which governs
-    /// only the audit trail (R45). With `false` the steps carry statuses and
-    /// timings, for profiling, and cannot be replayed.
+    /// only the audit trail, so turning that off cannot empty a debugger's
+    /// replay. With `false` the steps carry statuses and timings, for
+    /// profiling, and cannot be replayed.
     pub changes: bool,
     /// Prefixes whose values read `null` in `initial` and in every change,
     /// applied as each is captured; the message keeps the real values. A

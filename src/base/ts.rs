@@ -1,4 +1,4 @@
-//! The `ts` feature's hand-written declarations (I133).
+//! The `ts` feature's hand-written declarations.
 //!
 //! A wire shape whose `Serialize` is derived derives its TypeScript through
 //! ts-rs. One whose `Serialize` is written by hand declares it through

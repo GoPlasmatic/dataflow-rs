@@ -16,7 +16,7 @@ pub(crate) struct Record {
     pub(crate) exit: Option<WorkflowExit>,
 }
 
-/// What the run's arena and view did, counted (I72).
+/// What the run's arena and view did, counted.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]

@@ -1,5 +1,6 @@
 //! A host function, erased once at `register`, and a host call site's
-//! callee, bound once at compile (I42).
+//! callee, bound once at compile, so a call is one virtual call with no
+//! downcast.
 
 use super::templated::primary_name;
 use super::{

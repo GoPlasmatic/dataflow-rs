@@ -1,6 +1,6 @@
 //! The error context: where the engine mirrors the records each call added
 //! into the message's context, so a later condition or mapping can branch on
-//! why a task failed (I108). v3's `with_error_context_path` and
+//! why a task failed. v3's `with_error_context_path` and
 //! `with_error_context_limit`, with v3's record, trim and replacement rules.
 //!
 //! The recorder mirrors after the call's error record, for every recorded
@@ -15,7 +15,7 @@ use datavalue::OwnedDataValue;
 use std::borrow::Cow;
 use std::sync::Arc;
 
-/// The `metadata` keys the engine writes on every run (S5): the progress
+/// The `metadata` keys the engine writes on every run: the progress
 /// after every call, which cross-workflow chaining reads, and the run's
 /// stamps. A records array at or below one would be overwritten, or would
 /// overwrite it.
@@ -65,7 +65,7 @@ impl ErrorContext {
     ///
     /// [`ErrorKind::Config`] for a root (`data`, `metadata` or `temp_data`
     /// itself); for a path at or below a `metadata` slot the engine owns
-    /// (S5): `metadata.progress`, which it writes after every call for
+    /// `metadata.progress`, which it writes after every call for
     /// cross-workflow chaining, and the run's stamps `metadata.processed_at`,
     /// `metadata.engine_version` and `metadata.channel`; and for a `limit` of
     /// 0.

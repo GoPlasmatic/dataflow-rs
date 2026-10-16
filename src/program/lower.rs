@@ -1,7 +1,7 @@
-//! Lowering (I47): the compile walk emits a workflow's ops as it reaches each
+//! Lowering: the compile walk emits a workflow's ops as it reaches each
 //! step, and this module holds the emitter, the listing and the invariants.
 //!
-//! The shape, from 05:
+//! The shape:
 //!
 //! ```text
 //! [Cond workflow else->end]       the pre-phase: a loop with setup or over
@@ -218,8 +218,9 @@ fn in_range(pc: usize, table: &str, index: u32, len: usize) -> Result<usize, Str
 }
 
 impl CompiledWorkflow {
-    /// The ops, one line each, `{pc:>2} {op}`: the snapshot contract (I47). A
-    /// target is its op index, or `end` when it is the end.
+    /// The ops, one line each, `{pc:>2} {op}`: the snapshot contract, so
+    /// every lowering change shows as a diff. A target is its op index, or
+    /// `end` when it is the end.
     ///
     /// A row the op names that does not exist prints as `?`, so a broken
     /// lowering can still be listed.
@@ -611,7 +612,7 @@ mod tests {
         );
     }
 
-    /// 05's worked lowering, verbatim.
+    /// The design's worked lowering, verbatim: the snapshot contract.
     fn price_batches() -> Value {
         json!({
           "id": "price-batches",

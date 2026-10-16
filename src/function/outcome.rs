@@ -2,7 +2,7 @@
 
 /// What a call tells the engine. v3's `TaskOutcome`, unchanged.
 ///
-/// Exhaustive on purpose (R48): a host matching on it handles every case, and
+/// Exhaustive on purpose: a host matching on it handles every case, and
 /// a fifth would be a new contract, not a minor addition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {

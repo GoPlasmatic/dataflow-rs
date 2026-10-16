@@ -1,4 +1,4 @@
-//! The size test behind the invalidation rule (R56): whether an owned value
+//! The size test behind the invalidation rule: whether an owned value
 //! is large enough that copying it into the view costs more than rebuilding
 //! the view after a checkpoint.
 

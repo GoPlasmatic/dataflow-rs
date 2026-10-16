@@ -50,7 +50,7 @@ pub struct CallInfo<'a> {
 /// A [`Function`](super::Function)'s view of one call.
 ///
 /// It reads the run's single view of the context, so no view is built per
-/// call (R38), and keeps the call's writes in an overlay of its own: a read
+/// call, and keeps the call's writes in an overlay of its own: a read
 /// sees them over the run's context, and they reach the message only when
 /// the call returns `Ok` (whatever the [`Outcome`](super::Outcome)). An `Err`
 /// drops them, and their `Change`s, and keeps the records the call added.
@@ -116,7 +116,8 @@ pub struct Ctx<'r> {
     callee: &'r dyn BoundCall,
     deadline: Option<Instant>,
     cancel: Option<&'r CancelToken>,
-    /// Whether `set` and `remove` record `Change`s (I67).
+    /// Whether `set` and `remove` record `Change`s: only when the audit or
+    /// the trace keeps them.
     capture: bool,
     /// The call's writes, in order.
     overlay: Overlay,
@@ -292,7 +293,7 @@ impl<'r> Ctx<'r> {
     /// the engine writes, as [`TraceOptions::redact`](crate::observe::TraceOptions::redact)
     /// writes a redacted path's value, and it is never evaluated, so not
     /// even its error can carry the value: a logging layer or a dry run
-    /// reads the input without reading a secret (R37). The function itself
+    /// reads the input without reading a secret. The function itself
     /// reads its own fields, secrets included, through [`Self::eval`].
     ///
     /// # Errors
@@ -345,13 +346,14 @@ impl<'r> Ctx<'r> {
     }
 
     /// When the run must end, if it has a deadline: a run this function
-    /// starts passes it on, or an earlier one (R60).
+    /// starts passes it on, or an earlier one.
     pub fn deadline(&self) -> Option<Instant> {
         self.deadline
     }
 
     /// The run's cancellation token, if it has one: a child of it cancels a
-    /// run this function starts along with this one (R60).
+    /// run this function starts along with this one, so that run ends
+    /// `Cancelled` and reports it rather than being dropped.
     pub fn cancel(&self) -> Option<&CancelToken> {
         self.cancel
     }
@@ -388,8 +390,9 @@ impl<'r> Ctx<'r> {
 
     /// `doc` with each hole looked up once, as [`Self::get`] would, and
     /// lent where it was found; a hole that finds nothing yields its
-    /// default. No tree is built (R54): the [`Rendered`] serializes the
-    /// document's skeleton with each value in place.
+    /// default. No tree is built: the [`Rendered`] serializes the
+    /// document's skeleton with each value in place, so a consumer that is
+    /// itself a serializer pays for no intermediate value.
     pub fn render<'s>(&'s self, doc: &'s Interpolated) -> Rendered<'s> {
         doc.render_with(|hole| {
             hole.path
@@ -465,12 +468,12 @@ impl<'r> Ctx<'r> {
     /// capture, with the value this call sees there now, so a second write to
     /// one path leaves two `Change`s and one value. At a root the write
     /// replaces the root, and its `Change` says so
-    /// ([`replaced`](Change::replaced), I106).
+    /// ([`replaced`](Change::replaced)).
     ///
     /// # Errors
     ///
     /// [`ErrorKind::Config`](crate::base::ErrorKind::Config) when `path` is a
-    /// root and `value` is not an object (R52).
+    /// root and `value` is not an object.
     pub fn set(&mut self, path: &Path, value: OwnedDataValue) -> Result<()> {
         path.check_set(&value)?;
         // A first write with no binding is resolved against the run's view
@@ -568,7 +571,7 @@ impl<'r> Ctx<'r> {
     /// # Errors
     ///
     /// [`ErrorKind::Config`](crate::base::ErrorKind::Config) when `path` is a
-    /// root (R52).
+    /// root.
     pub fn remove(&mut self, path: &Path) -> Result<()> {
         path.check_remove()?;
         if self.capture {

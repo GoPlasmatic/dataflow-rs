@@ -1,4 +1,4 @@
-//! The path fields parse and publish keep from v3 (I44, I56): a parse
+//! The path fields parse and publish keep from v3: a parse
 //! source, which may name the payload; a path written relative to `data`; and
 //! a publish source, which is one with v3's `data.` fallback.
 //!
@@ -109,12 +109,13 @@ impl ParseFrom {
     }
 }
 
-/// Where `parse_json` and `parse_xml` read from (I44).
+/// Where `parse_json` and `parse_xml` read from.
 ///
 /// A literal string resolves at compile through `ParseFrom::parse`, and so
-/// does JSONLogic that folds (I71). Anything else compiles as JSONLogic
-/// computing that string, which resolves through the same function at run
-/// time, so a computed source can name the payload too.
+/// does JSONLogic that folds, so a constant is not parsed per call. Anything
+/// else compiles as JSONLogic computing that string, which resolves through
+/// the same function at run time, so a computed source can name the payload
+/// too.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ParseSource {
@@ -188,7 +189,7 @@ impl ConfigField for ParseSource {
     }
 }
 
-/// A path written relative to `data` (I44): `"orders"` is `data.orders`, and
+/// A path written relative to `data`: `"orders"` is `data.orders`, and
 /// `"data.t"` is `data.data.t`, as v3's `target` always was.
 ///
 /// A literal resolves at compile; JSONLogic that does not fold resolves
@@ -260,7 +261,7 @@ impl ConfigField for DataPath {
     }
 }
 
-/// A publish source (I56): rooted at `data`, as a [`DataPath`] is, plus v3's
+/// A publish source: rooted at `data`, as a [`DataPath`] is, plus v3's
 /// fallback. A source beginning with `data.` also names the source without
 /// that prefix, read when `data.<source>` is missing: `"data.obj"` reads
 /// `data.data.obj`, else `data.obj`.

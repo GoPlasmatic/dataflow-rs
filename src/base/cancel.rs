@@ -12,7 +12,7 @@ use {std::pin::Pin, std::pin::pin, tokio::sync::Notify};
 ///
 /// A function reads the run's token through
 /// [`Ctx::cancel`](crate::function::Ctx::cancel), and hands a child to a run
-/// it starts, so cancelling the parent cancels both (R60).
+/// it starts, so cancelling the parent cancels both.
 ///
 /// ```
 /// use dataflow_rs::run::CancelToken;

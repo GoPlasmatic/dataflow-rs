@@ -121,7 +121,7 @@ pub(crate) const PARSE_KEYS: &[&str] = &["source", "target"];
 /// The keys of a `publish_json` or `publish_xml` input.
 pub(crate) const PUBLISH_KEYS: &[&str] = &["source", "target", "pretty", "root_element"];
 
-/// What the compat reader knows of a built-in's input (I54): its keys and,
+/// What the compat reader knows of a built-in's input: its keys and,
 /// for an input holding an array of nested configs, that array's key and the
 /// keys of its elements. It moves any other key into the task's `ext`.
 ///

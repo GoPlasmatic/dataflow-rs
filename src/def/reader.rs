@@ -11,7 +11,7 @@
 //! | Where | v3 spelling | v4 spelling |
 //! | --- | --- | --- |
 //! | Workflow | `continue_on_error` | `on_failure: continue` or `fail` |
-//! | Task | `continue_on_error`, `halt_on` | `on_failure` and `on_rejection`, by 06's policy table |
+//! | Task | `continue_on_error`, `halt_on` | `on_failure` and `on_rejection`, by the policy table below |
 //! | `function.name` | `validate` | `validation` |
 //!
 //! Each rewrite is a `V3_SPELLING` Advisory at the v3 key, and a
@@ -19,7 +19,7 @@
 //! `publish_kafka`) are their hosts': their inputs are left as written. Two
 //! moves are not rewrites, and are reported as the keys they are:
 //!
-//! - **A key a built-in's input does not know (I54)** moves into the task's
+//! - **A key a built-in's input does not know** moves into the task's
 //!   `ext` as `function.input.<path>`, an `UNKNOWN_KEY` or a `LIKELY_TYPO`.
 //!   So does an unknown key of a `map` mapping or a `validation` rule that is
 //!   an object, as `function.input.mappings[0].<key>`. v3's configs ignored
@@ -473,7 +473,7 @@ impl Read {
         }
     }
 
-    /// A built-in's input, in its keys' order (I54). A key the built-in does
+    /// A built-in's input, in its keys' order. A key the built-in does
     /// not know moves into the `ext` of the task at `task`, and so does an
     /// unknown key of an object element of its nested configs.
     fn builtin_input(

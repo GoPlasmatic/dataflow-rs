@@ -1,6 +1,6 @@
 //! The built-in functions' configs, and the dispatch over them.
 //!
-//! Crate-private (I42): code outside the crate reaches a built-in's config
+//! Crate-private: code outside the crate reaches a built-in's config
 //! through the `Compiler`, as `tests/map_vs_v3.rs` and the v4 corpus driver
 //! do.
 //!
@@ -8,7 +8,7 @@
 //! `tests.rs`. Each config's keys, and those of `map`'s mappings and
 //! `validation`'s rules, are `def`'s tables for its input: the compat reader
 //! moves any other key into the task's `ext` before a config compiles, as v3
-//! ignored them (I54), and the tests hold the two to one set.
+//! ignored them, and the tests hold the two to one set.
 
 #[cfg(test)]
 pub(crate) mod differential;
@@ -33,7 +33,7 @@ use crate::expr::{CompileCx, ExprVisitor, FieldSpec};
 use crate::function::{FunctionConfig, FunctionSpec, Outcome, SyncCtx, SyncFunction};
 use serde_json::Value;
 
-/// A built-in function, by name (I42).
+/// A built-in function, by name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuiltinKind {
     Map,
@@ -164,8 +164,9 @@ impl BuiltinKind {
 }
 
 /// A built-in call site's callee: its typed config, which is what the
-/// runtime matches on (I42). The four parse and publish configs are boxed
-/// (I71) so a call site fits in 256 bytes; the hot ones stay inline.
+/// runtime matches on, with no box and no vtable. The four parse and
+/// publish configs are boxed so a call site fits in 256 bytes; the hot
+/// ones stay inline.
 #[derive(Debug)]
 pub(crate) enum Builtin {
     Map(MapConfig),
@@ -198,7 +199,7 @@ impl Builtin {
     }
 
     /// One call: a match over the eight configs, each through its
-    /// [`SyncFunction`] (I42).
+    /// [`SyncFunction`].
     pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         match self {
             Self::Map(c) => c.call(cx),

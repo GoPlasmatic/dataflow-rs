@@ -31,7 +31,7 @@ pub(crate) enum Flow {
     /// The failure goes to the workflow's `on_failure`.
     Fail(Error),
     /// The run ends, whatever the policies: its deadline passed or its
-    /// token was cancelled (I92).
+    /// token was cancelled.
     Stop(Error),
 }
 
@@ -157,9 +157,9 @@ pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> 
     }
 }
 
-/// What a call the run's deadline or token cut short records and does
-/// (I92): what an `Err` from the function records, a 500 and `error`'s
-/// record, whatever the task's policies, and then the run stops.
+/// What a call the run's deadline or token cut short records and does:
+/// what an `Err` from the function records, a 500 and `error`'s record,
+/// whatever the task's policies, and then the run stops.
 pub(crate) fn cut_short(task_id: &str, error: Error) -> Decision {
     let fails = Policy {
         on_failure: FailurePolicy::Fail,
@@ -400,7 +400,7 @@ mod tests {
         use datavalue::OwnedDataValue;
         use serde_json::{Value, json};
 
-        /// The four v3 flag combinations of 06's policy table:
+        /// The four v3 flag combinations and the policies each maps to:
         /// `continue_on_error: true`, and `halt_on: "failure"`.
         pub(super) const FLAGS: [(&str, bool, bool); 4] = [
             ("neither", false, false),

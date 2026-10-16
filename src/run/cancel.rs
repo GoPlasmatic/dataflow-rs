@@ -1,4 +1,4 @@
-//! The run's limits (I92): its deadline and its cancellation token, and the
+//! The run's limits: its deadline and its cancellation token, and the
 //! one rule that checks them.
 //!
 //! The interpreter checks them at every host call and every fan-out

@@ -158,8 +158,7 @@ impl SyncFunction for MapConfig {
     /// Each mapping in order, each against the view as the ones before it
     /// left it. A failing mapping is logged and the rest still run; the call
     /// is then `Status(500)`, as v3's. Under a trace that keeps changes,
-    /// each mapping's end in the changes is noted, a failing one's included
-    /// (I127).
+    /// each mapping's end in the changes is noted, a failing one's included.
     fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let mut failed = false;
         // Most mappings record one change: sized once, as v3's
@@ -329,7 +328,8 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
 
     /// Writes `result` at `path`: a root merges, anything else is assigned.
     /// The change is recorded first, with the old value read from the view;
-    /// under capture the mark keeps the owned new value (I7).
+    /// under capture the mark keeps the owned new value, which the `Change`
+    /// needed anyway, so the checkpoint converts nothing twice.
     fn set(&mut self, path: &Path, result: MapValue<'q, 'p>) {
         let owned = self.capture.then(|| result.owned());
         if let Some(new_value) = &owned {
@@ -355,7 +355,7 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
     /// The audit entry records the elements alone, as v3's. A replay of
     /// those alone cannot rebuild an array created where a `null` was, nor
     /// an empty `extend`'s, so a traced run records the array's creation
-    /// first, `null` to `[]`, for the trace alone (I19).
+    /// first, `null` to `[]`, for the trace alone.
     fn append(&mut self, path: &Path, mode: MapMode, result: MapValue<'q, 'p>) -> bool {
         if path.is_root() {
             error!("Map: Refusing to append to context root {path}");

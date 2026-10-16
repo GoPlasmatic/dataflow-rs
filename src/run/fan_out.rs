@@ -1,7 +1,7 @@
-//! One fan-out (05, "A fan-out"): a task's host function called once per
+//! One fan-out: a task's host function called once per
 //! element of an array, then folded into the run in element order.
 //!
-//! `over` is evaluated once, to an owned array, by a loop's rule (I91). Each
+//! `over` is evaluated once, to an owned array, by a loop's rule. Each
 //! element's call is a host call ([`invoke`]) over the run's one view, with
 //! the element and its index bound beneath the call's own writes
 //! ([`Binding`]). Nothing reaches the run until every call has finished, so
@@ -21,10 +21,10 @@
 //! the fold.
 //!
 //! Each element's call checks the run's limits as it starts and, natively,
-//! races them (I92). Once one is cut short, the calls in flight are dropped
+//! races them. Once one is cut short, the calls in flight are dropped
 //! and nothing is folded, the finished elements included. The records each
 //! call that returned added are kept, in element order and stamped with
-//! their element, as a single call cut short keeps its own (I96); then the
+//! their element, as a single call cut short keeps its own; then the
 //! task is recorded once, with no element, as a call cut short is, and the
 //! run stops.
 //!
@@ -139,7 +139,7 @@ fn slot(into: &Path, index: usize) -> Path {
 /// element order, then the task's own policy; the flow.
 ///
 /// An `over` that is not an array is one `Err` of the task, decided under
-/// the task's policy and recorded with no element (I91). An empty one writes
+/// the task's policy and recorded with no element. An empty one writes
 /// `into = []` with one `Change`, whose old value is `null` as v3's, and
 /// records the task once, with no element.
 pub(crate) async fn fan_out<'p>(

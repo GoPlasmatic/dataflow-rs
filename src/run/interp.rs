@@ -1,4 +1,4 @@
-//! The interpreter: one `async fn` over a workflow's ops (05). Nothing else
+//! The interpreter: one `async fn` over a workflow's ops. Nothing else
 //! interprets steps.
 //!
 //! A built-in runs inline with no `.await`; a host call awaits through
@@ -8,7 +8,7 @@
 //! [`decide`](super::policy::decide), the one definition of failed, rejected
 //! and halted, and then [`record`](super::record::record).
 //!
-//! A loop is two ops, in 05's order. `LoopInit` evaluates `over` once, writes
+//! A loop is two ops. `LoopInit` evaluates `over` once, writes
 //! the counter's `init`, checks the bounds, and in bounds writes the bindings
 //! and falls into the first sweep; `LoopNext` advances the counter and does
 //! the same, jumping back to the sweep's first op. The engine owns the
@@ -23,7 +23,7 @@
 //! is known to be selected: as it starts when it has no condition, or when
 //! the first evaluation of its condition admits it.
 //!
-//! A traced run's steps that are not a call's are made here (I105): the
+//! A traced run's steps that are not a call's are made here: the
 //! workflow's `Skipped` step when its condition refuses it on the first
 //! judgment, one `Skipped` step per call a group's or a task's condition
 //! refuses, the engine's step as a sweep is entered or a loop exits, and,
@@ -69,7 +69,7 @@ pub(crate) enum Exit {
     Stopped(Error),
     /// The run's deadline passed or its token was cancelled, as this error
     /// of kind `TimedOut` or `Cancelled` says: at a check between ops, as a
-    /// sweep starts, or cutting a call short (I92). Only this exit makes the
+    /// sweep starts, or cutting a call short. Only this exit makes the
     /// run `TimedOut` or `Cancelled`; an `Err` of either kind a function
     /// returned is a task's failure like any other.
     Limited(Error),
@@ -136,17 +136,17 @@ pub(crate) struct RunEnv<'r, 'p> {
     /// Which audit entries the message keeps.
     pub(crate) mode: AuditMode,
     /// Whether a call records its `Change`s: the audit or the trace wants
-    /// them (I67, I107).
+    /// them.
     pub(crate) capture: bool,
     /// Whether the audit entry gets the call's `Change`s: change capture is
-    /// on and the mode keeps entries (I67, I107).
+    /// on and the mode keeps entries.
     pub(crate) capture_audit: bool,
     /// What the run reports beyond the message, held by `run_with`.
     pub(crate) watch: &'r mut Watch<'p>,
     /// Whether a call is recorded beyond the message: the run is traced,
     /// mirrors its records into an error context, or tells an observer of
     /// the task events ([`Watch::records_calls`]). An unwatched call takes
-    /// the plain recorder (review A M-1).
+    /// the plain recorder, so the run's other outputs cost it one branch.
     pub(crate) watched: bool,
     /// The run's one clock reading.
     pub(crate) now: DateTime<Utc>,
@@ -392,8 +392,8 @@ pub(crate) async fn run_workflow<'p>(
 }
 
 /// Whether a workflow condition is the first thing `wf` judges: its first
-/// op, or, in a loop without setup or `over`, the first sweep's (05's
-/// shape, as `program::lower` emits it).
+/// op, or, in a loop without setup or `over`, the first sweep's (the
+/// shape `program::lower` emits).
 fn judged_first(wf: &CompiledWorkflow) -> bool {
     let first = match wf.ops.first() {
         Some(Op::LoopInit { .. }) => wf.ops.get(1),
@@ -426,9 +426,10 @@ fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
 }
 
 /// The workflow's own `Skipped` step, for a condition that refused it on
-/// its first judgment: when it failed to evaluate (R34), with the record of
-/// the error it failed with and the workflow's id. The message never gets
-/// that record, so the step's is the only one (I127).
+/// its first judgment: when it failed to evaluate, with the record of
+/// the error it failed with and the workflow's id, so the step is told
+/// apart from a plain `false`. The message never gets that record, so the
+/// step's is the only one.
 fn skipped_workflow(env: &mut RunEnv<'_, '_>, error: Option<&Error>) {
     if env.watch.trace.is_none() {
         return;
@@ -470,7 +471,7 @@ fn skipped_calls(
 /// `LoopInit`: `over`, once, then the counter's `init` and the first sweep.
 ///
 /// An `over` that does not give an array fails the workflow before the
-/// counter is written (I61): one record, whatever the workflow's policy,
+/// counter is written: one record, whatever the workflow's policy,
 /// which then decides; under `continue` the failure goes to the loop's exit.
 fn loop_init<'p>(
     rc: &mut RunContext<'_, 'p>,
@@ -505,7 +506,7 @@ fn loop_next<'p>(
     enter(rc, env, site, Flow::Jump(body_to), exit_to)
 }
 
-/// The sweep at the frame's counter, in 05's order: the counter written,
+/// The sweep at the frame's counter, in this order: the counter written,
 /// then the bounds, `counter < max` and `counter < len(over)`, then in bounds
 /// the run's limits, then `over[counter]` moved into `as` and `{}` into
 /// `scratch`, before the sweep's condition. Out of bounds the loop exits,
@@ -626,10 +627,10 @@ impl fmt::Display for Over<'_> {
     }
 }
 
-/// An `over`'s elements, owned: a loop's (I61) or a fan-out's (I91), by one
-/// rule. A value that is not an array is [`ErrorKind::Eval`]; an evaluation
-/// error keeps its own kind, with v3's text less v3's wrapper, as I61 words
-/// the other.
+/// An `over`'s elements, owned: a loop's or a fan-out's, by one rule. A
+/// value that is not an array is [`ErrorKind::Eval`], as a wrong-typed
+/// result is everywhere else; an evaluation error keeps its own kind, with
+/// v3's text less v3's wrapper.
 pub(super) fn elements(
     rc: &mut RunContext<'_, '_>,
     exprs: &ExprEngine,

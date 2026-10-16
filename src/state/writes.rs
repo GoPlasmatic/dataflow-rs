@@ -1,4 +1,4 @@
-//! The write log (R55): what changed since the view was built, in a trie
+//! The write log: what changed since the view was built, in a trie
 //! keyed by resolved segments, each a key's name or an array index, so the
 //! checkpoint can bring the owned tree up to date by converting only the
 //! paths that changed.
@@ -1000,8 +1000,8 @@ pub(super) mod list {
     }
 }
 
-/// A panic on demand inside `settle` or `apply`, for the test that holds the
-/// checkpoint to R51.
+/// A panic on demand inside `settle` or `apply`, for the test that holds
+/// that a panicking checkpoint never loses the message's context.
 #[cfg(test)]
 pub(super) mod fault {
     use std::cell::Cell;

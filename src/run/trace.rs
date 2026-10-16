@@ -1,6 +1,6 @@
-//! The trace as a run builds it (I105): [`Capture`], which redacts and
+//! The trace as a run builds it: [`Capture`], which redacts and
 //! charges `initial` and each step's changes, and drops the changes past the
-//! byte budget, a `map` step's mapping ends with them (I127).
+//! byte budget, a `map` step's mapping ends with them.
 //!
 //! Redaction is v3's pruning rule (`redacting_clone`), over a [`Path`]'s
 //! segments: on an object a segment is its key (one leading `#` stripped),
@@ -38,7 +38,7 @@ pub(crate) struct Capture {
     /// step takes. Filled only while the trace keeps changes.
     prelude: Vec<Change>,
     /// Where each mapping of the `map` call running ends in its changes,
-    /// lent to the call while the trace keeps changes (I127), and moved
+    /// lent to the call while the trace keeps changes, and moved
     /// onto its step by the recorder.
     mapping_ends: Vec<u32>,
 }

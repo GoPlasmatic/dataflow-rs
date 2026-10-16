@@ -1,4 +1,4 @@
-//! The run context (R38): the only writer of a run.
+//! The run context: the only writer of a run.
 //!
 //! It holds the message's context in two parts. The owned tree is the source
 //! of truth at every checkpoint. The run view is one arena view of it,
@@ -9,7 +9,7 @@
 //! drops the view, resets the arena and applies them.
 //!
 //! The view lives in a [`self_cell`](mod@self_cell) whose owner carries the `Program`'s
-//! lifetime `'p` (I6): datalogic's `evaluate` ties the compiled `Logic` to
+//! lifetime `'p`: datalogic's `evaluate` ties the compiled `Logic` to
 //! its result, so only an expression that outlives the view's own lifetime
 //! can have its result spliced in, and the owner's `'p` is what proves that
 //! inside the cell's `for<'q>` closures.
@@ -48,11 +48,11 @@ self_cell!(
     }
 );
 
-/// The knobs phase 0 measures. `Default` holds 05's starting values.
+/// The run view's tuning knobs. `Default` holds the measured starting values.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tuning {
     /// Whether an owned write larger than the view checkpoints instead of
-    /// being copied in (R56).
+    /// being copied in.
     pub(crate) invalidate: bool,
     /// An owned write is large when it passes `max(invalidate_floor, live)`.
     pub(crate) invalidate_floor: usize,
@@ -81,10 +81,10 @@ pub(crate) struct Stats {
     pub(crate) invalidations: u32,
     /// Marked paths the checkpoint converted from the view.
     pub(crate) converted: u32,
-    /// The largest `live` seen: the view's spine bytes right after a build (I72).
+    /// The largest `live` seen: the view's spine bytes right after a build.
     pub(crate) live_max: usize,
     /// The largest run-arena bytes in use seen at a tick, a checkpoint or the
-    /// finish (I72).
+    /// finish.
     pub(crate) peak_arena: usize,
 }
 
@@ -98,7 +98,7 @@ enum State<'p> {
     Taken,
 }
 
-/// The shared references a host call holds across its `.await` (05): never a
+/// The shared references a host call holds across its `.await`: never a
 /// `&RunView`, whose `Bump` makes it `!Sync`.
 #[derive(Clone, Copy)]
 pub(crate) struct Reader<'r> {
@@ -112,7 +112,7 @@ pub(crate) struct Reader<'r> {
 
 impl<'r> Reader<'r> {
     /// The value at `path`: borrowed from the owned tree unless the log says
-    /// it changed, else converted from the view (R55).
+    /// it changed, else converted from the view.
     pub(crate) fn get(self, path: &Path) -> Option<Cow<'r, OwnedDataValue>> {
         self.find(path).map(Filled::into_cow)
     }
@@ -147,7 +147,7 @@ impl<'r> Reader<'r> {
     }
 }
 
-/// The run context (R38): the only writer of a run. It owns the message's
+/// The run context: the only writer of a run. It owns the message's
 /// context for the run and puts it back when the run finishes or is dropped.
 pub(crate) struct RunContext<'m, 'p> {
     /// Where the context goes back to: the message's.
@@ -237,7 +237,8 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
     }
 
     /// Write `value` at `path`. `owned` is the same value as an owned tree,
-    /// when the writer has one (I7). Returns whether it wrote.
+    /// when the writer built one anyway, so the checkpoint need not convert
+    /// it again. Returns whether it wrote.
     pub(crate) fn set(
         &mut self,
         path: &Path,
@@ -447,7 +448,8 @@ impl<'m, 'p> RunContext<'m, 'p> {
         matches!(self.state, State::Viewed(_))
     }
 
-    /// The view, built now if there is none (R56: at the first read).
+    /// The view, built now if there is none: at the first read, not at run
+    /// start.
     fn view(&mut self) -> &mut RunView<'p> {
         if let State::Owned(_) = self.state {
             let State::Owned(owner) = std::mem::replace(&mut self.state, State::Taken) else {
@@ -483,7 +485,7 @@ impl<'m, 'p> RunContext<'m, 'p> {
 
     /// An owned write: a parse result, an applied overlay, a binding. With no
     /// view it assigns the owned tree. With a view, a value over the threshold
-    /// checkpoints and assigns the owned tree (R56), and anything smaller is
+    /// checkpoints and assigns the owned tree, and anything smaller is
     /// copied in, spliced and marked with its owned value.
     pub(crate) fn set(
         &mut self,
@@ -567,7 +569,7 @@ impl<'m, 'p> RunContext<'m, 'p> {
     }
 
     /// The value at `path`: borrowed from the owned tree unless the log says
-    /// it changed, else converted from the view (R55).
+    /// it changed, else converted from the view.
     pub(crate) fn get(&self, path: &Path) -> Option<Cow<'_, OwnedDataValue>> {
         match &self.state {
             State::Owned(owner) => path.get(&owner.ctx).map(Cow::Borrowed),
@@ -666,9 +668,9 @@ impl<'m, 'p> RunContext<'m, 'p> {
 
 impl Drop for RunContext<'_, '_> {
     /// A run dropped early, by a host's `select!` or a dropped request, still
-    /// leaves every write made so far in the message. Not while panicking
-    /// (R51): a checkpoint runs the same code the panic may have come from,
-    /// and a second panic during unwinding aborts the process. The message
+    /// leaves every write made so far in the message. Not while panicking:
+    /// a checkpoint runs the same code the panic may have come from, and a
+    /// second panic during unwinding aborts the process. The message
     /// then keeps the last checkpoint.
     fn drop(&mut self) {
         if !std::thread::panicking() {

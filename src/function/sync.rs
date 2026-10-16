@@ -1,4 +1,4 @@
-//! `SyncFunction`: how a built-in runs (R58), and `SyncCtx`, what it sees.
+//! `SyncFunction`: how a built-in runs, and `SyncCtx`, what it sees.
 //!
 //! A built-in reads the message through the run view and writes through the
 //! run context, so a write is spliced into the view and marked, never
@@ -13,7 +13,9 @@ use crate::state::RunContext;
 use datavalue::{DataValue, OwnedDataValue};
 use std::sync::Arc;
 
-/// A built-in's call (R58). Crate-private: hosts implement `Function`.
+/// A built-in's call. Crate-private: hosts implement `Function`, since a
+/// second public kind of function would bring a second context type and
+/// exceptions to layers, dry runs and fan-outs.
 pub(crate) trait SyncFunction {
     /// One call. Writes go through `cx` at once and stand even if the call
     /// then returns `Err`.
@@ -37,7 +39,8 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     pub(crate) workflow_id: &'p str,
     /// The task's id.
     pub(crate) task_id: &'p str,
-    /// Whether `Change`s are recorded (I67).
+    /// Whether `Change`s are recorded: only when the audit or the trace
+    /// keeps them.
     pub(crate) capture: bool,
     /// Whether the run's trace keeps changes: only then does a built-in
     /// record a write the trace alone needs ([`Change::for_trace`]).
@@ -47,7 +50,7 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     /// Set by a built-in that recorded a change the trace alone keeps, so
     /// the recorder makes the audit's copy without it, and only then.
     pub(crate) marked: bool,
-    /// Where `map` notes each mapping's end in `changes` (I127), lent by the
+    /// Where `map` notes each mapping's end in `changes`, lent by the
     /// trace only while it keeps changes; `None` otherwise, so a run that
     /// is not traced notes nothing.
     pub(crate) mapping_ends: Option<&'c mut Vec<u32>>,

@@ -503,7 +503,7 @@ fn stats_report_the_view_and_the_arena() {
 }
 
 /// A panic inside the checkpoint's `settle` or `apply` must not lose the
-/// message's context (R51): the slot holds an object with the three roots
+/// message's context: the slot holds an object with the three roots
 /// afterwards, never `null`.
 #[test]
 fn a_panic_inside_a_checkpoint_keeps_the_context() {

@@ -1,4 +1,5 @@
-//! The per-thread pool of evaluation arenas (decision I28).
+//! The per-thread pool of evaluation arenas. It lives in `expr`, below
+//! `state`, because `ExprEngine::eval` is what takes one.
 //!
 //! Taking an arena while one is held takes another, so evaluation may re-enter
 //! (an operator calling back into the engine) without a panic.

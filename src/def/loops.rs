@@ -42,7 +42,7 @@ pub(super) fn over_literal_problem(over: &Value) -> Option<String> {
     ))
 }
 
-/// The loop's bound rules (I78), each broken one as `(code, path, message)`,
+/// The loop's bound rules, each broken one as `(code, path, message)`,
 /// in v3's order: an `increment` below 1, then a `max` at or below `init`.
 /// `parse` checks what it read, an unreadable `increment` or `max` as `None`;
 /// the compile walk checks the definition it is handed again, since a host

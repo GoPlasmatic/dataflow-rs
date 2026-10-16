@@ -158,7 +158,7 @@ crate::base::ts::ts_decl!(
     }
 );
 
-/// The parts a run borrows separately (05: only `run` holds a `&mut Message`).
+/// The parts a run borrows separately: only `run` holds a `&mut Message`.
 #[derive(Debug)]
 pub(crate) struct Parts<'a> {
     pub(crate) id: &'a str,
@@ -282,7 +282,7 @@ impl Message {
 }
 
 /// Whether `mode` keeps any entry: `Off` and `Last(0)` keep none, so the
-/// engine records no changes under them (I67) and the recorder builds no
+/// engine records no changes under them and the recorder builds no
 /// entry.
 pub(crate) fn keeps_entries(mode: AuditMode) -> bool {
     !matches!(mode, AuditMode::Off | AuditMode::Last(0))

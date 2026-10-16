@@ -1,4 +1,4 @@
-//! One function call outside a run, for a host's unit tests (R59).
+//! One function call outside a run, for a host's unit tests.
 //!
 //! [`call`] runs one call of one function through the path a run takes:
 //!

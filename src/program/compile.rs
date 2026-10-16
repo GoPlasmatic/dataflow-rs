@@ -481,7 +481,8 @@ impl<'w> Walk<'w> {
 
     /// A condition at `at`: compiled and visited as not recorded. Its row in
     /// `conds`, or `None` when it did not compile or folds to the literal
-    /// `true`, which keeps no row and lowers to no `Cond` (I47).
+    /// `true`, which keeps no row and lowers to no `Cond`, so a trivially
+    /// true condition costs nothing at run time.
     fn cond(&mut self, raw: &Logic, at: AuthoredPath, step: Stamp<'_>) -> Option<u32> {
         let expr = self.expr(raw, &at, false, step)?;
         if expr.constant() == Some(&OwnedDataValue::Bool(true)) {
@@ -509,7 +510,7 @@ impl<'w> Walk<'w> {
         }
     }
 
-    /// The loop's bounds, checked again (I78), then its `over`, recorded,
+    /// The loop's bounds, checked again, then its `over`, recorded,
     /// then its slots, each `temp_data.<slot>`. Returns its row in `loops`.
     ///
     /// `parse` refuses a loop that never advances or never sweeps, but a host

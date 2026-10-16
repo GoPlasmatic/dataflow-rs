@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 /// A `VALIDATION_ERROR`, with the `Validation error: ` prefix v3's display
-/// adds (I62).
+/// adds, so the record's text stays v3's.
 pub(super) fn validation_error(message: impl std::fmt::Display) -> Error {
     Error::service("VALIDATION_ERROR", format!("Validation error: {message}"))
 }
