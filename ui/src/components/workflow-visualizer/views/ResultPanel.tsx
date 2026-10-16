@@ -1,10 +1,13 @@
 import { useMemo } from 'react';
-import type { Message, Change } from '../../../types';
+import type { Change, Context, Message } from '../../../types';
 import { JsonEditor } from '../../common';
 
 interface ResultPanelProps {
-  /** The message to display */
-  displayMessage: Message;
+  /**
+   * What to show: the context at the debugger's step (`trace.initial` before
+   * the first), or, outside the debugger, a host's result message.
+   */
+  displayValue: Message | Context;
   /** Current step index (-1 means ready state) */
   currentStepIndex: number;
   /** Changes at the current step */
@@ -16,7 +19,7 @@ interface ResultPanelProps {
 }
 
 export function ResultPanel({
-  displayMessage,
+  displayValue,
   currentStepIndex,
   currentChanges,
   theme,
@@ -24,10 +27,10 @@ export function ResultPanel({
 }: ResultPanelProps) {
   const highlightedPaths = useMemo(() => {
     if (!currentChanges || currentChanges.length === 0) return undefined;
-    // `Change.path` is rooted at the evaluation context (`data.user.name`), but
-    // the JSON rendered here is the whole `Message`, where that tree lives under
-    // `context`. Without the prefix no highlight ever matches a line.
-    return currentChanges.map((change: Change) => `context.${change.path}`);
+    // `Change.path` is rooted at the context (`data.user.name`), and so is
+    // the JSON rendered here whenever there are changes to highlight: the
+    // debugger shows the context itself, not a message wrapping it.
+    return currentChanges.map((change: Change) => change.path);
   }, [currentChanges]);
 
   return (
@@ -37,7 +40,7 @@ export function ResultPanel({
           {hasDebugTrace
             ? (currentStepIndex >= 0
                 ? `Step ${currentStepIndex + 1}`
-                : 'Ready')
+                : 'Initial context')
             : 'Result'}
         </span>
         {hasDebugTrace && currentChanges && currentChanges.length > 0 && (
@@ -49,7 +52,7 @@ export function ResultPanel({
 
       <div className="df-visualizer-result-content">
         <JsonEditor
-          value={JSON.stringify(displayMessage, null, 2)}
+          value={JSON.stringify(displayValue, null, 2)}
           onChange={() => {}}
           readOnly={true}
           theme={theme}

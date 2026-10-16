@@ -3,7 +3,8 @@ import '@xyflow/react/dist/style.css';
 import '@goplasmatic/datalogic-ui/styles.css';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useDebuggerOptional } from '../context';
-import { getMessageAtStep } from '../../../types';
+import type { Context, Trace } from '../../../types';
+import { contextAtStep, findTaskStepIndex, isEngineStep } from '../../../types';
 import {
   DataLogicView,
   TaskContent,
@@ -15,6 +16,35 @@ import { WorkflowFlowDiagram, GroupFlowDiagram } from './flow-diagram';
 interface DetailsPanelProps {
   selection: TreeSelectionType;
   onSelect?: (selection: TreeSelectionType) => void;
+}
+
+/**
+ * The index of the step before which a workflow's condition was evaluated,
+ * at the current position, or -1 when the workflow has no step at or before
+ * it.
+ *
+ * A trace records no evaluation of its own, so it is placed: the condition
+ * ran just before the workflow's first step, and, in a loop, again after the
+ * engine's writes as each sweep is entered (its counter, `as` and
+ * `scratch`), before the sweep's tasks. From the workflow's latest step at or
+ * before the position, walk back through its steps to that point.
+ */
+function workflowConditionStepIndex(trace: Trace, currentStepIndex: number, workflowId: string): number {
+  let i = -1;
+  for (let k = Math.min(currentStepIndex, trace.steps.length - 1); k >= 0; k--) {
+    if (trace.steps[k].workflow_id === workflowId) {
+      i = k;
+      break;
+    }
+  }
+  if (i === -1) return -1;
+  for (;;) {
+    // A sweep entered: the condition read what the engine's writes left.
+    if (isEngineStep(trace.steps[i])) return i + 1;
+    // The workflow's first step: the condition read what came before it.
+    if (i === 0 || trace.steps[i - 1].workflow_id !== workflowId) return i;
+    i--;
+  }
 }
 
 export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
@@ -51,20 +81,24 @@ export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
     );
   }
 
-  // Compute condition debug data: use the message from the step before the condition was evaluated
-  let conditionDebugData: Record<string, unknown> | undefined;
+  // A condition's data is the context before the step it gated, at the
+  // current position: for a task, the task's latest step at or before it
+  // (the current sweep's, for a loop; a skipped step's condition read the
+  // context before it too); for a workflow, see above. A step after the
+  // position shows nothing, as the tree marks it pending.
+  let conditionDebugData: Context | undefined;
   if (dbgContext?.state.isActive && dbgContext.state.trace && dbgContext.state.currentStepIndex >= 0) {
-    const { trace, currentStepIndex } = dbgContext.state;
+    const { trace, contexts, currentStepIndex } = dbgContext.state;
 
-    if (selection.type === 'workflow-condition' || selection.type === 'task-condition') {
-      // For conditions, the context used for evaluation is from the previous step's message
-      // (the state just before the condition was checked)
-      const prevMessage = currentStepIndex > 0
-        ? getMessageAtStep(trace, currentStepIndex - 1)
-        : null;
-      if (prevMessage) {
-        conditionDebugData = prevMessage.context;
-      }
+    let stepIndex = -1;
+    if (selection.type === 'task-condition') {
+      stepIndex = findTaskStepIndex(trace, currentStepIndex, selection.workflow.id, selection.task.id);
+      if (stepIndex > currentStepIndex) stepIndex = -1;
+    } else if (selection.type === 'workflow-condition') {
+      stepIndex = workflowConditionStepIndex(trace, currentStepIndex, selection.workflow.id);
+    }
+    if (stepIndex !== -1) {
+      conditionDebugData = contextAtStep(trace, contexts, stepIndex - 1);
     }
   }
 

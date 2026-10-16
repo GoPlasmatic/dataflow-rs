@@ -1406,3 +1406,197 @@
 .df-header-with-debug .df-visualizer-left-title {
   flex-shrink: 0;
 }
+
+/* ============================================
+   RUN STATUS AND TRACE VIEWS
+   The run's status and a refused definition in the toolbar; a step's
+   errors, the trace's note and the final message in the state panel
+   ============================================ */
+
+/* The run's status beside the step counter */
+.df-debug-toolbar-run-status {
+  font-size: 11px;
+  color: var(--df-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.df-debug-toolbar-run-status-success {
+  color: var(--df-success);
+}
+
+.df-debug-toolbar-run-status-warning {
+  color: var(--df-warning);
+}
+
+.df-debug-toolbar-run-status-error {
+  color: var(--df-error);
+}
+
+/* Why the run could not start: one line, and its issues on demand */
+.df-debug-toolbar-error {
+  position: relative;
+  font-size: 11px;
+  color: var(--df-error);
+}
+
+.df-debug-toolbar-error-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.df-debug-toolbar-error-summary::-webkit-details-marker {
+  display: none;
+}
+
+.df-debug-toolbar-error-code {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.df-debug-toolbar-error-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-debug-toolbar-error-detail {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 1000;
+  min-width: 320px;
+  max-width: 560px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-radius: 6px;
+  box-shadow: var(--df-shadow-lg);
+  color: var(--df-text-primary);
+}
+
+.df-debug-toolbar-error-message {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--df-error);
+  white-space: pre-wrap;
+}
+
+.df-debug-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.df-debug-issue {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--df-error) 6%, transparent);
+  border-left: 2px solid var(--df-error);
+  border-radius: 0 4px 4px 0;
+}
+
+.df-debug-issue-defect {
+  background: color-mix(in srgb, var(--df-warning) 6%, transparent);
+  border-left-color: var(--df-warning);
+}
+
+.df-debug-issue-advisory {
+  background: var(--df-bg-tertiary);
+  border-left-color: var(--df-text-muted);
+}
+
+.df-debug-issue-code {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--df-text-primary);
+}
+
+.df-debug-issue-path {
+  font-family: var(--font-mono);
+  color: var(--df-accent-primary);
+  overflow-wrap: anywhere;
+}
+
+.df-debug-issue-message {
+  grid-column: 1 / -1;
+  color: var(--df-text-secondary);
+}
+
+/* State panel: a note on the trace, the step's status code */
+.df-debug-state-note {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--df-warning);
+  background: color-mix(in srgb, var(--df-warning) 10%, transparent);
+  border-bottom: 1px solid var(--df-border-color);
+  flex-shrink: 0;
+}
+
+.df-debug-state-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--df-text-secondary);
+}
+
+/* State panel: the records a step added */
+.df-debug-errors-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.df-debug-error-item {
+  padding: 8px 10px;
+  background: var(--df-bg-primary);
+  border: 1px solid var(--df-border-color);
+  border-left: 2px solid var(--df-error);
+  border-radius: 4px;
+}
+
+.df-debug-error-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.df-debug-error-code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--df-error);
+}
+
+.df-debug-error-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--df-accent-primary);
+}
+
+.df-debug-error-where {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--df-text-muted);
+}
+
+.df-debug-error-message {
+  font-size: 12px;
+  color: var(--df-text-primary);
+  white-space: pre-wrap;
+}

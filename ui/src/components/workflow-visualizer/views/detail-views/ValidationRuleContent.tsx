@@ -1,6 +1,9 @@
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
+import type { Context } from '../../../../types';
+import { contextAtStep } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
-import { useTheme, useDebuggerOptional } from '../../context';
+import { useTheme } from '../../context';
+import { useTaskDebugStep } from '../../hooks/useTreeNodeDebugState';
 
 interface ValidationRuleContentProps {
   selection: Extract<TreeSelectionType, { type: 'validation-rule' }>;
@@ -9,20 +12,14 @@ interface ValidationRuleContentProps {
 export function ValidationRuleContent({ selection }: ValidationRuleContentProps) {
   const { rule } = selection;
   const { resolvedTheme } = useTheme();
-  const dbgContext = useDebuggerOptional();
+  const shown = useTaskDebugStep(selection.task, selection.workflow);
 
-  // When debugger is active, pass the task-level message context (validation is read-only)
-  let debugData: Record<string, unknown> | undefined;
-  if (dbgContext?.state.isActive && dbgContext.currentStep) {
-    const step = dbgContext.currentStep;
-    if (
-      step.workflow_id === selection.workflow.id &&
-      step.task_id === selection.task.id &&
-      step.result === 'executed' &&
-      step.message
-    ) {
-      debugData = step.message.context;
-    }
+  // The editor's `data` is what the rule was evaluated against: the context
+  // before its task's step, since a validation writes nothing but its
+  // records. A skipped task read nothing.
+  let debugData: Context | undefined;
+  if (shown && shown.step.result !== 'skipped') {
+    debugData = contextAtStep(shown.trace, shown.contexts, shown.stepIndex - 1);
   }
 
   return (

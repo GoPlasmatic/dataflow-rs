@@ -1,8 +1,9 @@
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
-import type { JsonLogicValue, MappingItem, ValidationRule } from '../../../../types';
-import { getMappingContext } from '../../../../types';
+import type { Context, JsonLogicValue, MappingItem, ValidationRule } from '../../../../types';
+import { contextAtStep } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
-import { useTheme, useDebuggerOptional } from '../../context';
+import { useTheme } from '../../context';
+import { useTaskDebugStep } from '../../hooks/useTreeNodeDebugState';
 import { convertMappingsToObject } from '../../../../utils/dataUtils';
 
 interface TaskContentProps {
@@ -12,26 +13,20 @@ interface TaskContentProps {
 export function TaskContent({ selection }: TaskContentProps) {
   const { task } = selection;
   const { resolvedTheme } = useTheme();
-  const dbgContext = useDebuggerOptional();
+  const shown = useTaskDebugStep(task, selection.workflow);
   const functionName = task.function.name;
   const input = task.function.input as Record<string, unknown> | undefined;
 
-  // Compute debug data context when debugger is active and step matches
-  let debugData: Record<string, unknown> | undefined;
-  if (dbgContext?.state.isActive && dbgContext.currentStep) {
-    const step = dbgContext.currentStep;
-    if (
-      step.workflow_id === selection.workflow.id &&
-      step.task_id === task.id &&
-      step.result === 'executed'
-    ) {
-      if (functionName === 'map') {
-        // For aggregate map view, use context before first mapping
-        debugData = getMappingContext(step, 0);
-      } else if ((functionName === 'validation' || functionName === 'validate') && step.message) {
-        // Validation is read-only, use task-level context
-        debugData = step.message.context;
-      }
+  // The editor's `data` is what the logic was evaluated against: the context
+  // before the task's step. A map's mappings each saw the one before them
+  // write, which a single object cannot show, so the aggregate view takes
+  // the first mapping's (the mapping view shows each its own); a validation
+  // writes nothing but its records, so every rule read the same one. A
+  // skipped task read nothing.
+  let debugData: Context | undefined;
+  if (shown && shown.step.result !== 'skipped') {
+    if (functionName === 'map' || functionName === 'validation') {
+      debugData = contextAtStep(shown.trace, shown.contexts, shown.stepIndex - 1);
     }
   }
 
@@ -55,7 +50,7 @@ export function TaskContent({ selection }: TaskContentProps) {
   }
 
   // For validation function, show all rules as AND expression
-  if (functionName === 'validation' || functionName === 'validate') {
+  if (functionName === 'validation') {
     const rules = (input?.rules as ValidationRule[]) || [];
     const andExpression: JsonLogicValue = {
       and: rules.map((rule) => rule.logic),

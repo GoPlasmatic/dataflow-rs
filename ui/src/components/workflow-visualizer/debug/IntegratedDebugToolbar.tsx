@@ -13,7 +13,8 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useDebugger } from '../context';
-import type { Workflow } from '../../../types';
+import type { ExecutionError, Run, RunResult, Workflow } from '../../../types';
+import { toExecutionError } from '../../../types';
 import { PLAYBACK } from '../constants';
 
 interface IntegratedDebugToolbarProps {
@@ -23,12 +24,44 @@ interface IntegratedDebugToolbarProps {
   payload?: Record<string, unknown>;
   /** Auto-execute on change */
   autoExecute?: boolean;
-  /** Callback when execution completes */
-  onExecutionComplete?: (trace: import('../../../types').ExecutionTrace) => void;
-  /** Callback when execution errors */
-  onExecutionError?: (error: string) => void;
+  /** Callback when a run completes, on every status */
+  onExecutionComplete?: (result: RunResult) => void;
+  /** Callback when a run could not start */
+  onExecutionError?: (error: ExecutionError) => void;
   /** Additional CSS class */
   className?: string;
+}
+
+/**
+ * How the run ended, in a few words: its status, a stopped run's error, and
+ * how many errors the final message carries.
+ */
+function describeRun(run: Run, errorCount: number): string {
+  const errors = `${errorCount} error${errorCount === 1 ? '' : 's'}`;
+  if (run.status === 'completed_with_errors') {
+    return `completed with ${errors}`;
+  }
+  let text = run.status.replace(/_/g, ' ');
+  if (run.status === 'stopped' && run.error) {
+    text += `: ${run.error.message}`;
+  }
+  if (errorCount > 0) {
+    text += ` · ${errors}`;
+  }
+  return text;
+}
+
+/** The tone of a run's status: green, amber, or red. */
+function runTone(run: Run): 'success' | 'warning' | 'error' {
+  switch (run.status) {
+    case 'completed':
+      return 'success';
+    case 'completed_with_errors':
+      return 'warning';
+    default:
+      // stopped, timed_out, cancelled: the run did not reach its end.
+      return 'error';
+  }
 }
 
 /**
@@ -53,7 +86,7 @@ export function IntegratedDebugToolbar({
     stepBackward,
     goToStep,
     startExecution,
-    executeTrace,
+    executeResult,
     setExecutionError,
     runExecution,
     isAtStart,
@@ -67,7 +100,12 @@ export function IntegratedDebugToolbar({
     setSkipFailedConditions,
   } = useDebugger();
 
-  const { playbackState, isExecuting, executionError, trace } = state;
+  const { playbackState, isExecuting, executionError, run, message } = state;
+
+  // A run resolves on every status, so `run` is set whenever one finished,
+  // trace or not; `hasTrace` is only about having steps to walk.
+  const hasResult = run !== null;
+  const finalErrorCount = message?.errors.length ?? 0;
 
   // Track last execution to prevent duplicates
   const lastExecutionRef = useRef<{ workflows: string; payload: string } | null>(null);
@@ -92,14 +130,16 @@ export function IntegratedDebugToolbar({
     try {
       const result = await runExecution(workflows, payload || {});
       if (result) {
-        executeTrace(result);
+        executeResult(result);
         lastExecutionRef.current = current; // Track successful execution
         onExecutionComplete?.(result);
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Execution failed';
-      setExecutionError(errorMessage);
-      onExecutionError?.(errorMessage);
+      // The engine refused a definition or an argument, or could not be
+      // built: the run never started. A run that failed resolves instead.
+      const error = toExecutionError(err);
+      setExecutionError(error);
+      onExecutionError?.(error);
     }
   }, [
     isEngineReady,
@@ -107,7 +147,7 @@ export function IntegratedDebugToolbar({
     payload,
     startExecution,
     runExecution,
-    executeTrace,
+    executeResult,
     setExecutionError,
     onExecutionComplete,
     onExecutionError,
@@ -212,14 +252,15 @@ export function IntegratedDebugToolbar({
     if (executionError) {
       return <XCircle size={14} className="df-debug-toolbar-status-error" />;
     }
-    if (hasTrace) {
-      // Check if final message has errors
-      const finalStep = trace?.steps[trace.steps.length - 1];
-      const hasErrors = finalStep?.message?.errors && finalStep.message.errors.length > 0;
-      if (hasErrors) {
-        return <AlertCircle size={14} className="df-debug-toolbar-status-warning" />;
+    if (run) {
+      switch (runTone(run)) {
+        case 'success':
+          return <CheckCircle size={14} className="df-debug-toolbar-status-success" />;
+        case 'warning':
+          return <AlertCircle size={14} className="df-debug-toolbar-status-warning" />;
+        case 'error':
+          return <XCircle size={14} className="df-debug-toolbar-status-error" />;
       }
-      return <CheckCircle size={14} className="df-debug-toolbar-status-success" />;
     }
     return null;
   };
@@ -238,13 +279,52 @@ export function IntegratedDebugToolbar({
     return `Step ${currentFilteredPosition + 1} / ${totalSteps}`;
   };
 
+  const runSummary = run && !isExecuting ? describeRun(run, finalErrorCount) : null;
+
   return (
     <div className={`df-debug-toolbar-integrated ${className}`}>
       {/* Step counter / status */}
-      <div className="df-debug-toolbar-status">
+      <div className="df-debug-toolbar-status" title={runSummary ?? undefined}>
         {getStatusIcon()}
         <span className="df-debug-toolbar-step-text">{getStepText()}</span>
+        {runSummary && run && (
+          <span className={`df-debug-toolbar-run-status df-debug-toolbar-run-status-${runTone(run)}`}>
+            {runSummary}
+          </span>
+        )}
       </div>
+
+      {/* Why the run could not start. A refused definition lists its issues;
+          the summary stays one line and the list opens on demand. */}
+      {executionError && !isExecuting && (
+        <details className="df-debug-toolbar-error">
+          <summary
+            className="df-debug-toolbar-error-summary"
+            title={`${executionError.code}: ${executionError.message}`}
+          >
+            <span className="df-debug-toolbar-error-code">{executionError.code}</span>
+            <span className="df-debug-toolbar-error-text">{executionError.message}</span>
+          </summary>
+          <div className="df-debug-toolbar-error-detail">
+            <div className="df-debug-toolbar-error-message">{executionError.message}</div>
+            {executionError.issues && executionError.issues.length > 0 && (
+              <ul className="df-debug-issues">
+                {executionError.issues.map((issue, index) => (
+                  <li
+                    key={index}
+                    className={`df-debug-issue df-debug-issue-${issue.severity.toLowerCase()}`}
+                  >
+                    <code className="df-debug-issue-code">{issue.code}</code>
+                    {/* The document itself is the empty path */}
+                    <code className="df-debug-issue-path">{issue.path || '(definition)'}</code>
+                    <span className="df-debug-issue-message">{issue.message}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </details>
+      )}
 
       {/* Playback controls */}
       <div className="df-debug-toolbar-controls">
@@ -321,7 +401,7 @@ export function IntegratedDebugToolbar({
 
       {/* Run / Reset buttons */}
       <div className="df-debug-toolbar-actions">
-        {hasTrace ? (
+        {hasResult ? (
           <button
             className="df-debug-toolbar-btn-action df-debug-toolbar-btn-reset"
             onClick={handleReset}

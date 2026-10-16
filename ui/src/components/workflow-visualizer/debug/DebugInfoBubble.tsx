@@ -1,17 +1,30 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, X, Clock, AlertCircle, SkipForward } from 'lucide-react';
-import type { ExecutionStep, DebugNodeState } from '../../../types';
+import type { TraceStep, DebugNodeState } from '../../../types';
+import { isEngineStep, isWorkflowStep, stepErrors, stepState } from '../../../types';
 
 interface DebugInfoBubbleProps {
-  /** The execution step to display */
-  step: ExecutionStep;
+  /** The trace step to display */
+  step: TraceStep;
   /** Target element to position near */
   targetRef: React.RefObject<HTMLElement>;
   /** Whether the bubble is visible */
   visible: boolean;
   /** Callback when bubble is closed */
   onClose?: () => void;
+}
+
+/**
+ * What a step is, for its title: a task's call, the workflow's own skip or
+ * failure, or the engine's writes as a loop sweep is entered.
+ */
+function stepTitle(step: TraceStep): string {
+  if (isEngineStep(step)) return 'Loop Sweep';
+  if (isWorkflowStep(step)) {
+    return step.result === 'failed' ? 'Workflow Failed' : 'Workflow Skipped';
+  }
+  return 'Task Step';
 }
 
 /**
@@ -63,14 +76,12 @@ export function DebugInfoBubble({
 
   if (!visible) return null;
 
-  const { workflow_id, task_id, result, message } = step;
+  const { workflow_id, task_id, result, status, loop_counter, element_index, elapsed_us } = step;
 
-  // Derive state from result
-  const state: DebugNodeState = result === 'executed' ? 'executed' : 'skipped';
-
-  // Check for errors in message
-  const hasError = message && message.errors && message.errors.length > 0;
-  const displayState: DebugNodeState = hasError ? 'error' : state;
+  // A `failed` step is an error, as is an executed one that recorded any.
+  const errors = stepErrors(step);
+  const displayState: DebugNodeState = stepState(step);
+  const engineStep = isEngineStep(step);
 
   return createPortal(
     <div
@@ -84,9 +95,7 @@ export function DebugInfoBubble({
     >
       <div className="df-debug-bubble-header">
         <StateIcon state={displayState} />
-        <span className="df-debug-bubble-title">
-          {task_id ? 'Task Step' : 'Workflow Skipped'}
-        </span>
+        <span className="df-debug-bubble-title">{stepTitle(step)}</span>
         {onClose && (
           <button className="df-debug-bubble-close" onClick={onClose}>
             <X size={14} />
@@ -107,17 +116,46 @@ export function DebugInfoBubble({
           </div>
         )}
 
+        {loop_counter !== undefined && (
+          <div className="df-debug-bubble-row">
+            <span className="df-debug-bubble-label">Sweep:</span>
+            <span className="df-debug-bubble-value">
+              {engineStep ? `entering ${loop_counter}` : loop_counter}
+            </span>
+          </div>
+        )}
+
+        {element_index !== undefined && (
+          <div className="df-debug-bubble-row">
+            <span className="df-debug-bubble-label">Element:</span>
+            <span className="df-debug-bubble-value">{element_index}</span>
+          </div>
+        )}
+
         <div className="df-debug-bubble-row">
           <span className="df-debug-bubble-label">Result:</span>
           <span className={`df-debug-bubble-state df-debug-bubble-state-${displayState}`}>
             {result}
           </span>
+          {status !== null && (
+            <span className="df-debug-bubble-value" title="The call's status code">{status}</span>
+          )}
         </div>
 
-        {hasError && message?.errors && (
+        {elapsed_us !== undefined && (
+          <div className="df-debug-bubble-row">
+            <span className="df-debug-bubble-label">Elapsed:</span>
+            <span className="df-debug-bubble-value">{elapsed_us} µs</span>
+          </div>
+        )}
+
+        {displayState === 'error' && (
           <div className="df-debug-bubble-error">
             <AlertCircle size={14} />
-            <span>{message.errors[0]?.message || 'Unknown error'}</span>
+            <span>
+              {errors[0]?.message ?? (result === 'failed' ? 'The step failed' : 'Unknown error')}
+              {errors.length > 1 && ` (+${errors.length - 1} more)`}
+            </span>
           </div>
         )}
       </div>

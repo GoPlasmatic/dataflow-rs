@@ -1,16 +1,24 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef, useMemo, ReactNode } from 'react';
+// The replay lives in the engine: `contexts(trace)` rebuilds the context after
+// every step from `trace.initial` and the steps' changes, under the engine's
+// own rules (`replaced` roots, removals, `mapping_ends`). Aliased so it does
+// not shadow the `contexts` the state keeps.
+import { contexts as replayContexts } from '@goplasmatic/dataflow-wasm';
 import type {
   DebuggerState,
   DebuggerAction,
-  ExecutionTrace,
-  ExecutionStep,
-  Message,
+  ExecutionError,
+  Trace,
+  TraceStep,
+  Context,
+  Change,
+  ErrorRecord,
+  RunResult,
   Workflow,
   DataflowEngine,
   EngineFactory,
 } from '../../../types';
-import { getMessageAtStep, getChangesAtStep } from '../../../types';
-import type { Change } from '../../../types';
+import { contextAtStep, stepErrors, traceIsReplayable } from '../../../types';
 import { PLAYBACK } from '../constants';
 
 /**
@@ -19,6 +27,9 @@ import { PLAYBACK } from '../constants';
 const initialState: DebuggerState = {
   isActive: false,
   trace: null,
+  run: null,
+  message: null,
+  contexts: [],
   currentStepIndex: -1,
   playbackState: 'stopped',
   playbackSpeed: PLAYBACK.DEFAULT_SPEED_MS,
@@ -32,7 +43,7 @@ const initialState: DebuggerState = {
  * Get filtered step indices based on skipFailedConditions setting.
  * Returns indices of steps that should be shown during debugging.
  */
-function getFilteredStepIndices(trace: ExecutionTrace | null, skipFailedConditions: boolean): number[] {
+function getFilteredStepIndices(trace: Trace | null, skipFailedConditions: boolean): number[] {
   if (!trace || trace.steps.length === 0) {
     return [];
   }
@@ -74,15 +85,23 @@ function debuggerReducer(state: DebuggerState, action: DebuggerAction): Debugger
         isExecuting: true,
         executionError: null,
         trace: null,
+        run: null,
+        message: null,
+        contexts: [],
         currentStepIndex: -1,
         playbackState: 'stopped',
       };
 
-    case 'EXECUTE_TRACE':
+    case 'EXECUTE_RESULT':
       return {
         ...state,
         isExecuting: false,
-        trace: action.trace,
+        // A run resolves on every status; a run without a trace (the engine
+        // was not asked for one) still shows its `run` and `message`.
+        trace: action.result.trace ?? null,
+        run: action.result.run,
+        message: action.result.message,
+        contexts: action.contexts,
         currentStepIndex: -1, // Start at "ready" state, before step 0
         playbackState: 'paused',
       };
@@ -118,6 +137,9 @@ function debuggerReducer(state: DebuggerState, action: DebuggerAction): Debugger
       return {
         ...state,
         trace: null,
+        run: null,
+        message: null,
+        contexts: [],
         currentStepIndex: -1,
         playbackState: 'stopped',
         executionError: null,
@@ -245,9 +267,13 @@ interface DebuggerContextValue {
   activate: () => void;
   deactivate: () => void;
   setInputPayload: (payload: Record<string, unknown>) => void;
-  executeTrace: (trace: ExecutionTrace) => void;
+  /**
+   * Take a run's result: replays its trace once, through the engine, and
+   * makes it the trace being stepped through.
+   */
+  executeResult: (result: RunResult) => void;
   startExecution: () => void;
-  setExecutionError: (error: string) => void;
+  setExecutionError: (error: ExecutionError) => void;
   play: () => void;
   pause: () => void;
   stop: () => void;
@@ -258,11 +284,19 @@ interface DebuggerContextValue {
   setSpeed: (speed: number) => void;
   setSkipFailedConditions: (skip: boolean) => void;
   // Engine execution method
-  runExecution: (workflows: Workflow[], payload: Record<string, unknown>) => Promise<ExecutionTrace | null>;
+  runExecution: (workflows: Workflow[], payload: Record<string, unknown>) => Promise<RunResult | null>;
   // Computed values
-  currentStep: ExecutionStep | null;
-  currentMessage: Message | null;
+  /** The step being viewed; `null` before step 0 */
+  currentStep: TraceStep | null;
+  /**
+   * The context at the step being viewed: after it, or `trace.initial`
+   * before step 0. `null` without a trace.
+   */
+  currentContext: Context | null;
+  /** The step's own changes */
   currentChanges: Change[];
+  /** The records the step added to the message */
+  currentErrors: ErrorRecord[];
   isAtStart: boolean;
   isAtEnd: boolean;
   hasTrace: boolean;
@@ -321,13 +355,21 @@ export function DebuggerProvider({
     (payload: Record<string, unknown>) => dispatch({ type: 'SET_INPUT_PAYLOAD', payload }),
     []
   );
-  const executeTrace = useCallback(
-    (trace: ExecutionTrace) => dispatch({ type: 'EXECUTE_TRACE', trace }),
-    []
-  );
+  const executeResult = useCallback((result: RunResult) => {
+    // One replay per run, here, so no view replays on its own. A truncated
+    // trace is not replayed: past the budget its steps carry no changes, so
+    // the contexts would be wrong without saying so; `contextAtStep` then
+    // shows `initial` for every step. A trace the engine cannot read throws
+    // its own `INVALID_TRACE`, which the caller reports like any other
+    // failure to run: it comes from a host's engine, never from the
+    // package's own run.
+    const contexts =
+      result.trace && traceIsReplayable(result.trace) ? replayContexts(result.trace) : [];
+    dispatch({ type: 'EXECUTE_RESULT', result, contexts });
+  }, []);
   const startExecution = useCallback(() => dispatch({ type: 'START_EXECUTION' }), []);
   const setExecutionError = useCallback(
-    (error: string) => dispatch({ type: 'EXECUTION_ERROR', error }),
+    (error: ExecutionError) => dispatch({ type: 'EXECUTION_ERROR', error }),
     []
   );
   const play = useCallback(() => dispatch({ type: 'PLAY' }), []);
@@ -344,11 +386,14 @@ export function DebuggerProvider({
   );
 
   /**
-   * Execute workflows with the provided payload and return the execution trace.
-   * Uses engineFactory to create a new engine when workflows change.
+   * Run the workflows over the payload and return the engine's result: the
+   * message, the run and, when the engine traced it, the trace. Resolves on
+   * every run status; rejects only when the engine could not be built or
+   * refused the arguments. Uses engineFactory to create a new engine when
+   * workflows change.
    */
   const runExecution = useCallback(
-    async (workflows: Workflow[], payload: Record<string, unknown>): Promise<ExecutionTrace | null> => {
+    async (workflows: Workflow[], payload: Record<string, unknown>): Promise<RunResult | null> => {
       if (workflows.length === 0 || !engineFactory) {
         return null;
       }
@@ -372,7 +417,9 @@ export function DebuggerProvider({
           engineRef.current = engineFactory(workflows);
           lastWorkflowsJsonRef.current = workflowsJson;
         }
-        return await engineRef.current.processWithTrace(payload);
+        // Ask for the trace explicitly: the wasm adapter traces by default,
+        // but a host's own engine only knows what it is asked.
+        return await engineRef.current.run(payload, { trace: true });
       } catch (error) {
         console.error('Execution error:', error);
         throw error;
@@ -419,18 +466,21 @@ export function DebuggerProvider({
     [state.trace, state.currentStepIndex]
   );
 
-  const currentMessage = useMemo(
-    () => state.trace && state.currentStepIndex >= 0
-      ? getMessageAtStep(state.trace, state.currentStepIndex)
+  const currentContext = useMemo(
+    () => state.trace
+      ? contextAtStep(state.trace, state.contexts, state.currentStepIndex)
       : null,
-    [state.trace, state.currentStepIndex]
+    [state.trace, state.contexts, state.currentStepIndex]
   );
 
   const currentChanges = useMemo(
-    () => state.trace && state.currentStepIndex >= 0
-      ? getChangesAtStep(state.trace, state.currentStepIndex)
-      : [],
-    [state.trace, state.currentStepIndex]
+    () => currentStep?.changes ?? [],
+    [currentStep]
+  );
+
+  const currentErrors = useMemo(
+    () => (currentStep ? stepErrors(currentStep) : []),
+    [currentStep]
   );
 
   const filteredStepIndices = useMemo(
@@ -461,7 +511,7 @@ export function DebuggerProvider({
       activate,
       deactivate,
       setInputPayload,
-      executeTrace,
+      executeResult,
       startExecution,
       setExecutionError,
       play,
@@ -475,8 +525,9 @@ export function DebuggerProvider({
       setSkipFailedConditions,
       runExecution,
       currentStep,
-      currentMessage,
+      currentContext,
       currentChanges,
+      currentErrors,
       isAtStart,
       isAtEnd,
       hasTrace,
@@ -493,7 +544,7 @@ export function DebuggerProvider({
       activate,
       deactivate,
       setInputPayload,
-      executeTrace,
+      executeResult,
       startExecution,
       setExecutionError,
       play,
@@ -507,8 +558,9 @@ export function DebuggerProvider({
       setSkipFailedConditions,
       runExecution,
       currentStep,
-      currentMessage,
+      currentContext,
       currentChanges,
+      currentErrors,
       isAtStart,
       isAtEnd,
       hasTrace,

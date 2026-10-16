@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
-import type { Workflow, Task, DebugNodeState } from '../../../types';
+import type { Workflow, Task, DebugNodeState, Context, Trace, TraceStep } from '../../../types';
 import {
   getWorkflowState,
   getTaskState,
   isTaskCurrent,
+  isWorkflowStep,
   findTaskStepIndex,
-  errorsIntroducedAt,
+  stepErrors,
 } from '../../../types';
 import { useDebuggerOptional } from '../context';
 
@@ -73,8 +74,12 @@ export function useWorkflowDebugState(workflow: Workflow): TreeNodeDebugState {
 
 /**
  * Hook to get debug state for a workflow condition node
- * Note: In the simplified trace format, workflow conditions are implicit
- * A workflow skip step indicates the condition was false
+ *
+ * A trace records no condition evaluation of its own: the workflow's own
+ * `skipped` step says the condition was false (or failed to evaluate, in
+ * which case the step carries that failure's record), and any task step of
+ * the workflow says it was true. A loop re-evaluates the condition every
+ * sweep, so the latest of those at or before the current position decides.
  */
 export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebugState {
   const dbgContext = useDebuggerOptional();
@@ -91,41 +96,47 @@ export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebu
 
     const { trace, currentStepIndex } = dbgContext.state;
 
-    // Find workflow-level skip step (task_id is undefined/null for workflow skips)
-    const workflowSkipStep = trace.steps.find(
-      s => s.workflow_id === workflow.id && !s.task_id && s.result === 'skipped'
-    );
+    let lastSkip = -1;
+    let lastTask = -1;
+    const end = Math.min(currentStepIndex, trace.steps.length - 1);
+    for (let i = 0; i <= end; i++) {
+      const s = trace.steps[i];
+      if (s.workflow_id !== workflow.id) continue;
+      if (isWorkflowStep(s)) {
+        // The engine's steps (a sweep entered) and the workflow's own
+        // failure are the workflow's too, but say nothing about its
+        // condition.
+        if (s.result === 'skipped') lastSkip = i;
+      } else {
+        lastTask = i;
+      }
+    }
 
-    if (workflowSkipStep) {
-      // Workflow was skipped due to condition
-      const stepIndex = trace.steps.indexOf(workflowSkipStep);
+    if (lastSkip === -1 && lastTask === -1) {
+      return nullState;
+    }
+
+    if (lastSkip > lastTask) {
+      const isCurrent = lastSkip === currentStepIndex;
+      const hasError = stepErrors(trace.steps[lastSkip]).length > 0;
       return {
-        state: stepIndex === currentStepIndex ? 'current' : 'skipped',
-        isCurrent: stepIndex === currentStepIndex,
+        state: isCurrent ? 'current' : hasError ? 'error' : 'skipped',
+        isCurrent,
         isExecuted: false,
         isSkipped: true,
-        hasError: false,
+        hasError,
         conditionResult: false,
       };
     }
 
-    // Check if workflow has any executed tasks (condition passed)
-    const hasExecutedTasks = trace.steps.some(
-      s => s.workflow_id === workflow.id && s.task_id && s.result === 'executed'
-    );
-
-    if (hasExecutedTasks) {
-      return {
-        state: 'executed',
-        isCurrent: false,
-        isExecuted: true,
-        isSkipped: false,
-        hasError: false,
-        conditionResult: true,
-      };
-    }
-
-    return nullState;
+    return {
+      state: 'executed',
+      isCurrent: false,
+      isExecuted: true,
+      isSkipped: false,
+      hasError: false,
+      conditionResult: true,
+    };
   }, [dbgContext, workflow.id]);
 }
 
@@ -171,8 +182,11 @@ export function useTaskDebugState(task: Task, workflow: Workflow): TreeNodeDebug
 
 /**
  * Hook to get debug state for a task condition node
- * Note: In the simplified trace format, task conditions are implicit
- * A task skip step indicates the condition was false
+ *
+ * A trace records no condition evaluation of its own: a task's `skipped`
+ * step says its condition was false (or its function chose to skip, which
+ * the wire does not tell apart), and a step that ran, whether it then
+ * succeeded or failed, says it was true.
  */
 export function useTaskConditionDebugState(task: Task, workflow: Workflow): TreeNodeDebugState {
   const dbgContext = useDebuggerOptional();
@@ -218,18 +232,15 @@ export function useTaskConditionDebugState(task: Task, workflow: Workflow): Tree
       };
     }
 
-    if (taskStep.result === 'executed') {
-      return {
-        state: 'executed',
-        isCurrent,
-        isExecuted: true,
-        isSkipped: false,
-        hasError: false,
-        conditionResult: true,
-      };
-    }
-
-    return nullState;
+    // Executed or failed: the condition admitted the task.
+    return {
+      state: 'executed',
+      isCurrent,
+      isExecuted: true,
+      isSkipped: false,
+      hasError: false,
+      conditionResult: true,
+    };
   }, [dbgContext, task.id, workflow.id]);
 }
 
@@ -309,20 +320,19 @@ export function useValidationRuleDebugState(task: Task, workflow: Workflow, rule
       };
     }
 
-    // Check if this specific rule produced an error. Match against the errors
-    // *this step* introduced, not the message's cumulative list — a rule whose
-    // message happens to be a substring of an earlier workflow's error would
-    // otherwise light up red without having failed.
+    // A validation puts one record per failed rule on its own step, with the
+    // rule's message in it, so the step's records say which rules failed:
+    // no diffing against the message's cumulative list, and no rule lights
+    // up for an earlier workflow's error that happens to contain its text.
     const isCurrent = taskStepIndex === currentStepIndex;
     let hasError = false;
-    const stepErrors = errorsIntroducedAt(trace, taskStepIndex);
-    if (stepErrors.length > 0) {
-      // Validation errors include the rule message; check if any error matches
+    const errors = stepErrors(taskStep);
+    if (errors.length > 0) {
       const rules = (task.function?.input as Record<string, unknown> | undefined);
       const rulesList = (rules?.rules as Array<{ message: string }>) || [];
       const rule = rulesList[ruleIndex];
       if (rule) {
-        hasError = stepErrors.some(e => e.message.includes(rule.message));
+        hasError = errors.some(e => e.message.includes(rule.message));
       }
     }
 
@@ -334,6 +344,42 @@ export function useValidationRuleDebugState(task: Task, workflow: Workflow, rule
       hasError,
     };
   }, [dbgContext, task.id, task.function, workflow.id, ruleIndex]);
+}
+
+/**
+ * The step of a task that the detail views read, with the trace and its
+ * replayed contexts.
+ */
+export interface TaskDebugStep {
+  trace: Trace;
+  contexts: Context[];
+  /** The step's index in `trace.steps` */
+  stepIndex: number;
+  step: TraceStep;
+}
+
+/**
+ * The step of a task to read at the current position: the latest at or
+ * before it (the current sweep's, for a looping workflow), so a detail view
+ * shows what the task saw then and never a step the tree still marks
+ * pending. `null` when the debugger is inactive, has no trace, or the task
+ * has no step at or before the position. The step may be a skipped one: its
+ * condition still read the context before it.
+ */
+export function useTaskDebugStep(task: Task, workflow: Workflow): TaskDebugStep | null {
+  const dbgContext = useDebuggerOptional();
+
+  return useMemo(() => {
+    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.state.trace) {
+      return null;
+    }
+    const { trace, contexts, currentStepIndex } = dbgContext.state;
+    const stepIndex = findTaskStepIndex(trace, currentStepIndex, workflow.id, task.id);
+    if (stepIndex === -1 || stepIndex > currentStepIndex) {
+      return null;
+    }
+    return { trace, contexts, stepIndex, step: trace.steps[stepIndex] };
+  }, [dbgContext, task.id, workflow.id]);
 }
 
 /**

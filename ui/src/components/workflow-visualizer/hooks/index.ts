@@ -9,5 +9,6 @@ export {
   useTaskConditionDebugState,
   useMappingDebugState,
   useValidationRuleDebugState,
+  useTaskDebugStep,
 } from './useTreeNodeDebugState';
-export type { TreeNodeDebugState } from './useTreeNodeDebugState';
+export type { TreeNodeDebugState, TaskDebugStep } from './useTreeNodeDebugState';

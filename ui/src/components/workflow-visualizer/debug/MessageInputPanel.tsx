@@ -16,8 +16,9 @@ type PayloadSection = 'payload';
 /**
  * Panel for inputting test payload data
  *
- * Note: This is a simplified version that works with the new ExecutionTrace-based
- * debugging system. The input is a JSON payload that gets processed through workflows.
+ * The input is the JSON payload a run starts from. The engine stores it as
+ * `message.payload`, outside the evaluation context, where a `parse_json`
+ * task reads it into `data`.
  */
 export function MessageInputPanel({
   onExecute,

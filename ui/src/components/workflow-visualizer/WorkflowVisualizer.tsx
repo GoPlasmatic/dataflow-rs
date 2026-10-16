@@ -165,10 +165,12 @@ function VisualizerInner({
 
   const selectionInfo = getSelectionInfo(selection);
 
-  // Determine which message to display in result panel
+  // What the result panel shows: the context at the debugger's step
+  // (`trace.initial` before the first), or a host's result message when
+  // not debugging. A dataflow-rs 4 trace keeps no message per step.
   const hasDebugTrace = debugMode && effectiveDebugContext?.hasTrace;
-  const displayMessage = hasDebugTrace
-    ? effectiveDebugContext?.currentMessage
+  const displayValue = hasDebugTrace
+    ? effectiveDebugContext?.currentContext
     : executionResult;
   const currentChanges = hasDebugTrace ? effectiveDebugContext?.currentChanges : [];
   const currentStepIndex = hasDebugTrace ? effectiveDebugContext?.state.currentStepIndex : -1;
@@ -211,8 +213,8 @@ function VisualizerInner({
           >
             {/* Tree view section */}
             <div
-              className={`df-visualizer-left-tree ${displayMessage ? 'df-with-result' : ''}`}
-              style={displayMessage ? { height: `${treePanelHeight}%` } : undefined}
+              className={`df-visualizer-left-tree ${displayValue ? 'df-with-result' : ''}`}
+              style={displayValue ? { height: `${treePanelHeight}%` } : undefined}
             >
               <div className="df-visualizer-left-header">
                 <span className="df-visualizer-left-title">Explorer</span>
@@ -234,7 +236,7 @@ function VisualizerInner({
           </div>
 
           {/* Horizontal resizer between tree and result */}
-          {displayMessage && (
+          {displayValue && (
             <div
               className={`df-visualizer-divider-horizontal ${isVerticalDragging ? 'df-divider-active' : ''}`}
               onMouseDown={handleVerticalMouseDown}
@@ -242,13 +244,13 @@ function VisualizerInner({
           )}
 
           {/* Result panel (bottom half when result exists) */}
-          {displayMessage && (
+          {displayValue && (
             <div
               className="df-visualizer-result-panel"
               style={{ height: `${100 - treePanelHeight}%` }}
             >
               <ResultPanel
-                displayMessage={displayMessage}
+                displayValue={displayValue}
                 currentStepIndex={currentStepIndex ?? -1}
                 currentChanges={currentChanges ?? []}
                 theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
