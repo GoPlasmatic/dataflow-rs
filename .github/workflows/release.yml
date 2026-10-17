@@ -62,6 +62,22 @@ jobs:
             "$(grep 'dataflow-rs = ' wasm/Cargo.toml | sed 's/.*version = "[=^~]*\([^"]*\)".*/\1/')"
           check "ui/package.json" \
             "$(node -p "require('./ui/package.json').version")"
+          # The derive is the fourth artifact: the root's published manifest
+          # names it from crates.io at exactly this version, so both the
+          # derive's own version and the root's requirement on it must agree.
+          check "derive/Cargo.toml" \
+            "$(grep '^version = ' derive/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')"
+          check "Cargo.toml dataflow-rs-derive dep" \
+            "$(grep 'dataflow-rs-derive = ' Cargo.toml | sed 's/.*version = "[=^~]*\([^"]*\)".*/\1/')"
+
+          # The GitHub release's notes are the changelog's section for this
+          # version (see github-release), so the section must exist.
+          if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "  ok  CHANGELOG.md has a [$VERSION] section"
+          else
+            echo "::error::CHANGELOG.md has no '## [$VERSION]' section"
+            FAILED=1
+          fi
 
           # Docs pin the minor only (`dataflow-rs = "3.3"`), so compare that.
           MINOR="${VERSION%.*}"
@@ -98,28 +114,50 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Check if version exists on crates.io
+      # Two crates, in order: the root's published manifest names
+      # `dataflow-rs-derive` from crates.io at exactly this version, so the
+      # derive must be there before the root's own verification build can
+      # resolve it. Each crate has its own check, so a run that failed between
+      # the two resumes at the root instead of refusing the derive as already
+      # uploaded (crates.io never takes a version twice). A 404 covers both a
+      # missing version and, for the derive's first release, a missing crate.
+      - name: Check which crates this version still needs
         id: check
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          HTTP_CODE=$(curl -sS -H 'User-Agent: dataflow-rs-release-check' \
-            -o /dev/null -w '%{http_code}' \
-            "https://crates.io/api/v1/crates/dataflow-rs/$VERSION")
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "Version $VERSION already published to crates.io, skipping"
-            echo "skip=true" >> $GITHUB_OUTPUT
-          elif [ "$HTTP_CODE" = "404" ]; then
-            echo "Publishing version $VERSION to crates.io"
-            echo "skip=false" >> $GITHUB_OUTPUT
-          else
-            echo "::error::Unexpected HTTP $HTTP_CODE from crates.io API"
-            exit 1
-          fi
+          check() {
+            HTTP_CODE=$(curl -sS -H 'User-Agent: dataflow-rs-release-check' \
+              -o /dev/null -w '%{http_code}' \
+              "https://crates.io/api/v1/crates/$1/$VERSION")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "$1 $VERSION is already on crates.io, skipping"
+              echo "$2=true" >> $GITHUB_OUTPUT
+            elif [ "$HTTP_CODE" = "404" ]; then
+              echo "$1 $VERSION will be published"
+              echo "$2=false" >> $GITHUB_OUTPUT
+            else
+              echo "::error::Unexpected HTTP $HTTP_CODE from crates.io API for $1"
+              exit 1
+            fi
+          }
+          check dataflow-rs-derive skip_derive
+          check dataflow-rs skip_root
 
       # `--locked` so the published build resolves exactly the tracked
-      # Cargo.lock that the validate job tested against.
-      - name: Publish
-        if: steps.check.outputs.skip != 'true'
+      # Cargo.lock that the validate job tested against. `cargo publish`
+      # returns only once the index serves the new version, so the root's
+      # publish below resolves the derive with no wait of its own.
+      - name: Publish dataflow-rs-derive
+        if: steps.check.outputs.skip_derive != 'true'
+        run: cargo publish -p dataflow-rs-derive --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
+      # Bare, not `-p dataflow-rs`: the lock also holds the published 3.15.0
+      # (the differential tests' pin), and cargo refuses the ambiguous name.
+      # At the root a bare `cargo publish` selects the root package.
+      - name: Publish dataflow-rs
+        if: steps.check.outputs.skip_root != 'true'
         run: cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
@@ -335,12 +373,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # The notes are CHANGELOG.md's section for this version, from its
+      # `## [VERSION]` heading to the next `## [` heading, without the heading
+      # itself. Generated notes would be the commit titles since the last tag,
+      # which for a release made of many commits say nothing a reader needs;
+      # the changelog is written for them and ships in the crate. The validate
+      # job has already checked that the section exists.
+      - name: Cut the release notes from the changelog
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          awk -v heading="## [$VERSION]" '
+            /^## \[/ { keep = (index($0, heading) == 1); if (keep) next }
+            keep { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md's [$VERSION] section is empty"
+            exit 1
+          fi
+          cat release-notes.md
+
       - name: Create release
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           gh release create "v$VERSION" \
             --title "v$VERSION" \
-            --generate-notes \
+            --notes-file release-notes.md \
             --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}

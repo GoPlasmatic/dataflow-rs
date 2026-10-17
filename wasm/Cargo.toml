@@ -8,6 +8,9 @@ authors = ["Plasmatic Engineering <shankar@goplasmatic.io>"]
 repository = "https://github.com/GoPlasmatic/dataflow-rs"
 keywords = ["rules-engine", "ifttt", "wasm", "webassembly"]
 categories = ["wasm", "development-tools"]
+# Ships through npm as `@goplasmatic/dataflow-wasm`, never through crates.io:
+# a `cargo publish --workspace` must not upload it.
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]

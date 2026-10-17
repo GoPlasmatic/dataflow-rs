@@ -16,7 +16,7 @@ the root `Cargo.toml` version; all four read `4.0.0-dev` until phase 8 sets
 | Path | Artifact | Registry |
 |---|---|---|
 | `.` | `dataflow-rs`: the engine (nothing publishes from `main` until phase 8) | crates.io |
-| `derive/` | `dataflow-rs-derive`: `#[derive(FunctionConfig)]`, published first (`publish = false` until phase 8) | crates.io |
+| `derive/` | `dataflow-rs-derive`: `#[derive(FunctionConfig)]`, published first | crates.io |
 | `wasm/` | `@goplasmatic/dataflow-wasm`: the root crate on `wasm32-unknown-unknown` with `wasm-web` and `all-operators` | npm |
 | `ui/` | `@goplasmatic/dataflow-ui`: the React debugger, on the wasm package's generated types | npm |
 
@@ -553,15 +553,19 @@ Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI; it
 never publishes, and the documentation site deploys from `v3-maintenance`
 (`docs.yml` on `main` runs only by hand until phase 8).
 `.github/workflows/release.yml` fires only on a `v*` tag, validates that the
-tag matches the root `Cargo.toml` version, then publishes the crate, the wasm
-package and the UI package, and cuts a GitHub release. **Phase 8 adds the
-derive's publish, first,** and drops its `publish = false`: the root's
-published manifest names the derive from crates.io.
+tag matches the root `Cargo.toml` version, then publishes the derive, the crate,
+the wasm package and the UI package, and cuts a GitHub release whose notes are
+`CHANGELOG.md`'s section for the version (`validate` fails without one). The
+derive goes first, under its own crates.io check: the root's published
+manifest names it from crates.io at exactly the root's version, and a run
+that failed between the two resumes at the root. `wasm/` is `publish = false`:
+it ships through npm only.
 
 **No tag may be cut from `main` before phase 8.** The root, the derive,
 `wasm/` and `ui/` read `4.0.0-dev`; `release.yml` checks that `wasm/`'s two
-versions, `ui/`'s and the install snippets' minor match the tag. 3.x releases
-are tagged on `v3-maintenance`.
+versions, the derive's and the root's requirement on it, `ui/`'s and the
+install snippets' minor match the tag, and that `CHANGELOG.md` has the
+version's section. 3.x releases are tagged on `v3-maintenance`.
 
 ## The machine
 

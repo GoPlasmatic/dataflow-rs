@@ -442,11 +442,13 @@ push never publishes. A `v*` tag triggers `.github/workflows/release.yml`,
 which validates that the tag matches the root `Cargo.toml` version and that
 `wasm/` (its own version and its `dataflow-rs` requirement), `ui/` and the
 install snippets in `README.md` and `docs/src/` agree, then publishes the
-crate and both npm packages. The four published versions move together, the
-derive's included: the root's manifest names `dataflow-rs-derive` from
-crates.io, so the 4.0.0 release adds the derive's publish before the root's
-(the derive is `publish = false` until then). Contributors do not need to
-bump versions in a PR. 3.x releases are tagged on `v3-maintenance`.
+derive, the crate and both npm packages, and cuts a GitHub release whose
+notes are `CHANGELOG.md`'s section for the version. The four published
+versions move together, the derive's included: the root's manifest names
+`dataflow-rs-derive` from crates.io at exactly the root's version, so the
+derive publishes first. Contributors do not need to bump versions in a PR,
+but a user-visible change gets a line under `CHANGELOG.md`'s `[Unreleased]`.
+3.x releases are tagged on `v3-maintenance`.
 
 ## Security
 
