@@ -7,6 +7,259 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+dataflow-rs 4 is a rewrite of the engine on the contract 3.x established:
+every stored 3.x definition still loads, the message and audit JSON do not
+change, and every error code the engine writes keeps its spelling. What
+changes is the Rust API, which every host takes a major version for; the
+trace, which carries changes instead of snapshots; and the behaviours listed
+under Changed, each of which a definition, a message or a host can observe.
+The [migration page](https://goplasmatic.github.io/dataflow-rs/migration/from-3.html)
+(`docs/src/migration/from-3.md`) walks every change with the 3.x code beside
+the 4.0 code and ends with the checks to run over stored data before
+switching.
+
+Three types for three phases: a `WorkflowDef` is raw data, entered through
+`def::parse`, which is also the linter; a `Program` is compiled and immutable;
+a `Run` is one message. One interpreter runs six ops, so groups, loops and
+fan-outs are jumps, and one recorder writes the audit entry, the progress, the
+error records, the trace step and the observer event, in that order. One
+writer owns the context: a run builds one arena view at its first read,
+splices every write into it and converts only what changed, so no step,
+call, sweep or fan-out element rebuilds the view.
+
+Measured at the 4.0 gate against 3.15.0 on one machine, 16 of the 49 judged
+rows read faster, 25 better and 6 not slower, and the two that read worse at
+five rounds read not slower at seven; `loop_scaling`, a 1000-sweep append loop
+over a large context, ran in 1 to 3% of 3.15's time. `bench/baseline/` holds
+the readings, and the README's Performance section says how to reproduce them.
+
+### Added
+
+- **`dataflow-rs-derive`**, a fourth published artifact at the crate's
+  version: `#[derive(FunctionConfig)]`, re-exported as
+  `dataflow_rs::function::FunctionConfig`. A host function's config is a
+  struct whose field types are positions: `Expr<T>` an expression,
+  `Interpolated` a document, `Output` a write destination, a plain type a
+  literal, and `#[config(serde)]` a type serde already reads;
+  `#[config(default = …)]` and `#[output(default = "…")]` give defaults. The
+  derive yields the config's compile function, which reports every issue at
+  its exact path when the workflow compiles and refuses unknown keys, its
+  expression visitor, its field spec and its resolver.
+- **`Function`**, the one trait for host functions: `type Config`, `spec`,
+  `prepare` and `async fn call(&self, ctx: &mut Ctx<'_>, cfg: &Self::Config)`.
+  A call's writes go to an overlay the call reads at once; they reach the
+  message when the call returns `Ok`, whatever the `Outcome`, and are dropped
+  on `Err`. The same overlay is a fan-out element's fork, so isolation costs
+  no clone.
+- **`Ctx`**: `get`, `set`, `remove`, `emit` (through an `Output`), `eval`
+  (typed by the `Expr<T>`), `render` (an `Interpolated` document as a
+  borrowed view), `secret`, `record_error`, `info()` (the workflow, the task,
+  the channel, the loop counter and the element index), `input()` (every
+  field resolved with its default, secret-reading fields `null` and never
+  evaluated) and `resolve`.
+- **`CallLayer`**, one around-call point for every host function, at
+  registry scope (`Registry::layer`, `EngineBuilder::layer`) and at run scope
+  (`RunOptions::layers`), with `layers::Answer` for a dry run that answers a
+  call by name. The built-ins are never wrapped.
+- **`Registry`**, with `register`, `layer`, `compiler` and `catalogue()`; a
+  `FunctionSpec` per function; `Templated` configs for a function whose
+  fields are declared at run time, such as a plugin's; `RetrySafety`. The
+  built-ins' names and `validate` cannot be registered.
+- **`Compiler`**, made from a `Registry`: `check` and `check_steps` report
+  every issue of a definition against the registry; `compile_one` compiles
+  one workflow, so a host owns quarantine; the infallible `link` sorts by
+  priority and numbers tasks. `CompileOptions::resources` installs a
+  `ResourceOracle` that judges a function's `Reference` fields. Each compiled
+  workflow has a `Fingerprint` (`v1:` and sixteen hex digits) over the
+  operators and data keys its expressions use.
+- **`def::parse`** is the one entry for a definition and its linter: one walk
+  over the authored JSON reports every issue at the path the author typed,
+  with 3.x's codes for 3.x's rules. Every unknown key is reported, a near
+  miss of a known key as a `LIKELY_TYPO` Defect and any other as an
+  `UNKNOWN_KEY` Advisory kept in the node's `ext`. `ParseOptions::compat`, on
+  by default, runs the compat reader, which rewrites each 3.x spelling into
+  its 4.0 counterpart with a `V3_SPELLING` Advisory; `compat::migrate_v3`
+  writes a definition in the 4.0 spelling and lists the rewrites.
+  `WorkflowDef::walk` visits every step, groups included.
+- **Two task policies in place of two flags.** `on_failure` (`fail`,
+  `continue`, `halt`) covers a 5xx or an `Err` and `on_rejection`
+  (`continue`, `halt`) a 4xx, each applied after the status is classified; a
+  workflow's `on_failure` is `fail` or `continue`. The compat reader maps
+  `continue_on_error` and `halt_on` onto them exactly.
+- **`Expr<T>`**, the compiled expression, typed by what a field reads; a
+  folded constant is borrowed, never cloned. **`Interpolated`** holds a
+  document, such as a Mongo filter, that substitutes `var` holes and keeps
+  its `$` keys, rendered straight into the host's serializer. **`Output`** is
+  a write destination. **`Path`** parses once and reads or writes a
+  `Context`. **`ExprEngine`** holds the operators, the `Secrets`, the `$` key
+  escape and the ops budget, and evaluates over any JSON root.
+- **`Engine::run_with`** returns a `Run` on every outcome, timeouts and
+  cancellation included: a typed `RunStatus` (`Completed`,
+  `CompletedWithErrors`, `Stopped`, `TimedOut`, `Cancelled`), each workflow's
+  `Selection` and `WorkflowExit`, `matched`, `retryable`, `partial` and the
+  trace. `Run::into_result()` gives the 3.x `Result` shape back, and a `Run`
+  serializes as JSON.
+- **`RunOptions`**: `channel`, `routing_bucket`, `capture_changes`, `audit`
+  (an `AuditMode`), `deadline`, `cancel` (a `CancelToken`), `trace`,
+  `observer` and `layers`. The deadline and the token are checked at every
+  host call, fan-out element and sweep, and a native host call races them; a
+  run they end is `TimedOut` or `Cancelled`, its record carrying
+  `TIMEOUT_ERROR` or the new `CANCELLED` code.
+- **`Observer`**, with `interest()` read once per run and one `on(&Event)`
+  over `RunStarted`, `WorkflowStarted`, `TaskFinished`, `WorkflowFinished`
+  and `RunFinished`. No clock is read unless `Interest::TIMINGS` is asked
+  for. An observer on `EngineConfig::observer` sees every run and survives a
+  reload; one on `RunOptions::observer` sees one run.
+- **The trace** is the redacted initial context plus one `TraceStep` per
+  call, skip, failure and engine write, each with its `changes`, the records
+  it added as `errors` and, for a `map` step, the `mapping_ends` where each
+  mapping's changes end. `Trace::contexts()` replays it to the context after
+  every step and `Trace::mapping_contexts(step)` to the context after each
+  mapping. A trace records its own changes whatever `capture_changes` says,
+  and the step whose failure went to the workflow's policy or stopped the
+  run is recorded as `failed`.
+- **`ErrorContext::new(path, limit)`** on `EngineConfig`: the slot where the
+  engine mirrors each failing call's records.
+- **`function::testing::call`** runs one function through the real compile,
+  overlay and layers with no engine assembled, with a channel, a deadline and
+  a token; `testing::config` and `config_with` compile a config alone.
+- **The wire shapes read back.** `Message`, `Context` and `Trace` implement
+  `Deserialize` and read what they write, byte for byte, a whole-number float
+  staying a float (serde_json's `float_roundtrip`). `bindings/dataflow.d.ts`,
+  the wire shapes as TypeScript, ships in the crate; the `ts` feature
+  regenerates it and is outside semver.
+- **An array index stops at 1,048,575.** A larger bare numeric path segment
+  is an object key, so no path from a trace or a computed value can grow an
+  array without bound.
+- **`@goplasmatic/dataflow-wasm` 4.0**: one `WasmEngine`, built with
+  `new WasmEngine(workflows, options?)` and run with `run(payload, options?)`,
+  which resolves on every status with `{message, run, trace?}`; `check`,
+  `parse`, `engine_facts` and `engine_version`; the replay exports `contexts`
+  and `mapping_contexts`; a structured `EngineError` with a `code`
+  (`REJECTED`, `INVALID_ARGUMENT`, `INVALID_TRACE`); the wire types embedded
+  in the package's `.d.ts`. **`@goplasmatic/dataflow-ui` 4.0** imports those
+  types, replays each step's context from the trace, shows the failing step
+  and each step's errors, and reads the engine's facts in place of hand-kept
+  mirrors.
+
+### Changed
+
+Every item here is a difference a host, a definition or a message can
+observe. The migration page has each one with its code.
+
+- **The Rust API**, along the migration page's mapping table: `Workflow`,
+  `Task`, `TaskGroup`, `LoopConfig` and `ForEach` are `def::WorkflowDef`,
+  `TaskDef`, `GroupDef`, `LoopDef` and `ForEachDef`; `Engine::new`,
+  `new_with_operators` and `with_new_workflows` are `Registry`, `Compiler`
+  and `Engine::new`, or `Engine::builder`, with a reload as `compiler()`,
+  `link` and `with_program`; the `process_message` family is `run` and
+  `run_with`; `AsyncFunctionHandler`, `type Input` and `execute` are
+  `Function`, a derived `type Config` and `call`; `TaskContext` is `Ctx`;
+  `Template`, `PathTemplate` and `TemplateCompiler` are `Expr<T>`, `Output`
+  and `Interpolated`; `DataflowError` is `Error` with an `ErrorKind`, a
+  host's own failure made with `Error::service(code, message)`;
+  `ExecutionObserver` is `Observer`; `ExecutionTrace` is `Trace`;
+  `with_error_context_path` and `with_error_context_limit` are
+  `EngineConfig::error_context`; `get_nested_value` and its kin are `Path`
+  and `Context`; `declared_secrets`, `operator_names`, `template_key_escape`
+  and `datalogic` are the `ExprEngine`'s.
+- **`capture_changes`, `audit_mode` and `routing_bucket`** are choices about
+  a run, so they moved from the message to `RunOptions`, with unchanged
+  defaults; `MessageBuilder` is gone. None of the three ever serialized, so
+  no stored message changes.
+- **A host function's writes are dropped when it returns `Err`.** 3.x kept
+  what the handler had written before it failed.
+- **Every unknown key is reported,** as under Added, and inside a host
+  function's `input` an undeclared key is Rejected, near miss or not: a
+  derived config refuses what it does not declare, where 3.x left it to the
+  host's serde settings. A host function's expression fields are checked as
+  a built-in's are: `DUPLICATE_TEMPLATE_KEY`, `PAYLOAD_VAR`,
+  `ESCAPED_TEMPLATE_KEY` and `UNKNOWN_SECRET` point at the field.
+- **An unregistered function rejects its workflow at compile,** as
+  `UNKNOWN_FUNCTION` at `tasks[i].function.name`, where 3.x refused the whole
+  build with one `FUNCTION_NOT_FOUND`.
+- **No `WORKFLOW_ERROR` records.** The task's record carries the workflow
+  id; a workflow's own failure, such as a `loop.over` that is not an array,
+  records one `LOGIC_ERROR`, or the evaluation's own code, with the workflow
+  id and no task id. A `for_each.over` that is not an array is `LOGIC_ERROR`
+  too, where 3.x wrote `TASK_ERROR`.
+- **The trace carries changes, not snapshots:** `{initial, steps,
+  truncated}`, as under Added. A step's `errors` replace the snapshot's error
+  list and a `map` step's `mapping_ends` replace `mapping_contexts`;
+  `redact_paths` is `redact` and `max_snapshot_bytes` is `max_bytes`; the
+  snapshot knobs are gone.
+- **`name` is optional** on every workflow, task and group.
+- **Only `active` workflows run,** with or without a channel; a `paused` or
+  `archived` workflow is not considered and appears in no run report.
+- **The 3.x spellings and aliases are the compat reader's.**
+  `continue_on_error`, `halt_on` and `validate` are rewritten with a
+  `V3_SPELLING` Advisory each; a task or workflow that mixes a 3.x policy key
+  with a 4.0 one is `PARSE_FAILED`. An observer sees the registered name,
+  `validation`, where 3.x reported `validate` for both spellings. The
+  integration configs' spellings (`path_logic`, `body_logic`, `key_logic`,
+  `value_logic`) are not rewritten: they reach the host's config as written.
+- **A literal `payload` path is a `PAYLOAD_VAR` Defect.** The evaluation
+  context is `{data, metadata, temp_data}`, so such a read resolved to
+  nothing in 3.x too, silently.
+- **A literal context path outside the three roots is `INVALID_PATH`** at
+  compile, where 3.x's `map` wrote a new top-level key; a path field given a
+  non-string (`7`, `null`) is `INPUT_PARSE`; a computed path that names no
+  root fails the mapping at run time; a path of more than 64 segments is
+  refused.
+- **A secret read in an `Output` destination is `SECRET_IN_MESSAGE_WRITE`**
+  at compile; 3.x let it reach `Change.path`.
+- **The built-ins record `Change`s only when `capture_changes` is on** and
+  the audit mode keeps entries; 3.x's `parse_xml`, `publish_json` and
+  `publish_xml` recorded one regardless.
+- **The engine's per-task log lines are gone;** the observer is how a host
+  watches tasks. The `log` built-in still logs on `dataflow::log`, and a
+  failing `map` mapping still logs at 3.x's level, under the crate's module
+  target.
+- **Message ids come from a thread-local UUID v7 context.** They are still
+  distinct, time-ordered at the millisecond and ordered by creation on one
+  thread; ids made on two threads within one millisecond are no longer
+  ordered across them. 3.x took a process-wide mutex per message.
+- **The error context is reset at run start,** so a message that arrives
+  with records at its path loses them and a clean run ends with no key there;
+  3.x appended to what arrived. `ErrorContext::new` refuses a root and a path
+  at or below a `metadata` slot the engine writes (`progress`,
+  `processed_at`, `engine_version`, `channel`).
+- **A host function's write at a context root takes only an object.**
+  `Ctx::set` and `emit` at `data`, `metadata` or `temp_data` refuse an array,
+  a string or a number with `CONFIG_ERROR`; 3.x replaced the root.
+- **A message's context holds only the three roots.** Reading a message or
+  a trace refuses a context with any other key, a context that is not an
+  object, and a root named twice; a context read with its roots in another
+  order writes them as `data`, `metadata`, `temp_data`, a missing one as
+  `{}`.
+- **`publish_json` with `pretty`, `publish_xml` and `parse_xml` keep the
+  source's key order in every build;** 3.x's default build sorted them
+  through `serde_json::Value`. A held duplicate key is written as held.
+- **A key with more than one leading `$`** is no longer reported as
+  `ESCAPED_TEMPLATE_KEY`; exactly one `$` is stripped from every template
+  key.
+- **`TIMEOUT_ERROR` is also what the engine's own deadline writes,** and a
+  host call that fails at or after the run's limit is the limit's.
+- **The published crate ships `src`, `bindings` and the root documents,**
+  not `examples` and `tests`, which need the repository's unpublished
+  members.
+- **serde_json is built with `float_roundtrip`.**
+
+### Removed
+
+- The 3.x engine API named under Changed, with `TaskContext::with_view` and
+  `ContextView` (3.15's), which the run view makes unnecessary.
+- **`HttpCallConfig`, `EnrichConfig` and `PublishKafkaConfig`.** `http_call`,
+  `enrich` and `publish_kafka` are a host's functions now, registered like
+  any other; a definition that names one in a host that has not registered
+  it is `UNKNOWN_FUNCTION`.
+- **`RetryPolicy`, `retry_with_policy` and `retry_with_attempts`.** Retry is
+  the host's policy: `Run::retryable()` and `Error::is_retryable()` say
+  whether running the message again may succeed.
+- **The `Rule`, `Action` and `RulesEngine` aliases,** and `continue_on_error`
+  and `halt_on` as API; the spellings are still read.
+- **`MessageBuilder`**, and the engine's per-task log lines, as above.
+
 ## [3.15.0] — 2026-10-01
 
 Four costs that grew with the message in a long loop, reported from a
