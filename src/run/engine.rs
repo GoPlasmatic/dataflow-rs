@@ -171,7 +171,9 @@ impl Engine {
     /// [`Cancelled`](RunStatus::Cancelled) once `opts.cancel` was cancelled,
     /// and otherwise [`Stopped`](RunStatus::Stopped) with the error that
     /// stopped it, whatever its kind: a child run's timeout that a function
-    /// returns is its task's failure, not this run's.
+    /// returns before this run's own deadline passed is its task's failure,
+    /// not this run's. An `Err` a function returns once `opts.deadline` has
+    /// passed, or `opts.cancel` was cancelled, is the run's limit's.
     ///
     /// With [`opts.trace`](RunOptions::trace()) set, the [`Run`] carries the
     /// run's [`Trace`](crate::observe::Trace): the context after the stamps
@@ -289,7 +291,8 @@ impl Engine {
                     Exit::Stopped(e) => (WorkflowExit::Stopped, Some(RunStatus::Stopped(e))),
                     // Only the run's own limits make it `TimedOut` or
                     // `Cancelled`: a task's `Err` of either kind, a child run's
-                    // propagated, stops it as any failure does.
+                    // propagated, stops it as any failure does, unless one of
+                    // them had passed when the call returned it.
                     Exit::Limited(e) => {
                         let status = if *e.kind() == ErrorKind::Cancelled {
                             RunStatus::Cancelled

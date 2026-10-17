@@ -11,7 +11,11 @@
 //! The run's limits are checked before each call and, natively, raced
 //! against it. A call they cut short is dropped and settles as an
 //! `Err` of kind `TimedOut` or `Cancelled` does, its writes dropped and its
-//! records kept; then the run stops, whatever the task's policies.
+//! records kept; then the run stops, whatever the task's policies. A call
+//! that returns `Err` once one of them has passed is decided as one they
+//! cut short: a child run handed the run's limits stops in the wake they
+//! fire in, and its call returns before the race can cut it short, or on
+//! wasm, where nothing races.
 //!
 //! A fan-out's elements are host calls too: [`invoke`] is the one call, and
 //! [`fan_out`](super::fan_out::fan_out) settles and records each element.
@@ -105,8 +109,9 @@ pub(crate) struct Invoked {
     /// What the call saw at `collect` when it returned `Ok`: a fan-out
     /// element's result.
     pub(crate) collected: Option<OwnedDataValue>,
-    /// Whether the run's deadline or token cut the call short: `result` is
-    /// then the `Err` that stops the run.
+    /// Whether the run's deadline or token cut the call short, or had
+    /// passed when the call returned `Err`: `result` is then the `Err` that
+    /// stops the run.
     pub(crate) cut_short: bool,
     /// How long a fan-out element's call ran, in a timed run: set by its
     /// caller, which reads the clock around the call.
@@ -117,7 +122,10 @@ pub(crate) struct Invoked {
 /// the run's limits checked, the chain run and, natively, raced against
 /// them, the value at `collect` read as the call sees it once it returned
 /// `Ok`, the `Ctx` settled. A call the limits cut short, before it starts or while it
-/// runs, gives `Err` of kind `TimedOut` or `Cancelled`, naming the function.
+/// runs, gives `Err` of kind `TimedOut` or `Cancelled`, naming the function;
+/// so does a call that returns `Err` once a limit has passed, whatever its
+/// own error, which costs one check of the limits on an `Err` and none on
+/// an `Ok`.
 ///
 /// The future holds the `Ctx`, which holds the callee, and not `start` or
 /// `bound` beside it, and the race is boxed, made only when a limit is set:
@@ -143,6 +151,15 @@ pub(crate) fn invoke<'r>(
             None => Box::pin(race(chain.run(&mut ctx), limits)).await,
         };
         let (result, cut_short) = match ran {
+            // An `Err` once the run's own limit has passed is the limit's:
+            // the call returned in the wake the limit fired in, before the
+            // race could cut it short, or on wasm, where nothing races. A
+            // child run handed the run's limits ends that way. Only an
+            // `Err` pays for the check.
+            Ok(Err(e)) => match limits.stop() {
+                Some(stop) => (Err(stop.during(function)), true),
+                None => (Err(e), false),
+            },
             Ok(result) => (result, false),
             Err(stop) => (Err(stop.during(function)), true),
         };

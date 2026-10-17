@@ -319,14 +319,17 @@ impl<'r> Ctx<'r> {
     }
 
     /// When the run must end, if it has a deadline: a run this function
-    /// starts passes it on, or an earlier one.
+    /// starts passes it on, or an earlier one. An `Err` this call returns
+    /// once the deadline has passed, such as that run's own `TimedOut`, ends
+    /// this run `TimedOut` too.
     pub fn deadline(&self) -> Option<Instant> {
         self.start.deadline
     }
 
     /// The run's cancellation token, if it has one: a child of it cancels a
     /// run this function starts along with this one, so that run ends
-    /// `Cancelled` and reports it rather than being dropped.
+    /// `Cancelled` and reports it rather than being dropped. An `Err` this
+    /// call returns once the token is cancelled ends this run `Cancelled`.
     pub fn cancel(&self) -> Option<&CancelToken> {
         self.start.cancel
     }

@@ -168,13 +168,13 @@ scans each newly linked test binary on its first launch, which can add minutes.
 
 ### The counts
 
-`cargo test --workspace --all-features` should report 1002 passing: the
-root's 852, the derive's 2, the corpus's 18 and `docs-tests`' 130 (117 page
+`cargo test --workspace --all-features` should report 1008 passing: the
+root's 858, the derive's 2, the corpus's 18 and `docs-tests`' 130 (117 page
 doctests, 11 README doctests, the derive README's one and its coverage test).
-`cargo test` at the root (the default build) should report 827, the same
+`cargo test` at the root (the default build) should report 833, the same
 under `--features serde_json/preserve_order`, and `cargo test -p
 dataflow-docs-tests` 130. The operator families are `#[cfg]`-gated, so the
-counts legitimately differ by feature set: the root reports 837 under
+counts legitimately differ by feature set: the root reports 843 under
 `--no-default-features --features all-operators`.
 
 ### Examples
@@ -248,8 +248,8 @@ spawned row at seven rounds before calling it WORSE.
 
 Orion's baseline is `bench/baseline/orion-1.12.0.json`, from `bench/orion.sh`
 (`ORION_TAG=v1.12.0`), which runs Orion's own `bench.sh` scenarios with the
-server's peak RSS; phase 7c's branch adds `ORION_COMMIT=<sha>` for a branch and
-`bench/orion_compare.py`, which judges a run against the baseline. Its
+server's peak RSS; `ORION_COMMIT=<sha>` benches a branch instead, and
+`bench/orion_compare.py` judges a run against the baseline. Its
 `cluster` scenario brings Orion's HA stack up as its own compose project on a
 free loopback port, never 8080.
 

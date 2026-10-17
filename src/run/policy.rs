@@ -157,9 +157,10 @@ pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> 
     }
 }
 
-/// What a call the run's deadline or token cut short records and does:
-/// what an `Err` from the function records, a 500 and `error`'s record,
-/// whatever the task's policies, and then the run stops.
+/// What a call the run's deadline or token cut short records and does, or
+/// one that returned `Err` once either had passed: what an `Err` from the
+/// function records, a 500 and `error`'s record, whatever the task's
+/// policies, and then the run stops.
 pub(crate) fn cut_short(task_id: &str, error: Error) -> Decision {
     let fails = Policy {
         on_failure: FailurePolicy::Fail,

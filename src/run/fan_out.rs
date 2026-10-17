@@ -21,12 +21,13 @@
 //! the fold.
 //!
 //! Each element's call checks the run's limits as it starts and, natively,
-//! races them. Once one is cut short, the calls in flight are dropped
-//! and nothing is folded, the finished elements included. The records each
-//! call that returned added are kept, in element order and stamped with
-//! their element, as a single call cut short keeps its own; then the
-//! task is recorded once, with no element, as a call cut short is, and the
-//! run stops.
+//! races them; one that returns `Err` once a limit has passed is cut short
+//! too, as a single call is. Once one is cut short, the calls in flight are
+//! dropped and nothing is folded, the finished elements included. The
+//! records each call that returned added are kept, in element order and
+//! stamped with their element, as a single call cut short keeps its own;
+//! then the task is recorded once, with no element, as a call cut short is,
+//! and the run stops.
 //!
 //! In a timed run each element's call is timed as it runs. The task's one
 //! record of a fan-out cut short takes the time the call cut short ran, and
