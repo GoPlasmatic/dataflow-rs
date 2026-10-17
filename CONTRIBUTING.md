@@ -46,10 +46,10 @@ cd dataflow-rs
 cargo test --workspace --all-features
 ```
 
-You should see 1054 passing tests: the root's 862 (828 tests and 34 doctests),
+You should see 1055 passing tests: the root's 862 (828 tests and 34 doctests),
 the derive's 2, `corpus/v4`'s 24, `corpus/`'s 33, `corpus/v3`'s 4 and
-`docs-tests`' 129 (117 page doctests, 11 README doctests and its coverage
-test).
+`docs-tests`' 130 (117 page doctests, 11 README doctests, the derive README's
+one and its coverage test).
 
 The count is feature-dependent. The optional operator families are `#[cfg]`-gated
 on both sides: some tests only exist when a family is on, others only when it is
@@ -439,11 +439,14 @@ registration. It needs a case in the corpus, a row in `BUILTIN_FUNCTIONS`
 Releases are tag-gated and maintainer-run. Pushing to `main` runs CI; the
 documentation site deploys from `v3-maintenance` until 4.0 is released, and a
 push never publishes. A `v*` tag triggers `.github/workflows/release.yml`,
-which validates that the tag matches the root `Cargo.toml` version and that
-`wasm/` (its own version and its `dataflow-rs` requirement), `ui/` and the
-install snippets in `README.md` and `docs/src/` agree, then publishes the
-derive, the crate and both npm packages, and cuts a GitHub release whose
-notes are `CHANGELOG.md`'s section for the version. The four published
+which validates that the tag matches the root `Cargo.toml` version, that
+`wasm/` (its own version and its `dataflow-rs` requirement), `derive/` (its
+version and the root's requirement on it), `ui/` and the install snippets in
+`README.md` and `docs/src/` agree, and that `CHANGELOG.md` has the version's
+section; then publishes the derive, the crate and both npm packages, and
+cuts a GitHub release whose notes are that section. The `CRATES_IO_TOKEN`
+secret needs the `publish-new` scope for a crate's first release, the
+derive's included. The four published
 versions move together, the derive's included: the root's manifest names
 `dataflow-rs-derive` from crates.io at exactly the root's version, so the
 derive publishes first. Contributors do not need to bump versions in a PR,

@@ -35,7 +35,7 @@ jobs:
           fi
           echo "Tag $GITHUB_REF_NAME matches Cargo.toml version $VERSION"
 
-      # The three artifacts are version-locked, but only the root Cargo.toml
+      # The four artifacts are version-locked, but only the root Cargo.toml
       # was ever checked. publish-wasm and publish-ui stamp their npm versions
       # from it, so a stale in-repo value publishes fine and stays invisible —
       # which is how a docs install snippet sat at the wrong version.
@@ -59,7 +59,7 @@ jobs:
           # wasm/ pins the crate, or `^`/`~`), which a tag never does: strip
           # it, so the version the requirement names is what is compared.
           check "wasm/Cargo.toml dataflow-rs dep" \
-            "$(grep 'dataflow-rs = ' wasm/Cargo.toml | sed 's/.*version = "[=^~]*\([^"]*\)".*/\1/')"
+            "$(grep '^dataflow-rs = ' wasm/Cargo.toml | sed 's/.*version = "[=^~]*\([^"]*\)".*/\1/')"
           check "ui/package.json" \
             "$(node -p "require('./ui/package.json').version")"
           # The derive is the fourth artifact: the root's published manifest
@@ -68,7 +68,7 @@ jobs:
           check "derive/Cargo.toml" \
             "$(grep '^version = ' derive/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')"
           check "Cargo.toml dataflow-rs-derive dep" \
-            "$(grep 'dataflow-rs-derive = ' Cargo.toml | sed 's/.*version = "[=^~]*\([^"]*\)".*/\1/')"
+            "$(grep '^dataflow-rs-derive = ' Cargo.toml | sed 's/.*version = "[=^~]*\([^"]*\)".*/\1/')"
 
           # The GitHub release's notes are the changelog's section for this
           # version (see github-release), so the section must exist.
@@ -147,6 +147,12 @@ jobs:
       # Cargo.lock that the validate job tested against. `cargo publish`
       # returns only once the index serves the new version, so the root's
       # publish below resolves the derive with no wait of its own.
+      #
+      # The first release of a crate needs a token with the `publish-new`
+      # scope; a token scoped `publish-update` alone, enough for every release
+      # while the root was the one crate, is refused here with a 403. Check the
+      # CRATES_IO_TOKEN secret's scopes before tagging the derive's first
+      # release (a failed run resumes at the root once the token is fixed).
       - name: Publish dataflow-rs-derive
         if: steps.check.outputs.skip_derive != 'true'
         run: cargo publish -p dataflow-rs-derive --locked

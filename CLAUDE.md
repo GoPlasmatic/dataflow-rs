@@ -171,13 +171,14 @@ scans each newly linked test binary on its first launch, which can add minutes.
 
 ### The counts
 
-`cargo test --workspace --all-features` should report 1054 passing: the
+`cargo test --workspace --all-features` should report 1055 passing: the
 root's 862 (828 tests and 34 doctests), the derive's 2, the corpus driver's
-24, the corpus's 33, `corpus/v3`'s 4 and `docs-tests`' 129 (117 page
-doctests, 11 README doctests and its coverage test). `cargo test` at the
+24, the corpus's 33, `corpus/v3`'s 4 and `docs-tests`' 130 (117 page
+doctests, 11 README doctests, the derive README's one and its coverage
+test). `cargo test` at the
 root (the default build) should report 837, `cargo test -p dataflow-corpus-v3`
 4, `cargo test -p dataflow-corpus-v4` 24 and `cargo test -p
-dataflow-docs-tests` 129. The operator families are `#[cfg]`-gated, so the
+dataflow-docs-tests` 130. The operator families are `#[cfg]`-gated, so the
 counts legitimately differ by feature set: the root reports 847 under
 `--no-default-features --features all-operators`.
 
@@ -558,8 +559,9 @@ the wasm package and the UI package, and cuts a GitHub release whose notes are
 `CHANGELOG.md`'s section for the version (`validate` fails without one). The
 derive goes first, under its own crates.io check: the root's published
 manifest names it from crates.io at exactly the root's version, and a run
-that failed between the two resumes at the root. `wasm/` is `publish = false`:
-it ships through npm only.
+that failed between the two resumes at the root. A crate's first release
+needs the `CRATES_IO_TOKEN` secret to carry the `publish-new` scope. `wasm/`
+is `publish = false`: it ships through npm only.
 
 **No tag may be cut from `main` before phase 8.** The root, the derive,
 `wasm/` and `ui/` read `4.0.0-dev`; `release.yml` checks that `wasm/`'s two

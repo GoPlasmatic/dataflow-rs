@@ -92,3 +92,8 @@ doc_pages! {
 /// describes.
 #[doc = include_str!("../../README.md")]
 pub struct ReadmeDoctests;
+
+/// `derive/README.md`'s Rust example, the derive crate's front page on
+/// crates.io, compiled against the root crate it tells readers to depend on.
+#[doc = include_str!("../../derive/README.md")]
+pub struct DeriveReadmeDoctests;

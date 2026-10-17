@@ -8,8 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 dataflow-rs 4 is a rewrite of the engine on the contract 3.x established:
-every stored 3.x definition still loads, the message and audit JSON do not
-change, and every error code the engine writes keeps its spelling. What
+every stored 3.x definition still parses, through the compat reader; the
+message and audit JSON keep their shapes; and every error code the engine
+writes keeps its spelling. What
 changes is the Rust API, which every host takes a major version for; the
 trace, which carries changes instead of snapshots; and the behaviours listed
 under Changed, each of which a definition, a message or a host can observe.
@@ -31,7 +32,8 @@ Measured at the 4.0 gate against 3.15.0 on one machine, 16 of the 49 judged
 rows read faster, 25 better and 6 not slower, and the two that read worse at
 five rounds read not slower at seven; `loop_scaling`, a 1000-sweep append loop
 over a large context, ran in 1 to 3% of 3.15's time. `bench/baseline/` holds
-the readings, and the README's Performance section says how to reproduce them.
+the 3.15.0 readings the gate compares against, and the README's Performance
+section says how to run it.
 
 ### Added
 
