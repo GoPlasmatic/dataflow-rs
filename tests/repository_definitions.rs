@@ -15,9 +15,8 @@
 //
 // Not read either: this crate's own `src/` and `tests/`. Their definitions are
 // inputs to the checks they test, refusals and typos included, so they cannot
-// be held to loading cleanly. v3's sources and tests, which this scan read
-// when they were at the root, are on `v3-maintenance`, and the corpus keeps
-// v3's spellings case by case.
+// be held to loading cleanly. The corpus keeps 3.x spellings case by case,
+// which the compat reader reads.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -109,7 +108,6 @@ const SKIPPED_DIRS: &[&str] = &[
     "target",
     "node_modules",
     ".git",
-    "design-v4",
     ".superpowers",
     "pkg",
     "book",
@@ -616,9 +614,6 @@ fn collect() -> (Vec<Found>, Vec<String>, Vec<String>) {
     // JSON files.
     for path in files_under(&["examples", "docs", "ui/src", "corpus/cases"], "json") {
         let file = rel(&path);
-        if file.ends_with(".v3.json") {
-            continue;
-        }
         let corpus = file.starts_with("corpus/cases/");
         let group = if corpus {
             "json: corpus/cases".to_string()

@@ -1,17 +1,10 @@
 {
   "description": "A handler's writes stay when it then returns Err, outside a fan-out.",
-  "covers": ["break.1"],
   "workflows": [
     {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
       {"id": "t", "name": "t", "continue_on_error": true, "function": {"name": "script", "input": {
         "set": [{"path": "data.partial", "raw": true}],
         "outcome": {"error": {"variant": "service", "code": "PARTNER_DOWN", "message": "down"}}}}}]}
   ],
-  "steps": [{"run": {"message": {}}}],
-  "deviations": [
-    {"break": "1",
-     "paths": ["/steps/0/run/message/context/data/partial",
-               "/steps/0/run/trace/steps/0/message/context/data/partial"],
-     "note": "v4 drops a host function's writes when it returns Err"}
-  ]
+  "steps": [{"run": {"message": {}}}]
 }

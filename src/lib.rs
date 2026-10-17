@@ -1,7 +1,5 @@
 //! dataflow-rs 4, under construction on `main`.
 //!
-//! The 3.x line is on the `v3-maintenance` branch, which takes its fixes.
-//!
 //! # Features
 //!
 //! None is on by default.

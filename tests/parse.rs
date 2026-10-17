@@ -1008,9 +1008,10 @@ fn rule_7_rollout_needs_both_bounds() {
 }
 
 #[test]
-fn rule_7_timestamps_are_read_as_v3_read_them() {
-    // v3 read them through chrono's serde, which is `FromStr`: RFC 3339 and
-    // its relaxed forms, chrono's own `Display` among them.
+fn rule_7_timestamps_are_read_as_rfc_3339_and_its_relaxed_forms() {
+    // Read through chrono's `FromStr`, as 3.x's serde read them: RFC 3339
+    // and its relaxed forms, chrono's own `Display` among them, each to the
+    // same instant in UTC.
     for (text, utc) in [
         ("2026-01-02T03:04:05Z", "2026-01-02T03:04:05+00:00"),
         ("2026-01-02T05:04:05+02:00", "2026-01-02T03:04:05+00:00"),
@@ -1026,11 +1027,6 @@ fn rule_7_timestamps_are_read_as_v3_read_them() {
             "{text}"
         );
         assert_eq!(def.updated_at, def.created_at, "{text}");
-        let v3: dataflow_rs_v3::Workflow = serde_json::from_value(json!({
-            "id": "w", "name": "w", "created_at": text, "tasks": []
-        }))
-        .unwrap_or_else(|e| panic!("v3 loads {text}: {e}"));
-        assert_eq!(v3.created_at, def.created_at, "{text}");
     }
 
     let parsed = compat(&json!({"id": "w", "created_at": "2026-01-02", "tasks": [leaf("t")]}));

@@ -1,0 +1,132 @@
+{
+  "records": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string"
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "halt",
+            "status_code": 299
+          },
+          "errors": [
+            {
+              "workflow_id": "w",
+              "task_id": "ok",
+              "code": "HOST_WARNING",
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "four",
+              "code": "HOST_WARNING",
+              "status": 422
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "err",
+              "code": "HOST_WARNING",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "err",
+              "code": "HOST_WARNING",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "err",
+              "code": "PARTNER_DOWN",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "halt",
+              "code": "HOST_WARNING",
+              "status": 299
+            }
+          ]
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "ok",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "four",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 422
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "err",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "halt",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 299
+        }
+      ],
+      "errors": [
+        {
+          "code": "HOST_WARNING",
+          "message": "recorded by the handler",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "HOST_WARNING",
+          "message": "recorded by the handler",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "HOST_WARNING",
+          "message": "recorded by the handler",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "HOST_WARNING",
+          "message": "recorded by the handler",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "PARTNER_DOWN",
+          "message": "Task err error: down",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "err",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "HOST_WARNING",
+          "message": "recorded by the handler",
+          "path": null,
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  }
+}

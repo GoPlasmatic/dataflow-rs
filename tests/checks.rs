@@ -1,16 +1,10 @@
 // The compile checks: secrets, template keys, `payload` vars and
 // `UNGUARDED_VALIDATION`.
 //
-// Secrets, template keys and `UNGUARDED_VALIDATION` are held to v3's
-// `check_workflow` by a differential: each definition is parsed and checked by
-// both, v3's task-relative paths are made absolute with the step's authored
-// path, and the `(code, severity, path)` rows must be equal as multisets. Each
-// fixture also pins v4's rows, so the two cannot agree by both saying nothing.
-// The declared differences are break 14 (v3 also reports a `$$` key as
-// escaped) and break 8 (v3 points at `halt_on`, v4 at `on_rejection`).
-//
-// `PAYLOAD_VAR`, break 2b and break 16 are v4's own, so they are pinned
-// directly.
+// Each fixture is parsed and checked, and the `(code, severity, path)` rows of
+// the codes it is about are pinned, as a multiset, to the rows it must report,
+// each path absolute from the workflow's root. An empty expectation is a
+// fixture that must report nothing of those codes.
 
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::def::{ParseOptions, WorkflowDef, parse};
@@ -20,16 +14,13 @@ use dataflow_rs::function::{
 };
 use dataflow_rs::program::{CompileOptions, Compiler, Issue, IssueCode as C, Severity, StepKind};
 use dataflow_rs::{Ctx, Expr, Function, Outcome, Registry, Result};
-use dataflow_rs_v3::{AsyncFunctionHandler, TaskContext, TaskOutcome};
 use serde_json::{Value, json};
-use std::future::Future;
-use std::pin::Pin;
 
 // ---------------------------------------------------------------------------
-// The two engines
+// The compiler
 // ---------------------------------------------------------------------------
 
-/// The secrets both engines hold: `k` is declared, `nope` is not.
+/// The secrets the engine holds: `k` is declared, `nope` is not.
 fn secrets() -> Value {
     json!({"k": "v"})
 }
@@ -95,55 +86,13 @@ fn compiler() -> Compiler {
     registry.compiler(CompileOptions::default())
 }
 
-/// v3's side of `host`, registered so `check_workflow` resolves it. Written
-/// as `async_trait` expands the method, since the macro is not a dependency
-/// here.
-struct V3Host;
-
-impl AsyncFunctionHandler for V3Host {
-    type Input = Value;
-
-    fn execute<'life0, 'life1, 'life2, 'life3, 'async_trait>(
-        &'life0 self,
-        _ctx: &'life1 mut TaskContext<'life2>,
-        _input: &'life3 Value,
-    ) -> Pin<Box<dyn Future<Output = dataflow_rs_v3::Result<TaskOutcome>> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        'life3: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(std::future::ready(Ok(TaskOutcome::Success)))
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Definitions and rows
 // ---------------------------------------------------------------------------
 
-/// `json` with a `name` beside the `id` of the workflow and of every task,
-/// which v3 requires (break 6). A group needs none.
-fn named(mut json: Value) -> Value {
-    fn steps(list: Option<&mut Value>) {
-        for step in list.and_then(Value::as_array_mut).into_iter().flatten() {
-            let id = step["id"].clone();
-            if step.get("function").is_some() {
-                step["name"] = id;
-            }
-            steps(step.get_mut("tasks"));
-        }
-    }
-    json["name"] = json["id"].clone();
-    steps(json.get_mut("tasks"));
-    steps(json.get_mut("loop").and_then(|l| l.get_mut("setup")));
-    json
-}
-
 /// A workflow `w` holding `tasks`.
 fn wf(tasks: Value) -> Value {
-    named(json!({"id": "w", "tasks": tasks}))
+    json!({"id": "w", "tasks": tasks})
 }
 
 /// A task `id` calling `name` with `input`.
@@ -183,14 +132,6 @@ fn def(json: &Value) -> WorkflowDef {
         .unwrap_or_else(|| panic!("the definition parses: {:?}", parsed.issues))
 }
 
-/// The authored path of the step with this id.
-fn step_path(def: &WorkflowDef, id: &str) -> String {
-    def.walk()
-        .find(|(_, _, step)| step.id() == id)
-        .map(|(path, _, _)| path.to_string())
-        .unwrap_or_else(|| panic!("no step `{id}`"))
-}
-
 /// One issue: code, severity and absolute path.
 type Row = (String, String, String);
 
@@ -203,8 +144,8 @@ fn sorted(mut rows: Vec<Row>) -> Vec<Row> {
     rows
 }
 
-/// v4's issues for `json`, of the given codes, in order.
-fn v4_issues(json: &Value, codes: &[C]) -> Vec<Issue> {
+/// The issues for `json`, of the given codes, in order.
+fn issues_of(json: &Value, codes: &[C]) -> Vec<Issue> {
     compiler()
         .check(&def(json))
         .into_iter()
@@ -212,43 +153,14 @@ fn v4_issues(json: &Value, codes: &[C]) -> Vec<Issue> {
         .collect()
 }
 
-fn v4_rows(json: &Value, codes: &[C]) -> Vec<Row> {
-    v4_issues(json, codes)
+fn rows_of(json: &Value, codes: &[C]) -> Vec<Row> {
+    issues_of(json, codes)
         .iter()
         .map(|i| row(i.code, i.severity, &i.path.to_string()))
         .collect()
 }
 
-/// v3's `check_workflow` issues for `json`, of the given codes, each path made
-/// absolute with the authored path of its step. A path at a `halt_on` is
-/// compared at `on_rejection` (break 8).
-fn v3_rows(json: &Value, codes: &[C]) -> Vec<Row> {
-    let workflow = dataflow_rs_v3::Workflow::from_json(&json.to_string())
-        .unwrap_or_else(|e| panic!("v3 parses {json}: {e}"));
-    let def = def(json);
-    dataflow_rs_v3::Engine::builder()
-        .with_secrets_json(&secrets())
-        .register("host", V3Host)
-        .check_workflow(&workflow)
-        .into_iter()
-        .filter(|i| codes.iter().any(|c| c.as_str() == i.code.as_str()))
-        .map(|i| {
-            let severity = i.severity().as_str().to_owned();
-            let relative = i.path.expect("a checked issue has a path");
-            let relative = match relative.strip_suffix("halt_on") {
-                Some(head) => format!("{head}on_rejection"),
-                None => relative,
-            };
-            let path = match &i.task_id {
-                Some(id) => format!("{}.{relative}", step_path(&def, id)),
-                None => relative,
-            };
-            (i.code.as_str().to_owned(), severity, path)
-        })
-        .collect()
-}
-
-/// The four codes the expression differential compares.
+/// The four codes the expression checks report.
 const EXPR_CODES: &[C] = &[
     C::SecretInMessageWrite,
     C::UnknownSecret,
@@ -256,35 +168,17 @@ const EXPR_CODES: &[C] = &[
     C::DuplicateTemplateKey,
 ];
 
-/// Whether a v3 row is break 14's: v3 reports a `$$` key as escaped, and v4
-/// does not, since the key emits a key that still starts with `$`.
-fn break_14(row: &Row) -> bool {
-    row.0 == "ESCAPED_TEMPLATE_KEY"
-        && row
-            .2
-            .rsplit('.')
-            .next()
-            .is_some_and(|k| k.starts_with("$$"))
-}
-
-/// v3 and v4 agree on `json`'s rows of `codes`, and v4's are `expected`.
-fn agree(json: &Value, codes: &[C], expected: &[Row]) {
-    let json = named(json.clone());
-    let v4 = v4_rows(&json, codes);
-    let v3: Vec<Row> = v3_rows(&json, codes)
-        .into_iter()
-        .filter(|r| !break_14(r))
-        .collect();
-    assert_eq!(sorted(v3), sorted(v4.clone()), "v3 and v4 differ on {json}");
+/// `json`'s rows of `codes` are `expected`, in any order.
+fn rows_are(json: &Value, codes: &[C], expected: &[Row]) {
     assert_eq!(
-        sorted(v4),
+        sorted(rows_of(json, codes)),
         sorted(expected.to_vec()),
-        "v4's rows for {json}"
+        "the rows for {json}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Secrets, against v3
+// Secrets
 // ---------------------------------------------------------------------------
 
 /// Every parameter that holds an expression, with `e` placed in it: the
@@ -353,10 +247,8 @@ fn sinks(e: &Value) -> Vec<(&'static str, bool, Value)> {
         (
             "loop.over",
             true,
-            named(
-                json!({"id": "w", "loop": {"max": 2, "over": e, "as": "item"},
-                         "tasks": [map("t", json!(1))]}),
-            ),
+            json!({"id": "w", "loop": {"max": 2, "over": e, "as": "item"},
+                     "tasks": [map("t", json!(1))]}),
         ),
         (
             "tasks[0].for_each.over",
@@ -368,7 +260,7 @@ fn sinks(e: &Value) -> Vec<(&'static str, bool, Value)> {
         (
             "condition",
             false,
-            named(json!({"id": "w", "condition": e, "tasks": [map("t", json!(1))]})),
+            json!({"id": "w", "condition": e, "tasks": [map("t", json!(1))]}),
         ),
         (
             "tasks[0].condition",
@@ -397,7 +289,7 @@ fn sinks(e: &Value) -> Vec<(&'static str, bool, Value)> {
 }
 
 #[test]
-fn a_secret_in_every_parameter_is_reported_as_v3_reports_it() {
+fn a_secret_in_every_parameter_is_reported() {
     let mut checked = 0;
     for name in ["k", "nope"] {
         let e = json!({"cat": ["data.", {"secret": name}]});
@@ -409,7 +301,7 @@ fn a_secret_in_every_parameter_is_reported_as_v3_reports_it() {
             } else {
                 vec![]
             };
-            agree(&json, EXPR_CODES, &expected);
+            rows_are(&json, EXPR_CODES, &expected);
             checked += 1;
         }
     }
@@ -420,7 +312,7 @@ fn a_secret_in_every_parameter_is_reported_as_v3_reports_it() {
 fn a_recorded_expression_reports_one_secret_issue_and_no_unknown_name() {
     let e = json!({"cat": [{"secret": "nope"}, {"secret": "k"}, {"secret": {"var": "data.n"}}]});
     let json = wf(json!([map("t", e)]));
-    agree(
+    rows_are(
         &json,
         EXPR_CODES,
         &[row(
@@ -437,7 +329,7 @@ fn every_undeclared_literal_name_is_reported_and_a_dynamic_one_is_not() {
                            {"secret": {"var": "data.n"}}]});
     let json = wf(json!([with(map("t", json!(1)), "condition", e)]));
     let at = "tasks[0].condition";
-    agree(
+    rows_are(
         &json,
         EXPR_CODES,
         &[
@@ -454,7 +346,7 @@ fn a_secret_issue_is_stamped_with_its_step_and_field() {
             task("t", "log", json!({"message": {"secret": "k"}}))
         ]}
     ]));
-    let issues = v4_issues(&json, EXPR_CODES);
+    let issues = issues_of(&json, EXPR_CODES);
     let stamps: Vec<_> = issues
         .iter()
         .map(|i| {
@@ -481,13 +373,13 @@ fn a_secret_issue_is_stamped_with_its_step_and_field() {
 }
 
 // ---------------------------------------------------------------------------
-// Template keys, against v3
+// Template keys
 // ---------------------------------------------------------------------------
 
 #[test]
 fn an_escaped_key_is_reported_at_its_deep_path() {
     let logic = "tasks[0].function.input.mappings[0].logic";
-    agree(
+    rows_are(
         &wf(json!([map("t", json!({"$cat": ["a", "b"]}))])),
         EXPR_CODES,
         &[row(
@@ -497,7 +389,7 @@ fn an_escaped_key_is_reported_at_its_deep_path() {
         )],
     );
     // Inside an array, below another key.
-    agree(
+    rows_are(
         &wf(json!([map(
             "t",
             json!({"cat": ["a", {"$oid": {"var": "data.id"}}]})
@@ -514,7 +406,7 @@ fn an_escaped_key_is_reported_at_its_deep_path() {
 #[test]
 fn two_keys_emitting_one_name_are_a_duplicate_at_the_later_key() {
     let logic = "tasks[0].function.input.mappings[0].logic";
-    agree(
+    rows_are(
         &wf(json!([map("t", json!({"$a": 1, "a": 2}))])),
         EXPR_CODES,
         &[
@@ -531,7 +423,7 @@ fn two_keys_emitting_one_name_are_a_duplicate_at_the_later_key() {
         ],
     );
     // In an array element, nested below an escaped key.
-    agree(
+    rows_are(
         &wf(json!([map(
             "t",
             json!({"cat": [{"$k": {"$b": 1, "b": 2}}]})
@@ -560,10 +452,10 @@ fn two_keys_emitting_one_name_are_a_duplicate_at_the_later_key() {
 #[test]
 fn a_doubled_escape_is_not_reported_as_escaped_break_14() {
     let logic = "tasks[0].function.input.mappings[0].logic";
-    // `$$x` emits `$x`: v3 calls it escaped, v4 does not.
-    agree(&wf(json!([map("t", json!({"$$x": 1}))])), EXPR_CODES, &[]);
+    // `$$x` emits `$x`, a key that still starts with `$`: not escaped.
+    rows_are(&wf(json!([map("t", json!({"$$x": 1}))])), EXPR_CODES, &[]);
     // `$$a` emits `$a` and `$a` emits `a`: no two keys emit one name.
-    agree(
+    rows_are(
         &wf(json!([map("t", json!({"$$a": 1, "$a": 2}))])),
         EXPR_CODES,
         &[row(
@@ -573,7 +465,7 @@ fn a_doubled_escape_is_not_reported_as_escaped_break_14() {
         )],
     );
     // `$$a` and `$a` both beside `a`: `$a` collides with `a`.
-    agree(
+    rows_are(
         &wf(json!([map("t", json!({"$$a": 0, "$a": 1, "a": 2}))])),
         EXPR_CODES,
         &[
@@ -594,7 +486,7 @@ fn a_doubled_escape_is_not_reported_as_escaped_break_14() {
 #[test]
 fn an_escaped_key_inside_a_condition_is_reported() {
     let cond = json!({"==": [{"var": "data.k"}, {"$a": 1}]});
-    agree(
+    rows_are(
         &wf(json!([with(map("t", json!(1)), "condition", cond.clone())])),
         EXPR_CODES,
         &[row(
@@ -604,8 +496,8 @@ fn an_escaped_key_inside_a_condition_is_reported() {
         )],
     );
     // The workflow's own condition, a group's, and `loop.over`.
-    agree(
-        &named(json!({"id": "w", "condition": cond.clone(), "tasks": [map("t", json!(1))]})),
+    rows_are(
+        &json!({"id": "w", "condition": cond.clone(), "tasks": [map("t", json!(1))]}),
         EXPR_CODES,
         &[row(
             C::EscapedTemplateKey,
@@ -613,7 +505,7 @@ fn an_escaped_key_inside_a_condition_is_reported() {
             "condition.==[1].$a",
         )],
     );
-    agree(
+    rows_are(
         &wf(json!([{"id": "g", "condition": cond, "tasks": [map("t", json!(1))]}])),
         EXPR_CODES,
         &[row(
@@ -622,11 +514,9 @@ fn an_escaped_key_inside_a_condition_is_reported() {
             "tasks[0].condition.==[1].$a",
         )],
     );
-    agree(
-        &named(
-            json!({"id": "w", "loop": {"max": 2, "over": [{"$a": 1, "a": 2}]},
-                      "tasks": [map("t", json!(1))]}),
-        ),
+    rows_are(
+        &json!({"id": "w", "loop": {"max": 2, "over": [{"$a": 1, "a": 2}]},
+                  "tasks": [map("t", json!(1))]}),
         EXPR_CODES,
         &[
             row(C::EscapedTemplateKey, Severity::Advisory, "loop.over[0].$a"),
@@ -652,7 +542,7 @@ fn a_duplicate_key_rejects_the_workflow() {
 }
 
 // ---------------------------------------------------------------------------
-// UNGUARDED_VALIDATION, against v3
+// UNGUARDED_VALIDATION
 // ---------------------------------------------------------------------------
 
 const UNGUARDED: &[C] = &[C::UnguardedValidation];
@@ -665,13 +555,13 @@ fn unguarded(path: &str) -> Row {
 fn an_unguarded_validation_is_reported_at_on_rejection() {
     let next = || map("m", json!(1));
     // Followed by an unguarded task.
-    agree(
+    rows_are(
         &wf(json!([validation("v"), next()])),
         UNGUARDED,
         &[unguarded("tasks[0].on_rejection")],
     );
     // A condition of literal `true` guards nothing.
-    agree(
+    rows_are(
         &wf(json!([
             validation("v"),
             with(next(), "condition", json!(true))
@@ -680,18 +570,18 @@ fn an_unguarded_validation_is_reported_at_on_rejection() {
         &[unguarded("tasks[0].on_rejection")],
     );
     // Nor does a group whose condition is literal `true`, or that has none.
-    agree(
+    rows_are(
         &wf(json!([validation("v"), {"id": "g", "condition": true, "tasks": [next()]}])),
         UNGUARDED,
         &[unguarded("tasks[0].on_rejection")],
     );
-    agree(
+    rows_are(
         &wf(json!([validation("v"), {"id": "a", "tasks": [{"id": "b", "tasks": [next()]}]}])),
         UNGUARDED,
         &[unguarded("tasks[0].on_rejection")],
     );
     // Each of two validations is unguarded: a validation guards nothing.
-    agree(
+    rows_are(
         &wf(json!([validation("v1"), validation("v2"), next()])),
         UNGUARDED,
         &[
@@ -700,7 +590,7 @@ fn an_unguarded_validation_is_reported_at_on_rejection() {
         ],
     );
     // In a group, followed by a task outside it.
-    agree(
+    rows_are(
         &wf(json!([{"id": "g", "tasks": [validation("v")]}, next()])),
         UNGUARDED,
         &[unguarded("tasks[0].tasks[0].on_rejection")],
@@ -711,10 +601,10 @@ fn an_unguarded_validation_is_reported_at_on_rejection() {
 fn a_guarded_or_stopping_validation_is_not_reported() {
     let next = || map("m", json!(1));
     // The last task: nothing follows it.
-    agree(&wf(json!([next(), validation("v")])), UNGUARDED, &[]);
+    rows_are(&wf(json!([next(), validation("v")])), UNGUARDED, &[]);
     // A conditional task follows it, at once or later.
     let cond = json!({"var": "data.ok"});
-    agree(
+    rows_are(
         &wf(json!([
             validation("v"),
             with(next(), "condition", cond.clone())
@@ -722,7 +612,7 @@ fn a_guarded_or_stopping_validation_is_not_reported() {
         UNGUARDED,
         &[],
     );
-    agree(
+    rows_are(
         &wf(json!([
             validation("v"),
             map("a", json!(1)),
@@ -732,7 +622,7 @@ fn a_guarded_or_stopping_validation_is_not_reported() {
         &[],
     );
     // A filter follows it.
-    agree(
+    rows_are(
         &wf(json!([
             validation("v"),
             task("f", "filter", json!({"condition": {"var": "data.ok"}})),
@@ -742,20 +632,20 @@ fn a_guarded_or_stopping_validation_is_not_reported() {
         &[],
     );
     // A group with a condition opens at the next task.
-    agree(
+    rows_are(
         &wf(json!([validation("v"), {"id": "g", "condition": cond.clone(), "tasks": [next()]}])),
         UNGUARDED,
         &[],
     );
     // A nested group opens at the next task: the inner one is conditional.
-    agree(
+    rows_are(
         &wf(json!([validation("v"),
                    {"id": "a", "tasks": [{"id": "b", "condition": cond, "tasks": [next()]}]}])),
         UNGUARDED,
         &[],
     );
     // It stops the workflow itself.
-    agree(
+    rows_are(
         &wf(json!([
             with(validation("v"), "terminal", json!(true)),
             next()
@@ -763,7 +653,16 @@ fn a_guarded_or_stopping_validation_is_not_reported() {
         UNGUARDED,
         &[],
     );
-    agree(
+    rows_are(
+        &wf(json!([
+            with(validation("v"), "on_rejection", json!("halt")),
+            next()
+        ])),
+        UNGUARDED,
+        &[],
+    );
+    // And in 3.x's spelling, which the compat reader rewrites.
+    rows_are(
         &wf(json!([
             with(validation("v"), "halt_on", json!("failure")),
             next()
@@ -775,23 +674,23 @@ fn a_guarded_or_stopping_validation_is_not_reported() {
 
 #[test]
 fn a_validation_in_setup_is_followed_by_the_body() {
-    let json = named(json!({"id": "w",
+    let json = json!({"id": "w",
         "loop": {"max": 2, "setup": [validation("v")]},
-        "tasks": [map("m", json!(1))]}));
-    agree(&json, UNGUARDED, &[unguarded("loop.setup[0].on_rejection")]);
+        "tasks": [map("m", json!(1))]});
+    rows_are(&json, UNGUARDED, &[unguarded("loop.setup[0].on_rejection")]);
     // A guarded body guards it.
-    let json = named(json!({"id": "w",
+    let json = json!({"id": "w",
         "loop": {"max": 2, "setup": [validation("v")]},
-        "tasks": [with(map("m", json!(1)), "condition", json!({"var": "data.ok"}))]}));
-    agree(&json, UNGUARDED, &[]);
+        "tasks": [with(map("m", json!(1)), "condition", json!({"var": "data.ok"}))]});
+    rows_are(&json, UNGUARDED, &[]);
 }
 
 #[test]
 fn the_unguarded_issue_names_the_next_task_and_on_rejection_halt() {
-    let json = named(json!({"id": "w",
+    let json = json!({"id": "w",
         "loop": {"max": 2, "setup": [validation("v")]},
-        "tasks": [map("m", json!(1))]}));
-    let issues = v4_issues(&json, UNGUARDED);
+        "tasks": [map("m", json!(1))]});
+    let issues = issues_of(&json, UNGUARDED);
     let [issue] = &issues[..] else {
         panic!("one issue: {issues:?}");
     };
@@ -863,7 +762,7 @@ fn in_logic_and_condition(read: &Value) -> [(Value, &'static str); 2] {
 fn a_literal_var_or_val_rooted_at_payload_is_a_defect_at_the_object() {
     for read in payload_reads() {
         for (json, at) in in_logic_and_condition(&read) {
-            let issues = v4_issues(&json, &[C::PayloadVar]);
+            let issues = issues_of(&json, &[C::PayloadVar]);
             assert_eq!(
                 issues
                     .iter()
@@ -884,7 +783,7 @@ fn a_literal_var_or_val_rooted_at_payload_is_a_defect_at_the_object() {
 #[test]
 fn the_payload_message_names_the_path_read() {
     let json = wf(json!([map("t", json!({"var": "payload.order.id"}))]));
-    let issues = v4_issues(&json, &[C::PayloadVar]);
+    let issues = issues_of(&json, &[C::PayloadVar]);
     assert_eq!(issues.len(), 1);
     assert!(
         issues[0].message.contains("payload.order.id"),
@@ -909,7 +808,7 @@ fn a_var_not_rooted_at_payload_or_computed_is_not_reported() {
         json!({"$var": "payload"}),
     ] {
         for (json, _) in in_logic_and_condition(&read) {
-            assert_eq!(v4_issues(&json, &[C::PayloadVar]), [], "{read}");
+            assert_eq!(issues_of(&json, &[C::PayloadVar]), [], "{read}");
         }
     }
 }
@@ -920,7 +819,7 @@ fn a_var_read_per_element_by_a_scoping_operator_is_not_reported() {
     // `payload` key; the array it walks is read from the context.
     let e = json!({"map": [{"var": "payload.items"}, {"var": "payload"}]});
     let json = wf(json!([map("t", e)]));
-    let paths: Vec<String> = v4_issues(&json, &[C::PayloadVar])
+    let paths: Vec<String> = issues_of(&json, &[C::PayloadVar])
         .iter()
         .map(|i| i.path.to_string())
         .collect();
@@ -935,7 +834,7 @@ fn reduces_initial_value_is_read_from_the_context_and_reported() {
     let e = json!({"reduce": [{"var": "data.a"}, body, {"var": "payload.init"}]});
     let json = wf(json!([map("t", e)]));
     assert_eq!(
-        v4_rows(&json, &[C::PayloadVar]),
+        rows_of(&json, &[C::PayloadVar]),
         [row(
             C::PayloadVar,
             Severity::Defect,
@@ -957,7 +856,7 @@ fn a_secret_in_a_host_output_is_a_message_write_break_16() {
         json!({"output": computed.clone()})
     )]));
     assert_eq!(
-        v4_rows(&json, EXPR_CODES),
+        rows_of(&json, EXPR_CODES),
         [row(
             C::SecretInMessageWrite,
             Severity::Rejected,
@@ -967,7 +866,7 @@ fn a_secret_in_a_host_output_is_a_message_write_break_16() {
     // A runtime `Output` field is visited the same way.
     let json = wf(json!([task("t", "plugin", json!({"out": computed}))]));
     assert_eq!(
-        v4_rows(&json, EXPR_CODES),
+        rows_of(&json, EXPR_CODES),
         [row(
             C::SecretInMessageWrite,
             Severity::Rejected,
@@ -997,7 +896,7 @@ fn a_secret_in_a_host_field_that_is_not_recorded_is_clean() {
         json!({"token": {"secret": "nope"}})
     )]));
     assert_eq!(
-        v4_rows(&json, EXPR_CODES),
+        rows_of(&json, EXPR_CODES),
         [row(
             C::UnknownSecret,
             Severity::Rejected,
@@ -1019,14 +918,14 @@ fn a_host_expression_field_is_checked_as_a_builtins_is_break_2b() {
     ];
     for (function, field) in [("fetch", "token"), ("plugin", "token")] {
         let at = format!("tasks[0].function.input.{field}");
-        // v3 checked a custom handler's input for unknown secrets only.
+        // Template keys and `payload` reads, beside the secret checks.
         let json = wf(json!([task(
             "t",
             function,
             json!({field: {"$a": 1, "a": 2}})
         )]));
         assert_eq!(
-            v4_rows(&json, CODES),
+            rows_of(&json, CODES),
             [
                 row(
                     C::EscapedTemplateKey,
@@ -1049,7 +948,7 @@ fn a_host_expression_field_is_checked_as_a_builtins_is_break_2b() {
             json!({field: {"var": "payload.id"}})
         )]));
         assert_eq!(
-            v4_rows(&json, CODES),
+            rows_of(&json, CODES),
             [row(C::PayloadVar, Severity::Defect, &at)],
             "{function}"
         );

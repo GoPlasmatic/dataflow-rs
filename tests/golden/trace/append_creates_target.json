@@ -1,0 +1,62 @@
+{
+  "default": {
+    "id": "m",
+    "payload": null,
+    "context": {
+      "data": {
+        "ext": [
+          1,
+          2
+        ],
+        "list": [
+          1,
+          5
+        ],
+        "nulled": [],
+        "empty": []
+      },
+      "metadata": {
+        "processed_at": "<timestamp>",
+        "engine_version": "<engine_version>",
+        "progress": {
+          "workflow_id": "w",
+          "task_id": "m",
+          "status_code": 200
+        }
+      },
+      "temp_data": {}
+    },
+    "audit_trail": [
+      {
+        "workflow_id": "w",
+        "task_id": "m",
+        "timestamp": "<timestamp>",
+        "changes": [
+          {
+            "path": "data.list.0",
+            "old_value": null,
+            "new_value": 1
+          },
+          {
+            "path": "data.ext.0",
+            "old_value": null,
+            "new_value": 1
+          },
+          {
+            "path": "data.ext.1",
+            "old_value": null,
+            "new_value": 2
+          },
+          {
+            "path": "data.list.1",
+            "old_value": null,
+            "new_value": 5
+          }
+        ],
+        "status": 200
+      }
+    ],
+    "errors": []
+  }
+}
+

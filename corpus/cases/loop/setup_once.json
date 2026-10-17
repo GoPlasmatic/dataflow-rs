@@ -1,11 +1,5 @@
 {
   "description": "loop.setup runs once, before the first sweep, without a counter: it appends \"setup\" and sees a null counter; the body then appends 0, 1, 2.",
-  "covers": [
-    "loop.setup"
-  ],
-  "mirrors": [
-    "src/workflow_executor::setup_runs_once_before_the_first_iteration_without_a_loop_counter"
-  ],
   "workflows": [
     {
       "id": "w",

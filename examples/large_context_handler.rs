@@ -1,11 +1,11 @@
 //! # Large-context handler
 //!
-//! v4's port of v3's `large_context_handler`, a row of the v4 performance
-//! gate: a host function that evaluates five expression fields against a
-//! 2 MiB context. In 3.15 each view of the context costs its spines, one per
-//! node, whether the fields read them or not. A v4 function evaluates against
-//! the run's single view and builds none per call, so the gate requires v4 to
-//! beat v3's `with_view` row here.
+//! A row of the performance gate, its workload first written against 3.x: a
+//! host function that evaluates five expression fields against a 2 MiB
+//! context. In 3.x each view of the context cost its spines, one per node,
+//! whether the fields read them or not. A function evaluates against the
+//! run's single view and builds none per call, so a call's cost must not grow
+//! with the context.
 //!
 //! The function is the only task of a 1000-sweep counter loop, so one message
 //! makes 1000 calls against one large context, and every figure is per call.
@@ -13,7 +13,7 @@
 //!
 //! - **write only** evaluates nothing: the floor of a call and a sweep;
 //! - **per field** evaluates each field through `Ctx::eval`;
-//! - **with_view** does the same: v4 has no view per call, so the two v3
+//! - **with_view** does the same: there is no view per call, so the two 3.x
 //!   modes are one call shape here, and the names stay for the gate.
 //!
 //! Run with: `cargo run --example large_context_handler --release`

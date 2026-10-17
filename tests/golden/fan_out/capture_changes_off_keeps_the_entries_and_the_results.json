@@ -1,0 +1,76 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "id": 0
+            },
+            {
+              "id": 1
+            }
+          ],
+          "outs": [
+            {
+              "i": 0,
+              "id": 0
+            },
+            {
+              "i": 1,
+              "id": 1
+            }
+          ],
+          "after_ran": true
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "after",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 1,
+            "id": 1
+          },
+          "by_eval": {
+            "id": 1
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200
+        }
+      ],
+      "errors": []
+    }
+  }
+]

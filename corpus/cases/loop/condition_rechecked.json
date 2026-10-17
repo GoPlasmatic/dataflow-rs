@@ -1,11 +1,5 @@
 {
   "description": "The workflow condition is re-checked before every sweep: the body turns data.go off at counter 2, and the loop ends after that sweep.",
-  "covers": [
-    "loop.condition"
-  ],
-  "mirrors": [
-    "src/workflow_executor::loop_exits_early_when_the_condition_goes_false"
-  ],
   "workflows": [
     {
       "id": "w",

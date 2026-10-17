@@ -1,7 +1,5 @@
 {
   "description": "The fold runs in element order; under continue_on_error an element that fails leaves null in into. In v3 a 5xx element's own writes are still replayed into the message (its changes are audited), while an Err element contributes no writes and an empty change list; the rest fold normally.",
-  "covers": ["fanout.fold"],
-  "mirrors": ["tests/for_each.rs::a_failed_element_leaves_null_under_continue_on_error", "tests/for_each.rs::a_hard_error_contributes_no_writes"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "continue_on_error": true,

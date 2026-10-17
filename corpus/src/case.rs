@@ -10,11 +10,6 @@ use serde::Deserialize;
 pub struct Case {
     /// One sentence: the behaviour this case pins.
     pub description: String,
-    /// Ids from `contract.json`.
-    pub covers: Vec<String>,
-    /// The v3 tests whose scenario this case reproduces, as `file::test`.
-    #[serde(default)]
-    pub mirrors: Vec<String>,
     #[serde(default)]
     pub requires: Requires,
     #[serde(default)]
@@ -23,9 +18,6 @@ pub struct Case {
     pub workflows: Vec<Json>,
     #[serde(default)]
     pub steps: Vec<Step>,
-    /// What v4 may answer differently, each allowed by a break row of 06.
-    #[serde(default)]
-    pub deviations: Vec<Deviation>,
 }
 
 /// The features a case needs on or off. A case must run in one of CI's two
@@ -224,18 +216,6 @@ impl From<TraceRepr> for TraceSpec {
     }
 }
 
-/// Recording paths a break row of 06 lets v4 change. v3's check ignores these.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Deviation {
-    /// The break's number in 06: `"1"` to `"13"`, or `"2a"`.
-    #[serde(rename = "break")]
-    pub break_row: String,
-    /// JSON pointers into the recording; `*` matches any one segment.
-    pub paths: Vec<String>,
-    pub note: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,7 +223,7 @@ mod tests {
     #[test]
     fn a_minimal_case_takes_every_default() {
         let case: Case = serde_json::from_str(
-            r#"{"description":"d","covers":["x"],"workflows":[],"steps":[{"run":{"message":{}}}]}"#,
+            r#"{"description":"d","workflows":[],"steps":[{"run":{"message":{}}}]}"#,
         )
         .unwrap();
         let Step::Run(run) = &case.steps[0] else {
@@ -257,10 +237,8 @@ mod tests {
     #[test]
     fn an_unknown_case_key_is_refused() {
         assert!(
-            serde_json::from_str::<Case>(
-                r#"{"description":"d","covers":[],"workflows":[],"cover":[]}"#
-            )
-            .is_err()
+            serde_json::from_str::<Case>(r#"{"description":"d","workflows":[],"cover":[]}"#)
+                .is_err()
         );
     }
 
@@ -282,12 +260,5 @@ mod tests {
     fn audit_modes_read_as_names_or_a_last_object() {
         let modes: Vec<AuditSpec> = serde_json::from_str(r#"["full","off",{"last":2}]"#).unwrap();
         assert_eq!(modes, [AuditSpec::Full, AuditSpec::Off, AuditSpec::Last(2)]);
-    }
-
-    #[test]
-    fn a_deviation_names_its_break() {
-        let d: Deviation =
-            serde_json::from_str(r#"{"break":"2a","paths":["/build"],"note":"n"}"#).unwrap();
-        assert_eq!(d.break_row, "2a");
     }
 }

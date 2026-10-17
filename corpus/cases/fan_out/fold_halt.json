@@ -1,7 +1,5 @@
 {
   "description": "An element that halts stops new calls and ends the fold after it: later elements contribute nothing, the workflow halts, and the next workflow still runs.",
-  "covers": ["fanout.fold"],
-  "mirrors": ["tests/for_each.rs::an_element_halt_stops_new_calls_and_halts_the_workflow"],
   "workflows": [
     {"id": "w", "name": "w", "priority": 0, "tasks": [
       {"id": "t", "name": "t",

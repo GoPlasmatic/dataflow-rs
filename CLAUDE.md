@@ -24,15 +24,16 @@ the root `Cargo.toml` version; all four read `4.0.0-dev` until phase 8 sets
 driven by the release workflow. Bumping a version means bumping all four.
 
 The other workspace members are not published: `docs-tests/` (the book's and
-the README's doctests, against the root), `corpus/` (the golden corpus),
-`corpus/v3` (v3's driver, on the published 3.15.0) and `corpus/v4` (the
-engine's corpus driver). See "The corpus" below.
+the README's doctests, against the root) and `corpus/` (the workflow cases the
+engine's tests load, and independent models of its path and replay rules). See
+"The corpus" below.
 
-**`main` is 4.0**, under construction until 4.0.0. 3.x's source, tests,
-examples and documentation site are on `v3-maintenance`, which takes 3.x fixes
-only. The root follows the design documents (`design-v4/`, untracked): design
-questions are decided for Orion, the main host, in priority order: performance,
-then developer experience, then a compact engine.
+**`main` is 4.0**, under construction until 4.0.0, and holds only v4: 3.x
+survives as the published crates and the `v3.*` tags, and nothing on `main`
+builds or tests against it. Design questions are decided for Orion, the main
+host, in priority order: performance, then developer experience, then a
+compact engine. The 4.0 port of Orion (phase 7c) is tracked in
+GoPlasmatic/Orion#385.
 
 ## Layout
 
@@ -71,7 +72,7 @@ then developer experience, then a compact engine.
 - `derive/src/lib.rs`: the derive.
 - `tests/`: one binary per topic (the table under "Testing"); `tests/support/`
   the shared fixtures.
-- `examples/`: the fourteen gate benchmarks, the six functional examples, and
+- `examples/`: the thirteen gate benchmarks, the six functional examples, and
   `examples/shared/` (not an example).
 - `bindings/dataflow.d.ts`: the wire shapes as TypeScript, generated under the
   `ts` feature and held by a drift test; the wasm package embeds it.
@@ -89,10 +90,8 @@ cargo test -- --nocapture                # with output
 ```
 
 A bare cargo command at the root selects the root package. Every other member
-takes `-p`, as in `cargo test -p dataflow-corpus-v4` or
-`cargo test -p dataflow-docs-tests`. `-p dataflow-rs` is ambiguous beside the
-published 3.15.0 that `corpus/v3` and the root's own dev-dependency pull in,
-and cargo refuses it.
+takes `-p`, as in `cargo test -p dataflow-corpus` or
+`cargo test -p dataflow-docs-tests`.
 
 ### Code Quality
 
@@ -141,11 +140,9 @@ cargo clippy --target wasm32-unknown-unknown --features wasm-web -- -D warnings
 cargo clippy --target wasm32-unknown-unknown --features wasm-web,all-operators -- -D warnings
 cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
 cargo test
-cargo test -p dataflow-corpus-v4
 cargo test --features serde_json/preserve_order
-cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order
 cargo test --features ts --test ts_types
-cargo test -p dataflow-corpus-v3
+cargo test -p dataflow-corpus
 cargo test -p dataflow-docs-tests
 for f in datetime ext-string ext-array ext-math ext-control ext-object \
          error-handling all-operators tensor budget; do
@@ -171,20 +168,18 @@ scans each newly linked test binary on its first launch, which can add minutes.
 
 ### The counts
 
-`cargo test --workspace --all-features` should report 1055 passing: the
-root's 862 (828 tests and 34 doctests), the derive's 2, the corpus driver's
-24, the corpus's 33, `corpus/v3`'s 4 and `docs-tests`' 130 (117 page
-doctests, 11 README doctests, the derive README's one and its coverage
-test). `cargo test` at the
-root (the default build) should report 837, `cargo test -p dataflow-corpus-v3`
-4, `cargo test -p dataflow-corpus-v4` 24 and `cargo test -p
+`cargo test --workspace --all-features` should report 1002 passing: the
+root's 852, the derive's 2, the corpus's 18 and `docs-tests`' 130 (117 page
+doctests, 11 README doctests, the derive README's one and its coverage test).
+`cargo test` at the root (the default build) should report 827, the same
+under `--features serde_json/preserve_order`, and `cargo test -p
 dataflow-docs-tests` 130. The operator families are `#[cfg]`-gated, so the
-counts legitimately differ by feature set: the root reports 847 under
+counts legitimately differ by feature set: the root reports 837 under
 `--no-default-features --features all-operators`.
 
 ### Examples
 
-The root's examples are the fourteen gate benchmarks and the six functional
+The root's examples are the thirteen gate benchmarks and the six functional
 examples. Always run a benchmark with `--release`; a debug build measures
 nothing useful:
 
@@ -196,7 +191,6 @@ cargo run --example micro_aggregate_bench --release      # Aggregate-heavy (redu
 cargo run --example micro_subtree_write_bench --release  # k map writes into one depth-2 subtree
 cargo run --example micro_multiworkflow_bench --release  # N chained workflows, one message
 cargo run --example async_handler_benchmark --release    # Marginal cost of one host function call
-cargo run --example host_call_floor --release            # One host call's own cost, v3 and v4 in one binary
 cargo run --example map_performance_test --release       # 10 chained mappings across all 3 roots
 cargo run --example loop_scaling --release               # 1000-sweep append loop over a large context
 cargo run --example large_context_handler --release      # Five expression fields over a 2 MiB context, per call
@@ -214,10 +208,9 @@ The six functional examples run in a debug build and print a walk-through:
 `map_performance_test` are regression guards for optimizations that landed in
 3.x (the arena write-through splice and the shared-arena workflow run). Read
 them as "this must stay flat". `loop_scaling`, `large_context_handler`,
-`fan_out`, `orion_connector` and `observed_run` are the five gate rows written
-against 3.15 before any v4 code existed: they measure where 3.15 paid per byte
-or node a message carries, or per clock read, which is where v4 claims its
-wins.
+`fan_out`, `orion_connector` and `observed_run` measure what a message costs
+per byte or node it carries, or per clock read: where 4.0's design pays off,
+and where a regression would show first.
 
 **A benchmark checks its result before it times anything.** A workload that
 silently does less than it says still reports a plausible number:
@@ -229,34 +222,29 @@ mean of 3+ runs, and **interleave A/B runs**, since all "before" then all
 
 ### The gate
 
-**The gate compares v4 with v3** through thirteen ports, `examples/<name>.rs`,
-each named for the v3 benchmark it ports and keeping its workload, startup
-check, `GATE` name and metric names. Each prints one machine-readable line,
-`GATE {...}`, last (`examples/shared/gate.rs`), which `bench/gate.py` reads:
+**The gate compares two builds of the engine,** a base commit against a
+candidate, through the thirteen benchmarks, each keeping its workload,
+startup check, `GATE` name and metric names. Each prints one machine-readable
+line, `GATE {...}`, last (`examples/shared/gate.rs`), which `bench/gate.py`
+reads:
 
 ```bash
-python3 bench/gate.py build --v3 --out /tmp/gate/v3   # v3's thirteen, from the freeze worktree
-python3 bench/gate.py build --out /tmp/gate/v4        # the root's fourteen
-python3 bench/gate.py compare --a /tmp/gate/v3 --b /tmp/gate/v4 --rounds 5
+git switch --detach <base>  && python3 bench/gate.py build --out /tmp/gate/a
+git switch <candidate>      && python3 bench/gate.py build --out /tmp/gate/b
+python3 bench/gate.py compare --a /tmp/gate/a --b /tmp/gate/b --rounds 5
 ```
 
-`build --v3` builds v3's benchmarks in a git worktree of the freeze commit
-`2d3d8e9` at `target/gate-v3`, reused only while it is at that commit and its
-tracked files are clean. `compare` alternates the two builds within each round
-and judges each metric on the median of its per-round ratios, with noise
-`max(3%, half the IQR)`, and reports instructions retired (`/usr/bin/time -l`),
-which separate load from work on a busy machine; they move with codegen too, so
-attribute a change to one item only with a same-binary toggle.
-`baseline --bins DIR --rounds 5 --out FILE` writes every run with the build,
-machine and method; the freeze baseline is `bench/baseline/3.15.0-freeze.json`.
-A metric's name is a contract: a port of a benchmark keeps it.
-
-`host_call_floor` is the self-judged floor row: v3 and v4 in one binary on
-one thread, in interleaved rounds; its `call.ratio` must be not slower. On
-this machine the 3% noise floor holds for one-thread rows only; with the
-owner's Docker stack busy, the spawned throughputs spread 10 to 18%: read the
-one-thread rows and the instructions retired, and re-run a spawned row at
-seven rounds before calling it WORSE.
+`build` builds HEAD from a clean tree. `compare` alternates the two builds
+within each round and judges each metric on the median of its per-round
+ratios, with noise `max(3%, half the IQR)`, and reports instructions retired
+(`/usr/bin/time -l`), which separate load from work on a busy machine; they
+move with codegen too, so attribute a change to one item only with a
+same-binary toggle. `baseline --bins DIR --rounds 5 --out FILE` writes every
+run with the build, machine and method. A metric's name is a contract: a
+benchmark keeps it. On this machine the 3% noise floor holds for one-thread
+rows only; with the owner's Docker stack busy, the spawned throughputs spread
+10 to 18%: read the one-thread rows and the instructions retired, and re-run a
+spawned row at seven rounds before calling it WORSE.
 
 Orion's baseline is `bench/baseline/orion-1.12.0.json`, from `bench/orion.sh`
 (`ORION_TAG=v1.12.0`), which runs Orion's own `bench.sh` scenarios with the
@@ -265,36 +253,28 @@ server's peak RSS; phase 7c's branch adds `ORION_COMMIT=<sha>` for a branch and
 `cluster` scenario brings Orion's HA stack up as its own compose project on a
 free loopback port, never 8080.
 
-### Branches and the pins
-
-`main` is 4.0; `v3-maintenance` holds 3.x and deploys the documentation site
-until phase 8. v3 is on `main` only as the published 3.15.0: `dataflow_rs_v3`
-in the root's differential tests and `host_call_floor`, and `dataflow-rs` in
-`corpus/v3`, two pins that `corpus/v3/tests/pins.rs` holds to one exact
-version. A 3.x fix on `v3-maintenance` that changes behaviour re-records its
-corpus cases there, after which `main` bumps the two pins together and
-re-records. Never edit a `.v3.json` by hand, and never to match v4: declare a
-deviation against a break instead.
-
 ### The corpus
 
-**The golden corpus** (`corpus/`, see its README) records what 3.15 does to a
-message, case by case: every row of the feature contract, every break and every
-error code. Each `corpus/cases/<area>/<name>.json` has its recording,
-`<name>.v3.json`, beside it. `corpus/record.sh [filter]` records against the
-pinned 3.15.0 (default build, then all-features); `cargo test -p
-dataflow-corpus-v3` checks that every recording still holds, and
-`corpus/tests/coverage.rs` that every contract row has a case. The comparator
-is order-sensitive, because key order is wire data.
+**The corpus** (`corpus/`, see its README) is a set of workflow cases,
+`corpus/cases/<area>/<name>.json`, each with its definitions, engine and
+steps, many in 3.x spellings the compat reader rewrites. `dataflow-corpus`
+loads them (`load_cases`) and holds the case format, the wire normalisation
+and independent models of the path rules and the trace replay, free of
+`dataflow-rs`. The root's tests read them: `compat.rs` migrates every
+definition, `ts_types.rs` holds every key a run writes to its declaration,
+`repository_definitions.rs` parses each one, and `path.rs`, `trace.rs` and
+`error_context.rs` hold the engine to the models.
 
-**The engine's driver**, `corpus/v4` (`dataflow-corpus-v4`), parses and
-compiles every corpus definition and holds each to v3's issues or to its
-declared deviation (`expect.rs`), runs every case it builds against v3's
-recording or a declared `RUN_DEVIATED` row, comparing observer events, and
-replays every trace against v3's snapshots or a declared `TRACE_DEVIATED` row.
-Run it in its three builds: default, `--features budget`, and
-`--features serde_json/preserve_order`. A difference no break explains is a
-finding, never a rewritten expectation.
+### Golden files
+
+A test that pins a whole output, too large for a literal, reads it from a
+golden file under `tests/golden/` (the lib's own tests under
+`tests/golden/lib/`, outside `src/` so nothing ships to crates.io), compared
+as text, key order included. `DATAFLOW_GOLDEN_WRITE=1` rewrites them; review
+the diff as a behaviour change. A golden must read the same in every build:
+under `preserve_order` a `json!` literal keeps its source order where the
+default build sorts it, so seeds, payloads and inputs feeding a golden are
+written with sorted keys.
 
 ### The documentation
 
@@ -381,7 +361,7 @@ Each rule lives once in the code; the test named beside it is what pins it.
   and `"extend"` stay O(entry): one `Change` per element at `path.<index>`,
   never the whole array. A literal path outside the three roots is
   `INVALID_PATH`; a root mapping merges; a path field given a non-string is
-  `INPUT_PARSE` (`tests/map_vs_v3.rs`, `src/function/builtins/map.rs`).
+  `INPUT_PARSE` (`src/function/builtins/map.rs`).
 - **A fan-out isolates every call and folds in element order.** Each element
   runs over its own bindings and overlay; the fold applies overlays in element
   order and stops at the first element that fails the task or halts, so
@@ -526,7 +506,6 @@ binary per topic under `tests/`, with shared fixtures in `tests/support/`:
 | `fingerprint.rs` | `Fingerprint`: stable, scheme-tagged, the golden value |
 | `function_testing.rs` | `function::testing::call` and `config` |
 | `host_calls.rs` | Host functions end to end: the overlay, layers, roots, `Ctx` |
-| `map_vs_v3.rs`, `parse_vs_v3.rs`, `run_vs_v3.rs` | The differential tests against the published 3.15.0 |
 | `observer.rs` | `Observer`: interest, the events, timings |
 | `operators.rs` | The operator table and the families' switches |
 | `ops_budget.rs` | `ops_budget` and `BUDGET_EXCEEDED` (needs `budget`) |
@@ -541,7 +520,6 @@ binary per topic under `tests/`, with shared fixtures in `tests/support/`:
 | `smoke.rs` | The crate version |
 | `trace.rs` | The trace: steps, changes, redaction, the budget, replay |
 | `ts_types.rs` | The bindings' drift and the wire check (needs `ts`) |
-| `vocabulary.rs` | Every error record the corpus writes reads back byte for byte |
 | `wire.rs` | Messages and traces read back byte for byte |
 
 A host tests one function with `function::testing::call(f, json!({..}))`,
@@ -551,8 +529,7 @@ which runs the real compile, overlay and layers with no engine assembled, and
 ## Release Process
 
 Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI; it
-never publishes, and the documentation site deploys from `v3-maintenance`
-(`docs.yml` on `main` runs only by hand until phase 8).
+never publishes, and `docs.yml` runs only by hand until phase 8.
 `.github/workflows/release.yml` fires only on a `v*` tag, validates that the
 tag matches the root `Cargo.toml` version, then publishes the derive, the crate,
 the wasm package and the UI package, and cuts a GitHub release whose notes are
@@ -567,7 +544,7 @@ is `publish = false`: it ships through npm only.
 `wasm/` and `ui/` read `4.0.0-dev`; `release.yml` checks that `wasm/`'s two
 versions, the derive's and the root's requirement on it, `ui/`'s and the
 install snippets' minor match the tag, and that `CHANGELOG.md` has the
-version's section. 3.x releases are tagged on `v3-maintenance`.
+version's section.
 
 ## The machine
 

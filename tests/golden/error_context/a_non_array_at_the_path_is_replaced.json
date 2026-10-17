@@ -1,0 +1,598 @@
+{
+  "metadata.errors over \"not a list\" at metadata.errors": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string"
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "errors": [
+            {
+              "workflow_id": "w",
+              "task_id": "bad",
+              "code": "TASK_STATUS_ERROR",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "bad2",
+              "code": "TASK_STATUS_ERROR",
+              "status": 501
+            }
+          ],
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "bad2",
+            "status_code": 501
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "m",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "metadata.errors",
+              "old_value": null,
+              "new_value": "not a list"
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 501
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad2 returned status 501",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "metadata.errors over {\"a\":1} at metadata.errors": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string"
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "errors": [
+            {
+              "workflow_id": "w",
+              "task_id": "bad",
+              "code": "TASK_STATUS_ERROR",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "bad2",
+              "code": "TASK_STATUS_ERROR",
+              "status": 501
+            }
+          ],
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "bad2",
+            "status_code": 501
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "m",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "metadata.errors",
+              "old_value": null,
+              "new_value": {
+                "a": 1
+              }
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 501
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad2 returned status 501",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "data.fail.list over 5 at data.fail": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "fail": {
+            "list": [
+              {
+                "workflow_id": "w",
+                "task_id": "bad",
+                "code": "TASK_STATUS_ERROR",
+                "status": 500
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "bad2",
+                "code": "TASK_STATUS_ERROR",
+                "status": 501
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "bad2",
+            "status_code": 501
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "m",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.fail",
+              "old_value": null,
+              "new_value": 5
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 501
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad2 returned status 501",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "data.items.list over [1,2] at data.items": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "items": {
+            "list": [
+              {
+                "workflow_id": "w",
+                "task_id": "bad",
+                "code": "TASK_STATUS_ERROR",
+                "status": 500
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "bad2",
+                "code": "TASK_STATUS_ERROR",
+                "status": 501
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "bad2",
+            "status_code": 501
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "m",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.items",
+              "old_value": null,
+              "new_value": [
+                1,
+                2
+              ]
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 501
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad2 returned status 501",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "data.items.0 over [1,2] at data.items": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "items": {
+            "0": [
+              {
+                "workflow_id": "w",
+                "task_id": "bad",
+                "code": "TASK_STATUS_ERROR",
+                "status": 500
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "bad2",
+                "code": "TASK_STATUS_ERROR",
+                "status": 501
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "bad2",
+            "status_code": 501
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "m",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.items",
+              "old_value": null,
+              "new_value": [
+                1,
+                2
+              ]
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 501
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad2 returned status 501",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "data.none.list over null at data.none": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "none": {
+            "list": [
+              {
+                "workflow_id": "w",
+                "task_id": "bad",
+                "code": "TASK_STATUS_ERROR",
+                "status": 500
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "bad2",
+                "code": "TASK_STATUS_ERROR",
+                "status": 501
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "bad2",
+            "status_code": 501
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "m",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 501
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad2 returned status 501",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "data.obj.list over {\"keep\":1} at data.obj": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "obj": {
+            "keep": 1,
+            "list": [
+              {
+                "workflow_id": "w",
+                "task_id": "bad",
+                "code": "TASK_STATUS_ERROR",
+                "status": 500
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "bad2",
+                "code": "TASK_STATUS_ERROR",
+                "status": 501
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "bad2",
+            "status_code": 501
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "m",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.obj",
+              "old_value": null,
+              "new_value": {
+                "keep": 1
+              }
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 501
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad2 returned status 501",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad2",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,617 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "limit": 0,
+          "zero": 0,
+          "breaks": [
+            0,
+            1
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "breaks",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "i": 0,
+          "j": 2
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "breaks",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.breaks.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "breaks",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.breaks.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "limit": 3,
+          "zero": 0,
+          "counter": [
+            0,
+            1,
+            2
+          ],
+          "setup": [
+            "ran"
+          ],
+          "with_setup": [
+            0,
+            1,
+            2
+          ],
+          "breaks": [
+            0,
+            1
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "breaks",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "i": 3,
+          "k": 3,
+          "j": 2
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.2",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "s",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.setup.0",
+              "old_value": null,
+              "new_value": "ran"
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.2",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "breaks",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.breaks.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "breaks",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.breaks.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "limit": 20,
+          "zero": 0,
+          "counter": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "setup": [
+            "ran"
+          ],
+          "with_setup": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "breaks": [
+            0,
+            1
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "breaks",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "i": 10,
+          "k": 10,
+          "j": 2
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.2",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.3",
+              "old_value": null,
+              "new_value": 3
+            }
+          ],
+          "status": 200,
+          "loop_counter": 3
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.4",
+              "old_value": null,
+              "new_value": 4
+            }
+          ],
+          "status": 200,
+          "loop_counter": 4
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.5",
+              "old_value": null,
+              "new_value": 5
+            }
+          ],
+          "status": 200,
+          "loop_counter": 5
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.6",
+              "old_value": null,
+              "new_value": 6
+            }
+          ],
+          "status": 200,
+          "loop_counter": 6
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.7",
+              "old_value": null,
+              "new_value": 7
+            }
+          ],
+          "status": 200,
+          "loop_counter": 7
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.8",
+              "old_value": null,
+              "new_value": 8
+            }
+          ],
+          "status": 200,
+          "loop_counter": 8
+        },
+        {
+          "workflow_id": "counter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.counter.9",
+              "old_value": null,
+              "new_value": 9
+            }
+          ],
+          "status": 200,
+          "loop_counter": 9
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "s",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.setup.0",
+              "old_value": null,
+              "new_value": "ran"
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.2",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.3",
+              "old_value": null,
+              "new_value": 3
+            }
+          ],
+          "status": 200,
+          "loop_counter": 3
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.4",
+              "old_value": null,
+              "new_value": 4
+            }
+          ],
+          "status": 200,
+          "loop_counter": 4
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.5",
+              "old_value": null,
+              "new_value": 5
+            }
+          ],
+          "status": 200,
+          "loop_counter": 5
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.6",
+              "old_value": null,
+              "new_value": 6
+            }
+          ],
+          "status": 200,
+          "loop_counter": 6
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.7",
+              "old_value": null,
+              "new_value": 7
+            }
+          ],
+          "status": 200,
+          "loop_counter": 7
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.8",
+              "old_value": null,
+              "new_value": 8
+            }
+          ],
+          "status": 200,
+          "loop_counter": 8
+        },
+        {
+          "workflow_id": "setup",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.with_setup.9",
+              "old_value": null,
+              "new_value": 9
+            }
+          ],
+          "status": 200,
+          "loop_counter": 9
+        },
+        {
+          "workflow_id": "breaks",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.breaks.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "breaks",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.breaks.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        }
+      ],
+      "errors": []
+    }
+  }
+]

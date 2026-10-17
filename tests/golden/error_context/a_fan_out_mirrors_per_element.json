@@ -1,0 +1,150 @@
+{
+  "in order": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "items": [
+            "ok",
+            503,
+            [
+              "record",
+              "ok"
+            ],
+            "err",
+            [
+              "record",
+              404
+            ],
+            [
+              "record",
+              "skip"
+            ]
+          ],
+          "text": "a string"
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "each",
+            "status_code": 404
+          },
+          "errors": [
+            {
+              "workflow_id": "w",
+              "task_id": "each",
+              "code": "TASK_STATUS_ERROR",
+              "status": 503
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "each",
+              "code": "HOST_WARNING",
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "each",
+              "code": "PARTNER_DOWN",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "each",
+              "code": "HOST_WARNING",
+              "status": 404
+            }
+          ]
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "each",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "each",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 503,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "each",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200,
+          "element_index": 2
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "each",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500,
+          "element_index": 3
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "each",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 404,
+          "element_index": 4
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task each returned status 503",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "each",
+          "timestamp": "<timestamp>",
+          "element_index": 1
+        },
+        {
+          "code": "HOST_WARNING",
+          "message": "recorded by the handler",
+          "path": null,
+          "timestamp": "<timestamp>",
+          "element_index": 2
+        },
+        {
+          "code": "PARTNER_DOWN",
+          "message": "Task each error: down",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "each",
+          "timestamp": "<timestamp>",
+          "element_index": 3
+        },
+        {
+          "code": "HOST_WARNING",
+          "message": "recorded by the handler",
+          "path": null,
+          "timestamp": "<timestamp>",
+          "element_index": 4
+        },
+        {
+          "code": "HOST_WARNING",
+          "message": "recorded by the handler",
+          "path": null,
+          "timestamp": "<timestamp>",
+          "element_index": 5
+        }
+      ]
+    }
+  }
+}

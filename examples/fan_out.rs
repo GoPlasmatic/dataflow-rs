@@ -1,13 +1,14 @@
 //! # Fan-out
 //!
-//! v4's port of v3's `fan_out`, a row of the v4 performance gate: one task
-//! fans out over 100 elements with `for_each`, on a message that carries a
-//! 2 MiB context. In 3.15 each call runs against its own fork of the
-//! message, so the fan-out copies the whole context once per element. v4
-//! binds each element beneath the call's own writes over the run's one view,
-//! which no call copies, so the gate requires this row to be faster.
+//! A row of the performance gate, its workload first written against 3.x:
+//! one task fans out over 100 elements with `for_each`, on a message that
+//! carries a 2 MiB context. In 3.x each call ran against its own fork of the
+//! message, so the fan-out copied the whole context once per element. The
+//! engine binds each element beneath the call's own writes over the run's one
+//! view, which no call copies, so an element's cost must not grow with the
+//! context.
 //!
-//! The function is the pricing step of the v4 design's worked example: it
+//! The function is a pricing step: it
 //! evaluates the element's `sku` and `qty` and writes a price to
 //! `temp_data.price`, which `collect` names, and the fold gathers the prices
 //! into `into` in element order.

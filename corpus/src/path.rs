@@ -1,5 +1,6 @@
-//! v3's dot paths on [`Json`], exactly as `set_nested_value` and
-//! `remove_nested_value` apply them (`corpus/v3/tests/path_vs_v3.rs` checks).
+//! The engine's dot paths on [`Json`], as 3.x's `set_nested_value` and
+//! `remove_nested_value` applied them: an independent model that
+//! `tests/path.rs` holds `Path` to.
 //!
 //! A segment is a key on an object, with one leading `#` stripped, and an index
 //! on an array, parsed from the raw segment, so `#20` is never an index. A

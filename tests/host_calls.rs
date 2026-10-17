@@ -470,8 +470,8 @@ async fn a_constant_is_lent() {
 
 #[tokio::test]
 async fn an_err_drops_the_calls_writes_and_keeps_its_records() {
-    // Break 1, as `breaks/handler_writes_then_err` records it against v3, and
-    // the record a call adds, as `run/host_contract` records it: kept as
+    // Break 1 (the corpus's `breaks/handler_writes_then_err`): the writes
+    // are dropped. The record a call adds (`run/host_contract`) is kept as
     // given, with the run's timestamp, before the recorder's own.
     let failing = probe(
         "t",
@@ -524,7 +524,7 @@ async fn an_err_drops_the_calls_writes_and_keeps_its_records() {
 
 #[tokio::test]
 async fn a_skip_keeps_the_writes_and_records_nothing() {
-    // v3's rule (`run/host_contract`'s `skipper`): no audit entry, no
+    // A `Skip` (`run/host_contract`'s `skipper`): no audit entry, no
     // progress, no record, and the writes stay.
     let (e, _) = engine(&[workflow(
         "w",
@@ -695,8 +695,8 @@ async fn a_root_write_takes_only_an_object_and_a_root_cannot_be_removed() {
         run.status()
     );
     assert_eq!(data(&m), json!({"fresh": true}));
-    // The audit's copy of the root's `Change` is v3's bytes: `replaced` is
-    // the trace's alone (I106, `tests/trace.rs`).
+    // The audit's copy of the root's `Change` carries no `replaced`: that
+    // flag is the trace's alone (I106, `tests/trace.rs`).
     assert_eq!(
         changes(&m, "t"),
         json!([{"path": "data", "old_value": {"kept": true},
@@ -708,63 +708,16 @@ async fn a_root_write_takes_only_an_object_and_a_root_cannot_be_removed() {
     );
 }
 
-/// v3's side of break 21: a handler assigning whatever it is given at `data`.
-mod v3_root {
-    use async_trait::async_trait;
-    use dataflow_rs_v3::{AsyncFunctionHandler, Result, TaskContext, TaskOutcome};
-    use datavalue::OwnedDataValue;
-    use serde_json::Value;
-
-    pub struct Write;
-
-    #[async_trait]
-    impl AsyncFunctionHandler for Write {
-        type Input = Value;
-
-        async fn execute(&self, ctx: &mut TaskContext<'_>, input: &Value) -> Result<TaskOutcome> {
-            ctx.set("data", OwnedDataValue::from(input));
-            Ok(TaskOutcome::Success)
-        }
-    }
-}
-
 #[tokio::test]
-async fn a_non_object_written_at_a_root_is_refused_where_v3_replaced_the_root() {
-    // Break 21. v3's `TaskContext::set` assigned whatever it was given, so a
-    // handler could turn `data` into an array, a string or a number; v4's
-    // `Ctx::set` refuses a non-object at a root (R52). The number alone is
-    // pinned above; this computes v3's side beside v4's, for each kind.
+async fn a_non_object_written_at_a_root_is_refused_for_every_kind() {
+    // Break 21: `Ctx::set` refuses a non-object at a root (R52), so a
+    // function cannot turn `data` into an array, a string or a number; the
+    // root is kept and the call fails with a `Config` error.
     for (value, kind) in [
         (json!([1, 2]), "an array"),
         (json!("text"), "a string"),
         (json!(5), "a number"),
     ] {
-        let v3_engine = dataflow_rs_v3::Engine::builder()
-            .register("write_root", v3_root::Write)
-            .with_workflow(
-                dataflow_rs_v3::Workflow::from_json(
-                    &json!({"id": "w", "name": "w", "tasks": [
-                        {"id": "t", "name": "t",
-                         "function": {"name": "write_root", "input": value}}
-                    ]})
-                    .to_string(),
-                )
-                .unwrap(),
-            )
-            .build()
-            .unwrap();
-        let mut v3 = dataflow_rs_v3::Message::builder()
-            .id("m")
-            .data_json(&json!({"kept": true}))
-            .build();
-        v3_engine.process_message(&mut v3).await.unwrap();
-        assert!(v3.errors().is_empty(), "{kind}: {:?}", v3.errors());
-        assert_eq!(
-            serde_json::to_value(v3.data()).unwrap(),
-            value,
-            "{kind}: v3 replaced the root"
-        );
-
         let (e, _) = engine(&[workflow(
             "w",
             &[],

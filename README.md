@@ -27,7 +27,7 @@ Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF 
 ### ⚡ Blazing Fast Performance
 Dataflow-rs targets high-throughput hot paths. Every expression, every task config and every write path is compiled once at build time; a run evaluates against one view of the message and reads the clock once.
 
-Measured at the 4.0 gate against 3.15.0, 16 of the 49 rows were judged faster and 25 better, 6 not slower, and the two that read worse at five rounds read not slower at seven; `loop_scaling`, a 1000-sweep append loop over a large context, ran in 1 to 3% of 3.15's time. The [Performance](#performance) section says how the gate measures and how to run the benchmarks yourself.
+Measured against 3.15.0 before 4.0's release, 16 of the 49 rows were judged faster and 25 better, 6 not slower, and the two that read worse at five rounds read not slower at seven; `loop_scaling`, a 1000-sweep append loop over a large context, ran in 1 to 3% of 3.15's time. The [Performance](#performance) section says how the gate measures and how to run the benchmarks yourself.
 
 ### 🧩 Full-Stack Ecosystem
 The same rule definitions run across your stack, not only in backend services:
@@ -390,13 +390,13 @@ Why it's fast:
 - **Nothing Unasked:** A run reads the clock once. Observer and trace costs exist only when one is attached; the unobserved path pays one branch per call
 - **Async I/O:** Non-blocking host functions on Tokio; a fan-out runs its calls concurrently without spawning
 
-Measured at the 4.0 gate against 3.15.0, 16 of the 49 rows were judged faster
-and 25 better, 6 not slower, and the two `micro_subtree_write_bench` rows that
-read worse at five rounds read not slower at seven; `loop_scaling` ran in 1 to
-3% of 3.15's time. The gate alternates the two
-builds within each round and judges each metric on the median of its
-per-round ratios, with a noise floor of 3% or half the inter-quartile range,
-whichever is larger; `bench/gate.py` runs it.
+Measured against 3.15.0 before 4.0's release, 16 of the 49 rows were judged
+faster and 25 better, 6 not slower, and the two `micro_subtree_write_bench`
+rows that read worse at five rounds read not slower at seven; `loop_scaling`
+ran in 1 to 3% of 3.15's time. The gate, `bench/gate.py`, compares two builds,
+a base commit against a candidate: it alternates them within each round and
+judges each metric on the median of its per-round ratios, with a noise floor
+of 3% or half the inter-quartile range, whichever is larger.
 
 **Tuning tip:** if you never read audit trails, run with
 `RunOptions::default().capture_changes(false)`, or keep only the last few
@@ -405,15 +405,15 @@ copies is the largest single saving in mapping-heavy workloads; in a looping
 workflow it also stops every sweep's copies from being held until the run
 ends. See the [performance guide](docs/src/advanced/performance.md) for more.
 
-Run the benchmarks yourself, always with `--release`. The crate's fourteen
-examples are its benchmarks ([CONTRIBUTING.md](CONTRIBUTING.md#benchmarks)
+Run the benchmarks yourself, always with `--release`. The crate has thirteen
+benchmark examples ([CONTRIBUTING.md](CONTRIBUTING.md#benchmarks)
 lists them); each checks its result before it times anything:
 
 ```bash
-cargo run --example benchmark --release             # Throughput + latency percentiles
-cargo run --example realistic_benchmark --release   # ISO 20022 -> SwiftMT-style workload
-cargo run --example loop_scaling --release          # 1000-sweep append loop over a large context
-cargo run --example host_call_floor --release       # One host call's own cost, v3 and v4 in one binary
+cargo run --example benchmark --release                # Throughput + latency percentiles
+cargo run --example realistic_benchmark --release      # ISO 20022 -> SwiftMT-style workload
+cargo run --example loop_scaling --release             # 1000-sweep append loop over a large context
+cargo run --example async_handler_benchmark --release  # Marginal cost of one host function call
 ```
 
 Numbers carry roughly ±2-3% run-to-run noise, so compare the mean of 3+ runs,

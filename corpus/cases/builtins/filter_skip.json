@@ -1,7 +1,5 @@
 {
   "description": "on_reject: \"skip\" skips the filter task alone: no audit entry, no progress write, and no terminal halt even on a terminal task; the next task runs.",
-  "covers": ["filter"],
-  "mirrors": ["tests/trace_options.rs::skip_step_reports_its_own_empty_diff_not_the_previous_tasks"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "first", "name": "first", "function": {"name": "map", "input": {"mappings": [

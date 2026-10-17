@@ -1,0 +1,94 @@
+{
+  "skipping": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "a": 1
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "m",
+            "status_code": 200
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "m",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.a",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200
+        }
+      ],
+      "errors": [
+        {
+          "code": "HOST_WARNING",
+          "message": "recorded by the handler",
+          "path": null,
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "clean": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "a": 1
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "ok",
+            "status_code": 200
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "m",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.a",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "ok",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200
+        }
+      ],
+      "errors": []
+    }
+  }
+}

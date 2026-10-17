@@ -1,6 +1,5 @@
 {
   "description": "Below the enabled level a log task skips only its evaluation: an info log whose message would fail to evaluate emits nothing and still records 200 and progress. At an enabled level fields are emitted in sorted key order, and a failing expression prints as <eval error>.",
-  "covers": ["log.level", "log.fields-order"],
   "engine": {"logs": "warn"},
   "workflows": [
     {"id": "w", "name": "w", "tasks": [

@@ -72,8 +72,8 @@ watched machinery one branch per call.
 
 ## Benchmarking
 
-The crate's examples are its fourteen benchmarks. Always run them in
-release; a debug build measures nothing useful:
+The crate has thirteen benchmark examples. Always run them in release; a
+debug build measures nothing useful:
 
 ```bash
 cargo run --example realistic_benchmark --release        # ISO 20022 -> SwiftMT-style workload
@@ -83,7 +83,6 @@ cargo run --example micro_aggregate_bench --release      # Aggregate-heavy (redu
 cargo run --example micro_subtree_write_bench --release  # k map writes into one depth-2 subtree
 cargo run --example micro_multiworkflow_bench --release  # N chained workflows, one message
 cargo run --example async_handler_benchmark --release    # Marginal cost of one host function call
-cargo run --example host_call_floor --release            # One host call's own cost, 3.15 and 4.0 in one binary
 cargo run --example map_performance_test --release       # 10 chained mappings across all 3 roots
 cargo run --example loop_scaling --release               # 1000-sweep append loop over a large context
 cargo run --example large_context_handler --release      # Five expression fields over a 2 MiB context, per call
@@ -115,17 +114,19 @@ measurement and then every "after" one conflates the change with thermal
 drift: a measured 8.5% improvement on `realistic_benchmark` collapsed to
 0.2% once the same two binaries were alternated round-robin instead.
 
-`bench/gate.py` does this mechanically. Every gate benchmark prints one
+`bench/gate.py` does this mechanically, comparing two builds: a base commit
+(A) against a candidate (B). Every gate benchmark prints one
 machine-readable line, `GATE {...}`, and the script reads only that:
 
 ```bash
-python3 bench/gate.py build --v3 --out /tmp/gate/v3   # 3.15's thirteen, from a worktree of the freeze
-python3 bench/gate.py build --out /tmp/gate/v4        # the root's fourteen
-python3 bench/gate.py compare --a /tmp/gate/v3 --b /tmp/gate/v4 --rounds 5
+git switch --detach main && python3 bench/gate.py build --out /tmp/gate/base
+git switch my-branch     && python3 bench/gate.py build --out /tmp/gate/candidate
+python3 bench/gate.py compare --a /tmp/gate/base --b /tmp/gate/candidate --rounds 5
 ```
 
-`build` builds the examples in release from a clean tree and copies the
-binaries out of `target/`, so a rebuild cannot clobber one. `compare` runs
+`build` builds the examples in release from a clean tree at `HEAD` and
+copies the thirteen binaries out of `target/`, so a rebuild cannot clobber
+one. `compare` runs
 the two builds round-robin for the rounds asked plus one, alternating the
 order within each pair, discards the first round as cold, and judges each
 metric on the **median of its per-round ratios**, B over A, oriented so a
@@ -136,9 +137,9 @@ instructions retired by each binary, which separate the work the code does
 from the load on the machine; they move with code layout too, so attribute
 a change to one item only with a same-binary toggle.
 
-### What the gate measured
+### What 4.0 measured against 3.15
 
-At the 4.0 gate against 3.15, five rounds after a cold one, on a machine
+Before 4.0's release, against 3.15, five rounds after a cold one, on a machine
 with a busy container stack: 16 rows faster, 25 better, 6 not slower and 2
 WORSE of 49 judged rows. The two WORSE rows were
 `micro_subtree_write_bench`'s `k=100` (1.039) and `scaling` (1.104), with
@@ -156,14 +157,11 @@ write:
 | `large_context_handler` | `per_field.mean` | 0.001 |
 | `fan_out` | `per_element.mean` | 0.002 |
 | `orion_connector` | `connector.mean` | 0.45 |
-| `host_call_floor` | `call.ratio`, one message with one host call | 1.016, not slower |
 
 `loop_scaling` at about 2% of 3.15's time, `fan_out` and
 `large_context_handler` at under 1%, are the one view and the overlay: 3.15
 converted the whole context into the arena once per sync stretch and once
-per fan-out element, and 4.0 does neither. `host_call_floor` is the
-self-judged row for what one host call costs on its own, with both engines
-in one process on one thread: `call.ratio` carries the verdict.
+per fan-out element, and 4.0 does neither.
 
 ## Optimization tips
 

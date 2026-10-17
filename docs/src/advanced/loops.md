@@ -427,8 +427,8 @@ always did, with no added checks per message.
 A run keeps one view of the context for its whole length and splices each
 write into it, so a sweep pays for what it writes, not for the bytes the
 context carries. The `loop_scaling` benchmark, a 1,000-sweep loop over a
-256 KiB context appending to a log every sweep, measured at the 4.0 gate
-against 3.15 at about 2% of 3.15's time per sweep, with the per-sweep
+256 KiB context appending to a log every sweep, measured against 3.15
+before 4.0's release at about 2% of 3.15's time per sweep, with the per-sweep
 figure flat between 250 and 1,000 sweeps. See
 [Performance](./performance.md).
 

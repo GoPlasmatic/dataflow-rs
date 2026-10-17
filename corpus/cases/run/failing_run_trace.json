@@ -1,7 +1,5 @@
 {
   "description": "A run whose second task returns Err without continue_on_error stops the engine. v3's trace holds only the step before the failure: the failing step is missing (break 5). The failing handler's write stays in the context with an empty change list on its audit entry.",
-  "covers": ["break.5", "break.13"],
-  "mirrors": ["tests/tracing.rs"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "ok", "name": "ok", "function": {"name": "map", "input": {"mappings": [
@@ -12,11 +10,5 @@
       {"id": "never", "name": "never", "function": {"name": "map", "input": {"mappings": [
         {"path": "data.never", "logic": true}]}}}]}
   ],
-  "steps": [{"run": {"message": {}}}],
-  "deviations": [
-    {"break": "1", "paths": ["/steps/0/run/message/context/data/partial"],
-     "note": "v4 drops a host function's writes when it returns Err"},
-    {"break": "4", "paths": ["/steps/0/run/message/errors/1"],
-     "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"}
-  ]
+  "steps": [{"run": {"message": {}}}]
 }

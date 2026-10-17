@@ -1,0 +1,487 @@
+{
+  "metadata.errors": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string"
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "xml",
+            "status_code": 500
+          },
+          "errors": [
+            {
+              "workflow_id": "w",
+              "task_id": "five",
+              "code": "TASK_STATUS_ERROR",
+              "status": 503
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "err",
+              "code": "PARTNER_DOWN",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "rules",
+              "code": "VALIDATION_ERROR",
+              "status": 400
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "rules",
+              "code": "VALIDATION_ERROR",
+              "status": 400
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "map",
+              "code": "TASK_STATUS_ERROR",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "xml",
+              "code": "VALIDATION_ERROR",
+              "status": 500
+            }
+          ]
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "five",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 503
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "err",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "four",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 404
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "rules",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 400
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "xml",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task five returned status 503",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "five",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "PARTNER_DOWN",
+          "message": "Task err error: down",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "err",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "not ok",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "no name",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task map returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "Task xml error: Validation error: ParseXml: Source 'data.xml' is not a string",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "xml",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "data.failures.list": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "failures": {
+            "list": [
+              {
+                "workflow_id": "w",
+                "task_id": "five",
+                "code": "TASK_STATUS_ERROR",
+                "status": 503
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "err",
+                "code": "PARTNER_DOWN",
+                "status": 500
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "rules",
+                "code": "VALIDATION_ERROR",
+                "status": 400
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "rules",
+                "code": "VALIDATION_ERROR",
+                "status": 400
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "map",
+                "code": "TASK_STATUS_ERROR",
+                "status": 500
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "xml",
+                "code": "VALIDATION_ERROR",
+                "status": 500
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "xml",
+            "status_code": 500
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "five",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 503
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "err",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "four",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 404
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "rules",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 400
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "xml",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task five returned status 503",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "five",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "PARTNER_DOWN",
+          "message": "Task err error: down",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "err",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "not ok",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "no name",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task map returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "Task xml error: Validation error: ParseXml: Source 'data.xml' is not a string",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "xml",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "temp_data.errs": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string"
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "xml",
+            "status_code": 500
+          }
+        },
+        "temp_data": {
+          "errs": [
+            {
+              "workflow_id": "w",
+              "task_id": "five",
+              "code": "TASK_STATUS_ERROR",
+              "status": 503
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "err",
+              "code": "PARTNER_DOWN",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "rules",
+              "code": "VALIDATION_ERROR",
+              "status": 400
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "rules",
+              "code": "VALIDATION_ERROR",
+              "status": 400
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "map",
+              "code": "TASK_STATUS_ERROR",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "xml",
+              "code": "VALIDATION_ERROR",
+              "status": 500
+            }
+          ]
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "five",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 503
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "err",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "four",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 404
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "rules",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 400
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "xml",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task five returned status 503",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "five",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "PARTNER_DOWN",
+          "message": "Task err error: down",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "err",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "not ok",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "no name",
+          "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task map returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "VALIDATION_ERROR",
+          "message": "Task xml error: Validation error: ParseXml: Source 'data.xml' is not a string",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "xml",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  "a 4xx alone": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string"
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "four",
+            "status_code": 404
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "four",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 404
+        }
+      ],
+      "errors": []
+    }
+  }
+}

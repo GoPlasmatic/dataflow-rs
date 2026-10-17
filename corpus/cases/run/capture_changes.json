@@ -1,7 +1,5 @@
 {
   "description": "capture_changes defaults to true, so the audit trail carries each write's change; with it off the entries stay and their changes are empty.",
-  "covers": ["run.capture-changes"],
-  "mirrors": ["src/message::capture_changes_defaults_to_true_on_every_constructor"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

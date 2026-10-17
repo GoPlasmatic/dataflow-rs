@@ -1,0 +1,143 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "items": [
+            1,
+            2,
+            3,
+            99,
+            99,
+            99
+          ],
+          "seen": [
+            1,
+            2,
+            3
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "grow",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "i": 3,
+          "x": 3
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "load",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.items",
+              "old_value": "replaced by setup",
+              "new_value": [
+                1,
+                2,
+                3
+              ]
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "seen",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.seen.0",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "grow",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.items.3",
+              "old_value": null,
+              "new_value": 99
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "seen",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.seen.1",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "grow",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.items.4",
+              "old_value": null,
+              "new_value": 99
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "seen",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.seen.2",
+              "old_value": null,
+              "new_value": 3
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "grow",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.items.5",
+              "old_value": null,
+              "new_value": 99
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        }
+      ],
+      "errors": []
+    }
+  }
+]

@@ -1,11 +1,5 @@
 {
   "description": "A setup step that fails, in a workflow without continue_on_error, stops the message before any sweep.",
-  "covers": [
-    "loop.setup"
-  ],
-  "mirrors": [
-    "src/workflow_executor::a_setup_error_stops_the_message_unless_the_workflow_continues_on_error"
-  ],
   "workflows": [
     {
       "id": "w",
@@ -80,15 +74,6 @@
       "run": {
         "message": {}
       }
-    }
-  ],
-  "deviations": [
-    {
-      "break": "4",
-      "paths": [
-        "/steps/0/run/message/errors/1"
-      ],
-      "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"
     }
   ]
 }

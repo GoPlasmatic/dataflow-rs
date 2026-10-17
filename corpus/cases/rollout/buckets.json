@@ -1,7 +1,5 @@
 {
   "description": "A rollout is {bucket_start, bucket_end}, half-open over 0..100: bucket 0 and 49 run a, 50 runs b, a workflow without a rollout runs for every bucket, and a message with no bucket is admitted by every split.",
-  "covers": ["rollout"],
-  "mirrors": ["src/rollout::accepts_is_a_half_open_range", "tests/rollout.rs::a_message_with_no_bucket_is_admitted_by_every_split"],
   "workflows": [
     {"id": "a", "name": "a", "priority": 0, "rollout": {"bucket_start": 0, "bucket_end": 50}, "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

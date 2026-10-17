@@ -1,12 +1,5 @@
 {
   "description": "A bound that could never run a sweep (max not above init) and a non-advancing increment parse, and are refused at build; validate_authored reports each.",
-  "covers": [
-    "loop.bounds"
-  ],
-  "mirrors": [
-    "src/workflow::loop_config_rejects_a_bound_that_could_never_run_a_sweep",
-    "src/workflow::loop_config_rejects_a_non_advancing_increment"
-  ],
   "workflows": [
     {
       "id": "max_at_init",

@@ -208,34 +208,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dataflow-corpus-v3"
-version = "0.0.0"
-dependencies = [
- "async-trait",
- "dataflow-corpus",
- "dataflow-rs 3.15.0",
- "log",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "dataflow-corpus-v4"
-version = "0.0.0"
-dependencies = [
- "dataflow-corpus",
- "dataflow-rs 4.0.0-dev",
- "log",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "dataflow-docs-tests"
 version = "0.0.0"
 dependencies = [
- "dataflow-rs 4.0.0-dev",
+ "dataflow-rs",
  "env_logger",
  "log",
  "serde",
@@ -245,34 +221,11 @@ dependencies = [
 
 [[package]]
 name = "dataflow-rs"
-version = "3.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46a2a3a0f4b83a94956548cdfd7c69d46ac51dc4eb9cd1adafe034677a91ccdb"
-dependencies = [
- "async-trait",
- "bumpalo",
- "chrono",
- "datalogic-rs",
- "datavalue-rs",
- "futures-util",
- "log",
- "quick-xml",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "dataflow-rs"
 version = "4.0.0-dev"
 dependencies = [
- "async-trait",
  "bumpalo",
  "chrono",
  "dataflow-corpus",
- "dataflow-rs 3.15.0",
  "dataflow-rs-derive",
  "datalogic-rs",
  "datavalue-rs",
@@ -306,7 +259,7 @@ name = "dataflow-wasm"
 version = "4.0.0-dev"
 dependencies = [
  "console_error_panic_hook",
- "dataflow-rs 4.0.0-dev",
+ "dataflow-rs",
  "js-sys",
  "serde",
  "serde_json",

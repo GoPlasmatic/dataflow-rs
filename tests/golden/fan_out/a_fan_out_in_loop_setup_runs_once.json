@@ -1,0 +1,152 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "n": 2
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "batch": [
+            {
+              "i": 0,
+              "id": "a"
+            },
+            {
+              "i": 1,
+              "id": "b"
+            }
+          ],
+          "out": {
+            "i": 1,
+            "id": "b"
+          },
+          "by_eval": {
+            "id": "b"
+          },
+          "i": 3
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "s",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "a"
+              }
+            },
+            {
+              "path": "temp_data.batch.0",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "s",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.batch.1",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.n",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.n",
+              "old_value": 0,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.n",
+              "old_value": 1,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        }
+      ],
+      "errors": []
+    }
+  }
+]

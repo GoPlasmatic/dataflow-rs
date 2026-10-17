@@ -1,0 +1,152 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "items": [
+            1,
+            2,
+            3
+          ],
+          "snapshots": [
+            {
+              "list": [
+                1
+              ]
+            },
+            {
+              "list": [
+                2
+              ]
+            },
+            {
+              "list": [
+                3
+              ]
+            }
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "snap",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "i": 3,
+          "x": 3,
+          "acc": {
+            "list": [
+              3
+            ]
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "add",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.acc.list.0",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "snap",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.snapshots.0",
+              "old_value": null,
+              "new_value": {
+                "list": [
+                  1
+                ]
+              }
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "add",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.acc.list.0",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "snap",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.snapshots.1",
+              "old_value": null,
+              "new_value": {
+                "list": [
+                  2
+                ]
+              }
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "add",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.acc.list.0",
+              "old_value": null,
+              "new_value": 3
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "snap",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.snapshots.2",
+              "old_value": null,
+              "new_value": {
+                "list": [
+                  3
+                ]
+              }
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        }
+      ],
+      "errors": []
+    }
+  }
+]

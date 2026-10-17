@@ -6,7 +6,7 @@ get a change merged.
 ## Repository Layout
 
 This is a Cargo workspace with four published artifacts that share one
-version number, four members that are never published, and the book:
+version number, two members that are never published, and the book:
 
 | Path | Artifact | Registry |
 |---|---|---|
@@ -16,9 +16,7 @@ version number, four members that are never published, and the book:
 | `ui/` | `@goplasmatic/dataflow-ui`, the React debugger | npm |
 | `docs/` | mdBook user guide, deployed to GitHub Pages | — |
 | `docs-tests/` | Compiles the book's and the README's Rust examples as doctests | — |
-| `corpus/` | The golden corpus: the cases, the comparator and the coverage tests | — |
-| `corpus/v3/` | The corpus recorder, on the published 3.15.0 | — |
-| `corpus/v4/` | The corpus driver that holds the engine at the root to the recordings | — |
+| `corpus/` | The corpus: the cases the engine's tests load, and the tools that read them | — |
 
 `wasm/` and `derive/` are workspace members; `ui/` is a separate npm project
 driven by the release workflow. The root depends on the derive by path *and*
@@ -46,10 +44,8 @@ cd dataflow-rs
 cargo test --workspace --all-features
 ```
 
-You should see 1055 passing tests: the root's 862 (828 tests and 34 doctests),
-the derive's 2, `corpus/v4`'s 24, `corpus/`'s 33, `corpus/v3`'s 4 and
-`docs-tests`' 130 (117 page doctests, 11 README doctests, the derive README's
-one and its coverage test).
+Every test should pass: the root's tests and doctests, the derive's, the
+corpus crate's and `docs-tests`' (the book's and the README's doctests).
 
 The count is feature-dependent. The optional operator families are `#[cfg]`-gated
 on both sides: some tests only exist when a family is on, others only when it is
@@ -59,14 +55,12 @@ off. The default build therefore reports a different number:
 cargo test
 ```
 
-should report 837 passing. A bare cargo command at the root selects the root
-package; every other member takes `-p`, as in `cargo test -p dataflow-corpus-v4`
-or `cargo test -p dataflow-docs-tests`. Use the bare command for the default
+A bare cargo command at the root selects the root package; every other member
+takes `-p`, as in `cargo test -p dataflow-corpus` or
+`cargo test -p dataflow-docs-tests`. Use the bare command for the default
 build, not `--workspace`: `wasm/` depends on the root with `all-operators`, and
 cargo unifies features across the members one invocation selects, so
-`--workspace` would turn every family back on. `-p dataflow-rs` cannot do it
-either: beside the published 3.15.0 that `corpus/v3` and the root's own
-differential tests pull in, the name is ambiguous and cargo refuses it.
+`--workspace` would turn every family back on.
 
 ### Running the debugger against your engine changes
 
@@ -158,10 +152,8 @@ them; run the ones your change touches:
 ```bash
 cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
 cargo test
-cargo test -p dataflow-corpus-v4
 cargo test -p dataflow-docs-tests
 cargo test --features serde_json/preserve_order
-cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order
 cargo test --features ts --test ts_types
 for f in datetime ext-string ext-array ext-math ext-control ext-object \
          error-handling all-operators tensor budget; do
@@ -280,30 +272,18 @@ Three conventions when writing snippets:
   `text`. Only ```` ```rust ```` fences are compiled, so the JSON in a page is
   not checked; read it against the definition types in `src/def/types.rs`.
 
-## The Golden Corpus
+## The Corpus
 
-`corpus/cases/<area>/<name>.json` records what 3.x does to a message, case by
-case, and each case's recording sits beside it as `<name>.v3.json`. The engine
-at the root is held to those recordings by `cargo test -p dataflow-corpus-v4`:
-it compiles every definition and runs every case against the recording, or
-against a deviation it declares. See `corpus/README.md`.
-
-Two rules:
-
-- **Never edit a `.v3.json` by hand**, and never to match the engine at the
-  root. A recording is what 3.x did. Where 4.0 deliberately differs, declare
-  the deviation in `corpus/v4` against the break it belongs to.
-- **Recordings come from `corpus/record.sh`**, which runs the recorder against
-  the published 3.15.0 that `corpus/v3` pins. A 3.x fix lands on
-  `v3-maintenance` and is released from there; `main` then bumps the pins
-  together (`corpus/v3`'s and the root's `dataflow_rs_v3` dev-dependency, which
-  `corpus/v3/tests/pins.rs` holds to one version) and re-records. Read each
-  new or changed recording before committing it. The comparator is
-  order-sensitive, because key order is wire data.
+`corpus/cases/<area>/<name>.json` holds one case per behaviour: definitions,
+an engine configuration and the steps run against it. The engine's tests load
+them through the `dataflow-corpus` crate, which also holds an order-sensitive
+JSON value, normalisation, and independent models of the dot-path rules and
+of trace replay that the engine is held to. Every case type refuses unknown
+keys, so a typo fails loudly. See `corpus/README.md`.
 
 ## Benchmarks
 
-The root's examples are its fourteen benchmarks. Always build them with
+The root's examples include its thirteen benchmarks. Always build them with
 `--release`; a debug build measures nothing useful.
 
 ```bash
@@ -314,7 +294,6 @@ cargo run --example micro_aggregate_bench --release      # Aggregate-heavy (redu
 cargo run --example micro_subtree_write_bench --release  # k map writes into one depth-2 subtree
 cargo run --example micro_multiworkflow_bench --release  # N chained workflows, one message
 cargo run --example async_handler_benchmark --release    # Marginal cost of one host function call
-cargo run --example host_call_floor --release            # One host call's own cost, v3 and v4 in one binary
 cargo run --example map_performance_test --release       # 10 chained mappings across all 3 roots
 cargo run --example loop_scaling --release               # 1000-sweep append loop over a large context
 cargo run --example large_context_handler --release      # Five expression fields over a 2 MiB context, per call
@@ -327,9 +306,8 @@ Every benchmark checks its result before it times anything, so a workload
 that silently does less than it says fails rather than reporting a plausible
 number, and prints one machine-readable `GATE {...}` line last.
 `bench/gate.py` builds the examples, runs them round-robin and compares two
-builds. `host_call_floor` is the self-judged row: it runs the published 3.x
-and the engine at the root in one binary, in interleaved rounds. The
-examples share `examples/shared/`, which is not an example itself.
+builds, a base commit against a candidate. The examples share
+`examples/shared/`, which is not an example itself.
 
 Results carry roughly ±2–3% run-to-run noise plus occasional transient P99
 spikes. **Compare the mean of at least 3 runs** before claiming a regression or
@@ -357,13 +335,9 @@ in front of users.
 
 ## Pull Requests
 
-**Which branch.** `main` is dataflow-rs 4.0. A fix for the 3.x release on
-crates.io and npm goes to `v3-maintenance`, which takes fixes only and
-deploys the documentation site until 4.0 is released; a feature goes to
-`main`.
+**Which branch.** `main` is dataflow-rs 4.0; every change goes there.
 
-1. Fork the repository and branch from `main`, or from `v3-maintenance` for a
-   3.x fix
+1. Fork the repository and branch from `main`
 2. Make your change, with tests covering it
 3. Run the checks above
 4. Open a PR describing what changed and why
@@ -378,10 +352,8 @@ definitions and the compiler (`parse.rs`, `compat.rs`, `compile.rs`,
 `repository_definitions.rs`), functions and their configs (`derive.rs`,
 `config_fields.rs`, `documents.rs`, `function_testing.rs`, `expr.rs`,
 `path.rs`, `operators.rs`, `secrets_isolation.rs`), the wire shapes
-(`wire.rs`, `run_json.rs`, `ts_types.rs`, `vocabulary.rs`), the
-differentials that hold the engine to the published 3.x (`run_vs_v3.rs`,
-`map_vs_v3.rs`, `parse_vs_v3.rs`), the feature-gated `ops_budget.rs`, and
-`smoke.rs` for the crate version.
+(`wire.rs`, `run_json.rs`, `ts_types.rs`), the feature-gated
+`ops_budget.rs`, and `smoke.rs` for the crate version.
 Pick the file whose topic already matches; add a new one only for a new area.
 
 Because each file is its own crate, a fixture needed by more than one of them
@@ -428,17 +400,16 @@ control flow in a status code. `function::testing::call` runs one call through
 the real compile, overlay and layers, for a unit test without a workflow.
 
 The eight built-ins (`src/function/builtins/`) are different: they run inline
-on the run's view, their names are reserved, and each is a row of the
-contract the corpus records, so adding one is a contract change, not a
+on the run's view, their names are reserved, and each is part of the
+engine's contract, so adding one is a contract change, not a
 registration. It needs a case in the corpus, a row in `BUILTIN_FUNCTIONS`
 (which the wasm package's `engine_facts()` and the UI read), a page in
 `docs/src/built-in-functions/` and a row in the README's table.
 
 ## Releases
 
-Releases are tag-gated and maintainer-run. Pushing to `main` runs CI; the
-documentation site deploys from `v3-maintenance` until 4.0 is released, and a
-push never publishes. A `v*` tag triggers `.github/workflows/release.yml`,
+Releases are tag-gated and maintainer-run. Pushing to `main` runs CI and never
+publishes; the documentation site deploys by hand until 4.0 is released. A `v*` tag triggers `.github/workflows/release.yml`,
 which validates that the tag matches the root `Cargo.toml` version, that
 `wasm/` (its own version and its `dataflow-rs` requirement), `derive/` (its
 version and the root's requirement on it), `ui/` and the install snippets in
@@ -451,7 +422,6 @@ versions move together, the derive's included: the root's manifest names
 `dataflow-rs-derive` from crates.io at exactly the root's version, so the
 derive publishes first. Contributors do not need to bump versions in a PR,
 but a user-visible change gets a line under `CHANGELOG.md`'s `[Unreleased]`.
-3.x releases are tagged on `v3-maintenance`.
 
 ## Security
 

@@ -1,7 +1,5 @@
 {
   "description": "The three context roots are always objects: a message seeded with a non-object data, metadata or temp_data keeps an empty object there, and writes land normally.",
-  "covers": ["run.context-roots"],
-  "mirrors": ["src/message::non_object_seeds_are_ignored_to_preserve_the_context_invariant"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

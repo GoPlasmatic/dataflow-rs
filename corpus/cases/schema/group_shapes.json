@@ -1,16 +1,5 @@
 {
   "description": "A tasks key makes a group even when it is not an array (refused at parse as a malformed group); a group carrying halt_on or for_each is refused at parse; an empty group is refused at parse; groups nested eight deep parse and run, nine deep are refused at parse.",
-  "covers": [
-    "schema.group-detection",
-    "schema.group-refusals"
-  ],
-  "mirrors": [
-    "src/steps::a_tasks_key_that_is_not_an_array_is_still_a_group",
-    "tests/task_groups.rs::halt_on_defaults_to_never_and_a_group_cannot_carry_it",
-    "src/for_each::a_group_carrying_for_each_is_refused_at_parse",
-    "tests/task_groups.rs::an_empty_group_is_rejected_at_parse_time",
-    "tests/task_groups.rs::groups_nested_too_deeply_are_rejected_at_parse_time"
-  ],
   "workflows": [
     {
       "id": "not_array",

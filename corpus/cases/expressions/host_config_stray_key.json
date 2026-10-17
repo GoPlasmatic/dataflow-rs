@@ -1,15 +1,10 @@
 {
   "description": "A host function's config keeps whatever keys the host's serde settings accept: the script's input has a stray key 'colour', and v3 builds and runs it.",
-  "covers": ["break.2a"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "script", "input": {
         "colour": "blue",
         "set": [{"path": "data.ran", "raw": true}]}}}]}
   ],
-  "steps": [{"run": {"message": {}}}],
-  "deviations": [
-    {"break": "2a", "paths": ["/definitions/0/checked", "/build", "/steps"],
-     "note": "A derived v4 config refuses the unknown key, so the workflow does not compile"}
-  ]
+  "steps": [{"run": {"message": {}}}]
 }

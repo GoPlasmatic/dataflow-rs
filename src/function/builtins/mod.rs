@@ -1,20 +1,19 @@
 //! The built-in functions' configs, and the dispatch over them.
 //!
 //! Crate-private: code outside the crate reaches a built-in's config
-//! through the `Compiler`, as `tests/map_vs_v3.rs` and the v4 corpus driver
-//! do.
+//! through the `Compiler`, as the integration tests do.
 //!
-//! What each config accepts is held to v3's build by the differential in
+//! What each config accepts and refuses, and where, is held by the rows in
 //! `tests.rs`. Each config's keys, and those of `map`'s mappings and
 //! `validation`'s rules, are `def`'s tables for its input: the compat reader
 //! moves any other key into the task's `ext` before a config compiles, as v3
 //! ignored them, and the tests hold the two to one set.
 
-#[cfg(test)]
-pub(crate) mod differential;
 mod filter;
 mod log;
 mod map;
+#[cfg(test)]
+pub(crate) mod one_task;
 mod parse;
 mod paths;
 mod publish;

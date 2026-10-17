@@ -1,0 +1,102 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "items": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e"
+          ],
+          "max": [
+            "a",
+            "b"
+          ],
+          "stride": [
+            "b",
+            "d"
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "stride",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "i": 2,
+          "x": "b",
+          "j": 5,
+          "y": "d"
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "max",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.max.0",
+              "old_value": null,
+              "new_value": "a"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "max",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.max.1",
+              "old_value": null,
+              "new_value": "b"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "stride",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.stride.0",
+              "old_value": null,
+              "new_value": "b"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "stride",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.stride.1",
+              "old_value": null,
+              "new_value": "d"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 3
+        }
+      ],
+      "errors": []
+    }
+  }
+]

@@ -234,8 +234,8 @@ assert_eq!(elements, [Some(0), Some(1)]);
 
 A fan-out copies nothing: each call reads the run's one view with its element
 bound beneath it, and the fold splices each call's writes in. The `fan_out`
-benchmark, 100 elements over a 2 MiB context, measured at the 4.0 gate
-against 3.15 at well under 1% of 3.15's time per message, since 3.15 copied
+benchmark, 100 elements over a 2 MiB context, measured against 3.15 before
+4.0's release at well under 1% of 3.15's time per message, since 3.15 copied
 the context once per element. See [Performance](./performance.md).
 
 ## Validation

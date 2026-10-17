@@ -1,7 +1,5 @@
 {
   "description": "An empty over writes into = [] with one audit record and no element; a non-array over is one task error, which continue_on_error lets the workflow carry on past.",
-  "covers": ["fanout.over"],
-  "mirrors": ["tests/for_each.rs::an_empty_over_writes_an_empty_array_and_one_record", "tests/for_each.rs::a_non_array_over_is_one_task_error"],
   "workflows": [
     {"id": "empty", "name": "empty", "priority": 0, "tasks": [
       {"id": "t", "name": "t",
@@ -16,11 +14,5 @@
       {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
         {"path": "data.after_ran", "logic": true}]}}}]}
   ],
-  "steps": [{"run": {"message": {"data": {"empty": [], "scalar": "x"}}}}],
-  "deviations": [
-    {"break": "4", "paths": ["/steps/0/run/message/errors/0/code", "/steps/0/run/message/errors/0/message",
-                             "/steps/0/run/trace/steps/1/message/errors/0/code",
-                             "/steps/0/run/trace/steps/1/message/errors/0/message"],
-     "note": "v4 records the non-array over as the evaluation failure it is: LOGIC_ERROR, \"Logic evaluation error: ...\", where v3 wrapped it as a task error, TASK_ERROR (I91)"}
-  ]
+  "steps": [{"run": {"message": {"data": {"empty": [], "scalar": "x"}}}}]
 }

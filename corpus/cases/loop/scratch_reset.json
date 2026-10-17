@@ -1,11 +1,5 @@
 {
   "description": "loop.scratch is reset to {} at the start of every sweep: each sweep reads temp_data.s.mark before setting it, and sees it absent every time (\"fresh\", never \"leaked\"); temp_data.keep is untouched, and s is left holding the last sweep's state.",
-  "covers": [
-    "loop.scratch"
-  ],
-  "mirrors": [
-    "src/workflow_executor::scratch_is_reset_at_the_start_of_every_iteration"
-  ],
   "workflows": [
     {
       "id": "w",

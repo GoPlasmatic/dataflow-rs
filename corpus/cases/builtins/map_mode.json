@@ -1,7 +1,5 @@
 {
   "description": "mode: append pushes one element and records one change at path.<index>; extend pushes each element with a change each; appending to a non-array target fails the mapping and leaves the value. mode without logic, and appending to a root, are INVALID_MAPPING.",
-  "covers": ["map.mode"],
-  "mirrors": ["tests/map_append.rs::each_append_records_only_its_element", "tests/map_append.rs::extend_pushes_each_element_and_a_null_result_follows_on_null", "tests/map_append.rs::validate_authored_reports_the_mode_rules_at_their_keys"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "continue_on_error": true, "function": {"name": "map", "input": {"mappings": [

@@ -1,7 +1,5 @@
 {
   "description": "continue_on_error covers 5xx and Err only: a 4xx is recorded and the next task runs regardless; a 5xx or Err under continue_on_error is recorded and the next task runs; a 5xx without it stops the engine.",
-  "covers": ["run.continue-on-error"],
-  "mirrors": ["tests/error_handling.rs::task_status_500_pushes_status_error_to_message", "src/workflow_executor::a_4xx_task_status_is_recorded_per_sweep_without_stopping_the_loop"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "rejected", "name": "rejected", "function": {"name": "script", "input": {"outcome": {"status": 400}}}},
@@ -13,9 +11,5 @@
       {"id": "stops", "name": "stops", "function": {"name": "script", "input": {"outcome": {"status": 503}}}},
       {"id": "never", "name": "never", "function": {"name": "map", "input": {"mappings": [{"path": "data.never", "logic": true}]}}}]}
   ],
-  "steps": [{"run": {"message": {}}}],
-  "deviations": [
-    {"break": "4", "paths": ["/steps/0/run/message/errors/3"],
-     "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"}
-  ]
+  "steps": [{"run": {"message": {}}}]
 }

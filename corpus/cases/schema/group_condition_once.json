@@ -1,11 +1,5 @@
 {
   "description": "A group's condition is evaluated once, on entry: a member that turns the condition off does not stop its sibling.",
-  "covers": [
-    "schema.group-condition"
-  ],
-  "mirrors": [
-    "tests/task_groups.rs::a_group_condition_is_evaluated_once_on_entry"
-  ],
   "workflows": [
     {
       "id": "w",

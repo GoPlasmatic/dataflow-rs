@@ -1,0 +1,223 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "filter": [
+            0,
+            1,
+            2
+          ],
+          "terminal_task": [
+            0,
+            "stop"
+          ],
+          "terminal_group": [
+            0,
+            1,
+            2,
+            "group"
+          ],
+          "setup_halts": [
+            "setup"
+          ],
+          "after": true
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "after",
+            "task_id": "after",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "i": 3
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "filter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.filter.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "filter",
+          "task_id": "gate",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "filter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.filter.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "filter",
+          "task_id": "gate",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "filter",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.filter.2",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "filter",
+          "task_id": "gate",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 299,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "terminal_task",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.terminal_task.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "terminal_task",
+          "task_id": "stop",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.terminal_task.1",
+              "old_value": null,
+              "new_value": "stop"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "terminal_group",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.terminal_group.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "terminal_group",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.terminal_group.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "terminal_group",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.terminal_group.2",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "terminal_group",
+          "task_id": "in_group",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.terminal_group.3",
+              "old_value": null,
+              "new_value": "group"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 3
+        },
+        {
+          "workflow_id": "setup_halts",
+          "task_id": "s",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.setup_halts.0",
+              "old_value": null,
+              "new_value": "setup"
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "after",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.after",
+              "old_value": null,
+              "new_value": true
+            }
+          ],
+          "status": 200
+        }
+      ],
+      "errors": []
+    }
+  }
+]

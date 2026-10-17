@@ -1,0 +1,130 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "setup": [
+            "ok"
+          ],
+          "after": true
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "after",
+            "task_id": "after",
+            "status_code": 200
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "ok",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.setup.0",
+              "old_value": null,
+              "new_value": "ok"
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        },
+        {
+          "workflow_id": "after",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.after",
+              "old_value": null,
+              "new_value": true
+            }
+          ],
+          "status": 200
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  },
+  {
+    "code": "TASK_ERROR",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "setup": [
+            "ok"
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "bad",
+            "status_code": 500
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "ok",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.setup.0",
+              "old_value": null,
+              "new_value": "ok"
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  }
+]

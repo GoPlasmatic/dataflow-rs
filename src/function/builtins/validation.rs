@@ -74,37 +74,44 @@ impl SyncFunction for ValidationConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::function::builtins::differential::same;
+    use crate::function::builtins::one_task::{Golden, Observed};
     use serde_json::{Value, json};
 
     fn context() -> Value {
         json!({"data": {"a": 5, "ok": true, "name": "x", "zero": 0, "list": [1]}})
     }
 
-    async fn rules(rules: Value) -> crate::function::builtins::differential::Observed {
-        same(
+    /// `validation` with `rules`, its whole observation held by `golden`.
+    fn rules(golden: &mut Golden, rules: Value) -> Observed {
+        golden.observe(
             "validation",
             &json!({"rules": rules}),
             &Value::Null,
             &context(),
         )
-        .await
     }
 
-    #[tokio::test]
-    async fn every_rule_passing_is_ok_and_records_nothing() {
-        let observed = rules(json!([
-            {"logic": true, "message": "m0"},
-            {"logic": {"var": "data.ok"}, "message": "m1"},
-            {"logic": {"==": [{"var": "data.a"}, 5]}, "message": "m2"},
-        ]))
-        .await;
+    #[test]
+    fn every_rule_passing_is_ok_and_records_nothing() {
+        let mut golden = Golden::new("validation", "every_rule_passing_is_ok_and_records_nothing");
+        let observed = rules(
+            &mut golden,
+            json!([
+                {"logic": true, "message": "m0"},
+                {"logic": {"var": "data.ok"}, "message": "m1"},
+                {"logic": {"==": [{"var": "data.a"}, 5]}, "message": "m2"},
+            ]),
+        );
         assert_eq!(observed.status, Some(200));
         assert_eq!(observed.errors, "[]");
     }
 
-    #[tokio::test]
-    async fn a_rule_that_is_not_a_literal_true_fails_with_its_message() {
+    #[test]
+    fn a_rule_that_is_not_a_literal_true_fails_with_its_message() {
+        let mut golden = Golden::new(
+            "validation",
+            "a_rule_that_is_not_a_literal_true_fails_with_its_message",
+        );
         // `false`, and the truthy non-booleans a condition never accepts.
         for logic in [
             json!(false),
@@ -115,52 +122,68 @@ mod tests {
             json!({"var": "data.list"}),
             json!({"var": "data.missing"}),
         ] {
-            let observed = rules(json!([{"logic": logic, "message": "nope"}])).await;
+            let observed = rules(&mut golden, json!([{"logic": logic, "message": "nope"}]));
             assert_eq!(observed.status, Some(400), "{logic}");
             assert!(observed.errors.contains("VALIDATION_ERROR"), "{logic}");
             assert!(observed.errors.contains("nope"), "{logic}");
         }
     }
 
-    #[tokio::test]
-    async fn an_evaluation_error_is_evaluation_error_and_the_rest_still_run() {
-        let observed = rules(json!([
-            {"logic": true, "message": "m0"},
-            {"logic": false, "message": "m1"},
-            {"logic": {"/": [1, {"var": "data.zero"}]}, "message": "m2"},
-            {"logic": false, "message": "m3"},
-        ]))
-        .await;
+    #[test]
+    fn an_evaluation_error_is_evaluation_error_and_the_rest_still_run() {
+        let mut golden = Golden::new(
+            "validation",
+            "an_evaluation_error_is_evaluation_error_and_the_rest_still_run",
+        );
+        let observed = rules(
+            &mut golden,
+            json!([
+                {"logic": true, "message": "m0"},
+                {"logic": false, "message": "m1"},
+                {"logic": {"/": [1, {"var": "data.zero"}]}, "message": "m2"},
+                {"logic": false, "message": "m3"},
+            ]),
+        );
         assert_eq!(observed.status, Some(400));
         assert!(observed.errors.contains("Failed to evaluate rule 2: "));
         assert!(observed.errors.contains("EVALUATION_ERROR"));
         assert!(observed.errors.contains("m3"));
     }
 
-    #[tokio::test]
-    async fn a_message_is_rendered_only_when_its_rule_fails() {
+    #[test]
+    fn a_message_is_rendered_only_when_its_rule_fails() {
+        let mut golden = Golden::new(
+            "validation",
+            "a_message_is_rendered_only_when_its_rule_fails",
+        );
         let broken = json!({"/": [1, {"var": "data.zero"}]});
         // Passing: the broken message is never evaluated.
-        let observed = rules(json!([{"logic": true, "message": broken}])).await;
+        let observed = rules(&mut golden, json!([{"logic": true, "message": broken}]));
         assert_eq!(observed.status, Some(200));
         assert_eq!(observed.errors, "[]");
-        // Failing: the failure is reported, with v3's stand-in text.
-        let observed = rules(json!([{"logic": false, "message": broken}])).await;
+        // Failing: the failure is reported, with a stand-in text.
+        let observed = rules(&mut golden, json!([{"logic": false, "message": broken}]));
         assert!(observed.errors.contains("Validation failed"));
         // A computed message names the value that failed.
-        let observed = rules(json!([{
-            "logic": false,
-            "message": {"cat": ["a was ", {"var": "data.a"}, " and name ", {"var": "data.name"}]}
-        }]))
-        .await;
+        let observed = rules(
+            &mut golden,
+            json!([{
+                "logic": false,
+                "message": {"cat": ["a was ", {"var": "data.a"}, " and name ", {"var": "data.name"}]}
+            }]),
+        );
         assert!(observed.errors.contains("a was 5 and name x"));
-        // A non-string message renders as its JSON, as v3's resolve does.
-        rules(json!([{"logic": false, "message": {"var": "data.list"}}])).await;
-        rules(json!([{"logic": false, "message": 7}])).await;
+        // A non-string message renders as its JSON.
+        rules(
+            &mut golden,
+            json!([{"logic": false, "message": {"var": "data.list"}}]),
+        );
+        rules(&mut golden, json!([{"logic": false, "message": 7}]));
     }
 
-    #[tokio::test]
-    async fn no_rules_is_ok() {
-        assert_eq!(rules(json!([])).await.status, Some(200));
+    #[test]
+    fn no_rules_is_ok() {
+        let mut golden = Golden::new("validation", "no_rules_is_ok");
+        assert_eq!(rules(&mut golden, json!([])).status, Some(200));
     }
 }

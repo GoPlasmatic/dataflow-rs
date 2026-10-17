@@ -1,6 +1,5 @@
 {
   "description": "Workflows run in ascending priority, stably among equals, whatever order they are declared in.",
-  "covers": ["schema.priority", "run.priority-order", "run.sequential"],
   "workflows": [
     {"id": "late", "name": "late", "priority": 5, "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

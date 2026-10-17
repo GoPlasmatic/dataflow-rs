@@ -1,10 +1,9 @@
 name: Deploy Documentation
 
-# `main` carries v4 from the freeze until 4.0.0, and the live docs must keep
-# describing the 3.x release users install, so they deploy from
-# `v3-maintenance` (its own copy of this file has the push trigger). Phase 8
-# restores the push trigger here: `push: branches: [main]` with the paths
-# docs/**, wasm/**, ui/**, src/** and this file.
+# By hand until 4.0.0 is released, so the live docs keep describing the 3.x
+# release users install. Phase 8 restores the push trigger here:
+# `push: branches: [main]` with the paths docs/**, wasm/**, ui/**, src/** and
+# this file.
 on:
   workflow_dispatch:
 

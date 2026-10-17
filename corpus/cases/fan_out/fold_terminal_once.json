@@ -1,7 +1,5 @@
 {
   "description": "terminal and halt_on apply once, to the whole fan-out: every element runs, then the workflow halts. halt_on: failure halts after the whole fan-out, not at its first failed element.",
-  "covers": ["fanout.fold"],
-  "mirrors": ["tests/for_each.rs::terminal_halts_after_the_whole_fan_out", "tests/for_each.rs::halt_on_failure_halts_after_the_whole_fan_out"],
   "workflows": [
     {"id": "terminal", "name": "terminal", "priority": 0, "tasks": [
       {"id": "t", "name": "t", "terminal": true,

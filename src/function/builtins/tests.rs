@@ -1,6 +1,6 @@
 //! The built-in configs: the dispatch, the defaults, the two path types, what
-//! each config records, and the differential that holds what each one accepts
-//! to what v3's build accepted.
+//! each config records, and the rows that hold what each one accepts and
+//! refuses, and where.
 
 use super::filter::RejectAction;
 use super::log::LogLevel;
@@ -598,7 +598,7 @@ fn the_fields_say_what_each_config_records() {
 }
 
 // ---------------------------------------------------------------------------
-// The differential against v3
+// What each config accepts and refuses
 // ---------------------------------------------------------------------------
 
 /// What v4 says of a row's input: through `def::parse` with the compat reader
@@ -614,29 +614,16 @@ enum V4 {
     Refuses(&'static str, IssueCode),
 }
 
-/// Why a row may be one v3 accepts and v4 refuses.
-#[derive(Clone, Copy, Debug)]
-enum Why {
-    /// A literal path outside `data`, `metadata` and `temp_data` (break 15):
-    /// v3 read it as a top-level context key.
-    Break15,
-    /// A literal path that is not a string (the widened break 15): v3
-    /// read `7` or `null` as the name `"7"` or `"null"`.
-    Break15Widened,
-}
-
-/// One input, what v4 says of it, and, when v3 disagrees, why it may.
+/// One input and what v4 says of it.
 struct Row {
     input: Value,
     v4: V4,
-    why: Option<Why>,
 }
 
 fn ok(input: Value) -> Row {
     Row {
         input,
         v4: V4::Accepts,
-        why: None,
     }
 }
 
@@ -644,7 +631,6 @@ fn ok_with(input: Value, at: &'static str, code: IssueCode) -> Row {
     Row {
         input,
         v4: V4::AcceptsWith(at, code),
-        why: None,
     }
 }
 
@@ -652,35 +638,17 @@ fn refused(input: Value, at: &'static str, code: IssueCode) -> Row {
     Row {
         input,
         v4: V4::Refuses(at, code),
-        why: None,
-    }
-}
-
-impl Row {
-    fn because(mut self, why: Why) -> Self {
-        self.why = Some(why);
-        self
     }
 }
 
 /// Where the one task keeps its input.
 const INPUT: &str = "tasks[0].function.input";
 
-/// The one-task workflow both versions read a row's input in.
+/// The one-task workflow a row's input is read in.
 fn workflow(name: &str, input: &Value) -> Value {
     json!({"id": "w", "name": "w", "tasks": [
         {"id": "t", "name": "t", "function": {"name": name, "input": input}}
     ]})
-}
-
-/// What v3 says: `Workflow::from_json`, then `Engine::build`.
-fn v3_accepts(name: &str, input: &Value) -> bool {
-    dataflow_rs_v3::Workflow::from_json(&workflow(name, input).to_string()).is_ok_and(|w| {
-        dataflow_rs_v3::Engine::builder()
-            .with_workflow(w)
-            .build()
-            .is_ok()
-    })
 }
 
 /// Every issue v4 reports: `def::parse` with the compat reader on, then,
@@ -738,18 +706,18 @@ fn map_rows() -> Vec<Row> {
             "mappings[0].logic",
             InvalidMapping,
         ),
+        // Break 15: 3.x read a literal path outside the three roots as a
+        // top-level context key, and a non-string one as its text.
         refused(
             json!({"mappings": [{"path": "extra.x", "logic": 1}]}),
             "mappings[0].path",
             InvalidPath,
-        )
-        .because(Why::Break15),
+        ),
         refused(
             json!({"mappings": [{"path": 7, "logic": 1}]}),
             "mappings[0].path",
             InputParse,
-        )
-        .because(Why::Break15Widened),
+        ),
         ok(
             json!({"mappings": [{"path": {"cat": ["data.", {"var": "data.k"}]},
                                 "logic": {"var": "data.y"}}]}),
@@ -774,7 +742,7 @@ fn map_rows() -> Vec<Row> {
     ]
 }
 
-/// Lists of mappings v3 accepts: every `on_null` and `mode` with `logic`,
+/// Lists of mappings `map` accepts, as 3.x did: every `on_null` and `mode` with `logic`,
 /// under each spelling of a `false` `unset`; a removal and a `null` logic; a
 /// context root; `#` paths; computed paths.
 fn accepted_mapping_lists() -> Vec<Vec<Value>> {
@@ -818,10 +786,9 @@ fn accepted_mapping_lists() -> Vec<Vec<Value>> {
 }
 
 #[test]
-fn map_keeps_every_mapping_v3_accepts() {
+fn map_keeps_every_accepted_mapping() {
     for list in accepted_mapping_lists() {
         let input = json!({"mappings": list});
-        assert!(v3_accepts("map", &input), "v3 refuses {input}");
         let (config, issues) = compile::<MapConfig>(&input);
         let config = config.unwrap_or_else(|| panic!("{input}: {issues:?}"));
         assert_eq!(config.mappings.len(), list.len(), "{input}");
@@ -959,17 +926,15 @@ fn parse_rows() -> Vec<Row> {
         ok(json!({"source": "data.raw", "target": "parsed"})),
         ok(json!({"source": "metadata.raw", "target": "parsed"})),
         ok(json!({"source": "temp_data.raw", "target": "parsed"})),
+        // Break 15, and its widening to a source that is not a string.
         refused(
             json!({"source": "extra.x", "target": "t"}),
             "source",
             InvalidPath,
-        )
-        .because(Why::Break15),
-        refused(json!({"source": "", "target": "t"}), "source", InvalidPath).because(Why::Break15),
-        refused(json!({"source": null, "target": "t"}), "source", InputParse)
-            .because(Why::Break15Widened),
-        refused(json!({"source": 7, "target": "t"}), "source", InputParse)
-            .because(Why::Break15Widened),
+        ),
+        refused(json!({"source": "", "target": "t"}), "source", InvalidPath),
+        refused(json!({"source": null, "target": "t"}), "source", InputParse),
+        refused(json!({"source": 7, "target": "t"}), "source", InputParse),
         // docs/src/built-in-functions/parse.md's computed source and target.
         ok(
             json!({"source": {"cat": ["data.batches.", {"var": "temp_data.i"}]},
@@ -979,18 +944,17 @@ fn parse_rows() -> Vec<Row> {
         ok(json!({"source": "payload", "target": {"cat": ["in_", {"var": "data.slot"}]}})),
         ok(json!({"source": "payload", "target": "data.t"})),
         ok(json!({"source": "payload", "target": ""})),
+        // The widened break 15: a target that is not a string.
         refused(
             json!({"source": "payload", "target": null}),
             "target",
             InputParse,
-        )
-        .because(Why::Break15Widened),
+        ),
         refused(
             json!({"source": "payload", "target": 7}),
             "target",
             InputParse,
-        )
-        .because(Why::Break15Widened),
+        ),
         refused(json!(7), "", InputParse),
         // I54: moved into the task's `ext`.
         ok_with(
@@ -1013,14 +977,11 @@ fn publish_rows() -> Vec<Row> {
         // corpus/cases/builtins/publish.json's spelling.
         ok(json!({"source": "data.obj", "target": "pretty_out", "pretty": true})),
         ok(json!({"source": "", "target": ""})),
-        refused(json!({"source": null, "target": "t"}), "source", InputParse)
-            .because(Why::Break15Widened),
-        refused(json!({"source": 7, "target": "t"}), "source", InputParse)
-            .because(Why::Break15Widened),
-        refused(json!({"source": "s", "target": null}), "target", InputParse)
-            .because(Why::Break15Widened),
-        refused(json!({"source": "s", "target": 7}), "target", InputParse)
-            .because(Why::Break15Widened),
+        // The widened break 15: a source or target that is not a string.
+        refused(json!({"source": null, "target": "t"}), "source", InputParse),
+        refused(json!({"source": 7, "target": "t"}), "source", InputParse),
+        refused(json!({"source": "s", "target": null}), "target", InputParse),
+        refused(json!({"source": "s", "target": 7}), "target", InputParse),
         ok(json!({"source": "s", "target": "t", "pretty": true})),
         refused(
             json!({"source": "s", "target": "t", "pretty": null}),
@@ -1066,7 +1027,7 @@ fn mismatch(row: &Row, issues: &[(String, IssueCode, Severity)]) -> Option<Strin
 }
 
 #[test]
-fn every_config_accepts_what_v3s_build_accepted() {
+fn every_config_accepts_and_refuses_what_its_rows_say() {
     let tables: [(&[&str], Vec<Row>); 6] = [
         (&["map"], map_rows()),
         (&["validation"], validation_rows()),
@@ -1081,24 +1042,8 @@ fn every_config_accepts_what_v3s_build_accepted() {
         for row in rows {
             for name in *names {
                 let input = &row.input;
-                let v3 = v3_accepts(name, input);
-                let issues = v4_issues(name, input);
-                let v4 = !issues.iter().any(|(_, _, s)| *s == Severity::Rejected);
-                if let Some(why) = mismatch(row, &issues) {
+                if let Some(why) = mismatch(row, &v4_issues(name, input)) {
                     failures.push(format!("{name} {input}: {why}"));
-                }
-                match row.why {
-                    None if v3 != v4 => failures.push(format!(
-                        "{name} {input}: v3 {}, v4 {}, and the row gives no reason",
-                        verdict(v3),
-                        verdict(v4)
-                    )),
-                    Some(why) if !(v3 && !v4) => failures.push(format!(
-                        "{name} {input}: pinned as {why:?}, but v3 {} and v4 {}",
-                        verdict(v3),
-                        verdict(v4)
-                    )),
-                    _ => {}
                 }
             }
         }
@@ -1109,8 +1054,4 @@ fn every_config_accepts_what_v3s_build_accepted() {
         failures.len(),
         failures.join("\n")
     );
-}
-
-fn verdict(accepts: bool) -> &'static str {
-    if accepts { "accepts" } else { "refuses" }
 }

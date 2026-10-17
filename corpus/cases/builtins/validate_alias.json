@@ -1,13 +1,9 @@
 {
   "description": "validate is an alias of validation: a failing rule under the old name behaves exactly as validation does.",
-  "covers": ["validation", "break.8"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "check", "name": "check", "function": {"name": "validate", "input": {"rules": [
         {"logic": false, "message": "alias failed"}]}}}]}
   ],
-  "steps": [{"run": {"message": {}}}],
-  "deviations": [
-    {"break": "8", "paths": ["/definitions/0/authored"], "note": "v4's compat reader rewrites validate to validation and reports the rewrite as an Advisory"}
-  ]
+  "steps": [{"run": {"message": {}}}]
 }

@@ -1,0 +1,174 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "id": "a",
+              "w": [
+                [
+                  "data.prices.a",
+                  1
+                ]
+              ]
+            },
+            {
+              "id": "b",
+              "w": [
+                [
+                  "data.prices.b",
+                  2
+                ]
+              ]
+            }
+          ],
+          "outs": [
+            {
+              "i": 0,
+              "id": "a"
+            },
+            {
+              "i": 1,
+              "id": "b"
+            }
+          ],
+          "prices": {
+            "a": 1,
+            "b": 2
+          },
+          "after_ran": true
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "after",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 1,
+            "id": "b"
+          },
+          "by_eval": {
+            "id": "b",
+            "w": [
+              [
+                "data.prices.b",
+                2
+              ]
+            ]
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.prices.a",
+              "old_value": null,
+              "new_value": 1
+            },
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "a",
+                "w": [
+                  [
+                    "data.prices.a",
+                    1
+                  ]
+                ]
+              }
+            },
+            {
+              "path": "data.outs.0",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.prices.b",
+              "old_value": null,
+              "new_value": 2
+            },
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "b",
+                "w": [
+                  [
+                    "data.prices.b",
+                    2
+                  ]
+                ]
+              }
+            },
+            {
+              "path": "data.outs.1",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.after_ran",
+              "old_value": null,
+              "new_value": true
+            }
+          ],
+          "status": 200
+        }
+      ],
+      "errors": []
+    }
+  }
+]

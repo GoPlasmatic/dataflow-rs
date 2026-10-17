@@ -1,7 +1,5 @@
 {
   "description": "http_call, enrich and publish_kafka are config only: the build succeeds without a handler and each task fails every message with FUNCTION_NOT_FOUND. Their configs refuse unknown fields when the definition parses.",
-  "covers": ["integration-configs", "break.3", "break.10", "code.FUNCTION_NOT_FOUND"],
-  "mirrors": ["tests/public_api.rs::a_handler_less_enrich_is_not_dispatchable_and_really_does_fail", "src/config::publish_kafka_rejects_unknown_fields"],
   "workflows": [
     {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
       {"id": "call", "name": "call", "continue_on_error": true, "function": {"name": "http_call", "input": {"connector": "c", "method": "POST", "path": "/x"}}},
@@ -10,9 +8,5 @@
     {"id": "typo", "name": "typo", "tasks": [
       {"id": "kafka", "name": "kafka", "function": {"name": "publish_kafka", "input": {"connector": "c", "topic": "t", "tpoic": "typo"}}}]}
   ],
-  "steps": [{"run": {"message": {}}}],
-  "deviations": [
-    {"break": "3", "paths": ["/definitions", "/build", "/steps"], "note": "v4 reports an unregistered function as a compile issue for its workflow, which then never runs"},
-    {"break": "10", "paths": ["/definitions"], "note": "the three configs belong to the host in v4; the engine only rewrites their aliases"}
-  ]
+  "steps": [{"run": {"message": {}}}]
 }

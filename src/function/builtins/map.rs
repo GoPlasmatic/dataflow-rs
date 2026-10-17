@@ -1,7 +1,7 @@
 //! `map`'s config: JSONLogic-driven writes to context paths, and removals.
 //!
 //! The rules between a mapping's keys are v3's (`AuthoredMapping::problem`),
-//! message for message, and `tests/map_vs_v3.rs` holds them to it.
+//! message for message, kept for compatibility.
 
 use crate::base::{Change, IssueCode, Result};
 use crate::expr::arena::with_arena;
@@ -609,29 +609,59 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // The call, against v3's run
+    // The call
     // -----------------------------------------------------------------------
 
     use crate::expr::arena;
-    use crate::function::builtins::differential::{
-        Observed, V4Task, mapping_grid, seed, v3, v3_task, v4, v4_task,
+    use crate::function::builtins::one_task::{
+        Golden, Observed, Task, run_once, seed, sorted, task,
     };
     use crate::state::{RunContext, Tuning};
     use std::borrow::Cow;
 
-    /// `map` with `mappings` over `context`, on both sides and with capture
-    /// on and off; v4's capture-on run, once both agree. `json!` sorts an
-    /// object's keys, so a seeded root's keys are in alphabetical order.
-    async fn both(mappings: Value, context: &Value) -> Observed {
-        let input = json!({"mappings": mappings});
-        let mut on = None;
-        for capture in [true, false] {
-            let want = v3("map", &input, &Value::Null, context, capture).await;
-            let got = v4("map", &input, &Value::Null, context, capture);
-            assert_eq!(got, want, "{mappings} over {context}, capture {capture}");
-            on.get_or_insert(got);
+    /// `map` with `mappings` over `context`, with capture on and off, its
+    /// whole observation held by `golden`; the capture-on run.
+    fn both(golden: &mut Golden, mappings: Value, context: &Value) -> Observed {
+        golden.observe("map", &json!({"mappings": mappings}), &Value::Null, context)
+    }
+
+    /// Every combination of `logic` (absent, present, `null`), `unset`
+    /// (absent, `true`, `false`), `on_null` (absent, `skip`, `unset`), `mode`
+    /// (absent, `set`, `append`, `extend`) and `path` (`data`, `data.x`).
+    fn mapping_grid() -> Vec<Value> {
+        let logics = [None, Some(json!({"var": "data.y"})), Some(Value::Null)];
+        let unsets = [None, Some(true), Some(false)];
+        let on_nulls = [None, Some("skip"), Some("unset")];
+        let modes = [None, Some("set"), Some("append"), Some("extend")];
+        let paths = ["data", "data.x"];
+        let mut all = Vec::new();
+        for logic in &logics {
+            for unset in unsets {
+                for on_null in on_nulls {
+                    for mode in modes {
+                        for path in paths {
+                            let mut m = serde_json::Map::new();
+                            m.insert("path".into(), json!(path));
+                            if let Some(logic) = logic {
+                                m.insert("logic".into(), logic.clone());
+                            }
+                            if let Some(unset) = unset {
+                                m.insert("unset".into(), json!(unset));
+                            }
+                            if let Some(on_null) = on_null {
+                                m.insert("on_null".into(), json!(on_null));
+                            }
+                            if let Some(mode) = mode {
+                                m.insert("mode".into(), json!(mode));
+                            }
+                            all.push(Value::Object(m));
+                        }
+                    }
+                }
+            }
         }
-        on.expect("the capture-on run")
+        assert_eq!(all.len(), 216);
+        all
     }
 
     /// The grid's contexts: the target `data.x` missing, an array or a
@@ -656,47 +686,51 @@ mod tests {
         contexts
     }
 
-    #[tokio::test]
-    async fn map_matches_v3_on_the_mapping_grid() {
+    /// Over the grid, a mapping compiles or not, and each one that does
+    /// leaves, over each context, what `tests/golden/lib/builtins/map_grid.json` holds: per
+    /// mapping, `"refused"` or one observation per context.
+    #[test]
+    fn map_on_the_mapping_grid() {
+        let mut golden = Golden::new("map_grid", "map_on_the_mapping_grid");
         let contexts = grid_contexts();
         let (mut runs, mut refused) = (0, 0);
         for mapping in mapping_grid() {
+            let mapping = sorted(&mapping);
             let input = json!({"mappings": [mapping]});
-            let Some(v3_task) = v3_task("map", &input) else {
-                assert!(
-                    v4_task("map", &input).is_none(),
-                    "v4 compiles what v3 refuses: {mapping}"
-                );
+            let name = mapping.to_string();
+            let Some(task) = task("map", &input) else {
+                golden.case(name, OwnedDataValue::String("refused".to_owned()));
                 refused += 1;
                 continue;
             };
-            let v4_task = v4_task("map", &input)
-                .unwrap_or_else(|| panic!("v4 refuses what v3 builds: {mapping}"));
-            for context in &contexts {
-                for capture in [true, false] {
-                    let want = v3_task.run(&Value::Null, context, capture).await;
-                    let got = v4_task.run(&Value::Null, context, capture);
-                    assert_eq!(got, want, "{mapping} over {context}, capture {capture}");
+            let observed = contexts
+                .iter()
+                .map(|context| {
                     runs += 1;
-                }
-            }
+                    task.run_both(&Value::Null, context).golden()
+                })
+                .collect();
+            golden.case(name, OwnedDataValue::Array(observed));
         }
-        // v3 refuses 151 of the 216, so 65 run, each over every context with
-        // capture on and off.
+        // 151 of the 216 are refused, so 65 run, each over every context.
         assert_eq!(refused, 151);
-        assert_eq!(runs, 65 * contexts.len() * 2);
+        assert_eq!(runs, 65 * contexts.len());
     }
 
-    #[tokio::test]
-    async fn a_root_write_merges_and_records_one_change_at_the_root() {
+    #[test]
+    fn a_root_write_merges_and_records_one_change_at_the_root() {
+        let mut golden = Golden::new(
+            "map",
+            "a_root_write_merges_and_records_one_change_at_the_root",
+        );
         let got = both(
+            &mut golden,
             json!([
                 {"path": "temp_data", "logic": {"field2": "second"}},
                 {"path": "data", "logic": {"var": "temp_data"}}
             ]),
             &json!({"data": {"a": 1}, "temp_data": {"field1": "first"}}),
-        )
-        .await;
+        );
         assert_eq!(
             got.context,
             r#"{"data":{"a":1,"field1":"first","field2":"second"},"metadata":{},"temp_data":{"field1":"first","field2":"second"}}"#
@@ -708,23 +742,24 @@ mod tests {
 
         // Anything but an object replaces the slot.
         both(
+            &mut golden,
             json!([{"path": "temp_data", "logic": [1]}]),
             &json!({"temp_data": {"x": 1}}),
-        )
-        .await;
+        );
     }
 
-    #[tokio::test]
-    async fn a_computed_destination_is_written() {
+    #[test]
+    fn a_computed_destination_is_written() {
+        let mut golden = Golden::new("map", "a_computed_destination_is_written");
         let got = both(
+            &mut golden,
             json!([
                 {"path": {"cat": ["data.accounts.", {"var": "data.id"}, ".balance"]}, "logic": 42},
                 {"path": {"cat": ["data.slot_", {"var": "data.n"}]}, "logic": true},
                 {"path": {"cat": ["temp_data.", "folded"]}, "logic": {"var": "data.id"}}
             ]),
             &json!({"data": {"id": "ACC7", "n": 3}}),
-        )
-        .await;
+        );
         assert_eq!(
             got.context,
             r#"{"data":{"id":"ACC7","n":3,"accounts":{"ACC7":{"balance":42}},"slot_3":true},"metadata":{},"temp_data":{"folded":"ACC7"}}"#
@@ -737,9 +772,11 @@ mod tests {
         assert!(got.changes.contains(r#""path":"data.slot_3""#));
     }
 
-    #[tokio::test]
-    async fn later_mappings_see_earlier_writes() {
+    #[test]
+    fn later_mappings_see_earlier_writes() {
+        let mut golden = Golden::new("map", "later_mappings_see_earlier_writes");
         let got = both(
+            &mut golden,
             json!([
                 {"path": "data.a", "logic": 1},
                 {"path": "data.b", "logic": {"+": [{"var": "data.a"}, 1]}},
@@ -753,17 +790,18 @@ mod tests {
                 {"path": "data.saw_merge", "logic": {"var": "data.merged"}}
             ]),
             &json!({"temp_data": {"x": "stale", "y": 1}}),
-        )
-        .await;
+        );
         assert_eq!(
             got.context,
             r#"{"data":{"a":1,"b":2,"name":"n","by_n":2,"missing_after":["temp_data.x"],"list":[1],"first":1,"merged":true,"saw_merge":true},"metadata":{},"temp_data":{"y":1}}"#
         );
     }
 
-    #[tokio::test]
-    async fn append_and_extend_record_one_change_per_element() {
+    #[test]
+    fn append_and_extend_record_one_change_per_element() {
+        let mut golden = Golden::new("map", "append_and_extend_record_one_change_per_element");
         let got = both(
+            &mut golden,
             json!([
                 {"path": "data.xs", "logic": {"var": "data.more"}, "mode": "extend"},
                 {"path": "data.xs", "logic": {"var": "data.missing"}, "mode": "extend"},
@@ -775,8 +813,7 @@ mod tests {
                 {"path": "data.none", "logic": [], "mode": "extend"}
             ]),
             &json!({"data": {"more": [2, 3], "xs": [1], "ys": [9]}}),
-        )
-        .await;
+        );
         assert_eq!(
             got.context,
             r#"{"data":{"more":[2,3],"xs":[1,2,3],"log":[{"turn":0},{"turn":1}],"fresh":[4,5],"none":[]},"metadata":{},"temp_data":{}}"#
@@ -800,8 +837,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_null_result_is_skipped_unless_on_null_unsets() {
+    #[test]
+    fn a_null_result_is_skipped_unless_on_null_unsets() {
+        let mut golden = Golden::new("map", "a_null_result_is_skipped_unless_on_null_unsets");
         let mappings = json!([
             {"path": "temp_data.a", "logic": {"if": [{"var": "data.go"}, "new", null]}},
             {"path": "temp_data.b", "logic": {"var": "data.go_missing"}, "on_null": "skip"},
@@ -813,10 +851,10 @@ mod tests {
         ]);
         let temp = json!({"a": 1, "b": 2, "c": 3, "reason": "old", "gone": 0});
         let got = both(
+            &mut golden,
             mappings.clone(),
             &json!({"data": {"go": false, "ok": true}, "temp_data": temp}),
-        )
-        .await;
+        );
         assert_eq!(
             got.context,
             r#"{"data":{"go":false,"ok":true},"metadata":{},"temp_data":{"a":1,"b":2,"c":3}}"#
@@ -826,15 +864,20 @@ mod tests {
             r#"[{"path":"temp_data.reason","old_value":"old","new_value":null,"removed":true},{"path":"temp_data.gone","old_value":0,"new_value":null,"removed":true}]"#
         );
         both(
+            &mut golden,
             mappings,
             &json!({"data": {"go": true, "ok": false}, "temp_data": temp}),
-        )
-        .await;
+        );
     }
 
-    #[tokio::test]
-    async fn a_computed_path_to_a_root_fails_the_mapping_and_keeps_the_root() {
+    #[test]
+    fn a_computed_path_to_a_root_fails_the_mapping_and_keeps_the_root() {
+        let mut golden = Golden::new(
+            "map",
+            "a_computed_path_to_a_root_fails_the_mapping_and_keeps_the_root",
+        );
         let got = both(
+            &mut golden,
             json!([
                 {"path": {"cat": ["temp", "_data"]}, "unset": true},
                 {"path": {"var": "data.root"}, "unset": true},
@@ -844,8 +887,7 @@ mod tests {
                 {"path": "data.after", "logic": "ran"}
             ]),
             &json!({"data": {"root": "temp_data"}, "temp_data": {"x": 1}}),
-        )
-        .await;
+        );
         assert_eq!(
             got.context,
             r#"{"data":{"root":"temp_data","after":"ran"},"metadata":{},"temp_data":{"x":1}}"#
@@ -853,9 +895,14 @@ mod tests {
         assert_eq!(got.status, Some(500));
     }
 
-    #[tokio::test]
-    async fn a_failing_mapping_runs_the_rest_and_the_task_returns_500() {
+    #[test]
+    fn a_failing_mapping_runs_the_rest_and_the_task_returns_500() {
+        let mut golden = Golden::new(
+            "map",
+            "a_failing_mapping_runs_the_rest_and_the_task_returns_500",
+        );
         let got = both(
+            &mut golden,
             json!([
                 {"path": "data.n", "logic": 1, "mode": "append"},
                 {"path": "data.xs", "logic": 5, "mode": "extend"},
@@ -863,8 +910,7 @@ mod tests {
                 {"path": "data.after", "logic": "ran"}
             ]),
             &json!({"data": {"n": 7, "zero": 0}}),
-        )
-        .await;
+        );
         assert_eq!(
             got.context,
             r#"{"data":{"n":7,"zero":0,"after":"ran"},"metadata":{},"temp_data":{}}"#
@@ -889,7 +935,7 @@ mod tests {
             {"path": {"var": "data.n"}, "logic": 1},
             {"path": "data.after", "logic": "ran"}
         ]});
-        let got = v4(
+        let got = run_once(
             "map",
             &input,
             &Value::Null,
@@ -905,7 +951,7 @@ mod tests {
 
     /// `task` called once over `context`, with the run context's stats and
     /// arena bytes in use before it finishes, and the context after it.
-    fn call(task: &V4Task, context: &Value, capture: bool) -> (u32, usize, usize, String) {
+    fn call(task: &Task, context: &Value, capture: bool) -> (u32, usize, usize, String) {
         let mut slot = seed(context);
         let mut changes = Vec::new();
         let mut errors = Vec::new();
@@ -940,7 +986,7 @@ mod tests {
                     json!({"path": key, "logic": {"+": [{"var": key}, 1]}})
                 })
                 .collect();
-            let task = v4_task("map", &json!({"mappings": mappings})).unwrap();
+            let task = task("map", &json!({"mappings": mappings})).unwrap();
             let (views, live, used, after) = call(&task, &context, false);
             assert_eq!(views, 1, "{k} writes, one view");
             let each = k / 10;
@@ -975,7 +1021,7 @@ mod tests {
         ]});
         let context = json!({"data": {"src": {"k": "v", "n": [1, 2]}, "more": [3]},
                              "temp_data": {"t": 1}});
-        let task = v4_task("map", &input).unwrap();
+        let task = task("map", &input).unwrap();
         let mut after = Vec::new();
         for capture in [true, false] {
             let mut slot = seed(&context);

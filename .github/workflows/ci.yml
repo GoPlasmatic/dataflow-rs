@@ -2,10 +2,9 @@ name: CI
 
 on:
   push:
-    # `main` carries v4 from the freeze until 4.0.0, and `v3-maintenance`
-    # carries 3.x fixes; both are tested. (Releases are tag-gated, not
-    # branch-gated, so a 3.15.x tag on the maintenance branch still publishes.)
-    branches: [main, v3-maintenance]
+    # Releases are tag-gated, not branch-gated: a push here tests, never
+    # publishes.
+    branches: [main]
     # Neither README.md nor docs/** appear here on purpose. The Rust blocks in
     # both are compiled as doctests (ReadmeDoctests in docs-tests, and the
     # dataflow-docs-tests member for the book), so edits to either can break
@@ -19,7 +18,7 @@ on:
       - 'LICENSE'
       - '.github/workflows/docs.yml'
   pull_request:
-    branches: [main, v3-maintenance]
+    branches: [main]
     paths-ignore: *prose-only
   # A new RUSTSEC advisory lands against unchanged code, so the supply-chain
   # gate needs a trigger that does not depend on someone pushing. This also
@@ -115,10 +114,7 @@ jobs:
       # `cargo add dataflow-rs` delivers it. `--workspace` cannot: `wasm/`
       # depends on the root with `wasm-web` and `all-operators`, and cargo
       # unifies features across the members one invocation selects, so under
-      # `--workspace` the root itself has every operator family on. Nor can
-      # `-p dataflow-rs`: it is ambiguous beside the published 3.15.0 that
-      # `corpus/v3`, `docs-tests` and the root's own dev-dependency pull in
-      # (I156).
+      # `--workspace` the root itself has every operator family on.
       - name: Run clippy (default features)
         run: cargo clippy --all-targets --locked -- -D warnings
 
@@ -129,10 +125,9 @@ jobs:
         run: cargo test --locked
 
       # The README's and the book's Rust examples, in a default build. A single
-      # `-p` builds the published 3.15.0 with its default features, so they
-      # hold for a user who ran `cargo add dataflow-rs`, which `--workspace`
-      # cannot show: there 3.15.0 has every family on, `tensor` and `budget`
-      # included.
+      # `-p` builds the root with its default features, so they hold for a
+      # user who ran `cargo add dataflow-rs`, which `--workspace` cannot show:
+      # there the root has every family on.
       - name: Run the README's and the book's doctests (default features)
         run: cargo test -p dataflow-docs-tests --locked
 
@@ -141,38 +136,9 @@ jobs:
       - name: Run tests (serde_json preserve_order)
         run: cargo test --features serde_json/preserve_order --locked
 
-      # The golden corpus's v3 recordings, held against the published 3.15.0.
-      # In the `--workspace --all-features` run above, it is `--all-features`
-      # itself, through `corpus/v3`'s forwards, that turns every family on,
-      # `tensor` and `budget` included, and that run covers the cases that
-      # need one. This default-build step is the only run of the cases that
-      # need a family off. It also catches a lock bump of 3.15.0's
-      # dependencies (`datalogic-rs`, `serde_json`, `quick-xml`, `chrono`),
-      # which can change v3's output though its source is fixed by checksum.
-      - name: Run the corpus (default features)
-        run: cargo test -p dataflow-corpus-v3 --locked
-
-      # The engine's corpus driver reads the same cases as v3's. It checks that
-      # the engine parses and compiles every definition as v3 built it, runs
-      # every case as v3 recorded it (observer events included), and traces
-      # every run as v3 did, compared by replay.
-      - name: Run the corpus, v4 (default features)
-        run: cargo test -p dataflow-corpus-v4 --locked
-
-      # The corpus under Orion's `preserve_order`: the differential tests
-      # compare against a v3 built the same way, so only the recordings, which
-      # are fixed bytes, show an order that follows serde_json's map type. The
-      # feature's `indexmap`, `hashbrown` and `equivalent` are not in
-      # `Cargo.lock`, since no member turns it on, so this step's versions of
-      # them float: a new release of one can turn it red with no commit behind
-      # it.
-      - name: Run the corpus, v4 (serde_json preserve_order)
-        run: cargo test -p dataflow-corpus-v4 --features serde_json/preserve_order --locked
-
       # `--all-features` and the default build are the two endpoints; neither
       # catches a family that only compiles when another one is also on. The
       # list adds `tensor` (outside `all-operators`) and the `budget` knob.
-      # v3's families run on `v3-maintenance`.
       - name: Test each operator family in isolation
         run: |
           set -euo pipefail

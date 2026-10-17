@@ -1,8 +1,5 @@
 {
   "description": "version, tags, created_at and updated_at are kept and never read: the workflow runs as if they were absent.",
-  "covers": [
-    "schema.workflow-fields"
-  ],
   "workflows": [
     {
       "id": "w",

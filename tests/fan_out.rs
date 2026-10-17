@@ -1,35 +1,36 @@
 // `for_each` end to end: one task's host function called once per element of
 // an array, every call isolated over the run's one view, then folded into the
-// message in element order. Every rule v3 can run is held to v3: one twin
-// function, `echo`, is registered on both sides, and each message is compared
-// as `run_vs_v3.rs` compares it (`support/vs_v3.rs`: the normalised wire text
-// and the outcome's code). What v3 cannot run (I91's error, the bound on
-// calls in flight, the `Send` pin) is checked against literal expectations.
+// message in element order. One host function, `echo`, does what each element
+// asks. Each test asserts the facts it is about, and every message it runs is
+// also held whole, key order included, to its golden file under
+// `tests/golden/fan_out/` (`support/run_helpers.rs`: the normalised wire text
+// and the outcome's code; `DATAFLOW_GOLDEN_WRITE=1` rewrites them). I91's
+// error, the bound on calls in flight and the `Send` pin are checked against
+// literal expectations alone.
 //
 // `echo` reads its element at `temp_data.<bound>` and the index at
 // `temp_data.<bound>_index` through `get`, yields `y` times, then makes the
-// element's writes (`w`, `[path, value]` pairs), appends (`a`, `[path,
-// value]` pairs, each read, pushed onto and written back) and increment
-// (`inc`, a path), writes `temp_data.out = {"id": <element.id>, "i":
-// <index>}` with the element read again through `get`, and
-// `temp_data.by_eval` from its `by_eval` expression. It records `WARNED`
-// when the element says `warn`, and returns what `o` names: `"success"` (the
-// default), `"skip"`, `"halt"`, `{"status": n}`, or `{"error": {"code": c,
-// "message": m}}`, a service error. Outside a fan-out it reads its asks from
-// the same slot, and the index is `null`. v4's alone also removes the paths
-// `rm` lists, after the writes: v3's `TaskContext` cannot remove.
+// element's writes (`w`, `[path, value]` pairs), removes the paths `rm`
+// lists, makes its appends (`a`, `[path, value]` pairs, each read, pushed
+// onto and written back) and increment (`inc`, a path), writes
+// `temp_data.out = {"id": <element.id>, "i": <index>}` with the element read
+// again through `get`, and `temp_data.by_eval` from its `by_eval`
+// expression. It records `WARNED` when the element says `warn`, and returns
+// what `o` names: `"success"` (the default), `"skip"`, `"halt"`, `{"status":
+// n}`, or `{"error": {"code": c, "message": m}}`, a service error. Outside a
+// fan-out it reads its asks from the same slot, and the index is `null`.
 
-#[path = "support/vs_v3.rs"]
-mod vs_v3;
+#[path = "support/run_helpers.rs"]
+mod run_helpers;
 
 use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next};
 use dataflow_rs::run::{ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
 use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result, RunOptions};
 use datavalue::OwnedDataValue;
+use run_helpers::{Golden, Run, build_with, data, run_on};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use vs_v3::{Run, data, on_v3, on_v4, v3_engine, v3_engine_with, v4_engine, v4_engine_with};
 
 /// What an element names as its call's result.
 enum Wanted {
@@ -101,88 +102,7 @@ fn asks(item: &Value) -> Asks {
     }
 }
 
-/// v3's `echo`, through `async_trait`.
-mod v3_twin {
-    use super::{Wanted, asks};
-    use async_trait::async_trait;
-    use dataflow_rs_v3::{
-        AsyncFunctionHandler, DataflowError, ErrorInfo, Result, TaskContext, TaskOutcome, Template,
-        TemplateCompiler,
-    };
-    use datavalue::OwnedDataValue;
-    use serde::Deserialize;
-    use serde_json::{Value, json};
-
-    #[derive(Deserialize)]
-    pub struct EchoInput {
-        bound: String,
-        by_eval: Template,
-    }
-
-    pub struct Echo;
-
-    fn get(ctx: &TaskContext<'_>, path: &str) -> Value {
-        ctx.get(path).map_or(Value::Null, Value::from)
-    }
-
-    #[async_trait]
-    impl AsyncFunctionHandler for Echo {
-        type Input = EchoInput;
-
-        fn compile_input(input: &mut EchoInput, c: &TemplateCompiler) -> Result<()> {
-            input.by_eval.compile(c, "by_eval")
-        }
-
-        async fn execute(
-            &self,
-            ctx: &mut TaskContext<'_>,
-            input: &EchoInput,
-        ) -> Result<TaskOutcome> {
-            let item_path = format!("temp_data.{}", input.bound);
-            let index = get(ctx, &format!("{item_path}_index"));
-            assert_eq!(ctx.element_index().map_or(Value::Null, |i| json!(i)), index);
-            let asks = asks(&get(ctx, &item_path));
-            assert!(asks.removes.is_empty(), "v3's `TaskContext` cannot remove");
-            for _ in 0..asks.yields {
-                tokio::task::yield_now().await;
-            }
-            for (path, value) in &asks.writes {
-                ctx.set(path, OwnedDataValue::from(value));
-            }
-            for (path, value) in &asks.appends {
-                let mut list = match get(ctx, path) {
-                    Value::Array(list) => list,
-                    _ => Vec::new(),
-                };
-                list.push(value.clone());
-                ctx.set(path, OwnedDataValue::from(&Value::Array(list)));
-            }
-            if let Some(path) = &asks.inc {
-                let n = get(ctx, path).as_i64().unwrap_or(0);
-                ctx.set(path, OwnedDataValue::from(&json!(n + 1)));
-            }
-            let id = get(ctx, &item_path)["id"].clone();
-            ctx.set(
-                "temp_data.out",
-                OwnedDataValue::from(&json!({"id": id, "i": index})),
-            );
-            let by_eval = input.by_eval.resolve(ctx)?;
-            ctx.set("temp_data.by_eval", by_eval);
-            if asks.warn {
-                ctx.add_error(ErrorInfo::builder("WARNED", "careful").build());
-            }
-            match asks.outcome {
-                Wanted::Success => Ok(TaskOutcome::Success),
-                Wanted::Skip => Ok(TaskOutcome::Skip),
-                Wanted::Halt => Ok(TaskOutcome::Halt),
-                Wanted::Status(s) => Ok(TaskOutcome::Status(s)),
-                Wanted::Error(code, message) => Err(DataflowError::service(code, message).build()),
-            }
-        }
-    }
-}
-
-/// v4's `echo`'s config.
+/// `echo`'s config.
 #[derive(FunctionConfig)]
 struct EchoConfig {
     /// The binding's name: the element is at `temp_data.<bound>`.
@@ -191,7 +111,7 @@ struct EchoConfig {
     by_eval: Expr,
 }
 
-/// v4's `echo`, which also counts its calls in flight, and lists the
+/// `echo`, which also counts its calls in flight, and lists the
 /// elements in the order their calls finished.
 #[derive(Default)]
 struct Echo {
@@ -242,7 +162,7 @@ impl Echo {
             set(ctx, path, &json!(n + 1))?;
         }
         let id = get(ctx, &item_path)?["id"].clone();
-        set(ctx, "temp_data.out", &json!({"id": id, "i": index}))?;
+        set(ctx, "temp_data.out", &json!({"i": index, "id": id}))?;
         let by_eval = ctx.eval(&cfg.by_eval)?.into_owned();
         ctx.set(&"temp_data.by_eval".parse()?, by_eval)?;
         if asks.warn {
@@ -337,28 +257,27 @@ fn over(ps: Value) -> Run {
     data(json!({"ps": ps}))
 }
 
-/// v3's engine and v4's over `workflows`, `echo` registered on both.
-fn engines(workflows: &[Value]) -> (dataflow_rs_v3::Engine, Engine) {
-    let v3 = v3_engine_with(workflows, |b| b.register("echo", v3_twin::Echo))
-        .unwrap_or_else(|e| panic!("v3 builds: {e}"));
-    let v4 = v4_engine_with(workflows, |b| b.register("echo", Echo::default()))
-        .unwrap_or_else(|e| panic!("v4 builds: {e}"));
-    (v3, v4)
+/// The engine over `workflows`, `echo` registered.
+fn engine(workflows: &[Value]) -> Engine {
+    build_with(workflows, |b| b.register("echo", Echo::default()))
+        .unwrap_or_else(|e| panic!("builds: {e}"))
 }
 
-/// `run` on v3 and on v4, which must agree: v4's message as JSON, the
-/// outcome's code, and v4's report.
-async fn same(workflows: &[Value], run: &Run) -> (Value, String, dataflow_rs::Run) {
-    let (v3, v4) = engines(workflows);
-    let (want, want_code) = on_v3(&v3, run).await;
-    let (got, code, report) = on_v4(&v4, run).await;
-    assert_eq!(
-        (&got, &code),
-        (&want, &want_code),
-        "v4 against v3 over {workflows:#?}\nwith {:?}",
-        run.data
-    );
-    (serde_json::from_str(&got).unwrap(), code, report)
+/// The golden file of test `name`.
+fn golden(name: &str) -> Golden {
+    Golden::new("fan_out", name)
+}
+
+/// `run` over `workflows`, added to `golden`: the message as JSON, the
+/// outcome's code, and the report.
+async fn run_echo(
+    workflows: &[Value],
+    run: &Run,
+    golden: &mut Golden,
+) -> (Value, String, dataflow_rs::Run) {
+    let ran = run_on(&engine(workflows), run).await;
+    golden.push(&ran);
+    (ran.json(), ran.code, ran.report)
 }
 
 /// `(element_index, status)` of each audit entry of `task`.
@@ -393,8 +312,9 @@ fn ab(n: usize) -> Value {
 
 #[tokio::test]
 async fn results_land_in_element_order_and_bindings_do_not_leak() {
+    let mut g = golden("results_land_in_element_order_and_bindings_do_not_leak");
     let ps = json!([{"id": "a"}, {"id": "b"}, {"id": "c"}]);
-    let (m, code, _) = same(&fanning(collect_into(), &[]), &over(ps)).await;
+    let (m, code, _) = run_echo(&fanning(collect_into(), &[]), &over(ps), &mut g).await;
     assert_eq!(code, "ok");
     assert_eq!(
         m["context"]["data"]["outs"],
@@ -418,11 +338,13 @@ async fn results_land_in_element_order_and_bindings_do_not_leak() {
         m["context"]["metadata"]["progress"],
         json!({"workflow_id": "w", "task_id": "after", "status_code": 200})
     );
+    g.check();
 }
 
 #[tokio::test]
 async fn audit_changes_carry_each_elements_writes_and_its_result_slot() {
-    let (m, _, _) = same(&fanning(collect_into(), &[]), &over(ab(2))).await;
+    let mut g = golden("audit_changes_carry_each_elements_writes_and_its_result_slot");
+    let (m, _, _) = run_echo(&fanning(collect_into(), &[]), &over(ab(2)), &mut g).await;
     let paths: Vec<Vec<Value>> = m["audit_trail"]
         .as_array()
         .unwrap()
@@ -452,15 +374,17 @@ async fn audit_changes_carry_each_elements_writes_and_its_result_slot() {
             ],
         ]
     );
+    g.check();
 }
 
 #[tokio::test]
 async fn capture_changes_off_keeps_the_entries_and_the_results() {
+    let mut g = golden("capture_changes_off_keeps_the_entries_and_the_results");
     let run = Run {
         capture_off: true,
         ..over(ab(2))
     };
-    let (m, _, _) = same(&fanning(collect_into(), &[]), &run).await;
+    let (m, _, _) = run_echo(&fanning(collect_into(), &[]), &run, &mut g).await;
     assert_eq!(
         m["context"]["data"]["outs"],
         json!([{"id": 0, "i": 0}, {"id": 1, "i": 1}])
@@ -477,10 +401,12 @@ async fn capture_changes_off_keeps_the_entries_and_the_results() {
             .all(|e| e["changes"] == json!([])),
         "no change captured, but every entry kept"
     );
+    g.check();
 }
 
 #[tokio::test]
 async fn a_host_call_and_a_fan_out_keep_what_the_audit_mode_keeps() {
+    let mut g = golden("a_host_call_and_a_fan_out_keep_what_the_audit_mode_keeps");
     // A host call, a fan-out of three and a `map`: six entries in full.
     // `Off` keeps none and captures no change; `Last(n)` keeps the last `n`,
     // each with its changes, cutting across the elements' entries.
@@ -523,7 +449,7 @@ async fn a_host_call_and_a_fan_out_keep_what_the_audit_mode_keeps() {
             audit,
             ..over(ab(3))
         };
-        let (m, code, _) = same(&workflows, &run).await;
+        let (m, code, _) = run_echo(&workflows, &run, &mut g).await;
         assert_eq!(code, "ok");
         assert_eq!(kept_by(&m), kept, "audit_off {audit_off}, Last({audit:?})");
         // Whatever the entries keep, the writes, the results and the
@@ -532,32 +458,28 @@ async fn a_host_call_and_a_fan_out_keep_what_the_audit_mode_keeps() {
         assert_eq!(m["context"]["data"]["outs"][2], json!({"id": 2, "i": 2}));
         assert_eq!(records(&m), [("WARNED".to_owned(), Value::Null)]);
     }
+    g.check();
 }
 
 #[tokio::test]
 async fn an_element_removes_over_the_runs_view_and_the_removal_is_replayed() {
-    // v3's `TaskContext` cannot remove, so this holds v4 to v3's fold rule
-    // as written (`remove_nested_value` for each removed `Change`, in
-    // element order) rather than to a twin. Each call removes over the
-    // run's view and its own binding, isolated: element 1 still sees
+    // The fold replays each removed `Change` as a removal, in element
+    // order. Each call removes over the run's view and its own binding,
+    // isolated: element 1 still sees
     // `data.gone`, and records its removal, which removes nothing when
     // replayed after element 0's. A removal below the binding is seen by
     // its own call and recorded, and replays onto nothing; a removal of
     // nothing records nothing.
     let ps = json!([
-        {"id": "a", "w": [["data.keep.z", 3]], "rm": ["data.gone"]},
+        {"id": "a", "rm": ["data.gone"], "w": [["data.keep.z", 3]]},
         {"id": "b", "rm": ["data.gone", "data.keep.x"]},
         {"id": "c", "rm": ["temp_data.p.id"]},
         {"id": "d", "rm": ["data.never"]},
     ]);
-    let e = v4_engine_with(&fanning(collect_into(), &[]), |b| {
-        b.register("echo", Echo::default())
-    })
-    .unwrap();
-    let run = data(json!({"ps": ps, "gone": 1, "keep": {"x": 1, "y": 2}}));
-    let (m, code, _) = on_v4(&e, &run).await;
-    let m: Value = serde_json::from_str(&m).unwrap();
-    assert_eq!(code, "ok");
+    let run = data(json!({"gone": 1, "keep": {"x": 1, "y": 2}, "ps": ps}));
+    let ran = run_on(&engine(&fanning(collect_into(), &[])), &run).await;
+    let m = ran.json();
+    assert_eq!(ran.code, "ok");
     let data = &m["context"]["data"];
     assert!(data.get("gone").is_none());
     assert_eq!(data["keep"], json!({"y": 2, "z": 3}));
@@ -599,6 +521,7 @@ async fn an_element_removes_over_the_runs_view_and_the_removal_is_replayed() {
 
 #[tokio::test]
 async fn calls_are_isolated_from_each_other() {
+    let mut g = golden("calls_are_isolated_from_each_other");
     // Every call sees `temp_data.seen` as it was before the fan-out, and the
     // writes are replayed in order, each writing 11.
     let for_each = json!({"over": {"var": "data.ps"}, "as": "p",
@@ -610,33 +533,37 @@ async fn calls_are_isolated_from_each_other() {
     )];
     let ps =
         json!([{"inc": "temp_data.seen"}, {"inc": "temp_data.seen"}, {"inc": "temp_data.seen"}]);
-    let (m, _, _) = same(&workflows, &over(ps)).await;
+    let (m, _, _) = run_echo(&workflows, &over(ps), &mut g).await;
     assert_eq!(m["context"]["data"]["seen_by"], json!([11, 11, 11]));
     assert_eq!(m["context"]["temp_data"]["seen"], json!(11));
+    g.check();
 }
 
 #[tokio::test]
 async fn without_collect_and_into_the_writes_are_simply_replayed() {
+    let mut g = golden("without_collect_and_into_the_writes_are_simply_replayed");
     let for_each = json!({"over": {"var": "data.ps"}, "as": "p"});
-    let (m, _, _) = same(&fanning(for_each, &[]), &over(ab(2))).await;
+    let (m, _, _) = run_echo(&fanning(for_each, &[]), &over(ab(2)), &mut g).await;
     assert_eq!(
         entries(&m, "t"),
         [(json!(0), json!(200)), (json!(1), json!(200))]
     );
     assert_eq!(m["context"]["temp_data"]["out"], json!({"id": 1, "i": 1}));
     assert!(m["context"]["data"].get("outs").is_none());
+    g.check();
 }
 
 #[tokio::test]
 async fn an_empty_over_writes_an_empty_array_and_one_record() {
-    // Whatever `into` held, its `Change` records `null` before, as v3's.
+    let mut g = golden("an_empty_over_writes_an_empty_array_and_one_record");
+    // Whatever `into` held, its `Change` records `null` before.
     for (data, terminal) in [
         (json!({"ps": []}), false),
-        (json!({"ps": [], "outs": "before"}), false),
+        (json!({"outs": "before", "ps": []}), false),
         (json!({"ps": []}), true),
     ] {
         let workflows = fanning(collect_into(), &[("terminal", json!(terminal))]);
-        let (m, _, _) = same(&workflows, &vs_v3::data(data)).await;
+        let (m, _, _) = run_echo(&workflows, &run_helpers::data(data), &mut g).await;
         assert_eq!(m["context"]["data"]["outs"], json!([]));
         assert_eq!(entries(&m, "t"), [(Value::Null, json!(200))]);
         let entry = &m["audit_trail"][0];
@@ -650,10 +577,12 @@ async fn an_empty_over_writes_an_empty_array_and_one_record() {
             "terminal halts after an empty fan-out too"
         );
     }
+    g.check();
 }
 
 #[tokio::test]
 async fn a_failed_element_leaves_null_under_continue() {
+    let mut g = golden("a_failed_element_leaves_null_under_continue");
     // A 5xx element's writes land and are audited; an `Err` element's do not,
     // but the records it made itself are kept. Every record carries its
     // element.
@@ -665,7 +594,7 @@ async fn a_failed_element_leaves_null_under_continue() {
         {"id": "d"}
     ]);
     let workflows = fanning(collect_into(), &[("continue_on_error", json!(true))]);
-    let (m, code, _) = same(&workflows, &over(ps)).await;
+    let (m, code, _) = run_echo(&workflows, &over(ps), &mut g).await;
     assert_eq!(code, "ok");
     let data = &m["context"]["data"];
     assert_eq!(
@@ -688,10 +617,12 @@ async fn a_failed_element_leaves_null_under_continue() {
         m["audit_trail"][1]["changes"][3],
         json!({"path": "data.outs.1", "old_value": null, "new_value": null})
     );
+    g.check();
 }
 
 #[tokio::test]
 async fn a_failed_element_fails_the_task_without_continue() {
+    let mut g = golden("a_failed_element_fails_the_task_without_continue");
     // `b` fails the task: `a` folded, `b` recorded, `c` never started.
     for failure in [
         json!({"status": 503}),
@@ -707,7 +638,7 @@ async fn a_failed_element_fails_the_task_without_continue() {
                 ),
                 workflow("w2", vec![mark("next")], &[("priority", json!(1))]),
             ];
-            let (m, code, _) = same(&workflows, &over(ps)).await;
+            let (m, code, _) = run_echo(&workflows, &over(ps), &mut g).await;
             let data = &m["context"]["data"];
             assert_eq!(
                 data["outs"],
@@ -728,24 +659,28 @@ async fn a_failed_element_fails_the_task_without_continue() {
             assert_eq!(code == "ok", workflow_continues, "{code}");
         }
     }
+    g.check();
 }
 
 #[tokio::test]
 async fn errors_a_call_records_itself_are_stamped_and_kept() {
+    let mut g = golden("errors_a_call_records_itself_are_stamped_and_kept");
     let ps = json!([{"id": "a"}, {"id": "b", "warn": true}]);
-    let (m, _, _) = same(&fanning(collect_into(), &[]), &over(ps)).await;
+    let (m, _, _) = run_echo(&fanning(collect_into(), &[]), &over(ps), &mut g).await;
     assert_eq!(records(&m), [("WARNED".to_owned(), json!(1))]);
     assert_eq!(m["errors"][0]["timestamp"], json!("<timestamp>"));
+    g.check();
 }
 
 #[tokio::test]
 async fn an_element_halt_stops_new_calls_and_halts_the_workflow() {
+    let mut g = golden("an_element_halt_stops_new_calls_and_halts_the_workflow");
     let ps = json!([{"id": "a"}, {"id": "b", "o": "halt"}, {"id": "c"}]);
     let workflows = vec![
         workflow("w", vec![fan(collect_into(), &[]), mark("after")], &[]),
         workflow("w2", vec![mark("next")], &[("priority", json!(1))]),
     ];
-    let (m, code, report) = same(&workflows, &over(ps)).await;
+    let (m, code, report) = run_echo(&workflows, &over(ps), &mut g).await;
     assert_eq!(code, "ok");
     assert_eq!(
         entries(&m, "t"),
@@ -764,13 +699,15 @@ async fn an_element_halt_stops_new_calls_and_halts_the_workflow() {
         exits,
         [Some(WorkflowExit::Halted), Some(WorkflowExit::Completed)]
     );
+    g.check();
 }
 
 #[tokio::test]
 async fn on_rejection_halt_halts_after_the_whole_fan_out() {
-    // v3's `halt_on: "failure"` is `on_rejection: halt`, and with
-    // `continue_on_error` also `on_failure: halt`: each applies once, after
-    // every element ran.
+    let mut g = golden("on_rejection_halt_halts_after_the_whole_fan_out");
+    // The 3.x spelling `halt_on: "failure"` reads as `on_rejection: halt`,
+    // and with `continue_on_error` also as `on_failure: halt`: each applies
+    // once, after every element ran.
     for (flags, first) in [
         (json!({"halt_on": "failure"}), json!({"status": 404})),
         (
@@ -795,7 +732,7 @@ async fn on_rejection_halt_halts_after_the_whole_fan_out() {
             .map(|(k, v)| (k.as_str(), v.clone()))
             .collect();
         let ps = json!([{"id": "a", "o": first}, {"id": "b"}, {"id": "c"}]);
-        let (m, _, _) = same(&fanning(collect_into(), &extra), &over(ps)).await;
+        let (m, _, _) = run_echo(&fanning(collect_into(), &extra), &over(ps), &mut g).await;
         let indices: Vec<Value> = entries(&m, "t").into_iter().map(|(i, _)| i).collect();
         assert_eq!(indices, [json!(0), json!(1), json!(2)], "{flags} {first}");
         assert_eq!(
@@ -804,23 +741,27 @@ async fn on_rejection_halt_halts_after_the_whole_fan_out() {
             "{flags} {first}"
         );
     }
+    g.check();
 }
 
 #[tokio::test]
 async fn terminal_halts_after_the_whole_fan_out() {
+    let mut g = golden("terminal_halts_after_the_whole_fan_out");
     let workflows = fanning(collect_into(), &[("terminal", json!(true))]);
-    let (m, _, _) = same(&workflows, &over(ab(2))).await;
+    let (m, _, _) = run_echo(&workflows, &over(ab(2)), &mut g).await;
     assert_eq!(
         entries(&m, "t"),
         [(json!(0), json!(200)), (json!(1), json!(200))]
     );
     assert!(m["context"]["data"].get("after_ran").is_none());
+    g.check();
 }
 
 #[tokio::test]
 async fn a_skip_element_keeps_its_writes_and_gets_no_entry() {
+    let mut g = golden("a_skip_element_keeps_its_writes_and_gets_no_entry");
     let ps = json!([{"id": "a"}, {"id": "b", "o": "skip", "w": [["data.skipped_wrote", true]]}, {"id": "c"}]);
-    let (m, _, _) = same(&fanning(collect_into(), &[]), &over(ps)).await;
+    let (m, _, _) = run_echo(&fanning(collect_into(), &[]), &over(ps), &mut g).await;
     assert_eq!(
         entries(&m, "t"),
         [(json!(0), json!(200)), (json!(2), json!(200))]
@@ -831,17 +772,19 @@ async fn a_skip_element_keeps_its_writes_and_gets_no_entry() {
         data["outs"],
         json!([{"id": "a", "i": 0}, {"id": "b", "i": 1}, {"id": "c", "i": 2}])
     );
+    g.check();
 }
 
 #[tokio::test]
 async fn a_fan_out_inside_a_loop_stamps_both_coordinates() {
+    let mut g = golden("a_fan_out_inside_a_loop_stamps_both_coordinates");
     let for_each = json!({"over": [{"id": "a"}, {"id": "b"}], "as": "p"});
     let workflows = [workflow(
         "w",
         vec![fan(for_each, &[])],
         &[("loop", json!({"counter": "i", "max": 2}))],
     )];
-    let (m, _, _) = same(&workflows, &Run::default()).await;
+    let (m, _, _) = run_echo(&workflows, &Run::default(), &mut g).await;
     let stamps: Vec<(Value, Value)> = m["audit_trail"]
         .as_array()
         .unwrap()
@@ -857,10 +800,12 @@ async fn a_fan_out_inside_a_loop_stamps_both_coordinates() {
             (json!(1), json!(1))
         ]
     );
+    g.check();
 }
 
 #[tokio::test]
 async fn a_fan_out_in_loop_setup_runs_once() {
+    let mut g = golden("a_fan_out_in_loop_setup_runs_once");
     let mut setup = fan(
         json!({"over": [{"id": "a"}, {"id": "b"}], "as": "p",
                "collect": "temp_data.out", "into": "temp_data.batch"}),
@@ -873,7 +818,7 @@ async fn a_fan_out_in_loop_setup_runs_once() {
             "mappings": [{"path": "data.n", "logic": {"var": "temp_data.i"}}]}}})],
         &[("loop", json!({"counter": "i", "max": 3, "setup": [setup]}))],
     )];
-    let (m, _, _) = same(&workflows, &Run::default()).await;
+    let (m, _, _) = run_echo(&workflows, &Run::default(), &mut g).await;
     assert_eq!(
         entries(&m, "s"),
         [(json!(0), json!(200)), (json!(1), json!(200))]
@@ -891,20 +836,29 @@ async fn a_fan_out_in_loop_setup_runs_once() {
         m["context"]["temp_data"]["batch"],
         json!([{"id": "a", "i": 0}, {"id": "b", "i": 1}])
     );
+    g.check();
 }
 
 #[tokio::test]
 async fn results_are_identical_at_every_concurrency() {
+    let mut g = golden("results_are_identical_at_every_concurrency");
     // Earlier elements yield more, so concurrent calls finish out of order;
     // one fails under `continue_on_error`, and the fold is the same.
-    let mut ps: Vec<Value> = (0..6)
-        .map(|i| json!({"id": i, "y": 6 - i, "w": [[format!("data.log.{i}"), i]]}))
+    let ps: Vec<Value> = (0..6)
+        .map(|i| {
+            let w = json!([[format!("data.log.{i}"), i]]);
+            if i == 2 {
+                json!({"id": i, "o": {"status": 500}, "w": w, "y": 6 - i})
+            } else {
+                json!({"id": i, "w": w, "y": 6 - i})
+            }
+        })
         .collect();
-    ps[2]["o"] = json!({"status": 500});
     let mut seen = Vec::new();
     for max in [1, 2, 4, 8] {
         let workflows = fanning(concurrent(max), &[("continue_on_error", json!(true))]);
-        let (m, _, _) = same(&workflows, &over(json!(ps))).await;
+        let ran = run_on(&engine(&workflows), &over(json!(ps))).await;
+        let m = ran.json();
         let mut outs = json!([0, 1, null, 3, 4, 5]);
         for (i, out) in outs.as_array_mut().unwrap().iter_mut().enumerate() {
             if !out.is_null() {
@@ -917,24 +871,29 @@ async fn results_are_identical_at_every_concurrency() {
             json!([0, 1, 2, 3, 4, 5]),
             "max_concurrency {max}"
         );
-        seen.push(m);
+        seen.push(ran);
     }
-    assert!(seen.windows(2).all(|w| w[0] == w[1]));
+    // The whole message, key order included, at every concurrency.
+    assert!(seen.windows(2).all(|w| w[0].text == w[1].text));
+    g.push(&seen[0]);
+    g.check();
 }
 
 #[tokio::test]
 async fn a_halt_yields_the_same_message_at_every_concurrency() {
+    let mut g = golden("a_halt_yields_the_same_message_at_every_concurrency");
     // `1` halts. `2` and `3` yield least, so above one call in flight they
     // finish first and are kept: the fold must still stop at `1`.
     let ps = json!([
         {"id": 0, "y": 3},
-        {"id": 1, "y": 3, "o": "halt"},
-        {"id": 2, "y": 0, "w": [["data.late", 2]]},
-        {"id": 3, "y": 0, "w": [["data.late", 3]]},
+        {"id": 1, "o": "halt", "y": 3},
+        {"id": 2, "w": [["data.late", 2]], "y": 0},
+        {"id": 3, "w": [["data.late", 3]], "y": 0},
     ]);
     let mut seen = Vec::new();
     for max in [1, 2, 4, 8] {
-        let (m, _, _) = same(&fanning(concurrent(max), &[]), &over(ps.clone())).await;
+        let ran = run_on(&engine(&fanning(concurrent(max), &[])), &over(ps.clone())).await;
+        let m = ran.json();
         assert_eq!(
             m["context"]["data"]["outs"],
             json!([{"id": 0, "i": 0}, {"id": 1, "i": 1}, null, null]),
@@ -949,9 +908,11 @@ async fn a_halt_yields_the_same_message_at_every_concurrency() {
             m["context"]["data"].get("late").is_none(),
             "max_concurrency {max}: a finished element after the halt contributes nothing"
         );
-        seen.push(m);
+        seen.push(ran);
     }
-    assert!(seen.windows(2).all(|w| w[0] == w[1]));
+    assert!(seen.windows(2).all(|w| w[0].text == w[1].text));
+    g.push(&seen[0]);
+    g.check();
 }
 
 #[tokio::test]
@@ -963,8 +924,7 @@ async fn max_concurrency_bounds_calls_in_flight() {
         let echo = Echo::default();
         let peak = Arc::clone(&echo.peak);
         let finished = Arc::clone(&echo.finished);
-        let e =
-            v4_engine_with(&fanning(concurrent(max), &[]), |b| b.register("echo", echo)).unwrap();
+        let e = build_with(&fanning(concurrent(max), &[]), |b| b.register("echo", echo)).unwrap();
         let ps: Vec<Value> = (0..8).map(|i| json!({"id": i, "y": 9 - i})).collect();
         let mut m = Message::from_parts(
             OwnedDataValue::Null,
@@ -1025,7 +985,7 @@ async fn no_call_starts_after_one_that_stops_the_fan_out() {
             .collect();
         let echo = Echo::default();
         let finished = Arc::clone(&echo.finished);
-        let e = v4_engine_with(&fanning(concurrent(max), &extra), |b| {
+        let e = build_with(&fanning(concurrent(max), &extra), |b| {
             b.register("echo", echo)
         })
         .unwrap();
@@ -1046,18 +1006,22 @@ async fn no_call_starts_after_one_that_stops_the_fan_out() {
 
 #[tokio::test]
 async fn elements_writing_under_one_new_parent_both_land() {
+    let mut g = golden("elements_writing_under_one_new_parent_both_land");
     // `data.prices` is absent before the fan-out: each call creates it with
-    // its own key, and both keys land, as v3's replayed `Change`s do.
+    // its own key, and both keys land as the replayed `Change`s merge.
     let ps = json!([
         {"id": "a", "w": [["data.prices.a", 1]]},
         {"id": "b", "w": [["data.prices.b", 2]]},
     ]);
-    let (m, _, _) = same(&fanning(collect_into(), &[]), &over(ps)).await;
+    let (m, _, _) = run_echo(&fanning(collect_into(), &[]), &over(ps), &mut g).await;
     assert_eq!(m["context"]["data"]["prices"], json!({"a": 1, "b": 2}));
+    g.check();
 }
 
 #[tokio::test]
 async fn an_element_writing_below_its_binding_reads_it_back_and_the_write_is_replayed() {
+    let mut g =
+        golden("an_element_writing_below_its_binding_reads_it_back_and_the_write_is_replayed");
     // Each call reads its own write over its binding. The binding is never
     // written to the run, so the settle replays each write at its path where
     // only the earlier elements' writes are: element 0's write below a
@@ -1068,7 +1032,7 @@ async fn an_element_writing_below_its_binding_reads_it_back_and_the_write_is_rep
         {"id": "b", "w": [["temp_data.p.id", "B"]]},
         {"id": "c", "w": [["temp_data.p.extra", true]]},
     ]);
-    let (m, _, _) = same(&fanning(collect_into(), &[]), &over(ps)).await;
+    let (m, _, _) = run_echo(&fanning(collect_into(), &[]), &over(ps), &mut g).await;
     assert_eq!(
         m["context"]["data"]["outs"],
         json!([{"id": "a", "i": 0}, {"id": "B", "i": 1}, {"id": "c", "i": 2}])
@@ -1080,29 +1044,32 @@ async fn an_element_writing_below_its_binding_reads_it_back_and_the_write_is_rep
         temp["by_eval"],
         json!({"id": "c", "w": [["temp_data.p.extra", true]], "extra": true})
     );
+    g.check();
 }
 
 #[tokio::test]
 async fn elements_appending_to_one_array_land_in_element_order() {
+    let mut g = golden("elements_appending_to_one_array_land_in_element_order");
     // An append read over the run's view and written whole: the later
     // element's array is the one that stays. An append at an index of its
     // own: both land, in element order, where neither existed before.
     let ps = json!([
-        {"id": "a", "a": [["data.list", "a"]], "w": [["data.log.0", "a"]]},
-        {"id": "b", "a": [["data.list", "b"]], "w": [["data.log.1", "b"]]},
+        {"a": [["data.list", "a"]], "id": "a", "w": [["data.log.0", "a"]]},
+        {"a": [["data.list", "b"]], "id": "b", "w": [["data.log.1", "b"]]},
     ]);
     let workflows = [workflow(
         "w",
         vec![seed("data.list", json!([0])), fan(collect_into(), &[])],
         &[],
     )];
-    let (m, _, _) = same(&workflows, &over(ps)).await;
+    let (m, _, _) = run_echo(&workflows, &over(ps), &mut g).await;
     assert_eq!(m["context"]["data"]["list"], json!([0, "b"]));
     assert_eq!(m["context"]["data"]["log"], json!(["a", "b"]));
+    g.check();
 }
 
 #[test]
-fn a_for_each_on_a_builtin_is_refused_on_both() {
+fn a_for_each_on_a_builtin_is_refused() {
     let workflows = [workflow(
         "w",
         vec![json!({"id": "t", "for_each": {"over": [1], "as": "p"},
@@ -1110,14 +1077,24 @@ fn a_for_each_on_a_builtin_is_refused_on_both() {
                 {"path": "data.x", "logic": 1}]}}})],
         &[],
     )];
-    assert!(v3_engine(&workflows).is_err());
-    assert!(v4_engine(&workflows).is_err());
+    let issues = Engine::builder()
+        .workflow_json(&workflows[0])
+        .build()
+        .expect_err("a for_each on a built-in is refused");
+    let refused: Vec<_> = issues
+        .iter()
+        .map(|i| (i.code.as_str(), i.path.to_string()))
+        .collect();
+    assert_eq!(
+        refused,
+        [("INVALID_FOR_EACH", "tasks[0].for_each".to_owned())]
+    );
 }
 
 #[tokio::test]
 async fn a_non_array_over_is_one_logic_error() {
-    // I91: a loop's rule, `LOGIC_ERROR` of kind `Eval`, where v3 wrote
-    // `TASK_ERROR` (break 4, widened).
+    // I91, a loop's rule: one `LOGIC_ERROR` of kind `Eval`, and the task's
+    // one record carries it.
     let text = "Task t: for_each.over must evaluate to an array, got a string";
     for workflow_continues in [false, true] {
         let workflows = vec![
@@ -1128,7 +1105,7 @@ async fn a_non_array_over_is_one_logic_error() {
             ),
             workflow("w2", vec![mark("next")], &[("priority", json!(1))]),
         ];
-        let e = v4_engine_with(&workflows, |b| b.register("echo", Echo::default())).unwrap();
+        let e = engine(&workflows);
         let mut m = Message::from_parts(
             OwnedDataValue::Null,
             OwnedDataValue::from(&json!({"ps": "nope"})),
@@ -1190,7 +1167,7 @@ impl CallLayer for Pass {
 #[test]
 fn the_run_future_is_send_with_a_fan_out_and_layers() {
     fn assert_send<T: Send>(_: &T) {}
-    let e = v4_engine_with(&fanning(concurrent(4), &[]), |b| {
+    let e = build_with(&fanning(concurrent(4), &[]), |b| {
         b.register("echo", Echo::default()).layer(Pass)
     })
     .unwrap();

@@ -1,5 +1,5 @@
-//! Measurement helpers for v4's ports of the performance gate's benchmarks: v3's
-//! `examples/shared/bench.rs`, with `spawned` over `Engine::run`.
+//! Measurement helpers for the performance gate's benchmarks, first written
+//! for 3.x's `examples/shared/bench.rs`, with `spawned` over `Engine::run`.
 //!
 //! Not an example: a benchmark pulls it in with
 //! `#[path = "shared/bench.rs"] mod bench;`, and no single benchmark uses all

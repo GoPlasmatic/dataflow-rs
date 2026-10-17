@@ -159,9 +159,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
 
-      # Bare, not `-p dataflow-rs`: the lock also holds the published 3.15.0
-      # (the differential tests' pin), and cargo refuses the ambiguous name.
-      # At the root a bare `cargo publish` selects the root package.
+      # Bare: at the root a bare `cargo publish` selects the root package.
       - name: Publish dataflow-rs
         if: steps.check.outputs.skip_root != 'true'
         run: cargo publish --locked

@@ -1,7 +1,5 @@
 {
   "description": "A rejecting filter with the default on_reject halts its workflow: the audit records 299, the next task in the workflow does not run, and the next workflow does.",
-  "covers": ["filter"],
-  "mirrors": ["tests/engine_execution.rs::filter_halt_in_sync_stretch_short_circuits_workflow"],
   "workflows": [
     {"id": "w1", "name": "w1", "priority": 1, "tasks": [
       {"id": "gate", "name": "gate", "function": {"name": "filter", "input": {"condition": false}}},

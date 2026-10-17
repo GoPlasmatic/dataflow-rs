@@ -1,0 +1,164 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "seen": [
+            0,
+            1,
+            2
+          ],
+          "after": [
+            100,
+            100,
+            100
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "after",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "i": 3
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "seen",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.seen.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "clobber",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.i",
+              "old_value": 0,
+              "new_value": 100
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.after.0",
+              "old_value": null,
+              "new_value": 100
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "seen",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.seen.1",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "clobber",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.i",
+              "old_value": 1,
+              "new_value": 100
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.after.1",
+              "old_value": null,
+              "new_value": 100
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "seen",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.seen.2",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "clobber",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.i",
+              "old_value": 2,
+              "new_value": 100
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.after.2",
+              "old_value": null,
+              "new_value": 100
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        }
+      ],
+      "errors": []
+    }
+  }
+]

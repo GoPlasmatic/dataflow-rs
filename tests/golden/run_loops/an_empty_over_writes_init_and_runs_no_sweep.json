@@ -1,0 +1,24 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "items": []
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>"
+        },
+        "temp_data": {
+          "i": 2,
+          "j": 0
+        }
+      },
+      "audit_trail": [],
+      "errors": []
+    }
+  }
+]

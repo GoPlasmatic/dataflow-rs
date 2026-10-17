@@ -2,14 +2,14 @@
 //! write it stands for, on random trees, one write at a time and in random
 //! sequences over an already-spliced root.
 //!
-//! The owned append rule in `expr::path` and the root-merge reference are
-//! checked here too, against v3's own helpers.
+//! The owned append rule in `expr::path` is checked here too, against a
+//! reference built from the owned read and write, and the root merge
+//! against its reference.
 
 use super::random;
 use crate::expr::path;
 use crate::state::splice;
 use bumpalo::Bump;
-use dataflow_rs_v3::engine::utils::{get_nested_value, set_nested_value};
 use datavalue::{DataValue, OwnedDataValue};
 
 #[derive(Debug)]
@@ -38,31 +38,31 @@ fn op(rng: &mut random::Rng, tree: &OwnedDataValue) -> Op {
     }
 }
 
-/// v3's append (`append_at` and `append_owned`): `Err` for a target that is
-/// neither missing, `null` nor an array; otherwise extend or create, through
-/// v3's own path helpers.
-fn v3_append(
+/// The append rule (3.x's `append_at` and `append_owned`): `Err` for a
+/// target that is neither missing, `null` nor an array; otherwise extend or
+/// create, as one owned read and one owned write.
+fn reference_append(
     context: &mut OwnedDataValue,
-    dotted: &str,
+    segs: &[crate::expr::Seg],
     items: Vec<OwnedDataValue>,
 ) -> Result<(), ()> {
-    match get_nested_value(context, dotted) {
+    match path::get(context, segs) {
         None | Some(OwnedDataValue::Null) => {
-            set_nested_value(context, dotted, OwnedDataValue::Array(items));
+            path::set(context, segs, OwnedDataValue::Array(items));
             Ok(())
         }
         Some(OwnedDataValue::Array(existing)) => {
             let mut all = existing.clone();
             all.extend(items);
-            set_nested_value(context, dotted, OwnedDataValue::Array(all));
+            path::set(context, segs, OwnedDataValue::Array(all));
             Ok(())
         }
         Some(_) => Err(()),
     }
 }
 
-/// Applies `op` to the owned tree through `state::path`, after checking the
-/// owned rule against v3's, and to the view through `splice`. Returns the
+/// Applies `op` to the owned tree through `expr::path`, after checking the
+/// owned rule against its reference, and to the view through `splice`. Returns the
 /// new view root, or the old one when the op did nothing.
 fn apply<'a>(
     case: usize,
@@ -125,7 +125,7 @@ fn apply<'a>(
         Op::Append(dotted, items) => {
             let segs = random::segs(&dotted);
             let mut reference = owned.clone();
-            let expected = v3_append(&mut reference, &dotted, items.clone());
+            let expected = reference_append(&mut reference, &segs, items.clone());
             let got = path::append(owned, &segs, items.clone());
             assert_eq!(
                 got.is_ok(),
@@ -160,7 +160,7 @@ fn apply<'a>(
         }
         Op::MergeRoot(key, value) => {
             let mut reference = owned.clone();
-            random::v3_merge_root(&mut reference, key, value.clone());
+            random::reference_merge_root(&mut reference, key, value.clone());
             crate::expr::path::merge_root(owned, key, value.clone());
             assert_eq!(
                 random::exact(owned),

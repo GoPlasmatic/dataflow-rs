@@ -1,7 +1,5 @@
 {
   "description": "The evaluation context is exactly {data, metadata, temp_data}: a var rooted at payload silently resolves to null, so the mapping writes nothing, while the three roots resolve.",
-  "covers": ["expr.eval-context", "break.9"],
-  "mirrors": ["src/task_context::payload_is_not_in_the_eval_context"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
@@ -10,9 +8,5 @@
         {"path": "data.from_metadata", "logic": {"var": "metadata.mk"}},
         {"path": "data.from_temp", "logic": {"var": "temp_data.tk"}}]}}}]}
   ],
-  "steps": [{"run": {"message": {"payload": {"a": 1}, "data": {"present": "d"}, "metadata": {"mk": "m"}, "temp_data": {"tk": "t"}}}}],
-  "deviations": [
-    {"break": "9", "paths": ["/definitions/0/authored", "/definitions/0/checked"],
-     "note": "v4 reports a literal var rooted at payload as a Defect; the run is unchanged"}
-  ]
+  "steps": [{"run": {"message": {"payload": {"a": 1}, "data": {"present": "d"}, "metadata": {"mk": "m"}, "temp_data": {"tk": "t"}}}}]
 }

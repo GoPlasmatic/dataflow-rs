@@ -1,9 +1,5 @@
 {
   "description": "Without a channel, v3 runs every workflow whatever its status: active, paused and archived all append.",
-  "covers": [
-    "schema.status",
-    "break.7"
-  ],
   "workflows": [
     {
       "id": "active",
@@ -83,19 +79,6 @@
       "run": {
         "message": {}
       }
-    }
-  ],
-  "deviations": [
-    {
-      "break": "7",
-      "paths": [
-        "/steps/0/run/message/context/data/order",
-        "/steps/0/run/message/context/metadata/progress",
-        "/steps/0/run/message/audit_trail",
-        "/steps/0/run/trace/steps/1",
-        "/steps/0/run/trace/steps/2"
-      ],
-      "note": "v4 runs only active workflows, with or without a channel"
     }
   ]
 }

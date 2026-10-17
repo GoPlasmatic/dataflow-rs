@@ -1,7 +1,5 @@
 {
   "description": "A failing mapping is logged and the later mappings still run; the task returns 500 at the end, recorded as TASK_STATUS_ERROR.",
-  "covers": ["map.errors", "code.TASK_STATUS_ERROR"],
-  "mirrors": ["tests/map_append.rs::an_append_to_a_non_array_fails_the_task_and_leaves_the_value"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "continue_on_error": true, "function": {"name": "map", "input": {"mappings": [

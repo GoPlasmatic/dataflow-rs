@@ -1,9 +1,5 @@
 {
   "description": "loop.over is evaluated once, after setup: each sweep sees over[counter] in temp_data.item, and the body growing data.items does not add sweeps.",
-  "covers": [
-    "loop.over",
-    "loop.over-once"
-  ],
   "workflows": [
     {
       "id": "w",

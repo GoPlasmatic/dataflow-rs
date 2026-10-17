@@ -1,7 +1,5 @@
 {
   "description": "Template keys that collide once the $ is stripped are refused at build: {\"$a\": 1, \"a\": 2} would emit a twice.",
-  "covers": ["expr.dollar-escape"],
-  "mirrors": ["tests/template_keys.rs::keys_that_collide_after_stripping_are_refused_at_build"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

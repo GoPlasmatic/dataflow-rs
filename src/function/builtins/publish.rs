@@ -118,9 +118,7 @@ fn find<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::function::builtins::differential::{
-        Observed, same, v3_context_text, v4_context_text,
-    };
+    use crate::function::builtins::one_task::{Golden, Observed, context_text_after};
     use datavalue::OwnedDataValue;
     use serde_json::{Value, json};
 
@@ -136,19 +134,22 @@ mod tests {
         })
     }
 
-    async fn publish(function: &str, extra: Value) -> Observed {
+    /// `function` from `obj` to `out`, with `extra`'s keys over those, its
+    /// whole observation held by `golden`.
+    fn publish(golden: &mut Golden, function: &str, extra: Value) -> Observed {
         let mut input = json!({"source": "obj", "target": "out"});
         for (k, v) in extra.as_object().expect("an object") {
             input[k] = v.clone();
         }
-        same(function, &input, &Value::Null, &context()).await
+        golden.observe(function, &input, &Value::Null, &context())
     }
 
-    #[tokio::test]
-    async fn publish_json_compact_and_pretty_agree_with_v3() {
-        let compact = publish("publish_json", json!({})).await;
+    #[test]
+    fn publish_json_writes_compact_and_pretty_text() {
+        let mut golden = Golden::new("publish", "publish_json_writes_compact_and_pretty_text");
+        let compact = publish(&mut golden, "publish_json", json!({}));
         assert_eq!(compact.status, Some(200));
-        let pretty = publish("publish_json", json!({"pretty": true})).await;
+        let pretty = publish(&mut golden, "publish_json", json!({"pretty": true}));
         assert!(
             pretty.context.contains(r#""out":"{\n  \"a\": ["#),
             "{}",
@@ -156,23 +157,27 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn compact_pretty_and_xml_keep_the_sources_key_order() {
+    #[test]
+    fn compact_pretty_and_xml_keep_the_sources_key_order() {
         // Built from JSON text so the keys stay out of order whatever
         // serde_json's map type is. All three write the source's order in
-        // every build: break 23, where v3's default build sorted pretty's
-        // and XML's keys. Compact is v3's text in either build.
+        // every build (break 23: v3's default build sorted pretty's and
+        // XML's keys).
         let text = r#"{"data":{"obj":{"z":1,"a":{"y":2,"b":[3,{"q":1,"c":2.0}]}}},"metadata":{},"temp_data":{}}"#;
         let context = || OwnedDataValue::from_json(text).expect("JSON");
         let compact = json!({"source": "obj", "target": "out"});
         assert_eq!(
-            v4_context_text("publish_json", &compact, context()),
-            v3_context_text("publish_json", &compact, context()).await
+            context_text_after("publish_json", &compact, context()),
+            concat!(
+                r#"{"data":{"obj":{"z":1,"a":{"y":2,"b":[3,{"q":1,"c":2.0}]}},"#,
+                r#""out":"{\"z\":1,\"a\":{\"y\":2,\"b\":[3,{\"q\":1,\"c\":2.0}]}}"},"#,
+                r#""metadata":{},"temp_data":{}}"#
+            )
         );
         let out = |function: &str, pretty: bool| {
             let input = json!({"source": "obj", "target": "out", "pretty": pretty});
             let written: Value =
-                serde_json::from_str(&v4_context_text(function, &input, context())).unwrap();
+                serde_json::from_str(&context_text_after(function, &input, context())).unwrap();
             written["data"]["out"]
                 .as_str()
                 .expect("a string")
@@ -195,21 +200,26 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn publish_json_reads_through_the_data_fallback() {
+    #[test]
+    fn publish_json_reads_through_the_data_fallback() {
+        let mut golden = Golden::new("publish", "publish_json_reads_through_the_data_fallback");
         // `data.obj`: `data.data.obj` is missing, so `data.obj` is read.
-        let observed = publish("publish_json", json!({"source": "data.obj"})).await;
+        let observed = publish(&mut golden, "publish_json", json!({"source": "data.obj"}));
         assert_eq!(observed.status, Some(200));
         // `data.inner` finds `data.data.inner` first.
-        publish("publish_json", json!({"source": "data.inner"})).await;
-        publish("publish_json", json!({"source": "data"})).await;
-        publish("publish_json", json!({"source": "obj.a.1"})).await;
-        publish("publish_json", json!({"source": "num"})).await;
-        publish("publish_json", json!({"source": "text"})).await;
+        publish(&mut golden, "publish_json", json!({"source": "data.inner"}));
+        publish(&mut golden, "publish_json", json!({"source": "data"}));
+        publish(&mut golden, "publish_json", json!({"source": "obj.a.1"}));
+        publish(&mut golden, "publish_json", json!({"source": "num"}));
+        publish(&mut golden, "publish_json", json!({"source": "text"}));
     }
 
-    #[tokio::test]
-    async fn a_missing_or_null_source_fails_with_the_validation_error() {
+    #[test]
+    fn a_missing_or_null_source_fails_with_the_validation_error() {
+        let mut golden = Golden::new(
+            "publish",
+            "a_missing_or_null_source_fails_with_the_validation_error",
+        );
         for (function, source, message) in [
             (
                 "publish_json",
@@ -237,7 +247,7 @@ mod tests {
                 "Validation error: PublishXml: Source 'data.nothing' not found or is null",
             ),
         ] {
-            let observed = publish(function, json!({"source": source})).await;
+            let observed = publish(&mut golden, function, json!({"source": source}));
             assert_eq!(observed.status, Some(500), "{function} {source}");
             assert_eq!(observed.error_code.as_deref(), Some("VALIDATION_ERROR"));
             assert!(
@@ -250,55 +260,84 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn a_computed_source_and_target_resolve_per_call() {
+    #[test]
+    fn a_computed_source_and_target_resolve_per_call() {
+        let mut golden = Golden::new("publish", "a_computed_source_and_target_resolve_per_call");
         for function in ["publish_json", "publish_xml"] {
-            publish(function, json!({"source": {"var": "data.kind"}})).await;
             publish(
+                &mut golden,
+                function,
+                json!({"source": {"var": "data.kind"}}),
+            );
+            publish(
+                &mut golden,
                 function,
                 json!({"source": {"cat": ["data.", {"var": "data.kind"}]}}),
-            )
-            .await;
-            publish(function, json!({"target": {"var": "data.slot"}})).await;
+            );
+            publish(
+                &mut golden,
+                function,
+                json!({"target": {"var": "data.slot"}}),
+            );
             // One that folds is resolved at compile; the answer is the same.
-            publish(function, json!({"source": {"cat": ["o", "bj"]}})).await;
+            publish(
+                &mut golden,
+                function,
+                json!({"source": {"cat": ["o", "bj"]}}),
+            );
         }
     }
 
-    #[tokio::test]
-    async fn publish_xml_writes_the_document_under_the_root_element() {
-        let observed = publish("publish_xml", json!({})).await;
+    #[test]
+    fn publish_xml_writes_the_document_under_the_root_element() {
+        let mut golden = Golden::new(
+            "publish",
+            "publish_xml_writes_the_document_under_the_root_element",
+        );
+        let observed = publish(&mut golden, "publish_xml", json!({}));
         assert!(
             observed.context.contains("<root><a><item>1</item>"),
             "{}",
             observed.context
         );
         assert!(observed.context.contains("v &amp; &lt;w&gt;"));
-        publish("publish_xml", json!({"root_element": "envelope"})).await;
-        publish("publish_xml", json!({"root_element": {"var": "data.tag"}})).await;
+        publish(
+            &mut golden,
+            "publish_xml",
+            json!({"root_element": "envelope"}),
+        );
+        publish(
+            &mut golden,
+            "publish_xml",
+            json!({"root_element": {"var": "data.tag"}}),
+        );
         // Scalars, a list and a key that is no XML name.
-        publish("publish_xml", json!({"source": "num"})).await;
-        publish("publish_xml", json!({"source": "obj.a"})).await;
-        publish("publish_xml", json!({"source": "text"})).await;
+        publish(&mut golden, "publish_xml", json!({"source": "num"}));
+        publish(&mut golden, "publish_xml", json!({"source": "obj.a"}));
+        publish(&mut golden, "publish_xml", json!({"source": "text"}));
     }
 
-    #[tokio::test]
-    async fn a_source_that_exists_under_data_wins_over_the_fallback() {
+    #[test]
+    fn a_source_that_exists_under_data_wins_over_the_fallback() {
+        let mut golden = Golden::new(
+            "publish",
+            "a_source_that_exists_under_data_wins_over_the_fallback",
+        );
         let context = json!({"data": {"data": {"x": 1}, "x": 2}});
         for function in ["publish_json", "publish_xml"] {
-            let observed = same(
+            let observed = golden.observe(
                 function,
                 &json!({"source": "data.x", "target": "out"}),
                 &Value::Null,
                 &context,
-            )
-            .await;
+            );
             assert!(observed.context.contains('1'), "{}", observed.context);
         }
     }
 
-    #[tokio::test]
-    async fn an_empty_remainder_publishes_the_whole_of_data_as_in_v3() {
+    #[test]
+    fn an_empty_remainder_publishes_the_whole_of_data() {
+        let mut golden = Golden::new("publish", "an_empty_remainder_publishes_the_whole_of_data");
         let context = json!({"data": {"e": "", "d": "data.", "k": 1, "o": {"x": 1}}});
         for function in ["publish_json", "publish_xml"] {
             for source in [
@@ -310,18 +349,22 @@ mod tests {
                 json!({"var": "data.d"}),
             ] {
                 let input = json!({"source": source, "target": "out"});
-                let observed = same(function, &input, &Value::Null, &context).await;
+                let observed = golden.observe(function, &input, &Value::Null, &context);
                 assert_eq!(observed.status, Some(200), "{function} {source}");
             }
         }
-        // A key named `""` wins over the whole of `data`, as in v3's first step.
+        // A key named `""` wins over the whole of `data`.
         let context = json!({"data": {"": {"only": 1}, "k": 2}});
         let input = json!({"source": "", "target": "out"});
-        same("publish_json", &input, &Value::Null, &context).await;
+        golden.observe("publish_json", &input, &Value::Null, &context);
     }
 
-    #[tokio::test]
-    async fn a_computed_parameter_that_fails_to_evaluate_records_v3s_text() {
+    #[test]
+    fn a_computed_parameter_that_fails_to_evaluate_records_a_logic_error() {
+        let mut golden = Golden::new(
+            "publish",
+            "a_computed_parameter_that_fails_to_evaluate_records_a_logic_error",
+        );
         let context = json!({"data": {"word": "abc", "obj": {"a": 1}}});
         let broken = json!({"+": [{"var": "data.word"}, "x"]});
         for (function, input) in [
@@ -334,7 +377,7 @@ mod tests {
                 json!({"source": "obj", "target": "out", "root_element": broken}),
             ),
         ] {
-            let observed = same(function, &input, &Value::Null, &context).await;
+            let observed = golden.observe(function, &input, &Value::Null, &context);
             assert_eq!(observed.status, Some(500), "{function} {input}");
             assert_eq!(observed.error_code.as_deref(), Some("LOGIC_ERROR"));
             assert!(

@@ -96,7 +96,7 @@ impl ParseConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::function::builtins::differential::{Observed, same, v4_context_text, v4_task};
+    use crate::function::builtins::one_task::{Golden, Observed, context_text_after, task};
     use serde_json::{Value, json};
 
     fn context() -> Value {
@@ -115,18 +115,23 @@ mod tests {
         json!({"x": {"y": [10, 20]}, "s": "{\"inner\": true}", "n": null, "list": [1, 2, 3]})
     }
 
-    async fn json_parse(source: Value, target: Value) -> Observed {
-        same(
+    /// `parse_json` from `source` to `target`, its whole observation held
+    /// by `golden`.
+    fn json_parse(golden: &mut Golden, source: Value, target: Value) -> Observed {
+        golden.observe(
             "parse_json",
             &json!({"source": source, "target": target}),
             &payload(),
             &context(),
         )
-        .await
     }
 
-    #[tokio::test]
-    async fn parse_json_reads_the_payload_a_payload_path_or_a_context_path() {
+    #[test]
+    fn parse_json_reads_the_payload_a_payload_path_or_a_context_path() {
+        let mut golden = Golden::new(
+            "parse",
+            "parse_json_reads_the_payload_a_payload_path_or_a_context_path",
+        );
         for source in [
             "payload",
             "payload.x",
@@ -141,20 +146,24 @@ mod tests {
             "metadata.m",
             "temp_data.t.deep",
         ] {
-            let observed = json_parse(json!(source), json!("out")).await;
+            let observed = json_parse(&mut golden, json!(source), json!("out"));
             assert_eq!(observed.status, Some(200), "{source}");
         }
     }
 
-    #[tokio::test]
-    async fn a_string_source_is_parsed_when_it_is_json_and_kept_when_it_is_not() {
-        let parsed = json_parse(json!("data.text"), json!("out")).await;
+    #[test]
+    fn a_string_source_is_parsed_when_it_is_json_and_kept_when_it_is_not() {
+        let mut golden = Golden::new(
+            "parse",
+            "a_string_source_is_parsed_when_it_is_json_and_kept_when_it_is_not",
+        );
+        let parsed = json_parse(&mut golden, json!("data.text"), json!("out"));
         assert!(
             parsed.context.contains(r#""out":{"k":[1,2]}"#),
             "{}",
             parsed.context
         );
-        let kept = json_parse(json!("data.plain"), json!("out")).await;
+        let kept = json_parse(&mut golden, json!("data.plain"), json!("out"));
         assert!(
             kept.context.contains(r#""out":"not json""#),
             "{}",
@@ -164,8 +173,9 @@ mod tests {
         assert!(parsed.changes.contains(r#""new_value":{"k":[1,2]}"#));
     }
 
-    #[tokio::test]
-    async fn parse_json_computes_its_source_and_its_target() {
+    #[test]
+    fn parse_json_computes_its_source_and_its_target() {
+        let mut golden = Golden::new("parse", "parse_json_computes_its_source_and_its_target");
         // A computed source can name the payload, a payload path or a context path.
         for source in [
             json!({"cat": ["pay", "load"]}),
@@ -174,21 +184,25 @@ mod tests {
             json!({"cat": ["data.", "obj"]}),
             json!({"cat": ["payload.", {"var": "data.name"}]}),
         ] {
-            json_parse(source, json!("out")).await;
+            json_parse(&mut golden, source, json!("out"));
         }
         // A computed target.
         json_parse(
+            &mut golden,
             json!("payload.x"),
             json!({"cat": ["to_", {"var": "data.slot"}]}),
-        )
-        .await;
-        json_parse(json!("payload.x"), json!({"var": "data.slot"})).await;
-        json_parse(json!("payload.x"), json!("deep.er.out")).await;
+        );
+        json_parse(&mut golden, json!("payload.x"), json!({"var": "data.slot"}));
+        json_parse(&mut golden, json!("payload.x"), json!("deep.er.out"));
     }
 
-    #[tokio::test]
-    async fn a_target_is_relative_to_data_so_data_t_lands_at_data_data_t() {
-        let observed = json_parse(json!("payload.x"), json!("data.t")).await;
+    #[test]
+    fn a_target_is_relative_to_data_so_data_t_lands_at_data_data_t() {
+        let mut golden = Golden::new(
+            "parse",
+            "a_target_is_relative_to_data_so_data_t_lands_at_data_data_t",
+        );
+        let observed = json_parse(&mut golden, json!("payload.x"), json!("data.t"));
         assert!(
             observed.context.contains(r#""data":{"t":"#),
             "{}",
@@ -200,11 +214,12 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_target_of_exactly_data_dot_does_what_v3_does() {
-        // T2-f: the path `data.data.` ends in an empty segment. v4 writes
-        // what v3 writes, whatever that is: the differential decides.
-        let observed = json_parse(json!("payload.x"), json!("data.")).await;
+    #[test]
+    fn a_target_of_exactly_data_dot_writes_the_empty_key() {
+        let mut golden = Golden::new("parse", "a_target_of_exactly_data_dot_writes_the_empty_key");
+        // T2-f: the path `data.data.` ends in an empty segment, which is a
+        // key, as in 3.x.
+        let observed = json_parse(&mut golden, json!("payload.x"), json!("data."));
         assert_eq!(observed.status, Some(200));
         // It is the key `""` under `data.data`, and the change names it so.
         assert!(
@@ -217,7 +232,7 @@ mod tests {
             1
         );
         // And so does a bare empty target.
-        json_parse(json!("payload.x"), json!("")).await;
+        json_parse(&mut golden, json!("payload.x"), json!(""));
     }
 
     #[test]
@@ -226,25 +241,25 @@ mod tests {
         // name outside the three roots (break 15): at compile when it folds,
         // as an error of the call when it does not.
         let folds = json!({"source": {"cat": ["extra", ".x"]}, "target": "out"});
-        assert!(v4_task("parse_json", &folds).is_none());
+        assert!(task("parse_json", &folds).is_none());
         let input = json!({"source": {"cat": ["extra.", {"var": "data.slot"}]}, "target": "out"});
         let observed =
-            v4_task("parse_json", &input)
+            task("parse_json", &input)
                 .expect("compiles")
                 .run(&payload(), &context(), true);
         assert_eq!(observed.status, Some(500));
         assert_eq!(observed.error_code.as_deref(), Some("CONFIG_ERROR"));
     }
 
-    #[tokio::test]
-    async fn parse_xml_parses_a_valid_document() {
-        let observed = same(
+    #[test]
+    fn parse_xml_parses_a_valid_document() {
+        let mut golden = Golden::new("parse", "parse_xml_parses_a_valid_document");
+        let observed = golden.observe(
             "parse_xml",
             &json!({"source": "data.xml", "target": "doc"}),
             &Value::Null,
             &context(),
-        )
-        .await;
+        );
         assert_eq!(observed.status, Some(200));
         assert!(
             observed
@@ -254,42 +269,46 @@ mod tests {
             observed.context
         );
         // The payload as the document, and a computed source.
-        same(
+        golden.observe(
             "parse_xml",
             &json!({"source": "payload", "target": "doc"}),
             &json!("<a><b>1</b></a>"),
             &context(),
-        )
-        .await;
-        same(
+        );
+        golden.observe(
             "parse_xml",
             &json!({"source": {"cat": ["data.", {"var": "data.slot"}]}, "target": "doc"}),
             &Value::Null,
             &json!({"data": {"slot": "xml", "xml": "<q>1</q>"}}),
-        )
-        .await;
+        );
     }
 
-    #[tokio::test]
-    async fn parse_xml_keeps_the_documents_element_order() {
+    #[test]
+    fn parse_xml_keeps_the_documents_element_order() {
+        let mut golden = Golden::new("parse", "parse_xml_keeps_the_documents_element_order");
         // In every build, where v3's default build sorted the keys (break
         // 23). A repeated element keeps its first place and its last value,
-        // as v3 read it with serde_json's `preserve_order` on; in sorted
-        // order, v3's default build agrees.
-        same(
+        // as 3.x read it with serde_json's `preserve_order` on.
+        let repeated = golden.observe(
             "parse_xml",
             &json!({"source": "data.xml", "target": "doc"}),
             &Value::Null,
             &json!({"data": {"xml": "<r><a>1</a><b>2</b><a>3</a></r>"}}),
-        )
-        .await;
+        );
+        assert!(
+            repeated
+                .context
+                .contains(r#""doc":{"a":{"$text":"3"},"b":{"$text":"2"}}"#),
+            "{}",
+            repeated.context
+        );
         let context = datavalue::OwnedDataValue::from_json(concat!(
             r#"{"data":{"xml":"<r><z>1</z><a><y>2</y><b>3</b></a><m>x</m><z>4</z></r>"},"#,
             r#""metadata":{},"temp_data":{}}"#
         ))
         .expect("JSON");
         let input = json!({"source": "data.xml", "target": "doc"});
-        let written = v4_context_text("parse_xml", &input, context);
+        let written = context_text_after("parse_xml", &input, context);
         assert!(
             written.contains(concat!(
                 r#""doc":{"z":{"$text":"4"},"a":{"y":{"$text":"2"},"b":{"$text":"3"}},"#,
@@ -299,8 +318,12 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn parse_xml_fails_on_a_source_that_is_not_a_string_or_not_a_document() {
+    #[test]
+    fn parse_xml_fails_on_a_source_that_is_not_a_string_or_not_a_document() {
+        let mut golden = Golden::new(
+            "parse",
+            "parse_xml_fails_on_a_source_that_is_not_a_string_or_not_a_document",
+        );
         for (source, message) in [
             (
                 "data.num",
@@ -316,13 +339,12 @@ mod tests {
             ),
             ("data.broken", "Validation error: Failed to parse XML: "),
         ] {
-            let observed = same(
+            let observed = golden.observe(
                 "parse_xml",
                 &json!({"source": source, "target": "doc"}),
                 &payload(),
                 &context(),
-            )
-            .await;
+            );
             assert_eq!(observed.status, Some(500), "{source}");
             assert_eq!(observed.error_code.as_deref(), Some("VALIDATION_ERROR"));
             assert!(
@@ -335,9 +357,11 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn an_empty_remainder_names_its_root_as_in_v3() {
-        // `get_nested_value(x, "")` is `x`: `payload.` is the payload, `data.` is `data`.
+    #[test]
+    fn an_empty_remainder_names_its_root() {
+        let mut golden = Golden::new("parse", "an_empty_remainder_names_its_root");
+        // An empty remainder reads its root whole: `payload.` is the
+        // payload, `data.` is `data`.
         let context = json!({"data": {"d": "data.", "e": "", "k": 1, "p": "payload."}});
         for source in [
             json!("payload."),
@@ -350,16 +374,15 @@ mod tests {
             json!({"var": "data.d"}),
         ] {
             let input = json!({"source": source, "target": "out"});
-            let observed = same("parse_json", &input, &payload(), &context).await;
+            let observed = golden.observe("parse_json", &input, &payload(), &context);
             assert_eq!(observed.status, Some(200), "{source}");
         }
-        let whole = same(
+        let whole = golden.observe(
             "parse_json",
             &json!({"source": "data.", "target": "out"}),
             &payload(),
             &context,
-        )
-        .await;
+        );
         assert!(
             whole.context.contains(r#""out":{"d":"data.""#),
             "{}",
@@ -372,12 +395,16 @@ mod tests {
             json!({"cat": ["payload.", {"var": "data.e"}]}),
         ] {
             let input = json!({"source": source, "target": "out"});
-            same("parse_xml", &input, &json!("<a>1</a>"), &context).await;
+            golden.observe("parse_xml", &input, &json!("<a>1</a>"), &context);
         }
     }
 
-    #[tokio::test]
-    async fn a_computed_parameter_that_fails_to_evaluate_records_v3s_text() {
+    #[test]
+    fn a_computed_parameter_that_fails_to_evaluate_records_a_logic_error() {
+        let mut golden = Golden::new(
+            "parse",
+            "a_computed_parameter_that_fails_to_evaluate_records_a_logic_error",
+        );
         let context = json!({"data": {"word": "abc"}});
         let broken = json!({"+": [{"var": "data.word"}, "x"]});
         for input in [
@@ -385,7 +412,7 @@ mod tests {
             json!({"source": "payload", "target": broken}),
         ] {
             for function in ["parse_json", "parse_xml"] {
-                let observed = same(function, &input, &json!("<a>1</a>"), &context).await;
+                let observed = golden.observe(function, &input, &json!("<a>1</a>"), &context);
                 assert_eq!(observed.status, Some(500), "{function} {input}");
                 assert_eq!(observed.error_code.as_deref(), Some("LOGIC_ERROR"));
                 assert!(

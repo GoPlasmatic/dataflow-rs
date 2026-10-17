@@ -1,13 +1,5 @@
 {
   "description": "max still bounds an over loop (five elements, max 2: two sweeps); an empty over runs no sweep and writes no task's output; a non-array over, under continue_on_error, is a recorded WORKFLOW_ERROR and the next workflow runs. Each loop has its own counter and binding, so what each leaves in temp_data is visible.",
-  "covers": [
-    "loop.over"
-  ],
-  "mirrors": [
-    "src/workflow_executor::max_still_bounds_an_over_loop",
-    "src/workflow_executor::an_empty_over_runs_no_iteration_but_the_workflow_still_executed",
-    "src/workflow_executor::a_non_array_over_is_a_workflow_error"
-  ],
   "workflows": [
     {
       "id": "bounded",
@@ -142,18 +134,6 @@
           }
         }
       }
-    }
-  ],
-  "deviations": [
-    {
-      "break": "4",
-      "paths": [
-        "/steps/0/run/message/errors/0/code",
-        "/steps/0/run/message/errors/0/message",
-        "/steps/0/run/trace/steps/2/message/errors/0/code",
-        "/steps/0/run/trace/steps/2/message/errors/0/message"
-      ],
-      "note": "v4 records no WORKFLOW_ERROR: the non-array over is one record with the evaluation's own code, LOGIC_ERROR, the workflow id and no task id, and its message is the loop's own (I61)"
     }
   ]
 }

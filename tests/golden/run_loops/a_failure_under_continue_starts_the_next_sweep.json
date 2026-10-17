@@ -1,0 +1,292 @@
+[
+  {
+    "code": "TASK_ERROR",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string",
+          "order": [
+            0,
+            "after",
+            1,
+            2,
+            "after",
+            0,
+            "after",
+            1
+          ],
+          "task": [
+            0,
+            "after",
+            1,
+            "after",
+            2,
+            "after"
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "stops",
+            "task_id": "bad",
+            "status_code": 500
+          }
+        },
+        "temp_data": {
+          "i": 1
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "continues",
+          "task_id": "before",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.order.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "continues",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.order.1",
+              "old_value": null,
+              "new_value": "after"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "continues",
+          "task_id": "before",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.order.2",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "continues",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "continues",
+          "task_id": "before",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.order.3",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "continues",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.order.4",
+              "old_value": null,
+              "new_value": "after"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "task_continues",
+          "task_id": "before",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.task.0",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "task_continues",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.task.1",
+              "old_value": null,
+              "new_value": "after"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "task_continues",
+          "task_id": "before",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.task.2",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "task_continues",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "task_continues",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.task.3",
+              "old_value": null,
+              "new_value": "after"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "task_continues",
+          "task_id": "before",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.task.4",
+              "old_value": null,
+              "new_value": 2
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "task_continues",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.task.5",
+              "old_value": null,
+              "new_value": "after"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 2
+        },
+        {
+          "workflow_id": "stops",
+          "task_id": "before",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.order.5",
+              "old_value": null,
+              "new_value": 0
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "stops",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.order.6",
+              "old_value": null,
+              "new_value": "after"
+            }
+          ],
+          "status": 200,
+          "loop_counter": 0
+        },
+        {
+          "workflow_id": "stops",
+          "task_id": "before",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.order.7",
+              "old_value": null,
+              "new_value": 1
+            }
+          ],
+          "status": 200,
+          "loop_counter": 1
+        },
+        {
+          "workflow_id": "stops",
+          "task_id": "bad",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500,
+          "loop_counter": 1
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "continues",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "task_continues",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task bad returned status 500",
+          "path": null,
+          "workflow_id": "stops",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  }
+]

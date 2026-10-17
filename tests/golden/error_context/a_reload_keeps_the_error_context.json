@@ -1,0 +1,43 @@
+{
+  "none configured": {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "text": "a string"
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "map",
+            "status_code": 500
+          }
+        },
+        "temp_data": {}
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task map returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>"
+        }
+      ]
+    }
+  }
+}

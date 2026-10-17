@@ -1,12 +1,5 @@
 {
   "description": "A group whose id equals a member task's id, and a loop.setup step sharing a body task's id, both parse and are refused at build (Workflow::validate); validate_authored reports each.",
-  "covers": [
-    "schema.unique-ids"
-  ],
-  "mirrors": [
-    "tests/task_groups.rs::a_group_id_colliding_with_a_task_id_is_rejected",
-    "src/workflow::a_setup_step_sharing_an_id_with_a_body_task_is_rejected"
-  ],
   "workflows": [
     {
       "id": "group_collision",

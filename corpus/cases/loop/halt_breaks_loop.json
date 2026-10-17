@@ -1,12 +1,5 @@
 {
   "description": "A halt breaks the whole loop, not one sweep: a rejecting filter at counter 1 ends its loop after sweep 1, and so does a terminal task at counter 1; a later workflow still runs.",
-  "covers": [
-    "loop.halt"
-  ],
-  "mirrors": [
-    "src/workflow_executor::filter_halt_breaks_the_whole_loop_not_just_one_sweep",
-    "tests/task_groups.rs::terminal_task_breaks_the_whole_loop"
-  ],
   "workflows": [
     {
       "id": "filtered",

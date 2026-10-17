@@ -1,7 +1,7 @@
 //! The one machine-readable line every gate benchmark prints, read by
-//! `bench/gate.py`. The human-readable output above it is unchanged; a v4 port
-//! of a benchmark keeps these metric names, so the 13-row comparison stays
-//! mechanical.
+//! `bench/gate.py`. The human-readable output above it is unchanged; a
+//! benchmark keeps these metric names from build to build, so the 13-row A/B
+//! comparison stays mechanical.
 //!
 //! Each benchmark compiles this file as its own module and none uses every
 //! method, hence the module-wide dead-code allowance.

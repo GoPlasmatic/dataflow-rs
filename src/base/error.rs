@@ -272,32 +272,30 @@ crate::base::ts::ts_decl!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dataflow_rs_v3::DataflowError as V3;
 
     #[test]
-    fn record_text_is_what_v3_displays_for_the_variant_it_corresponds_to() {
+    fn record_text_prefixes_four_kinds_and_is_the_message_otherwise() {
+        // The record texts are 3.x's, byte for byte.
         let m = "the message";
-        for (kind, v3) in [
-            (ErrorKind::Eval, V3::LogicEvaluation(m.into())),
-            (ErrorKind::Budget, V3::BudgetExceeded(m.into())),
-            (ErrorKind::Parse, V3::Deserialization(m.into())),
-            (ErrorKind::TimedOut, V3::Timeout(m.into())),
-            (ErrorKind::FunctionNotFound, V3::FunctionNotFound(m.into())),
+        for (kind, expected) in [
+            (ErrorKind::Eval, "Logic evaluation error: the message"),
+            (ErrorKind::Parse, "Deserialization error: the message"),
+            (ErrorKind::TimedOut, "Timeout error: the message"),
             (
-                ErrorKind::Service { code: "X".into() },
-                V3::service("X", m).build(),
+                ErrorKind::FunctionNotFound,
+                "Function not found: the message",
             ),
+            (ErrorKind::Budget, m),
+            (ErrorKind::Service { code: "X".into() }, m),
+            (ErrorKind::Config, m),
+            (ErrorKind::Compile, m),
+            (ErrorKind::Cancelled, m),
         ] {
-            let expected = v3.to_string();
             assert_eq!(
                 Error::new(kind.clone(), m).record_text(),
                 expected,
                 "{kind:?}"
             );
-        }
-        // v3 has no variant for these: the message alone.
-        for kind in [ErrorKind::Config, ErrorKind::Compile, ErrorKind::Cancelled] {
-            assert_eq!(Error::new(kind, m).record_text(), m);
         }
     }
 

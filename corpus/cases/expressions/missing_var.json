@@ -1,7 +1,5 @@
 {
   "description": "A missing var is null, never an error, so map skips it; datalogic 5.7's var with a computed path and a default returns the default only on a miss: a present 0 and a present null are values, not misses.",
-  "covers": ["expr.missing-var", "expr.var-default"],
-  "mirrors": ["src/compiler::a_missing_var_path_resolves_to_null_not_an_error"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

@@ -1,7 +1,5 @@
 {
   "description": "A payload that is itself a JSON string is re-parsed by parse_json.",
-  "covers": ["parse"],
-  "mirrors": ["src/parse::test_execute_parse_json_from_string_payload"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "whole", "name": "whole", "function": {"name": "parse_json", "input": {"source": "payload", "target": "input"}}}]}

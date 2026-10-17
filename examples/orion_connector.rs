@@ -1,13 +1,13 @@
 //! # Orion-shaped connector
 //!
-//! v4's port of v3's `orion_connector`, a row of the v4 performance gate: a
+//! A row of the performance gate, its workload first written against 3.x: a
 //! host function shaped like Orion 1.12's `mongo_read`, its most common kind
 //! of call, behind a layer shaped like Orion's `Connector<H>`:
 //!
 //! - three literal fields: `connector`, `database`, `collection`;
 //! - three document fields, `filter`, `projection` and `sort`, each an
 //!   `Interpolated` whose `{"var": …}` holes `Ctx::render` looks up once per
-//!   call, keeping their `$` keys, where v3 walks and clones each document;
+//!   call, keeping their `$` keys, where 3.x walked and cloned each document;
 //! - two numeric `Expr` fields, `limit` and `skip`, and an `Output` that
 //!   defaults to `data`, folded to a path at build when literal;
 //! - the rendered documents serialized straight into the wire buffer for the
@@ -18,8 +18,8 @@
 //!   Orion's connector shell does for its metrics.
 //!
 //! The driver answers from memory, so the figure is the engine's and the
-//! connector's own share of a call. The gate requires this row to be no
-//! slower than v3's.
+//! connector's own share of a call. The gate judges the row as every other:
+//! not slower.
 //!
 //! Run with: `cargo run --example orion_connector --release`
 

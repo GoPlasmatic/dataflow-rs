@@ -1,22 +1,22 @@
 // The trace end to end, through `Engine::builder()` and `run_with` (I105 to
 // I107): the initial context after the stamps, then one step per recorded
 // call, skipped step and engine write, each carrying its changes, so a
-// replay from `initial` rebuilds the context after every step. The rules are
-// v3's `tests/trace_options.rs` and `tests/tracing.rs` (redaction, the
-// budget, timings, the failing step); the snapshots they checked have no
-// twin, since a v4 trace carries changes, not snapshots.
+// replay from `initial` rebuilds the context after every step. The rules
+// covered: redaction, the byte budget, timings, the failing step, and the
+// engine's writes kept out of the audit.
 //
 // Four host functions drive the calls: `put` writes `writes` in key order
 // through `Ctx::set`, then returns what `outcome` names; `peek` keeps the
 // whole context as it sees it; `slow` sleeps on tokio's clock; `note`
-// records an error of its own, then fails. `wrap`, with a v3 twin, wraps its
-// fan-out element for the audit-bytes test.
-
-#[path = "support/vs_v3.rs"]
-mod vs_v3;
+// records an error of its own, then fails. `wrap` wraps its fan-out element
+// for the audit-bytes test.
+//
+// Two tests hold a whole message's normalised wire text to a golden file
+// under `tests/golden/trace/`; `DATAFLOW_GOLDEN_WRITE=1 cargo test --test
+// trace` rewrites them.
 
 use dataflow_corpus::json::Json;
-use dataflow_corpus::replay;
+use dataflow_corpus::{normalise, replay};
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::observe::{Event, Interest, Observer, StepResult, Trace, TraceOptions, TraceStep};
 use dataflow_rs::run::{AuditMode, ErrorRecord, Instant, RunStatus, Selection};
@@ -28,7 +28,6 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use vs_v3::{data, normalised, on_v3, on_v4, v3_engine, v3_engine_with, v4_engine, v4_engine_with};
 
 /// `put`'s config.
 #[derive(FunctionConfig)]
@@ -138,35 +137,8 @@ impl Function for Wrap {
     }
 }
 
-/// v3's `wrap`.
-mod v3_twin {
-    use async_trait::async_trait;
-    use dataflow_rs_v3::{AsyncFunctionHandler, Result, TaskContext, TaskOutcome};
-    use datavalue::OwnedDataValue;
-    use serde_json::Value;
-
-    pub struct Wrap;
-
-    #[async_trait]
-    impl AsyncFunctionHandler for Wrap {
-        type Input = Value;
-
-        async fn execute(&self, ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
-            let x = ctx
-                .get("temp_data.x")
-                .cloned()
-                .unwrap_or(OwnedDataValue::Null);
-            ctx.set(
-                "temp_data.r",
-                OwnedDataValue::Object(vec![("v".to_owned(), x)]),
-            );
-            Ok(TaskOutcome::Success)
-        }
-    }
-}
-
-/// An engine over `workflows` with `put`, `peek` (over `peeked`) and
-/// `slow` registered.
+/// An engine over `workflows` with `put`, `peek` (over `peeked`), `slow`,
+/// `note` and `wrap` registered.
 fn engine_with(workflows: &[Value], peeked: &Peek) -> Engine {
     workflows
         .iter()
@@ -175,7 +147,8 @@ fn engine_with(workflows: &[Value], peeked: &Peek) -> Engine {
                 .register("put", Put)
                 .register("peek", peeked.clone())
                 .register("slow", Slow)
-                .register("note", Note),
+                .register("note", Note)
+                .register("wrap", Wrap),
             |b, w| b.workflow_json(w),
         )
         .build()
@@ -377,7 +350,7 @@ async fn a_trace_is_the_initial_context_plus_each_steps_changes() {
 
 #[tokio::test]
 async fn the_failing_step_is_recorded_with_its_error() {
-    // Break 5: v3 dropped the step whose failure stopped the run.
+    // The step whose failure stopped the run is the trace's last.
     let e = engine(&[workflow(
         "w",
         vec![
@@ -414,9 +387,9 @@ async fn the_failing_step_is_recorded_with_its_error() {
 
 #[tokio::test]
 async fn a_builtin_failure_that_stops_the_run_records_its_failed_step() {
-    // v3's `tracing_retains_steps_when_sync_stretch_fails`, with break 5:
-    // two built-ins, the second failing on a source that is not a string,
-    // and v4 keeps the failing step v3 dropped, with its error.
+    // Two built-ins, the second failing on a source that is not a string:
+    // the trace keeps the steps before it and the failing step, with its
+    // error.
     let e = engine(&[workflow(
         "wf",
         vec![
@@ -447,8 +420,8 @@ async fn a_builtin_failure_that_stops_the_run_records_its_failed_step() {
 
 #[tokio::test]
 async fn a_failing_run_is_stamped() {
-    // v3's `tracing_stamps_processing_metadata_even_when_the_run_fails`:
-    // the stamps are in `initial` and on the message.
+    // A run that fails is still stamped: the stamps are in `initial` and on
+    // the message.
     let e = engine(&[workflow(
         "wf",
         vec![put("step_boom", json!({}), json!("err"))],
@@ -472,8 +445,8 @@ async fn a_failing_run_is_stamped() {
 
 #[tokio::test]
 async fn the_channel_is_stamped_in_initial_and_an_unknown_channel_traces_no_step() {
-    // v3's `channel_tracing_stamps_channel_metadata_and_retains_steps` and
-    // `channel_tracing_on_an_unknown_channel_is_a_noop`.
+    // The channel is stamped and the steps kept, through a failure; an
+    // unknown channel traces nothing.
     let e = engine(&[with(
         workflow(
             "wf_ch",
@@ -515,7 +488,7 @@ async fn the_channel_is_stamped_in_initial_and_an_unknown_channel_traces_no_step
 
 #[tokio::test]
 async fn a_filter_halt_records_the_halting_step_and_nothing_after() {
-    // v3's `tracing_records_the_full_trace_on_a_filter_halt`.
+    // A filter's halt keeps the whole trace up to the halting step.
     let e = engine(&[workflow(
         "wf",
         vec![
@@ -901,35 +874,76 @@ fn paths_of(m: &Message) -> Vec<Vec<&str>> {
         .collect()
 }
 
-/// [`on_v4`] with a default trace: the normalised wire text.
-async fn on_v4_traced(e: &Engine, run: &vs_v3::Run) -> String {
-    let mut m = Message::from_parts(
-        OwnedDataValue::from(&run.payload),
-        OwnedDataValue::from(&run.data),
-        OwnedDataValue::from(&run.metadata),
-    )
-    .with_id("m");
-    let mut opts = RunOptions::default().trace(TraceOptions::default());
-    if run.capture_off {
-        opts = opts.capture_changes(false);
-    }
-    if let Some(n) = run.audit {
-        opts = opts.audit(AuditMode::Last(n));
-    }
+/// The message's wire text, normalised as the corpus normalises it: the
+/// run's stamps and the audit and error timestamps blanked.
+fn normalised(m: &Message) -> Json {
+    let mut json = Json::from_text(&text(m)).expect("a message parses");
+    normalise::message(&mut json, None);
+    json
+}
+
+/// `e` run over a message whose `data` is `seed`, under `opts` without a
+/// trace and then with one: the message's normalised wire text, which the
+/// trace leaves byte for byte as it was. The traced run replays to its
+/// message.
+async fn wire(e: &Engine, seed: &Value, opts: &RunOptions<'_>) -> Json {
+    let mut plain = message(seed.clone());
+    let report = e.run_with(&mut plain, opts).await;
+    assert!(
+        !matches!(report.status(), RunStatus::Stopped(_)),
+        "{report:?}"
+    );
+    let mut m = message(seed.clone());
+    let opts = opts.clone().trace(TraceOptions::default());
     let (report, trace) = traced(e, &mut m, &opts).await;
     assert!(
         !matches!(report.status(), RunStatus::Stopped(_)),
         "{report:?}"
     );
     assert_replays(&trace, &m);
-    normalised(&m, false)
+    let untraced = normalised(&plain);
+    assert_eq!(
+        normalised(&m).to_text(),
+        untraced.to_text(),
+        "a trace changes nothing in the message"
+    );
+    untraced
+}
+
+/// `runs`, each `(name, normalised message)`, held to the golden file
+/// `tests/golden/trace/<name>.json`, or written there under
+/// `DATAFLOW_GOLDEN_WRITE=1`.
+fn golden(name: &str, runs: Vec<(&str, Json)>) {
+    let mut actual = Json::object();
+    for (run, message) in runs {
+        actual.insert(run, message);
+    }
+    let actual = actual.to_pretty() + "\n";
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/trace")
+        .join(format!("{name}.json"));
+    if std::env::var_os("DATAFLOW_GOLDEN_WRITE").is_some() {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(&file).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}; DATAFLOW_GOLDEN_WRITE=1 cargo test --test trace writes it",
+            file.display()
+        )
+    });
+    assert_eq!(
+        actual, expected,
+        "{name} differs from its golden file; DATAFLOW_GOLDEN_WRITE=1 rewrites it"
+    );
 }
 
 #[tokio::test]
 async fn the_engines_writes_never_enter_an_audit_entry() {
     // The progress write, a loop's counter, `as` and `scratch`, and a
     // fan-out's `into` pre-fill are all in the trace; none of them is in an
-    // audit entry, whose bytes are v3's with a trace or without one.
+    // audit entry, whose bytes are the same with a trace or without one.
     let workflows = [
         workflow(
             "w",
@@ -951,38 +965,54 @@ async fn the_engines_writes_never_enter_an_audit_entry() {
             &[("priority", json!(1))],
         ),
     ];
-    let v3 = v3_engine_with(&workflows, |b| b.register("wrap", v3_twin::Wrap)).unwrap();
-    let v4 = v4_engine_with(&workflows, |b| b.register("wrap", Wrap)).unwrap();
-    let runs = [
-        data(json!({})),
-        vs_v3::Run {
-            capture_off: true,
-            ..data(json!({}))
-        },
-        vs_v3::Run {
-            audit: Some(3),
-            ..data(json!({}))
-        },
+    let e = engine(&workflows);
+    let engines = [
+        "metadata.progress",
+        "temp_data.i",
+        "temp_data.item",
+        "temp_data.acc",
+        "data.out",
     ];
-    for run in &runs {
-        let (expected, code) = on_v3(&v3, run).await;
-        assert_eq!(code, "ok");
-        let (untraced, _, _) = on_v4(&v4, run).await;
-        assert_eq!(untraced, expected, "without a trace");
-        assert_eq!(on_v4_traced(&v4, run).await, expected, "with a trace");
+    let mut runs = Vec::new();
+    for (name, opts) in [
+        ("default", RunOptions::default()),
+        ("capture_off", RunOptions::default().capture_changes(false)),
+        (
+            "audit_last_3",
+            RunOptions::default().audit(AuditMode::Last(3)),
+        ),
+    ] {
+        let mut m = message(json!({}));
+        e.run_with(&mut m, &opts).await;
+        for entry in m.audit() {
+            for change in &entry.changes {
+                assert!(
+                    !engines.contains(&&*change.path),
+                    "{name}: the engine's write {} is audited",
+                    change.path
+                );
+            }
+        }
+        runs.push((name, wire(&e, &json!({}), &opts).await));
     }
 
-    // And without a host function, through the plain builds.
-    let plain = [workflow(
+    // And without a host function.
+    let plain = engine(&[workflow(
         "p",
         vec![map("m", "data.n", json!({"var": "temp_data.i"}))],
         &[("loop", json!({"counter": "i", "max": 3}))],
-    )];
-    let v3 = v3_engine(&plain).unwrap();
-    let v4 = v4_engine(&plain).unwrap();
-    let run = data(json!({}));
-    let (expected, _) = on_v3(&v3, &run).await;
-    assert_eq!(on_v4_traced(&v4, &run).await, expected);
+    )]);
+    let mut m = message(json!({}));
+    plain.run(&mut m).await;
+    assert_eq!(
+        paths_of(&m),
+        [vec!["data.n"], vec!["data.n"], vec!["data.n"]]
+    );
+    runs.push((
+        "plain_loop",
+        wire(&plain, &json!({}), &RunOptions::default()).await,
+    ));
+    golden("engines_writes", runs);
 }
 
 #[tokio::test]
@@ -1345,7 +1375,7 @@ async fn a_root_write_from_a_host_says_replaced_and_map_at_a_root_does_not() {
     assert_eq!(text(m.context().data()), r#"{"h":2}"#);
     assert_replays(&trace, &m);
 
-    // The audit entry's copy is v3's bytes: `replaced` is the trace's alone
+    // The audit entry's copy has no `replaced`: it is the trace's alone
     // (review B I-2), with a trace and without one.
     let audited = r#"[{"path":"data","old_value":{"keep":0,"m":1},"new_value":{"h":2}}]"#;
     assert_eq!(text(&m.audit()[1].changes), audited);
@@ -1355,10 +1385,10 @@ async fn a_root_write_from_a_host_says_replaced_and_map_at_a_root_does_not() {
 }
 
 #[tokio::test]
-async fn an_append_that_creates_its_target_gives_the_trace_the_array_and_the_audit_v3s_rows() {
+async fn an_append_that_creates_its_target_gives_the_trace_the_array_and_the_audit_its_elements() {
     // Review A I-1: an append or extend onto a missing or `null` target
-    // makes it an array. The audit entry records the elements alone, as
-    // v3's; a replay of those alone writes nothing through a `null`, and an
+    // makes it an array. The audit entry records the elements alone; a
+    // replay of those alone writes nothing through a `null`, and an
     // empty `extend` records none, so the trace records the array's
     // creation first, `null` to `[]`, for itself alone.
     let mapping =
@@ -1377,7 +1407,9 @@ async fn an_append_that_creates_its_target_gives_the_trace_the_array_and_the_aud
         ],
         &[],
     )];
-    let seed = json!({"list": null, "ext": null, "nulled": null});
+    // Keys in sorted order, so the golden file holds with serde_json's
+    // `preserve_order` and without it.
+    let seed = json!({"ext": null, "list": null, "nulled": null});
     let mut m = message(seed.clone());
     let (_, trace) = trace_of(&engine(&workflows), &mut m, TraceOptions::default()).await;
     let written = m.context().data();
@@ -1415,13 +1447,22 @@ async fn an_append_that_creates_its_target_gives_the_trace_the_array_and_the_aud
         ]]
     );
 
-    // v3's bytes, with a trace and without one.
-    let v3 = v3_engine(&workflows).unwrap();
-    let v4 = v4_engine(&workflows).unwrap();
-    let run = data(seed);
-    let (expected, _) = on_v3(&v3, &run).await;
-    assert_eq!(on_v4(&v4, &run).await.0, expected, "without a trace");
-    assert_eq!(on_v4_traced(&v4, &run).await, expected, "with a trace");
+    // The audit entry's bytes: each element at its index, old `null`.
+    assert_eq!(
+        text(&m.audit()[0].changes),
+        concat!(
+            r#"[{"path":"data.list.0","old_value":null,"new_value":1},"#,
+            r#"{"path":"data.ext.0","old_value":null,"new_value":1},"#,
+            r#"{"path":"data.ext.1","old_value":null,"new_value":2},"#,
+            r#"{"path":"data.list.1","old_value":null,"new_value":5}]"#,
+        )
+    );
+    // The whole message, the same with a trace and without one.
+    let e = engine(&workflows);
+    golden(
+        "append_creates_target",
+        vec![("default", wire(&e, &seed, &RunOptions::default()).await)],
+    );
 }
 
 #[tokio::test]
@@ -1729,8 +1770,7 @@ async fn mapping_ends_split_a_maps_changes_by_mapping() {
         ],
         &[],
     )];
-    let seed = json!({"seed": true});
-    let mut m = message(seed.clone());
+    let mut m = message(json!({"seed": true}));
     let (_, trace) = trace_of(&engine(&workflows), &mut m, TraceOptions::default()).await;
     let step = &trace.steps[0];
     assert_eq!(step.mapping_ends, [1, 1, 3, 4]);
@@ -1750,28 +1790,16 @@ async fn mapping_ends_split_a_maps_changes_by_mapping() {
         ["metadata.progress"]
     );
 
-    // v3's context before each mapping, and its snapshot after the task.
-    let v3 = v3_engine(&workflows).unwrap();
-    let mut v3_message = dataflow_rs_v3::Message::builder()
-        .id("m")
-        .data_json(&seed)
-        .build();
-    let v3_trace = v3
-        .process_message_with_trace_options(
-            &mut v3_message,
-            dataflow_rs_v3::TraceOptions::default(),
-        )
-        .await
-        .unwrap();
-    let v3_step = &v3_trace.steps[0];
-    let before: Vec<Value> = v3_step
-        .mapping_contexts
-        .clone()
-        .expect("v3 keeps a map's contexts")
-        .into_iter()
-        .map(unstamped)
-        .collect();
-    assert_eq!(before.len(), 4);
+    // The context before each mapping, and after the last; the `null`
+    // result leaves the second mapping's context as the first left it.
+    let context = |data: Value| json!({"data": data, "metadata": {}, "temp_data": {}});
+    let before = [
+        context(json!({"seed": true})),
+        context(json!({"seed": true, "a": 1})),
+        context(json!({"seed": true, "a": 1})),
+        context(json!({"seed": true, "a": 1, "list": [7]})),
+    ];
+    let after = context(json!({"seed": true, "a": 1, "list": [7], "x": 1, "y": 2}));
 
     // The context replayed from `initial` through `changes[..end]`.
     let replayed = |end: usize| -> Value {
@@ -1784,21 +1812,23 @@ async fn mapping_ends_split_a_maps_changes_by_mapping() {
     let ends: Vec<usize> = step.mapping_ends.iter().map(|&e| e as usize).collect();
     // Before mapping `i` is after mapping `i - 1`: `ends[i - 1]`, with
     // `ends[-1]` 0.
-    for (i, v3_before) in before.iter().enumerate() {
+    for (i, expected) in before.iter().enumerate() {
         let end = if i == 0 { 0 } else { ends[i - 1] };
-        assert_eq!(&replayed(end), v3_before, "before mapping {i}");
+        assert_eq!(&replayed(end), expected, "before mapping {i}");
     }
-    // After the last mapping, v3's snapshot less the progress write.
-    let snapshot = serde_json::to_value(v3_step.message.as_ref().expect("a snapshot")).unwrap();
-    assert_eq!(
-        replayed(ends[3]),
-        unstamped(snapshot["context"].clone()),
-        "after the last mapping"
-    );
+    assert_eq!(replayed(ends[3]), after, "after the last mapping");
+    // `Trace::mapping_contexts` is the context after each mapping.
+    let mapped: Vec<Value> = trace
+        .mapping_contexts(0)
+        .expect("a map step has its ends")
+        .iter()
+        .map(|c| unstamped(serde_json::from_str(&text(c)).unwrap()))
+        .collect();
+    assert_eq!(mapped[..3], before[1..]);
+    assert_eq!(mapped[3], after);
     assert_replays(&trace, &m);
 
-    // The audit entry and the wire shape of the changes are as before: the
-    // audit holds v3's rows, without the trace's `[]`.
+    // The audit entry holds the mappings' rows, without the trace's `[]`.
     assert_eq!(
         paths_of(&m),
         [vec!["data.a", "data.list.0", "data"]],

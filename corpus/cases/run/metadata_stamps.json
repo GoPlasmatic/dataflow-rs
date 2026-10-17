@@ -1,7 +1,5 @@
 {
   "description": "A run stamps metadata.processed_at, engine_version and, on a channel run, channel; metadata.progress is written after every executed task, a failed one included, but not after a filter's skip or a task whose condition is false.",
-  "covers": ["run.metadata"],
-  "mirrors": ["tests/rollout.rs::a_seeded_metadata_survives_processing_and_gains_the_engine_stamps", "tests/error_handling.rs::metadata_progress_is_written_even_when_a_task_errors"],
   "workflows": [
     {"id": "w", "name": "w", "channel": "c", "tasks": [
       {"id": "first", "name": "first", "function": {"name": "map", "input": {"mappings": [

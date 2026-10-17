@@ -1,8 +1,5 @@
 {
   "description": "A task's condition defaults to true: a task with none runs, one with true runs, one with false is skipped (the trace shows it skipped).",
-  "covers": [
-    "schema.task-condition"
-  ],
   "workflows": [
     {
       "id": "w",

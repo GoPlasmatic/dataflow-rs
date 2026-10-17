@@ -187,6 +187,7 @@ mod tests {
     use crate::base::ErrorKind;
     use crate::def::{ParseOptions, parse};
     use crate::function::Registry;
+    use crate::function::builtins::one_task::Golden;
     use crate::program::{CompileOptions, CompiledWorkflow};
     use serde_json::json;
 
@@ -395,17 +396,18 @@ mod tests {
         assert_eq!(combinations, 12);
     }
 
-    /// One run of a message over two workflows on v3 and on v4: the
-    /// message's wire text, normalised, and the outcome's code.
-    mod against_v3 {
+    /// One run of a message over two workflows through the engine: what it
+    /// left behind, in a line.
+    mod end_to_end {
+        use crate::expr::Path;
         use crate::run::{Engine, Message, RunStatus};
         use dataflow_corpus::json::Json;
         use dataflow_corpus::normalise;
         use datavalue::OwnedDataValue;
         use serde_json::{Value, json};
 
-        /// The four v3 flag combinations and the policies each maps to:
-        /// `continue_on_error: true`, and `halt_on: "failure"`.
+        /// The four 3.x flag combinations, which the compat reader maps to
+        /// policies: `continue_on_error: true`, and `halt_on: "failure"`.
         pub(super) const FLAGS: [(&str, bool, bool); 4] = [
             ("neither", false, false),
             ("continue_on_error", true, false),
@@ -445,45 +447,15 @@ mod tests {
             ]
         }
 
-        /// v3's wire text with `WORKFLOW_ERROR` records removed (break 4:
-        /// v4 records no wrapper for a workflow that stops), normalised.
-        fn normalised(text: &str, drop_workflow_errors: bool) -> String {
-            let mut json = Json::from_text(text).expect("a message parses");
-            if drop_workflow_errors && let Some(Json::Array(errors)) = json.get_mut("errors") {
-                errors.retain(|e| e.get("code") != Some(&Json::str("WORKFLOW_ERROR")));
-            }
-            normalise::message(&mut json, None);
-            json.to_text()
-        }
-
-        pub(super) async fn v3(workflows: &[Value], data: &Value) -> (String, String) {
-            let workflows: Vec<_> = workflows
-                .iter()
-                .map(|w| dataflow_rs_v3::Workflow::from_json(&w.to_string()).expect("v3 parses"))
-                .collect();
-            let engine = dataflow_rs_v3::Engine::builder()
-                .with_workflows(workflows)
-                .build()
-                .expect("v3 builds");
-            let mut message = dataflow_rs_v3::Message::builder()
-                .id("m")
-                .data_json(data)
-                .build();
-            let result = engine.process_message(&mut message).await;
-            let code = match result {
-                Ok(()) => "ok".to_owned(),
-                Err(e) => dataflow_rs_v3::ErrorInfo::new(None, None, e).code,
-            };
-            let text = serde_json::to_string(&message).expect("a message serializes");
-            (normalised(&text, true), code)
-        }
-
-        pub(super) async fn v4(workflows: &[Value], data: &Value) -> (String, String) {
+        /// The run's outcome code (`ok` unless it stopped), each audit entry
+        /// as `task:status`, each error record's code, and which marks were
+        /// written; and the message's wire text, normalised.
+        pub(super) async fn run(workflows: &[Value], data: &Value) -> (String, OwnedDataValue) {
             let engine = workflows
                 .iter()
                 .fold(Engine::builder(), |b, w| b.workflow_json(w))
                 .build()
-                .expect("v4 builds");
+                .expect("the workflows build");
             let mut message = Message::from_parts(
                 OwnedDataValue::Null,
                 OwnedDataValue::from(data),
@@ -491,17 +463,39 @@ mod tests {
             )
             .with_id("m");
             let run = engine.run(&mut message).await;
-            let code = match run.status() {
+            let outcome = match run.status() {
                 RunStatus::Stopped(e) => e.code().to_owned(),
                 _ => "ok".to_owned(),
             };
+            let audit: Vec<String> = message
+                .audit()
+                .iter()
+                .map(|e| format!("{}:{}", e.task_id, e.status))
+                .collect();
+            let errors: Vec<&str> = message.errors().iter().map(|e| &*e.code).collect();
+            let marks: Vec<&str> = ["after", "next"]
+                .into_iter()
+                .filter(|mark| {
+                    let path: Path = format!("data.{mark}").parse().expect("a path");
+                    message.context().get(&path).is_some()
+                })
+                .collect();
+            let line = format!(
+                "{outcome}; audit [{}]; errors [{}]; marks [{}]",
+                audit.join(", "),
+                errors.join(", "),
+                marks.join(", ")
+            );
             let text = serde_json::to_string(&message).expect("a message serializes");
-            (normalised(&text, false), code)
+            let mut json = Json::from_text(&text).expect("a message parses");
+            normalise::message(&mut json, None);
+            let wire = OwnedDataValue::from_json(&json.to_text()).expect("JSON");
+            (line, wire)
         }
     }
 
     #[tokio::test]
-    async fn decide_matches_v3s_flags() {
+    async fn each_3x_flag_combination_runs_as_its_policy() {
         // Each function over each message: `data.ok` passes the validation,
         // `data.s` an array lets the append succeed, `data.xml` valid XML
         // parses. 200, 400, 500 and `Err`.
@@ -513,13 +507,45 @@ mod tests {
             ("parse_xml", json!({"xml": "<a>1</a>"})),
             ("parse_xml", json!({"xml": "<a>"})),
         ];
-        for (i, (name, _, _)) in against_v3::FLAGS.iter().enumerate() {
+        // The whole message, normalised, is held by
+        // `tests/golden/lib/run/policy.json`.
+        let mut golden = Golden::at("run/policy", "each_3x_flag_combination_runs_as_its_policy");
+        let mut got = Vec::new();
+        for (i, (name, _, _)) in end_to_end::FLAGS.iter().enumerate() {
             for (function, data) in &cases {
-                let workflows = against_v3::workflows(i, function);
-                let v3 = against_v3::v3(&workflows, data).await;
-                let v4 = against_v3::v4(&workflows, data).await;
-                assert_eq!(v4, v3, "{function} over {data} with {name}");
+                let workflows = end_to_end::workflows(i, function);
+                let (ran, wire) = end_to_end::run(&workflows, data).await;
+                let case = format!("{name} {function} {data}");
+                got.push(format!("{case}: {ran}"));
+                golden.case(case, wire);
             }
         }
+        let want = [
+            r#"neither validation {"ok":true}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"neither validation {"ok":false}: ok; audit [t:400, after:200, next:200]; errors [VALIDATION_ERROR]; marks [after, next]"#,
+            r#"neither map {"s":[]}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"neither map {"s":"str"}: TASK_ERROR; audit [t:500]; errors [TASK_STATUS_ERROR]; marks []"#,
+            r#"neither parse_xml {"xml":"<a>1</a>"}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"neither parse_xml {"xml":"<a>"}: VALIDATION_ERROR; audit [t:500]; errors [VALIDATION_ERROR]; marks []"#,
+            r#"continue_on_error validation {"ok":true}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"continue_on_error validation {"ok":false}: ok; audit [t:400, after:200, next:200]; errors [VALIDATION_ERROR]; marks [after, next]"#,
+            r#"continue_on_error map {"s":[]}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"continue_on_error map {"s":"str"}: ok; audit [t:500, after:200, next:200]; errors [TASK_STATUS_ERROR]; marks [after, next]"#,
+            r#"continue_on_error parse_xml {"xml":"<a>1</a>"}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"continue_on_error parse_xml {"xml":"<a>"}: ok; audit [t:500, after:200, next:200]; errors [VALIDATION_ERROR]; marks [after, next]"#,
+            r#"halt_on validation {"ok":true}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"halt_on validation {"ok":false}: ok; audit [t:400, next:200]; errors [VALIDATION_ERROR]; marks [next]"#,
+            r#"halt_on map {"s":[]}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"halt_on map {"s":"str"}: TASK_ERROR; audit [t:500]; errors [TASK_STATUS_ERROR]; marks []"#,
+            r#"halt_on parse_xml {"xml":"<a>1</a>"}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"halt_on parse_xml {"xml":"<a>"}: VALIDATION_ERROR; audit [t:500]; errors [VALIDATION_ERROR]; marks []"#,
+            r#"both validation {"ok":true}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"both validation {"ok":false}: ok; audit [t:400, next:200]; errors [VALIDATION_ERROR]; marks [next]"#,
+            r#"both map {"s":[]}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"both map {"s":"str"}: ok; audit [t:500, next:200]; errors [TASK_STATUS_ERROR]; marks [next]"#,
+            r#"both parse_xml {"xml":"<a>1</a>"}: ok; audit [t:200, after:200, next:200]; errors []; marks [after, next]"#,
+            r#"both parse_xml {"xml":"<a>"}: ok; audit [t:500, next:200]; errors [VALIDATION_ERROR]; marks [next]"#,
+        ];
+        assert_eq!(got, want, "{got:#?}");
     }
 }

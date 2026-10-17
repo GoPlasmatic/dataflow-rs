@@ -196,9 +196,9 @@ pub fn segs(dotted: &str) -> Vec<Seg> {
     }
 }
 
-/// v3's `merge_root_field` (`src/engine/functions/map.rs`), verbatim: the
-/// reference for `map`'s write to a root slot.
-pub fn v3_merge_root(context: &mut OwnedDataValue, path: &str, new_value: OwnedDataValue) {
+/// 3.x's `merge_root_field`, copied verbatim: an independent reference for
+/// `map`'s write to a root slot.
+pub fn reference_merge_root(context: &mut OwnedDataValue, path: &str, new_value: OwnedDataValue) {
     let OwnedDataValue::Object(ctx_pairs) = context else {
         *context = OwnedDataValue::Object(vec![(path.to_string(), new_value)]);
         return;

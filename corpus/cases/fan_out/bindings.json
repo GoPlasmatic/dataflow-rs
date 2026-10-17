@@ -1,7 +1,5 @@
 {
   "description": "Each call sees its element at temp_data.<as> and its index at temp_data.<as>_index, through both ctx.get and evaluation; the bindings do not leak into the folded message.",
-  "covers": ["fanout.bindings"],
-  "mirrors": ["tests/for_each.rs::results_land_in_element_order_and_bindings_do_not_leak"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t",

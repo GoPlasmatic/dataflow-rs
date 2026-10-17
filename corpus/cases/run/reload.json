@@ -1,13 +1,5 @@
 {
   "description": "A reload keeps the engine's handlers (script), custom operators (shout), secrets, observer and error context (path and limit): the reloaded definitions use every one of them, and both runs show them working.",
-  "covers": [
-    "run.reload"
-  ],
-  "mirrors": [
-    "tests/observer.rs::the_observer_survives_a_hot_reload",
-    "tests/secrets.rs::the_store_survives_a_hot_reload",
-    "tests/public_api.rs::custom_datalogic_operator_survives_hot_reload"
-  ],
   "engine": {
     "operators": [
       "shout"

@@ -1,65 +1,41 @@
 #!/usr/bin/env python3
-"""The v4 performance gate's runner: the 13 benchmarks of design 06, measured by
-CLAUDE.md's interleaved method. Every gate benchmark prints one line,
-`GATE {"bench": ..., "metrics": [{"name", "value", "unit", "better"}]}`, and
-this reads only that line.
+"""The performance gate's runner: an A/B comparison of two builds of the
+engine (a base commit against a candidate) over the 13 gate benchmarks,
+measured by CLAUDE.md's interleaved method. Every gate benchmark prints one
+line, `GATE {"bench": ..., "metrics": [{"name", "value", "unit", "better"}]}`,
+and this reads only that line.
 
-    gate.py build [--v3 [--v3-ref REF]] --out DIR
-        Build the root's examples in release (v4) from a clean tree, copy the
-        ports V4_BENCHES names (thirteen, every bench, and the self-judged
-        `host_call_floor`), target/release/examples/<name>, to DIR/<name>, and
-        write DIR/build.json (commit, rustc, date, engine "v4").
-        With --v3, build v3 instead, from a git worktree of REF (V3_REF, the
-        freeze commit, by default; a tag names the commit it points at) at
-        target/gate-v3, reused while it is at REF with no tracked file changed
-        and recreated otherwise (a directory there that is no longer a
-        worktree is deleted first): `cargo build --release --examples` there,
-        with its own target, and copy the 13 BENCHES from it. build.json then
-        says engine "v3" and holds the full sha of REF's commit. A v4
-        directory holds the names a v3 one does, and `compare` reads the two
-        alike. Either build passes cargo `--target-dir <tree>/target` and
+    gate.py build --out DIR
+        Build the root's examples in release from a clean tree at HEAD, copy
+        the 13 BENCHES, target/release/examples/<name>, to DIR/<name>, and
+        write DIR/build.json (commit, describe, rustc, date). To build the
+        base, check its commit out and run `build` again into another
+        directory. The build passes cargo `--target-dir <root>/target` and
         copies from there, so neither the environment nor a cargo config can
         move the binaries away from where they are copied from.
 
     gate.py baseline --bins DIR --rounds N --out FILE [--only a,b]
-        Run the gate binaries DIR holds (or --only's), as `compare` finds
-        them, so a `build` directory runs its thirteen ports and
-        `host_call_floor`, round-robin for
-        N + 1 rounds, discard round 0 as cold, and write every run, each
-        metric's mean, median and spread, with the build, the machine and the
-        method, to FILE.
+        Run the gate binaries DIR holds (or --only's), round-robin for N + 1
+        rounds, discard round 0 as cold, and write every run, each metric's
+        mean, median and spread, with the build, the machine and the method,
+        to FILE.
 
     gate.py compare --a DIR --b DIR --rounds N [--only a,b] [--out FILE]
         Run the binaries of both directories round-robin for N + 1 rounds
         (the order within a pair alternates), discard round 0 as cold, and judge
-        each metric on its paired per-round ratios (I80, amending I70): in each
-        kept round the ratio B/A, inverted for a metric where higher is
-        better, so that a ratio above 1 always means B is worse. The noise is
-        max(3%, half the inter-quartile range of the ratios). B is WORSE when
-        the median ratio is above 1 + noise, better when it is below
-        1 - noise, and "not slower" otherwise. A row whose gate is "Faster"
-        (FASTER_ROWS: every metric of `loop_scaling`, its `map` and `handler`
-        rows alike, and of `fan_out`) reads faster when the median ratio is
-        below 1 - noise and NOT FASTER otherwise, but only when A's build.json
-        says v3 and B's says v4; between two builds of one engine every row is
-        judged better / not slower / WORSE. A bench may judge its metrics
-        apart (METRIC_RULES): a metric takes the rule of the first prefix of
-        its name listed there, else its bench's, and an "info" metric prints
-        its medians and ratio with no verdict and never fails the gate
-        (`large_context_handler`'s `with_view` and `per_field` are "faster",
-        its `write_only` and `async_handler_benchmark.marginal` info). Every
-        other bench, `orion_connector` among them, is "not slower". A metric
-        only one side reports is listed as such and not judged. Exit status is
-        1 if any verdict is WORSE or NOT FASTER.
-
-        A self-judged bench (SELF_JUDGED) compares v3 and v4 inside its own
-        process and has no v3 binary: `build` copies it, and `compare`
-        runs it from B only, once per round, and lists its rows in the same
-        table. Its judged metric is already a ratio, v4 over v3, so the
-        verdict reads that value directly: over the kept rounds, WORSE when
-        its median exceeds 1 + noise and better below 1 - noise, the noise
-        being max(3%, half the inter-quartile range of the values). Its
-        other metrics are info.
+        each metric on its paired per-round ratios: in each kept round the
+        ratio B/A, inverted for a metric where higher is better, so that a
+        ratio above 1 always means B is worse. The noise is max(3%, half the
+        inter-quartile range of the ratios). B is WORSE when the median ratio
+        is above 1 + noise, better when it is below 1 - noise, and
+        "not slower" otherwise. A bench may judge its metrics apart
+        (METRIC_RULES): a metric takes the rule of the first prefix of its
+        name listed there, else "not slower", and an "info" metric prints its
+        medians and ratio with no verdict and never fails the gate
+        (`large_context_handler.write_only` and
+        `async_handler_benchmark.marginal`). A metric only one side reports is
+        listed as such and not judged. Exit status is 1 if any verdict is
+        WORSE.
 
 Both commands run every binary under `/usr/bin/time -l` and keep, for every
 run, the instructions retired and cycles elapsed it prints (macOS). `compare`
@@ -77,10 +53,7 @@ import statistics
 import subprocess
 import sys
 
-# The freeze commit: v3 as the baseline measured it, whose examples `build --v3`
-# builds in a worktree (v3's source left `main` in phase 7b).
-V3_REF = "2d3d8e9"
-
+# The gate benchmarks (`examples/<name>.rs`), in the order they run.
 BENCHES = [
     "realistic_benchmark",
     "benchmark",
@@ -98,53 +71,15 @@ BENCHES = [
 ]
 
 
-# The benchmarks v4 ports (`examples/<name>.rs`), in BENCHES order: the
-# eight sync ones of phase 4, phase 5's four host-call rows and phase 6's
-# `observed_run`, thirteen ports,
-# with the self-judged `host_call_floor` beside the row whose floor it gates.
-V4_BENCHES = [
-    "realistic_benchmark",
-    "benchmark",
-    "micro_cond_bench",
-    "micro_aggregate_bench",
-    "micro_subtree_write_bench",
-    "micro_multiworkflow_bench",
-    "async_handler_benchmark",
-    "host_call_floor",
-    "map_performance_test",
-    "loop_scaling",
-    "large_context_handler",
-    "fan_out",
-    "orion_connector",
-    "observed_run",
-]
-
-# The rows whose gate is "Faster" rather than "Not slower" (design 06), every
-# metric of each: `loop_scaling`'s `handler` rows with its `map` ones (I95),
-# and `fan_out`. `orion_connector` is "not slower", as every bench not listed
-# here or in METRIC_RULES.
-FASTER_ROWS = {"loop_scaling", "fan_out"}
-
-# Per-metric rules, for a bench whose metrics are not all judged alike (I95):
-# a metric takes the rule of the first prefix of its name listed under its
-# bench, else its bench's. "faster" is FASTER_ROWS' rule for one metric;
-# "info" reports the metric without a verdict. A host call's own floor is
-# judged by `host_call_floor` (SELF_JUDGED): `large_context_handler`'s
-# write-only floor and `async_handler_benchmark.marginal`, a difference of two
-# latency means under a spawn burst whose noise ran 29% to 66%, are reported
-# without a verdict.
+# Per-metric rules, for a bench whose metrics are not all judged alike: a
+# metric takes the rule of the first prefix of its name listed under its
+# bench, else "not slower"; "info" reports the metric without a verdict.
+# `large_context_handler`'s write-only floor and
+# `async_handler_benchmark.marginal`, a difference of two latency means under
+# a spawn burst whose noise ran 29% to 66%, are reported without a verdict.
 METRIC_RULES = {
     "async_handler_benchmark": {"marginal": "info"},
-    "large_context_handler": {"with_view": "faster", "per_field": "faster", "write_only": "info"},
-}
-
-# Benches that compare v3 and v4 inside one process (v4 binaries only), with
-# the one metric each judges and its rule; their other metrics are info.
-# `host_call_floor` runs `async_handler_benchmark`'s two messages on both
-# engines on one thread, in interleaved rounds: `call.ratio` is v4 over v3 for
-# a message with the host call.
-SELF_JUDGED = {
-    "host_call_floor": {"call.ratio": "not slower"},
+    "large_context_handler": {"write_only": "info"},
 }
 
 # The smallest noise `compare` allows, in percent.
@@ -165,80 +100,37 @@ def repo_root():
     return sh("git", "rev-parse", "--show-toplevel")
 
 
-def worktree_head(tree):
-    """The HEAD of the worktree at `tree`, or None when `tree` is not one of
-    its own: missing, unregistered, or without its `.git`, where git would
-    otherwise answer for the repository around it."""
-    if not os.path.isdir(tree):
-        return None
-    try:
-        top = sh("git", "-C", tree, "rev-parse", "--show-toplevel")
-        if os.path.realpath(top) != os.path.realpath(tree):
-            return None
-        return sh("git", "-C", tree, "rev-parse", "HEAD")
-    except subprocess.CalledProcessError:
-        return None
-
-
-def v3_worktree(root, tree, ref):
-    """A detached worktree of `ref` at `tree`: the one there when it is at
-    `ref` with no tracked file changed, else a new one. A directory that
-    `git worktree remove` cannot remove (it is no longer a registered
-    worktree) is deleted and the registrations pruned."""
-    sh("git", "worktree", "prune", cwd=root)
-    head = worktree_head(tree)
-    if head == ref and not sh("git", "-C", tree, "status", "--porcelain", "--untracked-files=no"):
-        return
-    if os.path.isdir(tree):
-        try:
-            sh("git", "worktree", "remove", "--force", tree, cwd=root)
-        except subprocess.CalledProcessError:
-            shutil.rmtree(tree)
-            sh("git", "worktree", "prune", cwd=root)
-    sh("git", "worktree", "add", "--detach", tree, ref, cwd=root)
-
-
 def build(args):
     root = repo_root()
     if sh("git", "status", "--porcelain", "--untracked-files=no", cwd=root):
         sys.exit("refusing to build: the tree has uncommitted changes")
     env = {k: v for k, v in os.environ.items() if k != "CARGO_TARGET_DIR"}
-    if args.v3:
-        # `^{commit}`: an annotated tag's own sha is the tag object's, which
-        # never equals a worktree's HEAD.
-        ref = sh("git", "rev-parse", "--verify", f"{args.v3_ref}^{{commit}}", cwd=root)
-        tree = os.path.join(root, "target", "gate-v3")
-        v3_worktree(root, tree, ref)
-        names, src, commit = BENCHES, tree, ref
-    else:
-        names, src = V4_BENCHES, root
-        commit = sh("git", "rev-parse", "HEAD", cwd=root)
+    commit = sh("git", "rev-parse", "HEAD", cwd=root)
     # An explicit target directory: `CARGO_BUILD_TARGET_DIR` or a
     # `build.target-dir` in a cargo config would otherwise move the binaries.
-    target = os.path.join(src, "target")
+    target = os.path.join(root, "target")
     subprocess.run(
         ["cargo", "build", "--release", "--examples", "--target-dir", target],
-        cwd=src,
+        cwd=root,
         env=env,
         check=True,
     )
     os.makedirs(args.out, exist_ok=True)
-    for name in names:
+    for name in BENCHES:
         shutil.copy2(
             os.path.join(target, "release", "examples", name),
             os.path.join(args.out, name),
         )
     info = {
         "commit": commit,
-        "describe": sh("git", "describe", "--tags", "--always", cwd=src),
+        "describe": sh("git", "describe", "--tags", "--always", cwd=root),
         "rustc": sh("rustc", "-V"),
         "date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-        "engine": "v3" if args.v3 else "v4",
     }
     with open(os.path.join(args.out, "build.json"), "w") as f:
         json.dump(info, f, indent=2)
         f.write("\n")
-    print(f"{len(names)} binaries at {info['commit']} in {args.out}")
+    print(f"{len(BENCHES)} binaries at {info['commit']} in {args.out}")
 
 
 def gate_line(name, stdout):
@@ -290,9 +182,9 @@ def machine(load_before):
 
 
 def baseline(args):
-    available = [n for n in BENCHES + list(SELF_JUDGED) if os.path.exists(os.path.join(args.bins, n))]
+    available = [n for n in BENCHES if os.path.exists(os.path.join(args.bins, n))]
     names = args.only.split(",") if args.only else available
-    unknown = [n for n in names if n not in BENCHES and n not in SELF_JUDGED]
+    unknown = [n for n in names if n not in BENCHES]
     if unknown:
         sys.exit(f"not gate benchmarks: {unknown}")
     missing = [n for n in names if n not in available]
@@ -369,19 +261,17 @@ def half_iqr_pct(ratios):
 
 
 def rule(name, metric):
-    """The rule `metric` of bench `name` is judged by: "faster", "not slower"
-    or "info" (METRIC_RULES, else the bench's)."""
+    """The rule `metric` of bench `name` is judged by: "not slower" or
+    "info" (METRIC_RULES)."""
     for prefix, judged in METRIC_RULES.get(name, {}).items():
         if metric.startswith(prefix):
             return judged
-    return "faster" if name in FASTER_ROWS else "not slower"
+    return "not slower"
 
 
-def verdict(faster_row, median_ratio, noise_pct):
-    """B against A from the median of the per-round ratios (I80)."""
+def verdict(median_ratio, noise_pct):
+    """B against A from the median of the per-round ratios."""
     noise = noise_pct / 100
-    if faster_row:
-        return "faster" if median_ratio < 1 - noise else "NOT FASTER"
     if median_ratio > 1 + noise:
         return "WORSE"
     if median_ratio < 1 - noise:
@@ -389,47 +279,22 @@ def verdict(faster_row, median_ratio, noise_pct):
     return "not slower"
 
 
-def sides(name):
-    """The directories a bench runs from: both, or B alone when it is
-    self-judged."""
-    return ("b",) if name in SELF_JUDGED else ("a", "b")
-
-
-def self_judged_row(name, metric, values, unit, better):
-    """A self-judged bench's row: its judged metric's verdict read off the
-    values themselves (ratios, v4 over v3), any other metric info."""
-    median = statistics.median(values)
-    noise = max(NOISE_FLOOR_PCT, half_iqr_pct(values))
-    judged = SELF_JUDGED[name].get(metric)
-    row = {"bench": name, "metric": metric, "unit": unit, "better": better,
-           "b": {"runs": values, "median": median}, "self_judged": True}
-    if unit == "ratio":
-        row.update(median_ratio=median, half_iqr_pct=half_iqr_pct(values), noise_pct=noise)
-    row["verdict"] = verdict(False, median, noise) if judged == "not slower" else "info"
-    return row
-
-
 def compare(args):
     names = args.only.split(",") if args.only else None
     dirs = {"a": args.a, "b": args.b}
-    available = [n for n in BENCHES + list(SELF_JUDGED)
-                 if all(os.path.exists(os.path.join(dirs[s], n)) for s in sides(n))]
+    available = [n for n in BENCHES if all(os.path.exists(os.path.join(d, n)) for d in dirs.values())]
     if names is None:
         names = available
-    unknown = [n for n in names if n not in BENCHES and n not in SELF_JUDGED]
+    unknown = [n for n in names if n not in BENCHES]
     if unknown:
         sys.exit(f"not gate benchmarks: {unknown}")
     missing = [n for n in names if n not in available]
     if missing:
-        sys.exit(f"not built where they run (both directories, or B for a self-judged bench): {missing}")
+        sys.exit(f"not built in both directories: {missing}")
     builds = {}
     for side, d in (("a", args.a), ("b", args.b)):
         with open(os.path.join(d, "build.json")) as f:
             builds[side] = json.load(f)
-
-    # The "Faster" rule is v3 against v4; between two builds of one engine
-    # (a tuning comparison) every row is judged better / not slower / WORSE.
-    faster_rules = builds["a"].get("engine") == "v3" and builds["b"].get("engine") == "v4"
 
     load_before = os.getloadavg()
     # Per bench and side, one entry per kept round, in round order, so the
@@ -439,7 +304,7 @@ def compare(args):
         # Which side goes first alternates, so neither owns the cooler slot.
         order = ("a", "b") if round_no % 2 == 0 else ("b", "a")
         for name in names:
-            for side in (s for s in order if s in sides(name)):
+            for side in order:
                 metrics, counted = run_once(dirs[side], name)
                 if round_no > 0:
                     runs[name][side].append({"metrics": {m["name"]: m for m in metrics}, "counters": counted})
@@ -448,14 +313,6 @@ def compare(args):
 
     rows, work = [], {}
     for name in names:
-        if name in SELF_JUDGED:
-            for metric in dict.fromkeys(m for r in runs[name]["b"] for m in r["metrics"]):
-                found = [r["metrics"][metric] for r in runs[name]["b"] if metric in r["metrics"]]
-                rows.append(self_judged_row(name, metric, [m["value"] for m in found],
-                                            found[0]["unit"], found[0]["better"]))
-            work[name] = {key: {"b": [r["counters"].get(key) for r in runs[name]["b"]]}
-                          for key in COUNTERS.values()}
-            continue
         pairs = list(zip(runs[name]["a"], runs[name]["b"]))
         a_names = [m for r in runs[name]["a"] for m in r["metrics"]]
         b_names = [m for r in runs[name]["b"] for m in r["metrics"]]
@@ -483,11 +340,7 @@ def compare(args):
             median_ratio = statistics.median(ratios)
             half_iqr = half_iqr_pct(ratios)
             noise = max(NOISE_FLOOR_PCT, half_iqr)
-            judged = rule(name, metric)
-            if judged == "info":
-                said = "info"
-            else:
-                said = verdict(faster_rules and judged == "faster", median_ratio, noise)
+            said = "info" if rule(name, metric) == "info" else verdict(median_ratio, noise)
             row.update(
                 unit=ma["unit"], better=ma["better"], verdict=said,
                 ratios=ratios, median_ratio=median_ratio, half_iqr_pct=half_iqr, noise_pct=noise,
@@ -522,8 +375,6 @@ def compare(args):
                 tail = f"{'-':>7} {'-':>6}"
             print(f"{row['bench']:<26} {row['metric']:<28} {ca} {cb} {tail}  {row['verdict']}")
         instructions = work[name]["instructions"]
-        if name in SELF_JUDGED:
-            continue
         if "median_ratio" in instructions:
             a = statistics.median(v for v in instructions["a"] if v is not None)
             b = statistics.median(v for v in instructions["b"] if v is not None)
@@ -539,10 +390,9 @@ def compare(args):
                 "rounds": args.rounds,
                 "discarded_rounds": 1,
                 "order": names,
-                "statistic": "median of the per-round ratios B/A, inverted where higher is better (I80)",
+                "statistic": "median of the per-round ratios B/A, inverted where higher is better",
                 "noise": f"max({NOISE_FLOOR_PCT:g}%, half the inter-quartile range of the ratios)",
-                "rules": {"faster_rows": sorted(FASTER_ROWS), "metric_rules": METRIC_RULES,
-                          "self_judged": SELF_JUDGED},
+                "rules": {"metric_rules": METRIC_RULES},
                 "counters": f"{TIME} -l, informational",
             },
             "rows": rows,
@@ -551,7 +401,7 @@ def compare(args):
         with open(args.out, "w") as f:
             json.dump(out, f, indent=2, ensure_ascii=False)
             f.write("\n")
-    if any(r["verdict"] in ("WORSE", "NOT FASTER") for r in rows):
+    if any(r["verdict"] == "WORSE" for r in rows):
         sys.exit(1)
 
 
@@ -559,17 +409,15 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
     b = sub.add_parser("build")
-    b.add_argument("--out", required=True)
-    b.add_argument("--v3", action="store_true", help="build v3's examples from a worktree of --v3-ref instead of the root's")
-    b.add_argument("--v3-ref", default=V3_REF, help="the commit --v3 builds (default: the freeze commit)")
+    b.add_argument("--out", required=True, help="the directory the binaries and build.json go to")
     m = sub.add_parser("baseline")
     m.add_argument("--bins", required=True)
     m.add_argument("--rounds", type=int, default=5)
     m.add_argument("--out", required=True)
     m.add_argument("--only")
     c = sub.add_parser("compare")
-    c.add_argument("--a", required=True, help="the reference build directory (v3)")
-    c.add_argument("--b", required=True, help="the build directory judged against it (v4)")
+    c.add_argument("--a", required=True, help="the reference build directory (the base)")
+    c.add_argument("--b", required=True, help="the build directory judged against it (the candidate)")
     c.add_argument("--rounds", type=int, default=5)
     c.add_argument("--only")
     c.add_argument("--out")

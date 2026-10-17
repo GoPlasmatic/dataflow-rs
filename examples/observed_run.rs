@@ -1,12 +1,12 @@
 //! # Observed run
 //!
-//! v4's port of v3's `observed_run`, a row of the v4 performance gate:
+//! A row of the performance gate, its workload first written against 3.x:
 //! `realistic_benchmark`'s workload with an `Observer` attached that counts
 //! tasks and workflows and never reads a duration, as an always-on metrics
-//! observer that counts only events does. In 3.15 an attached observer costs
-//! a clock read per task and per workflow whether it uses the time or not.
-//! v4 reads the clock only for an observer whose interest holds `TIMINGS`.
-//! The gate judges the row as every other: not slower.
+//! observer that counts only events does. In 3.x an attached observer cost
+//! a clock read per task and per workflow whether it used the time or not;
+//! the engine reads the clock only for an observer whose interest holds
+//! `TIMINGS`. The gate judges the row as every other: not slower.
 //!
 //! The workload runs twice: unobserved, which is `realistic_benchmark`, and
 //! observed. The unobserved row shows what observing costs on this line.

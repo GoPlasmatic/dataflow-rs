@@ -1,11 +1,5 @@
 {
   "description": "continue_on_error on a group is recorded and never honoured: a member returning 500 stops the message, the task after the group does not run, and the flag is reported as GROUP_CONTINUE_ON_ERROR.",
-  "covers": [
-    "schema.group-continue-on-error"
-  ],
-  "mirrors": [
-    "tests/task_groups.rs::a_group_continue_on_error_is_recorded_but_never_honoured"
-  ],
   "workflows": [
     {
       "id": "w",
@@ -52,15 +46,6 @@
       "run": {
         "message": {}
       }
-    }
-  ],
-  "deviations": [
-    {
-      "break": "4",
-      "paths": [
-        "/steps/0/run/message/errors/1"
-      ],
-      "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"
     }
   ]
 }

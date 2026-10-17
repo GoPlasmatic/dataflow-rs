@@ -1,7 +1,5 @@
 {
   "description": "unset: true removes the key and records a change with removed: true; a plain write's change carries no removed key.",
-  "covers": ["map.removal", "run.audit-optional-fields"],
-  "mirrors": ["tests/map_unset.rs::unset_removes_the_key_and_records_a_removal"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

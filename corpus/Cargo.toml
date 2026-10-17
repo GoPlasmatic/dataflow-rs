@@ -6,10 +6,10 @@ edition = "2024"
 rust-version = "1.98"
 publish = false
 license = "Apache-2.0"
-description = "The golden corpus: cases, their format, and the version-independent tools that read them. Not published."
+description = "The corpus: workflow cases the engine's tests load, their format, and the tools that read them. Not published."
 
-# Deliberately free of `dataflow-rs`: v3's driver lives in `corpus/v3`, and v4's
-# will live beside it, both reading the cases through this crate.
+# Deliberately free of `dataflow-rs`, so its path and replay models are
+# independent of the engine the tests hold to them.
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

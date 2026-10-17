@@ -1,7 +1,5 @@
 {
   "description": "Every fan-out call runs on its own copy of the message: each sees temp_data.seen as it was before the fan-out, and an element's history does not repeat the parent's audit trail.",
-  "covers": ["fanout.isolation"],
-  "mirrors": ["tests/for_each.rs::calls_are_isolated_from_each_other", "tests/for_each.rs::an_element_carries_the_context_but_not_the_parents_history"],
   "workflows": [
     {"id": "pre", "name": "pre", "priority": 0, "tasks": [
       {"id": "pre", "name": "pre", "function": {"name": "map", "input": {"mappings": [

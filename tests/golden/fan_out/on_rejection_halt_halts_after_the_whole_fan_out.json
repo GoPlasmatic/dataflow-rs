@@ -1,0 +1,780 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "id": "a",
+              "o": {
+                "status": 404
+              }
+            },
+            {
+              "id": "b"
+            },
+            {
+              "id": "c"
+            }
+          ],
+          "outs": [
+            null,
+            {
+              "i": 1,
+              "id": "b"
+            },
+            {
+              "i": 2,
+              "id": "c"
+            }
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 2,
+            "id": "c"
+          },
+          "by_eval": {
+            "id": "c"
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "a",
+                "o": {
+                  "status": 404
+                }
+              }
+            },
+            {
+              "path": "data.outs.0",
+              "old_value": null,
+              "new_value": null
+            }
+          ],
+          "status": 404,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "b"
+              }
+            },
+            {
+              "path": "data.outs.1",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "c"
+              }
+            },
+            {
+              "path": "data.outs.2",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 2
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "id": "a",
+              "o": {
+                "status": 404
+              }
+            },
+            {
+              "id": "b"
+            },
+            {
+              "id": "c"
+            }
+          ],
+          "outs": [
+            null,
+            {
+              "i": 1,
+              "id": "b"
+            },
+            {
+              "i": 2,
+              "id": "c"
+            }
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 2,
+            "id": "c"
+          },
+          "by_eval": {
+            "id": "c"
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "a",
+                "o": {
+                  "status": 404
+                }
+              }
+            },
+            {
+              "path": "data.outs.0",
+              "old_value": null,
+              "new_value": null
+            }
+          ],
+          "status": 404,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "b"
+              }
+            },
+            {
+              "path": "data.outs.1",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "c"
+              }
+            },
+            {
+              "path": "data.outs.2",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 2
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "id": "a",
+              "o": {
+                "status": 500
+              }
+            },
+            {
+              "id": "b"
+            },
+            {
+              "id": "c"
+            }
+          ],
+          "outs": [
+            null,
+            {
+              "i": 1,
+              "id": "b"
+            },
+            {
+              "i": 2,
+              "id": "c"
+            }
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 2,
+            "id": "c"
+          },
+          "by_eval": {
+            "id": "c"
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "a",
+                "o": {
+                  "status": 500
+                }
+              }
+            },
+            {
+              "path": "data.outs.0",
+              "old_value": null,
+              "new_value": null
+            }
+          ],
+          "status": 500,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "b"
+              }
+            },
+            {
+              "path": "data.outs.1",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "c"
+              }
+            },
+            {
+              "path": "data.outs.2",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 2
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task t returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "element_index": 0
+        }
+      ]
+    }
+  },
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "id": "a",
+              "o": {
+                "error": {
+                  "code": "PARTNER_DOWN",
+                  "message": "down"
+                }
+              }
+            },
+            {
+              "id": "b"
+            },
+            {
+              "id": "c"
+            }
+          ],
+          "outs": [
+            null,
+            {
+              "i": 1,
+              "id": "b"
+            },
+            {
+              "i": 2,
+              "id": "c"
+            }
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 2,
+            "id": "c"
+          },
+          "by_eval": {
+            "id": "c"
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "b"
+              }
+            },
+            {
+              "path": "data.outs.1",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "c"
+              }
+            },
+            {
+              "path": "data.outs.2",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 2
+        }
+      ],
+      "errors": [
+        {
+          "code": "PARTNER_DOWN",
+          "message": "Task t error: down",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "element_index": 0
+        }
+      ]
+    }
+  },
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "id": "a",
+              "o": {
+                "status": 404
+              }
+            },
+            {
+              "id": "b"
+            },
+            {
+              "id": "c"
+            }
+          ],
+          "outs": [
+            null,
+            {
+              "i": 1,
+              "id": "b"
+            },
+            {
+              "i": 2,
+              "id": "c"
+            }
+          ],
+          "after_ran": true
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "after",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 2,
+            "id": "c"
+          },
+          "by_eval": {
+            "id": "c"
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "a",
+                "o": {
+                  "status": 404
+                }
+              }
+            },
+            {
+              "path": "data.outs.0",
+              "old_value": null,
+              "new_value": null
+            }
+          ],
+          "status": 404,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "b"
+              }
+            },
+            {
+              "path": "data.outs.1",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "c"
+              }
+            },
+            {
+              "path": "data.outs.2",
+              "old_value": null,
+              "new_value": {
+                "i": 2,
+                "id": "c"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 2
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.after_ran",
+              "old_value": null,
+              "new_value": true
+            }
+          ],
+          "status": 200
+        }
+      ],
+      "errors": []
+    }
+  }
+]

@@ -2,32 +2,26 @@
 // a `Skip`, each error record the call added, the recorder's own and the
 // call's, is mirrored at the configured path as `{workflow_id, task_id,
 // code, status}`, appended and trimmed to the newest `limit`; a non-array at
-// the path, or a non-object above it, is replaced. Every rule v3 can run is
-// held to v3 through `support/vs_v3.rs`, with v3's `with_error_context_path`
-// and `with_error_context_limit` on its builder, comparing the normalised
-// wire text. One rule is v4's own and is checked literally: the path is
-// reset at run start (break 20), where v3 appends to what the message
-// brought.
+// the path, or a non-object above it, is replaced; the path is reset at run
+// start, so what the message brought there is dropped. Each test pins the
+// mirrored records literally, and the whole normalised message of each run
+// against a golden file under `tests/golden/error_context/`, rewritten with
+// `DATAFLOW_GOLDEN_WRITE=1`.
 //
-// One host function, `act`, has a twin on both sides. It evaluates its
-// `outcome` and runs it as a step or a list of steps: `"record"` records a
-// `HOST_WARNING` and goes on; `"ok"`, `"skip"`, `"halt"`, a status, or
-// `"err"` (a `PARTNER_DOWN` service error) is the result. In a fan-out its
-// `outcome` reads the element.
-
-#[path = "support/vs_v3.rs"]
-mod vs_v3;
+// One host function, `act`, evaluates its `outcome` and runs it as a step or
+// a list of steps: `"record"` records a `HOST_WARNING` and goes on; `"ok"`,
+// `"skip"`, `"halt"`, a status, or `"err"` (a `PARTNER_DOWN` service error)
+// is the result. In a fan-out its `outcome` reads the element.
 
 use dataflow_corpus::json::Json;
-use dataflow_corpus::{path as json_path, replay};
+use dataflow_corpus::{normalise, path as json_path, replay};
 use dataflow_rs::def::{ParseOptions, parse};
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::observe::{StepResult, Trace, TraceOptions};
-use dataflow_rs::run::{EngineConfig, ErrorContext, ErrorKind, ErrorRecord};
+use dataflow_rs::run::{EngineConfig, ErrorContext, ErrorKind, ErrorRecord, RunStatus};
 use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Result, RunOptions};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
-use vs_v3::{Run, data, on_v3, on_v4, v3_engine, v3_engine_with, v4_engine, v4_engine_with};
 
 /// `act`'s config.
 #[derive(FunctionConfig)]
@@ -72,100 +66,103 @@ impl Function for Act {
     }
 }
 
-/// v3's `act`, through `async_trait`.
-mod v3_twin {
-    use super::status;
-    use async_trait::async_trait;
-    use dataflow_rs_v3::{
-        AsyncFunctionHandler, DataflowError, ErrorInfo, Result, TaskContext, TaskOutcome, Template,
-        TemplateCompiler,
-    };
-    use serde::Deserialize;
-    use serde_json::Value;
-
-    #[derive(Deserialize)]
-    pub struct ActInput {
-        outcome: Template,
-    }
-
-    pub struct Act;
-
-    #[async_trait]
-    impl AsyncFunctionHandler for Act {
-        type Input = ActInput;
-
-        fn compile_input(input: &mut ActInput, c: &TemplateCompiler) -> Result<()> {
-            input.outcome.compile(c, "outcome")
-        }
-
-        async fn execute(
-            &self,
-            ctx: &mut TaskContext<'_>,
-            input: &ActInput,
-        ) -> Result<TaskOutcome> {
-            tokio::task::yield_now().await;
-            let steps = match Value::from(&input.outcome.resolve(ctx)?) {
-                Value::Array(steps) => steps,
-                step => vec![step],
-            };
-            let mut result = Ok(TaskOutcome::Success);
-            for step in steps {
-                result = match step.as_str() {
-                    Some("record") => {
-                        ctx.add_error(
-                            ErrorInfo::builder("HOST_WARNING", "recorded by the handler").build(),
-                        );
-                        continue;
-                    }
-                    Some("ok") => Ok(TaskOutcome::Success),
-                    Some("skip") => Ok(TaskOutcome::Skip),
-                    Some("halt") => Ok(TaskOutcome::Halt),
-                    Some("err") => Err(DataflowError::service("PARTNER_DOWN", "down").build()),
-                    _ => Ok(TaskOutcome::Status(status(&step))),
-                };
-            }
-            result
-        }
-    }
-}
-
 /// The error context at `path`, keeping `limit`.
 fn error_context(path: &str, limit: usize) -> ErrorContext {
     ErrorContext::new(path.parse().unwrap(), limit).unwrap()
 }
 
-/// v3's build of `workflows`, with `act` registered and its error context at
-/// `path`, keeping `limit`.
-fn v3(workflows: &[Value], path: &str, limit: usize) -> dataflow_rs_v3::Engine {
-    v3_engine_with(workflows, |b| {
-        b.register("act", v3_twin::Act)
-            .with_error_context_path(path)
-            .with_error_context_limit(limit)
-    })
-    .unwrap_or_else(|e| panic!("v3 builds: {e}"))
+/// The build of `workflows`, with `act` registered and `error_context` on.
+fn build(workflows: &[Value], error_context: Option<ErrorContext>) -> Engine {
+    let mut config = EngineConfig::default();
+    if let Some(ec) = error_context {
+        config = config.error_context(ec);
+    }
+    workflows
+        .iter()
+        .fold(
+            Engine::builder().register("act", Act).config(config),
+            |b, w| b.workflow_json(w),
+        )
+        .build()
+        .unwrap_or_else(|issues| panic!("builds: {issues:?}"))
 }
 
-/// v4's twin of [`v3`].
-fn v4(workflows: &[Value], path: &str, limit: usize) -> Engine {
-    v4_engine_with(workflows, |b| {
-        b.register("act", Act)
-            .config(EngineConfig::default().error_context(error_context(path, limit)))
-    })
-    .unwrap_or_else(|e| panic!("v4 builds: {e}"))
+/// The build of `workflows`, with its error context at `path`, keeping
+/// `limit`.
+fn engine(workflows: &[Value], path: &str, limit: usize) -> Engine {
+    build(workflows, Some(error_context(path, limit)))
 }
 
-/// Runs `run` on both builds of `workflows` and holds v4 to v3: the
-/// normalised wire text and the outcome's code. Returns v4's text.
-async fn compare(workflows: &[Value], path: &str, limit: usize, run: &Run) -> String {
-    let expected = on_v3(&v3(workflows, path, limit), run).await;
-    let (text, code, _) = on_v4(&v4(workflows, path, limit), run).await;
-    assert_eq!(
-        (&text, &code),
-        (&expected.0, &expected.1),
-        "workflows {workflows:?}, the error context at {path}, run over data {}",
-        run.data
-    );
-    text
+/// One run of `e` over a message whose `data` is `data` and `metadata` is
+/// `metadata`: the normalised wire text and the outcome's code.
+async fn run_over(e: &Engine, data: Value, metadata: Value) -> (String, String) {
+    let mut m = message(data, metadata);
+    let run = e.run_with(&mut m, &RunOptions::default()).await;
+    let code = match run.status() {
+        RunStatus::Stopped(e) => e.code().to_owned(),
+        _ => "ok".to_owned(),
+    };
+    let mut json = Json::from_text(&text(&m)).expect("a message parses");
+    normalise::message(&mut json, None);
+    (json.to_text(), code)
+}
+
+/// The runs one test makes, held to `tests/golden/error_context/<name>.json`:
+/// each run's outcome code and normalised message, under its label.
+struct Golden {
+    name: &'static str,
+    runs: Json,
+}
+
+impl Golden {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            runs: Json::object(),
+        }
+    }
+
+    /// Runs `run` on the build of `workflows` with its error context at
+    /// `path`, keeping `limit`, records it under `label`, and returns the
+    /// normalised message.
+    async fn run(
+        &mut self,
+        label: impl Into<String>,
+        workflows: &[Value],
+        path: &str,
+        limit: usize,
+        data: Value,
+    ) -> String {
+        let (message, code) = run_over(&engine(workflows, path, limit), data, json!({})).await;
+        self.record(label, &message, &code);
+        message
+    }
+
+    fn record(&mut self, label: impl Into<String>, message: &str, code: &str) {
+        let mut entry = Json::object();
+        entry.insert("code", Json::str(code));
+        entry.insert("message", Json::from_text(message).unwrap());
+        self.runs.insert(label, entry);
+    }
+
+    /// Compares the recorded runs with the golden file, or rewrites it under
+    /// `DATAFLOW_GOLDEN_WRITE`.
+    fn check(self) {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/error_context");
+        let file = format!("{dir}/{}.json", self.name);
+        let actual = self.runs.to_pretty();
+        if std::env::var_os("DATAFLOW_GOLDEN_WRITE").is_some() {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(&file, actual).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{file}: {e}; write it with DATAFLOW_GOLDEN_WRITE=1"));
+        assert_eq!(
+            actual, expected,
+            "{file}; rewrite it with DATAFLOW_GOLDEN_WRITE=1"
+        );
+    }
 }
 
 /// The text of the value at `path` in a normalised message's context, its
@@ -175,7 +172,8 @@ fn slot(message: &str, path: &str) -> Option<String> {
     json_path::get(message.get("context").unwrap(), path).map(Json::to_text)
 }
 
-/// The records `(workflow_id, task_id, code, status)` as v3 writes them.
+/// The records `(workflow_id, task_id, code, status)` as the mirror writes
+/// them.
 fn records(records: &[(&str, &str, &str, u16)]) -> String {
     let items: Vec<String> = records
         .iter()
@@ -235,9 +233,9 @@ fn workflow(id: &str, tasks: Vec<Value>) -> Value {
     json!({"id": id, "tasks": tasks})
 }
 
-/// The run every test makes unless it says otherwise.
-fn seeded() -> Run {
-    data(json!({"text": "a string"}))
+/// The data every run is seeded with unless it says otherwise.
+fn seeded() -> Value {
+    json!({"text": "a string"})
 }
 
 /// A message whose `data` is `data` and `metadata` is `metadata`.
@@ -285,16 +283,20 @@ async fn a_failing_task_mirrors_its_records_at_the_path() {
         ("w", "map", "TASK_STATUS_ERROR", 500),
         ("w", "xml", "VALIDATION_ERROR", 500),
     ]);
+    let mut golden = Golden::new("a_failing_task_mirrors_its_records_at_the_path");
     // Under each root, and created through missing objects.
     for path in ["metadata.errors", "data.failures.list", "temp_data.errs"] {
-        let message = compare(&workflows, path, 32, &seeded()).await;
+        let message = golden.run(path, &workflows, path, 32, seeded()).await;
         assert_eq!(slot(&message, path), Some(expected.clone()), "{path}");
     }
 
     // A run whose only failure is a 4xx that records nothing writes no key.
     let workflows = [workflow("w", vec![act("four", json!(404))])];
-    let message = compare(&workflows, "metadata.errors", 32, &seeded()).await;
+    let message = golden
+        .run("a 4xx alone", &workflows, "metadata.errors", 32, seeded())
+        .await;
     assert_eq!(slot(&message, "metadata.errors"), None);
+    golden.check();
 }
 
 #[tokio::test]
@@ -312,7 +314,10 @@ async fn a_handlers_own_records_are_mirrored_too() {
             act("halt", json!(["record", "halt"])),
         ],
     )];
-    let message = compare(&workflows, "metadata.errors", 32, &seeded()).await;
+    let mut golden = Golden::new("a_handlers_own_records_are_mirrored_too");
+    let message = golden
+        .run("records", &workflows, "metadata.errors", 32, seeded())
+        .await;
     assert_eq!(
         slot(&message, "metadata.errors"),
         Some(records(&[
@@ -324,6 +329,7 @@ async fn a_handlers_own_records_are_mirrored_too() {
             ("w", "halt", "HOST_WARNING", 299),
         ]))
     );
+    golden.check();
 }
 
 #[tokio::test]
@@ -335,7 +341,10 @@ async fn the_limit_keeps_the_newest() {
             goes_on(act("bad", json!({"+": [500, {"var": "temp_data.i"}]}))),
         ]}),
     ];
-    let message = compare(&workflows, "metadata.errors", 2, &seeded()).await;
+    let mut golden = Golden::new("the_limit_keeps_the_newest");
+    let message = golden
+        .run("sweeps", &workflows, "metadata.errors", 2, seeded())
+        .await;
     assert_eq!(
         slot(&message, "metadata.errors"),
         Some(records(&[
@@ -348,7 +357,9 @@ async fn the_limit_keeps_the_newest() {
         "w",
         vec![goes_on(act("many", json!(["record", "record", 500])))],
     )];
-    let message = compare(&workflows, "metadata.errors", 2, &seeded()).await;
+    let message = golden
+        .run("one call", &workflows, "metadata.errors", 2, seeded())
+        .await;
     assert_eq!(
         slot(&message, "metadata.errors"),
         Some(records(&[
@@ -356,6 +367,7 @@ async fn the_limit_keeps_the_newest() {
             ("w", "many", "TASK_STATUS_ERROR", 500),
         ]))
     );
+    golden.check();
 }
 
 #[tokio::test]
@@ -373,13 +385,16 @@ async fn a_skip_mirrors_nothing_and_a_clean_run_leaves_the_key_absent() {
         "w",
         vec![map("m", "data.a", json!(1)), act("ok", json!("ok"))],
     )];
-    for workflows in [&skipping[..], &clean[..]] {
-        // The wire text is v3's, byte for byte once normalised: no key, not
-        // an empty array.
-        let message = compare(workflows, "metadata.errors", 32, &seeded()).await;
+    let mut golden = Golden::new("a_skip_mirrors_nothing_and_a_clean_run_leaves_the_key_absent");
+    for (label, workflows) in [("skipping", &skipping[..]), ("clean", &clean[..])] {
+        // No key, not an empty array.
+        let message = golden
+            .run(label, workflows, "metadata.errors", 32, seeded())
+            .await;
         assert_eq!(slot(&message, "metadata.errors"), None, "{workflows:?}");
     }
-    let e = v4(&skipping, "metadata.errors", 32);
+    golden.check();
+    let e = engine(&skipping, "metadata.errors", 32);
     let mut m = message(json!({}), json!({}));
     e.run(&mut m).await;
     assert_eq!(m.errors().len(), 1, "the skip's record is kept");
@@ -398,15 +413,20 @@ async fn a_fan_out_mirrors_per_element() {
             )],
         ))],
     )];
-    let run = data(json!({"text": "a string", "items": [
+    // Keys in sorted order, so the seed, and the golden, are the same with
+    // and without serde_json's `preserve_order`.
+    let items = json!({"items": [
         "ok",
         503,
         ["record", "ok"],
         "err",
         ["record", 404],
         ["record", "skip"],
-    ]}));
-    let message = compare(&workflows, "metadata.errors", 32, &run).await;
+    ], "text": "a string"});
+    let mut golden = Golden::new("a_fan_out_mirrors_per_element");
+    let message = golden
+        .run("in order", &workflows, "metadata.errors", 32, items.clone())
+        .await;
     // Each failed element's records, at its own status; the skipped
     // element's record is on the errors and nowhere else.
     assert_eq!(
@@ -429,11 +449,15 @@ async fn a_fan_out_mirrors_per_element() {
             )],
         ))],
     )];
-    let again = compare(&concurrent, "metadata.errors", 32, &run).await;
-    assert_eq!(
-        slot(&again, "metadata.errors"),
-        slot(&message, "metadata.errors")
-    );
+    let (again, code) = run_over(
+        &engine(&concurrent, "metadata.errors", 32),
+        items,
+        json!({}),
+    )
+    .await;
+    assert_eq!(code, "ok");
+    assert_eq!(again, message, "the whole message is the same");
+    golden.check();
 }
 
 #[tokio::test]
@@ -443,6 +467,7 @@ async fn a_non_array_at_the_path_is_replaced() {
     let one = ("w", "bad", "TASK_STATUS_ERROR", 500);
     let two = ("w", "bad2", "TASK_STATUS_ERROR", 501);
     let both = records(&[one, two]);
+    let mut golden = Golden::new("a_non_array_at_the_path_is_replaced");
     for (path, written_at, value, at_path, expected) in [
         // A string at the path.
         (
@@ -476,8 +501,8 @@ async fn a_non_array_at_the_path_is_replaced() {
             "data.items",
             format!(r#"{{"list":{both}}}"#),
         ),
-        // An array above it, under an index: v3 reads every segment of the
-        // path as a key.
+        // An array above it, under an index: every segment of the path is
+        // read as a key.
         (
             "data.items.0",
             "data.items",
@@ -502,6 +527,7 @@ async fn a_non_array_at_the_path_is_replaced() {
             format!(r#"{{"keep":1,"list":{both}}}"#),
         ),
     ] {
+        let label = format!("{path} over {value} at {written_at}");
         let workflows = [workflow(
             "w",
             vec![
@@ -510,45 +536,34 @@ async fn a_non_array_at_the_path_is_replaced() {
                 goes_on(act("bad2", json!(501))),
             ],
         )];
-        let message = compare(&workflows, path, 32, &seeded()).await;
-        assert_eq!(
-            slot(&message, at_path),
-            Some(expected),
-            "{path} over {value} at {written_at}"
-        );
+        let message = golden
+            .run(label.clone(), &workflows, path, 32, seeded())
+            .await;
+        assert_eq!(slot(&message, at_path), Some(expected), "{label}");
     }
+    golden.check();
 }
 
 #[tokio::test]
 async fn the_path_is_reset_at_run_start() {
-    // Break 20: a message that arrives with records at the path loses them.
-    // v3 appended to them.
+    // Break 20: a message that arrives with records at the path loses them;
+    // the run's own are not appended to them.
     let workflows = [workflow("w", vec![goes_on(act("bad", json!(500)))])];
     let arriving = json!({"errors": [{"old": true}], "keep": 1});
-    let run = Run {
-        data: json!({"text": "a string"}),
-        metadata: arriving.clone(),
-        ..Run::default()
-    };
     let fresh = records(&[("w", "bad", "TASK_STATUS_ERROR", 500)]);
-    let (v4_text, _, _) = on_v4(&v4(&workflows, "metadata.errors", 32), &run).await;
-    assert_eq!(slot(&v4_text, "metadata.errors"), Some(fresh));
-    assert_eq!(slot(&v4_text, "metadata.keep"), Some("1".to_owned()));
-    let (v3_text, _) = on_v3(&v3(&workflows, "metadata.errors", 32), &run).await;
-    assert_eq!(
-        slot(&v3_text, "metadata.errors"),
-        Some(format!(
-            r#"[{{"old":true}},{}]"#,
-            records(&[("w", "bad", "TASK_STATUS_ERROR", 500)])
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-        )),
-        "v3 appends"
-    );
+    let (text, code) = run_over(
+        &engine(&workflows, "metadata.errors", 32),
+        seeded(),
+        arriving.clone(),
+    )
+    .await;
+    assert_eq!(code, "ok");
+    assert_eq!(slot(&text, "metadata.errors"), Some(fresh));
+    assert_eq!(slot(&text, "metadata.keep"), Some("1".to_owned()));
 
     // A clean run removes the key, and the trace's `initial` never holds it.
     let clean = [workflow("w", vec![map("m", "data.a", json!(1))])];
-    let e = v4(&clean, "metadata.errors", 32);
+    let e = engine(&clean, "metadata.errors", 32);
     let mut m = message(json!({}), arriving);
     let run = e
         .run_with(
@@ -568,7 +583,7 @@ async fn the_path_is_reset_at_run_start() {
     );
 
     // The reset goes through the path's segments: under `data` too.
-    let e = v4(&workflows, "data.audit.errors", 32);
+    let e = engine(&workflows, "data.audit.errors", 32);
     let mut m = message(
         json!({"text": "a string", "audit": {"errors": [1, 2], "other": 0}}),
         json!({}),
@@ -593,8 +608,8 @@ fn new_refuses_a_root_metadata_progress_and_a_zero_limit() {
         // `#` names the same key, so it is the same slot.
         ("metadata.#progress", 32),
         ("metadata.errors", 0),
-        // At or below any slot the engine owns (review B M-8): v3 accepted
-        // these, and the next progress write or the stamps wrote over them.
+        // At or below any slot the engine owns (review B M-8): the next
+        // progress write or the stamps would write over them.
         ("metadata.progress.notes", 32),
         ("metadata.processed_at", 32),
         ("metadata.engine_version.x", 32),
@@ -603,22 +618,6 @@ fn new_refuses_a_root_metadata_progress_and_a_zero_limit() {
         let e = ErrorContext::new(path.parse().unwrap(), limit).unwrap_err();
         assert_eq!(*e.kind(), ErrorKind::Config, "{path}, {limit}: {e}");
     }
-    // v3 refuses the same, but for `#progress`, whose check read the raw
-    // segment.
-    for (path, limit) in [
-        ("data", 32),
-        ("metadata", 32),
-        ("temp_data", 1),
-        ("metadata.progress", 32),
-        ("metadata.errors", 0),
-    ] {
-        let refused = v3_engine_with(&[], |b| {
-            b.with_error_context_path(path)
-                .with_error_context_limit(limit)
-        });
-        assert!(refused.is_err(), "v3 refuses {path}, {limit}");
-    }
-
     let ec = ErrorContext::new(
         "metadata.errors".parse().unwrap(),
         ErrorContext::DEFAULT_LIMIT,
@@ -627,7 +626,7 @@ fn new_refuses_a_root_metadata_progress_and_a_zero_limit() {
     assert_eq!(ec.path().to_string(), "metadata.errors");
     assert_eq!(ec.limit(), 32);
     assert_eq!(ErrorContext::DEFAULT_LIMIT, 32);
-    // What v3 accepts beside it.
+    // What it accepts beside them.
     for path in [
         "data.errors",
         "data.progress",
@@ -678,7 +677,7 @@ async fn the_trace_carries_the_record_as_a_change() {
             goes_on(act("second", json!(["record", "err"]))),
         ],
     )];
-    let e = v4(&workflows, "metadata.errors", 32);
+    let e = engine(&workflows, "metadata.errors", 32);
     let (m, trace) = traced(&e, json!({})).await;
     let step = |task: &str| {
         trace
@@ -730,7 +729,7 @@ async fn the_trace_carries_the_record_as_a_change() {
             goes_on(act("bad", json!(500))),
         ],
     )];
-    let (m, trace) = traced(&v4(&workflows, "metadata.errors", 32), json!({})).await;
+    let (m, trace) = traced(&engine(&workflows, "metadata.errors", 32), json!({})).await;
     let change = trace.steps.last().unwrap().changes.last().unwrap();
     assert_eq!(&*change.path, "metadata.errors");
     assert_eq!(text(&change.old_value), r#""not a list""#);
@@ -745,7 +744,7 @@ async fn the_trace_carries_the_record_as_a_change() {
             goes_on(act("bad", json!(500))),
         ],
     )];
-    let (m, trace) = traced(&v4(&workflows, "data.fail.list", 32), json!({})).await;
+    let (m, trace) = traced(&engine(&workflows, "data.fail.list", 32), json!({})).await;
     let change = trace.steps.last().unwrap().changes.last().unwrap();
     assert_eq!(&*change.path, "data.fail");
     assert_eq!(text(&change.old_value), "5");
@@ -766,7 +765,7 @@ async fn the_trace_carries_the_record_as_a_change() {
             &[("for_each", json!({"over": [500, "ok", "err"], "as": "x"}))],
         ))],
     )];
-    let (m, trace) = traced(&v4(&workflows, "metadata.errors", 32), json!({})).await;
+    let (m, trace) = traced(&engine(&workflows, "metadata.errors", 32), json!({})).await;
     let mirrored: Vec<usize> = trace
         .steps
         .iter()
@@ -779,17 +778,17 @@ async fn the_trace_carries_the_record_as_a_change() {
 
 #[tokio::test]
 async fn a_reload_keeps_the_error_context() {
-    let e = v4(
+    let e = engine(
         &[workflow("w", vec![goes_on(act("t", json!(500)))])],
         "metadata.errors",
         2,
     );
     let compiler = e.compiler();
     let def = parse(
-        &vs_v3::named(workflow(
+        &workflow(
             "w2",
             vec![goes_on(act("u", json!(503))), goes_on(act("v", json!(504)))],
-        )),
+        ),
         ParseOptions::default(),
     )
     .def
@@ -826,12 +825,13 @@ async fn a_reload_keeps_the_error_context() {
         at(&m, "metadata.errors"),
         Some(records(&[("w", "t", "TASK_STATUS_ERROR", 500)]))
     );
-    // With none configured, neither engine writes a key.
+    // With none configured, nothing is written at the path.
     let workflows = [workflow("w", vec![goes_on(fails("map"))])];
-    let expected = on_v3(&v3_engine(&workflows).unwrap(), &seeded()).await;
-    let plain = v4_engine(&workflows).unwrap();
-    let (text, code, _) = on_v4(&plain, &seeded()).await;
-    assert_eq!((&text, &code), (&expected.0, &expected.1));
+    let plain = build(&workflows, None);
+    let (text, code) = run_over(&plain, seeded(), json!({})).await;
     assert_eq!(slot(&text, "metadata.errors"), None);
     assert!(format!("{plain:?}").contains("error_context: None"));
+    let mut golden = Golden::new("a_reload_keeps_the_error_context");
+    golden.record("none configured", &text, &code);
+    golden.check();
 }

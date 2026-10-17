@@ -1,11 +1,5 @@
 {
   "description": "max_concurrency changes timing, never results: the same message at max_concurrency 1 and 4. Each call yields as many times as its element's `y`, so at 4 the calls finish out of order (element 2, then 3, 1, 0), and the fold is still in element order, including a failed element under continue_on_error.",
-  "covers": [
-    "fanout.concurrency"
-  ],
-  "mirrors": [
-    "tests/for_each.rs::results_are_identical_at_every_concurrency"
-  ],
   "workflows": [
     {
       "id": "w",

@@ -1,0 +1,146 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "id": 0,
+              "y": 3
+            },
+            {
+              "id": 1,
+              "o": "halt",
+              "y": 3
+            },
+            {
+              "id": 2,
+              "w": [
+                [
+                  "data.late",
+                  2
+                ]
+              ],
+              "y": 0
+            },
+            {
+              "id": 3,
+              "w": [
+                [
+                  "data.late",
+                  3
+                ]
+              ],
+              "y": 0
+            }
+          ],
+          "outs": [
+            {
+              "i": 0,
+              "id": 0
+            },
+            {
+              "i": 1,
+              "id": 1
+            },
+            null,
+            null
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "t",
+            "status_code": 299
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 1,
+            "id": 1
+          },
+          "by_eval": {
+            "id": 1,
+            "o": "halt",
+            "y": 3
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": 0
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": 0,
+                "y": 3
+              }
+            },
+            {
+              "path": "data.outs.0",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": 0
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": 1
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": 1,
+                "o": "halt",
+                "y": 3
+              }
+            },
+            {
+              "path": "data.outs.1",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": 1
+              }
+            }
+          ],
+          "status": 299,
+          "element_index": 1
+        }
+      ],
+      "errors": []
+    }
+  }
+]

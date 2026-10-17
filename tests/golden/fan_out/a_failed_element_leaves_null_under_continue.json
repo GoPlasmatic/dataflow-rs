@@ -1,0 +1,238 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "id": "a"
+            },
+            {
+              "id": "b",
+              "o": {
+                "status": 500
+              },
+              "w": [
+                [
+                  "data.wrote_b",
+                  true
+                ]
+              ]
+            },
+            {
+              "id": "c",
+              "o": {
+                "error": {
+                  "code": "PARTNER_DOWN",
+                  "message": "down"
+                }
+              },
+              "w": [
+                [
+                  "data.wrote_c",
+                  true
+                ]
+              ],
+              "warn": true
+            },
+            {
+              "id": "d"
+            }
+          ],
+          "outs": [
+            {
+              "i": 0,
+              "id": "a"
+            },
+            null,
+            null,
+            {
+              "i": 3,
+              "id": "d"
+            }
+          ],
+          "wrote_b": true,
+          "after_ran": true
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "after",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 3,
+            "id": "d"
+          },
+          "by_eval": {
+            "id": "d"
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "a"
+              }
+            },
+            {
+              "path": "data.outs.0",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.wrote_b",
+              "old_value": null,
+              "new_value": true
+            },
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "b",
+                "o": {
+                  "status": 500
+                },
+                "w": [
+                  [
+                    "data.wrote_b",
+                    true
+                  ]
+                ]
+              }
+            },
+            {
+              "path": "data.outs.1",
+              "old_value": null,
+              "new_value": null
+            }
+          ],
+          "status": 500,
+          "element_index": 1
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [],
+          "status": 500,
+          "element_index": 2
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 3,
+                "id": "d"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "id": "d"
+              }
+            },
+            {
+              "path": "data.outs.3",
+              "old_value": null,
+              "new_value": {
+                "i": 3,
+                "id": "d"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 3
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "after",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.after_ran",
+              "old_value": null,
+              "new_value": true
+            }
+          ],
+          "status": 200
+        }
+      ],
+      "errors": [
+        {
+          "code": "TASK_STATUS_ERROR",
+          "message": "Task t returned status 500",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "element_index": 1
+        },
+        {
+          "code": "WARNED",
+          "message": "careful",
+          "path": null,
+          "timestamp": "<timestamp>",
+          "element_index": 2
+        },
+        {
+          "code": "PARTNER_DOWN",
+          "message": "Task t error: down",
+          "path": null,
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "element_index": 2
+        }
+      ]
+    }
+  }
+]

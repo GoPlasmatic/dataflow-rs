@@ -97,12 +97,28 @@ impl SyncFunction for LogConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::function::builtins::differential::logs::both;
+    use crate::function::builtins::one_task::logs::logged;
+    use crate::function::builtins::one_task::{Observed, untouched};
     use ::log::Level;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
-    fn context() -> serde_json::Value {
+    fn context() -> Value {
         json!({"data": {"a": 5, "b": 1, "c": "three", "list": [1, "x"], "f": 1.5, "zero": 0}})
+    }
+
+    /// A `log` task writes nothing, records nothing and is `Ok`, whatever it
+    /// logged and whether or not its expressions evaluated.
+    fn assert_quiet(observed: &Observed) {
+        assert_eq!(
+            observed,
+            &Observed {
+                context: untouched(&context()),
+                changes: "[]".to_owned(),
+                errors: "[]".to_owned(),
+                status: Some(200),
+                error_code: None,
+            }
+        );
     }
 
     #[test]
@@ -110,10 +126,9 @@ mod tests {
         // The message would fail; at `info` under a `warn` logger it is
         // never evaluated, so nothing is logged and nothing fails.
         let input = json!({"level": "info", "message": {"/": [1, {"var": "data.zero"}]}});
-        let (v3, v4) = both(Level::Warn, &input, &context());
-        assert_eq!(v4, v3);
-        assert_eq!(v4.0.status, Some(200));
-        assert!(v4.1.is_empty(), "{:?}", v4.1);
+        let (observed, lines) = logged(Level::Warn, &input, &context());
+        assert_quiet(&observed);
+        assert!(lines.is_empty(), "{lines:?}");
     }
 
     #[test]
@@ -127,9 +142,9 @@ mod tests {
                 "b": {"var": "data.b"},
             }
         });
-        let (v3, v4) = both(Level::Warn, &input, &context());
-        assert_eq!(v4, v3);
-        assert_eq!(v4.1, ["WARN: hello [a=5, b=1, c=three]"]);
+        let (observed, lines) = logged(Level::Warn, &input, &context());
+        assert_quiet(&observed);
+        assert_eq!(lines, ["WARN: hello [a=5, b=1, c=three]"]);
     }
 
     #[test]
@@ -139,46 +154,53 @@ mod tests {
             "message": {"var": "data.list"},
             "fields": {"f": {"var": "data.f"}, "n": {"var": "data.missing"}, "t": true}
         });
-        let (v3, v4) = both(Level::Trace, &input, &context());
-        assert_eq!(v4, v3);
-        assert_eq!(v4.1.len(), 1);
+        let (observed, lines) = logged(Level::Trace, &input, &context());
+        assert_quiet(&observed);
+        assert_eq!(lines, [r#"ERROR: [1,"x"] [f=1.5, n=null, t=true]"#]);
     }
 
     #[test]
     fn a_failing_message_or_field_is_written_as_eval_error() {
         let broken = json!({"/": [1, {"var": "data.zero"}]});
         let input = json!({"level": "warn", "message": broken, "fields": {"x": broken}});
-        let (v3, v4) = both(Level::Warn, &input, &context());
-        assert_eq!(v4, v3);
+        let (observed, lines) = logged(Level::Warn, &input, &context());
+        assert_quiet(&observed);
         assert_eq!(
-            v4.1,
+            lines,
             [
                 "ERROR: Log: Failed to evaluate expression",
                 "ERROR: Log: Failed to evaluate expression",
                 "WARN: <eval error> [x=<eval error>]"
             ]
         );
-        assert_eq!(v4.0.status, Some(200));
     }
 
     #[test]
-    fn every_level_agrees_with_v3_under_every_logger_level() {
-        for task in ["trace", "debug", "info", "warn", "error"] {
-            for logger in [
-                Level::Error,
-                Level::Warn,
-                Level::Info,
-                Level::Debug,
-                Level::Trace,
-            ] {
-                let input = json!({"level": task, "message": {"cat": ["m ", {"var": "data.a"}]}});
-                let (v3, v4) = both(logger, &input, &context());
-                assert_eq!(v4, v3, "task {task} under {logger}");
+    fn a_task_logs_exactly_when_its_level_is_enabled() {
+        let levels = [
+            Level::Error,
+            Level::Warn,
+            Level::Info,
+            Level::Debug,
+            Level::Trace,
+        ];
+        for task in levels {
+            let name = task.as_str().to_lowercase();
+            for logger in levels {
+                let input = json!({"level": name, "message": {"cat": ["m ", {"var": "data.a"}]}});
+                let (observed, lines) = logged(logger, &input, &context());
+                assert_quiet(&observed);
+                let want: Vec<String> = if task <= logger {
+                    vec![format!("{task}: m 5")]
+                } else {
+                    Vec::new()
+                };
+                assert_eq!(lines, want, "task {name} under {logger}");
             }
         }
         // The default level is `info`.
-        let (v3, v4) = both(Level::Info, &json!({"message": "m"}), &context());
-        assert_eq!(v4, v3);
-        assert_eq!(v4.1, ["INFO: m"]);
+        let (observed, lines) = logged(Level::Info, &json!({"message": "m"}), &context());
+        assert_quiet(&observed);
+        assert_eq!(lines, ["INFO: m"]);
     }
 }

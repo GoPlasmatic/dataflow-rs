@@ -1,9 +1,10 @@
 // The wire shapes read back (I125). A message and a trace v4 writes read
 // into v4 and write the same text, and a trace read back replays to the same
-// contexts; a message v3 wrote reads into v4 and writes v3's bytes. A context
-// takes its three roots in any order, writes them in order, reads a missing
-// one as `{}` and any value at each, and refuses any other key: break 22,
-// where v3's message read a fourth root as data.
+// contexts; a message in the 3.x wire shape (a 3.15.0 run's, captured below)
+// reads into v4 and writes the same bytes. A context takes its three roots in
+// any order, writes them in order, reads a missing one as `{}` and any value
+// at each, and refuses any other key and a context that is not an object
+// (break 22).
 
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::observe::{StepResult, Trace, TraceOptions};
@@ -41,24 +42,6 @@ impl Function for Put {
     }
 }
 
-/// v3's handler that always fails with a service error.
-mod v3_twin {
-    use async_trait::async_trait;
-    use dataflow_rs_v3::{AsyncFunctionHandler, DataflowError, Result, TaskContext, TaskOutcome};
-    use serde_json::Value;
-
-    pub struct Fail;
-
-    #[async_trait]
-    impl AsyncFunctionHandler for Fail {
-        type Input = Value;
-
-        async fn execute(&self, _ctx: &mut TaskContext<'_>, _input: &Value) -> Result<TaskOutcome> {
-            Err(DataflowError::service("PARTNER_DOWN", "down").build())
-        }
-    }
-}
-
 fn text<T: serde::Serialize + ?Sized>(v: &T) -> String {
     serde_json::to_string(v).unwrap()
 }
@@ -85,53 +68,47 @@ fn message_json(context: &str) -> String {
     format!(r#"{{"id":"m","payload":{{}},"context":{context},"audit_trail":[],"errors":[]}}"#)
 }
 
-#[tokio::test]
-async fn a_v3_message_reads_into_v4_and_writes_v3s_bytes() {
-    let workflow = json!({
-        "id": "w", "name": "w",
-        "tasks": [
-            {"id": "m", "name": "m", "function": {"name": "map", "input": {"mappings": [
-                {"path": "data.a", "logic": 1},
-                {"path": "data.b", "logic": {"cat": [{"var": "data.seed"}, "!"]}},
-                {"path": "temp_data.t", "logic": [1, {"x": 2.5}]}
-            ]}}},
-            {"id": "f", "name": "f", "continue_on_error": true,
-             "function": {"name": "fail", "input": {}}},
-            {"id": "after", "name": "after", "function": {"name": "map", "input": {"mappings": [
-                {"path": "data.after", "logic": {"var": "data.a"}}
-            ]}}}
-        ]
-    });
-    let engine = dataflow_rs_v3::Engine::builder()
-        .register("fail", v3_twin::Fail)
-        .with_workflow(dataflow_rs_v3::Workflow::from_json(&workflow.to_string()).unwrap())
-        .build()
-        .unwrap();
-    let mut v3 = dataflow_rs_v3::Message::builder()
-        .id("m")
-        .payload_json(&json!({"p": [1, 2.5, "s", null, 2.0], "z": {"y": true}}))
-        .data_json(&json!({"seed": "s", "zz": 1, "aa": 2, "f": 3.0}))
-        .metadata_json(&json!({"source": "api"}))
-        .build();
-    engine.process_message(&mut v3).await.unwrap();
-    // The run made what the read must carry: changes, and an error the task
-    // stepped past.
-    assert_eq!(v3.audit_trail().len(), 3);
-    assert!(!v3.audit_trail()[0].changes.is_empty());
-    assert_eq!(v3.errors().len(), 1, "{:?}", v3.errors());
-    let wire = text(&v3);
-    assert!(wire.contains(r#""f":3.0"#), "{wire}");
+/// A message 3.15.0 wrote after a run of three tasks: a `map` writing
+/// `data.a`, `data.b` and `temp_data.t`; a task failing with `PARTNER_DOWN`
+/// that the workflow stepped past; and a `map` after it. Its key order,
+/// timestamps, `engine_version` stamp and whole-number floats (`2.0`, `3.0`)
+/// are the bytes v4 must keep.
+const MESSAGE_3X: &str = concat!(
+    r#"{"id":"m","payload":{"p":[1,2.5,"s",null,2.0],"z":{"y":true}},"#,
+    r#""context":{"data":{"aa":2,"f":3.0,"seed":"s","zz":1,"a":1,"b":"s!","after":1},"#,
+    r#""metadata":{"source":"api","processed_at":"2026-10-17T09:46:12.425182+00:00","#,
+    r#""engine_version":"3.15.0","progress":"#,
+    r#"{"workflow_id":"w","task_id":"after","status_code":200}},"#,
+    r#""temp_data":{"t":[1,{"x":2.5}]}},"#,
+    r#""audit_trail":[{"workflow_id":"w","task_id":"m","#,
+    r#""timestamp":"2026-10-17T09:46:12.425182Z","changes":[{"path":"data.a","old_value":null,"#,
+    r#""new_value":1},{"path":"data.b","old_value":null,"new_value":"s!"},"#,
+    r#"{"path":"temp_data.t","old_value":null,"new_value":[1,{"x":2.5}]}],"status":200},"#,
+    r#"{"workflow_id":"w","task_id":"f","timestamp":"2026-10-17T09:46:12.425182Z","changes":[],"#,
+    r#""status":500},{"workflow_id":"w","task_id":"after","#,
+    r#""timestamp":"2026-10-17T09:46:12.425182Z","changes":[{"path":"data.after","#,
+    r#""old_value":null,"new_value":1}],"status":200}],"#,
+    r#""errors":[{"code":"PARTNER_DOWN","message":"Task f error: down","path":null,"#,
+    r#""workflow_id":"w","task_id":"f","#,
+    r#""timestamp":"2026-10-17T09:46:12.425519+00:00"}]}"#,
+);
 
-    let v4: Message = serde_json::from_str(&wire).unwrap();
-    assert_eq!(text(&v4), wire);
+#[test]
+fn a_3x_message_reads_into_v4_and_writes_the_same_bytes() {
+    let v4: Message = serde_json::from_str(MESSAGE_3X).unwrap();
+    assert_eq!(text(&v4), MESSAGE_3X);
     assert_eq!(v4.id(), "m");
     assert_eq!(
         v4.payload(),
         &dv(json!({"p": [1, 2.5, "s", null, 2.0], "z": {"y": true}}))
     );
     assert_eq!(v4.context().data()["after"], dv(json!(1)));
+    assert_eq!(v4.context().temp_data()["t"], dv(json!([1, {"x": 2.5}])));
     assert_eq!(v4.audit().len(), 3);
+    assert_eq!(v4.audit()[0].changes.len(), 3);
+    assert_eq!(v4.errors().len(), 1);
     assert_eq!(v4.errors()[0].code, "PARTNER_DOWN");
+    assert_eq!(v4.errors()[0].task_id.as_deref(), Some("f"));
 }
 
 #[test]
@@ -213,13 +190,6 @@ fn a_fourth_context_key_is_refused() {
         let err = refused(&message_json(json));
         assert!(err.starts_with("invalid type"), "{json}: {err}");
     }
-
-    // v3 read the same JSON: the fourth root came in as data, and so did a
-    // context that is not an object.
-    let v3: dataflow_rs_v3::Message = serde_json::from_str(&smuggled).unwrap();
-    assert_eq!(v3.context["secrets"]["partner_key"], dv(json!("k")));
-    let v3: dataflow_rs_v3::Message = serde_json::from_str(&message_json("null")).unwrap();
-    assert_eq!(v3.context, OwnedDataValue::Null);
 }
 
 #[tokio::test]

@@ -31,8 +31,6 @@ docs/book/
 # WASM build artifacts (but not docs)
 docs/src/wasm/*.js
 docs/src/wasm/*.wasm
-# The v4 design documents are kept locally, never committed
-design-v4/
 
 # Python bytecode (bench/gate.py)
 __pycache__/

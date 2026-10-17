@@ -1,7 +1,5 @@
 {
   "description": "A condition that fails to evaluate is false, and the workflow or task it guards is skipped; the same failing expression in a host function's template surfaces as Err, recorded as LOGIC_ERROR. The failing expression is {\"+\": [{\"var\": \"data.word\"}, 1]} with data.word = \"abc\": + over a non-numeric operand fails in datalogic 5.7.",
-  "covers": ["expr.condition-error", "code.LOGIC_ERROR"],
-  "mirrors": ["src/task_context::eval_surfaces_an_error_where_evaluate_condition_returns_false"],
   "workflows": [
     {"id": "guarded", "name": "guarded", "condition": {"+": [{"var": "data.word"}, 1]}, "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

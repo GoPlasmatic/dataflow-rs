@@ -1,6 +1,5 @@
 {
   "description": "Only a literal true passes a filter: conditions 1 and \"true\" both reject and halt their workflow, while true passes.",
-  "covers": ["filter.literal-true"],
   "workflows": [
     {"id": "one", "name": "one", "priority": 1, "tasks": [
       {"id": "gate", "name": "gate", "function": {"name": "filter", "input": {"condition": 1}}},

@@ -31,9 +31,8 @@ call, sweep or fan-out element rebuilds the view.
 Measured at the 4.0 gate against 3.15.0 on one machine, 16 of the 49 judged
 rows read faster, 25 better and 6 not slower, and the two that read worse at
 five rounds read not slower at seven; `loop_scaling`, a 1000-sweep append loop
-over a large context, ran in 1 to 3% of 3.15's time. `bench/baseline/` holds
-the 3.15.0 readings the gate compares against, and the README's Performance
-section says how to run it.
+over a large context, ran in 1 to 3% of 3.15's time. The README's Performance
+section says how to run the benchmarks.
 
 ### Added
 

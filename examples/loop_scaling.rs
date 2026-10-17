@@ -1,15 +1,15 @@
 //! # Loop scaling
 //!
-//! v4's port of v3's `loop_scaling`, a row of the v4 performance gate: the
+//! A row of the performance gate, its workload first written against 3.x: the
 //! shape of #66 to #69, from Orion#371. A turn loop runs 1000 sweeps over a
 //! large context and appends one entry to a log every sweep, so the context
 //! grows as the loop runs. Each sweep observes (a `map`), decides, then steps
 //! (a `map` that updates the score and appends to `data.log`).
 //!
-//! In 3.15 every sweep converts the whole context into the arena again, once
-//! per sync stretch, so a sweep pays for the context's bytes. v4 keeps one
-//! view of the context for the whole run and splices each write into it, so
-//! the gate requires this row to be faster.
+//! In 3.x every sweep converted the whole context into the arena again, once
+//! per sync stretch, so a sweep paid for the context's bytes. The engine
+//! keeps one view of the context for the whole run and splices each write
+//! into it, so a sweep's cost must not grow with the log.
 //!
 //! The decide step is measured two ways:
 //!
@@ -17,7 +17,7 @@
 //! - **by handler:** a host function evaluates two `Expr` fields against the
 //!   run's view and writes the decision through an `Output`, as Orion's
 //!   `model_infer` does once per seat. The sweep then has an `.await` in it,
-//!   which in 3.15 splits it into two stretches, each converting the context.
+//!   which in 3.x split it into two stretches, each converting the context.
 //!
 //! Each runs at 250 and 1000 sweeps. The per-sweep figure at 1000 over the one
 //! at 250 shows whether a sweep pays for the log: 1.0x means it does not.

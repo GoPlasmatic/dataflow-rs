@@ -1,20 +1,22 @@
 // Loops end to end: the counter, its bounds and its sweeps, the condition
 // before every sweep, `setup`, `over`, `as` and `scratch`, a halt and a
 // failure inside a loop, I61's non-array `over`, the checkpoints a long loop
-// takes (I72), and the run future's `Send`. Each test runs on v3 too where v3
-// can run it, comparing normalised messages (`support/vs_v3.rs`), and reads
-// the `Run` v4 reports.
+// takes (I72), and the run future's `Send`. Each test reads the `Run` the
+// engine reports and asserts the facts it is about; most also hold every
+// message they run whole, key order included, to their golden file under
+// `tests/golden/run_loops/` (`support/run_helpers.rs`;
+// `DATAFLOW_GOLDEN_WRITE=1` rewrites them).
 
-#[path = "support/vs_v3.rs"]
-mod vs_v3;
+#[path = "support/run_helpers.rs"]
+mod run_helpers;
 
 use dataflow_rs::def::{LoopDef, ParseOptions, parse};
 use dataflow_rs::program::Severity;
 use dataflow_rs::run::{RunStatus, Selection, WorkflowExit};
 use dataflow_rs::{Engine, Message, Run as Report, RunOptions};
 use datavalue::OwnedDataValue;
+use run_helpers::{Golden, Ran, Run, build, data, run_on};
 use serde_json::{Value, json};
-use vs_v3::{Run, data, on_v3, on_v4, v3_engine, v4_engine};
 
 /// A `map` task writing `logic` at `path`.
 fn map(id: &str, path: &str, logic: Value) -> Value {
@@ -50,24 +52,25 @@ fn looping(id: &str, priority: u32, config: Value, tasks: Vec<Value>) -> Value {
     json!({"id": id, "priority": priority, "loop": config, "tasks": tasks})
 }
 
-/// Builds `workflows` on both sides, runs each of `runs` on both, compares
-/// them, and returns v4's reports.
-async fn compare(workflows: &[Value], runs: &[Run]) -> Vec<Report> {
-    let v3 = v3_engine(workflows).unwrap_or_else(|e| panic!("v3 builds: {e}"));
-    let v4 = v4_engine(workflows).unwrap_or_else(|e| panic!("v4 builds: {e}"));
-    let mut reports = Vec::new();
+/// Builds `workflows`, runs each of `runs` over them, and holds every run to
+/// test `name`'s golden file.
+async fn golden(name: &str, workflows: &[Value], runs: &[Run]) -> Vec<Ran> {
+    let mut golden = Golden::new("run_loops", name);
+    let ran = golden_runs(&mut golden, workflows, runs).await;
+    golden.check();
+    ran
+}
+
+/// [`golden`]'s runs, added to `golden`.
+async fn golden_runs(golden: &mut Golden, workflows: &[Value], runs: &[Run]) -> Vec<Ran> {
+    let engine = build(workflows).unwrap_or_else(|e| panic!("builds: {e}"));
+    let mut ran = Vec::new();
     for run in runs {
-        let expected = on_v3(&v3, run).await;
-        let (text, code, report) = on_v4(&v4, run).await;
-        assert_eq!(
-            (text, code),
-            expected,
-            "workflows {workflows:?}, run over data {}",
-            run.data
-        );
-        reports.push(report);
+        let one = run_on(&engine, run).await;
+        golden.push(&one);
+        ran.push(one);
     }
-    reports
+    ran
 }
 
 /// One workflow the run considered: `(id, selection, sweeps, exit)`.
@@ -104,7 +107,11 @@ fn message(data: Value) -> Message {
 }
 
 #[tokio::test]
-async fn counter_sequences_match_v3() {
+async fn counter_sequences_follow_init_increment_and_max() {
+    let mut g = Golden::new(
+        "run_loops",
+        "counter_sequences_follow_init_increment_and_max",
+    );
     let mut compared = 0;
     for init in [0, 2] {
         for increment in [1, 3] {
@@ -116,23 +123,31 @@ async fn counter_sequences_match_v3() {
                     vec![append("seen", "data.seen", var("temp_data.i"))],
                 )];
                 if max <= init {
-                    // An empty bound is refused on both sides.
-                    assert!(v3_engine(&workflows).is_err(), "v3 refuses {max} <= {init}");
-                    assert!(v4_engine(&workflows).is_err(), "v4 refuses {max} <= {init}");
+                    // An empty bound is refused.
+                    assert!(build(&workflows).is_err(), "refuses {max} <= {init}");
                     continue;
                 }
-                let reports = compare(&workflows, &[data(json!({}))]).await;
-                let sweeps = (init..max).step_by(increment as usize).count() as u32;
+                let reports = golden_runs(&mut g, &workflows, &[data(json!({}))]).await;
+                let seen: Vec<u32> = (init..max).step_by(increment as usize).collect();
                 assert_eq!(
-                    considered(&reports[0]),
-                    [ran("w", sweeps, WorkflowExit::Completed)],
+                    considered(&reports[0].report),
+                    [ran("w", seen.len() as u32, WorkflowExit::Completed)],
                     "init {init}, increment {increment}, max {max}"
+                );
+                // Every counter in bounds, in order; after the loop the slot
+                // holds the first one out of bounds.
+                let context = &reports[0].json()["context"];
+                assert_eq!(context["data"]["seen"], json!(seen));
+                assert_eq!(
+                    context["temp_data"]["i"],
+                    json!(seen.last().unwrap() + increment)
                 );
                 compared += 1;
             }
         }
     }
     assert_eq!(compared, 10);
+    g.check();
 }
 
 #[tokio::test]
@@ -150,13 +165,18 @@ async fn the_engine_owns_the_counter() {
             append("after", "data.after", var("temp_data.i")),
         ],
     )];
-    let reports = compare(&workflows, &[data(json!({}))]).await;
+    let reports = golden(
+        "the_engine_owns_the_counter",
+        &workflows,
+        &[data(json!({}))],
+    )
+    .await;
     assert_eq!(
-        considered(&reports[0]),
+        considered(&reports[0].report),
         [ran("w", 3, WorkflowExit::Completed)]
     );
 
-    let e = v4_engine(&workflows).unwrap();
+    let e = build(&workflows).unwrap();
     let mut m = message(json!({}));
     e.run(&mut m).await;
     let context = m.to_json()["context"].clone();
@@ -210,15 +230,15 @@ async fn the_condition_is_rechecked_every_sweep() {
         data(json!({"limit": 3, "zero": 0})),
         data(json!({"limit": 20, "zero": 0})),
     ];
-    let reports = compare(&workflows, &runs).await;
+    let reports = golden("the_condition_is_rechecked_every_sweep", &workflows, &runs).await;
     let skipped = |id: &str| (id.to_owned(), "condition", 0, None);
     let breaks = ran("breaks", 2, WorkflowExit::Completed);
     assert_eq!(
-        considered(&reports[0]),
+        considered(&reports[0].report),
         [skipped("counter"), skipped("setup"), breaks.clone()]
     );
     assert_eq!(
-        considered(&reports[1]),
+        considered(&reports[1].report),
         [
             ran("counter", 3, WorkflowExit::Completed),
             ran("setup", 3, WorkflowExit::Completed),
@@ -226,7 +246,7 @@ async fn the_condition_is_rechecked_every_sweep() {
         ]
     );
     assert_eq!(
-        considered(&reports[2]),
+        considered(&reports[2].report),
         [
             ran("counter", 10, WorkflowExit::Completed),
             ran("setup", 10, WorkflowExit::Completed),
@@ -235,7 +255,7 @@ async fn the_condition_is_rechecked_every_sweep() {
     );
 
     // A condition that fails at its first evaluation is `ConditionFailed`.
-    let e = v4_engine(&[with(
+    let e = build(&[with(
         looping(
             "w",
             0,
@@ -250,6 +270,26 @@ async fn the_condition_is_rechecked_every_sweep() {
         considered(&report),
         [("w".to_owned(), "condition failed", 0, None)]
     );
+
+    // What each run's sweeps wrote: nothing past the condition's bound, and
+    // `breaks` two sweeps whatever the limit.
+    let written = |n: usize| {
+        let data = reports[n].json()["context"]["data"].clone();
+        ["counter", "setup", "with_setup", "breaks"].map(|key| data[key].clone())
+    };
+    let upto = |n: u32| json!((0..n).collect::<Vec<_>>());
+    assert_eq!(
+        written(0),
+        [Value::Null, Value::Null, Value::Null, json!([0, 1])]
+    );
+    assert_eq!(
+        written(1),
+        [upto(3), json!(["ran"]), upto(3), json!([0, 1])]
+    );
+    assert_eq!(
+        written(2),
+        [upto(10), json!(["ran"]), upto(10), json!([0, 1])]
+    );
 }
 
 #[tokio::test]
@@ -263,13 +303,18 @@ async fn setup_runs_once_without_a_loop_counter() {
         ]}),
         vec![append("t", "data.order", var("temp_data.i"))],
     )];
-    let reports = compare(&workflows, &[data(json!({}))]).await;
+    let reports = golden(
+        "setup_runs_once_without_a_loop_counter",
+        &workflows,
+        &[data(json!({}))],
+    )
+    .await;
     assert_eq!(
-        considered(&reports[0]),
+        considered(&reports[0].report),
         [ran("w", 3, WorkflowExit::Completed)]
     );
 
-    let e = v4_engine(&workflows).unwrap();
+    let e = build(&workflows).unwrap();
     let mut m = message(json!({}));
     e.run(&mut m).await;
     let counters: Vec<_> = m
@@ -304,11 +349,20 @@ async fn over_is_evaluated_once_after_setup() {
             append("grow", "data.items", json!(99)),
         ],
     )];
-    let reports = compare(&workflows, &[data(json!({"items": "replaced by setup"}))]).await;
+    let reports = golden(
+        "over_is_evaluated_once_after_setup",
+        &workflows,
+        &[data(json!({"items": "replaced by setup"}))],
+    )
+    .await;
     assert_eq!(
-        considered(&reports[0]),
+        considered(&reports[0].report),
         [ran("w", 3, WorkflowExit::Completed)]
     );
+    // Three sweeps over setup's array, though each sweep grew it.
+    let data = &reports[0].json()["context"]["data"];
+    assert_eq!(data["seen"], json!([1, 2, 3]));
+    assert_eq!(data["items"], json!([1, 2, 3, 99, 99, 99]));
 }
 
 #[tokio::test]
@@ -329,14 +383,22 @@ async fn max_bounds_an_over_loop() {
             vec![append("t", "data.stride", var("temp_data.y"))],
         ),
     ];
-    let reports = compare(&workflows, &[data(json!({"items": items}))]).await;
+    let reports = golden(
+        "max_bounds_an_over_loop",
+        &workflows,
+        &[data(json!({"items": items}))],
+    )
+    .await;
     assert_eq!(
-        considered(&reports[0]),
+        considered(&reports[0].report),
         [
             ran("max", 2, WorkflowExit::Completed),
             ran("stride", 2, WorkflowExit::Completed)
         ]
     );
+    let data = &reports[0].json()["context"]["data"];
+    assert_eq!(data["max"], json!(["a", "b"]));
+    assert_eq!(data["stride"], json!(["b", "d"]), "elements 1 and 3");
 }
 
 #[tokio::test]
@@ -356,16 +418,21 @@ async fn an_empty_over_writes_init_and_runs_no_sweep() {
             vec![append("t", "data.read", var("temp_data.y"))],
         ),
     ];
-    let reports = compare(&workflows, &[data(json!({"items": []}))]).await;
+    let reports = golden(
+        "an_empty_over_writes_init_and_runs_no_sweep",
+        &workflows,
+        &[data(json!({"items": []}))],
+    )
+    .await;
     assert_eq!(
-        considered(&reports[0]),
+        considered(&reports[0].report),
         [
             ran("literal", 0, WorkflowExit::Completed),
             ran("read", 0, WorkflowExit::Completed)
         ]
     );
 
-    let e = v4_engine(&workflows).unwrap();
+    let e = build(&workflows).unwrap();
     let mut m = message(json!({"items": []}));
     e.run(&mut m).await;
     // The counter holds `init`; no binding, no scratch, no task ran.
@@ -386,7 +453,7 @@ fn over_record(workflow: &str, kind: &str, now: &Value) -> Value {
 
 #[tokio::test]
 async fn a_non_array_over_records_one_logic_error_and_writes_no_counter() {
-    // I61, v4 only: v3 recorded `WORKFLOW_ERROR` (break 4).
+    // I61: one `LOGIC_ERROR` record, with no wrapper record beside it.
     for continues in [true, false] {
         for (scalar, kind) in [
             (json!("nope"), "a string"),
@@ -396,7 +463,7 @@ async fn a_non_array_over_records_one_logic_error_and_writes_no_counter() {
             (json!({"a": 1}), "an object"),
         ] {
             let policy = if continues { "continue" } else { "fail" };
-            let e = v4_engine(&[
+            let e = build(&[
                 with(
                     looping(
                         "w",
@@ -452,10 +519,9 @@ async fn a_non_array_over_records_one_logic_error_and_writes_no_counter() {
 }
 
 #[tokio::test]
-async fn an_over_that_fails_to_evaluate_records_v3s_inner_text() {
+async fn an_over_that_fails_to_evaluate_records_the_evaluation_error() {
     // Not I61's case, decided by it: one record with the workflow id, the
-    // evaluation error's code, and v3's text without its `WORKFLOW_ERROR`
-    // wrapper.
+    // evaluation error's code and its own text, with no workflow wrapper.
     let workflows = [with(
         looping(
             "w",
@@ -465,28 +531,17 @@ async fn an_over_that_fails_to_evaluate_records_v3s_inner_text() {
         ),
         &[("continue_on_error", json!(true))],
     )];
-    let run = data(json!({"zero": 0}));
-    let v3 = v3_engine(&workflows).unwrap();
-    let mut v3_message = dataflow_rs_v3::Message::builder()
-        .data_json(&run.data)
-        .build();
-    v3.process_message(&mut v3_message).await.unwrap();
-    let [v3_record] = v3_message.errors() else {
-        panic!("one v3 record: {:?}", v3_message.errors());
-    };
-    let inner = v3_record
-        .message
-        .strip_prefix("Workflow w error: Workflow error: ")
-        .expect("v3 wraps the workflow error");
-
-    let e = v4_engine(&workflows).unwrap();
-    let mut m = message(run.data.clone());
+    let e = build(&workflows).unwrap();
+    let mut m = message(json!({"zero": 0}));
     let report = e.run(&mut m).await;
     let [record] = m.errors() else {
         panic!("one record: {:?}", m.errors());
     };
     assert_eq!(record.code, "LOGIC_ERROR");
-    assert_eq!(record.message, inner);
+    assert_eq!(
+        record.message,
+        r#"Workflow w: loop.over failed to evaluate: Logic evaluation error: Thrown: {"type":"NaN"} (in operator: /)"#
+    );
     assert_eq!(record.workflow_id.as_deref(), Some("w"));
     assert_eq!(record.task_id, None);
     assert_eq!(m.to_json()["context"]["temp_data"], json!({}));
@@ -513,10 +568,19 @@ async fn scratch_is_reset_every_sweep() {
             json!({"==": [{"var": ["temp_data.acc.list", "none"]}, "none"]}),
         )],
     )];
-    let reports = compare(&workflows, &[data(json!({"items": [1, 2, 3]}))]).await;
+    let reports = golden(
+        "scratch_is_reset_every_sweep",
+        &workflows,
+        &[data(json!({"items": [1, 2, 3]}))],
+    )
+    .await;
     assert_eq!(
-        considered(&reports[0]),
+        considered(&reports[0].report),
         [ran("w", 3, WorkflowExit::Completed)]
+    );
+    assert_eq!(
+        reports[0].json()["context"]["data"]["snapshots"],
+        json!([{"list": [1]}, {"list": [2]}, {"list": [3]}])
     );
 }
 
@@ -564,9 +628,14 @@ async fn a_halt_or_terminal_ends_the_whole_loop() {
         ),
         json!({"id": "after", "priority": 4, "tasks": [map("after", "data.after", json!(true))]}),
     ];
-    let reports = compare(&workflows, &[data(json!({}))]).await;
+    let reports = golden(
+        "a_halt_or_terminal_ends_the_whole_loop",
+        &workflows,
+        &[data(json!({}))],
+    )
+    .await;
     assert_eq!(
-        considered(&reports[0]),
+        considered(&reports[0].report),
         [
             ran("filter", 3, WorkflowExit::Halted),
             ran("terminal_task", 2, WorkflowExit::Halted),
@@ -575,6 +644,12 @@ async fn a_halt_or_terminal_ends_the_whole_loop() {
             ran("after", 1, WorkflowExit::Completed),
         ]
     );
+    let data = &reports[0].json()["context"]["data"];
+    assert_eq!(data["filter"], json!([0, 1, 2]));
+    assert_eq!(data["terminal_task"], json!([0, "stop"]));
+    assert_eq!(data["terminal_group"], json!([0, 1, 2, "group"]));
+    assert_eq!(data["setup_halts"], json!(["setup"]));
+    assert_eq!(data["after"], json!(true));
 }
 
 #[tokio::test]
@@ -612,19 +687,38 @@ async fn a_failure_under_continue_starts_the_next_sweep() {
         looping("stops", 2, json!({"counter": "i", "max": 3}), body()),
         json!({"id": "never", "priority": 3, "tasks": [map("never", "data.never", json!(true))]}),
     ];
-    let reports = compare(&workflows, &[data(json!({"text": "a string"}))]).await;
+    let reports = golden(
+        "a_failure_under_continue_starts_the_next_sweep",
+        &workflows,
+        &[data(json!({"text": "a string"}))],
+    )
+    .await;
     assert_eq!(
-        considered(&reports[0]),
+        considered(&reports[0].report),
         [
             ran("continues", 3, WorkflowExit::Failed),
             ran("task_continues", 3, WorkflowExit::Completed),
             ran("stops", 2, WorkflowExit::Stopped),
         ]
     );
+    // `stops` fails the run with the failing task's code.
+    assert_eq!(reports[0].code, "TASK_ERROR");
+    let data = &reports[0].json()["context"]["data"];
+    // `continues` (sweep 1 cut short at `bad`), then `stops` (the same).
+    assert_eq!(
+        data["order"],
+        json!([0, "after", 1, 2, "after", 0, "after", 1])
+    );
+    assert_eq!(data["task"], json!([0, "after", 1, "after", 2, "after"]));
+    assert!(data.get("never").is_none());
 }
 
 #[tokio::test]
 async fn a_setup_failure_stops_unless_the_workflow_continues() {
+    let mut g = Golden::new(
+        "run_loops",
+        "a_setup_failure_stops_unless_the_workflow_continues",
+    );
     for continues in [true, false] {
         let workflows = [
             with(
@@ -639,7 +733,7 @@ async fn a_setup_failure_stops_unless_the_workflow_continues() {
             ),
             json!({"id": "after", "priority": 1, "tasks": [map("after", "data.after", json!(true))]}),
         ];
-        let reports = compare(&workflows, &[data(json!({"text": "a string"}))]).await;
+        let reports = golden_runs(&mut g, &workflows, &[data(json!({"text": "a string"}))]).await;
         let expected = if continues {
             vec![
                 ran("w", 0, WorkflowExit::Failed),
@@ -648,8 +742,18 @@ async fn a_setup_failure_stops_unless_the_workflow_continues() {
         } else {
             vec![ran("w", 0, WorkflowExit::Stopped)]
         };
-        assert_eq!(considered(&reports[0]), expected, "continues {continues}");
+        assert_eq!(
+            considered(&reports[0].report),
+            expected,
+            "continues {continues}"
+        );
+        let data = &reports[0].json()["context"]["data"];
+        assert_eq!(data["setup"], json!(["ok"]), "continues {continues}");
+        assert!(data.get("seen").is_none(), "continues {continues}");
+        assert_eq!(data.get("after").is_some(), continues);
+        assert_eq!(reports[0].code == "ok", continues);
     }
+    g.check();
 }
 
 /// About 200 KiB of JSON in 1,600 records, which no step reads.
@@ -669,7 +773,7 @@ fn large_input() -> Value {
 #[tokio::test]
 async fn a_long_loop_checkpoints_and_stays_within_the_arena_bound() {
     const SWEEPS: usize = 1000;
-    let e = v4_engine(&[looping(
+    let e = build(&[looping(
         "w",
         0,
         json!({"counter": "i", "max": SWEEPS}),
@@ -755,7 +859,7 @@ fn an_edited_loop_that_could_never_sweep_or_end_is_refused() {
 #[test]
 fn the_run_future_is_send() {
     fn assert_send<T: Send>(_: &T) {}
-    let e = v4_engine(&[looping(
+    let e = build(&[looping(
         "w",
         0,
         json!({"counter": "i", "max": 3, "over": var("data.items"), "as": "x",

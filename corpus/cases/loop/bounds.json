@@ -1,12 +1,5 @@
 {
   "description": "max is required (a loop without it is refused at parse), and the counter runs init, init+increment, ... while counter < max: init 1, increment 2, max 7 gives 1, 3, 5.",
-  "covers": [
-    "loop.bounds"
-  ],
-  "mirrors": [
-    "src/workflow::loop_config_requires_max",
-    "src/workflow_executor::counter_sequence_matrix_over_init_increment_and_max"
-  ],
   "workflows": [
     {
       "id": "no_max",

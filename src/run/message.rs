@@ -284,7 +284,6 @@ pub(crate) fn finish_audit(audit: &mut Vec<AuditEntry>, mode: AuditMode) {
 mod tests {
     use super::*;
     use crate::base::ErrorKind;
-    use dataflow_rs_v3 as v3;
     use serde_json::json;
 
     fn text<T: Serialize>(v: &T) -> String {
@@ -300,26 +299,33 @@ mod tests {
         .with_id("m")
     }
 
-    fn v3_msg(payload: &Value, data: &Value, metadata: &Value) -> v3::engine::message::Message {
-        v3::engine::message::Message::builder()
-            .id("m")
-            .payload_json(payload)
-            .data_json(data)
-            .metadata_json(metadata)
-            .build()
+    /// [`v4_msg`] from JSON text, so the keys keep their order in every
+    /// build.
+    fn msg_from_text(payload: &str, data: &str, metadata: &str) -> Message {
+        let parsed = |text: &str| OwnedDataValue::from_json(text).expect("JSON");
+        Message::from_parts(parsed(payload), parsed(data), parsed(metadata)).with_id("m")
     }
 
     #[test]
-    fn the_wire_shape_is_v3s() {
-        let payload = json!({"a": [1, {"b": null}], "z": "s", "k": 1.5});
-        let data = json!({"order": {"items": [1, 2, {"x": true}], "total": 10}, "a": 1});
-        let meta = json!({"source": "api", "tags": ["x", "y"]});
-        assert_eq!(
-            text(&v4_msg(&payload, &data, &meta)),
-            text(&v3_msg(&payload, &data, &meta))
+    fn the_wire_shape_keeps_3x_bytes() {
+        let message = msg_from_text(
+            r#"{"a": [1, {"b": null}], "z": "s", "k": 1.5}"#,
+            r#"{"order": {"items": [1, 2, {"x": true}], "total": 10}, "a": 1}"#,
+            r#"{"source": "api", "tags": ["x", "y"]}"#,
         );
-        let (n, e) = (json!(null), json!({}));
-        assert_eq!(text(&v4_msg(&n, &e, &e)), text(&v3_msg(&n, &e, &e)));
+        assert_eq!(
+            text(&message),
+            concat!(
+                r#"{"id":"m","payload":{"a":[1,{"b":null}],"z":"s","k":1.5},"#,
+                r#""context":{"data":{"order":{"items":[1,2,{"x":true}],"total":10},"a":1},"#,
+                r#""metadata":{"source":"api","tags":["x","y"]},"temp_data":{}},"#,
+                r#""audit_trail":[],"errors":[]}"#
+            )
+        );
+        assert_eq!(
+            text(&msg_from_text("null", "{}", "{}")),
+            r#"{"id":"m","payload":null,"context":{"data":{},"metadata":{},"temp_data":{}},"audit_trail":[],"errors":[]}"#
+        );
     }
 
     #[test]
@@ -330,39 +336,36 @@ mod tests {
             text(v4.context()),
             r#"{"data":{},"metadata":{},"temp_data":{}}"#
         );
-        assert_eq!(text(&v4), text(&v3_msg(&p, &d, &m)));
+        assert_eq!(text(&v4), text(&msg_from_text("null", "{}", "{}")));
     }
 
     #[test]
-    fn audit_entries_and_changes_serialize_as_v3s() {
-        let ts = Utc::now();
-        for (lc, ei, removed) in [
-            (None, None, false),
-            (Some(3), Some(2), true),
-            (Some(-1), None, false),
+    fn audit_entries_and_changes_keep_3x_bytes() {
+        let ts = "2026-10-14T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        for ((lc, ei, removed), change, entry) in [
+            (
+                (None, None, false),
+                r#"{"path":"data.a","old_value":{"o":1},"new_value":[1]}"#,
+                r#"{"workflow_id":"w","task_id":"t","timestamp":"2026-10-14T00:00:00Z","changes":[{"path":"data.a","old_value":{"o":1},"new_value":[1]}],"status":200}"#,
+            ),
+            (
+                (Some(3), Some(2), true),
+                r#"{"path":"data.a","old_value":{"o":1},"new_value":[1],"removed":true}"#,
+                r#"{"workflow_id":"w","task_id":"t","timestamp":"2026-10-14T00:00:00Z","changes":[{"path":"data.a","old_value":{"o":1},"new_value":[1],"removed":true}],"status":200,"loop_counter":3,"element_index":2}"#,
+            ),
+            (
+                (Some(-1), None, false),
+                r#"{"path":"data.a","old_value":{"o":1},"new_value":[1]}"#,
+                r#"{"workflow_id":"w","task_id":"t","timestamp":"2026-10-14T00:00:00Z","changes":[{"path":"data.a","old_value":{"o":1},"new_value":[1]}],"status":200,"loop_counter":-1}"#,
+            ),
         ] {
-            let c3 = v3::engine::message::Change {
-                path: Arc::from("data.a"),
-                old_value: OwnedDataValue::from(&json!({"o": 1})),
-                new_value: OwnedDataValue::from(&json!([1])),
-                removed,
-            };
             let mut c4 = Change::write(
                 "data.a",
                 OwnedDataValue::from(&json!({"o": 1})),
                 OwnedDataValue::from(&json!([1])),
             );
             c4.removed = removed;
-            assert_eq!(text(&c4), text(&c3));
-            let a3 = v3::engine::message::AuditTrail {
-                workflow_id: Arc::from("w"),
-                task_id: Arc::from("t"),
-                timestamp: ts,
-                changes: vec![c3],
-                status: 200,
-                loop_counter: lc,
-                element_index: ei,
-            };
+            assert_eq!(text(&c4), change);
             let a4 = AuditEntry {
                 workflow_id: Arc::from("w"),
                 task_id: Arc::from("t"),
@@ -372,7 +375,7 @@ mod tests {
                 loop_counter: lc,
                 element_index: ei,
             };
-            assert_eq!(text(&a4), text(&a3));
+            assert_eq!(text(&a4), entry);
         }
     }
 
@@ -448,39 +451,18 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn record_audit_matches_v3s_trim() {
-        let tasks: Vec<Value> = (0..10)
-            .map(|i| {
-                json!({"id": format!("t{i}"), "name": "t", "function": {"name": "map", "input": {
-                    "mappings": [{"path": "data.x", "logic": i}]}}})
-            })
-            .collect();
-        let workflow =
-            v3::Workflow::from_json(&json!({"id": "w", "name": "w", "tasks": tasks}).to_string())
-                .unwrap();
-        let engine = v3::Engine::builder()
-            .with_workflow(workflow)
-            .build()
-            .unwrap();
-        for mode in [
-            AuditMode::Full,
-            AuditMode::Off,
-            AuditMode::Last(0),
-            AuditMode::Last(1),
-            AuditMode::Last(3),
-            AuditMode::Last(10),
-            AuditMode::Last(25),
+    #[test]
+    fn record_audit_keeps_the_last_entries_the_mode_asks_for() {
+        for (mode, want) in [
+            (AuditMode::Full, 0..10),
+            (AuditMode::Off, 0..0),
+            (AuditMode::Last(0), 0..0),
+            (AuditMode::Last(1), 9..10),
+            (AuditMode::Last(3), 7..10),
+            (AuditMode::Last(10), 0..10),
+            (AuditMode::Last(25), 0..10),
         ] {
-            let mut m3 = v3::engine::message::Message::builder()
-                .audit_mode(mode_v3(mode))
-                .build();
-            engine.process_message(&mut m3).await.unwrap();
-            let want: Vec<String> = m3
-                .audit_trail()
-                .iter()
-                .map(|e| e.task_id.to_string())
-                .collect();
+            let want: Vec<String> = want.map(|i| format!("t{i}")).collect();
             let mut audit = Vec::new();
             for i in 0..10 {
                 record_audit(&mut audit, mode, entry(&format!("t{i}")));
@@ -491,14 +473,6 @@ mod tests {
             finish_audit(&mut audit, mode);
             let got: Vec<String> = audit.iter().map(|e| e.task_id.to_string()).collect();
             assert_eq!(got, want, "{mode:?}");
-        }
-    }
-
-    fn mode_v3(mode: AuditMode) -> v3::AuditMode {
-        match mode {
-            AuditMode::Full => v3::AuditMode::Full,
-            AuditMode::Off => v3::AuditMode::Off,
-            AuditMode::Last(n) => v3::AuditMode::Last(n),
         }
     }
 

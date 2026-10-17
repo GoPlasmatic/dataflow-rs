@@ -1,8 +1,5 @@
 {
   "description": "On a channel, only active workflows run: the paused and archived ones never join the channel's index.",
-  "covers": [
-    "schema.status"
-  ],
   "workflows": [
     {
       "id": "active",

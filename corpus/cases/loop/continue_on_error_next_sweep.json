@@ -1,11 +1,5 @@
 {
   "description": "Under workflow continue_on_error, a task failing with 500 ends the current sweep, and the next sweep starts: the counter sequence skips only the failing sweep's later task.",
-  "covers": [
-    "loop.continue-on-error"
-  ],
-  "mirrors": [
-    "tests/workflow_loop.rs::a_failing_task_with_workflow_continue_on_error_advances_to_the_next_sweep"
-  ],
   "workflows": [
     {
       "id": "w",
@@ -67,16 +61,6 @@
       "run": {
         "message": {}
       }
-    }
-  ],
-  "deviations": [
-    {
-      "break": "4",
-      "paths": [
-        "/steps/0/run/message/errors/1",
-        "/steps/0/run/trace/steps/2/message/errors/1"
-      ],
-      "note": "v4 adds no WORKFLOW_ERROR wrapper: the task's own record carries the workflow id"
     }
   ]
 }

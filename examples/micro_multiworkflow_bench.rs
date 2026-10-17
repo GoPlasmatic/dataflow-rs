@@ -63,11 +63,11 @@ const NUM_STAGES: usize = 5;
 /// `stage{i}.id` at the whole context, so the write lands at the top-level
 /// key `context.stage{i}`, while its rules read `data.stage{i}.*` and so fail
 /// on every message (5 tasks at status 400, 10 `VALIDATION_ERROR` records).
-/// That is a defect in v3's benchmark (reported to the owner), but it is the
-/// work the gate's baseline measures. v4 refuses a path outside the three
-/// roots, so the port reproduces that work through `temp_data.stage{i}.*`, a
-/// root no rule reads, and keeps the rules reading `data.stage{i}.*` so the
-/// same 10 fail.
+/// That was a defect in v3's benchmark (reported to the owner), but it is the
+/// work this row has measured from the start. The engine refuses a path
+/// outside the three roots, so the port reproduces that work through
+/// `temp_data.stage{i}.*`, a root no rule reads, and keeps the rules reading
+/// `data.stage{i}.*` so the same 10 fail.
 fn stage_tasks_json(i: usize) -> String {
     format!(
         r#"

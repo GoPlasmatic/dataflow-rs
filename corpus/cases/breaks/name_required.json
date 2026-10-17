@@ -1,8 +1,5 @@
 {
   "description": "v3 requires name on a workflow and on a task: each refuses at parse with DESERIALIZATION_ERROR (validate_authored reports EMPTY_WORKFLOW_NAME for the workflow, but only PARSE_FAILED with no path for the task). A group without a name already parses and runs. Only the two named definitions run.",
-  "covers": [
-    "break.6"
-  ],
   "workflows": [
     {
       "id": "no_workflow_name",
@@ -101,19 +98,6 @@
       "run": {
         "message": {}
       }
-    }
-  ],
-  "deviations": [
-    {
-      "break": "6",
-      "paths": [
-        "/definitions/0",
-        "/definitions/1",
-        "/steps/0/run/message/context/data/order",
-        "/steps/0/run/message/audit_trail",
-        "/steps/0/run/trace/steps"
-      ],
-      "note": "name is optional on every node in v4, so both definitions parse and run"
     }
   ]
 }

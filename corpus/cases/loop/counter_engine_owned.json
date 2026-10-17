@@ -1,11 +1,5 @@
 {
   "description": "The engine owns the counter: a body task writing 100 to it after the counter was read is overwritten at the next increment, so the sweeps still see 0, 1, 2 and the loop runs all three.",
-  "covers": [
-    "loop.counter"
-  ],
-  "mirrors": [
-    "src/workflow_executor::the_engine_owns_the_counter_even_if_a_body_task_writes_it"
-  ],
   "workflows": [
     {
       "id": "w",

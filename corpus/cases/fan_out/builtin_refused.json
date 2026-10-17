@@ -1,7 +1,5 @@
 {
   "description": "A for_each is only allowed on a handler-backed function: on a built-in (map) the build is refused, so nothing runs.",
-  "covers": ["fanout.eligibility"],
-  "mirrors": ["tests/for_each.rs::build_refuses_a_for_each_on_a_builtin"],
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t",

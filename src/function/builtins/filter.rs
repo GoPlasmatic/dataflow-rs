@@ -48,7 +48,7 @@ impl SyncFunction for FilterConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::function::builtins::differential::same;
+    use crate::function::builtins::one_task::{observe, untouched};
     use serde_json::{Value, json};
 
     async fn filter(condition: Value, on_reject: Option<&str>) -> Option<u16> {
@@ -57,8 +57,11 @@ mod tests {
             input["on_reject"] = json!(action);
         }
         let context = json!({"data": {"a": 5, "ok": true, "zero": 0}});
-        let observed = same("filter", &input, &Value::Null, &context).await;
+        let observed = observe("filter", &input, &Value::Null, &context);
         assert_eq!(observed.errors, "[]", "a filter never records an error");
+        assert_eq!(observed.context, untouched(&context), "nor writes");
+        assert_eq!(observed.changes, "[]");
+        assert_eq!(observed.error_code, None);
         observed.status
     }
 

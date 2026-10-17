@@ -1,0 +1,229 @@
+[
+  {
+    "code": "ok",
+    "message": {
+      "id": "m",
+      "payload": null,
+      "context": {
+        "data": {
+          "ps": [
+            {
+              "a": [
+                [
+                  "data.list",
+                  "a"
+                ]
+              ],
+              "id": "a",
+              "w": [
+                [
+                  "data.log.0",
+                  "a"
+                ]
+              ]
+            },
+            {
+              "a": [
+                [
+                  "data.list",
+                  "b"
+                ]
+              ],
+              "id": "b",
+              "w": [
+                [
+                  "data.log.1",
+                  "b"
+                ]
+              ]
+            }
+          ],
+          "list": [
+            0,
+            "b"
+          ],
+          "outs": [
+            {
+              "i": 0,
+              "id": "a"
+            },
+            {
+              "i": 1,
+              "id": "b"
+            }
+          ],
+          "log": [
+            "a",
+            "b"
+          ]
+        },
+        "metadata": {
+          "processed_at": "<timestamp>",
+          "engine_version": "<engine_version>",
+          "progress": {
+            "workflow_id": "w",
+            "task_id": "t",
+            "status_code": 200
+          }
+        },
+        "temp_data": {
+          "out": {
+            "i": 1,
+            "id": "b"
+          },
+          "by_eval": {
+            "a": [
+              [
+                "data.list",
+                "b"
+              ]
+            ],
+            "id": "b",
+            "w": [
+              [
+                "data.log.1",
+                "b"
+              ]
+            ]
+          }
+        }
+      },
+      "audit_trail": [
+        {
+          "workflow_id": "w",
+          "task_id": "seed",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.list",
+              "old_value": null,
+              "new_value": [
+                0
+              ]
+            }
+          ],
+          "status": 200
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.log.0",
+              "old_value": null,
+              "new_value": "a"
+            },
+            {
+              "path": "data.list",
+              "old_value": [
+                0
+              ],
+              "new_value": [
+                0,
+                "a"
+              ]
+            },
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "a": [
+                  [
+                    "data.list",
+                    "a"
+                  ]
+                ],
+                "id": "a",
+                "w": [
+                  [
+                    "data.log.0",
+                    "a"
+                  ]
+                ]
+              }
+            },
+            {
+              "path": "data.outs.0",
+              "old_value": null,
+              "new_value": {
+                "i": 0,
+                "id": "a"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 0
+        },
+        {
+          "workflow_id": "w",
+          "task_id": "t",
+          "timestamp": "<timestamp>",
+          "changes": [
+            {
+              "path": "data.log.1",
+              "old_value": null,
+              "new_value": "b"
+            },
+            {
+              "path": "data.list",
+              "old_value": [
+                0
+              ],
+              "new_value": [
+                0,
+                "b"
+              ]
+            },
+            {
+              "path": "temp_data.out",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            },
+            {
+              "path": "temp_data.by_eval",
+              "old_value": null,
+              "new_value": {
+                "a": [
+                  [
+                    "data.list",
+                    "b"
+                  ]
+                ],
+                "id": "b",
+                "w": [
+                  [
+                    "data.log.1",
+                    "b"
+                  ]
+                ]
+              }
+            },
+            {
+              "path": "data.outs.1",
+              "old_value": null,
+              "new_value": {
+                "i": 1,
+                "id": "b"
+              }
+            }
+          ],
+          "status": 200,
+          "element_index": 1
+        }
+      ],
+      "errors": []
+    }
+  }
+]
