@@ -103,7 +103,7 @@ impl<'e> Checks<'e> {
         match raw {
             Value::Object(map) => {
                 if let Some(key) = map.keys().next().filter(|_| map.len() == 1) {
-                    if self.exprs.operators().iter().any(|op| op.name == *key) {
+                    if self.exprs.operator(key).is_some() {
                         self.ops.insert(key.clone());
                     } else if !key.starts_with(self.exprs.escape()) {
                         self.data.insert(key.clone());
@@ -169,9 +169,8 @@ impl<'e> Checks<'e> {
     fn payload_vars(&self, at: &AuthoredPath, raw: &Value, report: &mut Report<'_>) {
         let scoping = |name: &str| {
             self.exprs
-                .operators()
-                .iter()
-                .find(|op| op.scoping && op.name == name)
+                .operator(name)
+                .filter(|op| op.scoping)
                 .map(|op| op.family == Family::Custom)
         };
         let mut found = Vec::new();

@@ -34,12 +34,11 @@
 //! record, as v3's.
 
 use super::host::{Invoked, Layers, call_start, invoke, keep_records, replaces_a_root};
-use super::interp::{Over, RunEnv, elements, old_value};
+use super::interp::{Over, RunEnv, elements};
 use super::policy::{self, Decision, Flow, Policy, decide};
-use super::record::{self, Completed, Stamp, TaskIds};
+use super::record::{self, Completed, Stamp};
 use crate::base::{Change, ErrorRecord};
-use crate::def::{FailurePolicy, RejectionPolicy};
-use crate::expr::Path;
+use crate::expr::{Path, Seg};
 use crate::function::{Binding, BoundCall, CallInfo, CallStart, Outcome, Overlay};
 use crate::program::{CallSite, CompiledWorkflow, FanSite};
 use crate::state::RunContext;
@@ -129,10 +128,17 @@ async fn call_element<'r>(
     (index, invoked)
 }
 
-/// `into`'s slot for element `index`, the path its `Change` names, as v3's.
-fn slot(into: &Path, index: usize) -> Path {
-    into.index_child(index)
-        .expect("the compiler leaves room below `into` for an index")
+/// `into`'s segments and one more for an element's slot, which each
+/// element's fold sets to its index: no path is built per element.
+fn slot_segs(into: &Path) -> Vec<Seg> {
+    debug_assert!(
+        into.index_child(0).is_some(),
+        "the compiler leaves room below `into` for an index"
+    );
+    let mut segs = Vec::with_capacity(into.segs().len() + 1);
+    segs.extend_from_slice(into.segs());
+    segs.push(Seg::index(0));
+    segs
 }
 
 /// One `FanOut` op: `over`, the calls, `into` pre-filled, the fold in
@@ -151,11 +157,8 @@ pub(crate) async fn fan_out<'p>(
     bound: &'p dyn BoundCall,
 ) -> Flow {
     let task = &wf.tasks[site.task as usize];
-    let ids = TaskIds {
-        workflow: env.workflow_id,
-        task: &env.task_ids[site.task as usize],
-    };
-    let policy = site.policy();
+    let task_id = env.ids(site.task).task;
+    let policy = site.policy;
     let items = match elements(rc, env.exprs, &fan.over, Over::FanOut(&task.id)) {
         Ok(items) if !items.is_empty() => items,
         // Nothing to call: an empty array completes the task, anything else
@@ -176,20 +179,15 @@ pub(crate) async fn fan_out<'p>(
                 }
                 Outcome::Ok
             });
-            let decision = decide(policy, ids.task, result);
+            let decision = decide(policy, task_id, result);
             let done = Completed {
-                ids,
                 task: site.task,
                 stamp: Stamp::sweep(env),
-                status: decision.status,
-                record: decision.record,
-                failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
                 elapsed: started.map(record::since),
                 errors_before,
                 marked: false,
             };
-            record::record(rc, env, wf, done);
-            return decision.flow;
+            return record::record(rc, env, wf, done, decision);
         }
     };
 
@@ -231,7 +229,7 @@ pub(crate) async fn fan_out<'p>(
                 cut = Some((index, invoked.errors, error, invoked.elapsed));
                 break;
             }
-            let element = Element::new(index, invoked, per_element, ids.task);
+            let element = Element::new(index, invoked, per_element, task_id);
             stop |= element.stops();
             finished[index] = Some(element);
         }
@@ -249,20 +247,15 @@ pub(crate) async fn fan_out<'p>(
         for (index, errors) in kept {
             keep_records(env, errors, Some(index));
         }
-        let decision = policy::cut_short(ids.task, e);
+        let decision = policy::cut_short(task_id, e);
         let done = Completed {
-            ids,
             task: site.task,
             stamp: Stamp::sweep(env),
-            status: decision.status,
-            record: decision.record,
-            failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
             elapsed,
             errors_before,
             marked: false,
         };
-        record::record(rc, env, wf, done);
-        return decision.flow;
+        return record::record(rc, env, wf, done, decision);
     }
 
     // One slot per element, so an element that failed or never ran is a
@@ -273,7 +266,7 @@ pub(crate) async fn fan_out<'p>(
         if let Some(trace) = env.watch.trace.as_deref_mut().filter(|t| t.changes()) {
             trace.push_prelude(Change::write(
                 Arc::clone(into.dotted()),
-                old_value(rc, into),
+                rc.get_or_null(into),
                 OwnedDataValue::Array(vec![OwnedDataValue::Null; n]),
             ));
         }
@@ -283,6 +276,7 @@ pub(crate) async fn fan_out<'p>(
             None,
         );
     }
+    let mut slot = fan.into.as_ref().map(|into| (into, slot_segs(into)));
     let mut halted = false;
     let mut rejected = false;
     let mut failed = false;
@@ -304,42 +298,41 @@ pub(crate) async fn fan_out<'p>(
             env.changes = changes;
         }
         let marked = replaces_a_root(&env.changes);
-        let status = decision.status.unwrap_or_default();
-        let failed_here = status >= 400;
-        if let Some(slot) = fan.into.as_ref().map(|into| slot(into, index)) {
+        let (rejected_here, failed_here) = (decision.rejected(), decision.failed());
+        if let Some((into, segs)) = slot.as_mut() {
+            if let Some(last) = segs.last_mut() {
+                *last = Seg::index(index);
+            }
             let value = match collected {
-                Some(value) if !failed_here => value,
+                Some(value) if !rejected_here && !failed_here => value,
                 _ => OwnedDataValue::Null,
             };
             // An `Err` records no change, its result's included, as v3's.
             if ok && env.capture {
+                // The dotted path `into.index_child(index)` would have.
                 env.changes.push(Change::write(
-                    Arc::clone(slot.dotted()),
+                    Arc::from(format!("{}.{index}", into.dotted())),
                     OwnedDataValue::Null,
                     value.clone(),
                 ));
             }
-            rc.set(&slot, value, None);
+            rc.set_segs(segs, value, None);
         }
-        rejected |= (400..500).contains(&status);
-        failed |= status >= 500;
+        rejected |= rejected_here;
+        failed |= failed_here;
         let done = Completed {
-            ids,
             task: site.task,
             stamp: Stamp {
                 element_index: Some(index),
                 ..Stamp::sweep(env)
             },
-            status: decision.status,
-            record: decision.record,
-            failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
             elapsed,
             errors_before,
             marked,
         };
-        record::record(rc, env, wf, done);
+        let flow = record::record(rc, env, wf, done, decision);
         rc.tick();
-        match decision.flow {
+        match flow {
             flow @ (Flow::Fail(_) | Flow::Stop(_)) => return flow,
             Flow::Halt => {
                 halted = true;
@@ -348,9 +341,5 @@ pub(crate) async fn fan_out<'p>(
             Flow::Next | Flow::Jump(_) => {}
         }
     }
-    let halts = halted
-        || policy.terminal
-        || (rejected && policy.on_rejection == RejectionPolicy::Halt)
-        || (failed && policy.on_failure == FailurePolicy::Halt);
-    if halts { Flow::Halt } else { Flow::Next }
+    policy.after_fan_out(halted, rejected, failed)
 }

@@ -34,13 +34,10 @@ pub enum Root {
 }
 
 impl Root {
-    /// The root's key in the context, as a path spells it.
+    /// The root's key in the context, as a path spells it: its row of the
+    /// context's roots, which the variants follow.
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Data => "data",
-            Self::Metadata => "metadata",
-            Self::TempData => "temp_data",
-        }
+        crate::base::ROOTS[self as usize]
     }
 }
 
@@ -479,8 +476,7 @@ pub(crate) fn append(
 /// `map`'s write to a root slot (v3's `merge_root_field`): two objects merge,
 /// existing keys replaced in place and new keys appended in order; anything
 /// else replaces the slot. The owned statement of the rules the splice's
-/// `merge_root` follows: `map` writes a root only through the view.
-#[cfg(test)]
+/// `merge_root` follows, which a trace's replay applies.
 pub(crate) fn merge_root(context: &mut OwnedDataValue, key: &str, value: OwnedDataValue) {
     let OwnedDataValue::Object(slots) = context else {
         *context = OwnedDataValue::Object(vec![(key.to_string(), value)]);

@@ -5,9 +5,10 @@
 use super::checks::{Below, Checks, Hook, Site, Stamp};
 use super::fingerprint::Fingerprint;
 use super::lower::Lower;
-use super::ops::{CallSite, Callee, CondKind, CondSite, FanSite, LoopSite, Op, TaskMeta};
+use super::ops::{CallSite, Callee, CondKind, CondSite, FanSite, LoopSite, Op, Policy, TaskMeta};
+use crate::base::any_rejected;
 use crate::base::typo::near_miss;
-use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, Severity, StepKind};
+use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, StepKind};
 use crate::def::{
     self, ForEachDef, GroupDef, Logic, LoopDef, ParseOptions, Rollout, Status, StepDef, TaskDef,
     WorkflowDef, WorkflowFailurePolicy,
@@ -166,13 +167,7 @@ impl Compiler {
                 )];
             }
         };
-        let is = |seg: &PathSeg, name: &str| matches!(seg, PathSeg::Key(key) if &**key == name);
-        let holds_steps = match root.segs() {
-            [loop_, setup] if is(loop_, "loop") && is(setup, "setup") => true,
-            [.., last] => is(last, "tasks"),
-            [] => false,
-        };
-        if !holds_steps {
+        if !def::holds_steps(&root) {
             let message = format!(
                 "`{root}` holds no steps: a fragment sits at a `tasks` list, such as `tasks` or \
                  `tasks[2].tasks`, or at `loop.setup`"
@@ -197,7 +192,7 @@ impl Compiler {
     pub fn compile_one(&self, def: &WorkflowDef) -> std::result::Result<Compiled, Vec<Issue>> {
         let mut checks = Checks::new(self.registry.exprs());
         let (workflow, issues) = self.compile_with(def, &mut checks);
-        if issues.iter().any(|i| i.severity == Severity::Rejected) {
+        if any_rejected(&issues) {
             return Err(issues);
         }
         debug_assert!(
@@ -550,7 +545,7 @@ impl<'w> Walk<'w> {
     /// A fragment's steps at `root`, as a workflow's would be walked: lowered
     /// with every failure to the end, and with no workflow condition or loop.
     fn fragment(&mut self, steps: &[StepDef], root: &AuthoredPath) {
-        self.steps(steps, root, def::fragment_is_setup(root));
+        self.steps(steps, root, def::fragment_place(root).0);
     }
 
     /// The steps of the list at `at`, pre-order: each group before its
@@ -608,9 +603,11 @@ impl<'w> Walk<'w> {
             self.calls.push(CallSite {
                 task: row,
                 callee,
-                on_failure: task.on_failure,
-                on_rejection: task.on_rejection,
-                terminal: task.terminal,
+                policy: Policy {
+                    on_failure: task.on_failure,
+                    on_rejection: task.on_rejection,
+                    terminal: task.terminal,
+                },
             });
             site
         });
@@ -766,7 +763,7 @@ impl<'w> Walk<'w> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::base::Result;
+    use crate::base::{Result, Severity};
     use crate::def::{FailurePolicy, RejectionPolicy, parse};
     use crate::function::builtins::{Builtin, BuiltinKind};
     use crate::function::{Ctx, Function, FunctionConfig, Outcome};
@@ -994,7 +991,13 @@ mod tests {
                     Callee::Builtin(b) => Some(b.kind()),
                     Callee::Host(_) => None,
                 };
-                (c.task, callee, c.on_failure, c.on_rejection, c.terminal)
+                (
+                    c.task,
+                    callee,
+                    c.policy.on_failure,
+                    c.policy.on_rejection,
+                    c.policy.terminal,
+                )
             })
             .collect();
         assert_eq!(

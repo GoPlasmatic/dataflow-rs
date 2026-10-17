@@ -62,7 +62,7 @@ impl PublishConfig {
                 found.to_json_string()
             }
         };
-        write(cx, &target, text);
+        cx.write(&target, OwnedDataValue::String(text), None);
         Ok(Outcome::Ok)
     }
 
@@ -75,11 +75,23 @@ impl PublishConfig {
     pub(crate) fn xml<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let (source, fallback, target) = self.paths(cx)?;
         debug!("PublishXml: Serializing '{source}' to '{target}'");
-        // Owned, as v3's bridge was: the root element is evaluated after the
-        // source is found, as in v3, and the evaluation needs the context.
-        let found = find(cx, &source, fallback.as_deref(), "PublishXml")?.into_owned();
-        let root = cx.eval(&self.root_element)?;
-        write(cx, &target, value_to_xml(&found, &root));
+        let xml = match self.root_element.constant() {
+            // A constant root reads nothing and cannot fail: the source is
+            // serialized where it is found.
+            Some(root) => value_to_xml(
+                &*find(cx, &source, fallback.as_deref(), "PublishXml")?,
+                root,
+            ),
+            // Owned, as v3's bridge was: the root element is evaluated after
+            // the source is found, as in v3, and the evaluation needs the
+            // context.
+            None => {
+                let found = find(cx, &source, fallback.as_deref(), "PublishXml")?.into_owned();
+                let root = cx.eval(&self.root_element)?;
+                value_to_xml(&found, &root)
+            }
+        };
+        cx.write(&target, OwnedDataValue::String(xml), None);
         Ok(Outcome::Ok)
     }
 }
@@ -102,19 +114,6 @@ fn find<'a>(
             "{who}: Source '{source}' not found or is null"
         ))),
     }
-}
-
-/// Writes the text at `target`, recording the change under capture.
-fn write(cx: &mut SyncCtx<'_, '_, '_>, target: &Path, text: String) {
-    let value = OwnedDataValue::String(text);
-    if cx.capture {
-        let old = cx
-            .rc
-            .get(target)
-            .map_or(OwnedDataValue::Null, Cow::into_owned);
-        cx.change(target.dotted().clone(), old, value.clone(), false);
-    }
-    cx.rc.set(target, value, None);
 }
 
 #[cfg(test)]

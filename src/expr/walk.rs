@@ -1,10 +1,8 @@
 //! Two pure walks over authored JSON, for the checks that need them.
 
+use super::secrets::SECRET_OPERATOR as SECRET;
 use crate::base::AuthoredPath;
 use serde_json::Value;
-
-/// The operator that reads a secret.
-const SECRET: &str = "secret";
 
 /// Every object key that starts with exactly one `$`, at any depth.
 ///
@@ -47,6 +45,18 @@ pub fn secret_refs(raw: &Value) -> impl Iterator<Item = (Option<&str>, AuthoredP
     let mut out = Vec::new();
     walk_secrets(raw, &AuthoredPath::root(), &mut out);
     out.into_iter()
+}
+
+/// Whether `raw` reads a secret anywhere, a computed name included: whether
+/// [`secret_refs`] finds any, walked without collecting them.
+pub(crate) fn reads_secret(raw: &Value) -> bool {
+    match raw {
+        Value::Object(map) => {
+            (map.len() == 1 && map.contains_key(SECRET)) || map.values().any(reads_secret)
+        }
+        Value::Array(items) => items.iter().any(reads_secret),
+        _ => false,
+    }
 }
 
 fn walk_secrets<'v>(

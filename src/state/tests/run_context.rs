@@ -139,7 +139,7 @@ fn run(name: &str, tuning: Tuning, seed: u64, cases: usize) -> Stats {
                             let av = v.to_arena(e.arena());
                             e.merge_root(key, av, owned.then(|| v.clone()))
                         });
-                        random::owned_merge_root(&mut model, key, v);
+                        crate::expr::path::merge_root(&mut model, key, v);
                         touched.push(key.to_string());
                     }
                     Op::Read(p) => {

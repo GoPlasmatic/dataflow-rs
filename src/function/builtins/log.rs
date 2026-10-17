@@ -56,17 +56,17 @@ impl LogLevel {
     }
 }
 
-/// One expression's text: a string as it is, anything else as compact JSON,
-/// and `<eval error>` when it fails.
-fn stringify<'p>(cx: &mut SyncCtx<'_, '_, 'p>, expr: &'p Expr) -> String {
+/// One expression's text onto `line`: a string as it is, anything else as
+/// compact JSON, and `<eval error>` when it fails.
+fn stringify<'p>(cx: &mut SyncCtx<'_, '_, 'p>, expr: &'p Expr, line: &mut String) {
     match cx.eval(expr) {
         Ok(value) => match &*value {
-            OwnedDataValue::String(s) => s.clone(),
-            other => other.to_json_string(),
+            OwnedDataValue::String(s) => line.push_str(s),
+            other => line.push_str(&other.to_json_string()),
         },
         Err(e) => {
             ::log::error!("Log: Failed to evaluate expression: {e:?}");
-            "<eval error>".to_owned()
+            line.push_str("<eval error>");
         }
     }
 }
@@ -79,14 +79,16 @@ impl SyncFunction for LogConfig {
         if !::log::log_enabled!(target: TARGET, level) {
             return Ok(Outcome::Ok);
         }
-        let mut line = stringify(cx, &self.message);
+        let mut line = String::new();
+        stringify(cx, &self.message, &mut line);
+        for (i, (key, expr)) in self.fields.iter().enumerate() {
+            line.push_str(if i == 0 { " [" } else { ", " });
+            line.push_str(key);
+            line.push('=');
+            stringify(cx, expr, &mut line);
+        }
         if !self.fields.is_empty() {
-            let parts: Vec<String> = self
-                .fields
-                .iter()
-                .map(|(key, expr)| format!("{key}={}", stringify(cx, expr)))
-                .collect();
-            line = format!("{line} [{}]", parts.join(", "));
+            line.push(']');
         }
         ::log::log!(target: TARGET, level, "{line}");
         Ok(Outcome::Ok)

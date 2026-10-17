@@ -12,6 +12,7 @@ use ::log::error;
 use datavalue::{DataValue, OwnedDataValue};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 /// `map`'s input.
@@ -85,10 +86,7 @@ impl Mapping {
             .as_ref()
             .is_some_and(|logic| matches!(logic.constant(), Some(OwnedDataValue::Null)));
         if always_null && !self.unset && self.on_null != Some(OnNull::Unset) {
-            let path = self
-                .path
-                .constant()
-                .map_or_else(|| self.path.raw().to_string(), ToString::to_string);
+            let path = self.describe();
             cx.at("logic", |cx| {
                 cx.issue(
                     IssueCode::NullMapping,
@@ -396,9 +394,14 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
                 ));
                 *self.marked = true;
             }
+            // One buffer for every element's path, `{path}.{index}`.
+            let mut at = format!("{path}.");
+            let base = at.len();
             for (i, item) in items.iter().enumerate() {
+                at.truncate(base);
+                let _ = write!(at, "{}", start + i);
                 self.changes.push(Change::write(
-                    format!("{path}.{}", start + i),
+                    at.as_str(),
                     OwnedDataValue::Null,
                     item.clone(),
                 ));

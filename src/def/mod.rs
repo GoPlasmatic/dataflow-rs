@@ -39,9 +39,9 @@ pub(crate) use loops::bound_issues;
 pub(crate) use parse::parse_steps;
 pub(crate) use parse::parse_with_rewrites;
 pub use parse::{ParseOptions, Parsed, parse};
+pub(crate) use parse::{fragment_place, holds_steps};
 pub use rollout::{Rollout, RolloutError};
 pub use types::defaults;
-pub(crate) use types::fragment_is_setup;
 pub use types::{
     FailurePolicy, ForEachDef, FunctionRef, GroupDef, Logic, LoopDef, NodeHeader, RejectionPolicy,
     Status, StepDef, TaskDef, WorkflowDef, WorkflowFailurePolicy,
@@ -53,6 +53,10 @@ pub use types::{
 /// are accepted at depths `0..MAX_GROUP_DEPTH`, and a group at
 /// `MAX_GROUP_DEPTH` is `GROUP_TOO_DEEP`.
 pub const MAX_GROUP_DEPTH: usize = 8;
+
+/// v3's alias for `validation`, which the compat reader rewrites and no
+/// host function may take.
+pub(crate) const V3_VALIDATE: &str = "validate";
 
 /// The built-in function names. They are reserved: no registration shadows
 /// one, and a task running one cannot carry `for_each`, since a built-in runs

@@ -63,7 +63,7 @@
 pub use crate::def::reader::Rewrite;
 
 use crate::Issue;
-use crate::base::Severity;
+use crate::base::any_rejected;
 use crate::def::{ParseOptions, parse_with_rewrites};
 use serde_json::Value;
 
@@ -85,12 +85,7 @@ pub struct Migrated {
 pub fn migrate_v3(json: &Value) -> std::result::Result<Migrated, Vec<Issue>> {
     let (parsed, rewrites) = parse_with_rewrites(json, ParseOptions::default().compat(true));
     let Some(def) = parsed.def else {
-        debug_assert!(
-            parsed
-                .issues
-                .iter()
-                .any(|issue| issue.severity == Severity::Rejected)
-        );
+        debug_assert!(any_rejected(&parsed.issues));
         return Err(parsed.issues);
     };
     let json =

@@ -10,7 +10,7 @@ use crate::expr::arena::with_arena;
 use crate::expr::path;
 use crate::expr::{
     Expr, ExprEngine, ExprVisitor, Filled, FromValue, Interpolated, Output, Path, Rendered,
-    ResolveExpr, Resolver, SealedResolver, Seg, secret_refs,
+    ResolveExpr, Resolver, SealedResolver, Seg, reads_secret,
 };
 use crate::state::{Lookup, Reader, splice};
 use bumpalo::Bump;
@@ -104,21 +104,14 @@ pub struct CallInfo<'a> {
 /// # });
 /// ```
 pub struct Ctx<'r> {
-    /// The run's view, the owned tree and the run's log.
-    reader: Reader<'r>,
-    /// A fan-out element's bindings, under the call's own writes.
-    binding: Option<&'r Binding<'r>>,
-    payload: &'r OwnedDataValue,
-    exprs: &'r ExprEngine,
-    info: CallInfo<'r>,
+    /// What the runtime handed the call: the run's reader, a fan-out
+    /// element's bindings (under the call's own writes), the payload, the
+    /// engine, the call's facts, the run's limits, and whether `set` and
+    /// `remove` record `Change`s.
+    start: CallStart<'r>,
     /// The function and its config: `emit_default` writes through its
     /// primary output, and `input` resolves its config.
     callee: &'r dyn BoundCall,
-    deadline: Option<Instant>,
-    cancel: Option<&'r CancelToken>,
-    /// Whether `set` and `remove` record `Change`s: only when the audit or
-    /// the trace keeps them.
-    capture: bool,
     /// The call's writes, in order.
     overlay: Overlay,
     /// The call's `Change`s, in write order.
@@ -224,19 +217,6 @@ fn below<'p>(path: &'p Path, prefix: &Path) -> Option<&'p [Seg]> {
         .then(|| &path[prefix.len()..])
 }
 
-/// The root a call's writes sit on: the run's view, with the binding
-/// written in `arena` when there is one.
-fn base_in<'a>(
-    reader: Reader<'a>,
-    binding: Option<&'a Binding<'a>>,
-    arena: &'a Bump,
-) -> DataValue<'a> {
-    match binding {
-        None => *reader.root,
-        Some(binding) => binding.splice_onto(*reader.root, arena),
-    }
-}
-
 /// `f` with the root a call's writes sit on, taking an arena only when there
 /// is a binding to write.
 fn with_base<R>(
@@ -246,7 +226,7 @@ fn with_base<R>(
 ) -> R {
     match binding {
         None => f(*reader.root),
-        Some(_) => with_arena(|arena| f(base_in(reader, binding, arena))),
+        Some(binding) => with_arena(|arena| f(binding.splice_onto(*reader.root, arena))),
     }
 }
 
@@ -254,15 +234,8 @@ impl<'r> Ctx<'r> {
     /// A context for one call of `callee`.
     pub(crate) fn new(start: CallStart<'r>, callee: &'r dyn BoundCall) -> Self {
         Self {
-            reader: start.reader,
-            binding: start.binding,
-            payload: start.payload,
-            exprs: start.exprs,
-            info: start.info,
+            start,
             callee,
-            deadline: start.deadline,
-            cancel: start.cancel,
-            capture: start.capture,
             overlay: Overlay::default(),
             changes: Vec::new(),
             errors: Vec::new(),
@@ -271,7 +244,7 @@ impl<'r> Ctx<'r> {
 
     /// The static facts about this call.
     pub fn info(&self) -> &CallInfo<'r> {
-        &self.info
+        &self.start.info
     }
 
     /// The function this call reaches and its config, bound at compile.
@@ -330,32 +303,32 @@ impl<'r> Ctx<'r> {
 
     /// The message's payload, which no expression reads.
     pub fn payload(&self) -> &OwnedDataValue {
-        self.payload
+        self.start.payload
     }
 
     /// The engine the program was compiled with, for an evaluation over a
     /// root of the function's own.
     pub fn exprs(&self) -> &ExprEngine {
-        self.exprs
+        self.start.exprs
     }
 
     /// The secret at the dotted path `name`, from the engine's store. What a
     /// function does with it is the function's: the engine never records it.
     pub fn secret(&self, name: &str) -> Option<&OwnedDataValue> {
-        self.exprs.secrets().get(name)
+        self.start.exprs.secrets().get(name)
     }
 
     /// When the run must end, if it has a deadline: a run this function
     /// starts passes it on, or an earlier one.
     pub fn deadline(&self) -> Option<Instant> {
-        self.deadline
+        self.start.deadline
     }
 
     /// The run's cancellation token, if it has one: a child of it cancels a
     /// run this function starts along with this one, so that run ends
     /// `Cancelled` and reports it rather than being dropped.
     pub fn cancel(&self) -> Option<&CancelToken> {
-        self.cancel
+        self.start.cancel
     }
 
     /// The value at `path` as this call sees it: its own writes, over a
@@ -382,10 +355,14 @@ impl<'r> Ctx<'r> {
                 });
             }
         }
-        if let Some(found) = self.binding.and_then(|b| b.get(path, *self.reader.root)) {
+        if let Some(found) = self
+            .start
+            .binding
+            .and_then(|b| b.get(path, *self.start.reader.root))
+        {
             return found.map(Filled::Owned);
         }
-        self.reader.find(path)
+        self.start.reader.find(path)
     }
 
     /// `doc` with each hole looked up once, as [`Self::get`] would, and
@@ -409,7 +386,7 @@ impl<'r> Ctx<'r> {
             Lookup::Dirty => {
                 with_arena(|arena| splice::get(*self.root_in(arena), path.segs()).is_some())
             }
-            Lookup::Clean => with_base(self.reader, self.binding, |base| {
+            Lookup::Clean => with_base(self.start.reader, self.start.binding, |base| {
                 splice::get(base, path.segs()).is_some()
             }),
         }
@@ -431,7 +408,7 @@ impl<'r> Ctx<'r> {
         }
         with_arena(|arena| {
             let root = self.root_in(arena);
-            let view = self.exprs.eval_in(expr.logic(), root, arena)?;
+            let view = self.start.exprs.eval_in(expr.logic(), root, arena)?;
             expr.convert(view).map(T::give)
         })
     }
@@ -445,7 +422,7 @@ impl<'r> Ctx<'r> {
         }
         with_arena(|arena| {
             let root = self.root_in(arena);
-            let view = self.exprs.eval_in(expr.logic(), root, arena)?;
+            let view = self.start.exprs.eval_in(expr.logic(), root, arena)?;
             expr.value_of(view)
         })
     }
@@ -453,10 +430,13 @@ impl<'r> Ctx<'r> {
     /// The root this call's evaluations see: the run's view, with the binding
     /// and then the call's writes spliced on in `arena` when there are any.
     fn root_in<'a>(&'a self, arena: &'a Bump) -> &'a DataValue<'a> {
-        if self.binding.is_none() && self.overlay.is_empty() {
-            return self.reader.root;
+        if self.start.binding.is_none() && self.overlay.is_empty() {
+            return self.start.reader.root;
         }
-        let base = base_in(self.reader, self.binding, arena);
+        let base = match self.start.binding {
+            None => *self.start.reader.root,
+            Some(binding) => binding.splice_onto(*self.start.reader.root, arena),
+        };
         if self.overlay.is_empty() {
             return arena.alloc(base);
         }
@@ -479,15 +459,15 @@ impl<'r> Ctx<'r> {
         // A first write with no binding is resolved against the run's view
         // once: the walk says whether the write lands, and whether anything
         // is there to record as the old value.
-        let first = (self.overlay.is_empty() && self.binding.is_none())
-            .then(|| splice::resolve(*self.reader.root, path.segs()));
-        if self.capture {
+        let first = (self.overlay.is_empty() && self.start.binding.is_none())
+            .then(|| splice::resolve(*self.start.reader.root, path.segs()));
+        if self.start.capture {
             let old_value = match first {
                 // Below a scalar, or creating the node at the path or above
                 // it: nothing is there, or a `null` element, read as `null`.
                 Some(None) => None,
                 Some(Some(r)) if r.created.is_some() => None,
-                Some(Some(r)) => self.reader.get_resolved(path, r),
+                Some(Some(r)) => self.start.reader.get_resolved(path, r),
                 None => self.get(path),
             };
             let mut change = Change::write(
@@ -502,13 +482,10 @@ impl<'r> Ctx<'r> {
             self.overlay.push(path, value, resolved.is_some());
             return Ok(());
         }
-        let Self {
-            reader,
-            binding,
-            overlay,
-            ..
-        } = self;
-        with_base(*reader, *binding, |base| overlay.set(base, path, value));
+        let Self { start, overlay, .. } = self;
+        with_base(start.reader, start.binding, |base| {
+            overlay.set(base, path, value)
+        });
         Ok(())
     }
 
@@ -550,7 +527,7 @@ impl<'r> Ctx<'r> {
     /// [`ErrorKind::Config`] when the config has no primary output, or
     /// leaves an optional one unset, which the error names; [`Self::emit`]'s.
     pub fn emit_default(&mut self, value: OwnedDataValue) -> Result<()> {
-        let function = self.info.function;
+        let function = self.start.info.function;
         let callee = self.callee;
         match callee.primary() {
             Primary::Set(out) => self.emit(out, value),
@@ -574,7 +551,7 @@ impl<'r> Ctx<'r> {
     /// root.
     pub fn remove(&mut self, path: &Path) -> Result<()> {
         path.check_remove()?;
-        if self.capture {
+        if self.start.capture {
             let Some(old_value) = self.get(path).map(Cow::into_owned) else {
                 return Ok(());
             };
@@ -613,11 +590,6 @@ impl Resolver for &Ctx<'_> {
     fn render(&mut self, doc: &Interpolated) -> Result<OwnedDataValue> {
         Ok(Ctx::render(self, doc).to_owned())
     }
-}
-
-/// Whether `raw` reads a secret anywhere, a computed name included.
-fn reads_secret(raw: &Value) -> bool {
-    secret_refs(raw).next().is_some()
 }
 
 /// The resolver behind [`Ctx::input`]: an expression that reads a secret
@@ -673,7 +645,7 @@ impl fmt::Debug for Ctx<'_> {
     /// The call's facts and whether it has written; never the context.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Ctx")
-            .field("info", &self.info)
+            .field("info", &self.start.info)
             .field("overlay_empty", &self.overlay.is_empty())
             .finish_non_exhaustive()
     }

@@ -74,7 +74,7 @@ impl OperatorInfo {
 
     pub(crate) fn secret() -> Self {
         Self {
-            name: Cow::Borrowed("secret"),
+            name: Cow::Borrowed(super::secrets::SECRET_OPERATOR),
             family: Family::Secret,
             scoping: false,
             deterministic: true,

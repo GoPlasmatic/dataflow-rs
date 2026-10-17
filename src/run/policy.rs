@@ -10,10 +10,10 @@
 //! under [`Policy::per_element`], which cannot halt, since `terminal` and
 //! the halting policies apply once, to the whole fan-out.
 
-use crate::base::{Error, Result};
+use crate::base::{Error, Result, TASK_ERROR, TASK_STATUS_ERROR};
 use crate::def::{FailurePolicy, RejectionPolicy};
 use crate::function::Outcome;
-use crate::program::CallSite;
+pub(crate) use crate::program::Policy;
 use std::borrow::Cow;
 
 /// The status a `Halt` records, as v3's `HALT_STATUS_CODE`.
@@ -45,29 +45,6 @@ pub(crate) struct Decision {
     pub(crate) flow: Flow,
 }
 
-/// What a task's outcome does: its three policies, as its call site holds
-/// them.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Policy {
-    /// What a failure (a 5xx or an `Err`) does.
-    pub(crate) on_failure: FailurePolicy,
-    /// What a rejection (a 4xx) does.
-    pub(crate) on_rejection: RejectionPolicy,
-    /// Whether completing the task ends the workflow.
-    pub(crate) terminal: bool,
-}
-
-impl CallSite {
-    /// The policies this site's outcome is decided under.
-    pub(crate) fn policy(&self) -> Policy {
-        Policy {
-            on_failure: self.on_failure,
-            on_rejection: self.on_rejection,
-            terminal: self.terminal,
-        }
-    }
-}
-
 impl Policy {
     /// What one element of a fan-out runs under: nothing that can halt.
     /// `terminal` is off, and `on_rejection: halt` and `on_failure: halt`
@@ -82,6 +59,32 @@ impl Policy {
             on_rejection: RejectionPolicy::Continue,
             terminal: false,
         }
+    }
+
+    /// What a fan-out does once its fold is done, under the task's own
+    /// policy: it halts when an element halted, when the task is
+    /// `terminal`, or when an element was rejected or failed and the
+    /// matching policy halts; otherwise the next op runs. `rejected` and
+    /// `failed` are [`Decision::rejected`] and [`Decision::failed`] over
+    /// the elements folded.
+    pub(crate) fn after_fan_out(self, halted: bool, rejected: bool, failed: bool) -> Flow {
+        let halts = halted
+            || self.terminal
+            || (rejected && self.on_rejection == RejectionPolicy::Halt)
+            || (failed && self.on_failure == FailurePolicy::Halt);
+        if halts { Flow::Halt } else { Flow::Next }
+    }
+}
+
+impl Decision {
+    /// The call was rejected: its status is a 4xx.
+    pub(crate) fn rejected(&self) -> bool {
+        matches!(self.status, Some(400..500))
+    }
+
+    /// The call failed: its status is a 5xx, as an `Err`'s is.
+    pub(crate) fn failed(&self) -> bool {
+        matches!(self.status, Some(500..))
     }
 }
 
@@ -126,14 +129,11 @@ pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> 
         }
         Ok(Outcome::Status(s)) => {
             let record = (
-                Cow::Borrowed("TASK_STATUS_ERROR"),
+                Cow::Borrowed(TASK_STATUS_ERROR),
                 format!("Task {task_id} returned status {s}"),
             );
             let flow = on_failure(policy.on_failure, || {
-                Error::service(
-                    "TASK_ERROR",
-                    format!("Task {task_id} failed with status {s}"),
-                )
+                Error::service(TASK_ERROR, format!("Task {task_id} failed with status {s}"))
             });
             (s, Some(record), flow)
         }
@@ -307,11 +307,15 @@ mod tests {
                     let wf = site(on_failure, on_rejection, terminal);
                     let site = &wf.0.calls[0];
                     assert_eq!(
-                        (site.on_failure, site.on_rejection, site.terminal),
+                        (
+                            site.policy.on_failure,
+                            site.policy.on_rejection,
+                            site.policy.terminal
+                        ),
                         (on_failure, on_rejection, terminal)
                     );
                     for row in ["skip", "ok", "halt", "302", "404", "503", "err"] {
-                        let d = decide(site.policy(), "t", result(row));
+                        let d = decide(site.policy, "t", result(row));
                         let got = (
                             d.status,
                             d.record.map(|(code, message)| (code.into_owned(), message)),

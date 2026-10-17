@@ -27,6 +27,29 @@ trait Fields {
         key: &'static str,
         value: &T,
     ) -> Result<(), Self::Error>;
+
+    /// The field, when `value` is set.
+    fn opt<T: Serialize>(
+        &mut self,
+        key: &'static str,
+        value: Option<&T>,
+    ) -> Result<(), Self::Error> {
+        value.map_or(Ok(()), |value| self.field(key, value))
+    }
+
+    /// The field, when `present`: a key holding its default is left out.
+    fn field_if<T: Serialize + ?Sized>(
+        &mut self,
+        present: bool,
+        key: &'static str,
+        value: &T,
+    ) -> Result<(), Self::Error> {
+        if present {
+            self.field(key, value)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 struct Count(usize);
@@ -67,55 +90,37 @@ fn node<N: Node, S: Serializer>(node: &N, serializer: S) -> Result<S::Ok, S::Err
 
 /// `name` and `description`, when set.
 fn names<F: Fields>(header: &NodeHeader, out: &mut F) -> Result<(), F::Error> {
-    if let Some(name) = &header.name {
-        out.field("name", name)?;
-    }
-    if let Some(description) = &header.description {
-        out.field("description", description)?;
-    }
-    Ok(())
+    out.opt("name", header.name.as_ref())?;
+    out.opt("description", header.description.as_ref())
 }
 
 /// `ext`, when it holds anything: the last key a node writes.
 fn ext<F: Fields>(header: &NodeHeader, out: &mut F) -> Result<(), F::Error> {
-    if !header.ext.is_empty() {
-        out.field("ext", &header.ext)?;
-    }
-    Ok(())
+    out.field_if(!header.ext.is_empty(), "ext", &header.ext)
 }
 
 impl Node for WorkflowDef {
     fn fields<F: Fields>(&self, out: &mut F) -> Result<(), F::Error> {
         out.field("id", &self.id)?;
         names(&self.header, out)?;
-        if self.priority != defaults::PRIORITY {
-            out.field("priority", &self.priority)?;
-        }
-        if let Some(condition) = &self.condition {
-            out.field("condition", condition)?;
-        }
+        out.field_if(
+            self.priority != defaults::PRIORITY,
+            "priority",
+            &self.priority,
+        )?;
+        out.opt("condition", self.condition.as_ref())?;
         out.field("tasks", &self.tasks)?;
-        if self.on_failure != WorkflowFailurePolicy::default() {
-            out.field("on_failure", &self.on_failure)?;
-        }
-        if self.channel != defaults::CHANNEL {
-            out.field("channel", &self.channel)?;
-        }
-        if self.status != Status::default() {
-            out.field("status", &self.status)?;
-        }
-        if self.version != defaults::VERSION {
-            out.field("version", &self.version)?;
-        }
-        if let Some(rollout) = &self.rollout {
-            out.field("rollout", rollout)?;
-        }
-        if let Some(config) = &self.r#loop {
-            out.field("loop", config)?;
-        }
-        if !self.tags.is_empty() {
-            out.field("tags", &self.tags)?;
-        }
+        out.field_if(
+            self.on_failure != WorkflowFailurePolicy::default(),
+            "on_failure",
+            &self.on_failure,
+        )?;
+        out.field_if(self.channel != defaults::CHANNEL, "channel", &self.channel)?;
+        out.field_if(self.status != Status::default(), "status", &self.status)?;
+        out.field_if(self.version != defaults::VERSION, "version", &self.version)?;
+        out.opt("rollout", self.rollout.as_ref())?;
+        out.opt("loop", self.r#loop.as_ref())?;
+        out.field_if(!self.tags.is_empty(), "tags", &self.tags)?;
         if let Some(at) = &self.created_at {
             out.field("created_at", &at.to_rfc3339())?;
         }
@@ -130,22 +135,20 @@ impl Node for TaskDef {
     fn fields<F: Fields>(&self, out: &mut F) -> Result<(), F::Error> {
         out.field("id", &self.id)?;
         names(&self.header, out)?;
-        if let Some(condition) = &self.condition {
-            out.field("condition", condition)?;
-        }
+        out.opt("condition", self.condition.as_ref())?;
         out.field("function", &self.function)?;
-        if self.on_failure != FailurePolicy::default() {
-            out.field("on_failure", &self.on_failure)?;
-        }
-        if self.on_rejection != RejectionPolicy::default() {
-            out.field("on_rejection", &self.on_rejection)?;
-        }
-        if self.terminal {
-            out.field("terminal", &true)?;
-        }
-        if let Some(for_each) = &self.for_each {
-            out.field("for_each", for_each)?;
-        }
+        out.field_if(
+            self.on_failure != FailurePolicy::default(),
+            "on_failure",
+            &self.on_failure,
+        )?;
+        out.field_if(
+            self.on_rejection != RejectionPolicy::default(),
+            "on_rejection",
+            &self.on_rejection,
+        )?;
+        out.field_if(self.terminal, "terminal", &true)?;
+        out.opt("for_each", self.for_each.as_ref())?;
         ext(&self.header, out)
     }
 }
@@ -154,12 +157,8 @@ impl Node for GroupDef {
     fn fields<F: Fields>(&self, out: &mut F) -> Result<(), F::Error> {
         out.field("id", &self.id)?;
         names(&self.header, out)?;
-        if let Some(condition) = &self.condition {
-            out.field("condition", condition)?;
-        }
-        if self.terminal {
-            out.field("terminal", &true)?;
-        }
+        out.opt("condition", self.condition.as_ref())?;
+        out.field_if(self.terminal, "terminal", &true)?;
         out.field("tasks", &self.tasks)?;
         ext(&self.header, out)
     }
@@ -167,29 +166,18 @@ impl Node for GroupDef {
 
 impl Node for LoopDef {
     fn fields<F: Fields>(&self, out: &mut F) -> Result<(), F::Error> {
-        if let Some(counter) = &self.counter {
-            out.field("counter", counter)?;
-        }
-        if self.init != defaults::INIT {
-            out.field("init", &self.init)?;
-        }
-        if self.increment != defaults::INCREMENT {
-            out.field("increment", &self.increment)?;
-        }
+        out.opt("counter", self.counter.as_ref())?;
+        out.field_if(self.init != defaults::INIT, "init", &self.init)?;
+        out.field_if(
+            self.increment != defaults::INCREMENT,
+            "increment",
+            &self.increment,
+        )?;
         out.field("max", &self.max)?;
-        if !self.setup.is_empty() {
-            out.field("setup", &self.setup)?;
-        }
-        if let Some(over) = &self.over {
-            out.field("over", over)?;
-        }
-        if let Some(item) = &self.r#as {
-            out.field("as", item)?;
-        }
-        if let Some(scratch) = &self.scratch {
-            out.field("scratch", scratch)?;
-        }
-        Ok(())
+        out.field_if(!self.setup.is_empty(), "setup", &self.setup)?;
+        out.opt("over", self.over.as_ref())?;
+        out.opt("as", self.r#as.as_ref())?;
+        out.opt("scratch", self.scratch.as_ref())
     }
 }
 
@@ -197,16 +185,13 @@ impl Node for ForEachDef {
     fn fields<F: Fields>(&self, out: &mut F) -> Result<(), F::Error> {
         out.field("over", &self.over)?;
         out.field("as", &self.r#as)?;
-        if self.max_concurrency != defaults::MAX_CONCURRENCY {
-            out.field("max_concurrency", &self.max_concurrency)?;
-        }
-        if let Some(collect) = &self.collect {
-            out.field("collect", collect)?;
-        }
-        if let Some(into) = &self.into {
-            out.field("into", into)?;
-        }
-        Ok(())
+        out.field_if(
+            self.max_concurrency != defaults::MAX_CONCURRENCY,
+            "max_concurrency",
+            &self.max_concurrency,
+        )?;
+        out.opt("collect", self.collect.as_ref())?;
+        out.opt("into", self.into.as_ref())
     }
 }
 

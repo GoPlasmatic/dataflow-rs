@@ -4,7 +4,7 @@ use crate::base::{Error, ErrorKind, WorkflowIx};
 use crate::observe::{RunStatus, Selection, Trace, WorkflowExit, WorkflowRecord};
 use crate::program::Program;
 use crate::state::Stats;
-use serde::ser::{SerializeSeq, SerializeStruct};
+use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
 /// One workflow considered by a run, as the engine records it.
@@ -155,11 +155,7 @@ impl Serialize for Run {
         struct Records<'r>(&'r Run);
         impl Serialize for Records<'_> {
             fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-                let mut seq = s.serialize_seq(Some(self.0.records.len()))?;
-                for w in self.0.workflows() {
-                    seq.serialize_element(&w)?;
-                }
-                seq.end()
+                s.collect_seq(self.0.workflows())
             }
         }
 

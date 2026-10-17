@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 /// The three roots, in the order a context holds them.
-const ROOTS: [&str; 3] = ["data", "metadata", "temp_data"];
+pub(crate) const ROOTS: [&str; 3] = ["data", "metadata", "temp_data"];
 
 /// The context: always `data`, `metadata` and `temp_data`, in that order.
 /// Each root starts as an object, and a `map` to a root of a value that is

@@ -46,6 +46,26 @@ pub(crate) enum Op {
     Halt,
 }
 
+impl Op {
+    /// The op's forward target: every target but a `LoopNext`'s `body_to`,
+    /// which goes back to the start of its sweep. `None` for a `Halt`.
+    pub(crate) fn forward_mut(&mut self) -> Option<&mut u32> {
+        match self {
+            Self::Cond { else_to: to, .. }
+            | Self::Call { fail_to: to, .. }
+            | Self::FanOut { fail_to: to, .. }
+            | Self::LoopInit { exit_to: to, .. }
+            | Self::LoopNext { exit_to: to, .. } => Some(to),
+            Self::Halt => None,
+        }
+    }
+
+    /// [`Self::forward_mut`], read.
+    pub(crate) fn forward(mut self) -> Option<u32> {
+        self.forward_mut().copied()
+    }
+}
+
 const _: () = assert!(size_of::<Op>() == 16);
 
 /// A compiled condition: the workflow's, a group's or a task's.
@@ -70,8 +90,19 @@ pub(crate) struct CallSite {
     /// The task's row in `tasks`.
     pub(crate) task: u32,
     pub(crate) callee: Callee,
+    /// What the task's outcome does.
+    pub(crate) policy: Policy,
+}
+
+/// What a task's outcome does: its three policies, as its call site holds
+/// them.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Policy {
+    /// What a failure (a 5xx or an `Err`) does.
     pub(crate) on_failure: FailurePolicy,
+    /// What a rejection (a 4xx) does.
     pub(crate) on_rejection: RejectionPolicy,
+    /// Whether completing the task ends the workflow.
     pub(crate) terminal: bool,
 }
 

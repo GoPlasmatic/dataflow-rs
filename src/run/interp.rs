@@ -46,7 +46,7 @@ use crate::function::builtins::Builtin;
 use crate::function::{CallLayer, SyncCtx, eval, test};
 use crate::observe::{Event, Selection, StepResult, TraceStep};
 use crate::program::{CallSite, Callee, CompiledWorkflow, CondKind, LoopSite, Op};
-use crate::state::RunContext;
+use crate::state::{Owner, RunContext};
 use chrono::{DateTime, Utc};
 use datavalue::{DataValue, OwnedDataValue};
 use std::borrow::Cow;
@@ -194,7 +194,7 @@ impl Watch<'_> {
 /// How many ops run between two checks of the limits.
 const CHECK_EVERY: u32 = 64;
 
-impl RunEnv<'_, '_> {
+impl<'p> RunEnv<'_, 'p> {
     /// At an op boundary: the run context's checkpoint when due, then, with
     /// a limit set, the limits at every 64th op.
     fn tick(&mut self, rc: &mut RunContext<'_, '_>) -> Result<(), Error> {
@@ -212,6 +212,23 @@ impl RunEnv<'_, '_> {
     /// recorded, and their old values read.
     pub(crate) fn traces_changes(&self) -> bool {
         self.watch.trace.as_ref().is_some_and(|t| t.changes())
+    }
+
+    /// The ids of the current workflow's task at row `task`, as the program
+    /// owns them.
+    pub(crate) fn ids(&self, task: u32) -> TaskIds<'p> {
+        TaskIds {
+            workflow: self.workflow_id,
+            task: &self.task_ids[task as usize],
+        }
+    }
+
+    /// The record of the current workflow's own `error`: its code and
+    /// message, and the workflow's id.
+    pub(crate) fn workflow_record(&self, error: &Error) -> ErrorRecord {
+        let mut record = ErrorRecord::from(error);
+        record.workflow_id = Some(self.workflow_id.to_string());
+        record
     }
 
     /// The current workflow's own step.
@@ -235,15 +252,15 @@ impl RunEnv<'_, '_> {
     pub(crate) fn push_step(&mut self, step: TraceStep) {
         if let Some(trace) = self.watch.trace.as_deref_mut() {
             trace.push(step);
-            self.capture = self.capture_audit || trace.changes();
+            self.capture = captures(self.capture_audit, Some(trace));
         }
     }
 }
 
-/// The value at `path`, owned, or `null`: an engine write's old value, read
-/// only for a trace that keeps changes.
-pub(crate) fn old_value(rc: &RunContext<'_, '_>, path: &Path) -> OwnedDataValue {
-    rc.get(path).map_or(OwnedDataValue::Null, Cow::into_owned)
+/// Whether a call records its `Change`s: the audit wants them, or the trace
+/// keeps them.
+pub(crate) fn captures(capture_audit: bool, trace: Option<&Capture>) -> bool {
+    capture_audit || trace.is_some_and(Capture::changes)
 }
 
 /// Where a failure `on_failure: continue` steps past goes from `op`.
@@ -294,7 +311,7 @@ pub(crate) async fn run_workflow<'p>(
     // first one evaluated.
     let mut unjudged = true;
     env.frame.sweeps = u32::from(wf.loops.is_empty());
-    if !judged_first(wf) {
+    if !wf.judged_first() {
         begin(env, wf);
     }
     let mut pc = 0;
@@ -391,23 +408,6 @@ pub(crate) async fn run_workflow<'p>(
     (exit, selection)
 }
 
-/// Whether a workflow condition is the first thing `wf` judges: its first
-/// op, or, in a loop without setup or `over`, the first sweep's (the
-/// shape `program::lower` emits).
-fn judged_first(wf: &CompiledWorkflow) -> bool {
-    let first = match wf.ops.first() {
-        Some(Op::LoopInit { .. }) => wf.ops.get(1),
-        first => first,
-    };
-    matches!(
-        first,
-        Some(Op::Cond {
-            kind: CondKind::Workflow,
-            ..
-        })
-    )
-}
-
 /// The workflow's `WorkflowStarted`, once, and in a timed run the clock
 /// reading its elapsed time starts from.
 fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
@@ -438,9 +438,7 @@ fn skipped_workflow(env: &mut RunEnv<'_, '_>, error: Option<&Error>) {
     if let Some(e) = error {
         #[cfg(test)]
         super::record::traced_work();
-        let mut record = ErrorRecord::from(e);
-        record.workflow_id = Some(env.workflow_id.to_string());
-        step.errors.push(record);
+        step.errors.push(env.workflow_record(e));
     }
     env.push_step(step);
 }
@@ -481,7 +479,8 @@ fn loop_init<'p>(
 ) -> Flow {
     if let Some(over) = &site.over {
         match elements(rc, env.exprs, over, Over::Loop(env.workflow_id)) {
-            Ok(items) => env.frame.items = Some(items),
+            // A loop moves each element out: its own copy.
+            Ok(items) => env.frame.items = Some(items.into_owned()),
             Err(e) => {
                 record::workflow_failure(env, &e);
                 return Flow::Fail(e);
@@ -529,38 +528,32 @@ fn enter<'p>(
     let mut changes = Vec::new();
     let counter = env.frame.counter;
     if let Some(path) = &site.counter {
-        let old = traced.then(|| old_value(rc, path));
-        rc.engine_set(
+        engine_write(
+            rc,
             path,
+            traced,
+            &mut changes,
             || OwnedDataValue::from_i64(counter),
             |_| DataValue::from_i64(counter),
         );
-        if let Some(old) = old {
-            changes.push(Change::write(
-                Arc::clone(path.dotted()),
-                old,
-                OwnedDataValue::from_i64(counter),
-            ));
-        }
     }
     // The element's index, when the loop is over an array.
     let element = match &env.frame.items {
         None => None,
         Some(items) => usize::try_from(counter).ok().filter(|&i| i < items.len()),
     };
-    if counter >= site.max || (env.frame.items.is_some() && element.is_none()) {
-        if site.counter.is_some() {
-            sweep_step(env, counter, changes);
-        }
-        return Flow::Jump(exit_to);
-    }
-    if let Err(e) = env.limits.check() {
+    let ends = if counter >= site.max || (env.frame.items.is_some() && element.is_none()) {
+        Some(Flow::Jump(exit_to))
+    } else {
         // Only the counter is written by now: its step, so a stopped run's
         // trace replays to its context.
+        env.limits.check().err().map(Flow::Stop)
+    };
+    if let Some(flow) = ends {
         if site.counter.is_some() {
             sweep_step(env, counter, changes);
         }
-        return Flow::Stop(e);
+        return flow;
     }
     if let Some(item) = element.and_then(|i| env.frame.items.as_mut()?.get_mut(i)) {
         // Moved, not cloned: `increment >= 1` visits no element twice.
@@ -569,7 +562,7 @@ fn enter<'p>(
             if traced {
                 changes.push(Change::write(
                     Arc::clone(path.dotted()),
-                    old_value(rc, path),
+                    rc.get_or_null(path),
                     item.clone(),
                 ));
             }
@@ -577,24 +570,36 @@ fn enter<'p>(
         }
     }
     if let Some(path) = &site.scratch {
-        let old = traced.then(|| old_value(rc, path));
-        rc.engine_set(
+        engine_write(
+            rc,
             path,
+            traced,
+            &mut changes,
             || OwnedDataValue::Object(Vec::new()),
             |_| DataValue::Object(&[]),
         );
-        if let Some(old) = old {
-            changes.push(Change::write(
-                Arc::clone(path.dotted()),
-                old,
-                OwnedDataValue::Object(Vec::new()),
-            ));
-        }
     }
     env.frame.loop_counter = Some(counter);
     env.frame.sweeps = env.frame.sweeps.saturating_add(1);
     sweep_step(env, counter, changes);
     sweep
+}
+
+/// An engine write at `path` ([`RunContext::engine_set`]), with its
+/// `Change` onto `changes` while the trace keeps changes.
+fn engine_write<'p>(
+    rc: &mut RunContext<'_, 'p>,
+    path: &Path,
+    traced: bool,
+    changes: &mut Vec<Change>,
+    owned: impl Fn() -> OwnedDataValue,
+    view: impl for<'q> FnOnce(&'q Owner<'p>) -> DataValue<'q>,
+) {
+    let old = traced.then(|| rc.get_or_null(path));
+    rc.engine_set(path, &owned, view);
+    if let Some(old) = old {
+        changes.push(Change::write(Arc::clone(path.dotted()), old, owned()));
+    }
 }
 
 /// The engine's step for a sweep entered or a loop exited at `counter`,
@@ -627,16 +632,16 @@ impl fmt::Display for Over<'_> {
     }
 }
 
-/// An `over`'s elements, owned: a loop's or a fan-out's, by one rule. A
-/// value that is not an array is [`ErrorKind::Eval`], as a wrong-typed
-/// result is everywhere else; an evaluation error keeps its own kind, with
-/// v3's text less v3's wrapper.
-pub(super) fn elements(
+/// An `over`'s elements: a loop's or a fan-out's, by one rule; a folded
+/// constant's lent. A value that is not an array is [`ErrorKind::Eval`], as
+/// a wrong-typed result is everywhere else; an evaluation error keeps its
+/// own kind, with v3's text less v3's wrapper.
+pub(super) fn elements<'e>(
     rc: &mut RunContext<'_, '_>,
     exprs: &ExprEngine,
-    over: &Expr,
+    over: &'e Expr,
     owner: Over<'_>,
-) -> Result<Vec<OwnedDataValue>, Error> {
+) -> Result<Cow<'e, [OwnedDataValue]>, Error> {
     let value = eval(rc, exprs, over).map_err(|e| {
         Error::new(
             e.kind().clone(),
@@ -644,8 +649,8 @@ pub(super) fn elements(
         )
     })?;
     match value {
-        Cow::Owned(OwnedDataValue::Array(items)) => Ok(items),
-        Cow::Borrowed(OwnedDataValue::Array(items)) => Ok(items.clone()),
+        Cow::Owned(OwnedDataValue::Array(items)) => Ok(Cow::Owned(items)),
+        Cow::Borrowed(OwnedDataValue::Array(items)) => Ok(Cow::Borrowed(items)),
         other => Err(Error::new(
             ErrorKind::Eval,
             format!("{owner} must evaluate to an array, got {}", kind(&other)),
@@ -662,10 +667,6 @@ fn call<'p>(
     site: &'p CallSite,
     builtin: &'p Builtin,
 ) -> Flow {
-    let ids = TaskIds {
-        workflow: env.workflow_id,
-        task: &env.task_ids[site.task as usize],
-    };
     let errors_before = env.errors.len();
     // An unwatched run neither traces nor times a call.
     let (traced, started) = if env.watched {
@@ -712,18 +713,13 @@ fn call<'p>(
             env.changes.clear();
         }
     }
-    let decision = policy::decide(site.policy(), ids.task, result);
+    let decision = policy::decide(site.policy, env.ids(site.task).task, result);
     let done = Completed {
-        ids,
         task: site.task,
         stamp: Stamp::sweep(env),
-        status: decision.status,
-        record: decision.record,
-        failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
         elapsed,
         errors_before,
         marked,
     };
-    record::record(rc, env, wf, done);
-    decision.flow
+    record::record(rc, env, wf, done, decision)
 }

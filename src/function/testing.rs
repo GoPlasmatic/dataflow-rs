@@ -22,9 +22,10 @@ use super::{
     BoundCall, BoxFuture, CallInfo, CallLayer, CallStart, Function, FunctionConfig, Outcome,
     Registry,
 };
+use crate::base::any_rejected;
 use crate::base::{
     AuthoredPath, CancelToken, Change, Error, ErrorKind, ErrorRecord, Instant, Issue, ProgramId,
-    Result, Severity, StepKind, TaskIx, WorkflowIx,
+    Result, StepKind, TaskIx, WorkflowIx,
 };
 use crate::expr::{CompileCx, ExprEngine, Path};
 use crate::program::{Callee, CalleeAt, Checks, compile_callee, refused};
@@ -455,7 +456,7 @@ fn compile(
         &mut checks,
         &mut issues,
     );
-    let rejected = issues.iter().any(|i| i.severity == Severity::Rejected);
+    let rejected = any_rejected(&issues);
     let bound = match callee {
         Some(Callee::Host(bound)) if !rejected => Some(bound),
         _ => None,

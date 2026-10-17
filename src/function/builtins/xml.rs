@@ -7,7 +7,7 @@
 //! unless serde_json's `preserve_order` is on; v4 never does, so its order is
 //! the same in every build (break 23: v3's default build sorted them).
 
-use crate::base::{Error, Result};
+use crate::base::{Error, Result, VALIDATION_ERROR};
 use datavalue::{NumberValue, OwnedDataValue};
 use serde::Deserializer;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
@@ -17,7 +17,7 @@ use std::fmt;
 /// A `VALIDATION_ERROR`, with the `Validation error: ` prefix v3's display
 /// adds, so the record's text stays v3's.
 pub(super) fn validation_error(message: impl std::fmt::Display) -> Error {
-    Error::service("VALIDATION_ERROR", format!("Validation error: {message}"))
+    Error::service(VALIDATION_ERROR, format!("Validation error: {message}"))
 }
 
 /// The document as a value, by `quick-xml`'s serde reader, its elements in
@@ -147,99 +147,103 @@ impl<'de> Visitor<'de> for InOrder {
 /// `value` as an XML document under `root_element`, its keys in the value's
 /// order.
 pub(super) fn value_to_xml(value: &OwnedDataValue, root_element: &str) -> String {
-    let mut buffer = String::new();
-    buffer.push_str(&format!("<{root_element}>"));
+    let mut out = String::new();
+    tag(&mut out, "<", root_element);
     match value {
-        OwnedDataValue::Object(_) => buffer.push_str(&content(value)),
         OwnedDataValue::Array(items) => {
             for item in items {
-                buffer.push_str("<item>");
-                buffer.push_str(&content(item));
-                buffer.push_str("</item>");
+                out.push_str("<item>");
+                content(item, &mut out);
+                out.push_str("</item>");
             }
         }
-        _ => buffer.push_str(&scalar(value)),
+        _ => content(value, &mut out),
     }
-    buffer.push_str(&format!("</{root_element}>"));
-    buffer
+    tag(&mut out, "</", root_element);
+    out
 }
 
-/// The inside of an element holding `value`.
-fn content(value: &OwnedDataValue) -> String {
-    let mut result = String::new();
+/// `{open}{name}>`: an element's opening or closing tag.
+fn tag(out: &mut String, open: &str, name: &str) {
+    out.push_str(open);
+    out.push_str(name);
+    out.push('>');
+}
+
+/// The inside of an element holding `value`, onto `out`.
+fn content(value: &OwnedDataValue, out: &mut String) {
     match value {
         OwnedDataValue::Object(pairs) => {
             for (key, val) in pairs {
                 let key = sanitize_name(key);
-                result.push_str(&format!("<{key}>"));
-                match val {
-                    OwnedDataValue::Object(_) | OwnedDataValue::Array(_) => {
-                        result.push_str(&content(val));
-                    }
-                    _ => result.push_str(&scalar(val)),
-                }
-                result.push_str(&format!("</{key}>"));
+                tag(out, "<", &key);
+                content(val, out);
+                tag(out, "</", &key);
             }
         }
         OwnedDataValue::Array(items) => {
             for item in items {
-                result.push_str("<item>");
-                match item {
-                    OwnedDataValue::Object(_) | OwnedDataValue::Array(_) => {
-                        result.push_str(&content(item));
-                    }
-                    _ => result.push_str(&scalar(item)),
-                }
-                result.push_str("</item>");
+                out.push_str("<item>");
+                content(item, out);
+                out.push_str("</item>");
             }
         }
-        _ => result.push_str(&scalar(value)),
+        _ => scalar(value, out),
     }
-    result
 }
 
-/// A scalar's text, as `serde_json::Value` writes it; `null` and a
-/// non-finite float are empty.
-fn scalar(value: &OwnedDataValue) -> String {
+/// A scalar's text, as `serde_json::Value` writes it, onto `out`; `null` and
+/// a non-finite float are empty.
+fn scalar(value: &OwnedDataValue, out: &mut String) {
+    use std::fmt::Write as _;
     match value {
-        OwnedDataValue::Null => String::new(),
-        OwnedDataValue::Bool(b) => b.to_string(),
-        OwnedDataValue::Number(NumberValue::Integer(i)) => i.to_string(),
-        OwnedDataValue::Number(NumberValue::Float(f)) => {
-            serde_json::Number::from_f64(*f).map_or_else(String::new, |n| n.to_string())
+        OwnedDataValue::Null => {}
+        OwnedDataValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        OwnedDataValue::Number(NumberValue::Integer(i)) => {
+            let _ = write!(out, "{i}");
         }
-        OwnedDataValue::String(s) => escape(s),
+        OwnedDataValue::Number(NumberValue::Float(f)) => {
+            if let Some(n) = serde_json::Number::from_f64(*f) {
+                let _ = write!(out, "{n}");
+            }
+        }
+        OwnedDataValue::String(s) => escape(s, out),
         // An object or an array is no scalar: `content` walks those.
-        OwnedDataValue::Object(_) | OwnedDataValue::Array(_) => String::new(),
+        OwnedDataValue::Object(_) | OwnedDataValue::Array(_) => {}
         #[allow(
             unreachable_patterns,
             reason = "the catch-all is live only with datavalue's `datetime` or `tensor` \
                       feature, which feature unification can turn on from another crate"
         )]
-        other => foreign(other),
+        other => foreign(other, out),
     }
 }
 
 /// A value JSON has no type for (a datetime, a duration, a tensor), in its
-/// JSON form: a datetime's and a duration's text, a tensor's tagged object
-/// walked in the order its `Serialize` writes it.
+/// JSON form, onto `out`: a datetime's and a duration's text, a tensor's
+/// tagged object walked in the order its `Serialize` writes it.
 #[cold]
-fn foreign(value: &OwnedDataValue) -> String {
+fn foreign(value: &OwnedDataValue, out: &mut String) {
     let text = serde_json::to_string(value).unwrap_or_default();
     match crate::base::exact(&mut serde_json::Deserializer::from_str(&text)) {
-        Ok(OwnedDataValue::String(s)) => escape(&s),
-        Ok(json @ (OwnedDataValue::Object(_) | OwnedDataValue::Array(_))) => content(&json),
-        Ok(other) => scalar(&other),
-        Err(_) => String::new(),
+        Ok(OwnedDataValue::String(s)) => escape(&s, out),
+        Ok(other) => content(&other, out),
+        Err(_) => {}
     }
 }
 
-fn escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+/// `s` with XML's five special characters escaped, onto `out`.
+fn escape(s: &str, out: &mut String) {
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
 }
 
 /// An element name made of what XML allows, as v3's `sanitize_xml_name`.

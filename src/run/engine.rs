@@ -3,7 +3,7 @@
 use super::builder::EngineBuilder;
 use super::cancel::Limits;
 use super::error_context::ErrorContext;
-use super::interp::{Exit, Frame, RunEnv, Watch, run_workflow};
+use super::interp::{Exit, Frame, RunEnv, Watch, captures, run_workflow};
 use super::message::{Message, finish_audit, keeps_entries};
 use super::observers::Observers;
 use super::options::RunOptions;
@@ -105,12 +105,24 @@ struct Inner {
     config: EngineConfig,
 }
 
-/// The run's stamps under `metadata`, written before any op.
-static PROCESSED_AT: LazyLock<Path> = LazyLock::new(|| metadata("processed_at"));
-static ENGINE_VERSION: LazyLock<Path> = LazyLock::new(|| metadata("engine_version"));
-static CHANNEL: LazyLock<Path> = LazyLock::new(|| metadata("channel"));
+/// The `metadata` keys the engine writes on every run: the progress after
+/// every call, which cross-workflow chaining reads, and the run's stamps,
+/// written before any op.
+pub(crate) mod slots {
+    pub(crate) const PROGRESS: &str = "progress";
+    pub(crate) const PROCESSED_AT: &str = "processed_at";
+    pub(crate) const ENGINE_VERSION: &str = "engine_version";
+    pub(crate) const CHANNEL: &str = "channel";
+    /// Every one of them.
+    pub(crate) const ALL: [&str; 4] = [PROGRESS, PROCESSED_AT, ENGINE_VERSION, CHANNEL];
+}
 
-fn metadata(key: &str) -> Path {
+static PROCESSED_AT: LazyLock<Path> = LazyLock::new(|| metadata(slots::PROCESSED_AT));
+static ENGINE_VERSION: LazyLock<Path> = LazyLock::new(|| metadata(slots::ENGINE_VERSION));
+static CHANNEL: LazyLock<Path> = LazyLock::new(|| metadata(slots::CHANNEL));
+
+/// `metadata.<key>`.
+pub(crate) fn metadata(key: &str) -> Path {
     format!("metadata.{key}")
         .parse()
         .expect("a metadata key is a path")
@@ -249,7 +261,7 @@ impl Engine {
                     errors: &mut *parts.errors,
                     audit: &mut *parts.audit,
                     mode: opts.audit,
-                    capture: capture_audit || watch.trace.as_ref().is_some_and(|t| t.changes()),
+                    capture: captures(capture_audit, watch.trace.as_deref()),
                     capture_audit,
                     watched: watch.records_calls(),
                     watch: &mut watch,

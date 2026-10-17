@@ -70,21 +70,13 @@ impl BuiltinKind {
     /// rewrites before a name is looked up, so a host function under it
     /// could never be called.
     pub(crate) fn reserved(name: &str) -> bool {
-        Self::from_name(name).is_some() || name == "validate"
+        Self::from_name(name).is_some() || name == crate::def::V3_VALIDATE
     }
 
-    /// The name a task calls it by.
+    /// The name a task calls it by: its row of `def::BUILTIN_FUNCTIONS`,
+    /// which [`Self::ALL`] follows.
     pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Map => "map",
-            Self::Validation => "validation",
-            Self::Filter => "filter",
-            Self::Log => "log",
-            Self::ParseJson => "parse_json",
-            Self::ParseXml => "parse_xml",
-            Self::PublishJson => "publish_json",
-            Self::PublishXml => "publish_xml",
-        }
+        crate::def::BUILTIN_FUNCTIONS[self as usize]
     }
 
     /// What the built-in says about itself: a one-sentence description and
@@ -181,10 +173,7 @@ pub(crate) enum Builtin {
 
 impl Builtin {
     /// Which built-in this is.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the tests ask a callee which built-in it is")
-    )]
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> BuiltinKind {
         match self {
             Self::Map(_) => BuiltinKind::Map,

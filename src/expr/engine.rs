@@ -137,6 +137,11 @@ impl ExprEngine {
         &self.inner.operators
     }
 
+    /// The operator named `name`, if the engine has one.
+    pub(crate) fn operator(&self, name: &str) -> Option<&OperatorInfo> {
+        self.operators().iter().find(|op| op.name == name)
+    }
+
     /// The secrets the `secret` operator reads.
     pub fn secrets(&self) -> &Secrets {
         &self.inner.secrets

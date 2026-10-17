@@ -7,7 +7,7 @@
 
 use crate::base::{Change, ErrorRecord, Result};
 use crate::expr::arena::with_arena;
-use crate::expr::{Expr, ExprEngine, FromValue};
+use crate::expr::{Expr, ExprEngine, FromValue, Path};
 use crate::function::Outcome;
 use crate::state::RunContext;
 use datavalue::{DataValue, OwnedDataValue};
@@ -90,24 +90,17 @@ impl<'p> SyncCtx<'_, '_, 'p> {
         test(self.rc, self.exprs, expr)
     }
 
-    /// Push a `Change` when `capture` is on.
-    pub(crate) fn change(
-        &mut self,
-        path: Arc<str>,
-        old_value: OwnedDataValue,
-        new_value: OwnedDataValue,
-        removed: bool,
-    ) {
+    /// Writes `value` at `target`, recording its `Change` under capture.
+    pub(crate) fn write(&mut self, target: &Path, value: OwnedDataValue, hint: Option<usize>) {
         if self.capture {
-            self.changes.push(Change {
-                path,
-                old_value,
-                new_value,
-                removed,
-                replaced: false,
-                trace_only: false,
-            });
+            let old = self.rc.get_or_null(target);
+            self.changes.push(Change::write(
+                Arc::clone(target.dotted()),
+                old,
+                value.clone(),
+            ));
         }
+        self.rc.set(target, value, hint);
     }
 }
 
@@ -150,7 +143,7 @@ pub(crate) fn test(rc: &mut RunContext<'_, '_>, exprs: &ExprEngine, expr: &Expr)
 /// An error record carrying a task's ids and the run's timestamp, as v3 fills
 /// them: what a built-in records, and what the recorder records for it.
 pub(crate) fn task_record(
-    code: &str,
+    code: impl Into<String>,
     message: String,
     workflow_id: &str,
     task_id: &str,
@@ -262,16 +255,16 @@ mod tests {
     }
 
     #[test]
-    fn change_is_pushed_only_under_capture() {
+    fn a_write_records_its_change_only_under_capture() {
         for capture in [true, false] {
             let changes = with_cx(capture, |cx| {
-                cx.change("data.a".into(), 1.into(), 2.into(), false);
-                cx.change("data.b".into(), 3.into(), OwnedDataValue::Null, true);
+                cx.write(&"data.a".parse().unwrap(), 2.into(), None);
+                cx.write(&"data.b".parse().unwrap(), 3.into(), None);
             });
             if capture {
                 assert_eq!(
                     serde_json::to_string(&changes).unwrap(),
-                    r#"[{"path":"data.a","old_value":1,"new_value":2},{"path":"data.b","old_value":3,"new_value":null,"removed":true}]"#
+                    r#"[{"path":"data.a","old_value":1,"new_value":2},{"path":"data.b","old_value":null,"new_value":3}]"#
                 );
             } else {
                 assert!(changes.is_empty());

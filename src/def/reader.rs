@@ -40,11 +40,11 @@
 //! the author meant them to combine. A refused key is taken out all the
 //! same, so the walk does not report it twice.
 
-use super::MAX_GROUP_DEPTH;
 use super::keys::{
     BuiltinInput, Ext, GROUP_V3_KEYS, TASK_POLICIES, TASK_V3_KEYS, WORKFLOW_POLICIES,
     WORKFLOW_V3_KEYS, builtin_input,
 };
+use super::{MAX_GROUP_DEPTH, V3_VALIDATE};
 use crate::base::typo::unknown_key;
 use crate::base::{AuthoredPath, Issue, IssueCode, StepKind};
 use serde_json::{Map, Value};
@@ -450,16 +450,16 @@ impl Read {
             .unwrap_or_default()
             .to_string();
         // `validate`'s input is `validation`'s, whichever key comes first.
-        let builtin = builtin_input(if name == "validate" {
+        let builtin = builtin_input(if name == V3_VALIDATE {
             "validation"
         } else {
             &name
         });
         for key in keys_among(&fields, &["input", "name"]) {
             if key == "name" {
-                if name == "validate" {
+                if name == V3_VALIDATE {
                     fields.insert("name".into(), Value::String("validation".into()));
-                    let (v3, v4) = ("validate".into(), "validation".into());
+                    let (v3, v4) = (V3_VALIDATE.into(), "validation".into());
                     self.rewrite(at.join("name"), v3, v4, Some(step), None);
                 }
             } else if let Some(Value::Object(input)) = fields.get_mut("input")

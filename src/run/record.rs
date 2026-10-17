@@ -30,11 +30,13 @@
 //! for an observer of the workflow events that asked it; the run's for any
 //! `TIMINGS`. A step's `elapsed` is kept only for the trace's timings.
 
-use super::interp::{RunEnv, old_value};
+use super::engine::{metadata, slots};
+use super::interp::RunEnv;
 use super::message::{AuditEntry, keeps_entries, record_audit};
-use crate::base::{Change, Error, ErrorRecord, Instant, TaskIx};
+use super::policy::{Decision, Flow};
+use crate::base::{Change, Error, Instant};
 use crate::expr::Path;
-use crate::function::{CallInfo, task_record};
+use crate::function::task_record;
 use crate::observe::{Event, StepResult};
 use crate::program::CompiledWorkflow;
 use crate::state::RunContext;
@@ -45,11 +47,7 @@ use std::time::Duration;
 
 /// `metadata.progress`, which the engine writes after every call that does
 /// not skip. Cross-workflow chaining reads it, so it is never gated.
-static PROGRESS: LazyLock<Path> = LazyLock::new(|| {
-    "metadata.progress"
-        .parse()
-        .expect("`metadata.progress` is a path")
-});
+static PROGRESS: LazyLock<Path> = LazyLock::new(|| metadata(slots::PROGRESS));
 
 /// The task a record is for: its ids, as the program owns them.
 #[derive(Clone, Copy, Debug)]
@@ -113,21 +111,14 @@ pub(crate) fn since(start: Instant) -> Duration {
     now().saturating_duration_since(start)
 }
 
-/// One recorded call: what the decision and the call left, for the
+/// One recorded call: what the call left, beside its decision, for the
 /// recorder's outputs.
-pub(crate) struct Completed<'p> {
-    /// The workflow's and the task's ids.
-    pub(crate) ids: TaskIds<'p>,
-    /// The task's row in the workflow, for `TaskIx` and the function's name.
+pub(crate) struct Completed {
+    /// The task's row in the workflow, for its ids, `TaskIx` and the
+    /// function's name.
     pub(crate) task: u32,
     /// Where the call sits in the run's iterations.
     pub(crate) stamp: Stamp,
-    /// The decision's status; `None` for a `Skip`.
-    pub(crate) status: Option<u16>,
-    /// The decision's error record: (code, message).
-    pub(crate) record: Option<(Cow<'static, str>, String)>,
-    /// The decision's flow is `Fail` or `Stop`: the trace's `Failed`.
-    pub(crate) failed: bool,
     /// How long the call ran, when the run is timed.
     pub(crate) elapsed: Option<Duration>,
     /// `env.errors.len()` before the call: the error context mirrors what
@@ -139,11 +130,11 @@ pub(crate) struct Completed<'p> {
     pub(crate) marked: bool,
 }
 
-/// Records one completed call of `wf`, in this order: the audit entry, with
-/// the call's changes, taken from `env.changes`, under `capture_audit`
-/// (through `AuditMode`), the progress write, the error record, the
-/// error-context record, the trace's step, and the observers'
-/// `TaskFinished`. A `Skip` gets the last two only.
+/// Records one completed call of `wf` under its `decision`, in this order:
+/// the audit entry, with the call's changes, taken from `env.changes`, under
+/// `capture_audit` (through `AuditMode`), the progress write, the error
+/// record, the error-context record, the trace's step, and the observers'
+/// `TaskFinished`. A `Skip` gets the last two only. The decision's flow.
 ///
 /// A call of an unwatched run ([`RunEnv::watched`]) that marked no change
 /// has only the first three to record, through [`plain`]: the run's other
@@ -153,15 +144,24 @@ pub(crate) fn record<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
     wf: &'p CompiledWorkflow,
-    done: Completed<'p>,
-) {
+    done: Completed,
+    decision: Decision,
+) -> Flow {
+    let Decision {
+        status,
+        record,
+        flow,
+    } = decision;
     #[cfg(test)]
-    tests::completed(&done);
+    tests::completed(env, &done, status, &flow);
     if env.watched || done.marked {
-        watched(rc, env, wf, done);
+        // The decision's flow is `Fail` or `Stop`: the trace's `Failed`.
+        let failed = matches!(flow, Flow::Fail(_) | Flow::Stop(_));
+        watched(rc, env, wf, done, status, record, failed);
     } else {
-        plain(rc, env, done.ids, done.stamp, done.status, done.record);
+        plain(rc, env, done.task, done.stamp, status, record);
     }
+    flow
 }
 
 /// [`record`] for a call of an unwatched run that marked no change: the
@@ -172,7 +172,7 @@ pub(crate) fn record<'p>(
 fn plain<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
-    ids: TaskIds<'p>,
+    task: u32,
     stamp: Stamp,
     status: Option<u16>,
     record: Option<(Cow<'static, str>, String)>,
@@ -181,31 +181,56 @@ fn plain<'p>(
         env.changes.clear();
         return;
     };
+    let ids = env.ids(task);
     // A mode that keeps nothing builds no entry for `record_audit` to drop.
     if keeps_entries(env.mode) {
-        record_audit(
-            env.audit,
-            env.mode,
-            AuditEntry {
-                workflow_id: Arc::clone(ids.workflow),
-                task_id: Arc::clone(ids.task),
-                timestamp: env.now,
-                changes: std::mem::take(&mut env.changes),
-                status: usize::from(status),
-                loop_counter: stamp.loop_counter,
-                element_index: stamp.element_index,
-            },
-        );
+        let changes = std::mem::take(&mut env.changes);
+        audit(env, ids, stamp, status, changes);
     } else {
         env.changes.clear();
     }
     write_progress(rc, ids.workflow, ids.task, status);
-    if let Some((code, message)) = record {
-        let (workflow, task) = (&**ids.workflow, &**ids.task);
-        let mut record = task_record(&code, message, workflow, task, env.now_text);
-        record.element_index = stamp.element_index;
-        env.errors.push(record);
+    if let Some(record) = record {
+        push_record(env, ids, stamp, record);
     }
+}
+
+/// The call's audit entry, with `changes`, through `AuditMode`'s trim.
+#[inline(always)]
+fn audit(
+    env: &mut RunEnv<'_, '_>,
+    ids: TaskIds<'_>,
+    stamp: Stamp,
+    status: u16,
+    changes: Vec<Change>,
+) {
+    record_audit(
+        env.audit,
+        env.mode,
+        AuditEntry {
+            workflow_id: Arc::clone(ids.workflow),
+            task_id: Arc::clone(ids.task),
+            timestamp: env.now,
+            changes,
+            status: usize::from(status),
+            loop_counter: stamp.loop_counter,
+            element_index: stamp.element_index,
+        },
+    );
+}
+
+/// The decision's error record, with the ids, the run's timestamp and the
+/// stamp's element, onto the message's records.
+#[inline(always)]
+fn push_record(
+    env: &mut RunEnv<'_, '_>,
+    ids: TaskIds<'_>,
+    stamp: Stamp,
+    (code, message): (Cow<'static, str>, String),
+) {
+    let mut record = task_record(code, message, ids.workflow, ids.task, env.now_text);
+    record.element_index = stamp.element_index;
+    env.errors.push(record);
 }
 
 /// [`record`] for a call of a watched run, or one that marked a change:
@@ -216,19 +241,19 @@ fn watched<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
     wf: &'p CompiledWorkflow,
-    done: Completed<'p>,
+    done: Completed,
+    status: Option<u16>,
+    record: Option<(Cow<'static, str>, String)>,
+    failed: bool,
 ) {
     let Completed {
-        ids,
         task,
         stamp,
-        status,
-        record,
-        failed,
         elapsed,
         errors_before,
         marked,
     } = done;
+    let ids = env.ids(task);
     // The step's changes, while the trace keeps them: the engine's writes
     // made for it first, then the call's, then the progress write, then the
     // error-context write.
@@ -244,51 +269,35 @@ fn watched<'p>(
         // A mode that keeps nothing builds no entry for `record_audit` to
         // drop.
         if keeps_entries(env.mode) {
-            let changes = match (env.capture_audit, traced) {
-                (false, _) => Vec::new(),
-                // Both want them, the audit v3's bytes.
-                (true, true) if marked => {
-                    let mut changes = env.changes.clone();
+            let changes = if env.capture_audit {
+                // When the trace wants them too, the audit gets a copy.
+                let mut changes = if traced {
+                    env.changes.clone()
+                } else {
+                    std::mem::take(&mut env.changes)
+                };
+                // The audit's copy keeps v3's bytes.
+                if marked {
                     changes.retain_mut(audited);
-                    changes
                 }
-                (true, true) => env.changes.clone(),
-                (true, false) if marked => {
-                    let mut changes = std::mem::take(&mut env.changes);
-                    changes.retain_mut(audited);
-                    changes
-                }
-                (true, false) => std::mem::take(&mut env.changes),
+                changes
+            } else {
+                Vec::new()
             };
-            record_audit(
-                env.audit,
-                env.mode,
-                AuditEntry {
-                    workflow_id: Arc::clone(ids.workflow),
-                    task_id: Arc::clone(ids.task),
-                    timestamp: env.now,
-                    changes,
-                    status: usize::from(status),
-                    loop_counter: stamp.loop_counter,
-                    element_index: stamp.element_index,
-                },
-            );
+            audit(env, ids, stamp, status, changes);
         }
-        let old = traced.then(|| old_value(rc, &PROGRESS));
+        let old = traced.then(|| rc.get_or_null(&PROGRESS));
         write_progress(rc, ids.workflow, ids.task, status);
         if let Some(old) = old {
             changes.append(&mut env.changes);
             changes.push(Change::write(
                 Arc::clone(PROGRESS.dotted()),
                 old,
-                old_value(rc, &PROGRESS),
+                rc.get_or_null(&PROGRESS),
             ));
         }
-        if let Some((code, message)) = record {
-            let (workflow, task) = (&**ids.workflow, &**ids.task);
-            let mut record = task_record(&code, message, workflow, task, env.now_text);
-            record.element_index = stamp.element_index;
-            env.errors.push(record);
+        if let Some(record) = record {
+            push_record(env, ids, stamp, record);
         }
         // Every record the call added, its own and the recorder's (I96,
         // I108).
@@ -333,18 +342,7 @@ fn watched<'p>(
         env.push_step(step);
     }
     if env.watch.observers.tasks() {
-        let meta = &wf.tasks[task as usize];
-        let info = CallInfo {
-            program: env.program,
-            workflow: env.workflow_ix,
-            task: TaskIx::new(env.task_base + task),
-            function: &meta.function,
-            workflow_id: &wf.id,
-            task_id: &meta.id,
-            channel: env.channel,
-            loop_counter: stamp.loop_counter,
-            element_index: stamp.element_index,
-        };
+        let info = env.call_info(wf, task, stamp);
         env.watch.observers.emit(Event::TaskFinished {
             info: &info,
             status,
@@ -369,8 +367,7 @@ fn audited(change: &mut Change) -> bool {
 /// the record as the one it added. No audit entry and no progress write: no
 /// task completed.
 pub(crate) fn workflow_failure(env: &mut RunEnv<'_, '_>, error: &Error) {
-    let mut record = ErrorRecord::from(error);
-    record.workflow_id = Some(env.workflow_id.to_string());
+    let mut record = env.workflow_record(error);
     record.timestamp = Some(env.now_text.to_owned());
     if env.watch.trace.is_some() {
         let mut step = env.workflow_step(StepResult::Failed);
@@ -554,11 +551,7 @@ fn write_progress<'p>(rc: &mut RunContext<'_, 'p>, workflow: &'p str, task: &'p 
                 FRESH
                     .iter()
                     .map(|key| {
-                        let value = match key {
-                            Key::Workflow => OwnedDataValue::String(workflow.to_owned()),
-                            Key::Task => OwnedDataValue::String(task.to_owned()),
-                            Key::Status => OwnedDataValue::from(status),
-                        };
+                        let value = key.value(workflow, task, status).to_owned();
                         (key.name().to_owned(), value)
                     })
                     .collect(),
@@ -609,14 +602,19 @@ mod tests {
     }
 
     /// `done`, kept while a test collects.
-    pub(super) fn completed(done: &Completed<'_>) {
+    pub(super) fn completed(
+        env: &RunEnv<'_, '_>,
+        done: &Completed,
+        status: Option<u16>,
+        flow: &Flow,
+    ) {
         COMPLETED.with_borrow_mut(|kept| {
             if let Some(kept) = kept {
                 kept.push(Done {
-                    task: done.ids.task.to_string(),
+                    task: env.ids(done.task).task.to_string(),
                     element: done.stamp.element_index,
-                    status: done.status,
-                    failed: done.failed,
+                    status,
+                    failed: matches!(flow, Flow::Fail(_) | Flow::Stop(_)),
                     errors_before: done.errors_before,
                     timed: done.elapsed.is_some(),
                 });

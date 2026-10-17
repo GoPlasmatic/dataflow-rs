@@ -224,32 +224,6 @@ pub fn v3_merge_root(context: &mut OwnedDataValue, path: &str, new_value: OwnedD
     }
 }
 
-/// `map`'s write to a root slot as the run's owned side does it (the spike's
-/// `path::merge_root`): two objects merge, existing keys replaced in place and
-/// new keys appended in order; anything else replaces the slot. Checked
-/// against [`v3_merge_root`] in `splice_property`.
-pub fn owned_merge_root(context: &mut OwnedDataValue, key: &str, value: OwnedDataValue) {
-    let OwnedDataValue::Object(slots) = context else {
-        *context = OwnedDataValue::Object(vec![(key.to_string(), value)]);
-        return;
-    };
-    let Some(slot) = slots.iter_mut().find(|(k, _)| k == key) else {
-        slots.push((key.to_string(), value));
-        return;
-    };
-    match (&mut slot.1, value) {
-        (OwnedDataValue::Object(existing), OwnedDataValue::Object(new_pairs)) => {
-            for (k, v) in new_pairs {
-                match existing.iter_mut().find(|(ek, _)| *ek == k) {
-                    Some(s) => s.1 = v,
-                    None => existing.push((k, v)),
-                }
-            }
-        }
-        (slot, value) => *slot = value,
-    }
-}
-
 /// Whether `DATAFLOW_V4_DEEP` is set (to anything): the model test then runs
 /// its full sequence count.
 pub fn deep() -> bool {

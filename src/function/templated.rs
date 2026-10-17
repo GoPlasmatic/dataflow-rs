@@ -1,7 +1,7 @@
 //! `Templated`: the config of a plugin function whose fields are declared at
 //! runtime.
 
-use super::{Ctx, FunctionConfig};
+use super::{__private, Ctx, FunctionConfig};
 use crate::base::AuthoredPath;
 use crate::base::{IssueCode, Result};
 use crate::expr::{
@@ -197,15 +197,10 @@ impl Templated {
             );
             return None;
         };
-        let Some(object) = input.as_object() else {
-            cx.issue(IssueCode::InputParse, "expected an object");
-            return None;
-        };
+        let object = __private::object(input, cx)?;
         let before = cx.rejected();
         let names: Vec<&str> = specs.iter().map(|s| &*s.name).collect();
-        for key in object.keys().filter(|k| !names.contains(&k.as_str())) {
-            cx.at(key.as_str(), |cx| cx.unknown_key(key, &names));
-        }
+        __private::unknown_keys(object, &names, cx);
         let mut fields = Vec::new();
         for spec in specs {
             cx.at(&*spec.name, |cx| {
@@ -302,10 +297,7 @@ impl Templated {
             };
         }
         if spec.required {
-            cx.issue(
-                IssueCode::InputParse,
-                format!("missing field `{}`", spec.name),
-            );
+            __private::missing(&spec.name, cx);
         }
         None
     }

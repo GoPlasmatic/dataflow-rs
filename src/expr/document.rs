@@ -3,7 +3,9 @@
 use super::config::{CompileCx, ConfigField, FieldKind, Resolver, Visit};
 use super::engine::ExprEngine;
 use super::path::Path;
-use crate::base::{Issue, IssueCode, Severity};
+use super::secrets::SECRET_OPERATOR;
+use crate::base::any_rejected;
+use crate::base::{Issue, IssueCode};
 use datavalue::{DataValue, OwnedDataValue};
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::Value;
@@ -263,14 +265,14 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, mut holes: Option<&mut Vec<Hole>>) 
                     return hole(raw, arg, cx, holes);
                 }
                 match key.as_str() {
-                    "secret" => {
+                    SECRET_OPERATOR => {
                         cx.issue(
                             IssueCode::SecretInDocument,
                             "a document cannot read a secret",
                         );
                         return Node::Literal(raw.clone());
                     }
-                    name if cx.exprs().operators().iter().any(|op| op.name == name) => {
+                    name if cx.exprs().operator(name).is_some() => {
                         cx.at(name, |cx| {
                             cx.issue(
                                 IssueCode::OperatorInDocument,
@@ -387,7 +389,7 @@ impl ExprEngine {
             compile(raw, &mut cx)
         };
         match doc {
-            Some(doc) if !issues.iter().any(|i| i.severity == Severity::Rejected) => Ok(doc),
+            Some(doc) if !any_rejected(&issues) => Ok(doc),
             _ => Err(issues),
         }
     }

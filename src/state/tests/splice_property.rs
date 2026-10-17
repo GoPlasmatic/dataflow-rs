@@ -107,13 +107,20 @@ fn apply<'a>(
         Op::Remove(dotted) => {
             let segs = random::segs(&dotted);
             let removed = path::remove(owned, &segs);
-            let spliced = splice::remove(arena, view, &segs);
+            let spliced = splice::remove_resolved(arena, view, &segs);
             assert_eq!(
                 spliced.is_some(),
                 removed.is_some(),
                 "case {case}: remove {dotted:?}"
             );
-            spliced.unwrap_or(view)
+            if let Some((_, kinds)) = spliced {
+                assert_eq!(
+                    Some(kinds),
+                    splice::resolve(view, &segs).map(|r| r.kinds),
+                    "case {case}: remove {dotted:?} resolves"
+                );
+            }
+            spliced.map_or(view, |(root, _)| root)
         }
         Op::Append(dotted, items) => {
             let segs = random::segs(&dotted);
@@ -131,8 +138,16 @@ fn apply<'a>(
                 "case {case}: owned append {dotted:?}"
             );
             let items_av: Vec<DataValue<'a>> = items.iter().map(|v| v.to_arena(arena)).collect();
-            match splice::append(arena, view, &segs, &items_av) {
-                Ok(Some(root)) => root,
+            let existing = splice::get(view, &segs);
+            match splice::append(arena, view, &segs, existing, &items_av) {
+                Ok(Some((root, r))) => {
+                    assert_eq!(
+                        Some(r),
+                        splice::resolve(view, &segs),
+                        "case {case}: append {dotted:?} resolves"
+                    );
+                    root
+                }
                 Ok(None) => {
                     assert_eq!(got, Ok(false), "case {case}: append {dotted:?} no-op");
                     view
@@ -146,7 +161,7 @@ fn apply<'a>(
         Op::MergeRoot(key, value) => {
             let mut reference = owned.clone();
             random::v3_merge_root(&mut reference, key, value.clone());
-            random::owned_merge_root(owned, key, value.clone());
+            crate::expr::path::merge_root(owned, key, value.clone());
             assert_eq!(
                 random::exact(owned),
                 random::exact(&reference),

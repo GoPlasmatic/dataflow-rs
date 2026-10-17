@@ -663,15 +663,11 @@ pub fn parse(
     #[wasm_bindgen(unchecked_param_type = "JsonValue")] definition: JsValue,
 ) -> Result<JsValue, JsValue> {
     let raw = self::definition(&definition, "definition")?;
-    let parsed = def::parse(&raw, ParseOptions::default());
-    let definition = match &parsed.def {
-        Some(def) => Some(serde_json::to_value(def).map_err(|e| invalid("definition", e))?),
-        None => None,
+    let (definition, issues) = match dataflow_rs::compat::migrate_v3(&raw) {
+        Ok(migrated) => (Some(migrated.json), migrated.issues),
+        Err(issues) => (None, issues),
     };
-    to_js(&ParseResult {
-        definition,
-        issues: parsed.issues,
-    })
+    to_js(&ParseResult { definition, issues })
 }
 
 /// A trace read back, its `mapping_ends` checked before anything indexes by

@@ -1,7 +1,7 @@
 //! `validation`'s config: rules, each a condition and the error recorded when
 //! it fails.
 
-use crate::base::{ErrorRecord, Result};
+use crate::base::{ErrorRecord, Result, VALIDATION_ERROR};
 use crate::expr::Expr;
 use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
 use ::log::{debug, error};
@@ -44,7 +44,7 @@ impl SyncFunction for ValidationConfig {
                 // A message that fails to render still reports the failure:
                 // the rule did fail.
                 Ok(false) => (
-                    "VALIDATION_ERROR",
+                    VALIDATION_ERROR,
                     cx.eval(&rule.message)
                         .map(Cow::into_owned)
                         .unwrap_or_else(|e| {

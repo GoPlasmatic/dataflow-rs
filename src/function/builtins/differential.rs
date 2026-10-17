@@ -239,9 +239,9 @@ impl V4Task {
             now: NOW,
         });
         let error_code = outcome.as_ref().err().map(|e| e.code().to_owned());
-        let decision = decide(workflow.calls[0].policy(), task_id, outcome);
+        let decision = decide(workflow.calls[0].policy, task_id, outcome);
         if let Some((code, message)) = decision.record {
-            errors.push(task_record(&code, message, workflow_id, task_id, NOW));
+            errors.push(task_record(code, message, workflow_id, task_id, NOW));
         }
         (decision.status, error_code)
     }

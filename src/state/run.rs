@@ -336,11 +336,10 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
     /// [`Self::remove`] at segments.
     pub(crate) fn remove_segs(&mut self, segs: &[Seg]) -> bool {
         let before = self.root();
-        let Some(after) = splice::remove(self.arena(), before, segs) else {
+        let Some((after, kinds)) = splice::remove_resolved(self.arena(), before, segs) else {
             return false;
         };
-        let r = splice::resolve(before, segs).expect("an existing path resolves");
-        let at = At::new(segs, r.kinds);
+        let at = At::new(segs, kinds);
         *self.root = self.arena().alloc(after);
         // A key that comes back later moves to the end of its object, which
         // the checkpoint's in-place assignment would not do.
@@ -361,10 +360,10 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
     ) -> Result<bool, &'static str> {
         let before = self.root();
         let existing = splice::get(before, path.segs());
-        let Some(after) = splice::append(self.arena(), before, path.segs(), items)? else {
+        let Some((after, r)) = splice::append(self.arena(), before, path.segs(), existing, items)?
+        else {
             return Ok(false);
         };
-        let r = splice::resolve(before, path.segs()).expect("an append that wrote resolves");
         let at = At::new(path.segs(), r.kinds);
         *self.root = self.arena().alloc(after);
         match existing {
@@ -576,6 +575,12 @@ impl<'m, 'p> RunContext<'m, 'p> {
             State::Viewed(view) => self.reader_of(view).get(path),
             State::Taken => unreachable!("a run context is not used after its context went back"),
         }
+    }
+
+    /// [`Self::get`], owned, or `null`: a write's old value, for its
+    /// `Change`.
+    pub(crate) fn get_or_null(&self, path: &Path) -> OwnedDataValue {
+        self.get(path).map_or(OwnedDataValue::Null, Cow::into_owned)
     }
 
     /// What a host call holds across its `.await`. Builds the view first.

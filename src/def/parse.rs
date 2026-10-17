@@ -22,6 +22,7 @@ use super::types::{
     FunctionRef, GroupDef, Logic, NodeHeader, Spelling, StepDef, TaskDef, WorkflowDef, defaults,
 };
 use super::{MAX_GROUP_DEPTH, Rollout};
+use crate::base::any_rejected;
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, Severity, StepKind};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
@@ -152,10 +153,24 @@ pub(crate) fn parse_steps(
     ((!rejected).then_some(steps), walk.issues)
 }
 
+/// Whether `seg` is the key `name`.
+fn is(seg: &PathSeg, name: &str) -> bool {
+    matches!(seg, PathSeg::Key(key) if &**key == name)
+}
+
+/// Whether a fragment can sit at `root`: at a `tasks` list, or at
+/// `loop.setup`.
+pub(crate) fn holds_steps(root: &AuthoredPath) -> bool {
+    match root.segs() {
+        [loop_, setup] if is(loop_, "loop") && is(setup, "setup") => true,
+        [.., last] => is(last, "tasks"),
+        [] => false,
+    }
+}
+
 /// Where a fragment at `root` sits: under `loop.setup` or not, and inside how
 /// many groups.
-pub(super) fn fragment_place(root: &AuthoredPath) -> (bool, usize) {
-    let is = |seg: &PathSeg, name: &str| matches!(seg, PathSeg::Key(key) if &**key == name);
+pub(crate) fn fragment_place(root: &AuthoredPath) -> (bool, usize) {
     let lists = root.segs().iter().filter(|seg| is(seg, "tasks")).count();
     match root.segs() {
         [first, second, ..] if is(first, "loop") && is(second, "setup") => (true, lists),
@@ -209,7 +224,7 @@ impl<'j> Walk<'j> {
 
     /// Whether any issue so far is Rejected.
     fn rejected(&self) -> bool {
-        self.issues.iter().any(|i| i.severity == Severity::Rejected)
+        any_rejected(&self.issues)
     }
 
     /// Reports at the code's default severity.

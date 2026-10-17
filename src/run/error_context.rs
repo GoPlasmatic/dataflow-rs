@@ -8,18 +8,13 @@
 //! path's key at run start, after the stamps and before the trace's
 //! `initial` (break 20).
 
+use super::engine::slots;
 use crate::base::{Change, Error, ErrorKind, ErrorRecord, Result};
 use crate::expr::{Path, Root};
 use crate::state::RunContext;
 use datavalue::OwnedDataValue;
 use std::borrow::Cow;
 use std::sync::Arc;
-
-/// The `metadata` keys the engine writes on every run: the progress
-/// after every call, which cross-workflow chaining reads, and the run's
-/// stamps. A records array at or below one would be overwritten, or would
-/// overwrite it.
-const ENGINE_OWNED: [&str; 4] = ["progress", "processed_at", "engine_version", "channel"];
 
 /// Where the engine mirrors failure records in the context, and how many it
 /// keeps.
@@ -81,7 +76,7 @@ impl ErrorContext {
         }
         if path.root() == Root::Metadata
             && let Some(slot) = path.segs().get(1)
-            && ENGINE_OWNED.contains(&&*slot.key)
+            && slots::ALL.contains(&&*slot.key)
         {
             return Err(Error::new(
                 ErrorKind::Config,

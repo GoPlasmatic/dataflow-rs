@@ -366,6 +366,52 @@ pub enum IssueCode {
 }
 
 impl IssueCode {
+    /// Every code; kept complete by the tests' exhaustive `ordinal`.
+    const ALL: [Self; 42] = [
+        Self::EmptyWorkflowId,
+        Self::EmptyWorkflowName,
+        Self::NoTasks,
+        Self::MissingStepId,
+        Self::DuplicateStepId,
+        Self::EmptyGroup,
+        Self::GroupTooDeep,
+        Self::MissingFunction,
+        Self::InvalidFunctionName,
+        Self::InvalidTerminal,
+        Self::UnguardedValidation,
+        Self::InvalidHaltOn,
+        Self::GroupContinueOnError,
+        Self::InvalidMapping,
+        Self::NullMapping,
+        Self::LoopIncrementTooSmall,
+        Self::LoopBoundEmpty,
+        Self::LoopCounterInvalid,
+        Self::LoopSlotInvalid,
+        Self::LoopItemWithoutOver,
+        Self::LoopSlotCollision,
+        Self::LoopOverInvalid,
+        Self::InvalidForEach,
+        Self::UnknownFunction,
+        Self::MissingHandler,
+        Self::InputParse,
+        Self::TemplateCompile,
+        Self::UnknownSecret,
+        Self::SecretInMessageWrite,
+        Self::InvalidSecretStore,
+        Self::DuplicateTemplateKey,
+        Self::EscapedTemplateKey,
+        Self::ParseFailed,
+        Self::ValidateFailed,
+        Self::LikelyTypo,
+        Self::UnknownKey,
+        Self::V3Spelling,
+        Self::PayloadVar,
+        Self::OperatorInDocument,
+        Self::SecretInDocument,
+        Self::InvalidPath,
+        Self::UnresolvedReference,
+    ];
+
     /// The stable string form, SCREAMING_SNAKE, v3's spellings unchanged.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -479,6 +525,12 @@ impl fmt::Display for IssueCode {
     }
 }
 
+/// Whether any of `issues` is Rejected: a definition or a config with one
+/// does not build.
+pub(crate) fn any_rejected(issues: &[Issue]) -> bool {
+    issues.iter().any(|i| i.severity == Severity::Rejected)
+}
+
 /// A string that is not an [`IssueCode`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseIssueCodeError(String);
@@ -496,51 +548,10 @@ impl FromStr for IssueCode {
 
     /// The inverse of [`IssueCode::as_str`], for reading recordings.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        match text {
-            "EMPTY_WORKFLOW_ID" => Ok(Self::EmptyWorkflowId),
-            "EMPTY_WORKFLOW_NAME" => Ok(Self::EmptyWorkflowName),
-            "NO_TASKS" => Ok(Self::NoTasks),
-            "MISSING_STEP_ID" => Ok(Self::MissingStepId),
-            "DUPLICATE_STEP_ID" => Ok(Self::DuplicateStepId),
-            "EMPTY_GROUP" => Ok(Self::EmptyGroup),
-            "GROUP_TOO_DEEP" => Ok(Self::GroupTooDeep),
-            "MISSING_FUNCTION" => Ok(Self::MissingFunction),
-            "INVALID_FUNCTION_NAME" => Ok(Self::InvalidFunctionName),
-            "INVALID_TERMINAL" => Ok(Self::InvalidTerminal),
-            "INVALID_HALT_ON" => Ok(Self::InvalidHaltOn),
-            "GROUP_CONTINUE_ON_ERROR" => Ok(Self::GroupContinueOnError),
-            "INVALID_MAPPING" => Ok(Self::InvalidMapping),
-            "NULL_MAPPING" => Ok(Self::NullMapping),
-            "UNGUARDED_VALIDATION" => Ok(Self::UnguardedValidation),
-            "LOOP_INCREMENT_TOO_SMALL" => Ok(Self::LoopIncrementTooSmall),
-            "LOOP_BOUND_EMPTY" => Ok(Self::LoopBoundEmpty),
-            "LOOP_COUNTER_INVALID" => Ok(Self::LoopCounterInvalid),
-            "LOOP_SLOT_INVALID" => Ok(Self::LoopSlotInvalid),
-            "LOOP_ITEM_WITHOUT_OVER" => Ok(Self::LoopItemWithoutOver),
-            "LOOP_SLOT_COLLISION" => Ok(Self::LoopSlotCollision),
-            "LOOP_OVER_INVALID" => Ok(Self::LoopOverInvalid),
-            "INVALID_FOR_EACH" => Ok(Self::InvalidForEach),
-            "UNKNOWN_FUNCTION" => Ok(Self::UnknownFunction),
-            "MISSING_HANDLER" => Ok(Self::MissingHandler),
-            "INPUT_PARSE" => Ok(Self::InputParse),
-            "TEMPLATE_COMPILE" => Ok(Self::TemplateCompile),
-            "UNKNOWN_SECRET" => Ok(Self::UnknownSecret),
-            "SECRET_IN_MESSAGE_WRITE" => Ok(Self::SecretInMessageWrite),
-            "INVALID_SECRET_STORE" => Ok(Self::InvalidSecretStore),
-            "DUPLICATE_TEMPLATE_KEY" => Ok(Self::DuplicateTemplateKey),
-            "ESCAPED_TEMPLATE_KEY" => Ok(Self::EscapedTemplateKey),
-            "PARSE_FAILED" => Ok(Self::ParseFailed),
-            "VALIDATE_FAILED" => Ok(Self::ValidateFailed),
-            "LIKELY_TYPO" => Ok(Self::LikelyTypo),
-            "UNKNOWN_KEY" => Ok(Self::UnknownKey),
-            "V3_SPELLING" => Ok(Self::V3Spelling),
-            "PAYLOAD_VAR" => Ok(Self::PayloadVar),
-            "OPERATOR_IN_DOCUMENT" => Ok(Self::OperatorInDocument),
-            "SECRET_IN_DOCUMENT" => Ok(Self::SecretInDocument),
-            "INVALID_PATH" => Ok(Self::InvalidPath),
-            "UNRESOLVED_REFERENCE" => Ok(Self::UnresolvedReference),
-            _ => Err(ParseIssueCodeError(text.to_string())),
-        }
+        Self::ALL
+            .into_iter()
+            .find(|code| code.as_str() == text)
+            .ok_or_else(|| ParseIssueCodeError(text.to_string()))
     }
 }
 
@@ -782,52 +793,6 @@ mod tests {
     use serde_json::{Value, json};
     use std::collections::HashSet;
 
-    /// Every [`IssueCode`]; kept complete by [`ordinal`].
-    const ALL_CODES: [IssueCode; 42] = [
-        IssueCode::EmptyWorkflowId,
-        IssueCode::EmptyWorkflowName,
-        IssueCode::NoTasks,
-        IssueCode::MissingStepId,
-        IssueCode::DuplicateStepId,
-        IssueCode::EmptyGroup,
-        IssueCode::GroupTooDeep,
-        IssueCode::MissingFunction,
-        IssueCode::InvalidFunctionName,
-        IssueCode::InvalidTerminal,
-        IssueCode::UnguardedValidation,
-        IssueCode::InvalidHaltOn,
-        IssueCode::GroupContinueOnError,
-        IssueCode::InvalidMapping,
-        IssueCode::NullMapping,
-        IssueCode::LoopIncrementTooSmall,
-        IssueCode::LoopBoundEmpty,
-        IssueCode::LoopCounterInvalid,
-        IssueCode::LoopSlotInvalid,
-        IssueCode::LoopItemWithoutOver,
-        IssueCode::LoopSlotCollision,
-        IssueCode::LoopOverInvalid,
-        IssueCode::InvalidForEach,
-        IssueCode::UnknownFunction,
-        IssueCode::MissingHandler,
-        IssueCode::InputParse,
-        IssueCode::TemplateCompile,
-        IssueCode::UnknownSecret,
-        IssueCode::SecretInMessageWrite,
-        IssueCode::InvalidSecretStore,
-        IssueCode::DuplicateTemplateKey,
-        IssueCode::EscapedTemplateKey,
-        IssueCode::ParseFailed,
-        IssueCode::ValidateFailed,
-        IssueCode::LikelyTypo,
-        IssueCode::UnknownKey,
-        IssueCode::V3Spelling,
-        IssueCode::PayloadVar,
-        IssueCode::OperatorInDocument,
-        IssueCode::SecretInDocument,
-        IssueCode::InvalidPath,
-        IssueCode::UnresolvedReference,
-    ];
-
     /// A distinct index per variant, with no wildcard arm: adding a code stops
     /// this compiling until it is given one.
     fn ordinal(code: IssueCode) -> usize {
@@ -879,14 +844,14 @@ mod tests {
 
     #[test]
     fn all_codes_lists_every_variant() {
-        assert_eq!(ALL_CODES.len(), 42);
-        let indices: HashSet<usize> = ALL_CODES.iter().copied().map(ordinal).collect();
-        assert_eq!(indices, (0..ALL_CODES.len()).collect::<HashSet<_>>());
+        assert_eq!(IssueCode::ALL.len(), 42);
+        let indices: HashSet<usize> = IssueCode::ALL.iter().copied().map(ordinal).collect();
+        assert_eq!(indices, (0..IssueCode::ALL.len()).collect::<HashSet<_>>());
     }
 
     #[test]
     fn every_code_round_trips_through_its_string() {
-        for code in ALL_CODES {
+        for code in IssueCode::ALL {
             assert_eq!(code.as_str().parse::<IssueCode>(), Ok(code), "{code:?}");
         }
         assert!("NOT_A_CODE".parse::<IssueCode>().is_err());
@@ -895,7 +860,7 @@ mod tests {
     #[test]
     fn code_strings_are_distinct_and_screaming_snake() {
         let mut seen = HashSet::new();
-        for code in ALL_CODES {
+        for code in IssueCode::ALL {
             assert!(seen.insert(code.as_str()), "duplicate string for {code:?}");
             assert_eq!(code.to_string(), code.as_str());
             assert!(
@@ -910,7 +875,7 @@ mod tests {
     #[test]
     fn the_advisory_and_defect_sets_are_exactly_these() {
         let by = |want: Severity| -> HashSet<&'static str> {
-            ALL_CODES
+            IssueCode::ALL
                 .iter()
                 .filter(|c| c.severity() == want)
                 .map(|c| c.as_str())
@@ -937,7 +902,7 @@ mod tests {
                 "UNRESOLVED_REFERENCE",
             ])
         );
-        assert_eq!(by(Severity::Rejected).len(), ALL_CODES.len() - 11);
+        assert_eq!(by(Severity::Rejected).len(), IssueCode::ALL.len() - 11);
         assert!(by(Severity::Rejected).contains("SECRET_IN_DOCUMENT"));
         assert!(by(Severity::Rejected).contains("INVALID_PATH"));
     }
@@ -1129,7 +1094,7 @@ mod tests {
             let value = serde_json::to_value(severity).unwrap();
             assert_eq!(serde_json::from_value::<Severity>(value).unwrap(), severity);
         }
-        for code in ALL_CODES {
+        for code in IssueCode::ALL {
             let value = serde_json::to_value(code).unwrap();
             assert_eq!(value, code.as_str());
             assert_eq!(serde_json::from_value::<IssueCode>(value).unwrap(), code);

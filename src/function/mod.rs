@@ -120,7 +120,8 @@ pub mod __private {
         })
     }
 
-    fn missing(key: &str, cx: &mut CompileCx<'_>) {
+    /// `INPUT_PARSE` for a required field the input leaves out.
+    pub(crate) fn missing(key: &str, cx: &mut CompileCx<'_>) {
         cx.issue(IssueCode::InputParse, format!("missing field `{key}`"));
     }
 

@@ -9,7 +9,7 @@ pub(crate) mod splice;
 pub(crate) mod tests;
 mod writes;
 
-pub(crate) use run::{Edit, Reader, RunContext, Stats, Tuning};
+pub(crate) use run::{Edit, Owner, Reader, RunContext, Stats, Tuning};
 pub(crate) use splice::kind;
 pub(crate) use writes::Lookup;
 // What only the tests name from outside `writes` so far. `Owner` and `At` are

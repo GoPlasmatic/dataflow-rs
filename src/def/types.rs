@@ -109,12 +109,6 @@ impl WorkflowDef {
     }
 }
 
-/// Whether the steps of a fragment that [`parse_steps`](super::parse_steps)
-/// read at `root` are setup steps: `root` is under `loop.setup`.
-pub(crate) fn fragment_is_setup(root: &AuthoredPath) -> bool {
-    super::parse::fragment_place(root).0
-}
-
 /// Appends `steps` and their members to `out`, pre-order.
 fn collect<'d>(
     steps: &'d [StepDef],

@@ -40,6 +40,14 @@ pub enum ErrorKind {
     },
 }
 
+/// The code of a task's own failure: a `Service` error with no code, and a
+/// 5xx status's failure.
+pub(crate) const TASK_ERROR: &str = "TASK_ERROR";
+/// The record a 5xx status adds.
+pub(crate) const TASK_STATUS_ERROR: &str = "TASK_STATUS_ERROR";
+/// The record of a failed validation rule, and a built-in's refused input.
+pub(crate) const VALIDATION_ERROR: &str = "VALIDATION_ERROR";
+
 impl Error {
     pub(crate) fn new(kind: ErrorKind, message: impl Into<Cow<'static, str>>) -> Self {
         Self {
@@ -111,7 +119,7 @@ impl Error {
             ErrorKind::Cancelled => "CANCELLED",
             ErrorKind::Config => "CONFIG_ERROR",
             ErrorKind::Compile => "COMPILATION_ERROR",
-            ErrorKind::Service { code } if code.is_empty() => "TASK_ERROR",
+            ErrorKind::Service { code } if code.is_empty() => TASK_ERROR,
             ErrorKind::Service { code } => code,
         }
     }

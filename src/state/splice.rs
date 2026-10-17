@@ -161,16 +161,31 @@ pub(crate) fn remove<'a>(
     root: DataValue<'a>,
     segs: &[Seg],
 ) -> Option<DataValue<'a>> {
-    let (seg, rest) = segs.split_first()?;
-    remove_in(arena, root, seg, rest)
+    remove_resolved(arena, root, segs).map(|(root, _)| root)
 }
 
-/// One level of [`remove`].
+/// [`remove`], also reporting the `kinds` [`resolve`] would have: bit `i`
+/// set when segment `i` is an array index. One walk where a removal needs
+/// both.
+pub(crate) fn remove_resolved<'a>(
+    arena: &'a Bump,
+    root: DataValue<'a>,
+    segs: &[Seg],
+) -> Option<(DataValue<'a>, u64)> {
+    let (seg, rest) = segs.split_first()?;
+    let mut kinds = 0;
+    let root = remove_in(arena, root, seg, rest, 0, &mut kinds)?;
+    Some((root, kinds))
+}
+
+/// One level of [`remove_resolved`], at segment `depth`.
 fn remove_in<'a>(
     arena: &'a Bump,
     node: DataValue<'a>,
     seg: &Seg,
     rest: &[Seg],
+    depth: usize,
+    kinds: &mut u64,
 ) -> Option<DataValue<'a>> {
     match node {
         DataValue::Object(pairs) => {
@@ -178,7 +193,7 @@ fn remove_in<'a>(
             Some(DataValue::Object(match rest.split_first() {
                 None => without(arena, pairs, at),
                 Some((next, rest)) => {
-                    let child = remove_in(arena, pairs[at].1, next, rest)?;
+                    let child = remove_in(arena, pairs[at].1, next, rest, depth + 1, kinds)?;
                     replaced(arena, pairs, at, child)
                 }
             }))
@@ -188,10 +203,11 @@ fn remove_in<'a>(
             if at >= items.len() {
                 return None;
             }
+            *kinds |= 1 << depth;
             Some(DataValue::Array(match rest.split_first() {
                 None => without(arena, items, at),
                 Some((next, rest)) => {
-                    let child = remove_in(arena, items[at], next, rest)?;
+                    let child = remove_in(arena, items[at], next, rest, depth + 1, kinds)?;
                     arena.alloc_slice_fill_with(
                         items.len(),
                         |i| if i == at { child } else { items[i] },
@@ -203,10 +219,12 @@ fn remove_in<'a>(
     }
 }
 
-/// `map`'s append and extend: `Ok(Some(root))` with `items` added to the
-/// array at `segs` (created over a missing or `null` target), `Ok(None)` when
-/// the path is unreachable, which v3 treats as success with nothing written,
-/// and `Err` naming the kind of any other target.
+/// `map`'s append and extend: `Ok(Some((root, resolved)))` with `items`
+/// added to the array at `segs` (created over a missing or `null` target),
+/// and what [`resolve`] would have reported for `segs`; `Ok(None)` when the
+/// path is unreachable, which v3 treats as success with nothing written,
+/// and `Err` naming the kind of any other target. `existing` is what
+/// [`get`] finds at `segs`, which the caller has read.
 ///
 /// The new array is a shallow copy of the old slice plus the items: O(array)
 /// pointer copies in the arena, never a conversion, as v3's append is.
@@ -214,9 +232,10 @@ pub(crate) fn append<'a>(
     arena: &'a Bump,
     root: DataValue<'a>,
     segs: &[Seg],
+    existing: Option<DataValue<'a>>,
     items: &[DataValue<'a>],
-) -> Result<Option<DataValue<'a>>, &'static str> {
-    let array = match get(root, segs) {
+) -> Result<Option<(DataValue<'a>, Resolved)>, &'static str> {
+    let array = match existing {
         None | Some(DataValue::Null) => DataValue::Array(arena.alloc_slice_copy(items)),
         Some(DataValue::Array(old)) => {
             DataValue::Array(arena.alloc_slice_fill_with(old.len() + items.len(), |i| {
@@ -229,7 +248,7 @@ pub(crate) fn append<'a>(
         }
         Some(other) => return Err(kind(&other)),
     };
-    Ok(set(arena, root, segs, array))
+    Ok(set_resolved(arena, root, segs, array))
 }
 
 /// `map`'s write to a root slot: two objects merge, existing keys replaced in

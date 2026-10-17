@@ -46,15 +46,25 @@ impl ParseConfig {
         let from = self.source.resolve(cx)?;
         let target = self.target.path(cx)?;
         debug!("ParseJson: Extracting from '{}' to '{target}'", from.text());
-        let (value, hint) = match lookup(cx.payload, cx.rc, &from).as_deref() {
+        // A value converted from the view is moved, and only a borrowed one
+        // is copied.
+        let (value, hint) = match lookup(cx.payload, cx.rc, &from) {
             None => (OwnedDataValue::Null, None),
-            Some(OwnedDataValue::String(s)) => (
-                OwnedDataValue::from_json(s).unwrap_or_else(|_| OwnedDataValue::String(s.clone())),
-                Some(s.len()),
-            ),
-            Some(other) => (other.clone(), None),
+            Some(found) => {
+                let parsed = match &*found {
+                    OwnedDataValue::String(s) => Some((OwnedDataValue::from_json(s).ok(), s.len())),
+                    _ => None,
+                };
+                match parsed {
+                    Some((Some(json), len)) => (json, Some(len)),
+                    // Not JSON: the string as it is.
+                    Some((None, len)) => (found.into_owned(), Some(len)),
+                    None => (found.into_owned(), None),
+                }
+            }
         };
-        write(cx, &target, value, hint);
+        cx.write(&target, value, hint);
+        debug!("Parse: Successfully stored data to '{target}'");
         Ok(Outcome::Ok)
     }
 
@@ -78,27 +88,10 @@ impl ParseConfig {
             }
         };
         let target = self.target.path(cx)?;
-        write(cx, &target, parsed, Some(len));
+        cx.write(&target, parsed, Some(len));
+        debug!("Parse: Successfully stored data to '{target}'");
         Ok(Outcome::Ok)
     }
-}
-
-/// Writes `value` at `target`, recording the change under capture.
-fn write(
-    cx: &mut SyncCtx<'_, '_, '_>,
-    target: &crate::expr::Path,
-    value: OwnedDataValue,
-    hint: Option<usize>,
-) {
-    if cx.capture {
-        let old = cx
-            .rc
-            .get(target)
-            .map_or(OwnedDataValue::Null, Cow::into_owned);
-        cx.change(target.dotted().clone(), old, value.clone(), false);
-    }
-    cx.rc.set(target, value, hint);
-    debug!("Parse: Successfully stored data to '{target}'");
 }
 
 #[cfg(test)]

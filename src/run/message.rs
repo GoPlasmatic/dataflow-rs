@@ -4,7 +4,6 @@ use crate::base::{Change, Context, ErrorRecord, Result};
 use crate::expr::Path;
 use chrono::{DateTime, Utc};
 use datavalue::OwnedDataValue;
-use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -74,56 +73,21 @@ impl Context {
 /// Read from JSON as v3's is: the five fields, each required, any other key
 /// ignored. Its context reads by [`Context`]'s rules, so a fourth root is
 /// refused (break 22).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     id: String,
+    /// Read back as v4 wrote it.
+    #[serde(deserialize_with = "payload")]
     payload: Arc<OwnedDataValue>,
     context: Context,
+    #[serde(rename = "audit_trail")]
     audit: Vec<AuditEntry>,
     errors: Vec<ErrorRecord>,
 }
 
-impl Serialize for Message {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        let mut st = s.serialize_struct("Message", 5)?;
-        st.serialize_field("id", &self.id)?;
-        st.serialize_field("payload", &self.payload)?;
-        st.serialize_field("context", &self.context)?;
-        st.serialize_field("audit_trail", &self.audit)?;
-        st.serialize_field("errors", &self.errors)?;
-        st.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for Message {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        /// The wire shape, as v3's `Message` reads it, each value read
-        /// back as v4 wrote it.
-        #[derive(Deserialize)]
-        struct Wire {
-            id: String,
-            #[serde(deserialize_with = "payload")]
-            payload: Arc<OwnedDataValue>,
-            context: Context,
-            audit_trail: Vec<AuditEntry>,
-            errors: Vec<ErrorRecord>,
-        }
-
-        fn payload<'de, D: Deserializer<'de>>(
-            d: D,
-        ) -> std::result::Result<Arc<OwnedDataValue>, D::Error> {
-            crate::base::exact(d).map(Arc::new)
-        }
-
-        let wire = Wire::deserialize(d)?;
-        Ok(Self {
-            id: wire.id,
-            payload: wire.payload,
-            context: wire.context,
-            audit: wire.audit_trail,
-            errors: wire.errors,
-        })
-    }
+/// A message's payload, read back exactly as v4 wrote it.
+fn payload<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Arc<OwnedDataValue>, D::Error> {
+    crate::base::exact(d).map(Arc::new)
 }
 
 #[cfg(feature = "ts")]

@@ -2,7 +2,7 @@
 
 use super::config::ValueKind;
 use super::path::Path;
-use super::walk::secret_refs;
+use super::walk::reads_secret;
 use crate::base::{Error, ErrorKind};
 use datalogic_rs::Logic;
 use datavalue::{DataValue, NumberValue, OwnedDataValue};
@@ -290,7 +290,7 @@ impl<T: FromValue> Expr<T> {
     /// expression names the secret, never its value.
     pub(crate) fn convert(&self, view: &DataValue<'_>) -> crate::Result<T> {
         T::from_view(view).map_err(|why| {
-            let message = if secret_refs(&self.raw).next().is_some() {
+            let message = if reads_secret(&self.raw) {
                 format!("`{}` did not give {}", self.raw, T::type_name())
             } else {
                 format!("`{}` did not give {}: {why}", self.raw, T::type_name())

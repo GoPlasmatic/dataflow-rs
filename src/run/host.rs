@@ -19,7 +19,7 @@
 use super::cancel::{Limits, race};
 use super::interp::RunEnv;
 use super::policy::{self, Flow};
-use super::record::{self, Completed, Stamp, TaskIds};
+use super::record::{self, Completed, Stamp};
 use crate::base::{Change, ErrorRecord, Result, TaskIx};
 use crate::expr::Path;
 use crate::function::{BoundCall, CallInfo, CallLayer, CallStart, Ctx, Next, Outcome, Overlay};
@@ -48,23 +48,12 @@ pub(crate) fn call_start<'c, 'r: 'c, 'p: 'c>(
     wf: &'c CompiledWorkflow,
     site: &CallSite,
 ) -> (CallStart<'c>, Layers<'c>) {
-    let task = &wf.tasks[site.task as usize];
     let start = CallStart {
         reader,
         binding: None,
         payload: env.payload,
         exprs: env.exprs,
-        info: CallInfo {
-            program: env.program,
-            workflow: env.workflow_ix,
-            task: TaskIx::new(env.task_base + site.task),
-            function: &task.function,
-            workflow_id: &wf.id,
-            task_id: &task.id,
-            channel: env.channel,
-            loop_counter: env.frame.loop_counter,
-            element_index: None,
-        },
+        info: env.call_info(wf, site.task, Stamp::sweep(env)),
         deadline: env.limits.deadline,
         cancel: env.limits.cancel,
         capture: env.capture,
@@ -74,6 +63,33 @@ pub(crate) fn call_start<'c, 'r: 'c, 'p: 'c>(
         registry: wf.registry.layers(),
     };
     (start, layers)
+}
+
+impl<'r> RunEnv<'r, '_> {
+    /// The [`CallInfo`] of `wf`'s task at row `task`, at `stamp`: what the
+    /// call is handed, and what its `TaskFinished` tells.
+    pub(crate) fn call_info<'c>(
+        &self,
+        wf: &'c CompiledWorkflow,
+        task: u32,
+        stamp: Stamp,
+    ) -> CallInfo<'c>
+    where
+        'r: 'c,
+    {
+        let meta = &wf.tasks[task as usize];
+        CallInfo {
+            program: self.program,
+            workflow: self.workflow_ix,
+            task: TaskIx::new(self.task_base + task),
+            function: &meta.function,
+            workflow_id: &wf.id,
+            task_id: &meta.id,
+            channel: self.channel,
+            loop_counter: stamp.loop_counter,
+            element_index: stamp.element_index,
+        }
+    }
 }
 
 /// What one call left: its result, and what it wrote and recorded.
@@ -207,10 +223,7 @@ pub(crate) async fn call_host<'p>(
     let elapsed = started.map(record::since);
     // Read after the call, so the run's future keeps neither across its
     // `.await`: nothing pushes to the message's records while it runs.
-    let ids = TaskIds {
-        workflow: env.workflow_id,
-        task: &env.task_ids[site.task as usize],
-    };
+    let task_id = env.ids(site.task).task;
     let errors_before = env.errors.len();
     if result.is_ok() {
         overlay.apply(rc);
@@ -219,22 +232,17 @@ pub(crate) async fn call_host<'p>(
     let marked = replaces_a_root(&env.changes);
     keep_records(env, errors, None);
     let decision = match result {
-        Err(e) if cut_short => policy::cut_short(ids.task, e),
-        result => policy::decide(site.policy(), ids.task, result),
+        Err(e) if cut_short => policy::cut_short(task_id, e),
+        result => policy::decide(site.policy, task_id, result),
     };
     let done = Completed {
-        ids,
         task: site.task,
         stamp: Stamp::sweep(env),
-        status: decision.status,
-        record: decision.record,
-        failed: matches!(decision.flow, Flow::Fail(_) | Flow::Stop(_)),
         elapsed,
         errors_before,
         marked,
     };
-    record::record(rc, env, wf, done);
-    decision.flow
+    record::record(rc, env, wf, done, decision)
 }
 
 /// Whether a host call's `changes` replace a root: the recorder then

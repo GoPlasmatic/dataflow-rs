@@ -6,11 +6,8 @@ use super::keys::{Ext, FOR_EACH};
 use super::loops::{is_slot_path, over_literal_problem, slots_overlap};
 use super::parse::Walk;
 use super::types::{ForEachDef, Logic, defaults};
-use crate::base::{AuthoredPath, IssueCode};
+use crate::base::{AuthoredPath, IssueCode, ROOTS};
 use serde_json::{Map, Value};
-
-/// The three roots every context path starts at.
-const ROOTS: [&str; 3] = ["data", "metadata", "temp_data"];
 
 /// Whether `path` names a key below a context root, such as `temp_data.m`.
 fn is_context_path(path: &str) -> bool {

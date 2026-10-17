@@ -20,4 +20,4 @@ pub(crate) use compile::{CalleeAt, compile_callee, refused};
 pub use compile::{CompileOptions, Compiled, CompiledWorkflow, Compiler, ResourceOracle};
 pub use fingerprint::{Fingerprint, ParseFingerprintError};
 pub use link::{Program, TaskInfo, WorkflowInfo};
-pub(crate) use ops::{CallSite, Callee, CondKind, FanSite, LoopSite, Op};
+pub(crate) use ops::{CallSite, Callee, CondKind, FanSite, LoopSite, Op, Policy};

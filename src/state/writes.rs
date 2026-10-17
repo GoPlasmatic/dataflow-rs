@@ -682,20 +682,17 @@ impl Writes {
     pub(crate) fn mark(&mut self, at: At<'_>, new: Mark) {
         debug_assert!(!at.is_empty(), "a write has a path");
         let element = removes_an_element(at, &new);
+        let mut new = new;
         let mut n = 0u32;
         for i in 0..at.len() {
             if let Some(above) = self.nodes[n as usize].mark.as_mut() {
                 return absorb(above, at, i, new);
             }
-            // An element's removal rewrites its array, unless an owned
-            // ancestor, met above, applied it instead.
+            // An element's removal rewrites its array, marked here, unless
+            // an owned ancestor, met above, applied it instead.
             if element && i + 1 == at.len() {
-                let has_children = self.nodes[n as usize].first != NONE;
-                self.unlink_children(n);
-                let node = &mut self.nodes[n as usize];
-                node.reorder = false;
-                node.mark = Some(combine(node.mark.take(), Mark::Set(None), has_children));
-                return;
+                new = Mark::Set(None);
+                break;
             }
             n = self.child(n, at, i);
         }

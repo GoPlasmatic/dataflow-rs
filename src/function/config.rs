@@ -215,11 +215,7 @@ impl FunctionConfig for () {
         let before = cx.rejected();
         match input {
             Value::Null => {}
-            Value::Object(map) => {
-                for key in map.keys() {
-                    cx.at(key.as_str(), |cx| cx.unknown_key(key, &[]));
-                }
-            }
+            Value::Object(map) => super::__private::unknown_keys(map, &[], cx),
             _ => cx.issue(
                 IssueCode::InputParse,
                 "expected an object or null, this function takes no input",

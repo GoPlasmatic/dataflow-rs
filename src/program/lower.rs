@@ -54,24 +54,7 @@ impl Lower {
 
     /// Points the op at `at`, which has one forward target, to `to`.
     fn patch(&mut self, at: usize, to: u32) {
-        match &mut self.ops[at] {
-            Op::Cond {
-                else_to: target, ..
-            }
-            | Op::Call {
-                fail_to: target, ..
-            }
-            | Op::FanOut {
-                fail_to: target, ..
-            }
-            | Op::LoopInit {
-                exit_to: target, ..
-            }
-            | Op::LoopNext {
-                exit_to: target, ..
-            } => *target = to,
-            Op::Halt => unreachable!("a `Halt` has no target"),
-        }
+        *self.ops[at].forward_mut().expect("a `Halt` has no target") = to;
     }
 
     /// Sends the op at `at`'s failures to the `LoopNext` in a loop body, and
@@ -177,32 +160,13 @@ impl Lower {
     }
 }
 
-/// An op's jump targets.
+/// An op's jump targets: its forward one, and a `LoopNext`'s `body_to`.
 fn targets(op: Op) -> impl Iterator<Item = u32> {
-    let (first, second) = match op {
-        Op::Cond { else_to: to, .. }
-        | Op::Call { fail_to: to, .. }
-        | Op::FanOut { fail_to: to, .. }
-        | Op::LoopInit { exit_to: to, .. } => (Some(to), None),
-        Op::LoopNext {
-            body_to, exit_to, ..
-        } => (Some(body_to), Some(exit_to)),
-        Op::Halt => (None, None),
+    let back = match op {
+        Op::LoopNext { body_to, .. } => Some(body_to),
+        _ => None,
     };
-    first.into_iter().chain(second)
-}
-
-/// The target of `op` that must lie ahead of it: every target but a
-/// `LoopNext`'s `body_to`, which goes back to the start of its sweep.
-fn ahead(op: Op) -> Option<u32> {
-    match op {
-        Op::Cond { else_to: to, .. }
-        | Op::Call { fail_to: to, .. }
-        | Op::FanOut { fail_to: to, .. }
-        | Op::LoopInit { exit_to: to, .. }
-        | Op::LoopNext { exit_to: to, .. } => Some(to),
-        Op::Halt => None,
-    }
+    op.forward().into_iter().chain(back)
 }
 
 /// Whether `index` is a row of a table of `len`, else why not.
@@ -218,6 +182,23 @@ fn in_range(pc: usize, table: &str, index: u32, len: usize) -> Result<usize, Str
 }
 
 impl CompiledWorkflow {
+    /// Whether a workflow condition is the first thing the workflow judges:
+    /// its first op, or, in a loop without setup or `over`, the first
+    /// sweep's, as the lowering places it.
+    pub(crate) fn judged_first(&self) -> bool {
+        let first = match self.ops.first() {
+            Some(Op::LoopInit { .. }) => self.ops.get(1),
+            first => first,
+        };
+        matches!(
+            first,
+            Some(Op::Cond {
+                kind: CondKind::Workflow,
+                ..
+            })
+        )
+    }
+
     /// The ops, one line each, `{pc:>2} {op}`: the snapshot contract, so
     /// every lowering change shows as a diff. A target is its op index, or
     /// `end` when it is the end.
@@ -250,7 +231,7 @@ impl CompiledWorkflow {
             if let Some(to) = targets(op).find(|&to| to as usize > end) {
                 return Err(format!("op {pc} jumps to {to}, past the end at {end}"));
             }
-            if let Some(to) = ahead(op).filter(|&to| to as usize <= pc) {
+            if let Some(to) = op.forward().filter(|&to| to as usize <= pc) {
                 return Err(format!(
                     "op {pc} jumps back to {to}: only a LoopNext's body jumps back"
                 ));
@@ -354,7 +335,11 @@ impl fmt::Display for Listing<'_> {
                 id,
                 function,
                 kind,
-                if site.terminal { " terminal" } else { "" },
+                if site.policy.terminal {
+                    " terminal"
+                } else {
+                    ""
+                },
             )
         };
         for (pc, &op) in wf.ops.iter().enumerate() {
