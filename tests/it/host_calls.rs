@@ -473,8 +473,9 @@ async fn a_constant_is_lent() {
 #[tokio::test]
 async fn an_err_drops_the_calls_writes_and_keeps_its_records() {
     // Break 1 (the corpus's `breaks/handler_writes_then_err`): the writes
-    // are dropped. The record a call adds (`run/host_contract`) is kept as
-    // given, with the run's timestamp, before the recorder's own.
+    // are dropped. The record a call adds (`run/host_contract`) is kept,
+    // stamped with the task's ids and the run's timestamp, before the
+    // recorder's own.
     let failing = probe(
         "t",
         json!([]),
@@ -499,7 +500,7 @@ async fn an_err_drops_the_calls_writes_and_keeps_its_records() {
         serde_json::to_value(m.errors()).unwrap(),
         json!([
             {"code": "HOST_WARNING", "message": "recorded by the handler", "path": null,
-             "timestamp": processed_at},
+             "workflow_id": "w", "task_id": "t", "timestamp": processed_at},
             {"code": "PARTNER_DOWN", "message": "Task t error: down", "path": null,
              "workflow_id": "w", "task_id": "t", "timestamp": processed_at}
         ])

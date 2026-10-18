@@ -176,122 +176,156 @@ impl serde::Serialize for AuthoredPath {
     }
 }
 
-/// What an issue is about. v3's 34 codes in v3's order, then the eight v4 adds.
-///
-/// `#[non_exhaustive]`: use [`Self::as_str`] to serialize.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum IssueCode {
+/// The `IssueCode` table: each row a variant, its documentation, its stable
+/// string and its default severity. A row without a severity does not
+/// compile, so a new code is always classified deliberately, never by a
+/// wildcard (a new advisory must not arrive as a silent rejection in a
+/// host's screen). One row is the whole cost of a code.
+macro_rules! issue_codes {
+    ($($(#[$doc:meta])* $code:ident = $text:literal, $severity:ident;)*) => {
+        /// What an issue is about: v3's codes, then v4's.
+        ///
+        /// `#[non_exhaustive]`: use [`Self::as_str`] to serialize.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
+        pub enum IssueCode {
+            $($(#[$doc])* $code,)*
+        }
+
+        impl IssueCode {
+            /// Every code, in the table's order: v3's, then v4's.
+            pub const ALL: &'static [Self] = &[$(Self::$code),*];
+
+            /// The stable string form, SCREAMING_SNAKE, v3's spellings
+            /// unchanged.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$code => $text,)*
+                }
+            }
+
+            /// The default severity of an issue carrying this code. An
+            /// issue may carry a different one ([`Issue::with_severity`]).
+            pub fn severity(self) -> Severity {
+                match self {
+                    $(Self::$code => Severity::$severity,)*
+                }
+            }
+        }
+    };
+}
+
+issue_codes! {
     /// `id` is missing or empty.
-    EmptyWorkflowId,
+    EmptyWorkflowId = "EMPTY_WORKFLOW_ID", Rejected;
     /// `tasks` is missing, not an array, or empty.
-    NoTasks,
+    NoTasks = "NO_TASKS", Rejected;
     /// A step carries no `id`.
-    MissingStepId,
+    MissingStepId = "MISSING_STEP_ID", Rejected;
     /// Two steps share an id. Groups share the task id namespace.
-    DuplicateStepId,
+    DuplicateStepId = "DUPLICATE_STEP_ID", Rejected;
     /// A group's `tasks` is not a non-empty array.
-    EmptyGroup,
+    EmptyGroup = "EMPTY_GROUP", Rejected;
     /// A group is nested at or beyond
     /// `MAX_GROUP_DEPTH`.
-    GroupTooDeep,
+    GroupTooDeep = "GROUP_TOO_DEEP", Rejected;
     /// A task carries no `function`.
-    MissingFunction,
+    MissingFunction = "MISSING_FUNCTION", Rejected;
     /// `function` is not an object, or its `name` is missing or empty.
-    InvalidFunctionName,
+    InvalidFunctionName = "INVALID_FUNCTION_NAME", Rejected;
     /// `terminal` is present but not a boolean.
-    InvalidTerminal,
+    InvalidTerminal = "INVALID_TERMINAL", Rejected;
     /// A `validation` task whose failure cannot stop anything: it is not
     /// `terminal`, its `on_rejection` is `continue`, and every task after it in
     /// the workflow is unguarded. A failing rule returns `400`, a rejection,
     /// so the pipeline proceeds as if it had passed.
     ///
-    /// [`Severity::Advisory`] — reported by
-    /// `Compiler::check` and never a reason to
+    /// [`Severity::Advisory`] — reported by the compat reader in
+    /// [`def::parse`](crate::def::parse) and never a reason to
     /// refuse. Validating purely to record errors is a
     /// legitimate shape; this only says the assertion is not acting as a gate.
-    UnguardedValidation,
+    UnguardedValidation = "UNGUARDED_VALIDATION", Advisory;
     /// `halt_on` is present and is not one of the accepted strings, or is
     /// present on a *group* — a group has no outcome of its own, so the
     /// executor could not honour it.
-    InvalidHaltOn,
+    InvalidHaltOn = "INVALID_HALT_ON", Rejected;
     /// A task group carries `continue_on_error`, which the engine drops. Error
     /// handling is per task and per workflow; a group only gates a span.
     ///
-    /// [`Severity::Advisory`] — reported by
-    /// `Compiler::check` and never a reason to
+    /// [`Severity::Advisory`] — reported by the compat reader in
+    /// [`def::parse`](crate::def::parse) and never a reason to
     /// refuse. Unlike [`Self::InvalidHaltOn`], which
     /// the parser refuses outright, this key is real at the other two levels
     /// and may already sit on a host's group nodes; refusing it would abort
     /// every workflow in the build.
-    GroupContinueOnError,
+    GroupContinueOnError = "GROUP_CONTINUE_ON_ERROR", Advisory;
     /// A `map` mapping breaks a rule between its keys: it has neither `logic`
     /// nor `"unset": true`, or both; it carries `on_null` or `mode` without
     /// `logic`; or it would remove or append to a context root (`data`,
     /// `metadata`, `temp_data`) by a literal path. Reported at the offending key, e.g.
     /// `tasks[0].function.input.mappings[2].unset`.
-    InvalidMapping,
+    InvalidMapping = "INVALID_MAPPING", Rejected;
     /// A `map` mapping whose `logic` always evaluates to `null` — `"logic":
     /// null`, or anything that folds to it — under the default
     /// `on_null: "skip"`. A null result is skipped, so the mapping can never
     /// write anything; it usually stands where the author meant to clear the
     /// path, which is `"unset": true`.
     ///
-    /// [`Severity::Advisory`] — reported by
-    /// `Compiler::check` and never a reason to
+    /// [`Severity::Advisory`] — reported by the compat reader in
+    /// [`def::parse`](crate::def::parse) and never a reason to
     /// refuse. The mapping is a no-op, not an error,
     /// and refusing it would fail every build that already carries one.
-    NullMapping,
+    NullMapping = "NULL_MAPPING", Advisory;
     /// `loop.increment` is below 1 — the counter would never reach `max`.
-    LoopIncrementTooSmall,
+    LoopIncrementTooSmall = "LOOP_INCREMENT_TOO_SMALL", Rejected;
     /// `loop.max` is not greater than `loop.init` — no sweep could ever run.
-    LoopBoundEmpty,
+    LoopBoundEmpty = "LOOP_BOUND_EMPTY", Rejected;
     /// `loop.counter` is not a non-empty dotted path.
-    LoopCounterInvalid,
+    LoopCounterInvalid = "LOOP_COUNTER_INVALID", Rejected;
     /// `loop.as` or `loop.scratch` is not a non-empty dotted path.
-    LoopSlotInvalid,
+    LoopSlotInvalid = "LOOP_SLOT_INVALID", Rejected;
     /// `loop.as` names a slot for the current element, but there is no
     /// `loop.over` to take elements from.
-    LoopItemWithoutOver,
+    LoopItemWithoutOver = "LOOP_ITEM_WITHOUT_OVER", Rejected;
     /// Two of `loop.counter`, `loop.as` and `loop.scratch` name the same
     /// `temp_data` path, or one lies inside the other — a per-iteration reset
     /// of one would wipe the other. Reported at the later of the two fields.
-    LoopSlotCollision,
+    LoopSlotCollision = "LOOP_SLOT_COLLISION", Rejected;
     /// `loop.over` can never yield an array: it is a scalar literal (a string,
     /// number, boolean or `null`), or `loop.init` is negative, which no array
     /// index can be. Reported at `loop.over` or `loop.init` respectively.
-    LoopOverInvalid,
+    LoopOverInvalid = "LOOP_OVER_INVALID", Rejected;
     /// A task's `for_each` breaks one of its rules — `over` a scalar literal,
     /// `as` not a slot path, `max_concurrency` of `0`, `collect` without
     /// `into` or the reverse, a result path outside the context, a `collect`
     /// or `into` overlapping a binding — or sits on a built-in function, or on
     /// a task group. Reported at the offending key, e.g.
     /// `tasks[0].for_each.max_concurrency`, or at `…for_each` itself.
-    InvalidForEach,
+    InvalidForEach = "INVALID_FOR_EACH", Rejected;
     /// No handler will dispatch this function name, and it is not a built-in.
     /// Usually a typo or a handler the host forgot to register.
-    UnknownFunction,
+    UnknownFunction = "UNKNOWN_FUNCTION", Rejected;
     /// A custom task's `input` does not deserialize into its handler's declared
     /// `Input` type.
-    InputParse,
+    InputParse = "INPUT_PARSE", Rejected;
     /// A `Template` field of a custom task's input does not compile.
-    TemplateCompile,
+    TemplateCompile = "TEMPLATE_COMPILE", Rejected;
     /// An expression reads `{"secret": "name"}` and no secret of that name is
     /// in the `ExprEngine`'s store (`ExprEngineBuilder::secrets`). Only
     /// literal names are checked; a dynamic name fails at evaluation instead.
-    UnknownSecret,
+    UnknownSecret = "UNKNOWN_SECRET", Rejected;
     /// An expression whose result the engine writes to the message or emits to
     /// a log reads a secret — a `map` mapping, or a `log` message or field. The
     /// store exists so a value is never recorded; an expression that would
     /// record it is refused outright, derived or not. Compute derived values in
     /// a custom handler.
-    SecretInMessageWrite,
+    SecretInMessageWrite = "SECRET_IN_MESSAGE_WRITE", Rejected;
     /// Two keys in one template object collapse to the same name once the
     /// template-key escape is stripped — `{"$a": 1, "a": 2}` emits `a` twice.
     /// The context is a `Vec` of pairs, so both survive: a later read sees only
     /// the first while serialization emits both. Always a bug, so
     /// `build` refuses it.
-    DuplicateTemplateKey,
+    DuplicateTemplateKey = "DUPLICATE_TEMPLATE_KEY", Rejected;
     /// A template key carries the escape prefix, so it is emitted with one
     /// prefix stripped: `$type` emits `type`. [`Severity::Advisory`] — reported
     /// by `Compiler::check` and never a reason to
@@ -302,38 +336,48 @@ pub enum IssueCode {
     /// keys — MongoDB's `$set`/`$oid`, JSON Schema's `$schema`/`$ref` — changes
     /// what it produces, silently. This lists every one so the audit is
     /// mechanical rather than archaeological.
-    EscapedTemplateKey,
-    /// The document does not deserialize into a workflow. Carries the
-    /// parser's own message, which names the offending field and type.
-    ParseFailed,
+    EscapedTemplateKey = "ESCAPED_TEMPLATE_KEY", Advisory;
+    /// A key holds a value of the wrong type, or a required key is missing.
+    /// Reported at the key's path, with a message naming what the key
+    /// takes.
+    ParseFailed = "PARSE_FAILED", Rejected;
+    /// A v3 policy key (`continue_on_error`, `halt_on`) beside a v4 one
+    /// (`on_failure`, `on_rejection`) on one node: the reader cannot tell
+    /// which the author meant, so it refuses the v3 key. Write only the v4
+    /// keys.
+    MixedSpelling = "MIXED_SPELLING", Rejected;
+    /// A key the reader or the walk keeps in a node's `ext` under a name
+    /// `ext` already holds: an authored `ext` entry, or an earlier key kept
+    /// under the same name. Rename one of them.
+    ExtCollision = "EXT_COLLISION", Rejected;
     /// An unknown key within edit distance 1 (keys of up to five characters) or 2 (longer) of a known key at its level: almost certainly a misspelling, so the setting it was meant to carry is silently lost.
     ///
     /// Default severity [`Severity::Defect`].
-    LikelyTypo,
+    LikelyTypo = "LIKELY_TYPO", Defect;
     /// An unknown key that resembles no known key at its level. It moves into `ext` under the compat reader and is refused without it.
     ///
     /// Default severity [`Severity::Advisory`].
-    UnknownKey,
+    UnknownKey = "UNKNOWN_KEY", Advisory;
     /// The compat reader rewrote a v3 spelling to its v4 counterpart.
     ///
     /// Default severity [`Severity::Advisory`].
-    V3Spelling,
+    V3Spelling = "V3_SPELLING", Advisory;
     /// A literal `var` rooted at `payload`. The evaluation context is `{data, metadata, temp_data}`, so it resolves to nothing.
     ///
     /// Default severity [`Severity::Defect`].
-    PayloadVar,
+    PayloadVar = "PAYLOAD_VAR", Defect;
     /// A single-key object inside an interpolated document whose key is a live operator name. A document is never evaluated, so it stays data.
     ///
     /// Default severity [`Severity::Advisory`].
-    OperatorInDocument,
+    OperatorInDocument = "OPERATOR_IN_DOCUMENT", Advisory;
     /// A `{"secret": ...}` node inside an interpolated document. A document is never evaluated, so the secret would never be substituted.
     ///
     /// Default severity [`Severity::Rejected`].
-    SecretInDocument,
+    SecretInDocument = "SECRET_IN_DOCUMENT", Rejected;
     /// A literal context path that is not rooted at `data`, `metadata` or `temp_data`, or a document hole whose path is not a literal.
     ///
     /// Default severity [`Severity::Rejected`].
-    InvalidPath,
+    InvalidPath = "INVALID_PATH", Rejected;
     /// A `Reference` field whose value is a literal string the host's
     /// `ResourceOracle` does not resolve, such as a connector no deployment
     /// declares, or one of the wrong type; the message leads with the
@@ -342,147 +386,7 @@ pub enum IssueCode {
     ///
     /// Default severity [`Severity::Defect`]: the workflow loads, then fails
     /// every call.
-    UnresolvedReference,
-}
-
-impl IssueCode {
-    /// Every code; kept complete by the tests' exhaustive `ordinal`.
-    const ALL: [Self; 38] = [
-        Self::EmptyWorkflowId,
-        Self::NoTasks,
-        Self::MissingStepId,
-        Self::DuplicateStepId,
-        Self::EmptyGroup,
-        Self::GroupTooDeep,
-        Self::MissingFunction,
-        Self::InvalidFunctionName,
-        Self::InvalidTerminal,
-        Self::UnguardedValidation,
-        Self::InvalidHaltOn,
-        Self::GroupContinueOnError,
-        Self::InvalidMapping,
-        Self::NullMapping,
-        Self::LoopIncrementTooSmall,
-        Self::LoopBoundEmpty,
-        Self::LoopCounterInvalid,
-        Self::LoopSlotInvalid,
-        Self::LoopItemWithoutOver,
-        Self::LoopSlotCollision,
-        Self::LoopOverInvalid,
-        Self::InvalidForEach,
-        Self::UnknownFunction,
-        Self::InputParse,
-        Self::TemplateCompile,
-        Self::UnknownSecret,
-        Self::SecretInMessageWrite,
-        Self::DuplicateTemplateKey,
-        Self::EscapedTemplateKey,
-        Self::ParseFailed,
-        Self::LikelyTypo,
-        Self::UnknownKey,
-        Self::V3Spelling,
-        Self::PayloadVar,
-        Self::OperatorInDocument,
-        Self::SecretInDocument,
-        Self::InvalidPath,
-        Self::UnresolvedReference,
-    ];
-
-    /// The stable string form, SCREAMING_SNAKE, v3's spellings unchanged.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::EmptyWorkflowId => "EMPTY_WORKFLOW_ID",
-            Self::NoTasks => "NO_TASKS",
-            Self::MissingStepId => "MISSING_STEP_ID",
-            Self::DuplicateStepId => "DUPLICATE_STEP_ID",
-            Self::EmptyGroup => "EMPTY_GROUP",
-            Self::GroupTooDeep => "GROUP_TOO_DEEP",
-            Self::MissingFunction => "MISSING_FUNCTION",
-            Self::InvalidFunctionName => "INVALID_FUNCTION_NAME",
-            Self::InvalidTerminal => "INVALID_TERMINAL",
-            Self::InvalidHaltOn => "INVALID_HALT_ON",
-            Self::GroupContinueOnError => "GROUP_CONTINUE_ON_ERROR",
-            Self::InvalidMapping => "INVALID_MAPPING",
-            Self::NullMapping => "NULL_MAPPING",
-            Self::UnguardedValidation => "UNGUARDED_VALIDATION",
-            Self::LoopIncrementTooSmall => "LOOP_INCREMENT_TOO_SMALL",
-            Self::LoopBoundEmpty => "LOOP_BOUND_EMPTY",
-            Self::LoopCounterInvalid => "LOOP_COUNTER_INVALID",
-            Self::LoopSlotInvalid => "LOOP_SLOT_INVALID",
-            Self::LoopItemWithoutOver => "LOOP_ITEM_WITHOUT_OVER",
-            Self::LoopSlotCollision => "LOOP_SLOT_COLLISION",
-            Self::LoopOverInvalid => "LOOP_OVER_INVALID",
-            Self::InvalidForEach => "INVALID_FOR_EACH",
-            Self::UnknownFunction => "UNKNOWN_FUNCTION",
-            Self::InputParse => "INPUT_PARSE",
-            Self::TemplateCompile => "TEMPLATE_COMPILE",
-            Self::UnknownSecret => "UNKNOWN_SECRET",
-            Self::SecretInMessageWrite => "SECRET_IN_MESSAGE_WRITE",
-            Self::DuplicateTemplateKey => "DUPLICATE_TEMPLATE_KEY",
-            Self::EscapedTemplateKey => "ESCAPED_TEMPLATE_KEY",
-            Self::ParseFailed => "PARSE_FAILED",
-            Self::LikelyTypo => "LIKELY_TYPO",
-            Self::UnknownKey => "UNKNOWN_KEY",
-            Self::V3Spelling => "V3_SPELLING",
-            Self::PayloadVar => "PAYLOAD_VAR",
-            Self::OperatorInDocument => "OPERATOR_IN_DOCUMENT",
-            Self::SecretInDocument => "SECRET_IN_DOCUMENT",
-            Self::InvalidPath => "INVALID_PATH",
-            Self::UnresolvedReference => "UNRESOLVED_REFERENCE",
-        }
-    }
-
-    /// The default severity of an issue carrying this code.
-    ///
-    /// The match has **no wildcard arm**, and must never gain one: a code added
-    /// later stops this compiling until it is deliberately classified, so a new
-    /// advisory cannot arrive as a silent rejection in a host's screen. An issue
-    /// may carry a different severity ([`Issue::with_severity`]).
-    pub fn severity(self) -> Severity {
-        match self {
-            // Reported for an author's attention; the definition loads.
-            Self::UnguardedValidation
-            | Self::GroupContinueOnError
-            | Self::EscapedTemplateKey
-            | Self::NullMapping
-            | Self::UnknownKey
-            | Self::V3Spelling
-            | Self::OperatorInDocument => Severity::Advisory,
-
-            // Loads, then does not do what it says.
-            Self::LikelyTypo | Self::PayloadVar | Self::UnresolvedReference => Severity::Defect,
-
-            // Everything else never loads.
-            Self::EmptyWorkflowId
-            | Self::NoTasks
-            | Self::MissingStepId
-            | Self::DuplicateStepId
-            | Self::EmptyGroup
-            | Self::GroupTooDeep
-            | Self::MissingFunction
-            | Self::InvalidFunctionName
-            | Self::InvalidTerminal
-            | Self::InvalidHaltOn
-            | Self::InvalidMapping
-            | Self::LoopIncrementTooSmall
-            | Self::LoopBoundEmpty
-            | Self::LoopCounterInvalid
-            | Self::LoopSlotInvalid
-            | Self::LoopItemWithoutOver
-            | Self::LoopSlotCollision
-            | Self::LoopOverInvalid
-            | Self::InvalidForEach
-            | Self::UnknownFunction
-            | Self::InputParse
-            | Self::TemplateCompile
-            | Self::UnknownSecret
-            | Self::SecretInMessageWrite
-            | Self::DuplicateTemplateKey
-            | Self::ParseFailed
-            | Self::SecretInDocument
-            | Self::InvalidPath => Severity::Rejected,
-        }
-    }
+    UnresolvedReference = "UNRESOLVED_REFERENCE", Defect;
 }
 
 impl fmt::Display for IssueCode {
@@ -515,7 +419,8 @@ impl FromStr for IssueCode {
     /// The inverse of [`IssueCode::as_str`], for reading recordings.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         Self::ALL
-            .into_iter()
+            .iter()
+            .copied()
             .find(|code| code.as_str() == text)
             .ok_or_else(|| ParseIssueCodeError(text.to_string()))
     }
@@ -716,7 +621,10 @@ crate::base::ts::ts_decl!(
     IssueCode,
     "IssueCode",
     [" What an issue is about: its SCREAMING_SNAKE code, such as `UNKNOWN_FUNCTION`."],
-    |_cfg| "string".to_owned()
+    |_cfg| {
+        let codes: Vec<&str> = IssueCode::ALL.iter().map(|c| c.as_str()).collect();
+        crate::base::ts::literals(&codes)
+    }
 );
 
 #[cfg(feature = "ts")]
@@ -759,61 +667,9 @@ mod tests {
     use serde_json::{Value, json};
     use std::collections::HashSet;
 
-    /// A distinct index per variant, with no wildcard arm: adding a code stops
-    /// this compiling until it is given one.
-    fn ordinal(code: IssueCode) -> usize {
-        match code {
-            IssueCode::EmptyWorkflowId => 0,
-            IssueCode::NoTasks => 1,
-            IssueCode::MissingStepId => 2,
-            IssueCode::DuplicateStepId => 3,
-            IssueCode::EmptyGroup => 4,
-            IssueCode::GroupTooDeep => 5,
-            IssueCode::MissingFunction => 6,
-            IssueCode::InvalidFunctionName => 7,
-            IssueCode::InvalidTerminal => 8,
-            IssueCode::UnguardedValidation => 9,
-            IssueCode::InvalidHaltOn => 10,
-            IssueCode::GroupContinueOnError => 11,
-            IssueCode::InvalidMapping => 12,
-            IssueCode::NullMapping => 13,
-            IssueCode::LoopIncrementTooSmall => 14,
-            IssueCode::LoopBoundEmpty => 15,
-            IssueCode::LoopCounterInvalid => 16,
-            IssueCode::LoopSlotInvalid => 17,
-            IssueCode::LoopItemWithoutOver => 18,
-            IssueCode::LoopSlotCollision => 19,
-            IssueCode::LoopOverInvalid => 20,
-            IssueCode::InvalidForEach => 21,
-            IssueCode::UnknownFunction => 22,
-            IssueCode::InputParse => 23,
-            IssueCode::TemplateCompile => 24,
-            IssueCode::UnknownSecret => 25,
-            IssueCode::SecretInMessageWrite => 26,
-            IssueCode::DuplicateTemplateKey => 27,
-            IssueCode::EscapedTemplateKey => 28,
-            IssueCode::ParseFailed => 29,
-            IssueCode::LikelyTypo => 30,
-            IssueCode::UnknownKey => 31,
-            IssueCode::V3Spelling => 32,
-            IssueCode::PayloadVar => 33,
-            IssueCode::OperatorInDocument => 34,
-            IssueCode::SecretInDocument => 35,
-            IssueCode::InvalidPath => 36,
-            IssueCode::UnresolvedReference => 37,
-        }
-    }
-
-    #[test]
-    fn all_codes_lists_every_variant() {
-        assert_eq!(IssueCode::ALL.len(), 38);
-        let indices: HashSet<usize> = IssueCode::ALL.iter().copied().map(ordinal).collect();
-        assert_eq!(indices, (0..IssueCode::ALL.len()).collect::<HashSet<_>>());
-    }
-
     #[test]
     fn every_code_round_trips_through_its_string() {
-        for code in IssueCode::ALL {
+        for &code in IssueCode::ALL {
             assert_eq!(code.as_str().parse::<IssueCode>(), Ok(code), "{code:?}");
         }
         assert!("NOT_A_CODE".parse::<IssueCode>().is_err());
@@ -822,7 +678,7 @@ mod tests {
     #[test]
     fn code_strings_are_distinct_and_screaming_snake() {
         let mut seen = HashSet::new();
-        for code in IssueCode::ALL {
+        for &code in IssueCode::ALL {
             assert!(seen.insert(code.as_str()), "duplicate string for {code:?}");
             assert_eq!(code.to_string(), code.as_str());
             assert!(
@@ -1051,7 +907,7 @@ mod tests {
             let value = serde_json::to_value(severity).unwrap();
             assert_eq!(serde_json::from_value::<Severity>(value).unwrap(), severity);
         }
-        for code in IssueCode::ALL {
+        for &code in IssueCode::ALL {
             let value = serde_json::to_value(code).unwrap();
             assert_eq!(value, code.as_str());
             assert_eq!(serde_json::from_value::<IssueCode>(value).unwrap(), code);

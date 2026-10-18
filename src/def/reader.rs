@@ -251,7 +251,7 @@ impl Read {
         let v4 = policies_in(obj, WORKFLOW_POLICIES);
         if !v4.is_empty() {
             let message = mixed("continue_on_error", &v4, "workflow", "policy");
-            self.report(IssueCode::ParseFailed, path, message, None, None);
+            self.report(IssueCode::MixedSpelling, path, message, None, None);
             return;
         }
         let policy = if flag { "continue" } else { "fail" };
@@ -348,7 +348,7 @@ impl Read {
         // Any v4 policy beside any v3 flag refuses every flag.
         let v4_policies = policies_in(obj, TASK_POLICIES);
         let refuse_mixed = |v3: &str| Flag::Refused {
-            code: IssueCode::ParseFailed,
+            code: IssueCode::MixedSpelling,
             message: mixed(v3, &v4_policies, "task", "policies"),
         };
         let continue_on_error = match take(obj, "continue_on_error") {
@@ -564,7 +564,7 @@ impl Read {
         match ext.keep(key, name, value, path.clone()) {
             Ok(()) => self.report(code, path, message, Some(step), field),
             Err(collision) => {
-                self.report(IssueCode::ParseFailed, path, collision, Some(step), field);
+                self.report(IssueCode::ExtCollision, path, collision, Some(step), field);
             }
         }
     }

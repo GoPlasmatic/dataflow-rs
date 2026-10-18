@@ -132,6 +132,8 @@
           "code": "WARNED",
           "message": "careful",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "t",
           "timestamp": "<timestamp>",
           "element_index": 1
         }

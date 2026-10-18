@@ -9,8 +9,7 @@ use std::collections::BTreeMap;
 
 /// `log`'s input.
 #[derive(Debug, FunctionConfig)]
-#[non_exhaustive]
-pub struct LogConfig {
+pub(crate) struct LogConfig {
     /// The level the line is emitted at: `info` by default.
     #[config(serde, default = "info")]
     pub level: LogLevel,
@@ -25,8 +24,7 @@ pub struct LogConfig {
 /// The level a [`LogConfig`] line is emitted at.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum LogLevel {
+pub(crate) enum LogLevel {
     /// `trace`.
     Trace,
     /// `debug`.

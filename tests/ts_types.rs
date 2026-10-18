@@ -303,8 +303,6 @@ impl Function for Rec {
         let mut record = ErrorRecord::new("NOTED", "noted");
         record.path = Some("temp_data.r".to_owned());
         record.detail = Some("operator detail".to_owned());
-        record.retry_attempted = Some(true);
-        record.retry_count = Some(2);
         ctx.record_error(record);
         Ok(Outcome::Ok)
     }
@@ -439,6 +437,11 @@ async fn made(samples: &mut Samples) {
             .with_step(kind, Some("s"))
             .with_field("f");
         samples.push("Issue", format!("made {severity}"), &issue);
+    }
+    // Every code, since the corpus refuses only some.
+    for &code in IssueCode::ALL {
+        let issue = Issue::new(code, AuthoredPath::root(), "m");
+        samples.push("Issue", format!("made {code}"), &issue);
     }
     samples.push("DataflowError", "an error", &Error::service("X", "m"));
 }

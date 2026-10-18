@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// `filter`'s input.
 #[derive(Debug, FunctionConfig)]
-#[non_exhaustive]
-pub struct FilterConfig {
+pub(crate) struct FilterConfig {
     /// JSONLogic that lets the message through only when it evaluates to
     /// `true`.
     pub condition: Expr,
@@ -22,8 +21,7 @@ pub struct FilterConfig {
 /// What a [`FilterConfig`] does when its condition is not met.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum RejectAction {
+pub(crate) enum RejectAction {
     /// Stop the workflow: no later task in it runs.
     #[default]
     Halt,

@@ -126,7 +126,10 @@ export type Change = {
 
 /**
  * One error record, written as v3 wrote one: the same keys, in the same
- * order, each optional one absent when unset.
+ * order, each optional one absent when unset. The engine stamps every
+ * record a task adds with the workflow's and the task's ids and the run's
+ * timestamp, keeping any the record already carries; a workflow's own
+ * failure carries no task id.
  */
 export type ErrorRecord = {
   /**
@@ -153,14 +156,6 @@ export type ErrorRecord = {
    * When it happened.
    */
   timestamp?: string,
-  /**
-   * Whether a retry was attempted.
-   */
-  retry_attempted?: boolean,
-  /**
-   * How many retries were attempted.
-   */
-  retry_count?: number,
   /**
    * Operator-only detail; never to be shown to an untrusted caller.
    */
@@ -432,7 +427,7 @@ export type Issue = {
 /**
  * What an issue is about: its SCREAMING_SNAKE code, such as `UNKNOWN_FUNCTION`.
  */
-export type IssueCode = string;
+export type IssueCode = "EMPTY_WORKFLOW_ID" | "NO_TASKS" | "MISSING_STEP_ID" | "DUPLICATE_STEP_ID" | "EMPTY_GROUP" | "GROUP_TOO_DEEP" | "MISSING_FUNCTION" | "INVALID_FUNCTION_NAME" | "INVALID_TERMINAL" | "UNGUARDED_VALIDATION" | "INVALID_HALT_ON" | "GROUP_CONTINUE_ON_ERROR" | "INVALID_MAPPING" | "NULL_MAPPING" | "LOOP_INCREMENT_TOO_SMALL" | "LOOP_BOUND_EMPTY" | "LOOP_COUNTER_INVALID" | "LOOP_SLOT_INVALID" | "LOOP_ITEM_WITHOUT_OVER" | "LOOP_SLOT_COLLISION" | "LOOP_OVER_INVALID" | "INVALID_FOR_EACH" | "UNKNOWN_FUNCTION" | "INPUT_PARSE" | "TEMPLATE_COMPILE" | "UNKNOWN_SECRET" | "SECRET_IN_MESSAGE_WRITE" | "DUPLICATE_TEMPLATE_KEY" | "ESCAPED_TEMPLATE_KEY" | "PARSE_FAILED" | "MIXED_SPELLING" | "EXT_COLLISION" | "LIKELY_TYPO" | "UNKNOWN_KEY" | "V3_SPELLING" | "PAYLOAD_VAR" | "OPERATOR_IN_DOCUMENT" | "SECRET_IN_DOCUMENT" | "INVALID_PATH" | "UNRESOLVED_REFERENCE";
 
 /**
  * When an issue bites.

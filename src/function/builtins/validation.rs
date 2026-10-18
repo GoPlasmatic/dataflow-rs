@@ -1,23 +1,22 @@
 //! `validation`'s config: rules, each a condition and the error recorded when
 //! it fails.
 
-use crate::base::{EVALUATION_ERROR, ErrorKind, ErrorRecord, Result, VALIDATION_ERROR};
+use crate::base::{EVALUATION_ERROR, ErrorKind, Result, VALIDATION_ERROR};
 use crate::expr::Expr;
+use crate::function::sync::task_record;
 use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
 use ::log::{debug, error};
 
 /// `validation`'s input.
 #[derive(Debug, FunctionConfig)]
-#[non_exhaustive]
-pub struct ValidationConfig {
+pub(crate) struct ValidationConfig {
     /// The rules, checked in order.
     pub rules: Vec<Rule>,
 }
 
 /// One rule of a [`ValidationConfig`].
 #[derive(Debug, FunctionConfig)]
-#[non_exhaustive]
-pub struct Rule {
+pub(crate) struct Rule {
     /// JSONLogic that passes the rule only when it evaluates to `true`.
     pub logic: Expr,
     /// The error recorded when the rule fails, evaluated only then.
@@ -30,7 +29,8 @@ impl SyncFunction for ValidationConfig {
     /// on a literal `true`; one that does not records its message, rendered
     /// only then, and one that fails to evaluate records
     /// `EVALUATION_ERROR`. The call is `Status(400)` when any record was
-    /// made. The records carry no ids, as v3's do.
+    /// made. Each record carries the workflow's and the task's ids, as every
+    /// other task record does (v3's carried none).
     ///
     /// An exceeded ops budget is no rejection: it is the call's `Err`, which
     /// the classifier records as `BUDGET_EXCEEDED` and `on_failure` governs,
@@ -66,9 +66,7 @@ impl SyncFunction for ValidationConfig {
                     )
                 }
             };
-            let mut record = ErrorRecord::new(code, text);
-            record.timestamp = Some(cx.now.to_owned());
-            records.push(record);
+            records.push(task_record(code, text, cx.workflow_id, cx.task_id, cx.now));
         }
         if records.is_empty() {
             return Ok(Outcome::Ok);

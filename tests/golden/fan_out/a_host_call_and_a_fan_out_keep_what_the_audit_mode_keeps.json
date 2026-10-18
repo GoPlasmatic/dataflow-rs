@@ -69,6 +69,8 @@
           "code": "WARNED",
           "message": "careful",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "h",
           "timestamp": "<timestamp>"
         }
       ]
@@ -202,6 +204,8 @@
           "code": "WARNED",
           "message": "careful",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "h",
           "timestamp": "<timestamp>"
         }
       ]
@@ -423,6 +427,8 @@
           "code": "WARNED",
           "message": "careful",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "h",
           "timestamp": "<timestamp>"
         }
       ]

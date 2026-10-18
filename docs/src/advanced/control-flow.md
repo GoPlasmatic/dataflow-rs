@@ -386,7 +386,7 @@ into the 4.0 policies, reporting a `V3_SPELLING` advisory at the 3.x key:
 | Task | both | `on_failure: "halt"`, `on_rejection: "halt"` |
 | Task | neither, or `halt_on: "never"` | the defaults |
 
-A 3.x flag beside a 4.0 policy on one node is refused (`PARSE_FAILED` at
+A 3.x flag beside a 4.0 policy on one node is refused (`MIXED_SPELLING` at
 the 3.x key): the two flags make one policy, and a mix would be a guess at
 how the author meant them to combine. A group's `continue_on_error`, which
 3.x reported and never honoured, moves into the group's `ext` and is

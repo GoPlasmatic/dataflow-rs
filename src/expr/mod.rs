@@ -23,6 +23,7 @@ pub use config::{
 pub(crate) use document::Filled;
 pub use document::{Interpolated, Rendered};
 pub use engine::{EvalRoot, ExprEngine, ExprEngineBuilder};
+pub(crate) use expr::sealed::CRATE;
 pub use expr::{Evaluated, Expr, FromValue, ResolveExpr};
 pub use operators::{Family, OperatorInfo};
 pub use output::Output;

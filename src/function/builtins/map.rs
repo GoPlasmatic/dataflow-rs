@@ -19,8 +19,7 @@ use std::sync::Arc;
 
 /// `map`'s input.
 #[derive(Debug, FunctionConfig)]
-#[non_exhaustive]
-pub struct MapConfig {
+pub(crate) struct MapConfig {
     /// The mappings, applied in order.
     pub mappings: Vec<Mapping>,
 }
@@ -28,8 +27,7 @@ pub struct MapConfig {
 /// One write, or one removal.
 #[derive(Debug, FunctionConfig)]
 #[config(check = Mapping::rules)]
-#[non_exhaustive]
-pub struct Mapping {
+pub(crate) struct Mapping {
     /// Where the result is written: a context path, or JSONLogic computing one.
     #[config(records)]
     pub path: Expr<Path>,
@@ -52,8 +50,7 @@ pub struct Mapping {
 /// What a [`Mapping`] does when its `logic` evaluates to `null`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum OnNull {
+pub(crate) enum OnNull {
     /// Leave the path as it was.
     Skip,
     /// Remove the key at the path.
@@ -63,8 +60,7 @@ pub enum OnNull {
 /// How a [`Mapping`] writes a non-null result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum MapMode {
+pub(crate) enum MapMode {
     /// Replace the value at the path (merging, at a context root).
     Set,
     /// Push the result onto the array at the path.

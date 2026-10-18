@@ -12,8 +12,7 @@ use std::borrow::Cow;
 
 /// `publish_json`'s and `publish_xml`'s input.
 #[derive(Debug, FunctionConfig)]
-#[non_exhaustive]
-pub struct PublishConfig {
+pub(crate) struct PublishConfig {
     /// What to serialize, relative to `data`, with v3's fallback: a source
     /// beginning with `data.` is also read without that prefix when
     /// `data.<source>` is missing.

@@ -24,6 +24,15 @@
 //!   package. **`ts` is outside semver:** the wire shapes are covered by
 //!   semver, but the generator, its output's layout and this feature's
 //!   dependencies may change in any release.
+//!
+//! # Dependencies in the API
+//!
+//! [`datalogic_rs`] and [`datavalue`] are re-exported, and part of this
+//! crate's API: a value is a [`datavalue::OwnedDataValue`] (a context, a
+//! secret, a resolved config), and a host's custom operator is a
+//! [`datalogic_rs::CustomOperator`]. A host names both through these
+//! re-exports, so its versions are always the engine's. A major version of
+//! either is a major version of this crate.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, missing_debug_implementations)]

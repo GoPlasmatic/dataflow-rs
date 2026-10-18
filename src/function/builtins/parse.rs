@@ -13,8 +13,7 @@ use std::borrow::Cow;
 
 /// `parse_json`'s and `parse_xml`'s input.
 #[derive(Debug, FunctionConfig)]
-#[non_exhaustive]
-pub struct ParseConfig {
+pub(crate) struct ParseConfig {
     /// What to read: `payload`, `payload.<path>`, a context path, or
     /// JSONLogic computing one of those.
     #[config(records)]

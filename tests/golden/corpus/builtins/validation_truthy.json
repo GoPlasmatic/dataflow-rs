@@ -53,18 +53,24 @@
               "code": "VALIDATION_ERROR",
               "message": "one",
               "path": null,
+              "workflow_id": "w",
+              "task_id": "check",
               "timestamp": "<timestamp>"
             },
             {
               "code": "VALIDATION_ERROR",
               "message": "yes",
               "path": null,
+              "workflow_id": "w",
+              "task_id": "check",
               "timestamp": "<timestamp>"
             },
             {
               "code": "VALIDATION_ERROR",
               "message": "array",
               "path": null,
+              "workflow_id": "w",
+              "task_id": "check",
               "timestamp": "<timestamp>"
             }
           ]

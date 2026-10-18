@@ -35,7 +35,7 @@
 //! Rejected as every unknown key then is. `validate` and a built-in
 //! input's stray keys are not keys of the definition: they stay
 //! in the task's `function` as written, for the function's lookup and config
-//! to refuse when the workflow is compiled (phase 3).
+//! to refuse when the workflow is compiled.
 //!
 //! [`migrate_v3`] parses with the reader on and writes the definition in the
 //! v4 spelling, which parses with the reader off to an equal definition.
@@ -62,16 +62,20 @@
 
 pub use crate::def::reader::Rewrite;
 
-use crate::Issue;
 use crate::base::any_rejected;
 use crate::def::{ParseOptions, parse_with_rewrites};
+use crate::{Issue, WorkflowDef};
 use serde_json::Value;
 
 /// A v3 definition in the v4 spelling: what [`migrate_v3`] returns.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Migrated {
-    /// The definition in the v4 spelling.
+    /// The definition, parsed: what [`json`](Self::json) parses to with the
+    /// reader off, so a host loading it need not parse it again.
+    pub def: WorkflowDef,
+    /// The definition in the v4 spelling, its keys in the definition's
+    /// order.
     pub json: Value,
     /// Each v3 spelling rewritten, in document order.
     pub rewrites: Vec<Rewrite>,
@@ -91,6 +95,7 @@ pub fn migrate_v3(json: &Value) -> std::result::Result<Migrated, Vec<Issue>> {
     let json =
         serde_json::to_value(&def).expect("a definition serializes to JSON: every key is a string");
     Ok(Migrated {
+        def,
         json,
         rewrites,
         issues: parsed.issues,

@@ -20,12 +20,12 @@ mod publish;
 mod validation;
 mod xml;
 
-pub use filter::FilterConfig;
-pub use log::LogConfig;
-pub use map::MapConfig;
-pub use parse::ParseConfig;
-pub use publish::PublishConfig;
-pub use validation::ValidationConfig;
+pub(crate) use filter::FilterConfig;
+pub(crate) use log::LogConfig;
+pub(crate) use map::MapConfig;
+pub(crate) use parse::ParseConfig;
+pub(crate) use publish::PublishConfig;
+pub(crate) use validation::ValidationConfig;
 
 use crate::base::Result;
 use crate::expr::{CompileCx, ExprVisitor, FieldSpec};

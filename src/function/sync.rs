@@ -142,9 +142,7 @@ pub(crate) fn task_record(
     now: &str,
 ) -> ErrorRecord {
     let mut record = ErrorRecord::new(code, message);
-    record.workflow_id = Some(workflow_id.to_owned());
-    record.task_id = Some(task_id.to_owned());
-    record.timestamp = Some(now.to_owned());
+    record.stamp(workflow_id, Some(task_id), now, None);
     record
 }
 

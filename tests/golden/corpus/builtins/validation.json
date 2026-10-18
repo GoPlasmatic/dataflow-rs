@@ -72,12 +72,16 @@
               "code": "VALIDATION_ERROR",
               "message": "bad 5",
               "path": null,
+              "workflow_id": "w",
+              "task_id": "check",
               "timestamp": "<timestamp>"
             },
             {
               "code": "EVALUATION_ERROR",
               "message": "Failed to evaluate rule 2: Thrown: {\"type\":\"NaN\"} (in operator: +)",
               "path": null,
+              "workflow_id": "w",
+              "task_id": "check",
               "timestamp": "<timestamp>"
             }
           ]

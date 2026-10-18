@@ -30,7 +30,7 @@ use crate::base::{
 use crate::expr::{CompileCx, ExprEngine, Path};
 use crate::program::{Callee, CalleeAt, Checks, compile_callee, refused};
 use crate::run::Message;
-use crate::run::host::{Invoked, Layers, invoke, stamp_record};
+use crate::run::host::{Invoked, Layers, invoke};
 use crate::state::{RunContext, Tuning};
 use chrono::Utc;
 use datavalue::OwnedDataValue;
@@ -39,7 +39,22 @@ use std::fmt;
 use std::future::IntoFuture;
 use std::sync::Arc;
 
-pub use super::overlay::Write;
+/// One write a call made, at the path it named: what [`Called::writes`]
+/// lists, in the order the call made them.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Write {
+    /// A value written, which the call's own context took: the call reads it
+    /// there from then on.
+    Set(OwnedDataValue),
+    /// A value written where the call's own context could not take it, below
+    /// a scalar. It changes nothing the call reads, and the settle still
+    /// replays it at its path, since the message may take it by then, as v3
+    /// replays every `Change`.
+    Blocked(OwnedDataValue),
+    /// A value the call saw, removed.
+    Removed,
+}
 
 /// The workflow and task ids a tested call is compiled and run under.
 const TEST: &str = "test";
@@ -335,7 +350,10 @@ impl<F: Function> Call<F> {
         rc.finish();
         let errors: Vec<ErrorRecord> = errors
             .into_iter()
-            .map(|record| stamp_record(record, &now_text, None))
+            .map(|mut record| {
+                record.stamp(TEST, Some(TEST), &now_text, None);
+                record
+            })
             .collect();
         parts.errors.extend(errors.iter().cloned());
         Called {
@@ -394,8 +412,9 @@ pub struct Called {
     /// the task's audit entry, which keeps v3's bytes, does not. Empty after
     /// an `Err`, or without capture.
     pub changes: Vec<Change>,
-    /// The records the call added, kept whatever it returned: as given, with
-    /// a timestamp when they carry none.
+    /// The records the call added, kept whatever it returned, stamped as a
+    /// run stamps them: the ids (`test` for both) and a timestamp, where
+    /// they carry none.
     pub errors: Vec<ErrorRecord>,
     /// The message after the settle: the writes applied on `Ok`, the records
     /// appended to its errors. Its audit is untouched, since no recorder ran.

@@ -278,6 +278,11 @@ observe. The migration page has each one with its code.
   only logged the reason. A `filter` condition that fails to evaluate
   records `EVALUATION_ERROR`, where 3.x rejected silently, so the run
   completes with errors.
+- **Every record a task adds carries `workflow_id` and `task_id`:**
+  `validation`'s `VALIDATION_ERROR` and `EVALUATION_ERROR`, and a host's
+  `Ctx::record_error`, as every other task record already did; a record's
+  own ids are kept. 3.x wrote neither on these, so a consumer grouping
+  errors by task matched them by position.
 - **A `map` mapping or a `filter` condition over the ops budget fails the
   task** with `BUDGET_EXCEEDED`, under its `on_failure`, as a `validation`
   rule's does; a `map` call ends there. 3.x made the mapping a 500 and the
@@ -310,6 +315,9 @@ observe. The migration page has each one with its code.
 - **The `Rule`, `Action` and `RulesEngine` aliases,** and `continue_on_error`
   and `halt_on` as API; the spellings are still read.
 - **`MessageBuilder`**, and the engine's per-task log lines, as above.
+- **`ErrorRecord::retry_attempted` and `retry_count`.** No engine path
+  wrote them, in 3.x or 4.0; retry is the host's (`Run::retryable()`). A
+  stored message carrying them still reads, and writes back without them.
 - **`FUNCTION_NOT_FOUND` and `DESERIALIZATION_ERROR`,** with
   `ErrorKind::FunctionNotFound` and `ErrorKind::Parse`. An unregistered
   function is the `UNKNOWN_FUNCTION` issue at build, and a value that does

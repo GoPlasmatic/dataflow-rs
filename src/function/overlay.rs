@@ -34,12 +34,10 @@ use datavalue::{DataValue, OwnedDataValue};
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Overlay(Vec<(Path, Write)>);
 
-/// One write a call made, at the path it named: what
-/// [`Called::writes`](super::testing::Called::writes) lists, in the order
-/// the call made them.
+/// One write a call made, at the path it named, as the overlay holds it.
+/// [`testing::Write`](super::testing::Write) is its public face.
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum Write {
+pub(crate) enum Write {
     /// A value written, which the call's own context took: the call reads it
     /// there from then on.
     Set(OwnedDataValue),
@@ -129,8 +127,19 @@ impl Overlay {
     }
 
     /// The writes, in the order the call made them.
-    pub(crate) fn into_writes(self) -> Vec<(Path, Write)> {
+    pub(crate) fn into_writes(self) -> Vec<(Path, super::testing::Write)> {
+        use super::testing::Write as Public;
         self.0
+            .into_iter()
+            .map(|(path, write)| {
+                let write = match write {
+                    Write::Set(value) => Public::Set(value),
+                    Write::Blocked(value) => Public::Blocked(value),
+                    Write::Removed => Public::Removed,
+                };
+                (path, write)
+            })
+            .collect()
     }
 
     /// Replays every write through `rc`, in the order the call made them,

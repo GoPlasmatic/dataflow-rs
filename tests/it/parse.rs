@@ -1309,9 +1309,9 @@ fn an_unknown_key_already_in_ext_is_refused() {
     assert_eq!(
         rows(&parsed),
         vec![
-            row(C::ParseFailed, R, "tasks[0].zz"),
-            row(C::ParseFailed, R, "loop.maxx"),
-            row(C::ParseFailed, R, "path"),
+            row(C::ExtCollision, R, "tasks[0].zz"),
+            row(C::ExtCollision, R, "loop.maxx"),
+            row(C::ExtCollision, R, "path"),
         ]
     );
     for issue in &parsed.issues {
@@ -1338,7 +1338,7 @@ fn two_unknown_keys_moving_to_one_ext_name_refuse_the_second() {
         rows(&parsed),
         vec![
             row(C::LikelyTypo, D, "loop.maxx"),
-            row(C::ParseFailed, R, r#"["loop.maxx"]"#),
+            row(C::ExtCollision, R, r#"["loop.maxx"]"#),
         ]
     );
     assert_eq!(parsed.issues[0].path.segs().len(), 2);

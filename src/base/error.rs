@@ -156,6 +156,7 @@ impl fmt::Debug for Error {
             .field("kind", &self.kind)
             .field("message", &self.message)
             .field("retryable", &self.is_retryable())
+            .field("source", &self.source)
             .finish()
     }
 }
@@ -170,7 +171,10 @@ impl std::error::Error for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// One error record, written as v3 wrote one: the same keys, in the same
-/// order, each optional one absent when unset.
+/// order, each optional one absent when unset. The engine stamps every
+/// record a task adds with the workflow's and the task's ids and the run's
+/// timestamp, keeping any the record already carries; a workflow's own
+/// failure carries no task id.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[non_exhaustive]
@@ -193,14 +197,6 @@ pub struct ErrorRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub timestamp: Option<String>,
-    /// Whether a retry was attempted.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub retry_attempted: Option<bool>,
-    /// How many retries were attempted.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub retry_count: Option<u32>,
     /// Operator-only detail; never to be shown to an untrusted caller.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
@@ -221,10 +217,33 @@ impl ErrorRecord {
             workflow_id: None,
             task_id: None,
             timestamp: None,
-            retry_attempted: None,
-            retry_count: None,
             detail: None,
             element_index: None,
+        }
+    }
+
+    /// Fills what the record leaves unset: the workflow's id, the task's id
+    /// (`None` for a workflow's own failure), the run's timestamp `now`,
+    /// and in a fan-out the element's index. Every record the engine keeps
+    /// is stamped here, so a consumer can group records by task.
+    pub(crate) fn stamp(
+        &mut self,
+        workflow_id: &str,
+        task_id: Option<&str>,
+        now: &str,
+        element_index: Option<usize>,
+    ) {
+        if self.workflow_id.is_none() {
+            self.workflow_id = Some(workflow_id.to_owned());
+        }
+        if self.task_id.is_none() {
+            self.task_id = task_id.map(str::to_owned);
+        }
+        if self.timestamp.is_none() {
+            self.timestamp = Some(now.to_owned());
+        }
+        if self.element_index.is_none() {
+            self.element_index = element_index;
         }
     }
 }
@@ -349,6 +368,30 @@ mod tests {
     fn debug_shows_kind_message_and_retryable() {
         let text = format!("{:?}", Error::new(ErrorKind::Budget, "over"));
         assert!(text.contains("Budget") && text.contains("over") && text.contains("retryable"));
+    }
+
+    #[test]
+    fn a_stored_record_with_3x_retry_keys_reads_and_writes_without_them() {
+        let stored = r#"{"code":"X","message":"m","path":null,"retry_attempted":true,"retry_count":2}"#;
+        let record: ErrorRecord = serde_json::from_str(stored).unwrap();
+        assert_eq!(
+            serde_json::to_string(&record).unwrap(),
+            r#"{"code":"X","message":"m","path":null}"#
+        );
+    }
+
+    #[test]
+    fn stamp_fills_only_what_the_record_leaves_unset() {
+        let mut record = ErrorRecord::new("X", "m");
+        record.task_id = Some("own".to_owned());
+        record.stamp("w", Some("t"), "now", Some(3));
+        assert_eq!(
+            serde_json::to_string(&record).unwrap(),
+            r#"{"code":"X","message":"m","path":null,"workflow_id":"w","task_id":"own","timestamp":"now","element_index":3}"#
+        );
+        let mut workflow_own = ErrorRecord::new("X", "m");
+        workflow_own.stamp("w", None, "now", None);
+        assert_eq!(workflow_own.task_id, None);
     }
 
     #[test]

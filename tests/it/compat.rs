@@ -217,7 +217,7 @@ fn a_tasks_two_flags_land_as_the_policy_table_says() {
 }
 
 #[test]
-fn a_v3_policy_beside_any_v4_policy_is_a_parse_failure_at_the_v3_key() {
+fn a_v3_policy_beside_any_v4_policy_is_a_mixed_spelling_at_the_v3_key() {
     // One policy, two spellings: which wins would be a guess, so neither
     // does. Each v3 key is refused, naming the v4 key beside it.
     for (flags, refused) in [
@@ -249,7 +249,7 @@ fn a_v3_policy_beside_any_v4_policy_is_a_parse_failure_at_the_v3_key() {
         let parsed = compat(&json);
         let expected: Vec<Row> = refused
             .iter()
-            .map(|(v3, _)| row(C::ParseFailed, R, &format!("tasks[0].{v3}")))
+            .map(|(v3, _)| row(C::MixedSpelling, R, &format!("tasks[0].{v3}")))
             .collect();
         assert_eq!(rows(&parsed), expected, "{flags}");
         for (issue, (v3, v4)) in parsed.issues.iter().zip(&refused) {
@@ -271,7 +271,7 @@ fn a_v3_policy_beside_any_v4_policy_is_a_parse_failure_at_the_v3_key() {
     let parsed = compat(&json);
     assert_eq!(
         rows(&parsed),
-        vec![row(C::ParseFailed, R, "tasks[0].halt_on")]
+        vec![row(C::MixedSpelling, R, "tasks[0].halt_on")]
     );
     assert_eq!(
         parsed.issues[0].message,
@@ -285,7 +285,7 @@ fn a_v3_policy_beside_any_v4_policy_is_a_parse_failure_at_the_v3_key() {
     let parsed = compat(&json);
     assert_eq!(
         rows(&parsed),
-        vec![row(C::ParseFailed, R, "continue_on_error")]
+        vec![row(C::MixedSpelling, R, "continue_on_error")]
     );
     assert_eq!(
         parsed.issues[0].message,
@@ -781,7 +781,7 @@ fn a_stray_publish_key_joins_an_authored_ext_and_refuses_a_collision() {
     let parsed = compat(&json);
     assert_eq!(
         rows(&parsed),
-        vec![row(C::ParseFailed, R, "tasks[0].function.input.x")]
+        vec![row(C::ExtCollision, R, "tasks[0].function.input.x")]
     );
     assert_eq!(
         parsed.issues[0].message,
@@ -803,7 +803,7 @@ fn a_key_the_walk_moves_onto_one_the_reader_moved_names_the_first() {
             .into_iter()
             .map(|(code, severity, _)| (code, severity))
             .collect::<Vec<_>>(),
-        vec![(C::UnknownKey, A), (C::ParseFailed, R)]
+        vec![(C::UnknownKey, A), (C::ExtCollision, R)]
     );
     assert_eq!(
         parsed.issues[0].path.to_string(),
@@ -882,7 +882,7 @@ fn a_groups_continue_on_error_already_in_its_ext_is_refused() {
     ])));
     assert_eq!(
         rows(&parsed),
-        vec![row(C::ParseFailed, R, "tasks[0].continue_on_error")]
+        vec![row(C::ExtCollision, R, "tasks[0].continue_on_error")]
     );
 }
 
@@ -1233,6 +1233,7 @@ fn every_corpus_definition_migrates_to_one_that_parses_with_compat_off_to_an_equ
         migrated_count += 1;
         rewritten += usize::from(!m.rewrites.is_empty());
         let def = compat(&json).def.expect("migrate_v3 succeeded");
+        assert_eq!(m.def, def, "{name}: the migrated def is the parsed one");
 
         let reparsed = strict(&m.json);
         assert_eq!(rows(&reparsed), vec![], "{name}: {}", m.json);

@@ -181,32 +181,18 @@ pub(crate) fn invoke<'r>(
     }
 }
 
-/// A record a call added, as given, stamped as v3 stamped it: with the
-/// run's timestamp, `now_text`, when it carries none, and in a fan-out the
-/// element's index when it carries none.
-pub(crate) fn stamp_record(
-    mut record: ErrorRecord,
-    now_text: &str,
-    element_index: Option<usize>,
-) -> ErrorRecord {
-    if record.timestamp.is_none() {
-        record.timestamp = Some(now_text.to_owned());
-    }
-    if record.element_index.is_none() {
-        record.element_index = element_index;
-    }
-    record
-}
-
-/// The records a call added, onto the message, each stamped by
-/// [`stamp_record`].
+/// The records a call added, onto the message, each stamped
+/// ([`ErrorRecord::stamp`]) with the task's ids, the run's timestamp and in
+/// a fan-out the element's index, where it carries none of its own.
 pub(crate) fn keep_records(
     env: &mut RunEnv<'_, '_>,
+    task: u32,
     records: Vec<ErrorRecord>,
     element_index: Option<usize>,
 ) {
-    for record in records {
-        let record = stamp_record(record, env.now_text, element_index);
+    let ids = env.ids(task);
+    for mut record in records {
+        record.stamp(ids.workflow, Some(ids.task), env.now_text, element_index);
         env.errors.push(record);
     }
 }
@@ -214,8 +200,9 @@ pub(crate) fn keep_records(
 /// One `Call` op on a host callee: the call, timed in a timed run, the
 /// settle, the decision, the recorder; the flow.
 ///
-/// The records the call added go to the message first, as given, with the
-/// run's timestamp when they carry none; the recorder's own follows.
+/// The records the call added go to the message first, stamped with the
+/// task's ids and the run's timestamp where they carry none; the
+/// recorder's own follows.
 /// A call the run's limits cut short is recorded as an `Err`, and then
 /// stops the run.
 pub(crate) async fn call_host<'p>(
@@ -248,7 +235,7 @@ pub(crate) async fn call_host<'p>(
         env.changes = changes;
     }
     let marked = replaces_a_root(&env.changes);
-    keep_records(env, errors, None);
+    keep_records(env, site.task, errors, None);
     let decision = match result {
         Err(e) if cut_short => policy::cut_short(task_id, e),
         result => policy::decide(site.policy, task_id, result),

@@ -55,6 +55,8 @@
               "code": "VALIDATION_ERROR",
               "message": "alias failed",
               "path": null,
+              "workflow_id": "w",
+              "task_id": "check",
               "timestamp": "<timestamp>"
             }
           ]

@@ -44,25 +44,44 @@ pub struct Change {
 }
 
 impl PartialEq for Change {
-    /// The wire fields; not whether the change is the trace's alone.
+    /// The wire fields; not whether the change is the trace's alone. The
+    /// destructuring names every field, so a field added later does not
+    /// compile until it is compared or deliberately left out.
     fn eq(&self, other: &Self) -> bool {
-        self.path == other.path
-            && self.old_value == other.old_value
-            && self.new_value == other.new_value
-            && self.removed == other.removed
-            && self.replaced == other.replaced
+        let Self {
+            path,
+            old_value,
+            new_value,
+            removed,
+            replaced,
+            trace_only: _,
+        } = self;
+        *path == other.path
+            && *old_value == other.old_value
+            && *new_value == other.new_value
+            && *removed == other.removed
+            && *replaced == other.replaced
     }
 }
 
 impl fmt::Debug for Change {
-    /// The wire fields, as a derive would show them.
+    /// The wire fields, as a derive would show them; every field named, as
+    /// in `eq`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            path,
+            old_value,
+            new_value,
+            removed,
+            replaced,
+            trace_only: _,
+        } = self;
         f.debug_struct("Change")
-            .field("path", &self.path)
-            .field("old_value", &self.old_value)
-            .field("new_value", &self.new_value)
-            .field("removed", &self.removed)
-            .field("replaced", &self.replaced)
+            .field("path", path)
+            .field("old_value", old_value)
+            .field("new_value", new_value)
+            .field("removed", removed)
+            .field("replaced", replaced)
             .finish()
     }
 }

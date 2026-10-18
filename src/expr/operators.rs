@@ -5,6 +5,10 @@ use datalogic_rs::ScopedArg;
 use std::borrow::Cow;
 
 /// The family an operator belongs to: the cargo feature that turns it on.
+///
+/// This crate's own, not `datalogic_rs::Family`: it adds the engine's
+/// [`Secret`](Self::Secret) and a host's [`Custom`](Self::Custom). A host
+/// that imports both aliases one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Family {
@@ -83,6 +87,9 @@ pub(crate) const FAMILIES: &[datalogic_rs::Family] = &[
 ];
 
 /// One operator an engine can evaluate.
+///
+/// This crate's own, not `datalogic_rs::OperatorInfo`, which it is built
+/// from: its [`family`](Self::family) is this crate's [`Family`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct OperatorInfo {

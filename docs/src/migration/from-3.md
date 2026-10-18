@@ -54,7 +54,7 @@ are rewritten to nothing and still reported.
 
 **Mixing the spellings on one node is refused.** A task or workflow that
 carries a 3.x policy key (`continue_on_error`, `halt_on`) beside a 4.0 one
-(`on_failure`, `on_rejection`) is `PARSE_FAILED` at the 3.x key. 3.x ignored
+(`on_failure`, `on_rejection`) is `MIXED_SPELLING` at the 3.x key. 3.x ignored
 the 4.0 keys, so a stray one must not change a migrated definition's policy
 silently.
 

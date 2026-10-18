@@ -11,9 +11,38 @@ use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
 
-mod sealed {
+pub(crate) mod sealed {
+    use datalogic_rs::{DataValue, Logic};
+    use datavalue::OwnedDataValue;
+
     pub trait Sealed {}
-    pub trait SealedExpr {}
+
+    /// The proof a caller is this crate. A `dyn` [`ResolveExpr`] exposes its
+    /// supertraits' methods to any crate holding one, so each method below
+    /// takes a `Crate`, which only this crate can make.
+    ///
+    /// [`ResolveExpr`]: super::ResolveExpr
+    #[derive(Clone, Copy, Debug)]
+    pub struct Crate(());
+
+    /// The one `Crate`.
+    pub(crate) const CRATE: Crate = Crate(());
+
+    /// The seal, and the crate's face of an expression: no datalogic type
+    /// reaches [`ResolveExpr`](super::ResolveExpr)'s public face.
+    pub trait SealedExpr {
+        /// The folded constant as an owned value, when the expression reads
+        /// nothing.
+        fn constant_value(&self, _: Crate) -> Option<OwnedDataValue>;
+
+        /// The compiled logic.
+        fn logic(&self, _: Crate) -> &Logic;
+
+        /// An evaluation's result as the expression's type, then as an
+        /// owned value: the `Eval` error naming the expression when it is
+        /// not of that type.
+        fn value_of(&self, view: &DataValue<'_>, _: Crate) -> crate::Result<OwnedDataValue>;
+    }
 }
 
 /// A type an expression can resolve to.
@@ -315,43 +344,35 @@ impl<T: FromValue> fmt::Debug for Expr<T> {
 /// a boolean, `String` as a string, [`Path`] as its dotted text, and
 /// `OwnedDataValue` as itself).
 ///
-/// Sealed: every `Expr<T>` is one, and nothing else is.
+/// Sealed: every `Expr<T>` is one, and nothing else is. Its evaluation
+/// is the crate's, so no datalogic type is part of it:
+///
+/// ```compile_fail
+/// fn logic(expr: &dyn dataflow_rs::expr::ResolveExpr) {
+///     let _ = expr.logic();
+/// }
+/// ```
 pub trait ResolveExpr: Send + Sync + sealed::SealedExpr {
     /// The authored JSON.
     fn raw(&self) -> &Value;
-
-    /// The folded constant as an owned value, when the expression reads
-    /// nothing.
-    #[doc(hidden)]
-    fn constant_value(&self) -> Option<OwnedDataValue>;
-
-    /// The compiled logic.
-    #[doc(hidden)]
-    fn logic(&self) -> &Logic;
-
-    /// An evaluation's result as the expression's type, then as an owned
-    /// value: the [`ErrorKind::Eval`] error naming the expression when it is
-    /// not of that type.
-    #[doc(hidden)]
-    fn value_of(&self, view: &DataValue<'_>) -> crate::Result<OwnedDataValue>;
 }
-
-impl<T: FromValue> sealed::SealedExpr for Expr<T> {}
 
 impl<T: FromValue> ResolveExpr for Expr<T> {
     fn raw(&self) -> &Value {
         &self.raw
     }
+}
 
-    fn constant_value(&self) -> Option<OwnedDataValue> {
+impl<T: FromValue> sealed::SealedExpr for Expr<T> {
+    fn constant_value(&self, _: sealed::Crate) -> Option<OwnedDataValue> {
         self.constant.as_ref().map(T::to_value)
     }
 
-    fn logic(&self) -> &Logic {
+    fn logic(&self, _: sealed::Crate) -> &Logic {
         &self.logic
     }
 
-    fn value_of(&self, view: &DataValue<'_>) -> crate::Result<OwnedDataValue> {
+    fn value_of(&self, view: &DataValue<'_>, _: sealed::Crate) -> crate::Result<OwnedDataValue> {
         self.convert(view).map(T::into_value)
     }
 }

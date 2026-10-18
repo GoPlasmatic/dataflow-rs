@@ -40,6 +40,8 @@
           "code": "HOST_WARNING",
           "message": "recorded by the handler",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "skips",
           "timestamp": "<timestamp>"
         }
       ]

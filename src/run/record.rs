@@ -368,7 +368,7 @@ fn audited(change: &mut Change) -> bool {
 /// task completed.
 pub(crate) fn workflow_failure(env: &mut RunEnv<'_, '_>, error: &Error) {
     let mut record = env.workflow_record(error);
-    record.timestamp = Some(env.now_text.to_owned());
+    record.stamp(env.workflow_id, None, env.now_text, None);
     if env.watch.trace.is_some() {
         let mut step = env.workflow_step(StepResult::Failed);
         #[cfg(test)]

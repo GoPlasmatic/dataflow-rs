@@ -12,7 +12,7 @@
 
 use super::parse::Walk;
 use crate::base::typo::unknown_key;
-use crate::base::{AuthoredPath, Severity};
+use crate::base::{AuthoredPath, IssueCode, Severity};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -288,7 +288,7 @@ impl Walk<'_> {
             let name = format!("{prefix}{key}");
             match ext.keep(key, name.clone(), value.clone(), path.clone()) {
                 Ok(()) => self.report(code, path, format!("{message} (kept in `ext` as `{name}`)")),
-                Err(collision) => self.parse_failed(path, collision),
+                Err(collision) => self.report(IssueCode::ExtCollision, path, collision),
             }
         }
     }

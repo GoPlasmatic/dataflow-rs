@@ -92,24 +92,32 @@
           "code": "HOST_WARNING",
           "message": "recorded by the handler",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "ok",
           "timestamp": "<timestamp>"
         },
         {
           "code": "HOST_WARNING",
           "message": "recorded by the handler",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "four",
           "timestamp": "<timestamp>"
         },
         {
           "code": "HOST_WARNING",
           "message": "recorded by the handler",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "err",
           "timestamp": "<timestamp>"
         },
         {
           "code": "HOST_WARNING",
           "message": "recorded by the handler",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "err",
           "timestamp": "<timestamp>"
         },
         {
@@ -124,6 +132,8 @@
           "code": "HOST_WARNING",
           "message": "recorded by the handler",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "halt",
           "timestamp": "<timestamp>"
         }
       ]

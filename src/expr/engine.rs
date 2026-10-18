@@ -6,7 +6,7 @@ use super::operators::{FAMILIES, Family, OperatorInfo};
 use super::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
 use crate::base::{Error, ErrorKind, Result};
 use bumpalo::Bump;
-use datalogic_rs::{CustomOperator, DataValue, Engine, EvalInput, Logic};
+use datalogic_rs::{CustomOperator, DataValue, Engine, Logic};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -34,9 +34,40 @@ impl CustomOperator for SharedOperator {
 }
 
 mod sealed {
-    pub trait Sealed {}
-    impl Sealed for &datavalue::OwnedDataValue {}
-    impl Sealed for &serde_json::Value {}
+    use bumpalo::Bump;
+    use datalogic_rs::{DataValue, EvalInput};
+    use datavalue::OwnedDataValue;
+    use serde_json::Value;
+
+    /// The seal, and the crate's view of a root: no datalogic type reaches
+    /// [`EvalRoot`](super::EvalRoot)'s public face.
+    pub trait Sealed<'r> {
+        /// The root as an arena value in `arena`, through datalogic's own
+        /// input adapter.
+        fn view_in<'a>(self, arena: &'a Bump) -> datalogic_rs::Result<&'a DataValue<'a>>
+        where
+            'r: 'a;
+    }
+
+    impl<'r> Sealed<'r> for &'r OwnedDataValue {
+        #[inline]
+        fn view_in<'a>(self, arena: &'a Bump) -> datalogic_rs::Result<&'a DataValue<'a>>
+        where
+            'r: 'a,
+        {
+            <&'a OwnedDataValue as EvalInput<'a>>::into_arena_value(self, arena)
+        }
+    }
+
+    impl<'r> Sealed<'r> for &'r Value {
+        #[inline]
+        fn view_in<'a>(self, arena: &'a Bump) -> datalogic_rs::Result<&'a DataValue<'a>>
+        where
+            'r: 'a,
+        {
+            <&'a Value as EvalInput<'a>>::into_arena_value(self, arena)
+        }
+    }
 }
 
 /// A root [`ExprEngine::eval`] evaluates against: an object holding the
@@ -62,34 +93,11 @@ mod sealed {
 /// let owned = OwnedDataValue::from(&context);
 /// assert_eq!(exprs.eval(&limit, &owned).unwrap().value, 42);
 /// ```
-pub trait EvalRoot<'r>: sealed::Sealed {
-    /// The root as an arena value in `arena`, through datalogic's own input
-    /// adapter.
-    #[doc(hidden)]
-    fn view_in<'a>(self, arena: &'a Bump) -> datalogic_rs::Result<&'a DataValue<'a>>
-    where
-        'r: 'a;
-}
+pub trait EvalRoot<'r>: sealed::Sealed<'r> {}
 
-impl<'r> EvalRoot<'r> for &'r OwnedDataValue {
-    #[inline]
-    fn view_in<'a>(self, arena: &'a Bump) -> datalogic_rs::Result<&'a DataValue<'a>>
-    where
-        'r: 'a,
-    {
-        <&'a OwnedDataValue as EvalInput<'a>>::into_arena_value(self, arena)
-    }
-}
+impl<'r> EvalRoot<'r> for &'r OwnedDataValue {}
 
-impl<'r> EvalRoot<'r> for &'r Value {
-    #[inline]
-    fn view_in<'a>(self, arena: &'a Bump) -> datalogic_rs::Result<&'a DataValue<'a>>
-    where
-        'r: 'a,
-    {
-        <&'a Value as EvalInput<'a>>::into_arena_value(self, arena)
-    }
-}
+impl<'r> EvalRoot<'r> for &'r Value {}
 
 struct Inner {
     logic: Engine,
@@ -218,7 +226,7 @@ impl ExprEngine {
             });
         }
         with_arena(|arena| {
-            let root = root.view_in(arena).map_err(eval_error)?;
+            let root = sealed::Sealed::view_in(root, arena).map_err(eval_error)?;
             #[cfg(feature = "budget")]
             let (view, ops) = {
                 let budget = self.logic().resolve_ops_budget(None);

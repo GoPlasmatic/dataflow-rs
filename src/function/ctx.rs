@@ -9,7 +9,7 @@ use crate::base::{
 use crate::expr::arena::with_arena;
 use crate::expr::path;
 use crate::expr::{
-    Expr, ExprEngine, ExprVisitor, Filled, FromValue, Interpolated, Output, Path, Rendered,
+    CRATE, Expr, ExprEngine, ExprVisitor, Filled, FromValue, Interpolated, Output, Path, Rendered,
     ResolveExpr, Resolver, SealedResolver, Seg, reads_secret,
 };
 use crate::state::{Lookup, Reader, splice};
@@ -424,13 +424,13 @@ impl<'r> Ctx<'r> {
     /// folded constant converted, anything else evaluated in a pooled arena
     /// and converted before the arena goes back.
     fn eval_owned(&self, expr: &dyn ResolveExpr) -> Result<OwnedDataValue> {
-        if let Some(constant) = expr.constant_value() {
+        if let Some(constant) = expr.constant_value(CRATE) {
             return Ok(constant);
         }
         with_arena(|arena| {
             let root = self.root_in(arena);
-            let view = self.start.exprs.eval_in(expr.logic(), root, arena)?;
-            expr.value_of(view)
+            let view = self.start.exprs.eval_in(expr.logic(CRATE), root, arena)?;
+            expr.value_of(view, CRATE)
         })
     }
 
@@ -569,8 +569,9 @@ impl<'r> Ctx<'r> {
         Ok(())
     }
 
-    /// Adds a record to the message's errors, whatever the call returns. One
-    /// with no timestamp gets the run's.
+    /// Adds a record to the message's errors, whatever the call returns. What
+    /// the record leaves unset the engine fills: the workflow's and the
+    /// task's ids, the run's timestamp, and in a fan-out the element's index.
     pub fn record_error(&mut self, e: ErrorRecord) {
         self.errors.push(e);
     }

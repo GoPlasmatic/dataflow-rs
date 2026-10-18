@@ -271,7 +271,7 @@ pub(crate) async fn fan_out<'p>(
         kept.push((index, errors));
         kept.sort_unstable_by_key(|&(index, _)| index);
         for (index, errors) in kept {
-            keep_records(env, errors, Some(index));
+            keep_records(env, site.task, errors, Some(index));
         }
         let decision = policy::cut_short(task_id, e);
         let done = Completed {
@@ -318,7 +318,7 @@ pub(crate) async fn fan_out<'p>(
             elapsed,
         } = element;
         let errors_before = env.errors.len();
-        keep_records(env, errors, Some(index));
+        keep_records(env, site.task, errors, Some(index));
         if ok {
             overlay.apply(rc);
             env.changes = changes;

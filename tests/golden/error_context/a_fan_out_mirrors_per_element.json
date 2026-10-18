@@ -118,6 +118,8 @@
           "code": "HOST_WARNING",
           "message": "recorded by the handler",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "each",
           "timestamp": "<timestamp>",
           "element_index": 2
         },
@@ -134,6 +136,8 @@
           "code": "HOST_WARNING",
           "message": "recorded by the handler",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "each",
           "timestamp": "<timestamp>",
           "element_index": 4
         },
@@ -141,6 +145,8 @@
           "code": "HOST_WARNING",
           "message": "recorded by the handler",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "each",
           "timestamp": "<timestamp>",
           "element_index": 5
         }

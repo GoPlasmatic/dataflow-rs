@@ -128,12 +128,16 @@
           "code": "VALIDATION_ERROR",
           "message": "not ok",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "rules",
           "timestamp": "<timestamp>"
         },
         {
           "code": "VALIDATION_ERROR",
           "message": "no name",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "rules",
           "timestamp": "<timestamp>"
         },
         {
@@ -294,12 +298,16 @@
           "code": "VALIDATION_ERROR",
           "message": "not ok",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "rules",
           "timestamp": "<timestamp>"
         },
         {
           "code": "VALIDATION_ERROR",
           "message": "no name",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "rules",
           "timestamp": "<timestamp>"
         },
         {
@@ -459,12 +467,16 @@
           "code": "VALIDATION_ERROR",
           "message": "not ok",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "rules",
           "timestamp": "<timestamp>"
         },
         {
           "code": "VALIDATION_ERROR",
           "message": "no name",
           "path": null,
+          "workflow_id": "w",
+          "task_id": "rules",
           "timestamp": "<timestamp>"
         },
         {
