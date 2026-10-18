@@ -75,7 +75,7 @@ function's config is made of. [docs.rs](https://docs.rs/dataflow-rs/4.0.0/datafl
 | `Output` | A write destination: an `Expr<Path>` a function emits through |
 | `Interpolated`, `Rendered` | A document of `var` holes in literal data, and one filled for a call |
 | `Secrets` | Values an expression reads through `{"secret": "name"}` and the engine never records |
-| `OperatorInfo`, `Family` | One operator an engine evaluates, and the feature family it belongs to |
+| `Operator`, `OperatorFamily` | One operator an engine evaluates, and the feature family it belongs to |
 | `ConfigField`, `Resolver`, `CompileCx`, `Visit`, `ExprVisitor`, `FieldSpec`, `FieldKind`, `ValueKind` | The machinery behind `#[derive(FunctionConfig)]`: how a field compiles, resolves and is walked |
 | `EvalRoot` | What an evaluation runs against (`&OwnedDataValue` or `&serde_json::Value`) |
 | `escaped_keys`, `secret_refs` | Walks over raw JSON: every `$`-escaped template key; every secret reference |

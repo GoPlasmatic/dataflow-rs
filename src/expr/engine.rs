@@ -2,7 +2,7 @@
 
 use super::arena::with_arena;
 use super::expr::{Evaluated, Expr, FromValue};
-use super::operators::{FAMILIES, Family, OperatorInfo};
+use super::operators::{FAMILIES, Operator, OperatorFamily};
 use super::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
 use crate::base::{Error, ErrorKind, Result};
 use bumpalo::Bump;
@@ -101,7 +101,7 @@ impl<'r> EvalRoot<'r> for &'r Value {}
 
 struct Inner {
     logic: Engine,
-    operators: Vec<OperatorInfo>,
+    operators: Vec<Operator>,
     secrets: Arc<Secrets>,
 }
 
@@ -141,12 +141,12 @@ impl ExprEngine {
     /// Every operator this engine evaluates: the datalogic built-ins its
     /// features enable, then the host's operators in registration order, then
     /// `secret`.
-    pub fn operators(&self) -> &[OperatorInfo] {
+    pub fn operators(&self) -> &[Operator] {
         &self.inner.operators
     }
 
     /// The operator named `name`, if the engine has one.
-    pub(crate) fn operator(&self, name: &str) -> Option<&OperatorInfo> {
+    pub(crate) fn operator(&self, name: &str) -> Option<&Operator> {
         self.operators().iter().find(|op| op.name == name)
     }
 
@@ -289,7 +289,7 @@ fn eval_error(e: datalogic_rs::Error) -> Error {
 /// Builds an [`ExprEngine`].
 #[derive(Default)]
 pub struct ExprEngineBuilder {
-    operators: Vec<(OperatorInfo, Arc<dyn CustomOperator>)>,
+    operators: Vec<(Operator, Arc<dyn CustomOperator>)>,
     secrets: Secrets,
     #[cfg(feature = "budget")]
     ops_budget: Option<u64>,
@@ -308,20 +308,26 @@ impl std::fmt::Debug for ExprEngineBuilder {
 
 impl ExprEngineBuilder {
     /// Registers a custom operator, neither scoping nor deterministic.
+    ///
+    /// # Dependency
+    ///
+    /// `op` is a [`datalogic_rs::CustomOperator`](crate::datalogic_rs::CustomOperator),
+    /// named through this crate's re-export. It is part of the committed
+    /// dependency surface, as [`OwnedDataValue`](datavalue::OwnedDataValue)
+    /// is: wrapping it would still take datalogic's value and arena types, so
+    /// the engine keeps the trait itself.
     #[must_use]
     pub fn operator(self, name: impl Into<String>, op: impl CustomOperator + 'static) -> Self {
-        self.operator_with(OperatorInfo::custom(name.into()), op)
+        self.operator_with(Operator::custom(name.into()), op)
     }
 
     /// Registers a custom operator with its own flags. The family is always
-    /// [`Family::Custom`].
+    /// [`OperatorFamily::Custom`]; `op` is a
+    /// [`datalogic_rs::CustomOperator`](crate::datalogic_rs::CustomOperator),
+    /// the committed dependency type [`operator`](Self::operator) documents.
     #[must_use]
-    pub fn operator_with(
-        mut self,
-        mut info: OperatorInfo,
-        op: impl CustomOperator + 'static,
-    ) -> Self {
-        info.family = Family::Custom;
+    pub fn operator_with(mut self, mut info: Operator, op: impl CustomOperator + 'static) -> Self {
+        info.family = OperatorFamily::Custom;
         self.operators.push((info, Arc::new(op)));
         self
     }
@@ -392,12 +398,10 @@ impl ExprEngineBuilder {
 
         // datalogic's own description of its operators, in its order, one
         // row per name.
-        let mut operators: Vec<OperatorInfo> = logic
-            .operators()
-            .flat_map(OperatorInfo::from_logic)
-            .collect();
+        let mut operators: Vec<Operator> =
+            logic.operators().flat_map(Operator::from_logic).collect();
         operators.extend(infos);
-        operators.push(OperatorInfo::secret());
+        operators.push(Operator::secret());
 
         Ok(ExprEngine {
             inner: Arc::new(Inner {

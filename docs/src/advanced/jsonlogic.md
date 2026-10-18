@@ -251,7 +251,7 @@ implementations treat any object as truthy; this one does not.
 
 Inside the body of `map`, `filter`, `reduce`, `all`, `some` and `none`,
 `var` reads the current element, not the context. These are the *scoping*
-operators; `OperatorInfo::scoping` names them, and the `PAYLOAD_VAR` check
+operators; `Operator::scoping` names them, and the `PAYLOAD_VAR` check
 skips their bodies for that reason.
 
 ## Try It
@@ -458,7 +458,7 @@ operators, whichever families were compiled in, the host's own operators,
 and `secret`:
 
 ```rust
-use dataflow_rs::expr::{ExprEngine, Family};
+use dataflow_rs::expr::{ExprEngine, OperatorFamily};
 
 let exprs = ExprEngine::default();
 let names: Vec<&str> = exprs.operators().iter().map(|op| &*op.name).collect();
@@ -470,7 +470,7 @@ assert!(names.contains(&"secret"));   // the engine's own, on every build
 // Each entry says which family it belongs to, whether it scopes `var` to an
 // element (`map`, `filter`, `reduce`, ...), and whether it is deterministic.
 let map = exprs.operators().iter().find(|op| op.name == "map").unwrap();
-assert_eq!(map.family, Family::Core);
+assert_eq!(map.family, OperatorFamily::Core);
 assert!(map.scoping && map.deterministic);
 ```
 
@@ -526,7 +526,7 @@ for an expression the function compiles itself.
 
 A host registers its own operators on the `ExprEngine`, then builds the
 registry over that engine. `operator(name, op)` registers one as neither
-scoping nor deterministic; `operator_with(OperatorInfo, op)` says which it is.
+scoping nor deterministic; `operator_with(Operator, op)` says which it is.
 The engine refuses a name that is `secret`, that is a built-in operator this
 build enables, or that is registered twice.
 
@@ -534,7 +534,7 @@ build enables, or that is registered twice.
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
 use dataflow_rs::datalogic_rs::{self, CustomOperator};
 use dataflow_rs::datavalue::NumberValue;
-use dataflow_rs::expr::{ExprEngine, Family, OperatorInfo};
+use dataflow_rs::expr::{ExprEngine, Operator, OperatorFamily};
 use dataflow_rs::{Engine, Message, Registry};
 use serde_json::json;
 
@@ -553,11 +553,11 @@ impl CustomOperator for Answer42 {
 }
 
 let exprs = ExprEngine::builder()
-    .operator_with(OperatorInfo::custom("answer").deterministic(true), Answer42)
+    .operator_with(Operator::custom("answer").deterministic(true), Answer42)
     .build()
     .unwrap();
 let answer = exprs.operators().iter().find(|op| op.name == "answer").unwrap();
-assert_eq!(answer.family, Family::Custom);
+assert_eq!(answer.family, OperatorFamily::Custom);
 
 // A name the engine refuses: `secret` is reserved.
 assert!(ExprEngine::builder().operator("secret", Answer42).build().is_err());

@@ -307,7 +307,12 @@ observe. The migration page has each one with its code.
   lint reads datalogic's own scoped arguments. An operator family is on only
   through this crate's feature of its name: another crate in the build
   enabling a datalogic family (`tensor`, `flagd`) no longer turns its
-  operators on here. `Family::Flagd` is gone.
+  operators on here. The old `Family::Flagd` variant is gone.
+- **`expr::Operator` and `expr::OperatorFamily`.** `OperatorInfo` and
+  `Family` are renamed so a host can import datalogic's own `OperatorInfo`
+  and `Family` beside them, unaliased. `ExprEngineBuilder` still takes
+  datalogic's `CustomOperator`: it is a deliberately committed dependency
+  type, as the crate's re-exports are, not a type this crate wraps.
 - **`publish_xml` sanitizes its root element** as it always sanitized
   child keys. 3.x wrote `root_element` raw, so a name computed from the
   message could close the root and inject elements.

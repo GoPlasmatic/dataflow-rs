@@ -25,7 +25,7 @@
 use super::fingerprint::Fingerprint;
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, StepKind};
 use crate::def::{Logic, RejectionPolicy, StepDef, TaskDef, WorkflowDef};
-use crate::expr::{ExprEngine, ExprVisitor, Family, OperatorInfo, escaped_keys, secret_refs};
+use crate::expr::{ExprEngine, ExprVisitor, Operator, OperatorFamily, escaped_keys, secret_refs};
 use crate::function::builtins::BuiltinKind;
 use datalogic_rs::ScopedArg;
 use serde_json::Value;
@@ -266,8 +266,8 @@ fn walk_duplicates(
 /// A host's operator declares no positions, so every argument after its
 /// first counts; so does a position of a kind this crate does not know,
 /// which skips an argument rather than report a false Defect.
-fn per_element(operator: &OperatorInfo, index: usize, len: usize) -> bool {
-    if operator.family == Family::Custom {
+fn per_element(operator: &Operator, index: usize, len: usize) -> bool {
+    if operator.family == OperatorFamily::Custom {
         return index > 0;
     }
     match operator.scoped {
@@ -499,7 +499,7 @@ mod tests {
     /// scoping `host_each`.
     fn reads(raw: &Value) -> Vec<(String, String)> {
         let exprs = ExprEngine::builder()
-            .operator_with(OperatorInfo::custom("host_each").scoping(true), Each)
+            .operator_with(Operator::custom("host_each").scoping(true), Each)
             .build()
             .unwrap();
         let mut out = Vec::new();

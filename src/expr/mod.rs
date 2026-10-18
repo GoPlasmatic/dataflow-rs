@@ -25,7 +25,7 @@ pub use document::{Interpolated, Rendered};
 pub use engine::{EvalRoot, ExprEngine, ExprEngineBuilder};
 pub(crate) use expr::sealed::CRATE;
 pub use expr::{Evaluated, Expr, FromValue, ResolveExpr};
-pub use operators::{Family, OperatorInfo};
+pub use operators::{Operator, OperatorFamily};
 pub use output::Output;
 pub(crate) use path::Seg;
 pub use path::{MAX_ARRAY_INDEX, Path, Root};

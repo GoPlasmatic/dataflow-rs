@@ -7,11 +7,11 @@ use std::borrow::Cow;
 /// The family an operator belongs to: the cargo feature that turns it on.
 ///
 /// This crate's own, not `datalogic_rs::Family`: it adds the engine's
-/// [`Secret`](Self::Secret) and a host's [`Custom`](Self::Custom). A host
-/// that imports both aliases one.
+/// [`Secret`](Self::Secret) and a host's [`Custom`](Self::Custom). The names
+/// differ, so a host imports both unaliased.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Family {
+pub enum OperatorFamily {
     /// Always present.
     Core,
     /// The `datetime` feature.
@@ -36,7 +36,7 @@ pub enum Family {
     Custom,
 }
 
-impl Family {
+impl OperatorFamily {
     /// The family of datalogic's family `upstream`. `None` for one this
     /// crate has no feature for, which the engine never turns on.
     fn of(upstream: datalogic_rs::Family) -> Option<Self> {
@@ -89,14 +89,24 @@ pub(crate) const FAMILIES: &[datalogic_rs::Family] = &[
 /// One operator an engine can evaluate.
 ///
 /// This crate's own, not `datalogic_rs::OperatorInfo`, which it is built
-/// from: its [`family`](Self::family) is this crate's [`Family`].
+/// from: its [`family`](Self::family) is this crate's [`OperatorFamily`].
+///
+/// ```
+/// use dataflow_rs::datalogic_rs::{Family, OperatorInfo};
+/// use dataflow_rs::expr::{Operator, OperatorFamily};
+///
+/// let _: Option<Operator> = None;
+/// let _: Option<OperatorFamily> = None;
+/// let _: Option<OperatorInfo> = None;
+/// let _: Option<Family> = None;
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct OperatorInfo {
+pub struct Operator {
     /// The name an expression spells it with.
     pub name: Cow<'static, str>,
     /// The family it belongs to.
-    pub family: Family,
+    pub family: OperatorFamily,
     /// It evaluates an argument once per element, with `var` reading the element.
     pub scoping: bool,
     /// The same arguments always give the same result.
@@ -106,12 +116,12 @@ pub struct OperatorInfo {
     pub(crate) scoped: Option<ScopedArg>,
 }
 
-impl OperatorInfo {
+impl Operator {
     /// A host operator: not scoping, not deterministic, until told otherwise.
     pub fn custom(name: impl Into<Cow<'static, str>>) -> Self {
         Self {
             name: name.into(),
-            family: Family::Custom,
+            family: OperatorFamily::Custom,
             scoping: false,
             deterministic: false,
             scoped: None,
@@ -135,7 +145,7 @@ impl OperatorInfo {
     pub(crate) fn secret() -> Self {
         Self {
             name: Cow::Borrowed(super::secrets::SECRET_OPERATOR),
-            family: Family::Secret,
+            family: OperatorFamily::Secret,
             scoping: false,
             deterministic: true,
             scoped: None,
@@ -147,7 +157,7 @@ impl OperatorInfo {
     /// it either way. Scoping is its `scoped_arg`; only the clock makes it
     /// non-deterministic.
     pub(crate) fn from_logic(op: datalogic_rs::OperatorInfo) -> impl Iterator<Item = Self> {
-        let family = Family::named(op.family);
+        let family = OperatorFamily::named(op.family);
         debug_assert!(
             family.is_some(),
             "`{}` is in family `{}`, which no feature turns on",
@@ -159,7 +169,7 @@ impl OperatorInfo {
             .filter(move |_| family.is_some())
             .map(move |name| Self {
                 name: Cow::Borrowed(name),
-                family: family.unwrap_or(Family::Core),
+                family: family.unwrap_or(OperatorFamily::Core),
                 scoping: op.scoped_arg.is_some(),
                 deterministic: op.effect != "clock",
                 scoped: op.scoped_arg,
@@ -182,7 +192,7 @@ mod tests {
     }
 
     /// Every operator this build lists, as `ExprEngine::operators` does.
-    fn listed() -> Vec<OperatorInfo> {
+    fn listed() -> Vec<Operator> {
         ExprEngine::default().operators().to_vec()
     }
 
@@ -193,7 +203,7 @@ mod tests {
             .build();
         let ours: Vec<String> = listed()
             .into_iter()
-            .filter(|o| o.family != Family::Secret)
+            .filter(|o| o.family != OperatorFamily::Secret)
             .map(|o| o.name.into_owned())
             .collect();
         let mut theirs: Vec<&str> = logic.builtin_operator_names().collect();
@@ -251,7 +261,7 @@ mod tests {
         // A family datalogic adds fails here until it is mapped or named
         // unwanted; `flagd` is feature-flag specific and never turned on.
         for family in datalogic_rs::Family::ALL {
-            let mapped = Family::of(*family);
+            let mapped = OperatorFamily::of(*family);
             assert_eq!(
                 mapped.is_none(),
                 family.name() == "Flagd",

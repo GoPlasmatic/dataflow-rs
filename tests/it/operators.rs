@@ -1,6 +1,6 @@
 use dataflow_rs::datalogic_rs::{self, CustomOperator};
 use dataflow_rs::datavalue::OwnedDataValue;
-use dataflow_rs::expr::{ExprEngine, Family, Secrets};
+use dataflow_rs::expr::{ExprEngine, OperatorFamily, Secrets};
 use dataflow_rs::{Error, Result};
 
 struct Nop;
@@ -18,6 +18,17 @@ impl CustomOperator for Nop {
 
 fn config_error(result: Result<ExprEngine>) -> bool {
     matches!(result, Err(e) if matches!(e.kind(), dataflow_rs::run::ErrorKind::Config))
+}
+
+#[test]
+fn the_operator_types_do_not_collide_with_datalogics() {
+    use dataflow_rs::datalogic_rs::{Family, OperatorInfo};
+    use dataflow_rs::expr::{Operator, OperatorFamily};
+
+    let _: Option<Operator> = None;
+    let _: Option<OperatorFamily> = None;
+    let _: Option<OperatorInfo> = None;
+    let _: Option<Family> = None;
 }
 
 #[test]
@@ -42,14 +53,14 @@ fn the_table_is_complete_and_operators_lists_builtins_customs_then_secret() {
     // Builtins keep datalogic's order, customs registration order, secret last.
     assert_eq!(&names[names.len() - 3..], ["alpha", "beta", "secret"]);
     for o in ops.iter().filter(|o| live.contains(&&*o.name)) {
-        assert_ne!(o.family, Family::Custom, "{}", o.name);
-        assert_ne!(o.family, Family::Secret, "{}", o.name);
+        assert_ne!(o.family, OperatorFamily::Custom, "{}", o.name);
+        assert_ne!(o.family, OperatorFamily::Secret, "{}", o.name);
     }
     let secret = ops.last().unwrap();
-    assert_eq!(secret.family, Family::Secret);
+    assert_eq!(secret.family, OperatorFamily::Secret);
     assert!(secret.deterministic && !secret.scoping);
     let alpha = &ops[ops.len() - 3];
-    assert_eq!(alpha.family, Family::Custom);
+    assert_eq!(alpha.family, OperatorFamily::Custom);
     assert!(!alpha.scoping && !alpha.deterministic);
 }
 

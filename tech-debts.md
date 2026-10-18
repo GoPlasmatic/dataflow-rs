@@ -73,6 +73,14 @@ the *implementation* of such a rule is duplicated, unenforced or leaky.
 > root must follow `(loop.setup | tasks)([i].tasks)*` and a literal `null`
 > condition is `NULL_CONDITION`; `CHECK_EVERY` is public, the `for_each`
 > message takes its owner, and `$` and the roots are spelled once.
+>
+> **Fourth batch (2026-10-18).** API-2 is fixed: the re-exports stay
+> committed, `EvalRoot::view_in` and the `ResolveExpr` internals stay sealed,
+> and `expr::Operator`/`expr::OperatorFamily` replace `OperatorInfo`/`Family`
+> so datalogic's own names import unaliased. `CustomOperator` stays the
+> direct dependency type: wrapping it would still take datalogic's value and
+> arena types, so the crate documents it as committed instead. The entry is
+> kept until the next prune.
 
 ## 0. Executive summary
 
@@ -131,7 +139,7 @@ silent-failure fixes come next.
 | # | Item | Severity | Effort | Why now |
 |---|---|---|---|---|
 | 1 | **The `ErrorRecord` wire shape, as one change:** [API-5](#api-5) ids on every record, [API-3](#api-3) `Arc<str>` ids and one stamp, [API-1](#api-1) drop or document the retry fields | Medium | M | All three change message bytes and `bindings/dataflow.d.ts`, which becomes permanent at the tag 🔒. API-3 is also a per-record allocation on validation-heavy runs (performance comes first). Doing them together means one bindings regeneration, one CHANGELOG line and one Orion follow-up. |
-| 2 | [API-2](#api-2) Dependency types on the public API | Medium-High | M (was L) | Becomes semver at the tag 🔒. Orion's check settles the largest question: keep both re-exports. What is left is sealing the `#[doc(hidden)]` `ResolveExpr`/`EvalRoot` methods, settling the `OperatorInfo`/`Family` clash, and documenting the commitment. |
+| 2 | [API-2](#api-2) Dependency types on the public API | Medium-High | M (was L) | **Fixed in the fourth batch:** `expr::Operator`/`OperatorFamily` replace the clashing names, and `CustomOperator` stays a documented committed dependency type. The next open pre-tag item is [API-4](#api-4). |
 | 3 | [API-4](#api-4) Stringly or leaky public types | Low-Medium | S each | Free only before the tag 🔒. First: `try_register` (Orion's plugin manifests), `testing::Write`, the built-in configs to `pub(crate)`, one canonical path per item, and the `PARSE_FAILED` split. |
 | 4 | [DOC-1](#doc-1) Design-doc IDs in public rustdoc | Medium | S | Four hits ship to docs.rs at 4.0. A CI grep stops new ones. |
 | 5 | [DUP-8](#dup-8) `IssueCode` as a literal union in the bindings | Low | S | A bindings change 🔒. Do it after API-4's new codes so they land in the union. |
@@ -416,6 +424,11 @@ phase-8 tag. That timing is the justification common to the whole section.
 <a id="api-2"></a>
 ### API-2 · Raw re-exports of datalogic-rs 5.x and datavalue 0.x; dependency types in signatures
 **Severity:** Medium-High · **Effort:** M (was L; Orion settles the re-exports) · **Verified:** ✔
+**Fixed (2026-10-18, fourth batch):** both re-exports stay committed and
+documented; `EvalRoot::view_in` and `ResolveExpr`'s internals are sealed;
+`expr::Operator`/`OperatorFamily` replace the names that clashed with
+datalogic's; and `CustomOperator` stays the direct, committed dependency
+type, since a wrapper would still take datalogic's value and arena types.
 - **Validated (Orion):** Orion's custom operators need `dataflow_rs::datalogic_rs` at O14, and use `datavalue` in 37 files. Keep both re-exports and commit to them; don't drop them. Checked against Orion `fafd753d` on 2026-10-17.
 
 - **Where:** `src/lib.rs:52-53` (`pub use datalogic_rs; pub use datavalue;`); the `#[doc(hidden)]` (still semver) `EvalRoot::view_in` (`src/expr/engine.rs:68-71`) and `ResolveExpr`'s `logic()`, `constant_value()` and `value_of(&DataValue)` (`src/expr/expr.rs:325-336`); `ExprEngineBuilder::operator(impl CustomOperator)` (`engine.rs:304`); `OwnedDataValue` in `Secrets` (`secrets.rs:43, 55`), `Resolver` (`config.rs:341`), `ConfigField::resolve`, `FromValue`.
