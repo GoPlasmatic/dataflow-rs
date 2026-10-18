@@ -41,6 +41,10 @@ pub struct CallInfo<'a> {
     /// The channel the run was started on; `None` when the run takes every
     /// active workflow.
     pub channel: Option<&'a str>,
+    /// The run's routing bucket, `0..=99`; `None` when the run was given
+    /// none, which every rollout admits. A function that starts a child run
+    /// passes it on, so the child keeps the caller's rollout decision.
+    pub routing_bucket: Option<u8>,
     /// The loop counter, inside a workflow's loop.
     pub loop_counter: Option<i64>,
     /// The element's index, inside a `for_each` fan-out.
@@ -732,6 +736,7 @@ mod tests {
             workflow_id: "w",
             task_id: "t",
             channel: None,
+            routing_bucket: None,
             loop_counter: None,
             element_index: None,
         }

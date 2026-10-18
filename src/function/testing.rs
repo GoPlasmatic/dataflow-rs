@@ -152,6 +152,7 @@ pub fn call<F: Function>(f: F, input: Value) -> Call<F> {
         name: "function".to_owned(),
         capture: true,
         channel: None,
+        routing_bucket: None,
         deadline: None,
         cancel: None,
     }
@@ -171,6 +172,7 @@ pub struct Call<F: Function> {
     name: String,
     capture: bool,
     channel: Option<String>,
+    routing_bucket: Option<u8>,
     deadline: Option<Instant>,
     cancel: Option<CancelToken>,
 }
@@ -220,6 +222,13 @@ impl<F: Function> Call<F> {
         self
     }
 
+    /// The run's routing bucket, as [`CallInfo::routing_bucket`] says. By
+    /// default none.
+    pub fn routing_bucket(mut self, b: u8) -> Self {
+        self.routing_bucket = Some(b);
+        self
+    }
+
     /// The run's deadline, as [`Ctx::deadline`](super::Ctx::deadline) says.
     /// The call is checked against it and, natively, raced against it, as
     /// a run's host call is: one it passes ends `Err` of kind
@@ -251,6 +260,7 @@ impl<F: Function> Call<F> {
             name,
             capture,
             channel,
+            routing_bucket,
             deadline,
             cancel,
         } = self;
@@ -298,6 +308,7 @@ impl<F: Function> Call<F> {
                     workflow_id: TEST,
                     task_id: TEST,
                     channel: channel.as_deref(),
+                    routing_bucket,
                     loop_counter: None,
                     element_index: None,
                 },

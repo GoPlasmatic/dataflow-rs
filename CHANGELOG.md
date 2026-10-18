@@ -166,7 +166,9 @@ observe. The migration page has each one with its code.
   and `datalogic` are the `ExprEngine`'s.
 - **`capture_changes`, `audit_mode` and `routing_bucket`** are choices about
   a run, so they moved from the message to `RunOptions`, with unchanged
-  defaults; `MessageBuilder` is gone. None of the three ever serialized, so
+  defaults: a bucket past 99 is still served as 99 (`Rollout::MAX_BUCKET`),
+  and a host function reads the run's as `CallInfo::routing_bucket`;
+  `MessageBuilder` is gone. None of the three ever serialized, so
   no stored message changes.
 - **A host function's writes are dropped when it returns `Err`.** 3.x kept
   what the handler had written before it failed.
@@ -228,11 +230,18 @@ observe. The migration page has each one with its code.
 - **A host function's write at a context root takes only an object.**
   `Ctx::set` and `emit` at `data`, `metadata` or `temp_data` refuse an array,
   a string or a number with `CONFIG_ERROR`; 3.x replaced the root.
+- **`map` at a context root takes only an object.** A `logic` that is
+  always a non-object at a literal root is `INVALID_MAPPING`; any other
+  non-object result fails the mapping, which leaves the root as it was, and
+  the task ends with status 500. 3.x replaced the root.
 - **A message's context holds only the three roots.** Reading a message or
   a trace refuses a context with any other key, a context that is not an
   object, and a root named twice; a context read with its roots in another
   order writes them as `data`, `metadata`, `temp_data`, a missing one as
-  `{}`.
+  `{}`. A message's roots must also be objects, where 3.x took any value and
+  then silently dropped every write under a `null` `metadata`,
+  `metadata.progress` included; a trace's context still takes a redacted
+  root's `null`.
 - **`publish_json` with `pretty`, `publish_xml` and `parse_xml` keep the
   source's key order in every build;** 3.x's default build sorted them
   through `serde_json::Value`. A held duplicate key is written as held.
@@ -244,7 +253,19 @@ observe. The migration page has each one with its code.
 - **The published crate ships `src`, `bindings` and the root documents,**
   not `examples` and `tests`, which need the repository's unpublished
   members.
-- **serde_json is built with `float_roundtrip`.**
+- **serde_json is built with `float_roundtrip` and `preserve_order`.** An
+  object keeps its keys in the order they were written: an `Interpolated`
+  document (a Mongo `$sort`, a projection) renders as authored, where 3.x's
+  default build sorted it, and a definition's issues come out in its order.
+  The feature unifies, so a host's own `serde_json::Map` keeps insertion
+  order too.
+- **A `validation` rule over the ops budget fails the task** with
+  `BUDGET_EXCEEDED`, under `on_failure`, where 3.x recorded it as an
+  `EVALUATION_ERROR` rejection (400) that `on_rejection: continue` stepped
+  past. Any other evaluation error is still `EVALUATION_ERROR` and 400.
+- **`publish_xml` sanitizes its root element** as it always sanitized
+  child keys. 3.x wrote `root_element` raw, so a name computed from the
+  message could close the root and inject elements.
 
 ### Removed
 
@@ -260,6 +281,16 @@ observe. The migration page has each one with its code.
 - **The `Rule`, `Action` and `RulesEngine` aliases,** and `continue_on_error`
   and `halt_on` as API; the spellings are still read.
 - **`MessageBuilder`**, and the engine's per-task log lines, as above.
+- **`FUNCTION_NOT_FOUND` and `DESERIALIZATION_ERROR`,** with
+  `ErrorKind::FunctionNotFound` and `ErrorKind::Parse`. An unregistered
+  function is the `UNKNOWN_FUNCTION` issue at build, and a value that does
+  not convert to a field's type is `LOGIC_ERROR`, where 3.x recorded
+  `DESERIALIZATION_ERROR`; nothing produced either kind.
+- **The issue codes `EMPTY_WORKFLOW_NAME`, `MISSING_HANDLER`,
+  `INVALID_SECRET_STORE` and `VALIDATE_FAILED`,** which 4.0 never reports: a
+  workflow needs no `name`, an unregistered function is `UNKNOWN_FUNCTION`, a
+  store that is not an object is refused when the `ExprEngine` is built, and
+  every rule has its own code.
 
 ## [3.15.0] — 2026-10-01
 

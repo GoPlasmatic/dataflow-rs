@@ -4,8 +4,8 @@
 //! It runs over a copy of the authored JSON, only when
 //! [`ParseOptions::compat`](super::ParseOptions::compat) is on, and reports
 //! as it goes. Its issues come before the walk's, in document order: each
-//! object's keys in the order the object holds them (sorted, with
-//! `serde_json`'s default map), the workflow first, then the steps of `loop`
+//! object's keys in the order they were written (the crate turns on
+//! serde_json's `preserve_order`), the workflow first, then the steps of `loop`
 //! and `tasks` as their keys come, each node before its members.
 //!
 //! | Where | v3 spelling | v4 spelling |
@@ -130,21 +130,11 @@ impl Flag {
     }
 }
 
-/// Removes `key` from `obj`, keeping the order of the keys after it: with
-/// `serde_json`'s `preserve_order`, `Map::remove` would swap the last key into
-/// its place, and the walk reports a node's unknown keys in its order.
+/// Removes `key` from `obj`, keeping the order of the keys after it:
+/// `Map::remove` would swap the last key into its place, and the walk reports
+/// a node's unknown keys in its order.
 fn take(obj: &mut Map<String, Value>, key: &str) -> Option<Value> {
-    if !obj.contains_key(key) {
-        return None;
-    }
-    let mut taken = None;
-    obj.retain(|k, value| {
-        if k == key {
-            taken = Some(std::mem::take(value));
-        }
-        k != key
-    });
-    taken
+    obj.shift_remove(key)
 }
 
 /// The keys of `obj` among `wanted`, in the object's order.

@@ -72,10 +72,9 @@ those definitions out.
 ## The tools
 
 **`json`.** An order-preserving JSON value. Key order is wire data: the JSON a message serializes
-to keeps its keys in the order they were written, and a removal changes that order. `serde_json`
-is built without `preserve_order` in this workspace, and turning it on would unify into
-`dataflow-rs` itself, so the corpus keeps objects as ordered pairs and its equality is
-order-sensitive.
+to keeps its keys in the order they were written, and a removal changes that order. The corpus
+keeps objects as ordered pairs, so its equality is order-sensitive whatever map type serde_json
+is built with (`dataflow-rs` turns on its `preserve_order`).
 
 **`normalise`.** Replaces the fields that differ between two runs of the same case, each in place,
 keeping its key's position, so key order is still compared:

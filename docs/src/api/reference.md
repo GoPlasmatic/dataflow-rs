@@ -379,8 +379,6 @@ a `Run`'s `error` writes, and what an `Err` from a host function records:
 |---|---|---|
 | `Eval` | `LOGIC_ERROR` | An expression failed to evaluate |
 | `Budget` | `BUDGET_EXCEEDED` | The operation ceiling was exceeded (`budget` feature) |
-| `FunctionNotFound` | `FUNCTION_NOT_FOUND` | No function is registered under the name |
-| `Parse` | `DESERIALIZATION_ERROR` | A document or payload did not parse |
 | `TimedOut` | `TIMEOUT_ERROR` | A deadline passed; retryable by default |
 | `Cancelled` | `CANCELLED` | The run's token was cancelled |
 | `Config` | `CONFIG_ERROR` | A configuration is invalid |

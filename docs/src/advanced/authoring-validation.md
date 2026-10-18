@@ -150,7 +150,7 @@ let json = json!({"id": "w", "tasks": [
 ]});
 
 // With the reader on, both keys load, and each is reported as what it is,
-// in the object's key order.
+// in the order they were written.
 let parsed = parse(&json, ParseOptions::default());
 let rows: Vec<(IssueCode, Severity, String)> = parsed
     .issues
@@ -158,8 +158,8 @@ let rows: Vec<(IssueCode, Severity, String)> = parsed
     .map(|i| (i.code, i.severity, i.path.to_string()))
     .collect();
 assert_eq!(rows, [
-    (IssueCode::UnknownKey, Severity::Advisory, "tasks[0].colour".to_owned()),
     (IssueCode::LikelyTypo, Severity::Defect, "tasks[0].conditon".to_owned()),
+    (IssueCode::UnknownKey, Severity::Advisory, "tasks[0].colour".to_owned()),
 ]);
 let def = parsed.def.unwrap();
 let dataflow_rs::def::StepDef::Task(task) = &def.tasks[0] else { unreachable!() };
@@ -191,7 +191,6 @@ since the function could not honour it.
 | `INVALID_FUNCTION_NAME` | Rejected | `function` is not an object with a non-empty `name` |
 | `INVALID_TERMINAL` | Rejected | `terminal` is present but not a boolean |
 | `PARSE_FAILED` | Rejected | A key is missing or of the wrong type; the message says what was expected |
-| `VALIDATE_FAILED` | Rejected | A backstop for a rule none of the codes above model |
 
 ### Loops and fan-out
 
@@ -219,7 +218,6 @@ since the function could not honour it.
 | `INVALID_PATH` | Rejected | A literal context path not rooted at `data`, `metadata` or `temp_data`, or a document hole whose path is not one |
 | `PAYLOAD_VAR` | Defect | A literal `var` rooted at `payload`, which is not in the evaluation context |
 | `UNRESOLVED_REFERENCE` | Defect | A field a function's spec names as a `Reference` holds a literal the host's `ResourceOracle` does not resolve |
-| `MISSING_HANDLER` | Defect | 3.x's code for its three config-only integrations with nothing registered; 4.0 never reports it, since an unregistered name is `UNKNOWN_FUNCTION` |
 
 ### Secrets, template keys and documents
 
@@ -227,7 +225,6 @@ since the function could not honour it.
 |---|---|---|
 | `UNKNOWN_SECRET` | Rejected | An expression names a secret the engine does not declare; see [Secrets](./secrets.md) |
 | `SECRET_IN_MESSAGE_WRITE` | Rejected | An expression whose result the engine records reads a secret; see [Secrets](./secrets.md#what-a-secret-may-not-do) |
-| `INVALID_SECRET_STORE` | Rejected | 3.x's code for a store that is not an object; 4.0 refuses such a store when the `ExprEngine` is built, so never reports it |
 | `DUPLICATE_TEMPLATE_KEY` | Rejected | Two keys in one template object collapse to the same name once the `$` escape is stripped |
 | `ESCAPED_TEMPLATE_KEY` | Advisory | A `$`-prefixed template key, listed so the audit is mechanical |
 | `OPERATOR_IN_DOCUMENT` | Advisory | An operator-shaped node inside an `Interpolated` document, which stays data |

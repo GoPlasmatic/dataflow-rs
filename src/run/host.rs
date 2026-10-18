@@ -90,6 +90,7 @@ impl<'r> RunEnv<'r, '_> {
             workflow_id: &wf.id,
             task_id: &meta.id,
             channel: self.channel,
+            routing_bucket: self.routing_bucket,
             loop_counter: stamp.loop_counter,
             element_index: stamp.element_index,
         }

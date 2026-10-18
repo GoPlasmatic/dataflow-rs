@@ -153,7 +153,6 @@ them; run the ones your change touches:
 cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
 cargo test
 cargo test -p dataflow-docs-tests
-cargo test --features serde_json/preserve_order
 cargo test --features ts --test ts_types
 for f in datetime ext-string ext-array ext-math ext-control ext-object \
          error-handling all-operators tensor budget; do
@@ -161,8 +160,7 @@ for f in datetime ext-string ext-array ext-math ext-control ext-object \
 done
 ```
 
-The `preserve_order` runs hold the engine's bytes independent of serde_json's
-key ordering, which a host's dependency graph may turn on. The `ts` run holds
+The `ts` run holds
 `bindings/dataflow.d.ts`, generated from the wire types, to the committed
 file, doc comments included: a doc edit on a wire type means regenerating it
 with `DATAFLOW_TS_WRITE=1 cargo test --features ts --test ts_types`. The

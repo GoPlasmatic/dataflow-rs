@@ -13,7 +13,8 @@ use std::sync::Arc;
 pub struct RunOptions<'a> {
     /// Run the Active workflows of this channel; `None` runs every Active one.
     pub channel: Option<&'a str>,
-    /// The bucket a rollout admits; `None` is admitted by every rollout.
+    /// The bucket a rollout admits, `0..=99`; a larger one is served as 99.
+    /// `None` is admitted by every rollout.
     pub routing_bucket: Option<u8>,
     /// Record each write's `Change` in its task's audit entry. `true` by
     /// default (#63). It governs only the audit trail: a trace records its
@@ -106,7 +107,9 @@ impl<'a> RunOptions<'a> {
         self
     }
 
-    /// Sets the routing bucket rollouts are tested against.
+    /// Sets the routing bucket rollouts are tested against: `0..=99`. A
+    /// larger one is served as bucket 99, as in 3.x, so derive it as a
+    /// hash `% 100`, never `% 256`.
     #[must_use]
     pub fn routing_bucket(mut self, b: u8) -> Self {
         self.routing_bucket = Some(b);

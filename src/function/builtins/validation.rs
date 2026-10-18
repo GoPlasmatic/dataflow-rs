@@ -1,11 +1,10 @@
 //! `validation`'s config: rules, each a condition and the error recorded when
 //! it fails.
 
-use crate::base::{ErrorRecord, Result, VALIDATION_ERROR};
+use crate::base::{ErrorKind, ErrorRecord, Result, VALIDATION_ERROR};
 use crate::expr::Expr;
 use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
 use ::log::{debug, error};
-use std::borrow::Cow;
 
 /// `validation`'s input.
 #[derive(Debug, FunctionConfig)]
@@ -32,6 +31,10 @@ impl SyncFunction for ValidationConfig {
     /// only then, and one that fails to evaluate records
     /// `EVALUATION_ERROR`. The call is `Status(400)` when any record was
     /// made. The records carry no ids, as v3's do.
+    ///
+    /// An exceeded ops budget is no rejection: it is the call's `Err`, which
+    /// the classifier records as `BUDGET_EXCEEDED` and `on_failure` governs,
+    /// so a runaway rule cannot pass as a 400 (3.x made it one).
     fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let mut records = Vec::new();
         for (idx, rule) in self.rules.iter().enumerate() {
@@ -45,13 +48,16 @@ impl SyncFunction for ValidationConfig {
                 // the rule did fail.
                 Ok(false) => (
                     VALIDATION_ERROR,
-                    cx.eval(&rule.message)
-                        .map(Cow::into_owned)
-                        .unwrap_or_else(|e| {
+                    match cx.eval(&rule.message) {
+                        Ok(text) => text.into_owned(),
+                        Err(e) if e.kind() == &ErrorKind::Budget => return Err(e),
+                        Err(e) => {
                             error!("Validation: rule {idx} message failed to render: {e:?}");
                             "Validation failed".to_owned()
-                        }),
+                        }
+                    },
                 ),
+                Err(e) if e.kind() == &ErrorKind::Budget => return Err(e),
                 Err(e) => {
                     error!("Validation: Error evaluating rule {idx}: {e:?}");
                     (

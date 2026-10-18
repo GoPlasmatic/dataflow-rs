@@ -13,8 +13,8 @@ use std::fmt;
 pub(crate) const ROOTS: [&str; 3] = ["data", "metadata", "temp_data"];
 
 /// The context: always `data`, `metadata` and `temp_data`, in that order.
-/// Each root starts as an object, and a `map` to a root of a value that is
-/// not an object replaces it, as v3's does.
+/// Each root starts as an object, and every write keeps it one: `map`,
+/// `Ctx::set` and [`Context::set`] refuse anything else at a root.
 ///
 /// Read from JSON, it takes the three roots in any order and writes them in
 /// that order, reads a missing one as `{}`, takes any value at each (a

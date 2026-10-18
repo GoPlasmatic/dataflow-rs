@@ -290,6 +290,15 @@ async fn channel_and_routing_bucket_select_workflows() {
 
     let within = run(&engine, JsValue::NULL, Some(r#"{"routing_bucket": 5}"#)).await;
     assert_eq!(within["message"]["context"]["data"]["rolled"], true);
+
+    // Buckets are 0 to 99: a hash `% 256` would match no `[x, 100)` range.
+    for bucket in ["100", "255"] {
+        let options = format!(r#"{{"routing_bucket": {bucket}}}"#);
+        let promise = engine.run(JsValue::NULL, Some(obj(&options)));
+        let (code, message, _) = error_parts(&JsFuture::from(promise).await.unwrap_err());
+        assert_eq!(code, "INVALID_ARGUMENT", "{bucket}");
+        assert!(message.contains("options.routing_bucket"), "{message}");
+    }
 }
 
 #[wasm_bindgen_test]

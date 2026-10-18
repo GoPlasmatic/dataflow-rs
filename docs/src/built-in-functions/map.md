@@ -94,9 +94,10 @@ Writing a root merges an object into it:
 
 adds `merged` to `data` and keeps the keys already there. The change's
 `new_value` is the object written, `{"merged": true}`, not the root after the
-merge; its `old_value` is the root before it. A result that is not an object replaces
-the root with it, which leaves the context with a root that is no longer an
-object; write an object at a root.
+merge; its `old_value` is the root before it. A root takes only an object: a
+`logic` that is always something else is refused when the engine is built, and
+a result that is not an object fails the mapping when it runs, leaving the
+root as it was.
 
 ### Computed destinations
 
@@ -253,6 +254,7 @@ A mapping that breaks one of these is refused when the engine is built, as
 | `mode` needs `logic` | `mode` | `mode` says how a `logic` result is written, and this mapping has no `logic` |
 | A root cannot be removed | `path` | a context root (`data`, `metadata`, `temp_data`) cannot be removed; remove the keys under it instead |
 | A root cannot be appended to | `path` | a context root (`data`, `metadata`, `temp_data`) is an object and cannot be appended to; name an array under it instead |
+| A root takes only an object | `logic` | a context root (`data`, `metadata`, `temp_data`) takes only an object, and this mapping's logic is always something else; write an object, or name a path under the root |
 
 Only a literal path names a root here. A computed path that resolves to a
 root fails that mapping when it runs, leaving the root in place.
@@ -301,7 +303,7 @@ square of its length. `append` converts and copies only the new element.
 
 A mapping fails when its `logic` does not evaluate, when a computed `path`
 does not resolve to a context path, when it would remove or append to a
-root, or when it appends to a target that is not an array. The failure is
+root or write one anything but an object, or when it appends to a target that is not an array. The failure is
 logged, the remaining mappings still run, and the call ends with status
 `500`:
 
@@ -352,6 +354,6 @@ removal. A root write's `new_value` is the object written. See
    message carries out.
 2. **Order matters**: a mapping sees the writes of the mappings before it.
 3. **Handle missing fields** with `if` or `!!`, or let a `null` result skip.
-4. **Write an object at a root**, so the write merges.
+4. **Write an object at a root**: it merges, and nothing else is accepted.
 5. **Clear with `unset`, not `false` or `null`**: `null` is skipped and
    `false` is a value; only `unset` makes a path absent.

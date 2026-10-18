@@ -229,8 +229,7 @@ A host function's `Err` is recorded under its `Error::code()`:
 - the code a **service error** chose (`Error::service(code, message)`), or
   `TASK_ERROR` when that code is empty
 - `LOGIC_ERROR` (`ErrorKind::Eval`), `BUDGET_EXCEEDED` (`Budget`),
-  `FUNCTION_NOT_FOUND`, `DESERIALIZATION_ERROR` (`Parse`), `TIMEOUT_ERROR`
-  (`TimedOut`), `CANCELLED`, `CONFIG_ERROR` (`Config`) and
+  `TIMEOUT_ERROR` (`TimedOut`), `CANCELLED`, `CONFIG_ERROR` (`Config`) and
   `COMPILATION_ERROR` (`Compile`)
 
 When a `5xx` stops the run, `Run::status()` carries a `TASK_ERROR` reading

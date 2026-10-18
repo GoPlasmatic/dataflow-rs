@@ -148,6 +148,20 @@ impl Mapping {
                  appended to — name an array under it instead",
             ));
         }
+        // A root takes only an object (3.x replaced the root with anything).
+        // A constant `null` is skipped, and `NULL_MAPPING`'s.
+        let constant = self.logic.as_ref().and_then(|logic| logic.constant());
+        if literal_root
+            && constant
+                .is_some_and(|c| !matches!(c, OwnedDataValue::Object(_) | OwnedDataValue::Null))
+        {
+            return Some((
+                "logic",
+                "a context root (`data`, `metadata`, `temp_data`) takes only an object, and this \
+                 mapping's logic is always something else — write an object, or name a path \
+                 under the root",
+            ));
+        }
         None
     }
 }
@@ -277,10 +291,7 @@ impl Mapping {
             return false;
         };
         match self.mode {
-            None | Some(MapMode::Set) => {
-                w.set(&path, result);
-                true
-            }
+            None | Some(MapMode::Set) => w.set(&path, result),
             Some(mode) => w.append(&path, mode, result),
         }
     }
@@ -327,8 +338,17 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
     /// Writes `result` at `path`: a root merges, anything else is assigned.
     /// The change is recorded first, with the old value read from the view;
     /// under capture the mark keeps the owned new value, which the `Change`
-    /// needed anyway, so the checkpoint converts nothing twice.
-    fn set(&mut self, path: &Path, result: MapValue<'q, 'p>) {
+    /// needed anyway, so the checkpoint converts nothing twice. `false`,
+    /// after logging, when `path` is a root and `result` is not an object: a
+    /// root takes only an object, as `Ctx::set`'s does.
+    fn set(&mut self, path: &Path, result: MapValue<'q, 'p>) -> bool {
+        if path.is_root() && !matches!(result.view, DataValue::Object(_)) {
+            error!(
+                "Map: {path} is a root and takes only an object, not {}",
+                kind(&result.view)
+            );
+            return false;
+        }
         let owned = self.capture.then(|| result.owned());
         if let Some(new_value) = &owned {
             let old_value = self.old(path);
@@ -343,6 +363,7 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
         } else {
             self.e.set(path, result.view, owned);
         }
+        true
     }
 
     /// Adds `result` to the array at `path` (#69): one element for `append`,
@@ -563,6 +584,29 @@ mod tests {
     }
 
     #[test]
+    fn a_root_takes_only_an_object() {
+        for logic in [json!([1]), json!(5), json!("s"), json!(true)] {
+            let (config, issues) = one(json!({"path": "temp_data", "logic": logic}));
+            assert!(config.is_none(), "{logic}");
+            assert_eq!(issues[0].code, IssueCode::InvalidMapping, "{logic}");
+            assert_eq!(issues[0].path.to_string(), "mappings[0].logic");
+            assert!(issues[0].message.contains("takes only an object"));
+        }
+        // An object merges, a constant `null` is `NULL_MAPPING`'s, and a
+        // computed result or a computed path is the write's to refuse.
+        for mapping in [
+            json!({"path": "data", "logic": {"a": 1}}),
+            json!({"path": "data", "logic": {"var": "data.list"}}),
+            json!({"path": {"cat": ["da", "ta"]}, "logic": [1]}),
+        ] {
+            let (_, issues) = one(mapping.clone());
+            assert!(issues.is_empty(), "{mapping} {issues:?}");
+        }
+        let (_, issues) = one(json!({"path": "data", "logic": null}));
+        assert_eq!(issues[0].code, IssueCode::NullMapping);
+    }
+
+    #[test]
     fn a_null_mapping_is_an_advisory_naming_the_path() {
         let (config, issues) = one(json!({"path": "data.x", "logic": null}));
         assert!(config.is_some(), "an Advisory refuses nothing");
@@ -740,12 +784,21 @@ mod tests {
             r#"[{"path":"temp_data","old_value":{"field1":"first"},"new_value":{"field2":"second"}},{"path":"data","old_value":{"a":1},"new_value":{"field1":"first","field2":"second"}}]"#
         );
 
-        // Anything but an object replaces the slot.
-        both(
+        // A root takes only an object: anything else fails the mapping and
+        // leaves the root as it was (3.x replaced the root).
+        let got = both(
             &mut golden,
-            json!([{"path": "temp_data", "logic": [1]}]),
-            &json!({"temp_data": {"x": 1}}),
+            json!([
+                {"path": "temp_data", "logic": {"var": "data.list"}},
+                {"path": "data.after", "logic": "ran"}
+            ]),
+            &json!({"data": {"list": [1]}, "temp_data": {"x": 1}}),
         );
+        assert_eq!(
+            got.context,
+            r#"{"data":{"list":[1],"after":"ran"},"metadata":{},"temp_data":{"x":1}}"#
+        );
+        assert_eq!(got.status, Some(500));
     }
 
     #[test]
@@ -884,6 +937,7 @@ mod tests {
                 {"path": {"cat": ["da", "ta"]}, "logic": 1, "mode": "append"},
                 {"path": {"var": "data.root"}, "logic": [1], "mode": "extend"},
                 {"path": {"var": "data.root"}, "logic": null, "on_null": "unset"},
+                {"path": {"var": "data.root"}, "logic": [1]},
                 {"path": "data.after", "logic": "ran"}
             ]),
             &json!({"data": {"root": "temp_data"}, "temp_data": {"x": 1}}),

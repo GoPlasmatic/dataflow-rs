@@ -72,17 +72,39 @@ impl Context {
 ///
 /// Read from JSON as v3's is: the five fields, each required, any other key
 /// ignored. Its context reads by [`Context`]'s rules, so a fourth root is
-/// refused (break 22).
+/// refused, and each root must be an object: a root takes only an object,
+/// and a `null` or scalar `metadata` would silently drop every write under
+/// it, `metadata.progress` included (3.x took any value).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     id: String,
     /// Read back as v4 wrote it.
     #[serde(deserialize_with = "payload")]
     payload: Arc<OwnedDataValue>,
+    #[serde(deserialize_with = "object_roots")]
     context: Context,
     #[serde(rename = "audit_trail")]
     audit: Vec<AuditEntry>,
     errors: Vec<ErrorRecord>,
+}
+
+/// A message's context, each of its roots an object. A trace's context is
+/// read by [`Context`]'s own rules, which take a redacted root's `null`.
+fn object_roots<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Context, D::Error> {
+    let context = Context::deserialize(d)?;
+    for (root, value) in [
+        ("data", context.data()),
+        ("metadata", context.metadata()),
+        ("temp_data", context.temp_data()),
+    ] {
+        if !value.is_object() {
+            return Err(serde::de::Error::custom(format_args!(
+                "`{root}` is a root and takes only an object, not {}",
+                crate::expr::path::kind(value)
+            )));
+        }
+    }
+    Ok(context)
 }
 
 /// A message's payload, read back exactly as v4 wrote it.
@@ -219,10 +241,8 @@ impl Message {
     /// The message as a JSON value holding `id`, `payload`, `context`,
     /// `audit_trail` and `errors`.
     ///
-    /// A [`serde_json::Value`]'s keys are sorted unless serde_json's
-    /// `preserve_order` is on, so this value's order depends on the build.
-    /// The wire text, in wire order in every build, is
-    /// `serde_json::to_string(&message)`.
+    /// Its keys are in wire order: the crate turns on serde_json's
+    /// `preserve_order`. The wire text is `serde_json::to_string(&message)`.
     pub fn to_json(&self) -> Value {
         serde_json::to_value(self).expect("a message always serializes")
     }

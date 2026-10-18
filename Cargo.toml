@@ -79,7 +79,11 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 # `float_roundtrip`: a float reads back as the bits it was written from, so a
 # message and a trace v4 writes read back byte for byte (I125). The default
 # parser can land one ULP off on a 17-digit float, which arithmetic makes.
-serde_json = { version = "1.0", features = ["float_roundtrip"] }
+# `preserve_order`: an object keeps its keys in the order they were written,
+# so a definition's documents (a Mongo `$sort`, a projection) render as
+# authored and its issues come out in its order, in every host's build. A
+# host's `serde_json::Map` keeps insertion order with it.
+serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"] }
 datalogic-rs = { version = "5.7", features = ["serde_json", "templating"] }
 datavalue = { package = "datavalue-rs", version = "0.3.1", features = ["serde", "serde_json"] }
 # `Instant` that works on wasm32; `std::time::Instant` natively (I86).

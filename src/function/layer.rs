@@ -149,6 +149,7 @@ mod tests {
             workflow_id: "w",
             task_id: "t",
             channel: None,
+            routing_bucket: None,
             loop_counter: None,
             element_index: None,
         }

@@ -76,7 +76,8 @@ A scalar source serializes too: `"source": "response.count"` writes `"42"`.
 Compact and pretty JSON both keep the source's key order, in every build. A
 value written as `z` then `a` publishes as `{"z":1,"a":…}`, compact or
 indented. 3.x's default build sorted the keys of pretty JSON, and of XML,
-unless `serde_json`'s `preserve_order` was on; 4.0 does not depend on it.
+unless `serde_json`'s `preserve_order` was on; 4.0 keeps the order in every
+build.
 
 ### Computed parameters
 
@@ -121,6 +122,10 @@ is JSONLogic too, so one task can name the document after the message:
 ```json
 {"source": "user", "target": "doc", "root_element": {"var": "data.doc_type"}}
 ```
+
+The root element's name is sanitized as a key's is (below), so a computed
+name can never close the root and open elements of its own:
+`"x><admin>true</admin><x"` names the element `x__admin_true__admin__x`.
 
 ### JSON to XML conversion
 

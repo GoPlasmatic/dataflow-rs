@@ -67,6 +67,7 @@ struct Info {
     workflow_id: String,
     task_id: String,
     channel: Option<String>,
+    routing_bucket: Option<u8>,
     loop_counter: Option<i64>,
     element_index: Option<usize>,
 }
@@ -105,6 +106,7 @@ impl Function for Probe {
             workflow_id: info.workflow_id.to_owned(),
             task_id: info.task_id.to_owned(),
             channel: info.channel.map(str::to_owned),
+            routing_bucket: info.routing_bucket,
             loop_counter: info.loop_counter,
             element_index: info.element_index,
         };
@@ -743,6 +745,48 @@ async fn a_non_object_written_at_a_root_is_refused_for_every_kind() {
 }
 
 #[tokio::test]
+async fn a_map_of_a_non_object_at_a_root_fails_and_later_writes_under_it_land() {
+    // A root takes only an object on every write path, `map` included (3.x's
+    // `map` replaced the root with anything). Were `temp_data` an array here,
+    // the probe's overlay, which holds every root an object, would read its
+    // own writes back while the replay dropped them.
+    let (e, _) = engine(&[workflow(
+        "w",
+        &[],
+        vec![
+            with(
+                map("m1", "temp_data", json!({"var": "data.list"})),
+                &[("on_failure", json!("continue"))],
+            ),
+            probe(
+                "p",
+                json!([]),
+                json!({"temp_data.a": 1, "temp_data.b": {"var": "temp_data.a"}}),
+                json!("ok"),
+            ),
+            map("m2", "data.seen", json!({"var": "temp_data"})),
+        ],
+    )]);
+    let mut m = message(json!({"list": [1]}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::CompletedWithErrors),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(
+        audit(&m),
+        [
+            entry("w", "m1", 500),
+            entry("w", "p", 200),
+            entry("w", "m2", 200)
+        ]
+    );
+    assert_eq!(data(&m), json!({"list": [1], "seen": {"a": 1, "b": 1}}));
+    assert_eq!(m.to_json()["context"]["temp_data"], json!({"a": 1, "b": 1}));
+}
+
+#[tokio::test]
 async fn the_run_layers_wrap_the_registry_layers_which_wrap_the_function() {
     // The order `function::layer`'s unit test pins, end to end: the run's
     // layers outermost, then the registry's, each list first-added outermost.
@@ -797,7 +841,7 @@ async fn the_run_layers_wrap_the_registry_layers_which_wrap_the_function() {
 }
 
 #[tokio::test]
-async fn call_info_carries_the_program_indices_ids_channel_and_counter() {
+async fn call_info_carries_the_program_indices_ids_channel_bucket_and_counter() {
     let (e, seen) = engine(&[
         workflow(
             "first",
@@ -831,7 +875,7 @@ async fn call_info_carries_the_program_indices_ids_channel_and_counter() {
         .unwrap()
         .ix;
     assert_eq!(program.task(task).function, "probe");
-    let info = |channel: Option<&str>, loop_counter: i64| Info {
+    let info = |channel: Option<&str>, routing_bucket: Option<u8>, loop_counter: i64| Info {
         program: program.id().index(),
         workflow: second.index(),
         task: task.index(),
@@ -839,6 +883,7 @@ async fn call_info_carries_the_program_indices_ids_channel_and_counter() {
         workflow_id: "second".to_owned(),
         task_id: "p".to_owned(),
         channel: channel.map(str::to_owned),
+        routing_bucket,
         loop_counter: Some(loop_counter),
         element_index: None,
     };
@@ -848,7 +893,7 @@ async fn call_info_carries_the_program_indices_ids_channel_and_counter() {
         .await;
     assert_eq!(
         seen.lock().unwrap().infos,
-        [info(Some("orders"), 0), info(Some("orders"), 1)]
+        [info(Some("orders"), None, 0), info(Some("orders"), None, 1)]
     );
     // The indices are the program's: the probe's task comes after the
     // first workflow's two and the loop's `map`.
@@ -856,7 +901,26 @@ async fn call_info_carries_the_program_indices_ids_channel_and_counter() {
 
     seen.lock().unwrap().infos.clear();
     e.run(&mut message(json!({}))).await;
-    assert_eq!(seen.lock().unwrap().infos, [info(None, 0), info(None, 1)]);
+    assert_eq!(
+        seen.lock().unwrap().infos,
+        [info(None, None, 0), info(None, None, 1)]
+    );
+
+    // The run's bucket, as the gate served it: a child run started from the
+    // call keeps the caller's rollout decision.
+    for (given, served) in [(7, 7), (99, 99), (200, 99)] {
+        seen.lock().unwrap().infos.clear();
+        e.run_with(
+            &mut message(json!({})),
+            &RunOptions::default().routing_bucket(given),
+        )
+        .await;
+        assert_eq!(
+            seen.lock().unwrap().infos,
+            [info(None, Some(served), 0), info(None, Some(served), 1)],
+            "{given}"
+        );
+    }
 }
 
 /// An observer that asks for every event and keeps none.

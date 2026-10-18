@@ -3,14 +3,14 @@
 //!
 //! An object's keys keep the order the value holds, in both directions: a
 //! document's elements read in document order, and a value writes its keys in
-//! its own order. v3 went through [`serde_json::Value`], whose keys are sorted
-//! unless serde_json's `preserve_order` is on; v4 never does, so its order is
-//! the same in every build (break 23: v3's default build sorted them).
+//! its own order, in every build. v3 went through [`serde_json::Value`], whose
+//! keys its default build sorted; v4 reads and writes `OwnedDataValue`.
 
 use crate::base::{Error, Result, VALIDATION_ERROR};
 use datavalue::{NumberValue, OwnedDataValue};
 use serde::Deserializer;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -145,8 +145,12 @@ impl<'de> Visitor<'de> for InOrder {
 }
 
 /// `value` as an XML document under `root_element`, its keys in the value's
-/// order.
+/// order. The root element's name is made an XML name as a key's is: it may
+/// be computed from the message, and written raw it could close itself and
+/// open elements of the message's choosing (3.x wrote it raw).
 pub(super) fn value_to_xml(value: &OwnedDataValue, root_element: &str) -> String {
+    let root_element = sanitize_name(root_element);
+    let root_element = &*root_element;
     let mut out = String::new();
     tag(&mut out, "<", root_element);
     match value {
@@ -246,8 +250,17 @@ fn escape(s: &str, out: &mut String) {
     }
 }
 
-/// An element name made of what XML allows, as v3's `sanitize_xml_name`.
-fn sanitize_name(name: &str) -> String {
+/// An element name made of what XML allows, as v3's `sanitize_xml_name`:
+/// borrowed when `name` is one already, as nearly every key is.
+fn sanitize_name(name: &str) -> Cow<'_, str> {
+    let mut chars = name.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+    if valid {
+        return Cow::Borrowed(name);
+    }
     let mut result = String::new();
     for (i, c) in name.chars().enumerate() {
         if i == 0 {
@@ -268,5 +281,47 @@ fn sanitize_name(name: &str) -> String {
     if result.is_empty() {
         result = "_element".to_string();
     }
-    result
+    Cow::Owned(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn doc(root: &str) -> String {
+        let value = OwnedDataValue::from_json(r#"{"a":1}"#).expect("JSON");
+        value_to_xml(&value, root)
+    }
+
+    #[test]
+    fn a_root_element_is_made_an_xml_name_as_a_key_is() {
+        assert_eq!(doc("envelope"), "<envelope><a>1</a></envelope>");
+        // A computed root cannot close itself and open elements of its own.
+        assert_eq!(
+            doc("x><admin>true</admin><x"),
+            "<x__admin_true__admin__x><a>1</a></x__admin_true__admin__x>"
+        );
+        assert_eq!(doc(""), "<_element><a>1</a></_element>");
+        assert_eq!(doc("a b"), "<a_b><a>1</a></a_b>");
+        assert_eq!(doc("1st"), "<_1st><a>1</a></_1st>");
+    }
+
+    #[test]
+    fn a_valid_name_is_borrowed_and_any_other_rewritten() {
+        for name in ["root", "_x", "a-b.c_9", "Z"] {
+            assert!(
+                matches!(sanitize_name(name), Cow::Borrowed(n) if n == name),
+                "{name}"
+            );
+        }
+        for (name, made) in [
+            ("", "_element"),
+            ("9", "_9"),
+            ("-a", "_a"),
+            ("a/b", "a_b"),
+            ("é", "_"),
+        ] {
+            assert_eq!(sanitize_name(name), made, "{name}");
+        }
+    }
 }

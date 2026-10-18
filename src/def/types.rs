@@ -130,6 +130,13 @@ fn collect<'d>(
 /// Not `#[non_exhaustive]`: the step grammar is closed, and a match on it is
 /// a decision about every kind of step.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a definition is parse-time data, never touched per message; a task \
+              is larger than a group because its JSON values are insertion-ordered \
+              maps (serde_json's `preserve_order`), and boxing it would cost every \
+              host that builds or matches a step a `Box` for no runtime gain"
+)]
 pub enum StepDef {
     /// A task: one function call.
     Task(TaskDef),

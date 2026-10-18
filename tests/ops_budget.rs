@@ -330,3 +330,76 @@ fn a_budget_error_round_trips_through_serde() {
         back.message
     );
 }
+
+// =============================================================================
+// `validation`
+// =============================================================================
+
+/// A workflow whose one `validation` task checks `rule`, then a `map` that
+/// marks the workflow as having gone on; `policy` is the task's extra keys.
+fn validation_workflow(rule: Value, policy: Value) -> Value {
+    let mut task = json!({ "id": "check", "function": { "name": "validation",
+        "input": { "rules": [rule] } } });
+    for (k, v) in policy.as_object().unwrap() {
+        task[k] = v.clone();
+    }
+    json!({
+        "id": "w", "priority": 0,
+        "tasks": [
+            task,
+            { "id": "after", "function": { "name": "map", "input": {
+                "mappings": [{ "path": "data.went_on", "logic": true }] } } }
+        ]
+    })
+}
+
+#[tokio::test]
+async fn a_validation_rule_over_the_ceiling_fails_the_task_rather_than_rejecting() {
+    // 3.x made a runaway rule an `EVALUATION_ERROR` rejection (400), which
+    // `on_rejection: continue` steps past: the ceiling would be silently
+    // spent. It is the task's failure, under `on_failure`.
+    let over = json!({ ">": [fold_expr(), 0] });
+    for (rule, at) in [
+        (json!({ "logic": over, "message": "never" }), "logic"),
+        (
+            json!({ "logic": false, "message": { "cat": ["n=", fold_expr()] } }),
+            "message",
+        ),
+    ] {
+        let engine = engine_over(&validation_workflow(rule, json!({})), Some(TIGHT));
+        let mut m = message();
+        let run = engine.run(&mut m).await;
+        assert_stopped_by_the_budget(&run);
+        assert_eq!(task_error(&m).code, "BUDGET_EXCEEDED", "{at}");
+        assert!(data(&m).get("went_on").is_none(), "{at}");
+
+        // `on_failure: continue` steps past it, as for any failure.
+        let engine = engine_over(
+            &validation_workflow(
+                json!({ "logic": { ">": [fold_expr(), 0] }, "message": "never" }),
+                json!({ "on_failure": "continue" }),
+            ),
+            Some(TIGHT),
+        );
+        let mut m = message();
+        engine.run(&mut m).await;
+        assert_eq!(task_error(&m).code, "BUDGET_EXCEEDED", "{at}");
+        assert_eq!(data(&m)["went_on"], json!(true), "{at}");
+    }
+}
+
+#[tokio::test]
+async fn a_validation_rule_that_fails_to_evaluate_is_still_a_rejection() {
+    // Any other evaluation error stays 3.x's `EVALUATION_ERROR` and 400.
+    let rule = json!({ "logic": { "+": [{ "var": "data.word" }, "x"] }, "message": "m" });
+    let engine = engine_over(&validation_workflow(rule, json!({})), Some(TIGHT));
+    let mut m = message_with(json!({ "word": "abc" }));
+    let run = engine.run(&mut m).await;
+    assert!(!matches!(run.status(), RunStatus::Stopped(_)), "{run:?}");
+    assert!(
+        m.errors().iter().any(|e| e.code == "EVALUATION_ERROR"),
+        "{:?}",
+        m.errors()
+    );
+    assert_eq!(data(&m)["went_on"], json!(true));
+}

@@ -96,11 +96,11 @@ assert_eq!(migrated.json, json!({
 let rewrites: Vec<(String, &str, &str)> = migrated.rewrites.iter()
     .map(|r| (r.path.to_string(), r.v3.as_str(), r.v4.as_str()))
     .collect();
-// In the document's key order; a `json!` object's keys sort.
+// In the document's key order, as written.
 assert_eq!(rewrites, [
     ("continue_on_error".to_string(), "continue_on_error: true", "on_failure: continue"),
-    ("tasks[0].function.name".to_string(), "validate", "validation"),
     ("tasks[0].halt_on".to_string(), "halt_on: failure", "on_failure: fail, on_rejection: halt"),
+    ("tasks[0].function.name".to_string(), "validate", "validation"),
 ]);
 
 let codes: Vec<IssueCode> = migrated.issues.iter().map(|i| i.code).collect();
@@ -159,9 +159,12 @@ evaluated once, and `metadata.progress` is still written after every task.
 - **An array index stops at 1,048,575.** A bare numeric segment larger than
   that is an object key, so no path can grow an array without bound; 3.x
   padded an array to any index.
-- **A host function's write at a root takes only an object.** `data`,
-  `metadata` and `temp_data` cannot be replaced with an array, a string or a
-  number.
+- **A write at a root takes only an object,** a host function's or a
+  `map`'s. `data`, `metadata` and `temp_data` cannot be replaced with an
+  array, a string or a number: a host function's write is a `CONFIG_ERROR`,
+  and a `map` whose `logic` is always a non-object at a literal root is
+  `INVALID_MAPPING` at build, any other non-object result failing the mapping
+  with status 500. 3.x's `map` replaced the root.
 
 ## What changes for a host
 
@@ -556,10 +559,12 @@ assert!(matches!(e.kind(), ErrorKind::Service { .. }));
 assert!(e.is_retryable());
 ```
 
-The recorded codes are unchanged (`LOGIC_ERROR`, `TIMEOUT_ERROR`,
-`DESERIALIZATION_ERROR`, `FUNCTION_NOT_FOUND`, `BUDGET_EXCEEDED`,
-`TASK_STATUS_ERROR`, `VALIDATION_ERROR`); `CANCELLED` is new, and
-`TIMEOUT_ERROR` is now also what the engine's own deadline writes. See the
+The recorded codes `LOGIC_ERROR`, `TIMEOUT_ERROR`, `BUDGET_EXCEEDED`,
+`TASK_STATUS_ERROR` and `VALIDATION_ERROR` are unchanged; `CANCELLED` is new,
+and `TIMEOUT_ERROR` is now also what the engine's own deadline writes.
+`FUNCTION_NOT_FOUND` and `DESERIALIZATION_ERROR` are gone: an unregistered
+function is the `UNKNOWN_FUNCTION` issue at build, and a value that does not
+convert to a field's type records `LOGIC_ERROR`. See the
 [error codes](../api/reference.md#error-codes).
 
 ### 6. Options, paths and retries
@@ -646,11 +651,13 @@ every status, so a host that showed snapshots replays instead.
 
 The message JSON is unchanged: `{id, payload, context, audit_trail,
 errors}`, the audit entry and the error record with the same keys in the
-same order, and every message 4.0 writes reads back byte for byte. One
-thing is refused on read: a context with a key besides `data`, `metadata`
-and `temp_data`, a context that is not an object, or a root named twice.
-3.x's `map` could write a fourth key for a path outside the roots; a stored
-message that carries one no longer reads.
+same order, and every message 4.0 writes reads back byte for byte. Two
+things are refused on read: a context with a key besides `data`, `metadata`
+and `temp_data`, a context that is not an object, or a root named twice; and
+a root that is not an object. 3.x's `map` could write a fourth key for a path
+outside the roots, or replace a root with a scalar; a stored message that
+carries either no longer reads. A `null` `metadata` used to drop every write
+under it silently, `metadata.progress` included.
 
 ```rust
 use dataflow_rs::Message;

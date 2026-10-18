@@ -122,6 +122,23 @@ if (!dtsName) {
   }
 }
 
+// --- Check 4: the README is the package's own -------------------------------
+// npm shows pkg/README.md as the package's page. Every 3.x release shipped the
+// Rust crate's README there, because the release copied the repository root's
+// over the one wasm-pack had placed from wasm/README.md.
+const README_HEADING = '# @goplasmatic/dataflow-wasm';
+let readme = '';
+try {
+  readme = readFileSync(join(pkgDir, 'README.md'), 'utf8');
+} catch {
+  fail(`no README.md in ${pkgDir}`);
+}
+if (readme && !readme.includes(README_HEADING)) {
+  fail(`${pkgDir}/README.md is not the package's page: it lacks "${README_HEADING}"`);
+} else if (readme) {
+  console.log(`  ✓ README.md is the package's page`);
+}
+
 if (process.exitCode) {
   console.error('\nRefusing to publish a broken wasm artifact.');
 } else {

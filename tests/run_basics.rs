@@ -526,11 +526,21 @@ async fn a_rollout_admits_by_bucket_and_no_bucket_is_admitted() {
         (Some(49), json!(["v1", "all"]), ["ran", "rollout", "ran"]),
         (Some(50), json!(["v2", "all"]), ["rollout", "ran", "ran"]),
         (Some(99), json!(["v2", "all"]), ["rollout", "ran", "ran"]),
+        // A bucket past 99 is served as 99, as in 3.x, through the builder
+        // and the field alike.
+        (Some(100), json!(["v2", "all"]), ["rollout", "ran", "ran"]),
+        (Some(255), json!(["v2", "all"]), ["rollout", "ran", "ran"]),
         (None, json!(["v1", "v2", "all"]), ["ran", "ran", "ran"]),
     ] {
         let mut opts = RunOptions::default();
         if let Some(b) = bucket {
-            opts = opts.routing_bucket(b);
+            opts = if b == 255 {
+                let mut opts = opts;
+                opts.routing_bucket = Some(b);
+                opts
+            } else {
+                opts.routing_bucket(b)
+            };
         }
         let mut m = message(json!({}));
         let run = e.run_with(&mut m, &opts).await;

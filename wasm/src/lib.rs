@@ -43,7 +43,7 @@
 //! and `trace` holding the failing step.
 
 use dataflow_rs::datavalue::OwnedDataValue;
-use dataflow_rs::def::{self, ParseOptions};
+use dataflow_rs::def::{self, ParseOptions, Rollout};
 use dataflow_rs::expr::{ExprEngine, Path, Secrets};
 use dataflow_rs::observe::{Trace, TraceOptions};
 use dataflow_rs::run::{AuditMode, Context, Engine, Instant, Message, Run, RunOptions};
@@ -113,7 +113,7 @@ export interface RunOptions {
   metadata?: JsonValue;
   /** The channel whose workflows run. Every active workflow when unset. */
   channel?: string;
-  /** The rollout bucket, 0 to 255. Every rollout admits an unset one. */
+  /** The rollout bucket, 0 to 99 (a hash `% 100`). Every rollout admits an unset one. */
   routing_bucket?: number;
   /** Record each task's changes in the audit trail. On by default. */
   capture_changes?: boolean;
@@ -411,6 +411,16 @@ impl RunOptionsIn {
         let deadline = self
             .timeout_ms
             .map(|ms| Instant::now() + Duration::from_millis(ms));
+        // The engine serves a larger bucket as 99, as 3.x's Rust API did;
+        // the package is new, so it refuses one rather than skew traffic.
+        if let Some(bucket) = self.routing_bucket
+            && bucket > Rollout::MAX_BUCKET
+        {
+            return Err(invalid(
+                "options.routing_bucket",
+                format!("{bucket} is not a bucket: buckets are 0 to 99"),
+            ));
+        }
         Ok(Prepared {
             message,
             channel: self.channel,

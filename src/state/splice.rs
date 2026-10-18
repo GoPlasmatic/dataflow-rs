@@ -254,7 +254,8 @@ pub(crate) fn append<'a>(
 /// `map`'s write to a root slot: two objects merge, existing keys replaced in
 /// place and new keys appended in order; anything else replaces the slot. The
 /// rules are the owned `path::merge_root`'s, which is v3's
-/// `merge_root_field`.
+/// `merge_root_field`, and which a replayed trace from an earlier build may
+/// still need whole: `map` itself writes only an object at a root.
 pub(crate) fn merge_root<'a>(
     arena: &'a Bump,
     root: DataValue<'a>,

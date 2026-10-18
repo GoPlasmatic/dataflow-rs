@@ -4,7 +4,8 @@
 // reads into v4 and writes the same bytes. A context takes its three roots in
 // any order, writes them in order, reads a missing one as `{}` and any value
 // at each, and refuses any other key and a context that is not an object
-// (break 22).
+// (break 22). A message's context takes only an object at each root; a
+// trace's takes a redacted root's `null`.
 
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::observe::{StepResult, Trace, TraceOptions};
@@ -192,9 +193,48 @@ fn a_fourth_context_key_is_refused() {
     }
 }
 
+#[test]
+fn a_message_takes_only_an_object_at_each_root() {
+    // A `null` or scalar `metadata` would silently drop every write under it,
+    // `metadata.progress` included, so a message refuses it (3.x took any
+    // value).
+    for (context, root, kind) in [
+        (
+            r#"{"data":{},"metadata":null,"temp_data":{}}"#,
+            "metadata",
+            "null",
+        ),
+        (r#"{"data":5}"#, "data", "a number"),
+        (r#"{"temp_data":[1]}"#, "temp_data", "an array"),
+        (r#"{"metadata":"s"}"#, "metadata", "a string"),
+    ] {
+        let err = refused(&message_json(context));
+        assert!(
+            err.starts_with(&format!(
+                "`{root}` is a root and takes only an object, not {kind}"
+            )),
+            "{context}: {err}"
+        );
+    }
+    // A missing root is still `{}`.
+    let m: Message = serde_json::from_str(&message_json(r#"{"data":{"a":1}}"#)).unwrap();
+    assert_eq!(
+        text(m.context()),
+        r#"{"data":{"a":1},"metadata":{},"temp_data":{}}"#
+    );
+    // Building a message ignores a seed that is not an object, as a host
+    // starting a run from a `null` seed relies on.
+    let m = Message::from_parts(OwnedDataValue::Null, OwnedDataValue::Null, dv(json!(5)));
+    assert_eq!(
+        text(m.context()),
+        r#"{"data":{},"metadata":{},"temp_data":{}}"#
+    );
+}
+
 #[tokio::test]
 async fn a_null_root_reads_back() {
-    // Any value at a root reads back as written, `null` included.
+    // In a context, any value at a root reads back as written, `null`
+    // included: a trace's `initial` holds a redacted root as `null`.
     for json in [
         r#"{"data":null,"metadata":{},"temp_data":{}}"#,
         r#"{"data":5,"metadata":"s","temp_data":[1,{"a":null}]}"#,

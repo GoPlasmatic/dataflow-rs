@@ -48,6 +48,7 @@ Every rule runs, in order; no failure stops the rest.
 | `true` | None: the rule passes |
 | Anything else: `false`, `null`, `1`, `"yes"`, `[1]`, an object | `VALIDATION_ERROR`, with the rule's `message` |
 | An error (the expression does not evaluate) | `EVALUATION_ERROR`, with `Failed to evaluate rule <index>: <reason>` |
+| The `ExprEngine`'s ops budget exceeded, by `logic` or `message` | None: the task fails with `BUDGET_EXCEEDED`, under `on_failure` |
 
 Only a literal `true` passes. A truthy value that is not `true` fails the
 rule, so `{"var": "data.email"}` is not a presence check; write

@@ -1,10 +1,10 @@
 //! An order-preserving JSON value.
 //!
 //! Key order is wire data: the JSON a message serializes to keeps its keys in
-//! the order they were written, and a removal changes that order. `serde_json`
-//! is built without `preserve_order` in this workspace, and turning it on would
-//! unify into `dataflow-rs` itself, so the corpus keeps objects as ordered
-//! pairs and its equality is order-sensitive.
+//! the order they were written, and a removal changes that order. The corpus
+//! keeps objects as ordered pairs, so its equality is order-sensitive whatever
+//! map type serde_json is built with (`dataflow-rs` turns on its
+//! `preserve_order`), and a removal's effect on order is its own model's.
 
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};

@@ -245,7 +245,9 @@ jobs:
             "keywords": ["rules-engine", "ifttt", "wasm", "webassembly", "dataflow", "rust"]
           }
           EOF
-          cp ../../README.md ./README.md
+          # The package's own page, wasm/README.md, not the crate's at the
+          # repository root.
+          cp ../README.md ./README.md
 
       - name: Setup Node.js
         uses: actions/setup-node@v7

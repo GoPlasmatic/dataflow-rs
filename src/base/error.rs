@@ -25,10 +25,6 @@ pub enum ErrorKind {
     Eval,
     /// The operation budget was exceeded.
     Budget,
-    /// No function is registered under the name.
-    FunctionNotFound,
-    /// A document or payload did not parse.
-    Parse,
     /// A deadline passed.
     TimedOut,
     /// The run was cancelled.
@@ -113,8 +109,6 @@ impl Error {
         match &self.kind {
             ErrorKind::Eval => "LOGIC_ERROR",
             ErrorKind::Budget => "BUDGET_EXCEEDED",
-            ErrorKind::FunctionNotFound => "FUNCTION_NOT_FOUND",
-            ErrorKind::Parse => "DESERIALIZATION_ERROR",
             ErrorKind::TimedOut => "TIMEOUT_ERROR",
             ErrorKind::Cancelled => "CANCELLED",
             ErrorKind::Config => "CONFIG_ERROR",
@@ -133,9 +127,7 @@ impl Error {
     pub(crate) fn record_text(&self) -> Cow<'_, str> {
         let prefix = match &self.kind {
             ErrorKind::Eval => "Logic evaluation error: ",
-            ErrorKind::Parse => "Deserialization error: ",
             ErrorKind::TimedOut => "Timeout error: ",
-            ErrorKind::FunctionNotFound => "Function not found: ",
             ErrorKind::Budget
             | ErrorKind::Config
             | ErrorKind::Compile
@@ -274,17 +266,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn record_text_prefixes_four_kinds_and_is_the_message_otherwise() {
+    fn record_text_prefixes_two_kinds_and_is_the_message_otherwise() {
         // The record texts are 3.x's, byte for byte.
         let m = "the message";
         for (kind, expected) in [
             (ErrorKind::Eval, "Logic evaluation error: the message"),
-            (ErrorKind::Parse, "Deserialization error: the message"),
             (ErrorKind::TimedOut, "Timeout error: the message"),
-            (
-                ErrorKind::FunctionNotFound,
-                "Function not found: the message",
-            ),
             (ErrorKind::Budget, m),
             (ErrorKind::Service { code: "X".into() }, m),
             (ErrorKind::Config, m),
@@ -303,8 +290,6 @@ mod tests {
         vec![
             (ErrorKind::Eval, "LOGIC_ERROR"),
             (ErrorKind::Budget, "BUDGET_EXCEEDED"),
-            (ErrorKind::FunctionNotFound, "FUNCTION_NOT_FOUND"),
-            (ErrorKind::Parse, "DESERIALIZATION_ERROR"),
             (ErrorKind::TimedOut, "TIMEOUT_ERROR"),
             (ErrorKind::Cancelled, "CANCELLED"),
             (ErrorKind::Config, "CONFIG_ERROR"),

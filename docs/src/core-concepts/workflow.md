@@ -416,9 +416,11 @@ let run = engine.run_with(&mut message, &opts).await;
 
 How you map a request to a bucket is your policy: a sticky hash of some request
 identity (so a given user always sees the same version), a per-message random
-draw, round-robin. That deliberately stays outside this crate.
+draw, round-robin. That deliberately stays outside this crate. Buckets are
+`0..=99`, so take a hash `% 100`: a larger bucket is served as 99, as in 3.x
+(`Rollout::MAX_BUCKET`), and the wasm package refuses one.
 
-Two rules apply:
+Three rules apply:
 
 - **A run with no bucket is admitted by every workflow**, split or not. The
   trade-off is that setting `rollout` and forgetting the bucket runs *every*
@@ -427,6 +429,9 @@ Two rules apply:
   entry, `metadata.progress` untouched, `Selection::SkippedByRollout` in the
   `Run`, and one `Skipped` step in a trace. The gate runs before any work on
   the context, so exclusion is cheap.
+- **A host function sees the run's bucket** as `ctx.info().routing_bucket`,
+  so a function that starts a child run passes it on and the child keeps the
+  caller's rollout decision. A child run given no bucket runs every version.
 
 ### Building and checking a split
 

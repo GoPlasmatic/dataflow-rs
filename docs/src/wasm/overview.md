@@ -149,7 +149,7 @@ interface RunOptions {
   data?: JsonValue;              // the `data` root the message starts with; an object, else ignored
   metadata?: JsonValue;          // the `metadata` root the message starts with; an object, else ignored
   channel?: string;              // the channel whose workflows run; every active workflow when unset
-  routing_bucket?: number;       // the rollout bucket, 0 to 255; every rollout admits an unset one
+  routing_bucket?: number;       // the rollout bucket, 0 to 99; every rollout admits an unset one
   capture_changes?: boolean;     // record each task's changes in the audit trail; on by default
   audit?: 'full' | 'off' | { last: number };  // which audit entries the message keeps; "full" by default
   trace?: boolean | TraceOptions;             // trace the run; off by default

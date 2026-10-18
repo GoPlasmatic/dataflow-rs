@@ -444,3 +444,25 @@ async fn a_payload_hole_yields_its_default() {
     .await;
     assert_eq!(rendering.wire, r#"{"a":"d","b":null,"c":"from data"}"#);
 }
+
+#[tokio::test]
+async fn a_document_renders_its_keys_as_authored() {
+    // Key order is meaning in a Mongo `$sort`: `created` first, `_id` to
+    // break ties. 3.x's default build sorted the keys, turning the sort
+    // around; 4.0 turns on serde_json's `preserve_order`, so a definition
+    // read from text keeps its order in every build.
+    let doc: Value = serde_json::from_str(
+        r#"{"$sort": {"created": -1, "_id": 1},
+            "filter": {"zone": {"var": "data.zone"}, "age": {"$gte": 18}}}"#,
+    )
+    .unwrap();
+    let (got, _) = rendered(
+        vec![render_task(&doc, &json!({}))],
+        Value::Null,
+        json!({"zone": "eu"}),
+    )
+    .await;
+    let want = r#"{"$sort":{"created":-1,"_id":1},"filter":{"zone":"eu","age":{"$gte":18}}}"#;
+    assert_eq!(got.wire, want);
+    assert_eq!(got.owned, want);
+}

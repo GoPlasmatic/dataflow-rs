@@ -44,9 +44,9 @@ enum Node {
 }
 
 impl Interpolated {
-    /// The document as authored, as a `serde_json::Value`: its objects'
-    /// keys in that type's order, sorted unless the build turns on
-    /// serde_json's `preserve_order`.
+    /// The document as authored, as a `serde_json::Value`, its objects'
+    /// keys in the order they were written: the crate turns on serde_json's
+    /// `preserve_order`.
     pub fn raw(&self) -> &Value {
         &self.raw
     }
@@ -160,9 +160,9 @@ impl Rendered<'_> {
 impl Serialize for Rendered<'_> {
     /// The skeleton with each hole's value in place: a literal subtree as
     /// its `serde_json::Value` holds it, objects and arrays entry by entry.
-    /// An object's keys, a literal's or not, come out in `serde_json::Value`'s
-    /// order: sorted, unless the build turns on serde_json's
-    /// `preserve_order`, when they are as authored.
+    /// An object's keys, a literal's or not, come out as authored, in every
+    /// build: a Mongo `{"$sort": {"created": -1, "_id": 1}}` keeps its sort
+    /// order (3.x's default build sorted the keys).
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         At {
             node: &self.doc.node,

@@ -184,8 +184,6 @@ impl serde::Serialize for AuthoredPath {
 pub enum IssueCode {
     /// `id` is missing or empty.
     EmptyWorkflowId,
-    /// `name` is missing or empty.
-    EmptyWorkflowName,
     /// `tasks` is missing, not an array, or empty.
     NoTasks,
     /// A step carries no `id`.
@@ -273,12 +271,6 @@ pub enum IssueCode {
     /// No handler will dispatch this function name, and it is not a built-in.
     /// Usually a typo or a handler the host forgot to register.
     UnknownFunction,
-    /// v3's code for a function that shipped as a config schema only
-    /// (`http_call`, `enrich`, `publish_kafka`) with no handler registered
-    /// under it. Kept so the corpus can name what v3 reported; v4 never
-    /// reports it, since those configs are the host's, and an unregistered
-    /// name is [`UnknownFunction`](Self::UnknownFunction).
-    MissingHandler,
     /// A custom task's `input` does not deserialize into its handler's declared
     /// `Input` type.
     InputParse,
@@ -294,15 +286,6 @@ pub enum IssueCode {
     /// record it is refused outright, derived or not. Compute derived values in
     /// a custom handler.
     SecretInMessageWrite,
-    /// The secret store is not a JSON object, so no name resolves. v4's
-    /// `Secrets::new` refuses such a store before any workflow compiles, so
-    /// this code is v3's, kept for the corpus; it would be reported
-    /// *instead of* the [`Self::UnknownSecret`] issues every literal name would
-    /// otherwise produce — the workflow is not what is wrong.
-    ///
-    /// [`Severity::Rejected`], but the odd one out: quarantining the workflow
-    /// will not make the build succeed, because the store is what is broken.
-    InvalidSecretStore,
     /// Two keys in one template object collapse to the same name once the
     /// template-key escape is stripped — `{"$a": 1, "a": 2}` emits `a` twice.
     /// The context is a `Vec` of pairs, so both survive: a later read sees only
@@ -323,9 +306,6 @@ pub enum IssueCode {
     /// The document does not deserialize into a workflow. Carries the
     /// parser's own message, which names the offending field and type.
     ParseFailed,
-    /// The document parses but workflow validation rejects it. A backstop:
-    /// reaching this means a rule exists that the checks above do not model.
-    ValidateFailed,
     /// An unknown key within edit distance 1 (keys of up to five characters) or 2 (longer) of a known key at its level: almost certainly a misspelling, so the setting it was meant to carry is silently lost.
     ///
     /// Default severity [`Severity::Defect`].
@@ -367,9 +347,8 @@ pub enum IssueCode {
 
 impl IssueCode {
     /// Every code; kept complete by the tests' exhaustive `ordinal`.
-    const ALL: [Self; 42] = [
+    const ALL: [Self; 38] = [
         Self::EmptyWorkflowId,
-        Self::EmptyWorkflowName,
         Self::NoTasks,
         Self::MissingStepId,
         Self::DuplicateStepId,
@@ -392,16 +371,13 @@ impl IssueCode {
         Self::LoopOverInvalid,
         Self::InvalidForEach,
         Self::UnknownFunction,
-        Self::MissingHandler,
         Self::InputParse,
         Self::TemplateCompile,
         Self::UnknownSecret,
         Self::SecretInMessageWrite,
-        Self::InvalidSecretStore,
         Self::DuplicateTemplateKey,
         Self::EscapedTemplateKey,
         Self::ParseFailed,
-        Self::ValidateFailed,
         Self::LikelyTypo,
         Self::UnknownKey,
         Self::V3Spelling,
@@ -416,7 +392,6 @@ impl IssueCode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::EmptyWorkflowId => "EMPTY_WORKFLOW_ID",
-            Self::EmptyWorkflowName => "EMPTY_WORKFLOW_NAME",
             Self::NoTasks => "NO_TASKS",
             Self::MissingStepId => "MISSING_STEP_ID",
             Self::DuplicateStepId => "DUPLICATE_STEP_ID",
@@ -439,16 +414,13 @@ impl IssueCode {
             Self::LoopOverInvalid => "LOOP_OVER_INVALID",
             Self::InvalidForEach => "INVALID_FOR_EACH",
             Self::UnknownFunction => "UNKNOWN_FUNCTION",
-            Self::MissingHandler => "MISSING_HANDLER",
             Self::InputParse => "INPUT_PARSE",
             Self::TemplateCompile => "TEMPLATE_COMPILE",
             Self::UnknownSecret => "UNKNOWN_SECRET",
             Self::SecretInMessageWrite => "SECRET_IN_MESSAGE_WRITE",
-            Self::InvalidSecretStore => "INVALID_SECRET_STORE",
             Self::DuplicateTemplateKey => "DUPLICATE_TEMPLATE_KEY",
             Self::EscapedTemplateKey => "ESCAPED_TEMPLATE_KEY",
             Self::ParseFailed => "PARSE_FAILED",
-            Self::ValidateFailed => "VALIDATE_FAILED",
             Self::LikelyTypo => "LIKELY_TYPO",
             Self::UnknownKey => "UNKNOWN_KEY",
             Self::V3Spelling => "V3_SPELLING",
@@ -478,14 +450,10 @@ impl IssueCode {
             | Self::OperatorInDocument => Severity::Advisory,
 
             // Loads, then does not do what it says.
-            Self::MissingHandler
-            | Self::LikelyTypo
-            | Self::PayloadVar
-            | Self::UnresolvedReference => Severity::Defect,
+            Self::LikelyTypo | Self::PayloadVar | Self::UnresolvedReference => Severity::Defect,
 
             // Everything else never loads.
             Self::EmptyWorkflowId
-            | Self::EmptyWorkflowName
             | Self::NoTasks
             | Self::MissingStepId
             | Self::DuplicateStepId
@@ -509,10 +477,8 @@ impl IssueCode {
             | Self::TemplateCompile
             | Self::UnknownSecret
             | Self::SecretInMessageWrite
-            | Self::InvalidSecretStore
             | Self::DuplicateTemplateKey
             | Self::ParseFailed
-            | Self::ValidateFailed
             | Self::SecretInDocument
             | Self::InvalidPath => Severity::Rejected,
         }
@@ -798,53 +764,49 @@ mod tests {
     fn ordinal(code: IssueCode) -> usize {
         match code {
             IssueCode::EmptyWorkflowId => 0,
-            IssueCode::EmptyWorkflowName => 1,
-            IssueCode::NoTasks => 2,
-            IssueCode::MissingStepId => 3,
-            IssueCode::DuplicateStepId => 4,
-            IssueCode::EmptyGroup => 5,
-            IssueCode::GroupTooDeep => 6,
-            IssueCode::MissingFunction => 7,
-            IssueCode::InvalidFunctionName => 8,
-            IssueCode::InvalidTerminal => 9,
-            IssueCode::UnguardedValidation => 10,
-            IssueCode::InvalidHaltOn => 11,
-            IssueCode::GroupContinueOnError => 12,
-            IssueCode::InvalidMapping => 13,
-            IssueCode::NullMapping => 14,
-            IssueCode::LoopIncrementTooSmall => 15,
-            IssueCode::LoopBoundEmpty => 16,
-            IssueCode::LoopCounterInvalid => 17,
-            IssueCode::LoopSlotInvalid => 18,
-            IssueCode::LoopItemWithoutOver => 19,
-            IssueCode::LoopSlotCollision => 20,
-            IssueCode::LoopOverInvalid => 21,
-            IssueCode::InvalidForEach => 22,
-            IssueCode::UnknownFunction => 23,
-            IssueCode::MissingHandler => 24,
-            IssueCode::InputParse => 25,
-            IssueCode::TemplateCompile => 26,
-            IssueCode::UnknownSecret => 27,
-            IssueCode::SecretInMessageWrite => 28,
-            IssueCode::InvalidSecretStore => 29,
-            IssueCode::DuplicateTemplateKey => 30,
-            IssueCode::EscapedTemplateKey => 31,
-            IssueCode::ParseFailed => 32,
-            IssueCode::ValidateFailed => 33,
-            IssueCode::LikelyTypo => 34,
-            IssueCode::UnknownKey => 35,
-            IssueCode::V3Spelling => 36,
-            IssueCode::PayloadVar => 37,
-            IssueCode::OperatorInDocument => 38,
-            IssueCode::SecretInDocument => 39,
-            IssueCode::InvalidPath => 40,
-            IssueCode::UnresolvedReference => 41,
+            IssueCode::NoTasks => 1,
+            IssueCode::MissingStepId => 2,
+            IssueCode::DuplicateStepId => 3,
+            IssueCode::EmptyGroup => 4,
+            IssueCode::GroupTooDeep => 5,
+            IssueCode::MissingFunction => 6,
+            IssueCode::InvalidFunctionName => 7,
+            IssueCode::InvalidTerminal => 8,
+            IssueCode::UnguardedValidation => 9,
+            IssueCode::InvalidHaltOn => 10,
+            IssueCode::GroupContinueOnError => 11,
+            IssueCode::InvalidMapping => 12,
+            IssueCode::NullMapping => 13,
+            IssueCode::LoopIncrementTooSmall => 14,
+            IssueCode::LoopBoundEmpty => 15,
+            IssueCode::LoopCounterInvalid => 16,
+            IssueCode::LoopSlotInvalid => 17,
+            IssueCode::LoopItemWithoutOver => 18,
+            IssueCode::LoopSlotCollision => 19,
+            IssueCode::LoopOverInvalid => 20,
+            IssueCode::InvalidForEach => 21,
+            IssueCode::UnknownFunction => 22,
+            IssueCode::InputParse => 23,
+            IssueCode::TemplateCompile => 24,
+            IssueCode::UnknownSecret => 25,
+            IssueCode::SecretInMessageWrite => 26,
+            IssueCode::DuplicateTemplateKey => 27,
+            IssueCode::EscapedTemplateKey => 28,
+            IssueCode::ParseFailed => 29,
+            IssueCode::LikelyTypo => 30,
+            IssueCode::UnknownKey => 31,
+            IssueCode::V3Spelling => 32,
+            IssueCode::PayloadVar => 33,
+            IssueCode::OperatorInDocument => 34,
+            IssueCode::SecretInDocument => 35,
+            IssueCode::InvalidPath => 36,
+            IssueCode::UnresolvedReference => 37,
         }
     }
 
     #[test]
     fn all_codes_lists_every_variant() {
-        assert_eq!(IssueCode::ALL.len(), 42);
+        assert_eq!(IssueCode::ALL.len(), 38);
         let indices: HashSet<usize> = IssueCode::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(indices, (0..IssueCode::ALL.len()).collect::<HashSet<_>>());
     }
@@ -895,14 +857,9 @@ mod tests {
         );
         assert_eq!(
             by(Severity::Defect),
-            HashSet::from([
-                "MISSING_HANDLER",
-                "LIKELY_TYPO",
-                "PAYLOAD_VAR",
-                "UNRESOLVED_REFERENCE",
-            ])
+            HashSet::from(["LIKELY_TYPO", "PAYLOAD_VAR", "UNRESOLVED_REFERENCE",])
         );
-        assert_eq!(by(Severity::Rejected).len(), IssueCode::ALL.len() - 11);
+        assert_eq!(by(Severity::Rejected).len(), IssueCode::ALL.len() - 10);
         assert!(by(Severity::Rejected).contains("SECRET_IN_DOCUMENT"));
         assert!(by(Severity::Rejected).contains("INVALID_PATH"));
     }

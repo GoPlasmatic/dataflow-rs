@@ -11,6 +11,7 @@ use super::record;
 use super::report::{Record, Run};
 use super::trace::Capture;
 use crate::base::ErrorKind;
+use crate::def::Rollout;
 use crate::expr::Path;
 use crate::observe::{
     Event, Observer, RunStatus, Selection, StepResult, TraceStep, WorkflowExit, WorkflowRecord,
@@ -226,12 +227,15 @@ impl Engine {
         let mut records = Vec::with_capacity(active.len());
         // Every 64th op of the run checks the limits, across workflows.
         let mut ops = 0;
+        // A bucket above 99 is served as 99, as in 3.x: the bucket space is
+        // `0..100`, and `[x, 100)` is the range that serves the rest.
+        let bucket = opts.routing_bucket.map(|b| b.min(Rollout::MAX_BUCKET));
         // How the run ended, once a workflow stopped it: the loop's value,
         // so the run's future holds no status across its workflows.
         let stopped = 'run: {
             for &ix in active {
                 let wf = program.compiled(ix);
-                if let (Some(rollout), Some(bucket)) = (wf.rollout, opts.routing_bucket)
+                if let (Some(rollout), Some(bucket)) = (wf.rollout, bucket)
                     && !rollout.accepts(bucket)
                 {
                     if let Some(trace) = watch.trace.as_deref_mut() {
@@ -252,6 +256,7 @@ impl Engine {
                     workflow_ix: ix,
                     task_base: program.task_base(ix),
                     channel: opts.channel,
+                    routing_bucket: bucket,
                     layers: opts.layers,
                     limits: Limits {
                         deadline: opts.deadline,

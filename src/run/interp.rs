@@ -118,6 +118,8 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) task_base: u32,
     /// The channel the run was started on.
     pub(crate) channel: Option<&'r str>,
+    /// The run's routing bucket, at most 99.
+    pub(crate) routing_bucket: Option<u8>,
     /// The run's layers, outermost first, around every host call.
     pub(crate) layers: &'r [Arc<dyn CallLayer>],
     /// The run's deadline and token.

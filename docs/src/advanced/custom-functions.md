@@ -279,7 +279,7 @@ not until the call returns.
 | `ctx.render(&doc)` | An `Interpolated` document with its holes filled, as a `Rendered` that serializes straight into whatever takes it |
 | `ctx.payload()` | The message's payload, which no expression reads |
 | `ctx.secret(name)` | A value from the engine's secret store, by dotted name |
-| `ctx.info()` | The call's `CallInfo`: workflow and task ids, the function's registered name, the loop counter, the fan-out element index, the channel |
+| `ctx.info()` | The call's `CallInfo`: workflow and task ids, the function's registered name, the loop counter, the fan-out element index, the channel, the routing bucket |
 | `ctx.input()` | The whole config resolved for this call, with every field that reads a secret `null` and never evaluated: what a layer or a dry run reads |
 | `ctx.resolve(&cfg)` | The whole config resolved for this call, secrets included: the function's own view, to hand on whole |
 | `ctx.deadline()`, `ctx.cancel()` | The run's deadline and cancellation token, to pass to a run this function starts |
@@ -412,8 +412,7 @@ An `Err` carries a code. `Error::service(code, message)` is the function's
 own: `Error::service("PARTNER_DOWN", "the partner API returned 503")` is
 recorded as `PARTNER_DOWN`. The engine's own kinds have fixed codes:
 `LOGIC_ERROR` for an evaluation that failed, `BUDGET_EXCEEDED`,
-`DESERIALIZATION_ERROR`, `TIMEOUT_ERROR`, `CANCELLED`, `CONFIG_ERROR`,
-`COMPILATION_ERROR`. Only a timeout is retryable by default;
+`TIMEOUT_ERROR`, `CANCELLED`, `CONFIG_ERROR`, `COMPILATION_ERROR`. Only a timeout is retryable by default;
 `with_retryable(true)` says a retry may succeed, and `with_source` keeps the
 cause.
 

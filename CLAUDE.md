@@ -140,7 +140,6 @@ cargo clippy --target wasm32-unknown-unknown --features wasm-web -- -D warnings
 cargo clippy --target wasm32-unknown-unknown --features wasm-web,all-operators -- -D warnings
 cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
 cargo test
-cargo test --features serde_json/preserve_order
 cargo test --features ts --test ts_types
 cargo test -p dataflow-corpus
 cargo test -p dataflow-docs-tests
@@ -168,13 +167,12 @@ scans each newly linked test binary on its first launch, which can add minutes.
 
 ### The counts
 
-`cargo test --workspace --all-features` should report 1008 passing: the
-root's 858, the derive's 2, the corpus's 18 and `docs-tests`' 130 (117 page
+`cargo test --workspace --all-features` should report 1016 passing: the
+root's 866, the derive's 2, the corpus's 18 and `docs-tests`' 130 (117 page
 doctests, 11 README doctests, the derive README's one and its coverage test).
-`cargo test` at the root (the default build) should report 833, the same
-under `--features serde_json/preserve_order`, and `cargo test -p
-dataflow-docs-tests` 130. The operator families are `#[cfg]`-gated, so the
-counts legitimately differ by feature set: the root reports 843 under
+`cargo test` at the root (the default build) should report 839, and `cargo
+test -p dataflow-docs-tests` 130. The operator families are `#[cfg]`-gated, so the
+counts legitimately differ by feature set: the root reports 849 under
 `--no-default-features --features all-operators`.
 
 ### Examples
@@ -271,10 +269,10 @@ A test that pins a whole output, too large for a literal, reads it from a
 golden file under `tests/golden/` (the lib's own tests under
 `tests/golden/lib/`, outside `src/` so nothing ships to crates.io), compared
 as text, key order included. `DATAFLOW_GOLDEN_WRITE=1` rewrites them; review
-the diff as a behaviour change. A golden must read the same in every build:
-under `preserve_order` a `json!` literal keeps its source order where the
-default build sorts it, so seeds, payloads and inputs feeding a golden are
-written with sorted keys.
+the diff as a behaviour change. The crate turns on serde_json's
+`preserve_order`, so a `json!` literal keeps its source order; the lib's
+golden harness still sorts the seeds, payloads and inputs it is given, so a
+golden does not move when a test reorders a literal.
 
 ### The documentation
 
@@ -381,13 +379,14 @@ Each rule lives once in the code; the test named beside it is what pins it.
   is the limit's (`tests/deadline.rs`).
 - **A root takes only an object.** `Ctx::set`, `emit` and a replayed overlay
   assign; at `data`, `metadata` or `temp_data` anything but an object is a
-  `Config` error. `map` merges at a root (`tests/host_calls.rs`).
+  `Config` error. `map` merges an object at a root; a constant non-object
+  `logic` at a literal root is `INVALID_MAPPING`, any other non-object result
+  fails the mapping (`tests/host_calls.rs`, `src/function/builtins/map.rs`).
 - **An array index stops at `MAX_ARRAY_INDEX`** (2^20 − 1): a larger bare
   numeric segment is a key, so no path from a trace or a computed value can grow
   an array without bound (`src/expr/path.rs`, the wasm `contexts` test).
 - **Error codes come from one classifier,** `Error::code`: `LOGIC_ERROR`,
-  `BUDGET_EXCEEDED`, `FUNCTION_NOT_FOUND`, `DESERIALIZATION_ERROR`,
-  `TIMEOUT_ERROR`, `CANCELLED`, `CONFIG_ERROR`, `COMPILATION_ERROR`, and a
+  `BUDGET_EXCEEDED`, `TIMEOUT_ERROR`, `CANCELLED`, `CONFIG_ERROR`, `COMPILATION_ERROR`, and a
   `Service` code verbatim (an empty one is `TASK_ERROR`). The record codes
   `TASK_STATUS_ERROR`, `VALIDATION_ERROR` and `EVALUATION_ERROR` are the
   recorder's and the built-ins'. There is no `WORKFLOW_ERROR` wrapper
@@ -425,11 +424,15 @@ Each rule lives once in the code; the test named beside it is what pins it.
 - **The wire shapes read back.** `Message`, `Context` and `Trace` read what
   they write, byte for byte, a whole-number float staying a float (serde_json
   with `float_roundtrip`); a context holds only the three roots and refuses a
-  fourth key, a non-object and a root twice; `Run` serializes as `{status,
-  error?, retryable, partial, matched, workflows}`; pretty `publish_json`,
-  `publish_xml` and `parse_xml` keep the source's key order in every build, so
-  nothing depends on serde_json's `preserve_order` (`tests/wire.rs`,
-  `tests/run_json.rs`, the corpus under `preserve_order`).
+  fourth key, a non-object and a root twice, and a message's roots are
+  objects (a trace's context takes a redacted root's `null`); `Run`
+  serializes as `{status, error?, retryable, partial, matched, workflows}`.
+  Key order is the source's everywhere: the crate turns on serde_json's
+  `preserve_order`, so an `Interpolated` document (a Mongo `$sort`) renders
+  as authored and issues come out in the definition's order, and pretty
+  `publish_json`, `publish_xml` and `parse_xml` keep it through
+  `OwnedDataValue` (`tests/wire.rs`, `tests/run_json.rs`,
+  `tests/documents.rs`).
 - **`Change::replaced` is the trace's alone;** an audit entry keeps v3's bytes.
   A trace records its own changes whatever `capture_changes` says
   (`tests/trace.rs`).

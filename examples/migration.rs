@@ -229,8 +229,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     // Only the 4.0 keys are written, and a key holding its default is left
-    // out. The keys come out sorted: a `serde_json::Value` keeps no order
-    // unless serde_json's `preserve_order` is on.
+    // out.
     println!("\nThe definition in its 4.0 spelling:");
     println!("{}", serde_json::to_string_pretty(&migrated.json)?);
 

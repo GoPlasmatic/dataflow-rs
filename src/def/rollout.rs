@@ -35,6 +35,10 @@ pub struct Rollout {
 }
 
 impl Rollout {
+    /// The highest routing bucket. A run given a larger one is served as
+    /// this one, so `[x, 100)` serves it, as in 3.x.
+    pub const MAX_BUCKET: u8 = 99;
+
     /// The range `[bucket_start, bucket_end)`.
     pub fn new(bucket_start: u8, bucket_end: u8) -> Self {
         Self {

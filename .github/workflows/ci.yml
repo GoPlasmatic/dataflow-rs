@@ -60,9 +60,9 @@ jobs:
           components: rustfmt, clippy
 
       # Crate downloads only — `target/` is deliberately absent. This job
-      # builds thirteen distinct feature configurations (all-features, default,
-      # serde_json's `preserve_order`, and the family loop's ten entries in
-      # isolation) across `--all-targets`, so its
+      # builds twelve distinct feature configurations (all-features, default,
+      # and the family loop's ten entries in isolation) across
+      # `--all-targets`, so its
       # `target/` reached 17 GB: `actions/cache` never prunes, and with
       # `restore-keys` every lockfile change restored the previous tree, added
       # another configuration's artifacts, and saved a larger superset.
@@ -130,11 +130,6 @@ jobs:
       # there the root has every family on.
       - name: Run the README's and the book's doctests (default features)
         run: cargo test -p dataflow-docs-tests --locked
-
-      # Orion's graph turns serde_json's `preserve_order` on, which unifies into
-      # the engine: its key order must be its own in both builds.
-      - name: Run tests (serde_json preserve_order)
-        run: cargo test --features serde_json/preserve_order --locked
 
       # `--all-features` and the default build are the two endpoints; neither
       # catches a family that only compiles when another one is also on. The
