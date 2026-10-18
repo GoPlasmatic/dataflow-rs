@@ -12,8 +12,8 @@ mod lower;
 mod ops;
 
 pub use crate::base::{
-    AuthoredPath, Issue, IssueCode, ParseIssueCodeError, ParsePathError, PathSeg, ProgramId,
-    Severity, StepKind, TaskIx, WorkflowIx,
+    AuthoredPath, IssueCode, ParseIssueCodeError, ParsePathError, PathSeg, ProgramId, Severity,
+    StepKind, TaskIx, WorkflowIx,
 };
 pub(crate) use checks::Checks;
 pub(crate) use compile::{CalleeAt, compile_callee, refused};

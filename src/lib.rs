@@ -52,7 +52,7 @@ pub mod program;
 pub mod run;
 mod state;
 
-pub use crate::base::{Error, Issue, Result};
+pub use crate::base::{Error, ErrorKind, Issue, Result};
 pub use crate::def::WorkflowDef;
 pub use crate::expr::{Expr, Path};
 pub use crate::function::{Ctx, Function, Outcome, Registry};

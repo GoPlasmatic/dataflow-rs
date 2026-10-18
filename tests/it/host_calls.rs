@@ -13,11 +13,10 @@ use dataflow_rs::function::{
     BoxFuture, CallLayer, FunctionConfig, FunctionSpec, Next, Templated, layers,
 };
 use dataflow_rs::observe::{Event, Interest, Observer, TraceOptions};
-use dataflow_rs::run::{
-    EngineConfig, ErrorContext, ErrorKind, ErrorRecord, RunStatus, WorkflowExit,
-};
+use dataflow_rs::run::{EngineConfig, ErrorContext, ErrorRecord, RunStatus, WorkflowExit};
 use dataflow_rs::{
-    Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Registry, Result, Run, RunOptions,
+    Ctx, Engine, Error, ErrorKind, Expr, Function, Message, Outcome, Path, Registry, Result, Run,
+    RunOptions,
 };
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};

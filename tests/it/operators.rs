@@ -17,7 +17,7 @@ impl CustomOperator for Nop {
 }
 
 fn config_error(result: Result<ExprEngine>) -> bool {
-    matches!(result, Err(e) if matches!(e.kind(), dataflow_rs::run::ErrorKind::Config))
+    matches!(result, Err(e) if matches!(e.kind(), dataflow_rs::ErrorKind::Config))
 }
 
 #[test]

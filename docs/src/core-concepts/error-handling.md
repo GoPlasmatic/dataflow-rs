@@ -253,7 +253,7 @@ limit), classify it yourself:
 
 ```rust
 use dataflow_rs::Error;
-use dataflow_rs::run::ErrorKind;
+use dataflow_rs::ErrorKind;
 
 let error = Error::service("circuit_open", "upstream unavailable")
     .with_retryable(true)

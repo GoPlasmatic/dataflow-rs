@@ -1,5 +1,6 @@
 //! The engine: a [`Program`] and its config, run over messages.
 
+use super::RunStatus;
 use super::builder::EngineBuilder;
 use super::cancel::{Limits, timers_available};
 use super::error_context::ErrorContext;
@@ -14,7 +15,7 @@ use crate::base::ErrorKind;
 use crate::def::Rollout;
 use crate::expr::Path;
 use crate::observe::{
-    Event, Observer, RunStatus, Selection, StepResult, TraceStep, WorkflowExit, WorkflowRecord,
+    Event, Observer, Selection, StepResult, TraceStep, WorkflowExit, WorkflowRecord,
 };
 use crate::program::{Compiler, Program};
 use crate::state::{RunContext, Tuning};

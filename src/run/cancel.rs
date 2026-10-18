@@ -404,7 +404,7 @@ mod tests {
             engine.run_with(&mut Message::from_json(&json!({})), &opts),
         );
         assert!(
-            matches!(run.status(), crate::observe::RunStatus::Completed),
+            matches!(run.status(), crate::run::RunStatus::Completed),
             "{:?}",
             run.status()
         );

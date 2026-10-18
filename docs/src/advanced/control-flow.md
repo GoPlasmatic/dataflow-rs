@@ -414,8 +414,11 @@ let task = &migrated.json["tasks"][0];
 assert_eq!(task["on_rejection"], json!("halt"));
 assert!(task.get("on_failure").is_none());
 assert!(task.get("halt_on").is_none());
-assert_eq!(migrated.rewrites[0].v3, "halt_on: failure");
-assert_eq!(migrated.rewrites[0].v4, "on_failure: fail, on_rejection: halt");
+assert_eq!(migrated.rewrites[0].path.to_string(), "tasks[0].halt_on");
+assert_eq!(
+    migrated.rewrites[0].to_string(),
+    "`halt_on: failure` is a v3 spelling, read as `on_failure: fail, on_rejection: halt`"
+);
 ```
 
 See [Migrating from 3.x](../migration/from-3.md).

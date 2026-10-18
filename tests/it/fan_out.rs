@@ -22,8 +22,10 @@
 
 use crate::support::run_helpers::{Golden, Run, build_with, data, run_on};
 use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next};
-use dataflow_rs::run::{ErrorKind, ErrorRecord, RunStatus, WorkflowExit};
-use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result, RunOptions};
+use dataflow_rs::run::{ErrorRecord, RunStatus, WorkflowExit};
+use dataflow_rs::{
+    Ctx, Engine, Error, ErrorKind, Expr, Function, Message, Outcome, Result, RunOptions,
+};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};

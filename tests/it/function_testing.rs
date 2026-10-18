@@ -7,8 +7,8 @@ use dataflow_rs::expr::{CompileCx, ExprEngine, ExprVisitor, FieldSpec, Output, R
 use dataflow_rs::function::testing::{self, Called, Write};
 use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next, Prepare};
 use dataflow_rs::program::{IssueCode, StepKind};
-use dataflow_rs::run::{CancelToken, Change, ErrorKind, ErrorRecord, Instant};
-use dataflow_rs::{Ctx, Error, Expr, Function, Issue, Message, Outcome, Path, Result};
+use dataflow_rs::run::{CancelToken, Change, ErrorRecord, Instant};
+use dataflow_rs::{Ctx, Error, ErrorKind, Expr, Function, Issue, Message, Outcome, Path, Result};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};

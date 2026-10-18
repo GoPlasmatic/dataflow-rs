@@ -9,9 +9,9 @@ use dataflow_rs::function::{
     ValueKind,
 };
 use dataflow_rs::program::{
-    CompileOptions, Compiler, Issue, IssueCode as C, ResourceOracle, Severity, StepKind,
+    CompileOptions, Compiler, IssueCode as C, ResourceOracle, Severity, StepKind,
 };
-use dataflow_rs::{Ctx, Expr, Function, Outcome, Registry, Result};
+use dataflow_rs::{Ctx, Expr, Function, Issue, Outcome, Registry, Result};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::Arc;

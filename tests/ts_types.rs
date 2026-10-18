@@ -25,14 +25,12 @@
 
 use dataflow_rs::RunOptions;
 use dataflow_rs::observe::{StepResult, Trace, TraceOptions, TraceStep};
-use dataflow_rs::program::{
-    AuthoredPath, Issue, IssueCode, Severity, StepKind, TaskIx, WorkflowIx,
-};
+use dataflow_rs::program::{AuthoredPath, IssueCode, Severity, StepKind, TaskIx, WorkflowIx};
 use dataflow_rs::run::{
     AuditEntry, CancelToken, Change, Context, ErrorRecord, RunStatus, Selection, WorkflowExit,
     WorkflowRecord,
 };
-use dataflow_rs::{Ctx, Engine, Error, Function, Message, Outcome, Result, Run};
+use dataflow_rs::{Ctx, Engine, Error, Function, Issue, Message, Outcome, Result, Run};
 use datavalue::OwnedDataValue;
 use serde::Serialize;
 use serde_json::{Value, json};

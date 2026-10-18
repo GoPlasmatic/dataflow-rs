@@ -946,7 +946,7 @@ mod tests {
             let run = e.run_with(&mut message, &opts).await;
             FAIL_AFTER_WRITES.set(false);
             assert!(
-                matches!(run.status(), crate::observe::RunStatus::Stopped(_)),
+                matches!(run.status(), crate::run::RunStatus::Stopped(_)),
                 "{run:?}"
             );
             let context = message.context();

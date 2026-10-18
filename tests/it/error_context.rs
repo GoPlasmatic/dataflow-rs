@@ -19,8 +19,10 @@ use dataflow_corpus::{normalise, path as json_path, replay};
 use dataflow_rs::def::{ParseOptions, parse};
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::observe::{StepResult, Trace, TraceOptions};
-use dataflow_rs::run::{EngineConfig, ErrorContext, ErrorKind, ErrorRecord, RunStatus};
-use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Path, Result, RunOptions};
+use dataflow_rs::run::{EngineConfig, ErrorContext, ErrorRecord, RunStatus};
+use dataflow_rs::{
+    Ctx, Engine, Error, ErrorKind, Expr, Function, Message, Outcome, Path, Result, RunOptions,
+};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 

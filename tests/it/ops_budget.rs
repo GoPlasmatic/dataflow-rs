@@ -11,8 +11,10 @@
 use dataflow_rs::def::{ParseOptions, WorkflowDef, parse};
 use dataflow_rs::expr::ExprEngine;
 use dataflow_rs::function::FunctionConfig;
-use dataflow_rs::run::{ErrorKind, ErrorRecord, RunStatus};
-use dataflow_rs::{Ctx, Engine, Expr, Function, Message, Outcome, Path, Registry, Result, Run};
+use dataflow_rs::run::{ErrorRecord, RunStatus};
+use dataflow_rs::{
+    Ctx, Engine, ErrorKind, Expr, Function, Message, Outcome, Path, Registry, Result, Run,
+};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 

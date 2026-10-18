@@ -31,7 +31,8 @@ use std::borrow::Cow;
 /// records in.
 ///
 /// ```
-/// use dataflow_rs::run::{EngineConfig, ErrorContext, ErrorKind};
+/// use dataflow_rs::run::{EngineConfig, ErrorContext};
+/// use dataflow_rs::ErrorKind;
 ///
 /// let ec = ErrorContext::new("metadata.errors".parse()?, ErrorContext::DEFAULT_LIMIT)?;
 /// assert_eq!(ec.limit(), 32);

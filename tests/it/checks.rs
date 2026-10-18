@@ -12,8 +12,8 @@ use dataflow_rs::expr::{ExprEngine, Output, Secrets};
 use dataflow_rs::function::{
     FieldKind, FieldSpec, FunctionConfig, FunctionSpec, Templated, ValueKind,
 };
-use dataflow_rs::program::{CompileOptions, Compiler, Issue, IssueCode as C, Severity, StepKind};
-use dataflow_rs::{Ctx, Expr, Function, Outcome, Registry, Result};
+use dataflow_rs::program::{CompileOptions, Compiler, IssueCode as C, Severity, StepKind};
+use dataflow_rs::{Ctx, Expr, Function, Issue, Outcome, Registry, Result};
 use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------

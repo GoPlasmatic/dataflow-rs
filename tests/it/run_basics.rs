@@ -5,8 +5,10 @@
 use dataflow_rs::def::{ParseOptions, parse};
 use dataflow_rs::function::{FunctionConfig, FunctionSpec, Reference};
 use dataflow_rs::program::{CompileOptions, IssueCode, ResourceOracle, Severity};
-use dataflow_rs::run::{AuditMode, EngineConfig, ErrorKind, RunStatus, Selection, WorkflowExit};
-use dataflow_rs::{Ctx, Engine, Expr, Function, Message, Outcome, Result, Run, RunOptions};
+use dataflow_rs::run::{AuditMode, EngineConfig, RunStatus, Selection, WorkflowExit};
+use dataflow_rs::{
+    Ctx, Engine, ErrorKind, Expr, Function, Message, Outcome, Result, Run, RunOptions,
+};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::Arc;

@@ -30,7 +30,7 @@ pub struct RunOptions<'a> {
     /// has passed, is recorded as `TIMEOUT_ERROR` on its task; either way
     /// the run ends [`TimedOut`].
     ///
-    /// [`TimedOut`]: crate::observe::RunStatus::TimedOut
+    /// [`TimedOut`]: crate::run::RunStatus::TimedOut
     pub deadline: Option<Instant>,
     /// A token that cancels the run when it, or an ancestor, is cancelled;
     /// `None` by default. It is checked and raced where the deadline is,
@@ -38,7 +38,7 @@ pub struct RunOptions<'a> {
     /// cancelled, is recorded as `CANCELLED` on its task; either way the
     /// run ends [`Cancelled`].
     ///
-    /// [`Cancelled`]: crate::observe::RunStatus::Cancelled
+    /// [`Cancelled`]: crate::run::RunStatus::Cancelled
     pub cancel: Option<&'a CancelToken>,
     /// Layers around every host call of this run, outside the registry's;
     /// the first is the outermost. None by default.

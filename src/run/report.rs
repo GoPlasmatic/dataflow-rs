@@ -1,7 +1,8 @@
 //! What a finished run reports.
 
+use super::RunStatus;
 use crate::base::{Error, ErrorKind, WorkflowIx};
-use crate::observe::{RunStatus, Selection, Trace, WorkflowExit, WorkflowRecord};
+use crate::observe::{Selection, Trace, WorkflowExit, WorkflowRecord};
 use crate::program::Program;
 use crate::state::Stats;
 use serde::ser::SerializeStruct;

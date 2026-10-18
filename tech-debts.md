@@ -81,6 +81,13 @@ the *implementation* of such a rule is duplicated, unenforced or leaky.
 > direct dependency type: wrapping it would still take datalogic's value and
 > arena types, so the crate documents it as committed instead. The entry is
 > kept until the next prune.
+>
+> **Fifth batch (2026-10-18).** API-4's canonical paths are fixed:
+> `Error`, `ErrorKind` and `Result` are at the crate root only, `Issue` at
+> the crate root only, and `RunStatus` at `run::RunStatus` only. The
+> duplicate `run::{Error, ErrorKind, Result}`, `program::Issue` and
+> `observe::RunStatus` paths are gone. The rest of API-4's subitems stay
+> registered below. The entry is kept until the next prune.
 
 ## 0. Executive summary
 
@@ -140,7 +147,7 @@ silent-failure fixes come next.
 |---|---|---|---|---|
 | 1 | **The `ErrorRecord` wire shape, as one change:** [API-5](#api-5) ids on every record, [API-3](#api-3) `Arc<str>` ids and one stamp, [API-1](#api-1) drop or document the retry fields | Medium | M | All three change message bytes and `bindings/dataflow.d.ts`, which becomes permanent at the tag 🔒. API-3 is also a per-record allocation on validation-heavy runs (performance comes first). Doing them together means one bindings regeneration, one CHANGELOG line and one Orion follow-up. |
 | 2 | [API-2](#api-2) Dependency types on the public API | Medium-High | M (was L) | **Fixed in the fourth batch:** `expr::Operator`/`OperatorFamily` replace the clashing names, and `CustomOperator` stays a documented committed dependency type. The next open pre-tag item is [API-4](#api-4). |
-| 3 | [API-4](#api-4) Stringly or leaky public types | Low-Medium | S each | Free only before the tag 🔒. First: `try_register` (Orion's plugin manifests), `testing::Write`, the built-in configs to `pub(crate)`, one canonical path per item, and the `PARSE_FAILED` split. |
+| 3 | [API-4](#api-4) Stringly or leaky public types | Low-Medium | S each | **Canonical paths fixed in the fifth batch.** What remains is hygiene: `testing::Write`, `Migrated::json` and `Error::Debug`. |
 | 4 | [DOC-1](#doc-1) Design-doc IDs in public rustdoc | Medium | S | Four hits ship to docs.rs at 4.0. A CI grep stops new ones. |
 | 5 | [DUP-8](#dup-8) `IssueCode` as a literal union in the bindings | Low | S | A bindings change 🔒. Do it after API-4's new codes so they land in the union. |
 | 6 | [VB-2](#vb-2) A rollout range that matches no traffic loads cleanly | Medium | S | A silent blackhole on a routing path. The check already exists, uncalled. A new Defect is easier to ship before Orion pins 4.0. |
@@ -465,7 +472,9 @@ type, since a wrapper would still take datalogic's value and arena types.
 <a id="api-4"></a>
 ### API-4 · Stringly or leaky types on the public surface
 **Severity:** Low-Medium · **Effort:** S each · **Verified:** ✔
-
+**Partly fixed (2026-10-18, fifth batch):** one canonical public path per
+type: `Error`/`ErrorKind`/`Result` and `Issue` at the crate root,
+`run::RunStatus` at `run`. The duplicate re-exports are gone.
 - **`compat::Rewrite { v3: String, v4: String }`** (`src/def/reader.rs:66-74`)
   is human prose. A host that wants to auto-fix a stored definition has to
   parse it. Replace it with a `RewriteKind` enum plus `Display`.
@@ -483,7 +492,8 @@ type, since a wrapper would still take datalogic's value and arena types.
   doesn't exist. Make them `pub(crate)`.
 - **One item, several paths:** `crate::Error`/`run::Error`,
   `crate::Issue`/`program::Issue` (produced by `def`), `observe::RunStatus`
-  re-exported from `run`. Pick one canonical home each.
+  re-exported from `run`. **Fixed in the fifth batch:** one canonical home
+  each (crate root for the errors and `Issue`, `run` for `RunStatus`).
 - **`Change`** carries a `pub(crate) trace_only` flag, which forces a manual
   `PartialEq`/`Debug` that must list every wire field (`base/change.rs:43-68`);
   a new field missed in `eq` compares equal. `Error`'s `Debug` drops `source`

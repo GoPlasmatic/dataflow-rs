@@ -93,14 +93,23 @@ assert_eq!(migrated.json, json!({
     ]
 }));
 
-let rewrites: Vec<(String, &str, &str)> = migrated.rewrites.iter()
-    .map(|r| (r.path.to_string(), r.v3.as_str(), r.v4.as_str()))
+let rewrites: Vec<(String, String)> = migrated.rewrites.iter()
+    .map(|r| (r.path.to_string(), r.to_string()))
     .collect();
 // In the document's key order, as written.
 assert_eq!(rewrites, [
-    ("continue_on_error".to_string(), "continue_on_error: true", "on_failure: continue"),
-    ("tasks[0].halt_on".to_string(), "halt_on: failure", "on_failure: fail, on_rejection: halt"),
-    ("tasks[0].function.name".to_string(), "validate", "validation"),
+    (
+        "continue_on_error".to_string(),
+        "`continue_on_error: true` is a v3 spelling, read as `on_failure: continue`".to_string(),
+    ),
+    (
+        "tasks[0].halt_on".to_string(),
+        "`halt_on: failure` is a v3 spelling, read as `on_failure: fail, on_rejection: halt`".to_string(),
+    ),
+    (
+        "tasks[0].function.name".to_string(),
+        "`validate` is a v3 spelling, read as `validation`".to_string(),
+    ),
 ]);
 
 let codes: Vec<IssueCode> = migrated.issues.iter().map(|i| i.code).collect();
@@ -554,7 +563,7 @@ return Err(DataflowError::service("HTTP_ERROR", "upstream 502").retryable(true).
 `Error::service(code, message)`, and keeps a stored code by naming it:
 
 ```rust
-use dataflow_rs::run::{Error, ErrorKind};
+use dataflow_rs::{Error, ErrorKind};
 
 let e = Error::service("HTTP_ERROR", "upstream 502").with_retryable(true);
 assert_eq!(e.code(), "HTTP_ERROR");

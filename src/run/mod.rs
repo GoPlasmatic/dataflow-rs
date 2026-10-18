@@ -19,8 +19,9 @@ mod trace;
 /// `std::time::Instant` itself on native targets and a browser clock on
 /// wasm32.
 pub use crate::base::Instant;
-pub use crate::base::{CancelToken, Change, Context, Error, ErrorKind, ErrorRecord, Result};
-pub use crate::observe::{RunStatus, Selection, WorkflowExit, WorkflowRecord};
+pub use crate::base::{CancelToken, Change, Context, ErrorRecord};
+pub use crate::observe::status::RunStatus;
+pub use crate::observe::{Selection, WorkflowExit, WorkflowRecord};
 pub use builder::EngineBuilder;
 pub(crate) use cancel::timers_available;
 pub use engine::{Engine, EngineConfig};

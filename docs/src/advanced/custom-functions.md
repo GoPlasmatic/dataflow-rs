@@ -448,8 +448,8 @@ Rejected one fails the task's compile.
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
 use dataflow_rs::function::{FunctionConfig, FunctionSpec, Prepare, RetrySafety, testing};
-use dataflow_rs::program::{Issue, IssueCode};
-use dataflow_rs::{Ctx, Expr, Function, Outcome, Result};
+use dataflow_rs::program::IssueCode;
+use dataflow_rs::{Ctx, Expr, Function, Issue, Outcome, Result};
 use serde_json::json;
 
 #[derive(FunctionConfig)]

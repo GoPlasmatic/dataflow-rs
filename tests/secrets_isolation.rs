@@ -28,10 +28,10 @@ use dataflow_rs::function::testing;
 use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next};
 use dataflow_rs::observe::{Event, Interest, Observer, StepResult, TraceOptions};
 use dataflow_rs::program::{CompileOptions, IssueCode};
-use dataflow_rs::run::{EngineConfig, ErrorContext, ErrorKind, RunStatus};
+use dataflow_rs::run::{EngineConfig, ErrorContext, RunStatus};
 use dataflow_rs::{
-    Ctx, Engine, Error, Expr, Function, Issue, Message, Outcome, Path, Registry, Result, Run,
-    RunOptions,
+    Ctx, Engine, Error, ErrorKind, Expr, Function, Issue, Message, Outcome, Path, Registry, Result,
+    Run, RunOptions,
 };
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};

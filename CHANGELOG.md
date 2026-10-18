@@ -313,6 +313,10 @@ observe. The migration page has each one with its code.
   and `Family` beside them, unaliased. `ExprEngineBuilder` still takes
   datalogic's `CustomOperator`: it is a deliberately committed dependency
   type, as the crate's re-exports are, not a type this crate wraps.
+- **One public path per type.** `Error`, `ErrorKind` and `Result` are at the
+  crate root only, `Issue` at the crate root only, and `RunStatus` at
+  `run::RunStatus` only. The duplicate `run::{Error, ErrorKind, Result}`,
+  `program::Issue` and `observe::RunStatus` paths are gone.
 - **`publish_xml` sanitizes its root element** as it always sanitized
   child keys. 3.x wrote `root_element` raw, so a name computed from the
   message could close the root and inject elements.

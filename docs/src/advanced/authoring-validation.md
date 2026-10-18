@@ -391,9 +391,9 @@ compiles each on its own and links the ones that compile:
 
 ```rust
 use dataflow_rs::def::{ParseOptions, parse};
-use dataflow_rs::program::{CompileOptions, Issue};
+use dataflow_rs::program::CompileOptions;
 use dataflow_rs::run::EngineConfig;
-use dataflow_rs::{Engine, Registry};
+use dataflow_rs::{Engine, Issue, Registry};
 use serde_json::{Value, json};
 
 let submitted: Vec<Value> = vec![

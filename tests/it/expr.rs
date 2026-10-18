@@ -1,10 +1,10 @@
+use dataflow_rs::ErrorKind;
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::expr::{
     ConfigField, EvalRoot, Evaluated, ExprEngine, FieldKind, Secrets, ValueKind, escaped_keys,
     secret_refs,
 };
 use dataflow_rs::function::{FunctionConfig, testing};
-use dataflow_rs::run::ErrorKind;
 use dataflow_rs::{Expr, Path};
 use serde_json::{Value, json};
 use std::borrow::Cow;

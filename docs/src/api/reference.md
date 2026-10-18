@@ -1,6 +1,6 @@
 # API Reference
 
-dataflow-rs 4 is seven public modules and fifteen names re-exported at the
+dataflow-rs 4 is seven public modules and sixteen names re-exported at the
 crate root. This page is the map: what each module holds, the one-line
 purpose of each type, and the handful of calls a host makes most, with their
 signatures. The full rustdoc is on docs.rs at
@@ -15,7 +15,7 @@ functions implement [`function::Function`](#a-host-function).
 
 ## The root
 
-Fifteen names, enough for a host that registers functions and runs messages:
+Sixteen names, enough for a host that registers functions and runs messages:
 
 | Name | Lives in | Purpose |
 |---|---|---|
@@ -23,9 +23,9 @@ Fifteen names, enough for a host that registers functions and runs messages:
 | `Message` | `run` | A payload, the three-root context, the audit trail and the error records |
 | `Run` | `run` | The report of one run: its status, each workflow's record, its trace |
 | `RunOptions` | `run` | What one run chooses: channel, bucket, audit, deadline, cancel, layers, observer, trace |
-| `Error` | `run` | Why a run, a compile or a call failed; `code()` is the recorded code |
-| `Result<T>` | `run` | `std::result::Result<T, Error>` |
-| `Issue` | `program` | One finding about a definition: code, severity, authored path, message |
+| `Error`, `ErrorKind` | root | Why a run, a compile or a call failed, and its class; `Error::service(code, message)` is a host's own |
+| `Result<T>` | root | `std::result::Result<T, Error>` |
+| `Issue` | root | One finding about a definition: code, severity, authored path, message |
 | `WorkflowDef` | `def` | A parsed definition: plain data with raw expressions |
 | `Expr<T>` | `expr` | Compiled JSONLogic that evaluates to a `T` |
 | `Path` | `expr` | A context path, parsed once: a root plus segments |
@@ -112,7 +112,7 @@ a host owns quarantine: a Rejected issue rejects only its own workflow.
 | `Compiled`, `CompiledWorkflow` | An accepted workflow with its Defects and Advisories; `fingerprint()` |
 | `Program`, `WorkflowInfo`, `TaskInfo` | Linked workflows, immutable, with dense indices; what the program lists about each |
 | `ProgramId`, `WorkflowIx`, `TaskIx` | The identity of a build and the positions within it |
-| `Issue`, `IssueCode`, `Severity` | A finding; its code (v3's 34 and v4's 8, `as_str()` is the stable spelling); `Rejected`, `Defect` or `Advisory` |
+| `IssueCode`, `Severity` | A finding's code (v3's 34 and v4's 8, `as_str()` is the stable spelling) and its `Rejected`, `Defect` or `Advisory` class |
 | `AuthoredPath`, `PathSeg`, `StepKind` | Where in the authored JSON, as v3 spelled it (`tasks[1].tasks[0].id`); the kind of step it sits in |
 | `ResourceOracle` | A host's answer to "does this connector exist", checked against `Reference` fields |
 | `Fingerprint` | The operators and data keys a workflow's expressions use; `Display` and `FromStr` |
@@ -133,7 +133,6 @@ Executing a program over a message. [docs.rs](https://docs.rs/dataflow-rs/4.0.0/
 | `Context` | The three roots, always `data`, `metadata` and `temp_data` in that order; `get`, `set`, `remove` by `Path` |
 | `AuditEntry`, `Change`, `AuditMode` | One task's audit record; one recorded write or removal; `Full`, `Last(n)` or `Off` |
 | `ErrorRecord` | One recorded error, on v3's wire shape |
-| `Error`, `ErrorKind`, `Result` | The error type and its class; `Error::service(code, message)` is a host's own |
 | `CancelToken` | A cancellation flag; a `child()` is cancelled with its parent |
 | `Instant` | The clock a deadline is read on: `std::time::Instant` natively, a browser clock on wasm32 |
 
@@ -341,8 +340,8 @@ drops them and keeps the records the call added.
 
 ```rust
 use dataflow_rs::def::{ParseOptions, Parsed, parse};
-use dataflow_rs::program::{CompileOptions, Issue, Severity};
-use dataflow_rs::Registry;
+use dataflow_rs::program::{CompileOptions, Severity};
+use dataflow_rs::{Issue, Registry};
 # use serde_json::json;
 
 let json = json!({"id": "w", "tasks": [
