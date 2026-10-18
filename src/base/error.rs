@@ -158,7 +158,7 @@ impl fmt::Debug for Error {
             .field("message", &self.message)
             .field("retryable", &self.is_retryable())
             .field("source", &self.source)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

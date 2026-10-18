@@ -84,10 +84,16 @@ use serde_json::Value;
 #[non_exhaustive]
 pub struct Migrated {
     /// The definition, parsed: what [`json`](Self::json) parses to with the
-    /// reader off, so a host loading it need not parse it again.
+    /// reader off, so a host loading it need not parse it again. A host that
+    /// wants the migrated definition's *text* serializes this
+    /// (`serde_json::to_string(&migrated.def)`), which is why the structured
+    /// form below is a `Value` and not a `String`: it keeps the definition's
+    /// key order, is inspectable without a re-parse, and is exactly what this
+    /// field serializes to.
     pub def: WorkflowDef,
     /// The definition in the v4 spelling, its keys in the definition's
-    /// order.
+    /// order: `serde_json::to_value(&def)`, usable on its own without a
+    /// [`WorkflowDef`]. See [`def`](Self::def) for the text contract.
     pub json: Value,
     /// Each v3 spelling rewritten, in document order.
     pub rewrites: Vec<Rewrite>,
