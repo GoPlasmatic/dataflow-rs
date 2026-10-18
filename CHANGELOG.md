@@ -81,7 +81,12 @@ section says how to run the benchmarks.
   by default, runs the compat reader, which rewrites each 3.x spelling into
   its 4.0 counterpart with a `V3_SPELLING` Advisory; `compat::migrate_v3`
   writes a definition in the 4.0 spelling and lists the rewrites.
-  `WorkflowDef::walk` visits every step, groups included.
+  `WorkflowDef::walk` visits every step, groups included;
+  `def::is_reserved_function` says whether a name is one no host function
+  may take (a built-in's, or `validate`). A definition is
+  read-only: every field is read through its accessor (`def.id()`,
+  `task.function().input()`), and nothing outside the crate builds or edits
+  one, so every definition a compiler sees has passed `parse`'s rules.
 - **Two task policies in place of two flags.** `on_failure` (`fail`,
   `continue`, `halt`) covers a 5xx or an `Err` and `on_rejection`
   (`continue`, `halt`) a 4xx, each applied after the status is classified; a
@@ -241,7 +246,10 @@ observe. The migration page has each one with its code.
   `{}`. A message's roots must also be objects, where 3.x took any value and
   then silently dropped every write under a `null` `metadata`,
   `metadata.progress` included; a trace's context still takes a redacted
-  root's `null`.
+  root's `null`. An object holding a key twice is refused wherever the
+  reader meets one, in the context, the payload or a change's value: the
+  engine reads the first, where a host's JSON parser keeps the last. 3.x
+  read through `serde_json::Value`, so no message it wrote holds one.
 - **`publish_json` with `pretty`, `publish_xml` and `parse_xml` keep the
   source's key order in every build;** 3.x's default build sorted them
   through `serde_json::Value`. A held duplicate key is written as held.
@@ -263,6 +271,27 @@ observe. The migration page has each one with its code.
   `BUDGET_EXCEEDED`, under `on_failure`, where 3.x recorded it as an
   `EVALUATION_ERROR` rejection (400) that `on_rejection: continue` stepped
   past. Any other evaluation error is still `EVALUATION_ERROR` and 400.
+- **A failed `map` mapping records `MAPPING_ERROR`** before the task's
+  `TASK_STATUS_ERROR`: one record per mapping, its `path` the mapping's
+  destination and its message the index, the destination and why
+  (`mappings[1] (data.s): the target holds a string, not an array`). 3.x
+  only logged the reason. A `filter` condition that fails to evaluate
+  records `EVALUATION_ERROR`, where 3.x rejected silently, so the run
+  completes with errors.
+- **A `map` mapping or a `filter` condition over the ops budget fails the
+  task** with `BUDGET_EXCEEDED`, under its `on_failure`, as a `validation`
+  rule's does; a `map` call ends there. 3.x made the mapping a 500 and the
+  condition a rejection.
+- **datalogic-rs 5.8.2, datavalue-rs 0.3.2.** The re-exported `datavalue`'s
+  `==` is an equivalence: an object holding a key twice equals its own clone,
+  and an integer and a float compare exactly, so `2^53 + 1` no longer equals
+  `2^53` as a float. `ExprEngine::operators` is datalogic's own
+  description of its operators (one row per name it answers to, aliases
+  included), so no table in this crate can drift from it, and the payload
+  lint reads datalogic's own scoped arguments. An operator family is on only
+  through this crate's feature of its name: another crate in the build
+  enabling a datalogic family (`tensor`, `flagd`) no longer turns its
+  operators on here. `Family::Flagd` is gone.
 - **`publish_xml` sanitizes its root element** as it always sanitized
   child keys. 3.x wrote `root_element` raw, so a name computed from the
   message could close the root and inject elements.

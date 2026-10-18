@@ -14,16 +14,39 @@ tests hold the engine to.
 
 | Reader | What it takes from the corpus |
 | --- | --- |
-| `tests/compat.rs` | Every case's definitions, its reload steps' included, through the compat reader and `migrate_v3` |
-| `tests/ts_types.rs` | Every case built and run traced, so every key a corpus message, trace and `Run` writes is held to its TypeScript declaration |
-| `tests/repository_definitions.rs` | Every definition under `cases/` parses and compiles, as every other definition in the repository does |
-| `tests/path.rs` | `path`: `Path` against the model, on random contexts and paths |
-| `tests/trace.rs`, `tests/error_context.rs` | `replay` and `normalise`: `Trace::contexts` against the model's replay |
+| `tests/it/corpus.rs` | Every case the build satisfies, run through the driver (`tests/it/support/corpus_driver.rs`) and held to its golden file, `tests/golden/corpus/<area>/<name>.json` |
+| `tests/it/compat.rs` | Every case's definitions, its reload steps' included, through the compat reader and `migrate_v3` |
+| `tests/ts_types.rs` | Every case through the same driver, traced with timings, so every key a corpus message, trace, `Run` and issue writes is held to its TypeScript declaration |
+| `tests/it/repository_definitions.rs` | Every definition under `cases/` parses and compiles, as every other definition in the repository does |
+| `tests/it/path.rs` | `path`: `Path` against the model, on random contexts and paths |
+| `tests/it/trace.rs`, `tests/it/error_context.rs` | `replay` and `normalise`: `Trace::contexts` against the model's replay |
 | `src/run/policy.rs`'s tests | `normalise` and `Json` |
 
 `load_cases()` returns every case, sorted by path, and panics naming the file when one does not
 parse, because a case that silently drops out tests nothing; `case_name` is a case's path below
 `cases/` without `.json`, its name in a report.
+
+## What a run of the corpus checks
+
+The driver parses and compiles each definition on its own, through a registry holding `script`
+and an expression engine with the case's secrets, custom operators and ops budget, then links the
+compiled ones into one engine. Each run step runs plain and then traced, and every run step,
+whatever its case pins, must pass:
+
+- the traced run's message equals the plain run's;
+- the trace's last context is the message's, through `Trace::contexts` and through this crate's
+  `replay`, key order included;
+- the message and the trace read back byte for byte, and the trace read back replays the same;
+- a `same_as: n` step's message equals step `n`'s.
+
+A case with run steps fails when a definition is refused as `UNKNOWN_FUNCTION`, when no
+definition compiled, or when a reload compiles none: each would run less than the case says. A
+case that pins refusals carries no run step. What each case then does (every definition's issues,
+each run's `Run`, normalised message and trace steps, the observer's events) is held to its
+golden file; `DATAFLOW_GOLDEN_WRITE=1` rewrites them, and the diff is reviewed against each
+description. `requires` decides which builds run a case: in the default build
+`expressions/budget` and `expressions/families_on` are skipped, and with every feature on
+`expressions/families_off` is, both pinned.
 
 ## A case
 
@@ -32,42 +55,40 @@ parse, because a case that silently drops out tests nothing; `case_name` is a ca
   "description": "One sentence: the behaviour this case pins.",
   "requires": { "on": ["budget"] },
   "engine": { "secrets": {}, "ops_budget": 40, "error_context": { "path": "metadata.failures", "limit": 2 },
-              "operators": ["shout"], "observer": true, "logs": "warn" },
+              "operators": ["shout"], "observer": true },
   "workflows": [ { "id": "w", "name": "w", "tasks": [] } ],
   "steps": [
     { "run": { "message": { "id": "m1", "payload": {}, "data": {} }, "channel": "c",
                "routing_bucket": 7, "capture_changes": true, "audit_mode": { "last": 2 },
-               "trace": { "redact_paths": [] }, "same_as": 0 } },
+               "trace": false, "same_as": 0 } },
     { "reload": { "workflows": [] } }
   ]
 }
 ```
 
 Only `description` and `workflows` are required, and every type refuses unknown keys, so a typo in
-a case fails loudly instead of silently testing less (`src/case.rs`).
+a case fails loudly instead of silently testing less (`src/case.rs`). `Case::validate` checks what
+serde cannot: the `requires` names, `on` and `off` not both set, an `ops_budget` only with
+`budget` required, and a `same_as` naming an earlier run step.
 
-- **`workflows`** are raw definitions, each parsed on its own, so a refused definition does not
-  hide the others. A definition the build refuses gets its own case: one refusal fails the whole
-  build, and the case would then run nothing.
+- **`workflows`** are raw definitions, each parsed and compiled on its own, so a refused definition
+  does not hide the others: the engine links the ones that compiled.
 - **`requires`** names the features a case needs on or off (`case::FEATURES`: the operator
   families, `all-operators` and `budget`). CI runs two builds, default (nothing on) and
   `--all-features` (everything on), so a case never needs features both on and off.
 - **`engine`** configures the engine the steps run on: its secrets, the ops budget, an error
-  context, custom operators by name (`shout`), an observer whose events are kept, and the `log` built-in's lines
-  up to a level.
+  context, custom operators by name (`shout`), and an observer whose events are kept.
 - **A `run` step** runs on a fresh message (`id` defaults to `m1`, `payload` to `{}`) with its
   channel, routing bucket, `capture_changes` and `audit_mode` (`"full"`, `"off"` or
-  `{"last": n}`). `trace` is `false` to skip the traced run, or an object that overrides the
-  defaults field by field (snapshots, mapping contexts and changes on, no byte limit, no redacted
-  paths). `same_as: n` requires this run's message to equal step `n`'s.
+  `{"last": n}`). `trace` is `false` to skip the traced run (default `true`). `same_as: n`
+  requires this run's message to equal step `n`'s.
 - **A `reload` step** swaps the engine's program for its own `workflows`.
 
 **`script` is the cases' one host function.** Its behaviour is all in its config: `set` (writes,
 each a `value` template, a `get` path or a `raw` value), `errors`, `identity`, `yields`, and an
 `outcome` template evaluated last (`"success"`, `"skip"`, `"halt"`, `{"status": n}`, or
-`{"error": {"variant", "code", "message", "status", "retryable"}}`). A definition that calls it
-builds only on a registry that has a function of that name; a reader that registers none leaves
-those definitions out.
+`{"error": {"variant", "code", "message", "status", "retryable"}}`). The driver registers it,
+and refuses any key its config does not know, as every derived config does.
 
 ## The tools
 

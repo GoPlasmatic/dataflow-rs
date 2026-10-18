@@ -1,0 +1,92 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "UNGUARDED_VALIDATION ADVISORY tasks[0].on_rejection"
+      ],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "v": 5,
+              "word": "not",
+              "after": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "check",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 400
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "VALIDATION_ERROR",
+              "message": "bad 5",
+              "path": null,
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "EVALUATION_ERROR",
+              "message": "Failed to evaluate rule 2: Thrown: {\"type\":\"NaN\"} (in operator: +)",
+              "path": null,
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w check executed 400",
+          "w after executed 200"
+        ]
+      }
+    }
+  ]
+}

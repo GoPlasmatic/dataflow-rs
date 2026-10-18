@@ -1,0 +1,70 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "halted"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "word": "not"
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "gate",
+                "status_code": 299
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "gate",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 299
+            }
+          ],
+          "errors": [
+            {
+              "code": "EVALUATION_ERROR",
+              "message": "Filter condition failed to evaluate: Thrown: {\"type\":\"NaN\"} (in operator: +)",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "gate",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w gate executed 299"
+        ]
+      }
+    }
+  ]
+}

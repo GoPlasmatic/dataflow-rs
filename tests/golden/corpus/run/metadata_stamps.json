@@ -1,0 +1,167 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY tasks[1].continue_on_error"
+      ],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "on_channel",
+          "payload": {},
+          "context": {
+            "data": {
+              "first": 1
+            },
+            "metadata": {
+              "source": "api",
+              "channel": "c",
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "fails",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "first",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.first",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "fails",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task fails returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "fails",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w first executed 200",
+          "w fails executed 500",
+          "w skips executed -",
+          "w never skipped -"
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "no_channel",
+          "payload": {},
+          "context": {
+            "data": {
+              "first": 1
+            },
+            "metadata": {
+              "source": "api",
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "fails",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "first",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.first",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "fails",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task fails returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "fails",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w first executed 200",
+          "w fails executed 500",
+          "w skips executed -",
+          "w never skipped -"
+        ]
+      }
+    }
+  ]
+}

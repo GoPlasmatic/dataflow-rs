@@ -43,6 +43,12 @@ pub(crate) const TASK_ERROR: &str = "TASK_ERROR";
 pub(crate) const TASK_STATUS_ERROR: &str = "TASK_STATUS_ERROR";
 /// The record of a failed validation rule, and a built-in's refused input.
 pub(crate) const VALIDATION_ERROR: &str = "VALIDATION_ERROR";
+/// The record of a `map` mapping that failed, with its destination as the
+/// record's `path`.
+pub(crate) const MAPPING_ERROR: &str = "MAPPING_ERROR";
+/// The record of a built-in's expression that failed to evaluate: a
+/// `validation` rule, a `filter` condition.
+pub(crate) const EVALUATION_ERROR: &str = "EVALUATION_ERROR";
 
 impl Error {
     pub(crate) fn new(kind: ErrorKind, message: impl Into<Cow<'static, str>>) -> Self {

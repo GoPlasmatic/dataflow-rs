@@ -2,7 +2,7 @@
 
 use super::arena::with_arena;
 use super::expr::{Evaluated, Expr, FromValue};
-use super::operators::{Family, OperatorInfo, TABLE};
+use super::operators::{FAMILIES, Family, OperatorInfo};
 use super::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
 use crate::base::{Error, ErrorKind, Result};
 use bumpalo::Bump;
@@ -333,33 +333,14 @@ impl ExprEngineBuilder {
         self
     }
 
-    /// Builds the engine. [`ErrorKind::Config`] when a custom operator is named
-    /// `secret`, is named like a datalogic built-in this build enables, or is
-    /// registered twice.
+    /// Builds the engine, with the operator families this crate's features
+    /// turn on and no other. [`ErrorKind::Config`] when a custom operator is
+    /// named `secret`, is named like a built-in operator of those families,
+    /// or is registered twice.
     pub fn build(self) -> Result<ExprEngine> {
-        let builtin: HashSet<&'static str> = Engine::new().builtin_operator_names().collect();
-        let mut seen = HashSet::new();
-        for (info, _) in &self.operators {
-            let name = &*info.name;
-            let refusal = if name == SECRET_OPERATOR {
-                Some("is reserved for the engine's own operator")
-            } else if builtin.contains(name) {
-                Some("is the name of a built-in operator")
-            } else if !seen.insert(name) {
-                Some("is registered twice")
-            } else {
-                None
-            };
-            if let Some(why) = refusal {
-                return Err(Error::new(
-                    ErrorKind::Config,
-                    format!("operator `{name}` {why}"),
-                ));
-            }
-        }
-
         let secrets = Arc::new(self.secrets);
         let mut builder = Engine::builder()
+            .with_families(FAMILIES.iter().copied())
             .with_templating(true)
             .with_template_key_escape(TEMPLATE_KEY_ESCAPE);
         // `with_config` replaces the whole `EvaluationConfig`, and `default()`
@@ -378,14 +359,34 @@ impl ExprEngineBuilder {
         builder = builder.add_operator(SECRET_OPERATOR, SecretOperator(Arc::clone(&secrets)));
         let logic = builder.build();
 
-        // The table's rows in the table's order, restricted to the names this
-        // build's datalogic reports. A name it reports that the table lacks is
-        // a bug the completeness test catches.
-        let live: HashSet<&'static str> = logic.builtin_operator_names().collect();
-        let mut operators: Vec<OperatorInfo> = TABLE
-            .iter()
-            .filter(|row| live.contains(row.name))
-            .map(|row| row.info())
+        // A custom name is judged against the built-ins this engine has, so
+        // no throwaway engine is built for it.
+        let builtin: HashSet<&'static str> = logic.builtin_operator_names().collect();
+        let mut seen = HashSet::new();
+        for info in &infos {
+            let name = &*info.name;
+            let refusal = if name == SECRET_OPERATOR {
+                Some("is reserved for the engine's own operator")
+            } else if builtin.contains(name) {
+                Some("is the name of a built-in operator")
+            } else if !seen.insert(name) {
+                Some("is registered twice")
+            } else {
+                None
+            };
+            if let Some(why) = refusal {
+                return Err(Error::new(
+                    ErrorKind::Config,
+                    format!("operator `{name}` {why}"),
+                ));
+            }
+        }
+
+        // datalogic's own description of its operators, in its order, one
+        // row per name.
+        let mut operators: Vec<OperatorInfo> = logic
+            .operators()
+            .flat_map(OperatorInfo::from_logic)
             .collect();
         operators.extend(infos);
         operators.push(OperatorInfo::secret());

@@ -1,5 +1,5 @@
 {
-  "description": "publish_json serializes a data-rooted source into a data-rooted target: compact keeps the source's key order, and v3's default build sorted pretty's keys. A missing source and a null source each fail the task with VALIDATION_ERROR. publish_xml serializes under root_element, its keys sorted by v3's default build.",
+  "description": "publish_json serializes a data-rooted source into a data-rooted target, compact and pretty both in the source's key order; a missing source and a null source each fail the task with VALIDATION_ERROR. publish_xml serializes under root_element in the source's key order, an array's elements as item (3.x's default build sorted pretty's and XML's keys).",
   "workflows": [
     {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
       {"id": "json", "name": "json", "function": {"name": "publish_json", "input": {"source": "obj", "target": "out"}}},

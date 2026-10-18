@@ -3,9 +3,11 @@
 //! The rules between a mapping's keys are v3's (`AuthoredMapping::problem`),
 //! message for message, kept for compatibility.
 
-use crate::base::{Change, IssueCode, Result};
+use crate::base::{Change, Error, ErrorKind, IssueCode, MAPPING_ERROR, Result};
 use crate::expr::arena::with_arena;
-use crate::expr::{CompileCx, Expr, ExprEngine, Path};
+use crate::expr::rules::{self, Shape};
+use crate::expr::{CompileCx, Expr, ExprEngine, MAX_ARRAY_INDEX, Path};
+use crate::function::sync::task_record;
 use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
 use crate::state::{Edit, kind};
 use ::log::error;
@@ -168,9 +170,15 @@ impl Mapping {
 
 impl SyncFunction for MapConfig {
     /// Each mapping in order, each against the view as the ones before it
-    /// left it. A failing mapping is logged and the rest still run; the call
-    /// is then `Status(500)`, as v3's. Under a trace that keeps changes,
-    /// each mapping's end in the changes is noted, a failing one's included.
+    /// left it. A failing mapping records `MAPPING_ERROR`, with its
+    /// destination as the record's `path` when it resolved one, and is
+    /// logged; the rest still run, and the call is then `Status(500)`, as
+    /// v3's. Under a trace that keeps changes, each mapping's end in the
+    /// changes is noted, a failing one's included.
+    ///
+    /// An exceeded ops budget is no failed mapping: it is the call's `Err`,
+    /// which the classifier records as `BUDGET_EXCEEDED` and `on_failure`
+    /// governs, as `validation`'s (3.x made it a 500).
     fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let mut failed = false;
         // Most mappings record one change: sized once, as v3's
@@ -178,11 +186,11 @@ impl SyncFunction for MapConfig {
         if cx.capture {
             cx.changes.reserve(self.mappings.len());
         }
-        for mapping in &self.mappings {
+        for (i, mapping) in self.mappings.iter().enumerate() {
             let (exprs, capture, traced) = (cx.exprs, cx.capture, cx.traced);
             let (changes, marked) = (&mut *cx.changes, &mut cx.marked);
             let ends = cx.mapping_ends.as_deref_mut();
-            failed |= !cx.rc.edit(|e| {
+            let applied = cx.rc.edit(|e| {
                 let mut w = Writer {
                     e,
                     exprs,
@@ -196,12 +204,65 @@ impl SyncFunction for MapConfig {
                 w.end();
                 applied
             });
+            match applied {
+                Ok(()) => {}
+                Err(failure) => {
+                    let (path, reason) = match *failure {
+                        Failed::Budget(e) => return Err(e),
+                        Failed::Mapping { path, reason } => (path, reason),
+                    };
+                    failed = true;
+                    let message = format!("mappings[{i}] ({}): {reason}", mapping.describe());
+                    error!("Map: {message}");
+                    let mut record =
+                        task_record(MAPPING_ERROR, message, cx.workflow_id, cx.task_id, cx.now);
+                    record.path = path.map(|path| path.to_string());
+                    cx.errors.push(record);
+                }
+            }
         }
         Ok(if failed {
             Outcome::Status(500)
         } else {
             Outcome::Ok
         })
+    }
+}
+
+/// How a mapping did not apply, boxed where it is returned: a mapping that
+/// applies moves a pointer-sized `Result`, and only a failure allocates.
+type Failure = Box<Failed>;
+
+/// How a mapping did not apply.
+enum Failed {
+    /// The mapping failed: the rest still run, and the call is a 500. `path`
+    /// is where it would have written, when it resolved one.
+    Mapping {
+        path: Option<Arc<str>>,
+        reason: String,
+    },
+    /// The run's ops budget ran out: the call fails.
+    Budget(Error),
+}
+
+impl Failed {
+    /// The mapping failed at `path`, for `reason`.
+    #[cold]
+    fn at(path: Option<&Path>, reason: String) -> Failure {
+        Box::new(Self::Mapping {
+            path: path.map(|path| Arc::clone(path.dotted())),
+            reason,
+        })
+    }
+
+    /// An evaluation's failure: the budget's, or the mapping's at `path`
+    /// with `what` failing.
+    #[cold]
+    fn eval(e: Error, path: Option<&Path>, what: &str) -> Failure {
+        if e.kind() == &ErrorKind::Budget {
+            return Box::new(Self::Budget(e));
+        }
+        Self::at(path, format!("{what} failed to evaluate: {e}"))
     }
 }
 
@@ -241,8 +302,8 @@ impl MapValue<'_, '_> {
 }
 
 impl Mapping {
-    /// How a log line names the destination: a constant path dotted, a
-    /// computed one by its expression, as v3's `describe_path`.
+    /// How a record and a log line name the destination: a constant path
+    /// dotted, a computed one by its expression, as v3's `describe_path`.
     fn describe(&self) -> String {
         self.path
             .constant()
@@ -250,11 +311,10 @@ impl Mapping {
     }
 
     /// Runs the mapping, v3's steps in v3's order: the logic, the `null`
-    /// rule, then the destination and the write. `false` when it failed,
-    /// after logging why.
-    fn apply<'p>(&'p self, w: &mut Writer<'_, '_, '_, 'p>) -> bool {
+    /// rule, then the destination and the write.
+    fn apply<'p>(&'p self, w: &mut Writer<'_, '_, '_, 'p>) -> std::result::Result<(), Failure> {
         if self.unset {
-            return self.destination(w).is_some_and(|path| w.remove(&path));
+            return w.remove(&*self.destination(w)?);
         }
         let logic = self
             .logic
@@ -272,24 +332,16 @@ impl Mapping {
                     view: *view,
                     constant: None,
                 },
-                Err(e) => {
-                    error!(
-                        "Map: Error evaluating logic for path {}: {e}",
-                        self.describe()
-                    );
-                    return false;
-                }
+                Err(e) => return Err(Failed::eval(e, self.path.constant(), "the logic")),
             },
         };
         if result.view.is_null() {
             return match self.on_null {
-                None | Some(OnNull::Skip) => true,
-                Some(OnNull::Unset) => self.destination(w).is_some_and(|path| w.remove(&path)),
+                None | Some(OnNull::Skip) => Ok(()),
+                Some(OnNull::Unset) => w.remove(&*self.destination(w)?),
             };
         }
-        let Some(path) = self.destination(w) else {
-            return false;
-        };
+        let path = self.destination(w)?;
         match self.mode {
             None | Some(MapMode::Set) => w.set(&path, result),
             Some(mode) => w.append(&path, mode, result),
@@ -297,12 +349,15 @@ impl Mapping {
     }
 
     /// Where the mapping writes: its constant path, or its computed one
-    /// evaluated against the view and parsed. `None`, after logging, when the
-    /// evaluation fails or its result is not a path (break 15: v3 wrote any
-    /// top-level context key).
-    fn destination<'p>(&'p self, w: &Writer<'_, '_, '_, 'p>) -> Option<Cow<'p, Path>> {
+    /// evaluated against the view and parsed. A failure when the evaluation
+    /// fails or its result is not a path (v3 wrote any top-level context
+    /// key).
+    fn destination<'p>(
+        &'p self,
+        w: &Writer<'_, '_, '_, 'p>,
+    ) -> std::result::Result<Cow<'p, Path>, Failure> {
         if let Some(path) = self.path.constant() {
-            return Some(Cow::Borrowed(path));
+            return Ok(Cow::Borrowed(path));
         }
         let root = w.e.root_ref();
         let resolved = with_arena(|arena| {
@@ -310,16 +365,9 @@ impl Mapping {
                 .eval_in(self.path.logic(), root, arena)
                 .and_then(|view| self.path.convert(view))
         });
-        match resolved {
-            Ok(path) => Some(Cow::Owned(path)),
-            Err(e) => {
-                error!(
-                    "Map: Error resolving destination path {}: {e}",
-                    self.describe()
-                );
-                None
-            }
-        }
+        resolved
+            .map(Cow::Owned)
+            .map_err(|e| Failed::eval(e, None, "the destination"))
     }
 }
 
@@ -338,16 +386,13 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
     /// Writes `result` at `path`: a root merges, anything else is assigned.
     /// The change is recorded first, with the old value read from the view;
     /// under capture the mark keeps the owned new value, which the `Change`
-    /// needed anyway, so the checkpoint converts nothing twice. `false`,
-    /// after logging, when `path` is a root and `result` is not an object: a
-    /// root takes only an object, as `Ctx::set`'s does.
-    fn set(&mut self, path: &Path, result: MapValue<'q, 'p>) -> bool {
+    /// needed anyway, so the checkpoint converts nothing twice. A failure
+    /// when `path` is a root and `result` is not an object: a root takes
+    /// only an object, as `Ctx::set`'s does.
+    fn set(&mut self, path: &Path, result: MapValue<'q, 'p>) -> std::result::Result<(), Failure> {
         if path.is_root() && !matches!(result.view, DataValue::Object(_)) {
-            error!(
-                "Map: {path} is a root and takes only an object, not {}",
-                kind(&result.view)
-            );
-            return false;
+            let reason = format!("a root takes only an object, not {}", kind(&result.view));
+            return Err(Failed::at(Some(path), reason));
         }
         let owned = self.capture.then(|| result.owned());
         if let Some(new_value) = &owned {
@@ -363,7 +408,7 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
         } else {
             self.e.set(path, result.view, owned);
         }
-        true
+        Ok(())
     }
 
     /// Adds `result` to the array at `path` (#69): one element for `append`,
@@ -375,33 +420,44 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
     /// those alone cannot rebuild an array created where a `null` was, nor
     /// an empty `extend`'s, so a traced run records the array's creation
     /// first, `null` to `[]`, for the trace alone.
-    fn append(&mut self, path: &Path, mode: MapMode, result: MapValue<'q, 'p>) -> bool {
+    fn append(
+        &mut self,
+        path: &Path,
+        mode: MapMode,
+        result: MapValue<'q, 'p>,
+    ) -> std::result::Result<(), Failure> {
+        let refuse = |reason: String| Err(Failed::at(Some(path), reason));
         if path.is_root() {
-            error!("Map: Refusing to append to context root {path}");
-            return false;
+            return refuse("a root cannot be appended to".to_owned());
         }
         let items: &[DataValue<'q>] = match (mode, &result.view) {
             (MapMode::Extend, DataValue::Array(items)) => items,
             (MapMode::Extend, other) => {
-                error!(
-                    "Map: `extend` needs an array result for {path}, got {}",
-                    kind(other)
-                );
-                return false;
+                return refuse(format!("`extend` needs an array, got {}", kind(other)));
             }
             _ => std::slice::from_ref(&result.view),
         };
-        let (start, creates) = match self.e.get(path) {
-            None | Some(DataValue::Null) => (0, true),
-            Some(DataValue::Array(old)) => (old.len(), false),
-            Some(other) => {
-                error!(
-                    "Map: Cannot append to {path}: it holds {}, not an array",
-                    kind(&other)
-                );
-                return false;
-            }
+        // The target decides, by the append rule: an array is extended, a
+        // missing or `null` one created, anything else refuses.
+        let existing = self.e.get(path);
+        let (start, creates) = match rules::append_to(existing.map(|v| Shape::of_view(&v))) {
+            Err(held) => return refuse(format!("the target holds {held}, not an array")),
+            Ok(false) => (0, true),
+            Ok(true) => (
+                existing
+                    .and_then(|v| v.as_array().map(<[_]>::len))
+                    .unwrap_or(0),
+                false,
+            ),
         };
+        // Each element's change is at `path.<index>`, and an index past the
+        // cap parses back as a key, which no replay could put in the array.
+        if start + items.len() > MAX_ARRAY_INDEX + 1 {
+            return refuse(format!(
+                "the array would grow past {} elements, the most an index reaches",
+                MAX_ARRAY_INDEX + 1
+            ));
+        }
         let owned = self.capture.then(|| match (mode, result.owned()) {
             (MapMode::Extend, OwnedDataValue::Array(items)) => items,
             (_, item) => vec![item],
@@ -430,15 +486,17 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
         }
         let appended = self.e.append(path, items, owned);
         debug_assert!(appended.is_ok(), "the target was checked: {appended:?}");
-        true
+        Ok(())
     }
 
     /// Removes the key at `path`, recording the removal when something was
     /// there. A root cannot be removed.
-    fn remove(&mut self, path: &Path) -> bool {
+    fn remove(&mut self, path: &Path) -> std::result::Result<(), Failure> {
         if path.is_root() {
-            error!("Map: Refusing to remove context root {path}");
-            return false;
+            return Err(Failed::at(
+                Some(path),
+                "a root cannot be removed".to_owned(),
+            ));
         }
         let old_value = self.capture.then(|| self.e.get(path)).flatten();
         if self.e.remove(path)
@@ -449,7 +507,7 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
                 old_value.to_owned(),
             ));
         }
-        true
+        Ok(())
     }
 
     /// The value at `path` before a write, converted; `null` when absent.
@@ -974,9 +1032,16 @@ mod tests {
             got.error_code, None,
             "a failed mapping is a status, not an `Err`"
         );
+        // One record per failed mapping, at its destination, before the
+        // recorder's record of the 500.
         assert_eq!(
             got.errors,
-            r#"[{"code":"TASK_STATUS_ERROR","message":"Task t returned status 500","path":null,"workflow_id":"w","task_id":"t","timestamp":"<timestamp>"}]"#
+            concat!(
+                r#"[{"code":"MAPPING_ERROR","message":"mappings[0] (data.n): the target holds a number, not an array","path":"data.n","workflow_id":"w","task_id":"t","timestamp":"<timestamp>"},"#,
+                r#"{"code":"MAPPING_ERROR","message":"mappings[1] (data.xs): `extend` needs an array, got a number","path":"data.xs","workflow_id":"w","task_id":"t","timestamp":"<timestamp>"},"#,
+                r#"{"code":"MAPPING_ERROR","message":"mappings[2] (data.q): the logic failed to evaluate: Thrown: {\"type\":\"NaN\"} (in operator: /)","path":"data.q","workflow_id":"w","task_id":"t","timestamp":"<timestamp>"},"#,
+                r#"{"code":"TASK_STATUS_ERROR","message":"Task t returned status 500","path":null,"workflow_id":"w","task_id":"t","timestamp":"<timestamp>"}]"#,
+            )
         );
     }
 

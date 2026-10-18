@@ -1,0 +1,181 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {
+            "inner": {
+              "k": 1
+            },
+            "xml": "<root><a>1</a><b>two</b></root>"
+          },
+          "context": {
+            "data": {
+              "raw": "{\"r\": 1, \"s\": [true]}",
+              "p": {
+                "inner": {
+                  "k": 1
+                },
+                "xml": "<root><a>1</a><b>two</b></root>"
+              },
+              "i": {
+                "k": 1
+              },
+              "r": {
+                "r": 1,
+                "s": [
+                  true
+                ]
+              },
+              "data": {
+                "t": {
+                  "from": "temp"
+                }
+              },
+              "x": {
+                "a": {
+                  "$text": "1"
+                },
+                "b": {
+                  "$text": "two"
+                }
+              }
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "xml",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "t": {
+                "from": "temp"
+              }
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "whole",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.p",
+                  "old_value": null,
+                  "new_value": {
+                    "inner": {
+                      "k": 1
+                    },
+                    "xml": "<root><a>1</a><b>two</b></root>"
+                  }
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "nested",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.i",
+                  "old_value": null,
+                  "new_value": {
+                    "k": 1
+                  }
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "string",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.r",
+                  "old_value": null,
+                  "new_value": {
+                    "r": 1,
+                    "s": [
+                      true
+                    ]
+                  }
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "context",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.data.t",
+                  "old_value": null,
+                  "new_value": {
+                    "from": "temp"
+                  }
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "xml",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.x",
+                  "old_value": null,
+                  "new_value": {
+                    "a": {
+                      "$text": "1"
+                    },
+                    "b": {
+                      "$text": "two"
+                    }
+                  }
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w whole executed 200",
+          "w nested executed 200",
+          "w string executed 200",
+          "w context executed 200",
+          "w xml executed 200"
+        ]
+      }
+    }
+  ]
+}

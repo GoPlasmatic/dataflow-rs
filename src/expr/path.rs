@@ -5,12 +5,18 @@
 //! index, parsed from the raw segment, so `#20` is never an index. Both
 //! readings are resolved at parse time, so no write re-parses.
 //!
-//! The write rules are v3's `set_nested_value`, and `tests/path.rs` checks
-//! them against it. A write either applies in full or changes nothing:
-//! containers are created only past the last existing one, and a hop that
-//! cannot continue (a scalar, a `null` under an object, a key on an array)
-//! comes before any creation.
+//! The write rules are v3's `set_nested_value`, stated once in
+//! [`rules`](super::rules). `set`, `get` and `remove` here are hand-inlined
+//! forms of [`rules::step`](super::rules::step) for the hot path (the
+//! checkpoint and every clean read), held to
+//! [`rules::resolve`](super::rules::resolve) on every small tree and path
+//! (`state::tests::splice_property`), and `tests/it/path.rs` checks them
+//! against the corpus's model. A write either applies in full or changes
+//! nothing: containers are created only past the last existing one, and a
+//! hop that cannot continue (a scalar, a `null` under an object, a key on
+//! an array) comes before any creation.
 
+use super::rules::{self, Shape};
 use crate::base::{Error, ErrorKind, Result};
 use datavalue::OwnedDataValue;
 use std::fmt;
@@ -84,8 +90,10 @@ impl Seg {
         }
     }
 
-    /// The segment naming array element `i`: its key is `i`'s text.
+    /// The segment naming array element `i`: its key is `i`'s text. `i` is
+    /// at most [`MAX_ARRAY_INDEX`], or the text would parse back as a key.
     pub(crate) fn index(i: usize) -> Self {
+        debug_assert!(i <= MAX_ARRAY_INDEX, "index {i} is past the cap");
         let key = i.to_string();
         Self {
             hash: key_hash(&key),
@@ -438,20 +446,7 @@ pub(crate) fn remove(v: &mut OwnedDataValue, segs: &[Seg]) -> Option<OwnedDataVa
 
 /// The kind of a value, for an error: v3's `describe_kind`.
 pub(crate) fn kind(v: &OwnedDataValue) -> &'static str {
-    match v {
-        OwnedDataValue::Null => "null",
-        OwnedDataValue::Bool(_) => "a boolean",
-        OwnedDataValue::Number(_) => "a number",
-        OwnedDataValue::String(_) => "a string",
-        OwnedDataValue::Array(_) => "an array",
-        OwnedDataValue::Object(_) => "an object",
-        #[allow(
-            unreachable_patterns,
-            reason = "the catch-all is live only with datavalue's `datetime` or `tensor` \
-                      feature, which feature unification can turn on from another crate"
-        )]
-        _ => "a non-array value",
-    }
+    Shape::of_owned(v).describe()
 }
 
 /// `map`'s append and extend (v3's `append_owned`): extend the array at
@@ -463,14 +458,14 @@ pub(crate) fn append(
     segs: &[Seg],
     items: Vec<OwnedDataValue>,
 ) -> std::result::Result<bool, &'static str> {
-    match get_mut(v, segs) {
-        Some(OwnedDataValue::Array(existing)) => {
+    let target = get_mut(v, segs);
+    if rules::append_to(target.as_deref().map(Shape::of_owned))? {
+        if let Some(OwnedDataValue::Array(existing)) = target {
             existing.extend(items);
-            Ok(true)
         }
-        None | Some(OwnedDataValue::Null) => Ok(set(v, segs, OwnedDataValue::Array(items))),
-        Some(other) => Err(kind(other)),
+        return Ok(true);
     }
+    Ok(set(v, segs, OwnedDataValue::Array(items)))
 }
 
 /// `map`'s write to a root slot (v3's `merge_root_field`): two objects merge,

@@ -23,6 +23,7 @@
 
 use crate::expr::arena::with_arena;
 use crate::expr::path;
+use crate::expr::rules::{self, Shape, Step};
 use crate::expr::{Path, Seg};
 use crate::state::splice;
 use crate::state::{Lookup, RunContext};
@@ -150,44 +151,44 @@ impl Overlay {
     }
 
     /// Whether a write at `segs` lands on the call's own root, by
-    /// `Path::set`'s rules: each container on the way is an object, or an
-    /// array the next segment indexes, and a missing one or a `null` element
-    /// is created, with everything below it.
+    /// [`rules::step`] at every segment, over what the call's own writes
+    /// left there: each container on the way is an object, or an array the
+    /// next segment indexes, and a missing one or a `null` element is
+    /// created, with everything below it.
     fn lands(&self, base: DataValue<'_>, segs: &[Seg]) -> bool {
         if self.is_empty() {
             return splice::resolve(base, segs).is_some();
         }
-        // Every root is an object (R52), and so holds `segs[1]`.
-        let mut holder = Kind::Object;
+        // Every root is an object, and so holds `segs[1]`.
+        let mut holder = Shape::Object;
         for i in 1..segs.len() {
-            let fits = match holder {
-                Kind::Object => true,
-                Kind::Array => segs[i].index.is_some(),
-                _ => false,
-            };
-            if !fits {
-                return false;
-            }
-            if i + 1 == segs.len() {
-                break;
-            }
-            holder = match self.kind_at(base, &segs[..=i]) {
-                Some(Kind::Missing) => return true,
-                Some(Kind::Null) if holder == Kind::Array => return true,
-                Some(kind) => kind,
-                None => {
-                    return with_arena(|arena| {
-                        splice::resolve(self.splice_onto(base, arena), segs).is_some()
-                    });
+            let last = i + 1 == segs.len();
+            // The last segment's child is replaced whatever it holds, so
+            // only its holder decides.
+            let child = if last {
+                None
+            } else {
+                match self.held_at(base, &segs[..=i]) {
+                    Some(held) => held,
+                    None => {
+                        return with_arena(|arena| {
+                            splice::resolve(self.splice_onto(base, arena), segs).is_some()
+                        });
+                    }
                 }
             };
+            match rules::step(holder, &segs[i], child, last) {
+                Step::Block => return false,
+                Step::Create => return true,
+                Step::Into => holder = child.unwrap_or(Shape::Null),
+            }
         }
         true
     }
 
-    /// What the call's own root holds at `q`, as far as a write through it
-    /// cares; `None` when only the spliced root can tell.
-    fn kind_at(&self, base: DataValue<'_>, q: &[Seg]) -> Option<Kind> {
+    /// What the call's own root holds at `q` (`Some(None)` when nothing);
+    /// `None` when only the spliced root can tell.
+    fn held_at(&self, base: DataValue<'_>, q: &[Seg]) -> Option<Option<Shape>> {
         // The first segment below `q` of the earliest write since the one
         // that decides `q` that landed below it: what created `q`, if it
         // was missing or a `null` element.
@@ -208,61 +209,31 @@ impl Overlay {
                     }
                 }
                 Rel::Above => {
-                    let kind = match set {
-                        Some(value) => Kind::of_owned(path::get(value, &q[e.len()..])),
+                    let held = match set {
+                        Some(value) => path::get(value, &q[e.len()..]).map(Shape::of_owned),
                         None if may_shift(e) => return None,
-                        None => Kind::Missing,
+                        None => None,
                     };
-                    return Some(kind.or_created(created));
+                    return Some(or_created(held, created));
                 }
                 Rel::Siblings { .. } | Rel::Unsure => return None,
             }
         }
-        Some(Kind::of_view(splice::get(base, q)).or_created(created))
+        Some(or_created(
+            splice::get(base, q).map(|v| Shape::of_view(&v)),
+            created,
+        ))
     }
 }
 
-/// What a path holds, as far as a write through it cares.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
-    Missing,
-    Null,
-    Scalar,
-    Object,
-    Array,
-}
-
-impl Kind {
-    fn of_view(v: Option<DataValue<'_>>) -> Self {
-        match v {
-            None => Self::Missing,
-            Some(DataValue::Null) => Self::Null,
-            Some(DataValue::Object(_)) => Self::Object,
-            Some(DataValue::Array(_)) => Self::Array,
-            Some(_) => Self::Scalar,
-        }
-    }
-
-    fn of_owned(v: Option<&OwnedDataValue>) -> Self {
-        match v {
-            None => Self::Missing,
-            Some(OwnedDataValue::Null) => Self::Null,
-            Some(OwnedDataValue::Object(_)) => Self::Object,
-            Some(OwnedDataValue::Array(_)) => Self::Array,
-            Some(_) => Self::Scalar,
-        }
-    }
-
-    /// The kind once a write landed below: a missing container, or a `null`
-    /// element, is created as `Path::set` creates it, an array when the
-    /// segment below it is an index. Only a `null` element takes a write
-    /// below it, so a `null` that stays is one under an object.
-    fn or_created(self, below: Option<&Seg>) -> Self {
-        match (self, below) {
-            (Self::Missing | Self::Null, Some(next)) if next.index.is_some() => Self::Array,
-            (Self::Missing | Self::Null, Some(_)) => Self::Object,
-            (kind, _) => kind,
-        }
+/// What a path holds once a write landed below it: a missing container, or
+/// a `null` element, is created as the path rules create it
+/// ([`rules::container_for`] the segment below). Only a `null` element takes
+/// a write below it, so a `null` that stays is one under an object.
+fn or_created(held: Option<Shape>, below: Option<&Seg>) -> Option<Shape> {
+    match (held, below) {
+        (None | Some(Shape::Null), Some(next)) => Some(rules::container_for(next)),
+        (held, _) => held,
     }
 }
 

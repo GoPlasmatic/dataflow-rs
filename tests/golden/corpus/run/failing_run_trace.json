@@ -1,0 +1,89 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "stopped",
+          "error": {
+            "code": "PARTNER_DOWN",
+            "message": "down",
+            "retryable": false
+          },
+          "retryable": false,
+          "partial": true,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "stopped"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "ok": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "fails",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "ok",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.ok",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "fails",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "PARTNER_DOWN",
+              "message": "Task fails error: down",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "fails",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w ok executed 200",
+          "w fails failed 500"
+        ]
+      }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "description": "Exactly one leading $ is stripped from every template key: $cat emits the literal key cat, $$x emits $x, an unescaped cat is the operator, and an escaped key with a computed value is evaluated rather than folded (reported as an advisory).",
+  "description": "Exactly one leading $ is stripped from every template key: $cat emits the literal key cat, $$x emits $x, an unescaped cat is the operator, and an escaped key with a computed value is evaluated. The build reports each single-$ key ($cat, $oid) as an ESCAPED_TEMPLATE_KEY Advisory.",
   "workflows": [
     {
       "id": "w",

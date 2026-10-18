@@ -1,0 +1,198 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 3,
+          "workflows": [
+            {
+              "id": "filtered",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 2,
+              "exit": "halted"
+            },
+            {
+              "id": "terminal",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 2,
+              "exit": "halted"
+            },
+            {
+              "id": "after",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "seen": [
+                0,
+                1
+              ],
+              "terminal": [
+                0,
+                1
+              ],
+              "exit": true,
+              "after": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "after",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "i": 1
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "filtered",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.0",
+                  "old_value": null,
+                  "new_value": 0
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "filtered",
+              "task_id": "gate",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 200,
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "filtered",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.1",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "filtered",
+              "task_id": "gate",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 299,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "terminal",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.terminal.0",
+                  "old_value": null,
+                  "new_value": 0
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "terminal",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.terminal.1",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "terminal",
+              "task_id": "exit",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.exit",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "after",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "filtered - executed -",
+          "filtered t executed 200",
+          "filtered gate executed 200",
+          "filtered - executed -",
+          "filtered t executed 200",
+          "filtered gate executed 299",
+          "terminal - executed -",
+          "terminal t executed 200",
+          "terminal exit skipped -",
+          "terminal - executed -",
+          "terminal t executed 200",
+          "terminal exit executed 200",
+          "after after executed 200"
+        ]
+      }
+    }
+  ]
+}

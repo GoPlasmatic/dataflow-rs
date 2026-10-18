@@ -390,13 +390,13 @@ a `Run`'s `error` writes, and what an `Err` from a host function records:
 such as `HTTP_ERROR`, and the engine keeps it. `is_retryable()` is `false` unless
 `with_retryable(true)` says otherwise, except for a timeout.
 
-Two codes are records only, never an `Error`, and `validation` records a
-third without an `Error` of its own:
+These codes are records only, never an `Error` of their own:
 
 | Code | Recorded when |
 |---|---|
 | `TASK_STATUS_ERROR` | A call returned `Status(5xx)`; the stop error, when the policy stops the run, is `TASK_ERROR` |
-| `EVALUATION_ERROR` | A `validation` rule failed to evaluate |
+| `EVALUATION_ERROR` | A `validation` rule or a `filter` condition failed to evaluate |
+| `MAPPING_ERROR` | A `map` mapping failed: one record per mapping, its `path` the destination, before the call's `TASK_STATUS_ERROR` |
 | `VALIDATION_ERROR` | A `validation` rule evaluated to anything but `true`: one record per failed rule, status `400`, no `Error` |
 
 A call that returns `Err(e)` records `e.code()` with status 500. There is no

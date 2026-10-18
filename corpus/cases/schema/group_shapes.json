@@ -1,5 +1,5 @@
 {
-  "description": "A tasks key makes a group even when it is not an array (refused at parse as a malformed group); a group carrying halt_on or for_each is refused at parse; an empty group is refused at parse; groups nested eight deep parse and run, nine deep are refused at parse.",
+  "description": "A tasks key makes a group even when it is not an array: tasks \"oops\" and an empty tasks are each refused at parse as EMPTY_GROUP; a group carrying halt_on is refused as INVALID_HALT_ON and one carrying for_each as INVALID_FOR_EACH; groups nested eight deep parse and run, nine deep are refused as GROUP_TOO_DEEP.",
   "workflows": [
     {
       "id": "not_array",

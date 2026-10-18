@@ -4,13 +4,18 @@
 //! rebuilt as a new slice in the arena with its one changed child replaced or
 //! appended; siblings are copied as values and never descended into, so a
 //! write costs its path's spine, whatever the size of the tree. The rules are
-//! [`crate::expr::path`]'s exactly, and `state::tests::splice_property` checks
-//! `view(apply(c, w)) == splice(view(c), w)` on random trees and writes.
+//! [`crate::expr::rules`]'s, hand-inlined here for the hot path:
+//! `state::tests::splice_property` checks `view(apply(c, w)) ==
+//! splice(view(c), w)` on random trees and writes, and holds [`resolve`] and
+//! [`set_resolved`] to [`rules::resolve`] on every small tree and path.
 
 use crate::expr::Seg;
 use crate::expr::path::MAX_PATH_SEGMENTS;
+use crate::expr::rules::{self, Shape};
 use bumpalo::Bump;
 use datavalue::DataValue;
+
+pub(crate) use crate::expr::rules::Resolved;
 
 /// The value at `segs`, with [`crate::expr::path::get`]'s rules.
 pub(crate) fn get<'a>(mut v: DataValue<'a>, segs: &[Seg]) -> Option<DataValue<'a>> {
@@ -235,9 +240,11 @@ pub(crate) fn append<'a>(
     existing: Option<DataValue<'a>>,
     items: &[DataValue<'a>],
 ) -> Result<Option<(DataValue<'a>, Resolved)>, &'static str> {
-    let array = match existing {
-        None | Some(DataValue::Null) => DataValue::Array(arena.alloc_slice_copy(items)),
-        Some(DataValue::Array(old)) => {
+    let array = match (
+        rules::append_to(existing.map(|v| Shape::of_view(&v)))?,
+        existing,
+    ) {
+        (true, Some(DataValue::Array(old))) => {
             DataValue::Array(arena.alloc_slice_fill_with(old.len() + items.len(), |i| {
                 if i < old.len() {
                     old[i]
@@ -246,7 +253,7 @@ pub(crate) fn append<'a>(
                 }
             }))
         }
-        Some(other) => return Err(kind(&other)),
+        _ => DataValue::Array(arena.alloc_slice_copy(items)),
     };
     Ok(set_resolved(arena, root, segs, array))
 }
@@ -288,20 +295,7 @@ pub(crate) fn merge_root<'a>(
 
 /// The kind of a value, for an error: v3's `describe_kind`.
 pub(crate) fn kind(v: &DataValue<'_>) -> &'static str {
-    match v {
-        DataValue::Null => "null",
-        DataValue::Bool(_) => "a boolean",
-        DataValue::Number(_) => "a number",
-        DataValue::String(_) => "a string",
-        DataValue::Array(_) => "an array",
-        DataValue::Object(_) => "an object",
-        #[allow(
-            unreachable_patterns,
-            reason = "the catch-all is live only with datavalue's `datetime` or `tensor` \
-                      feature, which feature unification can turn on from another crate"
-        )]
-        _ => "a non-array value",
-    }
+    Shape::of_view(v).describe()
 }
 
 /// `pairs` with the value at `at` replaced.
@@ -343,7 +337,9 @@ fn without<'a, T: Copy>(arena: &'a Bump, items: &[T], at: usize) -> &'a [T] {
     })
 }
 
-/// Where a write at `segs` lands: which segments resolve to an array index
+/// Where a write at `segs` lands ([`Resolved`]), [`rules::resolve`]'s walk
+/// hand-inlined over the view, which every read of a written run takes:
+/// which segments resolve to an array index
 /// on the containers `root` actually has (bit `i` of `kinds`), and the first
 /// segment whose node the write creates (a missing key, an index past the
 /// end, or a `null` element replaced by a container), if any. Past the last
@@ -408,15 +404,6 @@ pub(crate) fn resolve(root: DataValue<'_>, segs: &[Seg]) -> Option<Resolved> {
         }
     }
     Some(Resolved { kinds, created })
-}
-
-/// What [`resolve`] found: see there.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Resolved {
-    /// Bit `i` set when segment `i` resolved to an array index.
-    pub(crate) kinds: u64,
-    /// The first segment whose node the write creates, if any.
-    pub(crate) created: Option<usize>,
 }
 
 #[cfg(test)]

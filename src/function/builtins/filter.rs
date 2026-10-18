@@ -1,7 +1,8 @@
 //! `filter`'s config: a gate on the rest of the workflow.
 
-use crate::base::Result;
+use crate::base::{EVALUATION_ERROR, ErrorKind, Result};
 use crate::expr::Expr;
+use crate::function::sync::task_record;
 use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
 use ::log::debug;
 use serde::{Deserialize, Serialize};
@@ -31,13 +32,30 @@ pub enum RejectAction {
 }
 
 impl SyncFunction for FilterConfig {
-    /// `Ok` when the condition is a literal `true`. Anything else, including
-    /// an evaluation error, rejects: `Halt` or `Skip` by `on_reject`.
+    /// `Ok` when the condition is a literal `true`. Anything else rejects:
+    /// `Halt` or `Skip` by `on_reject`. A condition that fails to evaluate
+    /// also records `EVALUATION_ERROR`, so the rejection says why.
+    ///
+    /// An exceeded ops budget is no rejection: it is the call's `Err`, which
+    /// the classifier records as `BUDGET_EXCEEDED` and `on_failure` governs,
+    /// as `validation`'s (3.x made it a silent rejection).
     fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
-        let met = cx.test(&self.condition).unwrap_or_else(|e| {
-            debug!("Filter: condition evaluation error: {e:?}");
-            false
-        });
+        let met = match cx.test(&self.condition) {
+            Ok(met) => met,
+            Err(e) if e.kind() == &ErrorKind::Budget => return Err(e),
+            Err(e) => {
+                debug!("Filter: condition evaluation error: {e:?}");
+                let message = format!("Filter condition failed to evaluate: {e}");
+                cx.errors.push(task_record(
+                    EVALUATION_ERROR,
+                    message,
+                    cx.workflow_id,
+                    cx.task_id,
+                    cx.now,
+                ));
+                false
+            }
+        };
         Ok(match (met, self.on_reject) {
             (true, _) => Outcome::Ok,
             (false, RejectAction::Halt) => Outcome::Halt,
@@ -51,18 +69,31 @@ mod tests {
     use crate::function::builtins::one_task::{observe, untouched};
     use serde_json::{Value, json};
 
+    /// The filter's status, after checking it wrote nothing, failed nothing
+    /// and recorded no error.
     async fn filter(condition: Value, on_reject: Option<&str>) -> Option<u16> {
+        let (status, errors) = filter_recording(condition, on_reject);
+        assert_eq!(errors, "[]", "a condition that evaluates records nothing");
+        status
+    }
+
+    /// The filter's status and its records, after checking it wrote nothing
+    /// and failed nothing.
+    fn filter_recording(condition: Value, on_reject: Option<&str>) -> (Option<u16>, String) {
         let mut input = json!({"condition": condition});
         if let Some(action) = on_reject {
             input["on_reject"] = json!(action);
         }
         let context = json!({"data": {"a": 5, "ok": true, "zero": 0}});
         let observed = observe("filter", &input, &Value::Null, &context);
-        assert_eq!(observed.errors, "[]", "a filter never records an error");
-        assert_eq!(observed.context, untouched(&context), "nor writes");
+        assert_eq!(
+            observed.context,
+            untouched(&context),
+            "a filter never writes"
+        );
         assert_eq!(observed.changes, "[]");
         assert_eq!(observed.error_code, None);
-        observed.status
+        (observed.status, observed.errors)
     }
 
     #[tokio::test]
@@ -85,8 +116,6 @@ mod tests {
             json!([1]),
             json!({"var": "data.a"}),
             json!({"var": "data.missing"}),
-            // An evaluation error rejects too.
-            json!({"/": [1, {"var": "data.zero"}]}),
         ] {
             // `halt` is the default; it is `Halt`, status 299.
             assert_eq!(
@@ -97,6 +126,19 @@ mod tests {
             assert_eq!(filter(condition.clone(), Some("halt")).await, Some(299));
             // `skip` leaves no audit entry at all.
             assert_eq!(filter(condition, Some("skip")).await, None);
+        }
+    }
+
+    #[test]
+    fn an_evaluation_error_rejects_and_records_why() {
+        let record = r#"[{"code":"EVALUATION_ERROR","message":"Filter condition failed to evaluate: Thrown: {\"type\":\"NaN\"} (in operator: /)","path":null,"workflow_id":"w","task_id":"t","timestamp":"<timestamp>"}]"#;
+        let condition = json!({"/": [1, {"var": "data.zero"}]});
+        for (on_reject, status) in [(None, Some(299)), (Some("skip"), None)] {
+            assert_eq!(
+                filter_recording(condition.clone(), on_reject),
+                (status, record.to_owned()),
+                "{on_reject:?}"
+            );
         }
     }
 }

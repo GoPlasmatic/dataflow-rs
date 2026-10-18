@@ -1,0 +1,142 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "default",
+          "payload": {},
+          "context": {
+            "data": {
+              "x": 1,
+              "y": 2
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "s",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.x",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "s",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.y",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w t executed 200",
+          "w s executed 200"
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "off",
+          "payload": {},
+          "context": {
+            "data": {
+              "x": 1,
+              "y": 2
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "s",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "s",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w t executed 200",
+          "w s executed 200"
+        ]
+      }
+    }
+  ]
+}

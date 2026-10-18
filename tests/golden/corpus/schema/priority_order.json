@@ -1,0 +1,121 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 3,
+          "workflows": [
+            {
+              "id": "first",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "second",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "late",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "order": [
+                "first",
+                "second",
+                "late"
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "late",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "first",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.0",
+                  "old_value": null,
+                  "new_value": "first"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "second",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.1",
+                  "old_value": null,
+                  "new_value": "second"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "late",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.2",
+                  "old_value": null,
+                  "new_value": "late"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "first t executed 200",
+          "second t executed 200",
+          "late t executed 200"
+        ]
+      }
+    }
+  ]
+}

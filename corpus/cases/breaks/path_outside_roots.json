@@ -1,5 +1,5 @@
 {
-  "description": "v3's map writes any top-level context key, so a path outside data, metadata and temp_data creates context.extra; v4 refuses the path.",
+  "description": "A literal map path outside data, metadata and temp_data is refused at build as INVALID_PATH (3.x wrote any top-level context key, creating context.extra).",
   "workflows": [
     {
       "id": "w",
@@ -21,13 +21,6 @@
           }
         }
       ]
-    }
-  ],
-  "steps": [
-    {
-      "run": {
-        "message": {}
-      }
     }
   ]
 }

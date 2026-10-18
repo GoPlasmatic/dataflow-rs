@@ -1,0 +1,364 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY continue_on_error",
+        "V3_SPELLING ADVISORY tasks[0].continue_on_error"
+      ],
+      "compiled": true
+    },
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY continue_on_error",
+        "V3_SPELLING ADVISORY tasks[0].continue_on_error"
+      ],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 3,
+          "workflows": [
+            {
+              "id": "cond",
+              "index": 0,
+              "selection": "condition_failed",
+              "error": {
+                "code": "BUDGET_EXCEEDED",
+                "message": "Operation budget exceeded: 42 operations charged against a budget of 30 (in operator: reduce)",
+                "retryable": false
+              },
+              "sweeps": 0,
+              "exit": null
+            },
+            {
+              "id": "mapw",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "scriptw",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "cheap",
+              "index": 3,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "one": 1,
+              "xs": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
+              "cheap": 3
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "cheap",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "mapw",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "scriptw",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "cheap",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.cheap",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "BUDGET_EXCEEDED",
+              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "path": null,
+              "workflow_id": "mapw",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "BUDGET_EXCEEDED",
+              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "path": null,
+              "workflow_id": "scriptw",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "reload": {
+        "definitions": [
+          {
+            "issues": [],
+            "compiled": true
+          },
+          {
+            "issues": [
+              "V3_SPELLING ADVISORY continue_on_error",
+              "V3_SPELLING ADVISORY tasks[0].continue_on_error"
+            ],
+            "compiled": true
+          },
+          {
+            "issues": [
+              "V3_SPELLING ADVISORY continue_on_error",
+              "V3_SPELLING ADVISORY tasks[0].continue_on_error"
+            ],
+            "compiled": true
+          },
+          {
+            "issues": [],
+            "compiled": true
+          }
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 3,
+          "workflows": [
+            {
+              "id": "cond",
+              "index": 0,
+              "selection": "condition_failed",
+              "error": {
+                "code": "BUDGET_EXCEEDED",
+                "message": "Operation budget exceeded: 42 operations charged against a budget of 30 (in operator: reduce)",
+                "retryable": false
+              },
+              "sweeps": 0,
+              "exit": null
+            },
+            {
+              "id": "mapw",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "scriptw",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "cheap",
+              "index": 3,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "one": 1,
+              "xs": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
+              "cheap": 3
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "cheap",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "mapw",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "scriptw",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "cheap",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.cheap",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "BUDGET_EXCEEDED",
+              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "path": null,
+              "workflow_id": "mapw",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "BUDGET_EXCEEDED",
+              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "path": null,
+              "workflow_id": "scriptw",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

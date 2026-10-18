@@ -84,6 +84,22 @@ impl Change {
         }
     }
 
+    /// An assignment of `new_value` over `old_value` at `path`, as a host
+    /// function's `Ctx::set` and the engine's own writes make one: at a root
+    /// it replaces the root, and says so ([`replaced`](Self::replaced)). A
+    /// `map` root mapping merges instead, and records a plain
+    /// [`write`](Self::write).
+    pub(crate) fn assign(
+        path: &crate::expr::Path,
+        old_value: OwnedDataValue,
+        new_value: OwnedDataValue,
+    ) -> Self {
+        Self {
+            replaced: path.is_root(),
+            ..Self::write(Arc::clone(path.dotted()), old_value, new_value)
+        }
+    }
+
     /// A removal of the key at `path`, which held `old_value`.
     pub fn removal(path: impl Into<Arc<str>>, old_value: OwnedDataValue) -> Self {
         Self {
@@ -106,5 +122,44 @@ impl Change {
             trace_only: true,
             ..Self::write(path, old_value, new_value)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::expr::Path;
+
+    fn path(dotted: &str) -> Path {
+        dotted.parse().unwrap()
+    }
+
+    #[test]
+    fn each_kind_of_record_sets_its_own_flags() {
+        let (old, new) = (OwnedDataValue::Null, OwnedDataValue::from(1));
+        let flags = |c: &Change| (c.removed, c.replaced, c.trace_only);
+        // An assignment replaces a root, and says so; below a root it is a
+        // plain write.
+        assert_eq!(
+            flags(&Change::assign(&path("data"), old.clone(), new.clone())),
+            (false, true, false)
+        );
+        assert_eq!(
+            flags(&Change::assign(&path("data.a"), old.clone(), new.clone())),
+            (false, false, false)
+        );
+        // `map`'s root mapping merges: a plain write, never `replaced`.
+        assert_eq!(
+            flags(&Change::write("data", old.clone(), new.clone())),
+            (false, false, false)
+        );
+        assert_eq!(
+            flags(&Change::removal("data.a", new.clone())),
+            (true, false, false)
+        );
+        assert_eq!(
+            flags(&Change::for_trace("data.a", old, new)),
+            (false, false, true)
+        );
     }
 }

@@ -3,7 +3,7 @@
 
 use super::paths::{DataPath, ParseFrom, ParseSource};
 use super::xml::{validation_error, xml_to_value};
-use crate::base::Result;
+use crate::base::{Result, keep_last};
 use crate::expr::path;
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use crate::state::RunContext;
@@ -41,7 +41,9 @@ fn lookup<'a>(
 
 impl ParseConfig {
     /// `parse_json`: the source's value, which a string is parsed as JSON
-    /// when it is JSON and kept when it is not, written at the target.
+    /// when it is JSON and kept when it is not, written at the target. A
+    /// parsed object holding a key twice keeps its first position and its
+    /// last value, as 3.x's `serde_json::Value` read it.
     pub(crate) fn json<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let from = self.source.resolve(cx)?;
         let target = self.target.path(cx)?;
@@ -52,7 +54,11 @@ impl ParseConfig {
             None => (OwnedDataValue::Null, None),
             Some(found) => {
                 let parsed = match &*found {
-                    OwnedDataValue::String(s) => Some((OwnedDataValue::from_json(s).ok(), s.len())),
+                    OwnedDataValue::String(s) => {
+                        let mut json = OwnedDataValue::from_json(s).ok();
+                        json.iter_mut().for_each(keep_last);
+                        Some((json, s.len()))
+                    }
                     _ => None,
                 };
                 match parsed {
@@ -171,6 +177,24 @@ mod tests {
         );
         // The change records the parsed value.
         assert!(parsed.changes.contains(r#""new_value":{"k":[1,2]}"#));
+    }
+
+    #[test]
+    fn a_parsed_key_held_twice_keeps_its_first_position_and_its_last_value() {
+        // As 3.x's `serde_json::Value` read it, and as `parse_xml` reads a
+        // repeated element: a context never holds a key twice.
+        let input = json!({"source": "data.dup", "target": "out"});
+        let context = json!({"data": {"dup": r#"{"a":1,"b":[{"c":1,"c":2}],"a":3}"#}});
+        let observed =
+            task("parse_json", &input)
+                .expect("compiles")
+                .run(&Value::Null, &context, true);
+        assert_eq!(observed.status, Some(200));
+        assert!(
+            observed.context.contains(r#""out":{"a":3,"b":[{"c":2}]}"#),
+            "{}",
+            observed.context
+        );
     }
 
     #[test]

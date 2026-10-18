@@ -12,6 +12,7 @@ mod expr;
 mod operators;
 mod output;
 pub(crate) mod path;
+pub(crate) mod rules;
 mod secrets;
 mod walk;
 

@@ -1,0 +1,114 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "key": "dynamic",
+              "folded": "ab",
+              "number": 5,
+              "dynamic": 5,
+              "config": {
+                "var": "data.number"
+              },
+              "evaluated": 5
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "host",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "literal",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.folded",
+                  "old_value": null,
+                  "new_value": "ab"
+                },
+                {
+                  "path": "data.number",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "computed",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.dynamic",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "host",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.config",
+                  "old_value": null,
+                  "new_value": {
+                    "var": "data.number"
+                  }
+                },
+                {
+                  "path": "data.evaluated",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w literal executed 200",
+          "w computed executed 200",
+          "w host executed 200"
+        ]
+      }
+    }
+  ]
+}

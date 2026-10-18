@@ -254,6 +254,6 @@ offending key, so `Engine::builder().build()` refuses the workflow:
 - an `into` overlapping `collect`, `temp_data.<as>` or `temp_data.<as>_index`;
 - `for_each` on a built-in function, or on a task group.
 
-The compiler checks the rules again, since a host may edit a parsed
-definition before compiling it. See
+A parsed definition is read-only (its fields are read through accessors),
+so these rules hold for every fan-out the compiler sees. See
 [Authoring-Time Validation](./authoring-validation.md).

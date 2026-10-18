@@ -42,52 +42,187 @@ impl Logic {
 #[non_exhaustive]
 pub struct NodeHeader {
     /// A human-readable name.
-    pub name: Option<String>,
+    pub(crate) name: Option<String>,
     /// What the node is for.
-    pub description: Option<String>,
+    pub(crate) description: Option<String>,
     /// Host and UI data, kept verbatim and never read: the authored `ext`
     /// object, then the unknown keys the compat reader moved there.
-    pub ext: Map<String, Value>,
+    pub(crate) ext: Map<String, Value>,
+}
+
+impl NodeHeader {
+    /// The human-readable name, if authored.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// What the node is for, if authored.
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// Host and UI data, kept verbatim and never read: the authored `ext`
+    /// object, then the unknown keys the compat reader moved there.
+    #[must_use]
+    pub fn ext(&self) -> &Map<String, Value> {
+        &self.ext
+    }
 }
 
 /// A workflow definition: a condition and a tree of steps.
+///
+/// Only [`parse`](super::parse) makes one, and nothing changes one after:
+/// every field is read through its accessor, so a definition a compiler sees
+/// has passed every rule `parse` checks, and the interpreter can trust them.
+///
+/// ```
+/// use dataflow_rs::def::{ParseOptions, StepDef, parse};
+/// use serde_json::json;
+///
+/// let json = json!({"id": "w", "priority": 5, "tasks": [
+///     {"id": "t", "function": {"name": "log", "input": {"message": "hi"}}}
+/// ]});
+/// let def = parse(&json, ParseOptions::default()).def.unwrap();
+/// assert_eq!((def.id(), def.priority()), ("w", 5));
+/// let StepDef::Task(task) = &def.tasks()[0] else { unreachable!() };
+/// assert_eq!(task.function().name(), "log");
+/// ```
+///
+/// A field cannot be assigned:
+///
+/// ```compile_fail
+/// # use dataflow_rs::def::{ParseOptions, parse};
+/// # use serde_json::json;
+/// let json = json!({"id": "w", "tasks": []});
+/// let mut def = parse(&json, ParseOptions::default()).def.unwrap();
+/// def.priority = 5;
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct WorkflowDef {
     /// The workflow's id: a non-empty string.
-    pub id: String,
+    pub(crate) id: String,
     /// The name, description and `ext`.
-    pub header: NodeHeader,
+    pub(crate) header: NodeHeader,
     /// The run order: lower runs first, and equal priorities keep their
     /// order. Default 0.
-    pub priority: u32,
+    pub(crate) priority: u32,
     /// Whether a message enters the workflow. Absent means true.
-    pub condition: Option<Logic>,
+    pub(crate) condition: Option<Logic>,
     /// The steps, as authored: tasks and groups.
-    pub tasks: Vec<StepDef>,
+    pub(crate) tasks: Vec<StepDef>,
     /// What a task's failure that reaches the workflow does. Default `fail`.
-    pub on_failure: WorkflowFailurePolicy,
+    pub(crate) on_failure: WorkflowFailurePolicy,
     /// The routing channel. Default `"default"`, as in v3.
-    pub channel: String,
+    pub(crate) channel: String,
     /// The lifecycle status. Default `active`.
-    pub status: Status,
+    pub(crate) status: Status,
     /// The definition's version. Default 1.
-    pub version: u32,
+    pub(crate) version: u32,
     /// The workflow's slice of the traffic on its channel. `None` runs for
     /// every message.
-    pub rollout: Option<Rollout>,
+    pub(crate) rollout: Option<Rollout>,
     /// The bounded loop over the task list, if any.
-    pub r#loop: Option<LoopDef>,
+    pub(crate) r#loop: Option<LoopDef>,
     /// Tags for the host's filtering.
-    pub tags: Vec<String>,
+    pub(crate) tags: Vec<String>,
     /// When the definition was created. Kept for stored definitions, never
     /// read.
-    pub created_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: Option<DateTime<Utc>>,
     /// When the definition was last updated. Kept, never read.
-    pub updated_at: Option<DateTime<Utc>>,
+    pub(crate) updated_at: Option<DateTime<Utc>>,
 }
 
 impl WorkflowDef {
+    /// The workflow's id: a non-empty string.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The name, description and `ext`.
+    #[must_use]
+    pub fn header(&self) -> &NodeHeader {
+        &self.header
+    }
+
+    /// The run order: lower runs first, and equal priorities keep their
+    /// order. Default 0.
+    #[must_use]
+    pub fn priority(&self) -> u32 {
+        self.priority
+    }
+
+    /// Whether a message enters the workflow. Absent means true.
+    #[must_use]
+    pub fn condition(&self) -> Option<&Logic> {
+        self.condition.as_ref()
+    }
+
+    /// The steps, as authored: tasks and groups.
+    #[must_use]
+    pub fn tasks(&self) -> &[StepDef] {
+        &self.tasks
+    }
+
+    /// What a task's failure that reaches the workflow does. Default `fail`.
+    #[must_use]
+    pub fn on_failure(&self) -> WorkflowFailurePolicy {
+        self.on_failure
+    }
+
+    /// The routing channel. Default `"default"`, as in v3.
+    #[must_use]
+    pub fn channel(&self) -> &str {
+        &self.channel
+    }
+
+    /// The lifecycle status. Default `active`.
+    #[must_use]
+    pub fn status(&self) -> Status {
+        self.status
+    }
+
+    /// The definition's version. Default 1.
+    #[must_use]
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// The workflow's slice of the traffic on its channel. `None` runs for
+    /// every message.
+    #[must_use]
+    pub fn rollout(&self) -> Option<&Rollout> {
+        self.rollout.as_ref()
+    }
+
+    /// The bounded loop over the task list, if any.
+    #[must_use]
+    pub fn r#loop(&self) -> Option<&LoopDef> {
+        self.r#loop.as_ref()
+    }
+
+    /// Tags for the host's filtering.
+    #[must_use]
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    /// When the definition was created. Kept for stored definitions, never
+    /// read.
+    #[must_use]
+    pub fn created_at(&self) -> Option<DateTime<Utc>> {
+        self.created_at
+    }
+
+    /// When the definition was last updated. Kept, never read.
+    #[must_use]
+    pub fn updated_at(&self) -> Option<DateTime<Utc>> {
+        self.updated_at
+    }
+
     /// Every step with its authored path and kind, pre-order: `loop.setup`
     /// first, then `tasks`, each group before its members.
     ///
@@ -169,22 +304,73 @@ impl StepDef {
 #[non_exhaustive]
 pub struct TaskDef {
     /// The step id, unique across the workflow's steps and setup.
-    pub id: String,
+    pub(crate) id: String,
     /// The name, description and `ext`.
-    pub header: NodeHeader,
+    pub(crate) header: NodeHeader,
     /// Whether the task runs. Absent means true.
-    pub condition: Option<Logic>,
+    pub(crate) condition: Option<Logic>,
     /// The function the task runs, and its raw input.
-    pub function: FunctionRef,
+    pub(crate) function: FunctionRef,
     /// What a failure (a 5xx or an `Err`) does. Default `fail`.
-    pub on_failure: FailurePolicy,
+    pub(crate) on_failure: FailurePolicy,
     /// What a rejection (a 4xx) does. Default `continue`.
-    pub on_rejection: RejectionPolicy,
+    pub(crate) on_rejection: RejectionPolicy,
     /// Whether running the task ends the workflow, applied after the
     /// policies. Default false.
-    pub terminal: bool,
+    pub(crate) terminal: bool,
     /// Run the function once per element of an array. Refused on a built-in.
-    pub for_each: Option<ForEachDef>,
+    pub(crate) for_each: Option<ForEachDef>,
+}
+
+impl TaskDef {
+    /// The step id, unique across the workflow's steps and setup.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The name, description and `ext`.
+    #[must_use]
+    pub fn header(&self) -> &NodeHeader {
+        &self.header
+    }
+
+    /// Whether the task runs. Absent means true.
+    #[must_use]
+    pub fn condition(&self) -> Option<&Logic> {
+        self.condition.as_ref()
+    }
+
+    /// The function the task runs, and its raw input.
+    #[must_use]
+    pub fn function(&self) -> &FunctionRef {
+        &self.function
+    }
+
+    /// What a failure (a 5xx or an `Err`) does. Default `fail`.
+    #[must_use]
+    pub fn on_failure(&self) -> FailurePolicy {
+        self.on_failure
+    }
+
+    /// What a rejection (a 4xx) does. Default `continue`.
+    #[must_use]
+    pub fn on_rejection(&self) -> RejectionPolicy {
+        self.on_rejection
+    }
+
+    /// Whether running the task ends the workflow, applied after the
+    /// policies. Default false.
+    #[must_use]
+    pub fn terminal(&self) -> bool {
+        self.terminal
+    }
+
+    /// The task's fan-out, if any: its function runs once per element.
+    #[must_use]
+    pub fn for_each(&self) -> Option<&ForEachDef> {
+        self.for_each.as_ref()
+    }
 }
 
 /// A group: a span of steps sharing one condition, evaluated once on entry.
@@ -192,16 +378,49 @@ pub struct TaskDef {
 #[non_exhaustive]
 pub struct GroupDef {
     /// The step id, unique across the workflow's steps and setup.
-    pub id: String,
+    pub(crate) id: String,
     /// The name, description and `ext`.
-    pub header: NodeHeader,
+    pub(crate) header: NodeHeader,
     /// Whether the span runs. Absent means true.
-    pub condition: Option<Logic>,
+    pub(crate) condition: Option<Logic>,
     /// Whether reaching the end of the group ends the workflow.
-    pub terminal: bool,
+    pub(crate) terminal: bool,
     /// The members: never empty, nested at most
     /// [`MAX_GROUP_DEPTH`](super::MAX_GROUP_DEPTH) deep.
-    pub tasks: Vec<StepDef>,
+    pub(crate) tasks: Vec<StepDef>,
+}
+
+impl GroupDef {
+    /// The step id, unique across the workflow's steps and setup.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The name, description and `ext`.
+    #[must_use]
+    pub fn header(&self) -> &NodeHeader {
+        &self.header
+    }
+
+    /// Whether the span runs. Absent means true.
+    #[must_use]
+    pub fn condition(&self) -> Option<&Logic> {
+        self.condition.as_ref()
+    }
+
+    /// Whether reaching the end of the group ends the workflow.
+    #[must_use]
+    pub fn terminal(&self) -> bool {
+        self.terminal
+    }
+
+    /// The members: never empty, nested at most
+    /// [`MAX_GROUP_DEPTH`](super::MAX_GROUP_DEPTH) deep.
+    #[must_use]
+    pub fn tasks(&self) -> &[StepDef] {
+        &self.tasks
+    }
 }
 
 /// A workflow's bounded loop: the task list runs once per sweep while
@@ -210,21 +429,71 @@ pub struct GroupDef {
 #[non_exhaustive]
 pub struct LoopDef {
     /// The `temp_data` slot the engine writes the counter to, if any.
-    pub counter: Option<String>,
+    pub(crate) counter: Option<String>,
     /// The first counter value. Default 0.
-    pub init: i64,
+    pub(crate) init: i64,
     /// Added to the counter after each sweep: at least 1. Default 1.
-    pub increment: i64,
+    pub(crate) increment: i64,
     /// The exclusive upper bound, above `init`. Required.
-    pub max: i64,
+    pub(crate) max: i64,
     /// Steps run once, before the first sweep, with no counter.
-    pub setup: Vec<StepDef>,
+    pub(crate) setup: Vec<StepDef>,
     /// The array iterated, evaluated once after setup.
-    pub over: Option<Logic>,
+    pub(crate) over: Option<Logic>,
     /// The `temp_data` slot holding `over[counter]`. Requires `over`.
-    pub r#as: Option<String>,
+    pub(crate) r#as: Option<String>,
     /// The `temp_data` slot reset to `{}` before every sweep.
-    pub scratch: Option<String>,
+    pub(crate) scratch: Option<String>,
+}
+
+impl LoopDef {
+    /// The `temp_data` slot the engine writes the counter to, if any.
+    #[must_use]
+    pub fn counter(&self) -> Option<&str> {
+        self.counter.as_deref()
+    }
+
+    /// The first counter value. Default 0.
+    #[must_use]
+    pub fn init(&self) -> i64 {
+        self.init
+    }
+
+    /// Added to the counter after each sweep: at least 1. Default 1.
+    #[must_use]
+    pub fn increment(&self) -> i64 {
+        self.increment
+    }
+
+    /// The exclusive upper bound, above `init`.
+    #[must_use]
+    pub fn max(&self) -> i64 {
+        self.max
+    }
+
+    /// Steps run once, before the first sweep, with no counter.
+    #[must_use]
+    pub fn setup(&self) -> &[StepDef] {
+        &self.setup
+    }
+
+    /// The array iterated, evaluated once after setup.
+    #[must_use]
+    pub fn over(&self) -> Option<&Logic> {
+        self.over.as_ref()
+    }
+
+    /// The `temp_data` slot holding `over[counter]`. Only with `over`.
+    #[must_use]
+    pub fn r#as(&self) -> Option<&str> {
+        self.r#as.as_deref()
+    }
+
+    /// The `temp_data` slot reset to `{}` before every sweep.
+    #[must_use]
+    pub fn scratch(&self) -> Option<&str> {
+        self.scratch.as_deref()
+    }
 }
 
 /// A task's fan-out: its function runs once per element of an array.
@@ -232,17 +501,51 @@ pub struct LoopDef {
 #[non_exhaustive]
 pub struct ForEachDef {
     /// The array, evaluated once after the task's condition.
-    pub over: Logic,
+    pub(crate) over: Logic,
     /// The `temp_data` slot holding the element; its index is at
     /// `temp_data.<as>_index`.
-    pub r#as: String,
+    pub(crate) r#as: String,
     /// Calls in flight at once: timing only, never results. Default 1.
-    pub max_concurrency: usize,
+    pub(crate) max_concurrency: usize,
     /// The context path each call writes its result to. Requires `into`.
-    pub collect: Option<String>,
+    pub(crate) collect: Option<String>,
     /// The context path receiving the results in element order. Requires
     /// `collect`.
-    pub into: Option<String>,
+    pub(crate) into: Option<String>,
+}
+
+impl ForEachDef {
+    /// The array, evaluated once after the task's condition.
+    #[must_use]
+    pub fn over(&self) -> &Logic {
+        &self.over
+    }
+
+    /// The `temp_data` slot holding the element; its index is at
+    /// `temp_data.<as>_index`.
+    #[must_use]
+    pub fn r#as(&self) -> &str {
+        &self.r#as
+    }
+
+    /// Calls in flight at once: timing only, never results. Default 1.
+    #[must_use]
+    pub fn max_concurrency(&self) -> usize {
+        self.max_concurrency
+    }
+
+    /// The context path each call writes its result to. Only with `into`.
+    #[must_use]
+    pub fn collect(&self) -> Option<&str> {
+        self.collect.as_deref()
+    }
+
+    /// The context path receiving the results in element order. Only with
+    /// `collect`.
+    #[must_use]
+    pub fn into(&self) -> Option<&str> {
+        self.into.as_deref()
+    }
 }
 
 /// The function a task runs.
@@ -250,9 +553,23 @@ pub struct ForEachDef {
 #[non_exhaustive]
 pub struct FunctionRef {
     /// The registered name.
-    pub name: String,
+    pub(crate) name: String,
     /// The config, raw until a compiler reads it. Default `{}`.
-    pub input: Value,
+    pub(crate) input: Value,
+}
+
+impl FunctionRef {
+    /// The registered name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The config, raw until a compiler reads it. Default `{}`.
+    #[must_use]
+    pub fn input(&self) -> &Value {
+        &self.input
+    }
 }
 
 /// A spelling table for an enum read from a string.

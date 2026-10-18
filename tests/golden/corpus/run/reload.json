@@ -1,0 +1,320 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY tasks[2].continue_on_error",
+        "V3_SPELLING ADVISORY tasks[3].continue_on_error",
+        "V3_SPELLING ADVISORY tasks[4].continue_on_error"
+      ],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w_before",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "before",
+          "payload": {},
+          "context": {
+            "data": {
+              "loud_before": "HI BEFORE",
+              "secret_ok_before": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w_before",
+                "task_id": "fail_3",
+                "status_code": 503
+              },
+              "failures": [
+                {
+                  "workflow_id": "w_before",
+                  "task_id": "fail_2",
+                  "code": "PARTNER_DOWN",
+                  "status": 500
+                },
+                {
+                  "workflow_id": "w_before",
+                  "task_id": "fail_3",
+                  "code": "TASK_STATUS_ERROR",
+                  "status": 503
+                }
+              ]
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w_before",
+              "task_id": "loud",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.loud_before",
+                  "old_value": null,
+                  "new_value": "HI BEFORE"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w_before",
+              "task_id": "secret",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.secret_ok_before",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w_before",
+              "task_id": "fail_1",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w_before",
+              "task_id": "fail_2",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w_before",
+              "task_id": "fail_3",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 503
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task fail_1 returned status 500",
+              "path": null,
+              "workflow_id": "w_before",
+              "task_id": "fail_1",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "PARTNER_DOWN",
+              "message": "Task fail_2 error: down",
+              "path": null,
+              "workflow_id": "w_before",
+              "task_id": "fail_2",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task fail_3 returned status 503",
+              "path": null,
+              "workflow_id": "w_before",
+              "task_id": "fail_3",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w_before loud executed 200",
+          "w_before secret executed 200",
+          "w_before fail_1 executed 500",
+          "w_before fail_2 executed 500",
+          "w_before fail_3 executed 503"
+        ],
+        "observer": [
+          "run before considers 1",
+          "workflow w_before started",
+          "task w_before/loud (map) finished 200",
+          "task w_before/secret (script) finished 200",
+          "task w_before/fail_1 (script) finished 500",
+          "task w_before/fail_2 (script) finished 500",
+          "task w_before/fail_3 (script) finished 503",
+          "workflow w_before finished, 1 sweeps",
+          "run before finished, 3 errors"
+        ]
+      }
+    },
+    {
+      "reload": {
+        "definitions": [
+          {
+            "issues": [
+              "V3_SPELLING ADVISORY tasks[2].continue_on_error",
+              "V3_SPELLING ADVISORY tasks[3].continue_on_error",
+              "V3_SPELLING ADVISORY tasks[4].continue_on_error"
+            ],
+            "compiled": true
+          }
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w_after",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "after",
+          "payload": {},
+          "context": {
+            "data": {
+              "loud_after": "HI AFTER",
+              "secret_ok_after": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w_after",
+                "task_id": "fail_3",
+                "status_code": 503
+              },
+              "failures": [
+                {
+                  "workflow_id": "w_after",
+                  "task_id": "fail_2",
+                  "code": "PARTNER_DOWN",
+                  "status": 500
+                },
+                {
+                  "workflow_id": "w_after",
+                  "task_id": "fail_3",
+                  "code": "TASK_STATUS_ERROR",
+                  "status": 503
+                }
+              ]
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w_after",
+              "task_id": "loud",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.loud_after",
+                  "old_value": null,
+                  "new_value": "HI AFTER"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w_after",
+              "task_id": "secret",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.secret_ok_after",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w_after",
+              "task_id": "fail_1",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w_after",
+              "task_id": "fail_2",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w_after",
+              "task_id": "fail_3",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 503
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task fail_1 returned status 500",
+              "path": null,
+              "workflow_id": "w_after",
+              "task_id": "fail_1",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "PARTNER_DOWN",
+              "message": "Task fail_2 error: down",
+              "path": null,
+              "workflow_id": "w_after",
+              "task_id": "fail_2",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task fail_3 returned status 503",
+              "path": null,
+              "workflow_id": "w_after",
+              "task_id": "fail_3",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w_after loud executed 200",
+          "w_after secret executed 200",
+          "w_after fail_1 executed 500",
+          "w_after fail_2 executed 500",
+          "w_after fail_3 executed 503"
+        ],
+        "observer": [
+          "run after considers 1",
+          "workflow w_after started",
+          "task w_after/loud (map) finished 200",
+          "task w_after/secret (script) finished 200",
+          "task w_after/fail_1 (script) finished 500",
+          "task w_after/fail_2 (script) finished 500",
+          "task w_after/fail_3 (script) finished 503",
+          "workflow w_after finished, 1 sweeps",
+          "run after finished, 3 errors"
+        ]
+      }
+    }
+  ]
+}

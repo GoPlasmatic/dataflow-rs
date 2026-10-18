@@ -62,10 +62,6 @@ pub struct EngineSpec {
     /// Attach a recording observer and keep its events.
     #[serde(default)]
     pub observer: bool,
-    /// Enable target `dataflow::log` up to this level and keep its lines:
-    /// `error`, `warn`, `info`, `debug` or `trace`.
-    #[serde(default)]
-    pub logs: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,8 +98,10 @@ pub struct RunSpec {
     pub capture_changes: Option<bool>,
     #[serde(default)]
     pub audit_mode: Option<AuditSpec>,
-    #[serde(default = "TraceSpec::recording_default")]
-    pub trace: TraceSpec,
+    /// Whether the step also runs traced, which the driver holds to the
+    /// plain run. Default `true`.
+    #[serde(default = "yes")]
+    pub trace: bool,
     /// This run's normalised message must equal the one step `n` recorded.
     #[serde(default)]
     pub same_as: Option<usize>,
@@ -149,70 +147,37 @@ pub enum AuditSpec {
     Last(usize),
 }
 
-/// What the traced run records. `false` skips the traced run; an object
-/// overrides the recording default field by field.
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-#[serde(from = "TraceRepr")]
-pub struct TraceSpec {
-    pub enabled: bool,
-    pub snapshots: bool,
-    pub mapping_contexts: bool,
-    pub changes: bool,
-    pub max_snapshot_bytes: usize,
-    pub redact_paths: Vec<String>,
-    /// `full`, `own` or `none`.
-    pub snapshot_audit_trail: String,
+fn yes() -> bool {
+    true
 }
 
-impl TraceSpec {
-    /// Snapshots, mapping contexts and the per-step changes, each snapshot
-    /// carrying only its own audit entry so a recording stays linear in steps.
-    pub fn recording_default() -> Self {
-        Self {
-            enabled: true,
-            snapshots: true,
-            mapping_contexts: true,
-            changes: true,
-            max_snapshot_bytes: 0,
-            redact_paths: Vec::new(),
-            snapshot_audit_trail: "own".to_owned(),
+impl Case {
+    /// The rules between a case's keys that serde cannot state: every
+    /// `requires` name is a [`FEATURES`] entry, `on` and `off` are not both
+    /// set, an `ops_budget` requires `budget`, and a `same_as` names an
+    /// earlier run step.
+    pub fn validate(&self) -> Result<(), String> {
+        let names = self.requires.on.iter().chain(&self.requires.off);
+        if let Some(name) = names.into_iter().find(|n| !FEATURES.contains(&n.as_str())) {
+            return Err(format!("requires names `{name}`, which is no feature"));
         }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum TraceRepr {
-    Flag(bool),
-    Fields(TraceFields),
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TraceFields {
-    snapshots: Option<bool>,
-    mapping_contexts: Option<bool>,
-    changes: Option<bool>,
-    max_snapshot_bytes: Option<usize>,
-    redact_paths: Option<Vec<String>>,
-    snapshot_audit_trail: Option<String>,
-}
-
-impl From<TraceRepr> for TraceSpec {
-    fn from(repr: TraceRepr) -> Self {
-        let d = Self::recording_default();
-        match repr {
-            TraceRepr::Flag(enabled) => Self { enabled, ..d },
-            TraceRepr::Fields(f) => Self {
-                enabled: true,
-                snapshots: f.snapshots.unwrap_or(d.snapshots),
-                mapping_contexts: f.mapping_contexts.unwrap_or(d.mapping_contexts),
-                changes: f.changes.unwrap_or(d.changes),
-                max_snapshot_bytes: f.max_snapshot_bytes.unwrap_or(d.max_snapshot_bytes),
-                redact_paths: f.redact_paths.unwrap_or(d.redact_paths),
-                snapshot_audit_trail: f.snapshot_audit_trail.unwrap_or(d.snapshot_audit_trail),
-            },
+        if !self.requires.on.is_empty() && !self.requires.off.is_empty() {
+            return Err("requires has features both on and off: no CI build has both".to_owned());
         }
+        if self.engine.ops_budget.is_some() && !self.requires.on.iter().any(|n| n == "budget") {
+            return Err("engine.ops_budget without requires.on budget runs unbounded".to_owned());
+        }
+        for (i, step) in self.steps.iter().enumerate() {
+            let Step::Run(run) = step else { continue };
+            if let Some(n) = run.same_as
+                && !(n < i && matches!(self.steps[n], Step::Run(_)))
+            {
+                return Err(format!(
+                    "step {i}'s same_as names {n}, which is no earlier run step"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -220,18 +185,20 @@ impl From<TraceRepr> for TraceSpec {
 mod tests {
     use super::*;
 
+    fn case(text: &str) -> Case {
+        serde_json::from_str(text).unwrap()
+    }
+
     #[test]
     fn a_minimal_case_takes_every_default() {
-        let case: Case = serde_json::from_str(
-            r#"{"description":"d","workflows":[],"steps":[{"run":{"message":{}}}]}"#,
-        )
-        .unwrap();
+        let case = case(r#"{"description":"d","workflows":[],"steps":[{"run":{"message":{}}}]}"#);
         let Step::Run(run) = &case.steps[0] else {
             panic!("a run step")
         };
         assert_eq!(run.message.id, "m1");
         assert_eq!(run.message.payload, Json::object());
-        assert_eq!(run.trace, TraceSpec::recording_default());
+        assert!(run.trace, "a step runs traced too by default");
+        assert_eq!(case.validate(), Ok(()));
     }
 
     #[test]
@@ -240,20 +207,40 @@ mod tests {
             serde_json::from_str::<Case>(r#"{"description":"d","workflows":[],"cover":[]}"#)
                 .is_err()
         );
+        // `logs` and the object form of `trace` are gone.
+        assert!(serde_json::from_str::<EngineSpec>(r#"{"logs":"warn"}"#).is_err());
+        assert!(serde_json::from_str::<RunSpec>(r#"{"trace":{"changes":true}}"#).is_err());
     }
 
     #[test]
     fn trace_false_disables_the_traced_run() {
         let run: RunSpec = serde_json::from_str(r#"{"message":{},"trace":false}"#).unwrap();
-        assert!(!run.trace.enabled);
+        assert!(!run.trace);
     }
 
     #[test]
-    fn a_partial_trace_keeps_the_other_defaults() {
-        let run: RunSpec =
-            serde_json::from_str(r#"{"trace":{"redact_paths":["data.secret"]}}"#).unwrap();
-        assert!(run.trace.enabled && run.trace.changes);
-        assert_eq!(run.trace.redact_paths, ["data.secret"]);
+    fn validate_refuses_what_serde_cannot() {
+        let refused = |text: &str| case(text).validate().unwrap_err();
+        assert!(
+            refused(r#"{"description":"d","workflows":[],"requires":{"on":["fast"]}}"#)
+                .contains("`fast`")
+        );
+        assert!(refused(
+            r#"{"description":"d","workflows":[],"requires":{"on":["budget"],"off":["tensor"]}}"#
+        )
+        .contains("both"));
+        assert!(
+            refused(r#"{"description":"d","workflows":[],"engine":{"ops_budget":5}}"#)
+                .contains("budget")
+        );
+        assert!(
+            refused(r#"{"description":"d","workflows":[],"steps":[{"run":{"same_as":0}}]}"#)
+                .contains("same_as")
+        );
+        assert!(refused(
+            r#"{"description":"d","workflows":[],"steps":[{"reload":{"workflows":[]}},{"run":{"same_as":0}}]}"#
+        )
+        .contains("same_as"));
     }
 
     #[test]

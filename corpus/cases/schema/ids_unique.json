@@ -1,5 +1,5 @@
 {
-  "description": "Step ids are one namespace: a clean definition parses and runs; ids colliding across a group and a task, or across loop.setup and the body, are refused at build (see ids_unique_refused).",
+  "description": "Step ids are one namespace: a clean definition parses and runs; ids colliding across a group and a task, or across loop.setup and the body, are refused at parse as DUPLICATE_STEP_ID (see ids_unique_refused).",
   "workflows": [
     {
       "id": "clean",

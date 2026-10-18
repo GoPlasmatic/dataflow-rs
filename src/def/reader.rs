@@ -44,7 +44,8 @@ use super::keys::{
     BuiltinInput, Ext, GROUP_V3_KEYS, TASK_POLICIES, TASK_V3_KEYS, WORKFLOW_POLICIES,
     WORKFLOW_V3_KEYS, builtin_input,
 };
-use super::{MAX_GROUP_DEPTH, V3_VALIDATE};
+use super::parse::{descends, is_group, step_kind};
+use super::{V3_VALIDATE, VALIDATION};
 use crate::base::typo::unknown_key;
 use crate::base::{AuthoredPath, Issue, IssueCode, StepKind};
 use serde_json::{Map, Value};
@@ -272,15 +273,9 @@ impl Read {
     }
 
     fn step(&mut self, obj: &mut Map<String, Value>, at: AuthoredPath, setup: bool, depth: usize) {
-        let group = obj.contains_key("tasks");
+        let group = is_group(obj);
         let step = Step {
-            kind: if setup {
-                StepKind::Setup
-            } else if group {
-                StepKind::Group
-            } else {
-                StepKind::Task
-            },
+            kind: step_kind(obj, setup),
             id: obj
                 .get("id")
                 .and_then(Value::as_str)
@@ -307,7 +302,7 @@ impl Read {
         for key in keys_among(obj, &wanted) {
             if key == "continue_on_error" {
                 self.group_flag(obj, at, step);
-            } else if depth < MAX_GROUP_DEPTH
+            } else if descends(depth)
                 && let Some(Value::Array(members)) = obj.get_mut("tasks")
             {
                 self.steps(members, &at.join("tasks"), setup, depth + 1);
@@ -441,15 +436,15 @@ impl Read {
             .to_string();
         // `validate`'s input is `validation`'s, whichever key comes first.
         let builtin = builtin_input(if name == V3_VALIDATE {
-            "validation"
+            VALIDATION
         } else {
             &name
         });
         for key in keys_among(&fields, &["input", "name"]) {
             if key == "name" {
                 if name == V3_VALIDATE {
-                    fields.insert("name".into(), Value::String("validation".into()));
-                    let (v3, v4) = (V3_VALIDATE.into(), "validation".into());
+                    fields.insert("name".into(), Value::String(VALIDATION.into()));
+                    let (v3, v4) = (V3_VALIDATE.into(), VALIDATION.into());
                     self.rewrite(at.join("name"), v3, v4, Some(step), None);
                 }
             } else if let Some(Value::Object(input)) = fields.get_mut("input")

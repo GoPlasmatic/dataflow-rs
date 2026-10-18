@@ -137,7 +137,7 @@ async fn main() {
 
     let mut per_mapping = Vec::new();
     for &(k, n) in CONFIGS {
-        let (_, ns_mapping) = time_config(k, n, &payload).await;
+        let (_, ns_mapping) = time_config(k, gate::count(n, 20), &payload).await;
         per_mapping.push((k, ns_mapping));
     }
 

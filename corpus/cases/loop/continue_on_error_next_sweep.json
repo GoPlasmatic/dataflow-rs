@@ -1,5 +1,5 @@
 {
-  "description": "Under workflow continue_on_error, a task failing with 500 ends the current sweep, and the next sweep starts: the counter sequence skips only the failing sweep's later task.",
+  "description": "Under workflow continue_on_error, a task failing with 500 ends the current sweep, and the next sweep starts: the counter sequence skips only the failing sweep's later task, and the workflow's exit is failed.",
   "workflows": [
     {
       "id": "w",

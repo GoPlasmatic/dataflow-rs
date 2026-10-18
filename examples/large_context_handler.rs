@@ -32,7 +32,9 @@ mod gate;
 
 const CONTEXT_BYTES: usize = 2 * 1024 * 1024;
 const CALLS: usize = 1000;
-const MESSAGES: usize = 5;
+fn messages() -> usize {
+    gate::count(5, 1)
+}
 
 /// The five fields, and where every mode writes: v3's literal `data.out`,
 /// folded to a path at build.
@@ -164,8 +166,8 @@ async fn main() {
         );
         assert_eq!(m.audit().len(), CALLS, "one call per sweep");
 
-        let mut samples = bench::Samples::with_capacity(MESSAGES);
-        for _ in 0..MESSAGES {
+        let mut samples = bench::Samples::with_capacity(messages());
+        for _ in 0..messages() {
             let mut m = message(&data, &metadata);
             let start = Instant::now();
             engine

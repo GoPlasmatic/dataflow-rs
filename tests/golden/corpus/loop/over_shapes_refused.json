@@ -1,0 +1,11 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "LOOP_OVER_INVALID REJECTED loop.over"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": []
+}

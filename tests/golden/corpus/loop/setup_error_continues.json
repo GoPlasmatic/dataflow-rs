@@ -1,0 +1,97 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY continue_on_error"
+      ],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 2,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 0,
+              "exit": "failed"
+            },
+            {
+              "id": "after",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "after": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "after",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "after",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_ERROR",
+              "message": "Task boom error: Task error: setup failed",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w boom failed 500",
+          "after after executed 200"
+        ]
+      }
+    }
+  ]
+}

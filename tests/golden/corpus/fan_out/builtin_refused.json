@@ -1,0 +1,11 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "INVALID_FOR_EACH REJECTED tasks[0].for_each"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": []
+}

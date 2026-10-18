@@ -1,0 +1,132 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 3,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "items": [
+                "a",
+                "b",
+                "c",
+                "x",
+                "x",
+                "x"
+              ],
+              "seen": [
+                "a",
+                "b",
+                "c"
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "i": 3,
+              "item": "c"
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.0",
+                  "old_value": null,
+                  "new_value": "a"
+                },
+                {
+                  "path": "data.items.3",
+                  "old_value": null,
+                  "new_value": "x"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.1",
+                  "old_value": null,
+                  "new_value": "b"
+                },
+                {
+                  "path": "data.items.4",
+                  "old_value": null,
+                  "new_value": "x"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.2",
+                  "old_value": null,
+                  "new_value": "c"
+                },
+                {
+                  "path": "data.items.5",
+                  "old_value": null,
+                  "new_value": "x"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 2
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w - executed -",
+          "w t executed 200",
+          "w - executed -",
+          "w t executed 200",
+          "w - executed -",
+          "w t executed 200",
+          "w - executed -"
+        ]
+      }
+    }
+  ]
+}

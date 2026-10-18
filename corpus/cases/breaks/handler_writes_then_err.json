@@ -1,5 +1,5 @@
 {
-  "description": "A handler's writes stay when it then returns Err, outside a fan-out.",
+  "description": "A host function's writes are dropped whole when it then returns Err: data.partial is never written and the audit entry has no change, PARTNER_DOWN is recorded with status 500, and under continue_on_error the run completes with errors (3.x kept the writes).",
   "workflows": [
     {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
       {"id": "t", "name": "t", "continue_on_error": true, "function": {"name": "script", "input": {

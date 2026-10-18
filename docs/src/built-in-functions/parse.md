@@ -37,7 +37,7 @@ What is written depends on what the source holds:
 
 | The source holds | Written at `data.<target>` |
 |------------------|----------------------------|
-| A string that parses as JSON | The parsed value |
+| A string that parses as JSON | The parsed value; a key held twice keeps its first position and its last value |
 | Any other string | The string, unchanged |
 | An object, array, number, boolean or `null` | A copy of the value |
 | Nothing (the path does not exist) | `null` |

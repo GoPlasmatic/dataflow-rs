@@ -127,7 +127,7 @@ for raw in &definitions {
         Ok(compiled) => workflows.push(compiled.workflow),
         Err(issues) => {
             for issue in &issues {
-                eprintln!("{}: {issue}", def.id);
+                eprintln!("{}: {issue}", def.id());
             }
         }
     }

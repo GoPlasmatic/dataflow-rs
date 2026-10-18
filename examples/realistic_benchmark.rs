@@ -26,8 +26,12 @@ mod gate;
 #[path = "shared/iso20022.rs"]
 mod iso20022;
 
-const TOTAL_MESSAGES: usize = 500_000;
-const WARMUP_MESSAGES: usize = 5_000;
+fn total_messages() -> usize {
+    gate::count(500_000, 200)
+}
+fn warmup_messages() -> usize {
+    gate::count(5_000, 20)
+}
 
 struct LatencyStats {
     measurements: Vec<Duration>,
@@ -36,7 +40,7 @@ struct LatencyStats {
 impl LatencyStats {
     fn new() -> Self {
         Self {
-            measurements: Vec::with_capacity(TOTAL_MESSAGES),
+            measurements: Vec::with_capacity(total_messages()),
         }
     }
 
@@ -79,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("REALISTIC ENGINE BENCHMARK (ISO 20022 -> SwiftMT-shaped workload)");
     println!("=================================================================");
-    println!("Total messages: {}", TOTAL_MESSAGES);
+    println!("Total messages: {}", total_messages());
     println!("CPU cores: {}", cpus());
     println!("Tokio worker threads: {}", cpus());
     println!();
@@ -109,9 +113,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     iso20022::check(&checked);
 
     // Warmup
-    println!("Running warmup ({} messages)...", WARMUP_MESSAGES);
+    println!("Running warmup ({} messages)...", warmup_messages());
     let warmup_start = Instant::now();
-    let warmup_handles: Vec<_> = (0..WARMUP_MESSAGES)
+    let warmup_handles: Vec<_> = (0..warmup_messages())
         .map(|_| {
             let engine = engine.clone();
             let payload = Arc::clone(&sample_payload);
@@ -135,9 +139,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut latency_stats = LatencyStats::new();
     let benchmark_start = Instant::now();
-    let mut handles = Vec::with_capacity(TOTAL_MESSAGES);
+    let mut handles = Vec::with_capacity(total_messages());
 
-    for _ in 0..TOTAL_MESSAGES {
+    for _ in 0..total_messages() {
         let engine = engine.clone();
         let payload = Arc::clone(&sample_payload);
         handles.push(tokio::spawn(async move {
@@ -154,14 +158,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let total_time = benchmark_start.elapsed();
-    let throughput = TOTAL_MESSAGES as f64 / total_time.as_secs_f64();
+    let throughput = total_messages() as f64 / total_time.as_secs_f64();
     let avg = latency_stats.average();
     let (p50, p90, p95, p99, p999) = latency_stats.percentiles();
 
     println!(
         "{:^13} | {:^8} | {:^11} | {:^17.0} | {:^8.0} | {:^8.0} | {:^8.0} | {:^8.0} | {:^8.0} | {:^10.0}",
         "Realistic",
-        TOTAL_MESSAGES,
+        total_messages(),
         "Unlimited",
         throughput,
         avg.as_micros(),

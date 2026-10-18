@@ -1,10 +1,9 @@
 {
-  "description": "A for_each is only allowed on a handler-backed function: on a built-in (map) the build is refused, so nothing runs.",
+  "description": "A for_each is only allowed on a host function: on a built-in (map) the definition is refused at parse as INVALID_FOR_EACH.",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t",
        "for_each": {"over": {"var": "data.items"}, "as": "p"},
        "function": {"name": "map", "input": {"mappings": [{"path": "data.x", "logic": 1}]}}}]}
-  ],
-  "steps": [{"run": {"message": {"data": {"items": [1, 2]}}}}]
+  ]
 }

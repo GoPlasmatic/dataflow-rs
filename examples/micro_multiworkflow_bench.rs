@@ -51,8 +51,12 @@ use std::time::Instant;
 #[path = "shared/gate.rs"]
 mod gate;
 
-const N: usize = 500_000;
-const WARMUP: usize = 50_000;
+fn n() -> usize {
+    gate::count(500_000, 200)
+}
+fn warmup() -> usize {
+    gate::count(50_000, 20)
+}
 const NUM_STAGES: usize = 5;
 
 /// JSON for a `map` + `validation` pair operating on stage `i`: reads the heavy
@@ -234,22 +238,23 @@ async fn time_engine(label: &str, engine: &Engine, payload: &Value, expected_aud
         assert_eq!(rejected, NUM_STAGES, "[{label}] validation tasks at 400");
     }
 
-    for _ in 0..WARMUP {
+    for _ in 0..warmup() {
         let mut m = Message::from_json(payload);
         engine.run(&mut m).await.into_result().unwrap();
     }
 
     let start = Instant::now();
-    for _ in 0..N {
+    for _ in 0..n() {
         let mut m = Message::from_json(payload);
         engine.run(&mut m).await.into_result().unwrap();
     }
     let el = start.elapsed();
-    let ns = el.as_nanos() as f64 / N as f64;
+    let ns = el.as_nanos() as f64 / n() as f64;
     println!(
-        "  {label:<16} {N} msgs in {:.3}s => {ns:>8.1} ns/msg => {:.0} msg/s",
+        "  {label:<16} {} msgs in {:.3}s => {ns:>8.1} ns/msg => {:.0} msg/s",
+        n(),
         el.as_secs_f64(),
-        N as f64 / el.as_secs_f64()
+        n() as f64 / el.as_secs_f64()
     );
     ns
 }
@@ -275,8 +280,8 @@ async fn main() {
     );
 
     let g = time_engine("grouped(1 wf)", &grouped, &payload, expected_audit).await;
-    let st = time_engine("split-true(N wf)", &split_true, &payload, expected_audit).await;
-    let sp = time_engine("split-progress(N)", &split_prog, &payload, expected_audit).await;
+    let st = time_engine("split-true(n() wf)", &split_true, &payload, expected_audit).await;
+    let sp = time_engine("split-progress(n())", &split_prog, &payload, expected_audit).await;
 
     println!(
         "\nSplit-vs-grouped gap (work is identical; only deep-walk count differs).\n\

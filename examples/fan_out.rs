@@ -29,7 +29,9 @@ mod gate;
 
 const CONTEXT_BYTES: usize = 2 * 1024 * 1024;
 const ELEMENTS: usize = 100;
-const MESSAGES: usize = 10;
+fn messages() -> usize {
+    gate::count(10, 1)
+}
 
 /// Where every call writes its price, which `collect` names.
 static PRICE: LazyLock<Path> = LazyLock::new(|| "temp_data.price".parse().expect("a path"));
@@ -127,8 +129,8 @@ async fn main() {
         "every element priced, in element order"
     );
 
-    let mut samples = bench::Samples::with_capacity(MESSAGES);
-    for _ in 0..MESSAGES {
+    let mut samples = bench::Samples::with_capacity(messages());
+    for _ in 0..messages() {
         let mut m = message(&data);
         let start = Instant::now();
         engine

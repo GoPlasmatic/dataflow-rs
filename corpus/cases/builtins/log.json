@@ -1,6 +1,5 @@
 {
-  "description": "Below the enabled level a log task skips only its evaluation: an info log whose message would fail to evaluate emits nothing and still records 200 and progress. At an enabled level fields are emitted in sorted key order, and a failing expression prints as <eval error>.",
-  "engine": {"logs": "warn"},
+  "description": "A log task writes nothing to the message and never fails it: a message or a field that fails to evaluate is logged as <eval error>, and each task still records 200 and its progress, with no change and no error record. What reaches the log, by level and in sorted field order, is the unit tests' (src/function/builtins/log.rs).",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "quiet", "name": "quiet", "function": {"name": "log", "input": {"level": "info", "message": {"+": [{"var": "data.word"}, "a number"]}}}},

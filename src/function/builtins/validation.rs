@@ -1,7 +1,7 @@
 //! `validation`'s config: rules, each a condition and the error recorded when
 //! it fails.
 
-use crate::base::{ErrorKind, ErrorRecord, Result, VALIDATION_ERROR};
+use crate::base::{EVALUATION_ERROR, ErrorKind, ErrorRecord, Result, VALIDATION_ERROR};
 use crate::expr::Expr;
 use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
 use ::log::{debug, error};
@@ -61,7 +61,7 @@ impl SyncFunction for ValidationConfig {
                 Err(e) => {
                     error!("Validation: Error evaluating rule {idx}: {e:?}");
                     (
-                        "EVALUATION_ERROR",
+                        EVALUATION_ERROR,
                         format!("Failed to evaluate rule {idx}: {e}"),
                     )
                 }

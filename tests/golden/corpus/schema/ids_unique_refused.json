@@ -1,0 +1,17 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "DUPLICATE_STEP_ID REJECTED tasks[0].tasks[0].id"
+      ],
+      "compiled": false
+    },
+    {
+      "issues": [
+        "DUPLICATE_STEP_ID REJECTED loop.setup[0].id"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": []
+}

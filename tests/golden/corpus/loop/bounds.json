@@ -1,0 +1,114 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "PARSE_FAILED REJECTED loop.max"
+      ],
+      "compiled": false
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "stride",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 3,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "seen": [
+                1,
+                3,
+                5
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "stride",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "i": 7
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "stride",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.0",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "stride",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.1",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "status": 200,
+              "loop_counter": 3
+            },
+            {
+              "workflow_id": "stride",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.seen.2",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "status": 200,
+              "loop_counter": 5
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "stride - executed -",
+          "stride t executed 200",
+          "stride - executed -",
+          "stride t executed 200",
+          "stride - executed -",
+          "stride t executed 200",
+          "stride - executed -"
+        ]
+      }
+    }
+  ]
+}

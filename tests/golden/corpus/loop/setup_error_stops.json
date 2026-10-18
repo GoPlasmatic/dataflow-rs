@@ -1,0 +1,77 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "stopped",
+          "error": {
+            "code": "TASK_ERROR",
+            "message": "Task error: setup failed",
+            "retryable": false
+          },
+          "retryable": false,
+          "partial": true,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 0,
+              "exit": "stopped"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {},
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "boom",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_ERROR",
+              "message": "Task boom error: Task error: setup failed",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w boom failed 500"
+        ]
+      }
+    }
+  ]
+}

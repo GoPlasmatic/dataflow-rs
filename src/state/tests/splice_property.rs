@@ -7,7 +7,7 @@
 //! against its reference.
 
 use super::random;
-use crate::expr::path;
+use crate::expr::{path, rules};
 use crate::state::splice;
 use bumpalo::Bump;
 use datavalue::{DataValue, OwnedDataValue};
@@ -212,4 +212,118 @@ fn sequences_of_splices_over_a_spliced_root_match() {
             );
         }
     }
+}
+
+/// Every tree up to two containers deep over a small alphabet: scalars,
+/// empty containers, one-element arrays, two-element arrays with a leading
+/// `null`, and one-key objects under `a`, `0` and `#0`.
+fn small_trees(depth: usize) -> Vec<OwnedDataValue> {
+    let mut out = vec![
+        OwnedDataValue::Null,
+        OwnedDataValue::from(1),
+        OwnedDataValue::String("s".to_owned()),
+    ];
+    if depth == 0 {
+        return out;
+    }
+    let below = small_trees(depth - 1);
+    out.push(OwnedDataValue::Array(Vec::new()));
+    out.push(OwnedDataValue::Object(Vec::new()));
+    for t in &below {
+        out.push(OwnedDataValue::Array(vec![t.clone()]));
+        out.push(OwnedDataValue::Array(vec![OwnedDataValue::Null, t.clone()]));
+        for key in ["a", "0", "#0"] {
+            out.push(OwnedDataValue::Object(vec![(key.to_owned(), t.clone())]));
+        }
+    }
+    out
+}
+
+/// Every path of one to three segments below `data`, over segments that
+/// name a key, an index, an escaped number, forms `usize::from_str` reads
+/// unexpectedly, and the empty key.
+fn small_paths() -> Vec<String> {
+    const SEGS: &[&str] = &["a", "0", "1", "#0", "01", "+1", "2", ""];
+    let mut out: Vec<String> = SEGS.iter().map(|s| format!("data.{s}")).collect();
+    let mut last = out.clone();
+    for _ in 1..3 {
+        last = last
+            .iter()
+            .flat_map(|p| SEGS.iter().map(move |s| format!("{p}.{s}")))
+            .collect();
+        out.extend(last.iter().cloned());
+    }
+    out
+}
+
+#[test]
+fn every_small_tree_and_path_agrees_with_the_owned_rule_and_the_model() {
+    // Exhaustive where the random tests sample: every small context and every
+    // short path, the splice's walk held to the rules' reference walk, each
+    // write, removal and append through the owned rule, the splice and the
+    // resolve (`apply`), and each write and removal also held to the
+    // corpus's independent model, so a mistake shared by the owned and arena
+    // copies still fails.
+    use dataflow_corpus::{Json, path as model};
+    let value = OwnedDataValue::from(7);
+    let mut case = 0;
+    for tree in small_trees(2) {
+        let context = OwnedDataValue::Object(vec![("data".to_owned(), tree)]);
+        let text = random::exact(&context);
+        for dotted in small_paths() {
+            // The reference walk, `rules::step` at every segment, over the
+            // owned tree and its view; the splice's own walk agrees, and
+            // `apply` holds the owned write and the splice to that walk.
+            let segs = random::segs(&dotted);
+            let arena = Bump::new();
+            let reference = rules::resolve(&context, &segs);
+            assert_eq!(
+                rules::resolve(context.view_in(&arena), &segs),
+                reference,
+                "the reference over the view, {dotted} on {text}"
+            );
+            assert_eq!(
+                splice::resolve(context.view_in(&arena), &segs),
+                reference,
+                "the splice's walk, {dotted} on {text}"
+            );
+            let ops = [
+                Op::Set(dotted.clone(), value.clone()),
+                Op::Remove(dotted.clone()),
+                Op::Append(dotted.clone(), vec![value.clone()]),
+            ];
+            for op in ops {
+                case += 1;
+                let arena = Bump::new();
+                let view = context.view_in(&arena);
+                let mut written = context.clone();
+                let what = format!("{op:?} on {text}");
+                let mut theirs = Json::from_text(&text).expect("a context parses");
+                match &op {
+                    Op::Set(at, v) => {
+                        model::set(&mut theirs, at, Json::from_text(&random::exact(v)).unwrap())
+                    }
+                    Op::Remove(at) => {
+                        model::remove(&mut theirs, at);
+                    }
+                    _ => {}
+                }
+                let checks_model = !matches!(op, Op::Append(..));
+                let root = apply(case, &arena, &mut written, view, op);
+                assert_eq!(
+                    random::exact(&root.to_owned()),
+                    random::exact(&written),
+                    "case {case}: {what}"
+                );
+                if checks_model {
+                    assert_eq!(
+                        random::exact(&written),
+                        theirs.to_text(),
+                        "case {case}: model, {what}"
+                    );
+                }
+            }
+        }
+    }
+    assert!(case > 100_000, "{case} cases");
 }

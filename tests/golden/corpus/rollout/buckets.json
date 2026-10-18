@@ -1,0 +1,477 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 2,
+          "workflows": [
+            {
+              "id": "a",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "b",
+              "index": 1,
+              "selection": "skipped_by_rollout",
+              "sweeps": 0,
+              "exit": null
+            },
+            {
+              "id": "all",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "bucket_0",
+          "payload": {},
+          "context": {
+            "data": {
+              "order": [
+                "a",
+                "all"
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "all",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "a",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.0",
+                  "old_value": null,
+                  "new_value": "a"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "all",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.1",
+                  "old_value": null,
+                  "new_value": "all"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "a t executed 200",
+          "b - skipped -",
+          "all t executed 200"
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 2,
+          "workflows": [
+            {
+              "id": "a",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "b",
+              "index": 1,
+              "selection": "skipped_by_rollout",
+              "sweeps": 0,
+              "exit": null
+            },
+            {
+              "id": "all",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "bucket_49",
+          "payload": {},
+          "context": {
+            "data": {
+              "order": [
+                "a",
+                "all"
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "all",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "a",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.0",
+                  "old_value": null,
+                  "new_value": "a"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "all",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.1",
+                  "old_value": null,
+                  "new_value": "all"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "a t executed 200",
+          "b - skipped -",
+          "all t executed 200"
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 2,
+          "workflows": [
+            {
+              "id": "a",
+              "index": 0,
+              "selection": "skipped_by_rollout",
+              "sweeps": 0,
+              "exit": null
+            },
+            {
+              "id": "b",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "all",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "bucket_50",
+          "payload": {},
+          "context": {
+            "data": {
+              "order": [
+                "b",
+                "all"
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "all",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "b",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.0",
+                  "old_value": null,
+                  "new_value": "b"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "all",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.1",
+                  "old_value": null,
+                  "new_value": "all"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "a - skipped -",
+          "b t executed 200",
+          "all t executed 200"
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 2,
+          "workflows": [
+            {
+              "id": "a",
+              "index": 0,
+              "selection": "skipped_by_rollout",
+              "sweeps": 0,
+              "exit": null
+            },
+            {
+              "id": "b",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "all",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "bucket_99",
+          "payload": {},
+          "context": {
+            "data": {
+              "order": [
+                "b",
+                "all"
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "all",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "b",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.0",
+                  "old_value": null,
+                  "new_value": "b"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "all",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.1",
+                  "old_value": null,
+                  "new_value": "all"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "a - skipped -",
+          "b t executed 200",
+          "all t executed 200"
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 3,
+          "workflows": [
+            {
+              "id": "a",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "b",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "all",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "no_bucket",
+          "payload": {},
+          "context": {
+            "data": {
+              "order": [
+                "a",
+                "b",
+                "all"
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "all",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "a",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.0",
+                  "old_value": null,
+                  "new_value": "a"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "b",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.1",
+                  "old_value": null,
+                  "new_value": "b"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "all",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.order.2",
+                  "old_value": null,
+                  "new_value": "all"
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "a t executed 200",
+          "b t executed 200",
+          "all t executed 200"
+        ]
+      }
+    }
+  ]
+}

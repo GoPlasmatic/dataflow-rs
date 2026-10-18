@@ -1,9 +1,8 @@
 {
-  "description": "Template keys that collide once the $ is stripped are refused at build: {\"$a\": 1, \"a\": 2} would emit a twice.",
+  "description": "Template keys that collide once the $ is stripped are refused at build: {\"$a\": 1, \"a\": 2} would emit a twice, a DUPLICATE_TEMPLATE_KEY at the second key beside the ESCAPED_TEMPLATE_KEY Advisory on $a.",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [
         {"path": "data.out", "logic": {"$a": 1, "a": 2}}]}}}]}
-  ],
-  "steps": [{"run": {"message": {}}}]
+  ]
 }

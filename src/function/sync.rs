@@ -11,7 +11,6 @@ use crate::expr::{Expr, ExprEngine, FromValue, Path};
 use crate::function::Outcome;
 use crate::state::RunContext;
 use datavalue::{DataValue, OwnedDataValue};
-use std::sync::Arc;
 
 /// A built-in's call. Crate-private: hosts implement `Function`, since a
 /// second public kind of function would bring a second context type and
@@ -92,15 +91,8 @@ impl<'p> SyncCtx<'_, '_, 'p> {
 
     /// Writes `value` at `target`, recording its `Change` under capture.
     pub(crate) fn write(&mut self, target: &Path, value: OwnedDataValue, hint: Option<usize>) {
-        if self.capture {
-            let old = self.rc.get_or_null(target);
-            self.changes.push(Change::write(
-                Arc::clone(target.dotted()),
-                old,
-                value.clone(),
-            ));
-        }
-        self.rc.set(target, value, hint);
+        let changes = self.capture.then_some(&mut *self.changes);
+        self.rc.set_recorded(target, value, hint, changes);
     }
 }
 

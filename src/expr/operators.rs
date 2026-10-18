@@ -1,6 +1,7 @@
-//! The operator table: what datalogic-rs ships, and what each operator does
-//! to the way an expression reads its data.
+//! The operators an engine evaluates, as datalogic-rs describes its own
+//! (`Engine::operators`), plus the engine's `secret` and the host's.
 
+use datalogic_rs::ScopedArg;
 use std::borrow::Cow;
 
 /// The family an operator belongs to: the cargo feature that turns it on.
@@ -25,13 +26,61 @@ pub enum Family {
     ErrorHandling,
     /// The `tensor` feature.
     Tensor,
-    /// The `flagd` feature of datalogic-rs.
-    Flagd,
     /// The engine's own `secret` operator.
     Secret,
     /// An operator the host registered.
     Custom,
 }
+
+impl Family {
+    /// The family of datalogic's family `upstream`. `None` for one this
+    /// crate has no feature for, which the engine never turns on.
+    fn of(upstream: datalogic_rs::Family) -> Option<Self> {
+        use datalogic_rs::Family as F;
+        Some(match upstream {
+            F::Core => Self::Core,
+            F::DateTime => Self::Datetime,
+            F::ExtString => Self::ExtString,
+            F::ExtArray => Self::ExtArray,
+            F::ExtMath => Self::ExtMath,
+            F::ExtControl => Self::ExtControl,
+            F::ExtObject => Self::ExtObject,
+            F::ErrorHandling => Self::ErrorHandling,
+            F::Tensor => Self::Tensor,
+            _ => return None,
+        })
+    }
+
+    /// The family datalogic names `name` in an operator's description.
+    fn named(name: &str) -> Option<Self> {
+        datalogic_rs::Family::ALL
+            .iter()
+            .find(|f| f.name() == name)
+            .and_then(|f| Self::of(*f))
+    }
+}
+
+/// The datalogic families this build turns on: each by this crate's feature
+/// of its name, and no other. A family another crate's features compile into
+/// datalogic stays off here, so it can never change what a definition does.
+pub(crate) const FAMILIES: &[datalogic_rs::Family] = &[
+    #[cfg(feature = "datetime")]
+    datalogic_rs::Family::DateTime,
+    #[cfg(feature = "ext-string")]
+    datalogic_rs::Family::ExtString,
+    #[cfg(feature = "ext-array")]
+    datalogic_rs::Family::ExtArray,
+    #[cfg(feature = "ext-math")]
+    datalogic_rs::Family::ExtMath,
+    #[cfg(feature = "ext-control")]
+    datalogic_rs::Family::ExtControl,
+    #[cfg(feature = "ext-object")]
+    datalogic_rs::Family::ExtObject,
+    #[cfg(feature = "error-handling")]
+    datalogic_rs::Family::ErrorHandling,
+    #[cfg(feature = "tensor")]
+    datalogic_rs::Family::Tensor,
+];
 
 /// One operator an engine can evaluate.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +94,9 @@ pub struct OperatorInfo {
     pub scoping: bool,
     /// The same arguments always give the same result.
     pub deterministic: bool,
+    /// Which argument a datalogic operator evaluates per element: its
+    /// `scoped_arg`. A host's scoping operator declares none.
+    pub(crate) scoped: Option<ScopedArg>,
 }
 
 impl OperatorInfo {
@@ -55,6 +107,7 @@ impl OperatorInfo {
             family: Family::Custom,
             scoping: false,
             deterministic: false,
+            scoped: None,
         }
     }
 
@@ -78,142 +131,34 @@ impl OperatorInfo {
             family: Family::Secret,
             scoping: false,
             deterministic: true,
+            scoped: None,
         }
     }
-}
 
-/// A row of [`TABLE`].
-pub(crate) struct Row {
-    pub(crate) name: &'static str,
-    family: Family,
-    scoping: bool,
-    deterministic: bool,
-}
-
-impl Row {
-    pub(crate) fn info(&self) -> OperatorInfo {
-        OperatorInfo {
-            name: Cow::Borrowed(self.name),
-            family: self.family,
-            scoping: self.scoping,
-            deterministic: self.deterministic,
-        }
+    /// One row per name datalogic's operator answers to, its canonical name
+    /// first, then each alias (`val`, then `var`): an expression may spell
+    /// it either way. Scoping is its `scoped_arg`; only the clock makes it
+    /// non-deterministic.
+    pub(crate) fn from_logic(op: datalogic_rs::OperatorInfo) -> impl Iterator<Item = Self> {
+        let family = Family::named(op.family);
+        debug_assert!(
+            family.is_some(),
+            "`{}` is in family `{}`, which no feature turns on",
+            op.name,
+            op.family
+        );
+        std::iter::once(op.name)
+            .chain(op.aliases.iter().copied())
+            .filter(move |_| family.is_some())
+            .map(move |name| Self {
+                name: Cow::Borrowed(name),
+                family: family.unwrap_or(Family::Core),
+                scoping: op.scoped_arg.is_some(),
+                deterministic: op.effect != "clock",
+                scoped: op.scoped_arg,
+            })
     }
 }
-
-const fn r(name: &'static str, family: Family) -> Row {
-    let scoping = matches!(
-        name.as_bytes(),
-        b"filter"
-            | b"map"
-            | b"reduce"
-            | b"all"
-            | b"some"
-            | b"none"
-            | b"sort"
-            | b"group_by"
-            | b"distinct"
-            | b"try"
-    );
-    Row {
-        name,
-        family,
-        scoping,
-        deterministic: !matches!(name.as_bytes(), b"now"),
-    }
-}
-
-/// Every name in datalogic-rs 5.7's `OPCODE_NAMES`, gated or not, in its order.
-/// A build lists only the rows its engine reports in `builtin_operator_names()`.
-pub(crate) static TABLE: &[Row] = &[
-    r("val", Family::Core),
-    r("var", Family::Core),
-    r("==", Family::Core),
-    r("===", Family::Core),
-    r("!=", Family::Core),
-    r("!==", Family::Core),
-    r(">", Family::Core),
-    r(">=", Family::Core),
-    r("<", Family::Core),
-    r("<=", Family::Core),
-    r("!", Family::Core),
-    r("!!", Family::Core),
-    r("and", Family::Core),
-    r("or", Family::Core),
-    r("if", Family::Core),
-    r("?:", Family::Core),
-    r("+", Family::Core),
-    r("-", Family::Core),
-    r("*", Family::Core),
-    r("/", Family::Core),
-    r("%", Family::Core),
-    r("max", Family::Core),
-    r("min", Family::Core),
-    r("cat", Family::Core),
-    r("substr", Family::Core),
-    r("in", Family::Core),
-    r("merge", Family::Core),
-    r("filter", Family::Core),
-    r("map", Family::Core),
-    r("reduce", Family::Core),
-    r("all", Family::Core),
-    r("some", Family::Core),
-    r("none", Family::Core),
-    r("missing", Family::Core),
-    r("missing_some", Family::Core),
-    r("datetime", Family::Datetime),
-    r("timestamp", Family::Datetime),
-    r("parse_date", Family::Datetime),
-    r("format_date", Family::Datetime),
-    r("date_diff", Family::Datetime),
-    r("now", Family::Datetime),
-    r("length", Family::ExtString),
-    r("starts_with", Family::ExtString),
-    r("ends_with", Family::ExtString),
-    r("upper", Family::ExtString),
-    r("lower", Family::ExtString),
-    r("trim", Family::ExtString),
-    r("split", Family::ExtString),
-    r("sort", Family::ExtArray),
-    r("slice", Family::ExtArray),
-    r("group_by", Family::ExtArray),
-    r("distinct", Family::ExtArray),
-    r("keys", Family::ExtObject),
-    r("values", Family::ExtObject),
-    r("entries", Family::ExtObject),
-    r("exists", Family::ExtControl),
-    r("??", Family::ExtControl),
-    r("switch", Family::ExtControl),
-    r("match", Family::ExtControl),
-    r("type", Family::ExtControl),
-    r("try", Family::ErrorHandling),
-    r("throw", Family::ErrorHandling),
-    r("abs", Family::ExtMath),
-    r("ceil", Family::ExtMath),
-    r("floor", Family::ExtMath),
-    r("tensor", Family::Tensor),
-    r("zeros", Family::Tensor),
-    r("full", Family::Tensor),
-    r("scatter", Family::Tensor),
-    r("rle_expand", Family::Tensor),
-    r("one_hot", Family::Tensor),
-    r("stack", Family::Tensor),
-    r("concat", Family::Tensor),
-    r("unstack", Family::Tensor),
-    r("reshape", Family::Tensor),
-    r("transpose", Family::Tensor),
-    r("pad", Family::Tensor),
-    r("crop", Family::Tensor),
-    r("cast", Family::Tensor),
-    r("normalize", Family::Tensor),
-    r("argmax", Family::Tensor),
-    r("gather", Family::Tensor),
-    r("to_list", Family::Tensor),
-    r("shape", Family::Tensor),
-    r("dtype", Family::Tensor),
-    r("fractional", Family::Flagd),
-    r("sem_ver", Family::Flagd),
-];
 
 #[cfg(test)]
 mod tests {
@@ -229,28 +174,102 @@ mod tests {
         json!([{"a": 1}, {"a": 2}])
     }
 
+    /// Every operator this build lists, as `ExprEngine::operators` does.
+    fn listed() -> Vec<OperatorInfo> {
+        ExprEngine::default().operators().to_vec()
+    }
+
     #[test]
-    fn the_table_has_unique_names_and_the_documented_flags() {
-        let mut names: Vec<&str> = TABLE.iter().map(|r| r.name).collect();
-        let total = names.len();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), total, "duplicate row");
-        assert_eq!(total, 87, "one row per OPCODE_NAMES entry");
-        let scoping: Vec<&str> = TABLE.iter().filter(|r| r.scoping).map(|r| r.name).collect();
-        assert_eq!(
-            scoping,
-            [
-                "filter", "map", "reduce", "all", "some", "none", "sort", "group_by", "distinct",
-                "try"
-            ]
-        );
-        let non: Vec<&str> = TABLE
-            .iter()
-            .filter(|r| !r.deterministic)
-            .map(|r| r.name)
+    fn the_expanded_names_are_datalogics_in_its_order_with_no_duplicate() {
+        let logic = datalogic_rs::Engine::builder()
+            .with_families(FAMILIES.iter().copied())
+            .build();
+        let ours: Vec<String> = listed()
+            .into_iter()
+            .filter(|o| o.family != Family::Secret)
+            .map(|o| o.name.into_owned())
             .collect();
-        assert_eq!(non, ["now"]);
+        let mut theirs: Vec<&str> = logic.builtin_operator_names().collect();
+        let mut sorted = ours.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ours.len(), "a name twice");
+        theirs.sort_unstable();
+        assert_eq!(
+            sorted, theirs,
+            "every name datalogic answers to, aliases included"
+        );
+        // An alias follows its operator.
+        let at = |name: &str| ours.iter().position(|n| n == name).unwrap();
+        assert_eq!(at("var"), at("val") + 1);
+        assert_eq!(at("?:"), at("if") + 1);
+    }
+
+    #[test]
+    fn the_scoping_and_the_clock_are_datalogics_facts() {
+        let ops = listed();
+        let scoping: Vec<&str> = ops.iter().filter(|o| o.scoping).map(|o| &*o.name).collect();
+        let non: Vec<&str> = ops
+            .iter()
+            .filter(|o| !o.deterministic)
+            .map(|o| &*o.name)
+            .collect();
+        let mut want_scoping = vec!["filter", "map", "reduce", "all", "some", "none"];
+        let mut want_non = Vec::new();
+        if cfg!(feature = "ext-array") {
+            want_scoping.extend(["sort", "group_by", "distinct"]);
+        }
+        if cfg!(feature = "error-handling") {
+            want_scoping.push("try");
+        }
+        if cfg!(feature = "datetime") {
+            want_non.push("now");
+        }
+        let mut scoping = scoping;
+        scoping.sort_unstable();
+        want_scoping.sort_unstable();
+        assert_eq!(scoping, want_scoping);
+        assert_eq!(non, want_non);
+        let at = |name: &str| ops.iter().find(|o| o.name == name).unwrap().scoped;
+        assert_eq!(at("map"), Some(ScopedArg::Index(1)));
+        assert_eq!(at("reduce"), Some(ScopedArg::Index(1)));
+        #[cfg(feature = "ext-array")]
+        assert_eq!(at("sort"), Some(ScopedArg::Index(2)));
+        #[cfg(feature = "error-handling")]
+        assert_eq!(at("try"), Some(ScopedArg::LastOfMany));
+    }
+
+    #[test]
+    fn every_family_datalogic_has_but_flagd_is_one_of_ours() {
+        // A family datalogic adds fails here until it is mapped or named
+        // unwanted; `flagd` is feature-flag specific and never turned on.
+        for family in datalogic_rs::Family::ALL {
+            let mapped = Family::of(*family);
+            assert_eq!(
+                mapped.is_none(),
+                family.name() == "Flagd",
+                "{}",
+                family.name()
+            );
+        }
+    }
+
+    #[test]
+    fn the_effects_are_the_ones_this_crate_reads() {
+        // `deterministic` reads `effect`: a new effect fails here at the
+        // bump that brings it, rather than silently counting as pure.
+        let logic = datalogic_rs::Engine::builder()
+            .with_families(FAMILIES.iter().copied())
+            .build();
+        let mut effects: Vec<&str> = logic.operators().map(|o| o.effect).collect();
+        effects.sort_unstable();
+        effects.dedup();
+        for effect in effects {
+            assert!(
+                ["pure", "clock", "throws", "catches"].contains(&effect),
+                "an effect this crate does not read: {effect}"
+            );
+        }
     }
 
     #[test]

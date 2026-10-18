@@ -1,5 +1,5 @@
 {
-  "description": "continue_on_error covers 5xx and Err only: a 4xx is recorded and the next task runs regardless; a 5xx or Err under continue_on_error is recorded and the next task runs; a 5xx without it stops the engine.",
+  "description": "continue_on_error (on_failure: continue) covers 5xx and Err only: a 4xx is audited, with no error record, and the next task runs regardless; a 5xx or Err under continue_on_error is recorded and the next task runs; a 503 without it stops the run, partial, with TASK_ERROR on the Run.",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "rejected", "name": "rejected", "function": {"name": "script", "input": {"outcome": {"status": 400}}}},

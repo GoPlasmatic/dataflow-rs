@@ -1,0 +1,186 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 2,
+          "workflows": [
+            {
+              "id": "plain",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "looped",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 2,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "items": [
+                "a",
+                "b"
+              ],
+              "plain": true,
+              "sweeps": [
+                0,
+                1
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "looped",
+                "task_id": "count",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "i": 2,
+              "last": "1/b"
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "plain",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.plain",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "looped",
+              "task_id": "fan",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.last",
+                  "old_value": null,
+                  "new_value": "0/a"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0,
+              "element_index": 0
+            },
+            {
+              "workflow_id": "looped",
+              "task_id": "fan",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.last",
+                  "old_value": null,
+                  "new_value": "0/b"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0,
+              "element_index": 1
+            },
+            {
+              "workflow_id": "looped",
+              "task_id": "count",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.sweeps.0",
+                  "old_value": null,
+                  "new_value": 0
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "looped",
+              "task_id": "fan",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.last",
+                  "old_value": "0/b",
+                  "new_value": "1/a"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1,
+              "element_index": 0
+            },
+            {
+              "workflow_id": "looped",
+              "task_id": "fan",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "temp_data.last",
+                  "old_value": "0/b",
+                  "new_value": "1/b"
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1,
+              "element_index": 1
+            },
+            {
+              "workflow_id": "looped",
+              "task_id": "count",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.sweeps.1",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "plain t executed 200",
+          "looped - executed -",
+          "looped fan executed 200",
+          "looped fan executed 200",
+          "looped count executed 200",
+          "looped - executed -",
+          "looped fan executed 200",
+          "looped fan executed 200",
+          "looped count executed 200",
+          "looped - executed -"
+        ]
+      }
+    }
+  ]
+}

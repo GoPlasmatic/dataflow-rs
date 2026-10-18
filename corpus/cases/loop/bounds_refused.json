@@ -1,5 +1,5 @@
 {
-  "description": "A bound that could never run a sweep (max not above init) and a non-advancing increment parse, and are refused at build; validate_authored reports each.",
+  "description": "A bound that could never run a sweep (max not above init) and a non-advancing increment are refused at parse: LOOP_BOUND_EMPTY at loop.max and LOOP_INCREMENT_TOO_SMALL at loop.increment.",
   "workflows": [
     {
       "id": "max_at_init",

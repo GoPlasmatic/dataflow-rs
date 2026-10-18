@@ -1,5 +1,5 @@
 {
-  "description": "The wire message is exactly {id, payload, context, audit_trail, errors}: capture_changes, routing_bucket and audit_mode change what is kept but never serialize. Break 12: No wire difference: v4 moves capture_changes, audit_mode and routing_bucket from the message to RunOptions with unchanged defaults, so its runner maps this case's run options onto RunOptions.",
+  "description": "The wire message is exactly {id, payload, context, audit_trail, errors}: capture_changes, routing_bucket and audit_mode are RunOptions, which change what is kept but never serialize.",
   "workflows": [
     {
       "id": "w",

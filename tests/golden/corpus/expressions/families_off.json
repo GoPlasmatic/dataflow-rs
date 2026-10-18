@@ -1,0 +1,145 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "ESCAPED_TEMPLATE_KEY ADVISORY tasks[0].function.input.mappings[3].logic.$shape"
+      ],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "starts_with": {
+                "starts_with": [
+                  "hello",
+                  "he"
+                ]
+              },
+              "abs": {
+                "abs": -5
+              },
+              "shape": {
+                "shape": [
+                  {
+                    "tensor": [
+                      [
+                        1,
+                        2,
+                        3
+                      ],
+                      "u8"
+                    ]
+                  }
+                ]
+              },
+              "escaped_shape": {
+                "shape": [
+                  1,
+                  2,
+                  3
+                ]
+              },
+              "dates_equal": false
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.starts_with",
+                  "old_value": null,
+                  "new_value": {
+                    "starts_with": [
+                      "hello",
+                      "he"
+                    ]
+                  }
+                },
+                {
+                  "path": "data.abs",
+                  "old_value": null,
+                  "new_value": {
+                    "abs": -5
+                  }
+                },
+                {
+                  "path": "data.shape",
+                  "old_value": null,
+                  "new_value": {
+                    "shape": [
+                      {
+                        "tensor": [
+                          [
+                            1,
+                            2,
+                            3
+                          ],
+                          "u8"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "path": "data.escaped_shape",
+                  "old_value": null,
+                  "new_value": {
+                    "shape": [
+                      1,
+                      2,
+                      3
+                    ]
+                  }
+                },
+                {
+                  "path": "data.dates_equal",
+                  "old_value": null,
+                  "new_value": false
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w t executed 200"
+        ]
+      }
+    }
+  ]
+}

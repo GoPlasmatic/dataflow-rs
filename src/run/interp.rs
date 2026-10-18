@@ -276,15 +276,6 @@ fn fail_to(op: Op) -> u32 {
     }
 }
 
-/// A fan-out whose callee is a built-in, which the parser refuses: a
-/// definition changed after its parse can still reach the compiler.
-fn builtin_fan_out(task_id: &str) -> Error {
-    Error::new(
-        ErrorKind::Config,
-        format!("Task {task_id}: a built-in cannot fan out"),
-    )
-}
-
 /// Runs one workflow's ops over the run context: how they ended, and the
 /// workflow's selection.
 ///
@@ -375,8 +366,7 @@ pub(crate) async fn run_workflow<'p>(
             Op::FanOut { site, fan, .. } => {
                 let site = &wf.calls[site as usize];
                 let Callee::Host(bound) = &site.callee else {
-                    let task = &wf.tasks[site.task as usize].id;
-                    break Exit::Stopped(builtin_fan_out(task));
+                    unreachable!("compile_one checks that a fan-out calls a host function")
                 };
                 // Boxed: a fan-out's state stays out of the run's future,
                 // which a host spawns once per message.
@@ -561,14 +551,7 @@ fn enter<'p>(
         // Moved, not cloned: `increment >= 1` visits no element twice.
         let item = std::mem::take(item);
         if let Some(path) = &site.r#as {
-            if traced {
-                changes.push(Change::write(
-                    Arc::clone(path.dotted()),
-                    rc.get_or_null(path),
-                    item.clone(),
-                ));
-            }
-            rc.set(path, item, None);
+            rc.set_recorded(path, item, None, traced.then_some(&mut changes));
         }
     }
     if let Some(path) = &site.scratch {

@@ -76,11 +76,11 @@ let parsed = parse(
 );
 let def = parsed.def.expect("nothing was rejected");
 
-let StepDef::Task(task) = &def.tasks[0] else { panic!("a task") };
-assert_eq!(task.function.name, "map");
-assert_eq!(task.on_failure, FailurePolicy::Continue);
-assert_eq!(task.on_rejection, RejectionPolicy::Continue);
-assert!(task.condition.is_none());
+let StepDef::Task(task) = &def.tasks()[0] else { panic!("a task") };
+assert_eq!(task.function().name(), "map");
+assert_eq!(task.on_failure(), FailurePolicy::Continue);
+assert_eq!(task.on_rejection(), RejectionPolicy::Continue);
+assert!(task.condition().is_none());
 
 // Every step, pre-order, each group before its members.
 let paths: Vec<String> = def.walk().map(|(path, _, step)| format!("{path} = {}", step.id())).collect();

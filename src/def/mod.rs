@@ -32,10 +32,10 @@ mod parse;
 pub(crate) mod reader;
 mod rollout;
 mod ser;
+#[cfg(test)]
+mod tests;
 mod types;
 
-pub(crate) use for_each::for_each_issue;
-pub(crate) use loops::bound_issues;
 pub(crate) use parse::parse_steps;
 pub(crate) use parse::parse_with_rewrites;
 pub use parse::{ParseOptions, Parsed, parse};
@@ -57,6 +57,28 @@ pub const MAX_GROUP_DEPTH: usize = 8;
 /// v3's alias for `validation`, which the compat reader rewrites and no
 /// host function may take.
 pub(crate) const V3_VALIDATE: &str = "validate";
+
+/// The `validation` built-in's name, which the compat reader writes for
+/// [`V3_VALIDATE`].
+pub(crate) const VALIDATION: &str = "validation";
+
+/// Whether no host function may be registered as `name`: a name in
+/// [`BUILTIN_FUNCTIONS`], since a built-in cannot be shadowed, or `validate`,
+/// 3.x's alias for `validation`, which the compat reader rewrites before any
+/// name is looked up. [`Registry::register`](crate::Registry::register)
+/// panics on one; a host that registers names from data checks them here
+/// first.
+///
+/// ```
+/// use dataflow_rs::def::is_reserved_function;
+///
+/// assert!(is_reserved_function("map") && is_reserved_function("validate"));
+/// assert!(!is_reserved_function("http_call"));
+/// ```
+#[must_use]
+pub fn is_reserved_function(name: &str) -> bool {
+    BUILTIN_FUNCTIONS.contains(&name) || name == V3_VALIDATE
+}
 
 /// The built-in function names. They are reserved: no registration shadows
 /// one, and a task running one cannot carry `for_each`, since a built-in runs

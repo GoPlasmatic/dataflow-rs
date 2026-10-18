@@ -45,7 +45,7 @@ pub struct Registry {
 struct Inner {
     exprs: ExprEngine,
     /// Each built-in's spec, in [`BuiltinKind::ALL`] order.
-    builtin_specs: [FunctionSpec; 8],
+    builtin_specs: [FunctionSpec; BuiltinKind::ALL.len()],
     hosts: BTreeMap<Box<str>, Arc<dyn ErasedFunction>>,
     /// The first registered is the outermost.
     layers: Vec<Arc<dyn CallLayer>>,
@@ -82,7 +82,8 @@ impl Registry {
     /// [`BUILTIN_FUNCTIONS`](crate::def::BUILTIN_FUNCTIONS), since a built-in
     /// cannot be shadowed, or `validate`, v3's alias for `validation`, which
     /// the compat reader rewrites before any name is looked up. A host that
-    /// registers names from data checks those first.
+    /// registers names from data checks them with
+    /// [`def::is_reserved_function`](crate::def::is_reserved_function) first.
     ///
     /// On a spec the function's config cannot honour, a host bug best found
     /// once, here:
@@ -104,7 +105,7 @@ impl Registry {
     ///   [`Ctx::emit_default`](crate::Ctx::emit_default) writes through.
     pub fn register<F: Function>(&mut self, name: &str, f: F) {
         assert!(
-            !BuiltinKind::reserved(name),
+            !crate::def::is_reserved_function(name),
             "cannot register `{name}`: the name is reserved for the built-in functions \
              (def::BUILTIN_FUNCTIONS, and v3's alias for `validation`)"
         );

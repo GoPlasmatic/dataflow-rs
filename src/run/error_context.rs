@@ -14,7 +14,6 @@ use crate::expr::{Path, Root};
 use crate::state::RunContext;
 use datavalue::OwnedDataValue;
 use std::borrow::Cow;
-use std::sync::Arc;
 
 /// Where the engine mirrors failure records in the context, and how many it
 /// keeps.
@@ -237,12 +236,8 @@ impl ErrorContext {
             .fold(OwnedDataValue::Array(items), |inner, seg| {
                 OwnedDataValue::Object(vec![(String::from(&*seg.key), inner)])
             });
-        // A write at a root replaces it, and its `Change` says so (I106).
-        let change = old_value.map(|old| {
-            let mut change = Change::write(Arc::clone(at.dotted()), old, value.clone());
-            change.replaced = at.is_root();
-            change
-        });
+        // A write at a root replaces it, and its `Change` says so.
+        let change = old_value.map(|old| Change::assign(at, old, value.clone()));
         (value, change)
     }
 }

@@ -1,0 +1,244 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "stopped",
+          "error": {
+            "code": "TASK_ERROR",
+            "message": "Task t failed with status 500",
+            "retryable": false
+          },
+          "retryable": false,
+          "partial": true,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "terminal_500",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "stopped"
+            }
+          ]
+        },
+        "message": {
+          "id": "terminal_500",
+          "payload": {},
+          "context": {
+            "data": {},
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "terminal_500",
+                "task_id": "t",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "terminal_500",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task t returned status 500",
+              "path": null,
+              "workflow_id": "terminal_500",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "terminal_500 t failed 500"
+        ]
+      }
+    },
+    {
+      "reload": {
+        "definitions": [
+          {
+            "issues": [
+              "V3_SPELLING ADVISORY tasks[0].halt_on"
+            ],
+            "compiled": true
+          },
+          {
+            "issues": [],
+            "compiled": true
+          }
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "stopped",
+          "error": {
+            "code": "TASK_ERROR",
+            "message": "Task t failed with status 500",
+            "retryable": false
+          },
+          "retryable": false,
+          "partial": true,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "halt_on_500",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "stopped"
+            }
+          ]
+        },
+        "message": {
+          "id": "halt_on_500",
+          "payload": {},
+          "context": {
+            "data": {},
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "halt_on_500",
+                "task_id": "t",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "halt_on_500",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task t returned status 500",
+              "path": null,
+              "workflow_id": "halt_on_500",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "halt_on_500 t failed 500"
+        ]
+      }
+    },
+    {
+      "reload": {
+        "definitions": [
+          {
+            "issues": [
+              "V3_SPELLING ADVISORY tasks[0].halt_on"
+            ],
+            "compiled": true
+          },
+          {
+            "issues": [],
+            "compiled": true
+          }
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 2,
+          "workflows": [
+            {
+              "id": "halt_on_400",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "halted"
+            },
+            {
+              "id": "next",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "halt_on_400",
+          "payload": {},
+          "context": {
+            "data": {
+              "next_ran": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "next",
+                "task_id": "n",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "halt_on_400",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 400
+            },
+            {
+              "workflow_id": "next",
+              "task_id": "n",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.next_ran",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "halt_on_400 t executed 400",
+          "next n executed 200"
+        ]
+      }
+    }
+  ]
+}

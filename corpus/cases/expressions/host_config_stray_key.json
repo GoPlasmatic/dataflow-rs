@@ -1,10 +1,9 @@
 {
-  "description": "A host function's config keeps whatever keys the host's serde settings accept: the script's input has a stray key 'colour', and v3 builds and runs it.",
+  "description": "A host function's derived config refuses a key it does not know: the script's input has a stray key 'colour', so the definition is refused at build as UNKNOWN_KEY at that key (3.x's serde accepted it and ran the task).",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "script", "input": {
         "colour": "blue",
         "set": [{"path": "data.ran", "raw": true}]}}}]}
-  ],
-  "steps": [{"run": {"message": {}}}]
+  ]
 }

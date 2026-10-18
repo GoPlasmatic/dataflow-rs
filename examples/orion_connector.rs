@@ -38,8 +38,12 @@ mod bench;
 #[path = "shared/gate.rs"]
 mod gate;
 
-const TOTAL_MESSAGES: usize = 500_000;
-const WARMUP_MESSAGES: usize = 5_000;
+fn total_messages() -> usize {
+    gate::count(500_000, 200)
+}
+fn warmup_messages() -> usize {
+    gate::count(5_000, 20)
+}
 
 /// Where the driver reads the customer: the path the filter's `customer_id`
 /// hole reads.
@@ -239,9 +243,13 @@ async fn main() {
     );
 
     println!("ORION-SHAPED CONNECTOR: parse_json + mongo_find behind a timing layer + map");
-    println!("Messages: {TOTAL_MESSAGES}, cores: {}\n", num_cpus::get());
+    println!(
+        "Messages: {}, cores: {}\n",
+        total_messages(),
+        num_cpus::get()
+    );
     let (mut samples, throughput) =
-        bench::spawned(&engine, &payload, WARMUP_MESSAGES, TOTAL_MESSAGES).await;
+        bench::spawned(&engine, &payload, warmup_messages(), total_messages()).await;
     let row = samples.row("parse + connector + map", 1, "message");
     println!("Throughput: {throughput:.0} msg/s");
     let n = calls.load(Ordering::Relaxed);

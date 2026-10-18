@@ -195,13 +195,14 @@ impl Compiler {
         if any_rejected(&issues) {
             return Err(issues);
         }
-        debug_assert!(
-            workflow.check_invariants().is_ok(),
-            "the lowering of `{}` broke an invariant: {:?}\n{}",
-            workflow.id,
-            workflow.check_invariants(),
-            workflow.listing(),
-        );
+        // O(ops), once per workflow: the interpreter trusts every one.
+        if let Err(broken) = workflow.check_invariants() {
+            panic!(
+                "the lowering of `{}` broke an invariant: {broken}\n{}",
+                workflow.id,
+                workflow.listing(),
+            );
+        }
         Ok(Compiled { workflow, issues })
     }
 
@@ -493,7 +494,8 @@ impl<'w> Walk<'w> {
     }
 
     /// `dotted` as a context path, else `INVALID_PATH` at `at`. Parse has
-    /// already checked every binding, so this is defensive.
+    /// already checked every binding, and a definition cannot change after
+    /// it; this reports, rather than panics, if the two rules ever drift.
     fn path(&mut self, dotted: &str, at: AuthoredPath, step: Stamp<'_>) -> Option<Path> {
         match Path::from_str(dotted) {
             Ok(path) => Some(path),
@@ -505,19 +507,14 @@ impl<'w> Walk<'w> {
         }
     }
 
-    /// The loop's bounds, checked again, then its `over`, recorded,
-    /// then its slots, each `temp_data.<slot>`. Returns its row in `loops`.
+    /// The loop's `over`, recorded, then its slots, each
+    /// `temp_data.<slot>`. Returns its row in `loops`.
     ///
-    /// `parse` refuses a loop that never advances or never sweeps, but a host
-    /// may edit a parsed definition, and the interpreter's termination rests
-    /// on `increment >= 1`.
+    /// The bounds are `parse`'s: a definition cannot be edited after it, so
+    /// the interpreter's termination (`increment >= 1`) holds by
+    /// construction.
     fn r#loop(&mut self, config: &LoopDef) -> u32 {
         let at = AuthoredPath::root().join("loop");
-        for (code, path, message) in
-            def::bound_issues(config.init, Some(config.increment), Some(config.max))
-        {
-            self.report(Issue::new(code, path, message), None);
-        }
         let over = config
             .over
             .as_ref()
@@ -622,23 +619,19 @@ impl<'w> Walk<'w> {
         self.lower.close(open);
     }
 
-    /// A fan-out at `at`: its rules, checked again, then its `over`,
-    /// recorded, then its bindings as paths, `into` with room for the
-    /// index each element's result lands at.
+    /// A fan-out at `at`: its `over`, recorded, then its bindings as
+    /// paths, `into` with room for the index each element's result lands
+    /// at.
     ///
-    /// `parse` refuses a fan-out that breaks a rule, but a host may edit a
-    /// parsed definition, and the interpreter trusts them: no call starts
-    /// under `max_concurrency: 0`, and an `into` at a root would replace it.
+    /// The fan-out's rules are `parse`'s: a definition cannot be edited
+    /// after it, so no call starts under `max_concurrency: 0` and no `into`
+    /// is a root.
     fn fan(
         &mut self,
         config: &ForEachDef,
         at: &AuthoredPath,
         step: (StepKind, &str),
     ) -> Option<FanSite> {
-        if let Some((code, path, message)) = def::for_each_issue(config, at) {
-            self.report(Issue::new(code, path, message), Some(step));
-            return None;
-        }
         let over = self.expr(&config.over, &at.join("over"), true, Some(step));
         let item = format!("temp_data.{}", config.r#as);
         let bound = self
@@ -763,7 +756,7 @@ impl<'w> Walk<'w> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::base::{Result, Severity};
+    use crate::base::Result;
     use crate::def::{FailurePolicy, RejectionPolicy, parse};
     use crate::function::builtins::{Builtin, BuiltinKind};
     use crate::function::{Ctx, Function, FunctionConfig, Outcome};
@@ -1106,151 +1099,6 @@ mod tests {
     /// An `echo` task.
     fn echo_task() -> Value {
         json!({"id": "t", "function": {"name": "echo", "input": {"text": "a"}}})
-    }
-
-    /// A counter loop from `0` to `3`, parsed, then edited by `edit`, as a
-    /// host may edit a parsed definition: the issues `compile_one` rejects
-    /// it with, as `(code, severity, path, message)`.
-    fn edited_loop(edit: impl FnOnce(&mut LoopDef)) -> Vec<(IssueCode, Severity, String, String)> {
-        let json = json!({"id": "w", "loop": {"counter": "i", "max": 3}, "tasks": [echo_task()]});
-        let mut def = parse(&json, ParseOptions::default()).def.unwrap();
-        edit(def.r#loop.as_mut().unwrap());
-        compiler()
-            .compile_one(&def)
-            .expect_err("compile refuses the edited loop")
-            .into_iter()
-            .map(|i| (i.code, i.severity, i.path.to_string(), i.message))
-            .collect()
-    }
-
-    /// What `parse` reports for `json`'s loop, as `edited_loop` lists it.
-    fn parse_issues(json: &Value) -> Vec<(IssueCode, Severity, String, String)> {
-        parse(json, ParseOptions::default())
-            .issues
-            .into_iter()
-            .map(|i| (i.code, i.severity, i.path.to_string(), i.message))
-            .collect()
-    }
-
-    #[test]
-    fn compile_refuses_an_edited_loop_increment_below_one() {
-        // I78: `increment = 0` would never advance, so the loop would never end.
-        for increment in [0, -2] {
-            let issues = edited_loop(|lp| lp.increment = increment);
-            assert_eq!(
-                issues,
-                [(
-                    IssueCode::LoopIncrementTooSmall,
-                    Severity::Rejected,
-                    "loop.increment".to_owned(),
-                    format!(
-                        "loop increment must be >= 1, got {increment} (a non-advancing counter \
-                         would never reach max)"
-                    ),
-                )]
-            );
-            // The code, path and message `parse` gives the authored spelling.
-            let authored = json!({"id": "w", "loop": {"max": 3, "increment": increment},
-                "tasks": [echo_task()]});
-            assert_eq!(parse_issues(&authored), issues);
-        }
-    }
-
-    #[test]
-    fn compile_refuses_an_edited_loop_bound_at_or_below_init() {
-        for (init, max) in [(0, 0), (2, 1)] {
-            let issues = edited_loop(|lp| {
-                lp.init = init;
-                lp.max = max;
-            });
-            assert_eq!(
-                issues,
-                [(
-                    IssueCode::LoopBoundEmpty,
-                    Severity::Rejected,
-                    "loop.max".to_owned(),
-                    format!(
-                        "loop max ({max}) must be greater than init ({init}) — the bound is \
-                         half-open, so this could never run a sweep"
-                    ),
-                )]
-            );
-            let authored =
-                json!({"id": "w", "loop": {"init": init, "max": max}, "tasks": [echo_task()]});
-            assert_eq!(parse_issues(&authored), issues);
-        }
-    }
-
-    /// An `echo` fan-out, parsed, then edited by `edit`, as a host may edit a
-    /// parsed definition: the issues `compile_one` rejects it with, as
-    /// `edited_loop` lists them.
-    fn edited_fan(
-        edit: impl FnOnce(&mut ForEachDef),
-    ) -> Vec<(IssueCode, Severity, String, String)> {
-        let mut task = echo_task();
-        task["for_each"] = json!({"over": {"var": "data.items"}, "as": "item",
-            "collect": "temp_data.r", "into": "data.rs"});
-        let json = json!({"id": "w", "tasks": [task]});
-        let mut def = parse(&json, ParseOptions::default()).def.unwrap();
-        let StepDef::Task(task) = &mut def.tasks[0] else {
-            panic!("a task");
-        };
-        edit(task.for_each.as_mut().unwrap());
-        compiler()
-            .compile_one(&def)
-            .expect_err("compile refuses the edited fan-out")
-            .into_iter()
-            .map(|i| (i.code, i.severity, i.path.to_string(), i.message))
-            .collect()
-    }
-
-    #[test]
-    fn compile_refuses_an_edited_fan_out_the_parser_would_refuse() {
-        // `max_concurrency: 0` would start no call, and an `into` or a
-        // `collect` at a root would replace the root with an array.
-        type Edit = fn(&mut ForEachDef);
-        let cases: [(Edit, Value, &str, &str); 3] = [
-            (
-                |fan| fan.max_concurrency = 0,
-                json!({"max_concurrency": 0}),
-                "max_concurrency",
-                "for_each max_concurrency must be at least 1",
-            ),
-            (
-                |fan| fan.into = Some("data".to_owned()),
-                json!({"into": "data"}),
-                "into",
-                "for_each into must be a context path below data, metadata or temp_data, \
-                 got \"data\"",
-            ),
-            (
-                |fan| fan.collect = Some("temp_data".to_owned()),
-                json!({"collect": "temp_data"}),
-                "collect",
-                "for_each collect must be a context path below data, metadata or temp_data, \
-                 got \"temp_data\"",
-            ),
-        ];
-        for (edit, spelled, field, message) in cases {
-            let issues = edited_fan(edit);
-            assert_eq!(
-                issues,
-                [(
-                    IssueCode::InvalidForEach,
-                    Severity::Rejected,
-                    format!("tasks[0].for_each.{field}"),
-                    message.to_owned(),
-                )]
-            );
-            // The code, path and message `parse` gives the authored spelling.
-            let mut task = echo_task();
-            task["for_each"] = json!({"over": {"var": "data.items"}, "as": "item",
-                "collect": "temp_data.r", "into": "data.rs"});
-            for (key, value) in spelled.as_object().unwrap() {
-                task["for_each"][key] = value.clone();
-            }
-            assert_eq!(parse_issues(&json!({"id": "w", "tasks": [task]})), issues);
-        }
     }
 
     #[test]

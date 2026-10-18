@@ -73,7 +73,7 @@ async fn main() {
 
     // Warmup
     println!("Warming up...");
-    for _ in 0..1000 {
+    for _ in 0..gate::count(1000, 10) {
         let mut message = Message::from_json(&json!({
             "source": "test_value"
         }));
@@ -90,7 +90,7 @@ async fn main() {
     }
 
     // Benchmark
-    let iterations = 100_000;
+    let iterations = gate::count(100_000, 100);
     println!(
         "Running {} iterations with 10 sequential mappings each...",
         iterations

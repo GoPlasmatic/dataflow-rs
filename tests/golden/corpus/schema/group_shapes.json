@@ -1,0 +1,97 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "EMPTY_GROUP REJECTED tasks[0].tasks"
+      ],
+      "compiled": false
+    },
+    {
+      "issues": [
+        "INVALID_HALT_ON REJECTED tasks[0].halt_on"
+      ],
+      "compiled": false
+    },
+    {
+      "issues": [
+        "INVALID_FOR_EACH REJECTED tasks[0].for_each"
+      ],
+      "compiled": false
+    },
+    {
+      "issues": [
+        "EMPTY_GROUP REJECTED tasks[0].tasks"
+      ],
+      "compiled": false
+    },
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [
+        "GROUP_TOO_DEEP REJECTED tasks[0].tasks[0].tasks[0].tasks[0].tasks[0].tasks[0].tasks[0].tasks[0].tasks[0]"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "depth8",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "leaf": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "depth8",
+                "task_id": "leaf",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "depth8",
+              "task_id": "leaf",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.leaf",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "depth8 leaf executed 200"
+        ]
+      }
+    }
+  ]
+}

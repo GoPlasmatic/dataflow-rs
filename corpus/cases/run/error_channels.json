@@ -1,5 +1,5 @@
 {
-  "description": "Two error channels: a task that returns Err without continue_on_error stops the engine, reported to the caller, and message.errors holds everything, here the task's record plus a WORKFLOW_ERROR wrapper.",
+  "description": "Two error channels: a task that returns Err under the default on_failure stops the run, reported on the Run as stopped and partial with the TASK_ERROR, and message.errors holds only the task's own TASK_ERROR record (3.x added a WORKFLOW_ERROR wrapper); neither the next task nor the next workflow runs.",
   "workflows": [
     {"id": "w", "name": "w", "priority": 0, "tasks": [
       {"id": "t", "name": "t", "function": {"name": "script", "input": {

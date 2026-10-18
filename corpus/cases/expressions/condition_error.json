@@ -1,5 +1,5 @@
 {
-  "description": "A condition that fails to evaluate is false, and the workflow or task it guards is skipped; the same failing expression in a host function's template surfaces as Err, recorded as LOGIC_ERROR. The failing expression is {\"+\": [{\"var\": \"data.word\"}, 1]} with data.word = \"abc\": + over a non-numeric operand fails in datalogic 5.7.",
+  "description": "A condition that fails to evaluate is false: the workflow it guards does not run (selection condition_failed, the LOGIC_ERROR on its Run entry) and the task it guards is skipped with no record; the same failing expression in a host function's template surfaces as Err, recorded as LOGIC_ERROR with status 500. The failing expression is {\"+\": [{\"var\": \"data.word\"}, 1]} with data.word = \"abc\": + over a non-numeric operand fails in datalogic 5.8.",
   "workflows": [
     {"id": "guarded", "name": "guarded", "condition": {"+": [{"var": "data.word"}, 1]}, "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

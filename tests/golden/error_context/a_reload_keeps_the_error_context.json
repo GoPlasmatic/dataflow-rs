@@ -30,6 +30,14 @@
       ],
       "errors": [
         {
+          "code": "MAPPING_ERROR",
+          "message": "mappings[0] (data.text): the target holds a string, not an array",
+          "path": "data.text",
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>"
+        },
+        {
           "code": "TASK_STATUS_ERROR",
           "message": "Task map returned status 500",
           "path": null,

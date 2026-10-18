@@ -1,5 +1,5 @@
 {
-  "description": "terminal and halt_on apply after the status is classified and only upgrade a continue: a terminal task returning 500 still records TASK_STATUS_ERROR and stops the engine; halt_on: failure with 500 likewise propagates; halt_on: failure with 400 halts only its own workflow and the next one runs.",
+  "description": "terminal and on_rejection: halt (3.x's halt_on: failure here) apply after the status is classified and only upgrade a continue: a terminal task returning 500 still records TASK_STATUS_ERROR and stops the run; under halt_on: failure a 500 still goes to the default on_failure: fail and stops the run, while a 400 halts only its own workflow and the next one runs.",
   "workflows": [
     {
       "id": "terminal_500",

@@ -477,13 +477,11 @@ impl<'r> Ctx<'r> {
                 Some(Some(r)) => self.start.reader.get_resolved(path, r),
                 None => self.get(path),
             };
-            let mut change = Change::write(
-                Arc::clone(path.dotted()),
+            self.changes.push(Change::assign(
+                path,
                 old_value.map_or(OwnedDataValue::Null, Cow::into_owned),
                 value.clone(),
-            );
-            change.replaced = path.is_root();
-            self.changes.push(change);
+            ));
         }
         if let Some(resolved) = first {
             self.overlay.push(path, value, resolved.is_some());

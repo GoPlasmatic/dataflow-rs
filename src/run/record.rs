@@ -884,14 +884,14 @@ mod tests {
             [
                 ("m", None, Some(200), false, 0),
                 ("bad", None, Some(500), false, 0),
-                ("h", None, Some(500), false, 1),
-                ("f", Some(0), Some(200), false, 2),
-                ("f", Some(1), Some(200), false, 2),
-                ("e", None, Some(200), false, 2),
-                ("n", None, Some(500), false, 2),
-                ("stop", None, Some(500), true, 3),
+                ("h", None, Some(500), false, 2),
+                ("f", Some(0), Some(200), false, 3),
+                ("f", Some(1), Some(200), false, 3),
+                ("e", None, Some(200), false, 3),
+                ("n", None, Some(500), false, 3),
+                ("stop", None, Some(500), true, 4),
                 // The first element fails the task, and the fold stops.
-                ("g", Some(0), Some(500), true, 4),
+                ("g", Some(0), Some(500), true, 5),
             ]
         );
         assert!(done.iter().all(|d| d.timed), "{done:?}");

@@ -1,5 +1,5 @@
 {
-  "description": "The pre-3.9 spellings path_logic, body_logic, key_logic, value_logic and output load as aliases; supplying both spellings of one field is a duplicate-field refusal when the definition parses.",
+  "description": "The pre-3.9 spellings of the integration configs (path_logic, body_logic, key_logic, value_logic and output) are the host's to read: the compat reader leaves them as written, and with no host function registered each definition is refused at build as UNKNOWN_FUNCTION (3.x read them as aliases).",
   "workflows": [
     {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
       {"id": "call", "name": "call", "continue_on_error": true, "function": {"name": "http_call", "input": {
@@ -11,6 +11,5 @@
     {"id": "both", "name": "both", "tasks": [
       {"id": "call", "name": "call", "function": {"name": "http_call", "input": {
         "connector": "c", "path": "/a", "path_logic": {"var": "data.id"}}}}]}
-  ],
-  "steps": [{"run": {"message": {"data": {"id": 7, "obj": {"a": 1}}}}}]
+  ]
 }

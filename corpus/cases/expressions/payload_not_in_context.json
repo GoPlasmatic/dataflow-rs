@@ -1,5 +1,5 @@
 {
-  "description": "The evaluation context is exactly {data, metadata, temp_data}: a var rooted at payload silently resolves to null, so the mapping writes nothing, while the three roots resolve.",
+  "description": "The evaluation context is exactly {data, metadata, temp_data}: the build reports a var rooted at payload as a PAYLOAD_VAR Defect, and at run it resolves to null, so the mapping writes nothing, while the three roots resolve.",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

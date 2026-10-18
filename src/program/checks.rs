@@ -25,8 +25,9 @@
 use super::fingerprint::Fingerprint;
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, StepKind};
 use crate::def::{Logic, RejectionPolicy, StepDef, TaskDef, WorkflowDef};
-use crate::expr::{ExprEngine, ExprVisitor, Family, escaped_keys, secret_refs};
+use crate::expr::{ExprEngine, ExprVisitor, Family, OperatorInfo, escaped_keys, secret_refs};
 use crate::function::builtins::BuiltinKind;
+use datalogic_rs::ScopedArg;
 use serde_json::Value;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
@@ -167,14 +168,8 @@ impl<'e> Checks<'e> {
 
     /// Rule 3: every literal read rooted at `payload`, at its object.
     fn payload_vars(&self, at: &AuthoredPath, raw: &Value, report: &mut Report<'_>) {
-        let scoping = |name: &str| {
-            self.exprs
-                .operator(name)
-                .filter(|op| op.scoping)
-                .map(|op| op.family == Family::Custom)
-        };
         let mut found = Vec::new();
-        walk_payload(raw, &AuthoredPath::root(), &scoping, &mut found);
+        walk_payload(raw, &AuthoredPath::root(), self.exprs, &mut found);
         for (object_at, path) in found {
             let message = format!(
                 "reads `{path}`, but the payload is not in the evaluation context, which \
@@ -260,26 +255,26 @@ fn walk_duplicates(
     }
 }
 
-/// Whether a scoping operator evaluates its argument at `index` once per
-/// element, with `var` reading the element.
+/// Whether a scoping operator evaluates its argument at `index` (of `len`)
+/// once per element, with `var` reading the element.
 ///
-/// For datalogic's operators this is its `frames_pushed_for_child`: the body
-/// of `filter`, `map`, `all`, `some`, `none` and `reduce`, and the key of
+/// For datalogic's operators this is its own `scoped_arg`: the body of
+/// `filter`, `map`, `all`, `some`, `none` and `reduce`, and the key of
 /// `group_by` and `distinct`, each at index 1, `sort`'s key at index 2, and
 /// `try`'s last argument when it has two or more (the catch arm). `reduce`'s
 /// initial value and `sort`'s direction are evaluated once, in the context.
-/// A host's (`custom`) operator declares no positions, so every argument
-/// after its first counts.
-fn per_element(operator: &str, custom: bool, index: usize, len: usize) -> bool {
-    match operator {
-        "filter" | "map" | "all" | "some" | "none" | "reduce" | "group_by" | "distinct"
-            if !custom =>
-        {
-            index == 1
-        }
-        "try" if !custom => len >= 2 && index == len - 1,
-        "sort" if !custom => index == 2,
-        _ => index > 0,
+/// A host's operator declares no positions, so every argument after its
+/// first counts; so does a position of a kind this crate does not know,
+/// which skips an argument rather than report a false Defect.
+fn per_element(operator: &OperatorInfo, index: usize, len: usize) -> bool {
+    if operator.family == Family::Custom {
+        return index > 0;
+    }
+    match operator.scoped {
+        Some(ScopedArg::Index(i)) => index == i,
+        Some(ScopedArg::LastOfMany) => len >= 2 && index == len - 1,
+        Some(_) => true,
+        None => false,
     }
 }
 
@@ -288,12 +283,11 @@ fn per_element(operator: &str, custom: bool, index: usize, len: usize) -> bool {
 ///
 /// An argument a scoping operator evaluates per element ([`per_element`]) is
 /// skipped: there `var` reads the element, which may well have a `payload`
-/// key. `scoping` says whether an operator scopes and, when it does, whether
-/// it is a host's.
+/// key. Which operators scope, and where, is `exprs`'s.
 fn walk_payload(
     value: &Value,
     at: &AuthoredPath,
-    scoping: &dyn Fn(&str) -> Option<bool>,
+    exprs: &ExprEngine,
     out: &mut Vec<(AuthoredPath, String)>,
 ) {
     match value {
@@ -303,23 +297,23 @@ fn walk_payload(
                     out.push((at.clone(), path));
                 }
                 if let Value::Array(args) = arg
-                    && let Some(custom) = scoping(key)
+                    && let Some(operator) = exprs.operator(key).filter(|op| op.scoping)
                 {
                     for (i, arg) in args.iter().enumerate() {
-                        if !per_element(key, custom, i, args.len()) {
-                            walk_payload(arg, &at.join(key.as_str()).join(i), scoping, out);
+                        if !per_element(operator, i, args.len()) {
+                            walk_payload(arg, &at.join(key.as_str()).join(i), exprs, out);
                         }
                     }
                     return;
                 }
             }
             for (key, child) in map {
-                walk_payload(child, &at.join(key.as_str()), scoping, out);
+                walk_payload(child, &at.join(key.as_str()), exprs, out);
             }
         }
         Value::Array(items) => {
             for (i, item) in items.iter().enumerate() {
-                walk_payload(item, &at.join(i), scoping, out);
+                walk_payload(item, &at.join(i), exprs, out);
             }
         }
         _ => {}
@@ -487,14 +481,29 @@ mod tests {
         );
     }
 
+    /// A host's scoping operator, for `host_each`.
+    struct Each;
+
+    impl datalogic_rs::CustomOperator for Each {
+        fn evaluate<'a>(
+            &self,
+            _args: &[&'a datalogic_rs::DataValue<'a>],
+            _ctx: &mut datalogic_rs::operator::EvalContext<'_, 'a>,
+            arena: &'a datalogic_rs::bumpalo::Bump,
+        ) -> datalogic_rs::Result<&'a datalogic_rs::DataValue<'a>> {
+            Ok(arena.alloc(datalogic_rs::DataValue::Null))
+        }
+    }
+
+    /// The payload reads of `raw`, by this build's operators and a host's
+    /// scoping `host_each`.
     fn reads(raw: &Value) -> Vec<(String, String)> {
-        let scoping = |name: &str| match name {
-            "map" | "reduce" | "sort" | "group_by" | "distinct" | "try" => Some(false),
-            "host_each" => Some(true),
-            _ => None,
-        };
+        let exprs = ExprEngine::builder()
+            .operator_with(OperatorInfo::custom("host_each").scoping(true), Each)
+            .build()
+            .unwrap();
         let mut out = Vec::new();
-        walk_payload(raw, &AuthoredPath::root(), &scoping, &mut out);
+        walk_payload(raw, &AuthoredPath::root(), &exprs, &mut out);
         out.into_iter().map(|(at, p)| (at.to_string(), p)).collect()
     }
 
@@ -522,14 +531,17 @@ mod tests {
             [r("reduce[0]", "payload"), r("reduce[2]", "payload")]
         );
         // `sort`'s direction is outer; its key, the third argument, is not.
-        assert_eq!(
-            reads(&json!({"sort": [p(), p(), p()]})),
-            [r("sort[0]", "payload"), r("sort[1]", "payload")]
-        );
-        assert_eq!(
-            reads(&json!({"group_by": [p(), p()]})),
-            [r("group_by[0]", "payload")]
-        );
+        #[cfg(feature = "ext-array")]
+        {
+            assert_eq!(
+                reads(&json!({"sort": [p(), p(), p()]})),
+                [r("sort[0]", "payload"), r("sort[1]", "payload")]
+            );
+            assert_eq!(
+                reads(&json!({"group_by": [p(), p()]})),
+                [r("group_by[0]", "payload")]
+            );
+        }
         // A host's scoping operator declares no positions: every argument
         // after its first is taken as per-element.
         assert_eq!(

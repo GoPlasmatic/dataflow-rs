@@ -1,0 +1,23 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY continue_on_error",
+        "V3_SPELLING ADVISORY tasks[0].continue_on_error",
+        "V3_SPELLING ADVISORY tasks[1].continue_on_error",
+        "V3_SPELLING ADVISORY tasks[2].continue_on_error",
+        "UNKNOWN_FUNCTION REJECTED tasks[0].function.name",
+        "UNKNOWN_FUNCTION REJECTED tasks[1].function.name",
+        "UNKNOWN_FUNCTION REJECTED tasks[2].function.name"
+      ],
+      "compiled": false
+    },
+    {
+      "issues": [
+        "UNKNOWN_FUNCTION REJECTED tasks[0].function.name"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": []
+}

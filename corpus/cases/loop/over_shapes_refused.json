@@ -1,5 +1,5 @@
 {
-  "description": "An explicit \"over\": null is kept as present and refused like any literal that can never be an array.",
+  "description": "An explicit \"over\": null is kept as present and refused like any literal that can never be an array, as LOOP_OVER_INVALID at loop.over.",
   "workflows": [
     {
       "id": "null_over",

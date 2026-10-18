@@ -124,6 +124,19 @@ jobs:
       - name: Run tests (default features)
         run: cargo test --locked
 
+      # Each benchmark's startup check is the guard against a workload that
+      # silently does less than it says, and the six functional examples are
+      # the walk-throughs a user copies; until this step neither ever ran in
+      # CI. Every example runs once here, in debug, at smoke counts
+      # (DATAFLOW_BENCH_SMOKE): this checks the workloads, never the numbers,
+      # which the gate measures by hand on one machine. `cargo test` above has
+      # already built every example in this configuration.
+      - name: Run every example (smoke)
+        run: |
+          cargo build --examples --locked
+          python3 bench/gate_test.py
+          python3 bench/gate.py smoke --bins target/debug/examples
+
       # The README's and the book's Rust examples, in a default build. A single
       # `-p` builds the root with its default features, so they hold for a
       # user who ran `cargo add dataflow-rs`, which `--workspace` cannot show:
@@ -143,6 +156,45 @@ jobs:
             cargo test --no-default-features --features "$f" --locked
             echo "::endgroup::"
           done
+
+  # Too slow for every push: the run-context model test at its full 2,000
+  # sequences per tuning (the default build runs 150), and every benchmark's
+  # startup check against the fat-LTO release build the gate measures. Weekly
+  # (the schedule above), on demand, and before every release: release.yml
+  # calls this workflow on a tag, which keeps the tag's ref.
+  deep:
+    name: Deep
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      # Bare, the default build: the only one in which the model test is not
+      # ignored (src/state/tests/run_context.rs).
+      - name: Run the run-context model at full depth
+        env:
+          DATAFLOW_V4_DEEP: '1'
+        run: |
+          cargo test --lib --locked state::
+
+      - name: Run every example (smoke) on the release build
+        run: |
+          cargo build --release --examples --locked
+          python3 bench/gate.py smoke --bins target/release/examples
 
   # The native job above builds dataflow-wasm for the host only. This job is
   # what actually exercises the wasm32 target, where uuid/chrono take different
@@ -212,7 +264,7 @@ jobs:
   # nothing else in CI verifies it — the other jobs run stable. This caught the
   # crate having silently required 1.88 (let-chains) while advertising 1.85.
   #
-  # The floor is 1.98: `datalogic-rs` 5.7 and `datavalue-rs` 0.3.1 both declare
+  # The floor is 1.98: `datalogic-rs` 5.8 and `datavalue-rs` 0.3 both declare
   # `rust-version = "1.98"`, so it is inherited, not chosen.
   msrv:
     name: MSRV (1.98)

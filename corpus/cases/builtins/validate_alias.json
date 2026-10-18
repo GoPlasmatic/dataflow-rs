@@ -1,5 +1,5 @@
 {
-  "description": "validate is an alias of validation: a failing rule under the old name behaves exactly as validation does.",
+  "description": "validate is 3.x's name for validation: the compat reader rewrites it with a V3_SPELLING Advisory, and a failing rule under the old name behaves exactly as validation does (VALIDATION_ERROR, status 400).",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "check", "name": "check", "function": {"name": "validate", "input": {"rules": [

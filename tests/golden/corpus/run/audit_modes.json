@@ -1,0 +1,285 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY tasks[3].continue_on_error"
+      ],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "full",
+          "payload": {},
+          "context": {
+            "data": {
+              "a": 1,
+              "b": 2
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "boom",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "a",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.a",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "reject",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 400
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "b",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.b",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task boom returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w a executed 200",
+          "w reject executed 400",
+          "w b executed 200",
+          "w boom executed 500"
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "last_1",
+          "payload": {},
+          "context": {
+            "data": {
+              "a": 1,
+              "b": 2
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "boom",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task boom returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w a executed 200",
+          "w reject executed 400",
+          "w b executed 200",
+          "w boom executed 500"
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "last_0",
+          "payload": {},
+          "context": {
+            "data": {
+              "a": 1,
+              "b": 2
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "boom",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task boom returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w a executed 200",
+          "w reject executed 400",
+          "w b executed 200",
+          "w boom executed 500"
+        ]
+      }
+    },
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "off",
+          "payload": {},
+          "context": {
+            "data": {
+              "a": 1,
+              "b": 2
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "boom",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [],
+          "errors": [
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task boom returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "boom",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w a executed 200",
+          "w reject executed 400",
+          "w b executed 200",
+          "w boom executed 500"
+        ]
+      }
+    }
+  ]
+}

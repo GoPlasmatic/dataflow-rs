@@ -1,0 +1,93 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 2,
+          "workflows": [
+            {
+              "id": "first",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "halted"
+            },
+            {
+              "id": "second",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "exit": true,
+              "later_workflow": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "second",
+                "task_id": "later",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "first",
+              "task_id": "exit",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.exit",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "second",
+              "task_id": "later",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.later_workflow",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "first exit executed 200",
+          "second later executed 200"
+        ]
+      }
+    }
+  ]
+}

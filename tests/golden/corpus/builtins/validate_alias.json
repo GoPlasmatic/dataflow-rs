@@ -1,0 +1,68 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY tasks[0].function.name"
+      ],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {},
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "check",
+                "status_code": 400
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "check",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 400
+            }
+          ],
+          "errors": [
+            {
+              "code": "VALIDATION_ERROR",
+              "message": "alias failed",
+              "path": null,
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w check executed 400"
+        ]
+      }
+    }
+  ]
+}

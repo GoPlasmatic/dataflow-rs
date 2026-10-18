@@ -1,5 +1,5 @@
 {
-  "description": "mode: append pushes one element and records one change at path.<index>; extend pushes each element with a change each; appending to a non-array target fails the mapping and leaves the value. mode without logic, and appending to a root, are INVALID_MAPPING.",
+  "description": "mode: append pushes one element and records one change at path.<index>; extend pushes each element with a change each; appending to a non-array target fails the mapping with MAPPING_ERROR, leaves the value and makes the task return 500. mode without logic, and appending to a root, are INVALID_MAPPING at build.",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "continue_on_error": true, "function": {"name": "map", "input": {"mappings": [

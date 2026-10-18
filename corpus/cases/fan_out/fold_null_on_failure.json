@@ -1,5 +1,5 @@
 {
-  "description": "The fold runs in element order; under continue_on_error an element that fails leaves null in into. In v3 a 5xx element's own writes are still replayed into the message (its changes are audited), while an Err element contributes no writes and an empty change list; the rest fold normally.",
+  "description": "The fold runs in element order; under continue_on_error an element that fails leaves null in into. A 5xx element's own writes are still replayed into the message and audited, with TASK_STATUS_ERROR, while an Err element's writes are dropped whole, its entry has an empty change list and its error is TASK_ERROR; the rest fold normally.",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "continue_on_error": true,

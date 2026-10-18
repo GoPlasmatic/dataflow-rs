@@ -34,8 +34,12 @@ use std::time::{Duration, Instant};
 #[path = "shared/gate.rs"]
 mod gate;
 
-const TOTAL_MESSAGES: usize = 500_000;
-const WARMUP_MESSAGES: usize = 5_000;
+fn total_messages() -> usize {
+    gate::count(500_000, 200)
+}
+fn warmup_messages() -> usize {
+    gate::count(5_000, 20)
+}
 
 struct LatencyStats {
     measurements: Vec<Duration>,
@@ -44,7 +48,7 @@ struct LatencyStats {
 impl LatencyStats {
     fn new() -> Self {
         Self {
-            measurements: Vec::with_capacity(TOTAL_MESSAGES),
+            measurements: Vec::with_capacity(total_messages()),
         }
     }
 
@@ -227,8 +231,8 @@ async fn run_benchmark(
     Duration,
     (Duration, Duration, Duration, Duration, Duration),
 ) {
-    println!("[{label}] Warmup ({} messages)...", WARMUP_MESSAGES);
-    let warmup_handles: Vec<_> = (0..WARMUP_MESSAGES)
+    println!("[{label}] Warmup ({} messages)...", warmup_messages());
+    let warmup_handles: Vec<_> = (0..warmup_messages())
         .map(|_| {
             let engine = engine.clone();
             let payload = Arc::clone(&payload);
@@ -242,9 +246,9 @@ async fn run_benchmark(
 
     let mut latency_stats = LatencyStats::new();
     let benchmark_start = Instant::now();
-    let mut handles = Vec::with_capacity(TOTAL_MESSAGES);
+    let mut handles = Vec::with_capacity(total_messages());
 
-    for _ in 0..TOTAL_MESSAGES {
+    for _ in 0..total_messages() {
         let engine = engine.clone();
         let payload = Arc::clone(&payload);
         handles.push(tokio::spawn(async move {
@@ -261,7 +265,7 @@ async fn run_benchmark(
     }
 
     let total_time = benchmark_start.elapsed();
-    let throughput = TOTAL_MESSAGES as f64 / total_time.as_secs_f64();
+    let throughput = total_messages() as f64 / total_time.as_secs_f64();
     let avg = latency_stats.average();
     let pcts = latency_stats.percentiles();
     println!(
@@ -291,7 +295,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     println!("ASYNC HANDLER BENCHMARK (dispatch overhead delta)");
     println!("=================================================");
-    println!("Total messages per config: {}", TOTAL_MESSAGES);
+    println!("Total messages per config: {}", total_messages());
     println!("CPU cores: {}", num_cpus::get());
     println!("Tokio worker threads: {}", num_cpus::get());
     println!();

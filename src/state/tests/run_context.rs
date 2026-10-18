@@ -1,5 +1,5 @@
 //! `RunContext` against a model that writes the owned tree directly, with
-//! the rules `tests/path.rs` and `splice_property.rs` already checked against
+//! the rules `tests/it/path.rs` and `splice_property.rs` already checked against
 //! v3. Random sequences of every operation, with
 //! invalidation on and off, and a garbage floor small enough that checkpoints
 //! fall mid-sequence. Trees are compared as JSON, so key order counts.

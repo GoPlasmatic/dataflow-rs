@@ -1,5 +1,5 @@
 {
-  "description": "A group whose id equals a member task's id, and a loop.setup step sharing a body task's id, both parse and are refused at build (Workflow::validate); validate_authored reports each.",
+  "description": "A group whose id equals a member task's id, and a loop.setup step sharing a body task's id, are each refused at parse as DUPLICATE_STEP_ID (at tasks[0].tasks[0].id and loop.setup[0].id).",
   "workflows": [
     {
       "id": "group_collision",

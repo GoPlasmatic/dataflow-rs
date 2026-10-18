@@ -31,8 +31,12 @@ use std::time::Instant;
 #[path = "shared/gate.rs"]
 mod gate;
 
-const N: usize = 200_000;
-const WARMUP: usize = 10_000;
+fn n() -> usize {
+    gate::count(200_000, 200)
+}
+fn warmup() -> usize {
+    gate::count(10_000, 20)
+}
 const ITEMS: usize = 40;
 
 /// The repeated pure aggregate: subtotal = sum(items[i].price * items[i].qty),
@@ -138,13 +142,13 @@ async fn main() {
         );
     }
 
-    for _ in 0..WARMUP {
+    for _ in 0..warmup() {
         let mut m = Message::from_json(&data);
         engine.run(&mut m).await.into_result().unwrap();
     }
 
     let start = Instant::now();
-    for _ in 0..N {
+    for _ in 0..n() {
         let mut m = Message::from_json(&data);
         engine.run(&mut m).await.into_result().unwrap();
     }
@@ -152,14 +156,14 @@ async fn main() {
 
     println!(
         "AGGREGATE {} msgs ({} items, parse + 6 mappings + 2 validations) in {:.3}s => {:.1} ns/msg => {:.0} msg/s",
-        N,
+        n(),
         ITEMS,
         el.as_secs_f64(),
-        el.as_nanos() as f64 / N as f64,
-        N as f64 / el.as_secs_f64()
+        el.as_nanos() as f64 / n() as f64,
+        n() as f64 / el.as_secs_f64()
     );
 
     gate::Gate::new("micro_aggregate_bench")
-        .lower("ns_per_msg", el.as_nanos() as f64 / N as f64, "ns/msg")
+        .lower("ns_per_msg", el.as_nanos() as f64 / n() as f64, "ns/msg")
         .emit();
 }

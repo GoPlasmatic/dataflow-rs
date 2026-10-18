@@ -1,0 +1,113 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 3,
+          "workflows": [
+            {
+              "id": "one",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "halted"
+            },
+            {
+              "id": "string_true",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "halted"
+            },
+            {
+              "id": "literal",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "literal": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "literal",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "one",
+              "task_id": "gate",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 299
+            },
+            {
+              "workflow_id": "string_true",
+              "task_id": "gate",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 299
+            },
+            {
+              "workflow_id": "literal",
+              "task_id": "gate",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 200
+            },
+            {
+              "workflow_id": "literal",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.literal",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "one gate executed 299",
+          "string_true gate executed 299",
+          "literal gate executed 200",
+          "literal after executed 200"
+        ]
+      }
+    }
+  ]
+}

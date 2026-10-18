@@ -26,8 +26,8 @@ a release publishes the derive first.
 ## Prerequisites
 
 - **Rust 1.98 or later** (Edition 2024). This is the declared MSRV and CI
-  enforces it. The floor is inherited rather than chosen: `datalogic-rs` 5.7
-  and `datavalue-rs` 0.3.1 both declare `rust-version = "1.98"`, so the crate
+  enforces it. The floor is inherited rather than chosen: `datalogic-rs` 5.8
+  and `datavalue-rs` 0.3 both declare `rust-version = "1.98"`, so the crate
   cannot build on less. Let-chains (`if let ... && let ...`, stable since
   1.88) are therefore allowed, and clippy's `collapsible_if` asks for them.
 - **Node.js 22**, only if you are touching `ui/`. CI and the release
@@ -307,6 +307,13 @@ number, and prints one machine-readable `GATE {...}` line last.
 builds, a base commit against a candidate. The examples share
 `examples/shared/`, which is not an example itself.
 
+CI runs every example once, in smoke mode: `DATAFLOW_BENCH_SMOKE=1` makes a
+benchmark run its startup check, then a few iterations, and mark its `GATE`
+line `"smoke"`. Run it locally with `cargo build --examples` and `python3
+bench/gate.py smoke --bins target/debug/examples`. A new benchmark reads its
+iteration counts through `gate::count(full, smoke)` and is added to
+`bench/gate.py`'s `BENCHES`.
+
 Results carry roughly ±2–3% run-to-run noise plus occasional transient P99
 spikes. **Compare the mean of at least 3 runs** before claiming a regression or
 an improvement, and **interleave A/B runs**: running all the "before" runs and
@@ -341,21 +348,23 @@ in front of users.
 4. Open a PR describing what changed and why
 
 Add tests next to the code they cover in a `mod tests` block for unit-level
-changes. Behaviour that spans the engine goes in `tests/`, which is split by
-topic, one binary per file: the engine end to end (`run_basics.rs`,
+changes. Behaviour that spans the engine goes in `tests/it/`, one test binary
+with a module per topic: the engine end to end (`run_basics.rs`,
 `run_loops.rs`, `host_calls.rs`, `fan_out.rs`, `deadline.rs`,
 `error_context.rs`, `observer.rs`, `trace.rs`, `acceptance.rs`), the
 definitions and the compiler (`parse.rs`, `compat.rs`, `compile.rs`,
 `checks.rs`, `fingerprint.rs`, `program.rs`, `registry.rs`,
 `repository_definitions.rs`), functions and their configs (`derive.rs`,
 `config_fields.rs`, `documents.rs`, `function_testing.rs`, `expr.rs`,
-`path.rs`, `operators.rs`, `secrets_isolation.rs`), the wire shapes
-(`wire.rs`, `run_json.rs`, `ts_types.rs`), the feature-gated
-`ops_budget.rs`, and `smoke.rs` for the crate version.
-Pick the file whose topic already matches; add a new one only for a new area.
+`path.rs`, `operators.rs`), the wire shapes (`wire.rs`, `run_json.rs`), and
+the feature-gated `ops_budget.rs`. Pick the module whose topic already
+matches, and add a new one, listed in `tests/it/main.rs`, only for a new area.
+Run one with `cargo test --test it run_basics::`.
 
-Because each file is its own crate, a fixture needed by more than one of them
-belongs in `tests/support/`, pulled in with a `#[path]` module.
+A fixture more than one module needs belongs in `tests/it/support/`; every
+golden file goes through `support::golden`. Two tests are their own binaries
+and stay so: `tests/secrets_isolation.rs` installs the process's logger, and
+`tests/ts_types.rs` (built only under `ts`) is named in the bindings' header.
 
 CI skips docs-only and Markdown-only changes by design, so a PR
 touching only those paths will not show Rust checks.

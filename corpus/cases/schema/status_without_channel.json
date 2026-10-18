@@ -1,5 +1,5 @@
 {
-  "description": "Without a channel, v3 runs every workflow whatever its status: active, paused and archived all append.",
+  "description": "Without a channel only active workflows run as well: paused and archived are never considered and appear in no run report (3.x ran every workflow off a channel, whatever its status).",
   "workflows": [
     {
       "id": "active",

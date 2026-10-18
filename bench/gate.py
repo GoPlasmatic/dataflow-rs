@@ -37,8 +37,21 @@ and this reads only that line.
         listed as such and not judged. Exit status is 1 if any verdict is
         WORSE.
 
-Both commands run every binary under `/usr/bin/time -l` and keep, for every
-run, the instructions retired and cycles elapsed it prints (macOS). `compare`
+    gate.py smoke --bins DIR [--timeout SECONDS]
+        Run every example (`examples/*.rs`) built in DIR once, with
+        DATAFLOW_BENCH_SMOKE=1: each benchmark runs its startup check in full,
+        a few iterations, and prints its GATE line marked `"smoke": true`. A
+        gate benchmark must exit 0 and print exactly that, with its own name
+        and at least one metric; any other example must exit 0 and print no
+        GATE line, so a benchmark missing from BENCHES fails too. CI runs it
+        over the debug build: it checks the workloads, never the numbers.
+
+A smoke number is never a measurement: `baseline` and `compare` refuse to
+start with DATAFLOW_BENCH_SMOKE set, run every binary without it, and refuse a
+GATE line that says `"smoke"`.
+
+`baseline` and `compare` run every binary under `/usr/bin/time -l` and keep,
+for every run, the instructions retired and cycles elapsed it prints (macOS). `compare`
 reports each benchmark's median per-round ratio of instructions retired, B/A,
 beside its verdicts: the work the code does, which neither load nor code
 layout moves. It is informational, never a verdict.
@@ -81,6 +94,9 @@ METRIC_RULES = {
     "async_handler_benchmark": {"marginal": "info"},
     "large_context_handler": {"write_only": "info"},
 }
+
+# The variable that runs a benchmark in smoke mode (`examples/shared/gate.rs`).
+SMOKE = "DATAFLOW_BENCH_SMOKE"
 
 # The smallest noise `compare` allows, in percent.
 NOISE_FLOOR_PCT = 3.0
@@ -133,14 +149,31 @@ def build(args):
     print(f"{len(BENCHES)} binaries at {info['commit']} in {args.out}")
 
 
+def gate_lines(stdout):
+    """Every GATE line's object, in order."""
+    return [json.loads(line[5:]) for line in stdout.splitlines() if line.startswith("GATE ")]
+
+
 def gate_line(name, stdout):
-    for line in reversed(stdout.splitlines()):
-        if line.startswith("GATE "):
-            gate = json.loads(line[5:])
-            if gate["bench"] != name:
-                sys.exit(f"{name} printed a GATE line for {gate['bench']}")
-            return gate["metrics"]
-    sys.exit(f"{name} printed no GATE line")
+    lines = gate_lines(stdout)
+    if not lines:
+        sys.exit(f"{name} printed no GATE line")
+    gate = lines[-1]
+    if gate["bench"] != name:
+        sys.exit(f"{name} printed a GATE line for {gate['bench']}")
+    if gate.get("smoke"):
+        sys.exit(f"{name} printed a smoke GATE line: a smoke run is never a measurement")
+    return gate["metrics"]
+
+
+def without_smoke():
+    """The environment, without the smoke switch: a measured run is a full run."""
+    return {k: v for k, v in os.environ.items() if k != SMOKE}
+
+
+def refuse_smoke():
+    if SMOKE in os.environ:
+        sys.exit(f"refusing to measure with {SMOKE} set: unset it")
 
 
 def counters(stderr):
@@ -159,7 +192,12 @@ def run_once(bins, name):
     """One run: its GATE metrics and its counters (empty where unavailable)."""
     path = os.path.join(bins, name)
     timed = sys.platform == "darwin" and os.access(TIME, os.X_OK)
-    done = subprocess.run([TIME, "-l", path] if timed else [path], capture_output=True, text=True)
+    done = subprocess.run(
+        [TIME, "-l", path] if timed else [path],
+        capture_output=True,
+        text=True,
+        env=without_smoke(),
+    )
     if done.returncode != 0:
         sys.exit(f"{name} exited {done.returncode}:\n{done.stderr[-2000:]}")
     return gate_line(name, done.stdout), (counters(done.stderr) if timed else {})
@@ -182,6 +220,7 @@ def machine(load_before):
 
 
 def baseline(args):
+    refuse_smoke()
     available = [n for n in BENCHES if os.path.exists(os.path.join(args.bins, n))]
     names = args.only.split(",") if args.only else available
     unknown = [n for n in names if n not in BENCHES]
@@ -280,6 +319,7 @@ def verdict(median_ratio, noise_pct):
 
 
 def compare(args):
+    refuse_smoke()
     names = args.only.split(",") if args.only else None
     dirs = {"a": args.a, "b": args.b}
     available = [n for n in BENCHES if all(os.path.exists(os.path.join(d, n)) for d in dirs.values())]
@@ -405,6 +445,54 @@ def compare(args):
         sys.exit(1)
 
 
+def examples(root):
+    """Every example's name: each `examples/*.rs`."""
+    folder = os.path.join(root, "examples")
+    return sorted(f[:-3] for f in os.listdir(folder) if f.endswith(".rs"))
+
+
+def smoke(args):
+    env = dict(os.environ, **{SMOKE: "1"})
+    failures = []
+    names = examples(repo_root())
+    for name in names:
+        path = os.path.join(args.bins, name)
+        if not os.access(path, os.X_OK):
+            failures.append(f"{name}: not built in {args.bins}")
+            continue
+        try:
+            done = subprocess.run([path], capture_output=True, text=True, env=env, timeout=args.timeout)
+        except subprocess.TimeoutExpired:
+            failures.append(f"{name}: still running after {args.timeout}s; does it read smoke mode?")
+            continue
+        if done.returncode != 0:
+            failures.append(f"{name}: exited {done.returncode}:\n{done.stderr[-2000:]}")
+            continue
+        lines = gate_lines(done.stdout)
+        if name not in BENCHES:
+            if lines:
+                failures.append(f"{name}: printed a GATE line but is not in BENCHES")
+            else:
+                print(f"ok    {name}")
+            continue
+        if len(lines) != 1:
+            failures.append(f"{name}: printed {len(lines)} GATE lines, not one")
+        elif lines[0].get("bench") != name:
+            failures.append(f"{name}: its GATE line names {lines[0].get('bench')}")
+        elif lines[0].get("smoke") is not True:
+            failures.append(f"{name}: its GATE line is not marked smoke; does it read smoke mode?")
+        elif not lines[0].get("metrics"):
+            failures.append(f"{name}: its GATE line has no metric")
+        else:
+            print(f"ok    {name} ({len(lines[0]['metrics'])} metrics)")
+    missing = [b for b in BENCHES if b not in names]
+    if missing:
+        failures.append(f"BENCHES names no example: {missing}")
+    if failures:
+        sys.exit("smoke failures:\n" + "\n".join(failures))
+    print(f"{len(names)} examples ran smoke")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
@@ -421,8 +509,11 @@ def main():
     c.add_argument("--rounds", type=int, default=5)
     c.add_argument("--only")
     c.add_argument("--out")
+    k = sub.add_parser("smoke")
+    k.add_argument("--bins", required=True, help="the directory the examples are built in")
+    k.add_argument("--timeout", type=int, default=300, help="seconds one example may take")
     args = p.parse_args()
-    {"build": build, "baseline": baseline, "compare": compare}[args.command](args)
+    {"build": build, "baseline": baseline, "compare": compare, "smoke": smoke}[args.command](args)
 
 
 if __name__ == "__main__":

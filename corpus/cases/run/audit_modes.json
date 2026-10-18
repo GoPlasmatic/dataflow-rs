@@ -1,5 +1,5 @@
 {
-  "description": "AuditMode Full (the default), Last(n) and Off change only what the audit trail keeps: the context, progress and error records are identical in every mode. In v3 the traced run's per-step changes are empty under Off and Last(0) as well.",
+  "description": "AuditMode Full (the default), Last(n) and Off change only what the audit trail keeps: the context, progress and error records are identical in every mode, Last(1) keeps the final entry, and Last(0) and Off keep none. A trace records its own changes in every mode (3.x's traced run had empty per-step changes under Off and Last(0)).",
   "workflows": [
     {
       "id": "w",

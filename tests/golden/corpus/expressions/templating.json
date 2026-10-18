@@ -1,0 +1,88 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "x": 5,
+              "out": {
+                "result": 5
+              },
+              "typo": {
+                "totally_made_up_op_xyz": [
+                  "a",
+                  5
+                ]
+              }
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.out",
+                  "old_value": null,
+                  "new_value": {
+                    "result": 5
+                  }
+                },
+                {
+                  "path": "data.typo",
+                  "old_value": null,
+                  "new_value": {
+                    "totally_made_up_op_xyz": [
+                      "a",
+                      5
+                    ]
+                  }
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w t executed 200"
+        ]
+      }
+    }
+  ]
+}

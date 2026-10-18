@@ -303,9 +303,12 @@ square of its length. `append` converts and copies only the new element.
 
 A mapping fails when its `logic` does not evaluate, when a computed `path`
 does not resolve to a context path, when it would remove or append to a
-root or write one anything but an object, or when it appends to a target that is not an array. The failure is
-logged, the remaining mappings still run, and the call ends with status
-`500`:
+root or write one anything but an object, or when it appends to a target
+that is not an array. The failure records `MAPPING_ERROR` on the message's
+errors, its `path` the mapping's destination (`null` when a computed path did
+not resolve) and its message the mapping's index, its destination and why; it
+is also logged. The remaining mappings still run, and the call ends with
+status `500`:
 
 ```json
 {
@@ -323,11 +326,14 @@ logged, the remaining mappings still run, and the call ends with status
 }
 ```
 
-With `data.s` at `"str"`, the second mapping fails (`Map: Cannot append to
-data.s: it holds a string, not an array`), `data.a` and `data.c` are both
-written, the audit entry records `500` with those two changes, and the
-message gets the record `TASK_STATUS_ERROR` with the text
-`Task t returned status 500`. Then the task's `on_failure` decides: by
+With `data.s` at `"str"`, the second mapping fails, `data.a` and `data.c` are
+both written, and the audit entry records `500` with those two changes. The
+message gets two records: `MAPPING_ERROR` at `data.s`, with the text
+`mappings[1] (data.s): the target holds a string, not an array`, then
+`TASK_STATUS_ERROR` with the text `Task t returned status 500`. A mapping
+over the [ops budget](../advanced/jsonlogic.md) is no failed mapping: it
+fails the task with `BUDGET_EXCEEDED`, and the mappings after it do not run.
+Then the task's `on_failure` decides: by
 default the failure reaches the workflow and stops the run, with `TASK_ERROR`
 (`Task t failed with status 500`) as the run's status; with
 `"on_failure": "continue"` on the task the next task runs. See

@@ -1,0 +1,73 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": "{\"name\": \"John\", \"age\": 30}",
+          "context": {
+            "data": {
+              "input": {
+                "name": "John",
+                "age": 30
+              }
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "whole",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "whole",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.input",
+                  "old_value": null,
+                  "new_value": {
+                    "name": "John",
+                    "age": 30
+                  }
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w whole executed 200"
+        ]
+      }
+    }
+  ]
+}

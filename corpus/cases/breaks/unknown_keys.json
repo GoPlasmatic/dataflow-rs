@@ -1,5 +1,5 @@
 {
-  "description": "Unknown keys are ignored: a workflow-level typo (conditon), the UI's path key, a task-level typo, and stray keys inside loop, for_each, rollout and a publish_json input all load, and each workflow runs as if the key were absent.",
+  "description": "def::parse reports every unknown key and still builds: a near miss of a known key (conditon on a workflow and on a task, loop.maxx, for_each.ass, rollout.bucket_strat, publish_json's targte) is a LIKELY_TYPO Defect and the UI's path key an UNKNOWN_KEY Advisory, and each workflow runs as if the key were absent (3.x ignored them silently).",
   "workflows": [
     {"id": "wf_typo", "name": "wf_typo", "conditon": false, "path": "ui/folder", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

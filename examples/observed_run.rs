@@ -27,8 +27,12 @@ mod gate;
 #[path = "shared/iso20022.rs"]
 mod iso20022;
 
-const TOTAL_MESSAGES: usize = 500_000;
-const WARMUP_MESSAGES: usize = 5_000;
+fn total_messages() -> usize {
+    gate::count(500_000, 200)
+}
+fn warmup_messages() -> usize {
+    gate::count(5_000, 20)
+}
 
 /// Counts events and never reads a duration.
 #[derive(Default)]
@@ -90,13 +94,14 @@ async fn main() {
 
     println!("OBSERVED RUN: the ISO 20022 workload, unobserved and with a counting observer");
     println!(
-        "Messages per row: {TOTAL_MESSAGES}, cores: {}\n",
+        "Messages per row: {}, cores: {}\n",
+        total_messages(),
         num_cpus::get()
     );
     let (mut plain, plain_tp) =
-        bench::spawned(&unobserved, &payload, WARMUP_MESSAGES, TOTAL_MESSAGES).await;
+        bench::spawned(&unobserved, &payload, warmup_messages(), total_messages()).await;
     let (mut watched, watched_tp) =
-        bench::spawned(&observed, &payload, WARMUP_MESSAGES, TOTAL_MESSAGES).await;
+        bench::spawned(&observed, &payload, warmup_messages(), total_messages()).await;
     let plain_row = plain.row("unobserved", 1, "message");
     let watched_row = watched.row("observed, counting only", 1, "message");
     println!();

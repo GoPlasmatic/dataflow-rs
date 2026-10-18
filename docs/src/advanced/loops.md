@@ -450,6 +450,6 @@ fail at runtime:
   (`it` and `it.item`) (`LOOP_SLOT_COLLISION`).
 - a `setup` step that breaks the step grammar, or reuses an id from `tasks`.
 
-The compiler checks the bounds again, since a host may edit a parsed
-definition before compiling it. See
+A parsed definition is read-only (its fields are read through accessors),
+so these rules hold for every loop the compiler sees. See
 [Authoring-Time Validation](./authoring-validation.md).

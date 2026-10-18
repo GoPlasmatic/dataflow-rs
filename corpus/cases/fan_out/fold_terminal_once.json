@@ -1,5 +1,5 @@
 {
-  "description": "terminal and halt_on apply once, to the whole fan-out: every element runs, then the workflow halts. halt_on: failure halts after the whole fan-out, not at its first failed element.",
+  "description": "terminal and on_failure: halt (here continue_on_error with halt_on: failure) apply once, to the whole fan-out: every element runs and is folded, then the workflow halts. A failure at the first element leaves null at its index, and the halt comes only after the last element.",
   "workflows": [
     {"id": "terminal", "name": "terminal", "priority": 0, "tasks": [
       {"id": "t", "name": "t", "terminal": true,

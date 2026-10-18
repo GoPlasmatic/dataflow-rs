@@ -23,8 +23,12 @@ use std::time::Instant;
 #[path = "shared/gate.rs"]
 mod gate;
 
-const N: usize = 2_000_000;
-const WARMUP: usize = 100_000;
+fn n() -> usize {
+    gate::count(2_000_000, 1000)
+}
+fn warmup() -> usize {
+    gate::count(100_000, 100)
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -101,13 +105,13 @@ async fn main() {
         );
     }
 
-    for _ in 0..WARMUP {
+    for _ in 0..warmup() {
         let mut m = Message::from_json(&data);
         engine.run(&mut m).await.into_result().unwrap();
     }
 
     let start = Instant::now();
-    for _ in 0..N {
+    for _ in 0..n() {
         let mut m = Message::from_json(&data);
         engine.run(&mut m).await.into_result().unwrap();
     }
@@ -115,13 +119,13 @@ async fn main() {
 
     println!(
         "MICRO {} msgs in {:.3}s => {:.1} ns/msg => {:.0} msg/s",
-        N,
+        n(),
         el.as_secs_f64(),
-        el.as_nanos() as f64 / N as f64,
-        N as f64 / el.as_secs_f64()
+        el.as_nanos() as f64 / n() as f64,
+        n() as f64 / el.as_secs_f64()
     );
 
     gate::Gate::new("micro_cond_bench")
-        .lower("ns_per_msg", el.as_nanos() as f64 / N as f64, "ns/msg")
+        .lower("ns_per_msg", el.as_nanos() as f64 / n() as f64, "ns/msg")
         .emit();
 }

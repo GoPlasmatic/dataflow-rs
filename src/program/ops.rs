@@ -162,8 +162,7 @@ mod tests {
 
     #[test]
     fn call_site_fits_in_256_bytes() {
-        // I71: the parse and publish configs are boxed so the hot built-ins
-        // can stay inline.
+        // A built-in config holding an expression inline is boxed.
         let size = std::mem::size_of::<CallSite>();
         assert!(size <= 256, "a call site is {size} bytes");
     }

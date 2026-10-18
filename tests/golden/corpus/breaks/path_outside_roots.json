@@ -1,0 +1,11 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "INVALID_PATH REJECTED tasks[0].function.input.mappings[0].path"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": []
+}

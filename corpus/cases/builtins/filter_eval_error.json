@@ -1,5 +1,5 @@
 {
-  "description": "A filter condition that fails to evaluate rejects, halting its workflow.",
+  "description": "A filter condition that fails to evaluate rejects: it records EVALUATION_ERROR, the audit records 299, the workflow halts before its next task, and the run completes with errors.",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "gate", "name": "gate", "function": {"name": "filter", "input": {"condition": {"+": [{"var": "data.word"}, "a number"]}}}},

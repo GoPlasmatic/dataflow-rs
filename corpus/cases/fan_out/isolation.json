@@ -1,5 +1,5 @@
 {
-  "description": "Every fan-out call runs on its own copy of the message: each sees temp_data.seen as it was before the fan-out, and an element's history does not repeat the parent's audit trail.",
+  "description": "Every fan-out call runs isolated over the context as it was before the fan-out: each element reads temp_data.seen as 0 and writes 1, so every result is 1, and each element's audit entry carries only its own changes.",
   "workflows": [
     {"id": "pre", "name": "pre", "priority": 0, "tasks": [
       {"id": "pre", "name": "pre", "function": {"name": "map", "input": {"mappings": [

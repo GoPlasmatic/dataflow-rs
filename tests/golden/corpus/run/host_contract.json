@@ -1,0 +1,104 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "input": "x",
+              "identity": {
+                "element_index": null,
+                "loop_counter": null,
+                "task_id": "host",
+                "workflow_id": "w"
+              },
+              "first": "seen x",
+              "skipper_wrote": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "host",
+                "status_code": 201
+              }
+            },
+            "temp_data": {
+              "second": {
+                "kept": "verbatim"
+              }
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "host",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.identity",
+                  "old_value": null,
+                  "new_value": {
+                    "element_index": null,
+                    "loop_counter": null,
+                    "task_id": "host",
+                    "workflow_id": "w"
+                  }
+                },
+                {
+                  "path": "data.first",
+                  "old_value": null,
+                  "new_value": "seen x"
+                },
+                {
+                  "path": "temp_data.second",
+                  "old_value": null,
+                  "new_value": {
+                    "kept": "verbatim"
+                  }
+                }
+              ],
+              "status": 201
+            }
+          ],
+          "errors": [
+            {
+              "code": "HOST_WARNING",
+              "message": "recorded by the handler",
+              "path": null,
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w host executed 201",
+          "w skipper executed -"
+        ]
+      }
+    }
+  ]
+}

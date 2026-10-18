@@ -1,0 +1,154 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY continue_on_error"
+      ],
+      "compiled": true
+    },
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 4,
+          "workflows": [
+            {
+              "id": "bounded",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 2,
+              "exit": "completed"
+            },
+            {
+              "id": "empty",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 0,
+              "exit": "completed"
+            },
+            {
+              "id": "not_array",
+              "index": 2,
+              "selection": "ran",
+              "sweeps": 0,
+              "exit": "failed"
+            },
+            {
+              "id": "after",
+              "index": 3,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "scalar": "nope",
+              "bounded": [
+                1,
+                2
+              ],
+              "after": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "after",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {
+              "bi": 2,
+              "bitem": 2,
+              "ei": 0
+            }
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "bounded",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.bounded.0",
+                  "old_value": null,
+                  "new_value": 1
+                }
+              ],
+              "status": 200,
+              "loop_counter": 0
+            },
+            {
+              "workflow_id": "bounded",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.bounded.1",
+                  "old_value": null,
+                  "new_value": 2
+                }
+              ],
+              "status": 200,
+              "loop_counter": 1
+            },
+            {
+              "workflow_id": "after",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "LOGIC_ERROR",
+              "message": "Workflow not_array: loop.over must evaluate to an array, got a string",
+              "path": null,
+              "workflow_id": "not_array",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "bounded - executed -",
+          "bounded t executed 200",
+          "bounded - executed -",
+          "bounded t executed 200",
+          "bounded - executed -",
+          "empty - executed -",
+          "not_array - failed -",
+          "after after executed 200"
+        ]
+      }
+    }
+  ]
+}

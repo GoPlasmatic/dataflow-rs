@@ -1,5 +1,5 @@
 {
-  "description": "max still bounds an over loop (five elements, max 2: two sweeps); an empty over runs no sweep and writes no task's output; a non-array over, under continue_on_error, is a recorded WORKFLOW_ERROR and the next workflow runs. Each loop has its own counter and binding, so what each leaves in temp_data is visible.",
+  "description": "max still bounds an over loop (five elements, max 2: two sweeps); an empty over runs no sweep and writes no task's output; a non-array over, under continue_on_error, runs no sweep, records LOGIC_ERROR with the workflow's id and no task id, and ends the workflow failed, and the next workflow runs. Each loop has its own counter and binding, so what each leaves in temp_data is visible.",
   "workflows": [
     {
       "id": "bounded",

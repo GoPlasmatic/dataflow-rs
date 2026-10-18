@@ -23,9 +23,12 @@ met, either halts the workflow or skips the task. It writes nothing.
 | `on_reject` | `"halt"` \| `"skip"` | No | What a rejected message does: `halt` (the default) stops the workflow, `skip` skips this task only |
 
 Only a literal `true` passes. `false`, `null`, a missing path, `1`, `"true"`
-and `[1]` all reject, and so does a condition that fails to evaluate: a
-malformed filter is indistinguishable from a gate closing, and nothing is
-recorded on the message's errors. Write a presence check as
+and `[1]` all reject, and record nothing. A condition that fails to evaluate
+rejects too, and records `EVALUATION_ERROR` (`Filter condition failed to
+evaluate: …`) on the message's errors, so a malformed filter is told apart
+from a gate closing; the run then completes with errors. A condition over the
+[ops budget](../advanced/jsonlogic.md) is no rejection: it fails the task with
+`BUDGET_EXCEEDED`, under its `on_failure`. Write a presence check as
 `{"!!": {"var": "data.email"}}`, not `{"var": "data.email"}`.
 
 ## What a rejection does

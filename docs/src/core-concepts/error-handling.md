@@ -221,7 +221,11 @@ Common error codes you'll see in `message.errors()`:
 - `VALIDATION_ERROR`: from the `validation` built-in, one per failing rule;
   also from `parse_xml`, `publish_json` and `publish_xml` when the source is
   not what they need
-- `EVALUATION_ERROR`: a `validation` rule that failed to evaluate
+- `EVALUATION_ERROR`: a `validation` rule or a `filter` condition that failed
+  to evaluate
+- `MAPPING_ERROR`: a `map` mapping that failed, one per mapping, with the
+  mapping's destination as the record's `path`; before the task's
+  `TASK_STATUS_ERROR`
 - `TASK_STATUS_ERROR`: a task returned `Outcome::Status(s)` with `s >= 500`
 
 A host function's `Err` is recorded under its `Error::code()`:
@@ -275,8 +279,8 @@ Three things this buys you:
   the kind, the retryability and the source.
 
 `Display` renders the message alone, so `to_string()` is safe to hand to a
-caller. The built-ins record `VALIDATION_ERROR` and `EVALUATION_ERROR`
-themselves; every other code in the list above comes from the engine's
+caller. The built-ins record `VALIDATION_ERROR`, `EVALUATION_ERROR` and
+`MAPPING_ERROR` themselves; every other code in the list above comes from the engine's
 classification of a call's result.
 
 ## Branching on Why a Task Failed

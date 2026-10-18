@@ -44,10 +44,10 @@ pub(super) fn over_literal_problem(over: &Value) -> Option<String> {
 
 /// The loop's bound rules, each broken one as `(code, path, message)`,
 /// in v3's order: an `increment` below 1, then a `max` at or below `init`.
-/// `parse` checks what it read, an unreadable `increment` or `max` as `None`;
-/// the compile walk checks the definition it is handed again, since a host
-/// may edit one after `parse`, and a loop that never advances never ends.
-pub(crate) fn bound_issues(
+/// `parse` checks what it read, an unreadable `increment` or `max` as `None`.
+/// A definition cannot be edited after it, so the interpreter's termination
+/// rests here alone.
+fn bound_issues(
     init: i64,
     increment: Option<i64>,
     max: Option<i64>,

@@ -1,0 +1,106 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY continue_on_error",
+        "V3_SPELLING ADVISORY tasks[1].continue_on_error"
+      ],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "guarded",
+              "index": 0,
+              "selection": "condition_failed",
+              "error": {
+                "code": "LOGIC_ERROR",
+                "message": "Thrown: {\"type\":\"NaN\"} (in operator: +)",
+                "retryable": false
+              },
+              "sweeps": 0,
+              "exit": null
+            },
+            {
+              "id": "w",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "word": "abc",
+              "after": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "host",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "LOGIC_ERROR",
+              "message": "Task host error: Logic evaluation error: Thrown: {\"type\":\"NaN\"} (in operator: +)",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "host",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "guarded - skipped -",
+          "w skipped skipped -",
+          "w host executed 500",
+          "w after executed 200"
+        ]
+      }
+    }
+  ]
+}

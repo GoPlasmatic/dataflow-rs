@@ -216,7 +216,7 @@ impl CompiledWorkflow {
     /// - every row an op names is in its table, as is every call site's task;
     /// - every condition is named by at least one `Cond`;
     /// - every call site and every task row is named by exactly one `Call` or
-    ///   `FanOut`;
+    ///   `FanOut`, and a `FanOut`'s call site names a host function;
     /// - a loop has at most one `LoopInit` and at most one `LoopNext`, and
     ///   its `LoopInit` comes before its `LoopNext`, which goes back to the
     ///   op after the `LoopInit`, where every sweep starts.
@@ -245,6 +245,12 @@ impl CompiledWorkflow {
                 Op::Call { site, .. } => Some(site),
                 Op::FanOut { site, fan, .. } => {
                     in_range(pc, "fan-out", fan, self.fans.len())?;
+                    let row = in_range(pc, "call site", site, self.calls.len())?;
+                    if !matches!(self.calls[row].callee, Callee::Host(_)) {
+                        return Err(format!(
+                            "op {pc} fans out call site {row}, whose callee is a built-in"
+                        ));
+                    }
                     Some(site)
                 }
                 Op::LoopInit { lp, .. } => {
@@ -766,6 +772,25 @@ mod tests {
                 },
             ],
             "op 1 jumps back to 1",
+        );
+    }
+
+    #[test]
+    fn check_invariants_refuses_a_fan_out_of_a_built_in() {
+        let mut wf = compile(&json!({"id": "w", "tasks": [
+            {"id": "f", "for_each": {"over": [1, 2], "as": "x"},
+             "function": {"name": "echo", "input": {"value": "x"}}},
+        ]}));
+        let builtin = compile(&json!({"id": "w", "tasks": [map("a")]}))
+            .calls
+            .swap_remove(0)
+            .callee;
+        wf.calls[0].callee = builtin;
+        let ops = wf.ops.clone();
+        refuses(
+            wf,
+            ops,
+            "op 0 fans out call site 0, whose callee is a built-in",
         );
     }
 

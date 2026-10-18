@@ -47,13 +47,19 @@ GoPlasmatic/Orion#385.
   (`ProgramId`, `WorkflowIx`, `TaskIx`), `CancelToken`, `Instant`, the typo
   distance, and the `ts` feature's hand-written declarations.
 - `src/def/`: definitions. `parse` is the one entry and the linter; `types.rs`
-  the plain data (`WorkflowDef`, `TaskDef`, `GroupDef`, `LoopDef`,
-  `ForEachDef`, the policies, `defaults`); `reader.rs` the compat reader;
+  the read-only data (`WorkflowDef`, `TaskDef`, `GroupDef`, `LoopDef`,
+  `ForEachDef`, the policies, `defaults`), crate-private fields behind read
+  accessors, so nothing edits a def after `parse`; `reader.rs` the compat reader;
   `keys.rs` the known-key tables; `ser.rs` the v4-spelling serializer.
 - `src/expr/`: expressions, only compiled. `ExprEngine` (operators, secrets,
   the `$` escape, the ops budget), `Expr<T>`, `Interpolated` documents,
   `Output`, `Path`, `Secrets`, `ConfigField` and `CompileCx`, the operator
-  table, the arena.
+  facts (datalogic's own, through the families this crate's features turn
+  on), the arena, and `rules`: the path rules stated once (`step` per
+  segment, the append target, value shapes, the one-segment primitives),
+  which the overlay and the write log apply and the two hot walks (the owned
+  `path::set` and the splice) inline for speed, held to the rules' reference
+  walk on every small tree and path (`state::tests::splice_property`).
 - `src/function/`: `Function`, `FunctionConfig`, `Ctx` and `CallInfo`,
   `Outcome`, the overlay, `CallLayer` and `layers::Answer`, `Registry`,
   `FunctionSpec`, `Templated`, `testing`, and `builtins/` (the eight built-ins
@@ -70,8 +76,9 @@ GoPlasmatic/Orion#385.
   `TraceOptions`.
 - `src/compat/`: `migrate_v3`.
 - `derive/src/lib.rs`: the derive.
-- `tests/`: one binary per topic (the table under "Testing"); `tests/support/`
-  the shared fixtures.
+- `tests/`: `it/`, one binary with a module per topic (the table under
+  "Testing") and `it/support/` the shared fixtures; `secrets_isolation.rs`
+  and `ts_types.rs`, their own binaries.
 - `examples/`: the thirteen gate benchmarks, the six functional examples, and
   `examples/shared/` (not an example).
 - `bindings/dataflow.d.ts`: the wire shapes as TypeScript, generated under the
@@ -152,7 +159,7 @@ cargo deny check
 ```
 
 **MSRV is 1.98 and CI enforces it.** The floor is *inherited, not chosen*:
-`datalogic-rs` 5.7 and `datavalue-rs` 0.3.1 both declare
+`datalogic-rs` 5.8 and `datavalue-rs` 0.3 both declare
 `rust-version = "1.98"`, so it moves when they move. Let-chains are fine.
 
 **`cargo test` at the root must stay under a minute, rebuild included.** The
@@ -167,12 +174,12 @@ scans each newly linked test binary on its first launch, which can add minutes.
 
 ### The counts
 
-`cargo test --workspace --all-features` should report 1016 passing: the
-root's 866, the derive's 2, the corpus's 18 and `docs-tests`' 130 (117 page
+`cargo test --workspace --all-features` should report 1037 passing: the
+root's 887, the derive's 2, the corpus's 18 and `docs-tests`' 130 (117 page
 doctests, 11 README doctests, the derive README's one and its coverage test).
-`cargo test` at the root (the default build) should report 839, and `cargo
+`cargo test` at the root (the default build) should report 859, and `cargo
 test -p dataflow-docs-tests` 130. The operator families are `#[cfg]`-gated, so the
-counts legitimately differ by feature set: the root reports 849 under
+counts legitimately differ by feature set: the root reports 869 under
 `--no-default-features --features all-operators`.
 
 ### Examples
@@ -218,6 +225,19 @@ paths were spelled `#20`. Numbers carry ±2-3% run-to-run noise: compare the
 mean of 3+ runs, and **interleave A/B runs**, since all "before" then all
 "after" conflates the change with thermal drift.
 
+**CI runs every example, smoke.** Under `DATAFLOW_BENCH_SMOKE=1` a benchmark
+runs its startup check in full, then a few iterations (`gate::count(full,
+smoke)` in `examples/shared/gate.rs`; only repetition counts shrink, never a
+shape a check depends on), and marks its `GATE` line `"smoke": true`.
+`python3 bench/gate.py smoke --bins target/debug/examples` runs all nineteen
+(about 15 s in debug): a benchmark must print exactly that line, any other
+example exit 0 with none. `gate.py baseline` and `compare` refuse to start
+with the variable set and refuse a smoke line, so a smoke number is never a
+measurement (`bench/gate_test.py`). A new benchmark reads its counts through
+`gate::count` and joins `BENCHES`. CI's weekly `deep` job (also on demand and
+on a release tag) runs the model test at full depth and the smoke run on the
+release build.
+
 ### The gate
 
 **The gate compares two builds of the engine,** a base commit against a
@@ -258,10 +278,17 @@ free loopback port, never 8080.
 steps, many in 3.x spellings the compat reader rewrites. `dataflow-corpus`
 loads them (`load_cases`) and holds the case format, the wire normalisation
 and independent models of the path rules and the trace replay, free of
-`dataflow-rs`. The root's tests read them: `compat.rs` migrates every
-definition, `ts_types.rs` holds every key a run writes to its declaration,
-`repository_definitions.rs` parses each one, and `path.rs`, `trace.rs` and
-`error_context.rs` hold the engine to the models.
+`dataflow-rs`. The root's tests read them: `tests/it/corpus.rs` runs every
+case through the driver (`tests/it/support/corpus_driver.rs`: `script` and
+`shout` registered, each run plain and traced, the two agreeing, the trace
+replaying to the message by both replays, everything reading back) and holds
+it to `tests/golden/corpus/<area>/<name>.json`; `compat.rs` migrates every
+definition; `ts_types.rs` runs the same driver and holds every key a run
+writes to its declaration; `repository_definitions.rs` parses each one; and
+`path.rs`, `trace.rs` and `error_context.rs` hold the engine to the models.
+A case with run steps fails on an `UNKNOWN_FUNCTION` refusal or an engine
+that compiled nothing; a refusal case carries no run step. Review a golden
+diff against each case's description.
 
 ### Golden files
 
@@ -344,16 +371,16 @@ Each rule lives once in the code; the test named beside it is what pins it.
 - **The eval context is `{data, metadata, temp_data}` only.** `payload` is a
   field of `Message`, not of the context: a literal `var` path rooted at
   `payload` is a `PAYLOAD_VAR` Defect at compile, and `parse_json` with
-  `"source": "payload"` is how the payload reaches `data` (`tests/checks.rs`).
+  `"source": "payload"` is how the payload reaches `data` (`tests/it/checks.rs`).
 - **`metadata.progress` is written after every recorded call** that is not a
   `Skip`, as `{workflow_id, task_id, status_code}`; cross-workflow chaining
-  reads it. Never gate or skip the write (`tests/run_basics.rs`, the corpus).
+  reads it. Never gate or skip the write (`tests/it/run_basics.rs`, the corpus).
 - **A policy applies after the status is classified.** A task's `on_failure`
   (`fail`, `continue`, `halt`) covers a 5xx or an `Err`, `on_rejection`
   (`continue`, `halt`) a 4xx; `terminal` ends the workflow after either. A
   failing `validation` returns 400 and records `VALIDATION_ERROR` per rule;
   the next task runs unless `on_rejection: halt` (`src/run/policy.rs`,
-  `tests/run_basics.rs`, `corpus/cases/builtins/validation.json`).
+  `tests/it/run_basics.rs`, `corpus/cases/builtins/validation.json`).
 - **A `null` `map` result is skipped,** so `{"if": [c, v, null]}` means "set
   or keep"; removal is `unset: true` or `on_null: "unset"`. `mode: "append"`
   and `"extend"` stay O(entry): one `Change` per element at `path.<index>`,
@@ -364,48 +391,51 @@ Each rule lives once in the code; the test named beside it is what pins it.
   runs over its own bindings and overlay; the fold applies overlays in element
   order and stops at the first element that fails the task or halts, so
   `max_concurrency` can never change results. `for_each` is refused on a
-  built-in (`tests/fan_out.rs`, `results_are_identical_at_every_concurrency`).
+  built-in (`tests/it/fan_out.rs`, `results_are_identical_at_every_concurrency`).
 - **A loop's slots are the engine's.** Per sweep the engine writes the counter
   (and `as`, `scratch`) to `temp_data`, checks `counter < max`, re-evaluates
   the condition and runs the task list; reaching `max` is normal completion; a
   `Halt` ends the whole loop. A body task writing the counter's path is
-  overwritten at the next increment (`tests/run_loops.rs`).
+  overwritten at the next increment (`tests/it/run_loops.rs`).
 - **The deadline and the token are checked** at every host call, fan-out
   element and sweep, and every 64th op while one is set; natively a host call
   also races them, so a run with a deadline needs a Tokio runtime with its time
   driver. Only the run's own limits end it `TimedOut` or `Cancelled`; a
   function's own `TimedOut`, a child run's included, ends it `Stopped` when its
   policies stop the run, and a host call that fails at or after the run's limit
-  is the limit's (`tests/deadline.rs`).
+  is the limit's (`tests/it/deadline.rs`).
 - **A root takes only an object.** `Ctx::set`, `emit` and a replayed overlay
   assign; at `data`, `metadata` or `temp_data` anything but an object is a
   `Config` error. `map` merges an object at a root; a constant non-object
   `logic` at a literal root is `INVALID_MAPPING`, any other non-object result
-  fails the mapping (`tests/host_calls.rs`, `src/function/builtins/map.rs`).
+  fails the mapping (`tests/it/host_calls.rs`, `src/function/builtins/map.rs`).
 - **An array index stops at `MAX_ARRAY_INDEX`** (2^20 − 1): a larger bare
   numeric segment is a key, so no path from a trace or a computed value can grow
   an array without bound (`src/expr/path.rs`, the wasm `contexts` test).
 - **Error codes come from one classifier,** `Error::code`: `LOGIC_ERROR`,
   `BUDGET_EXCEEDED`, `TIMEOUT_ERROR`, `CANCELLED`, `CONFIG_ERROR`, `COMPILATION_ERROR`, and a
   `Service` code verbatim (an empty one is `TASK_ERROR`). The record codes
-  `TASK_STATUS_ERROR`, `VALIDATION_ERROR` and `EVALUATION_ERROR` are the
-  recorder's and the built-ins'. There is no `WORKFLOW_ERROR` wrapper
-  (`src/base/error.rs`'s unit tests; `tests/run_basics.rs`).
+  `TASK_STATUS_ERROR`, `VALIDATION_ERROR`, `EVALUATION_ERROR` and
+  `MAPPING_ERROR` are the recorder's and the built-ins': a failed `map`
+  mapping records `MAPPING_ERROR` at its destination before the recorder's
+  `TASK_STATUS_ERROR`, and a built-in over the ops budget fails its task.
+  There is no `WORKFLOW_ERROR` wrapper (`src/base/error.rs`'s unit tests;
+  `tests/it/run_basics.rs`, `src/function/builtins/map.rs`, `tests/it/ops_budget.rs`).
 - **Reserved names cannot be registered.** `Registry::register` panics on a
   name in `def::BUILTIN_FUNCTIONS` and on `validate`, 3.x's alias the compat
   reader rewrites to `validation`; and on a malformed spec (a `Reference` that
   reaches no field, `runtime_fields` on a config that is not `Templated`)
-  (`tests/registry.rs`).
+  (`tests/it/registry.rs`).
 - **Every config parameter is JSONLogic, and the static spelling is free.** A
   literal folds at compile and costs nothing per call; `Expr::constant`
   borrows it. Resolution borrows: `Ctx::eval` lends a folded constant and
-  `Ctx::render` builds no tree (`tests/expr.rs`, `tests/documents.rs`).
+  `Ctx::render` builds no tree (`tests/it/expr.rs`, `tests/it/documents.rs`).
 - **The template-key escape (`$`) is always on:** `{"$cat": …}` is the literal
   object, `{"cat": …}` the operator; exactly one prefix is stripped from every
   template key, so a template emitting `$`-prefixed keys doubles them. A
   single-key object with an unknown key is not inert: it is the ordinary
   output-template shape, which is why there is no "unknown operator" lint
-  (the escape in `tests/checks.rs`; the shape in `src/expr/engine.rs`'s
+  (the escape in `tests/it/checks.rs`; the shape in `src/expr/engine.rs`'s
   `an_unrecognised_operator_is_not_an_error_under_templating`).
 - **Operator families are opt-in, and enabling one is not a no-op.** The
   engine evaluates in templating mode, so an operator whose family is off is
@@ -415,7 +445,7 @@ Each rule lives once in the code; the test named beside it is what pins it.
   in workflows that already ship. `budget` is a config knob, not a family:
   `ExprEngineBuilder::ops_budget` installs the ceiling, exceeded as
   `ErrorKind::Budget` (`src/expr/engine.rs`'s gated-operator tests,
-  `tests/operators.rs`, `tests/ops_budget.rs`).
+  `tests/it/operators.rs`, `tests/it/ops_budget.rs`).
 - **Secrets are an operator, not a context root.** `{"secret": "name"}` reads
   the `ExprEngine`'s `Secrets`; nothing is composed into the message, a `map`
   mapping, a `log` expression and an `Output` may not read one, `Ctx::input()`
@@ -425,21 +455,23 @@ Each rule lives once in the code; the test named beside it is what pins it.
   they write, byte for byte, a whole-number float staying a float (serde_json
   with `float_roundtrip`); a context holds only the three roots and refuses a
   fourth key, a non-object and a root twice, and a message's roots are
-  objects (a trace's context takes a redacted root's `null`); `Run`
+  objects (a trace's context takes a redacted root's `null`); the reader
+  refuses an object holding a key twice, anywhere, and `parse_json` folds
+  one to its first position and last value (`base::context`); `Run`
   serializes as `{status, error?, retryable, partial, matched, workflows}`.
   Key order is the source's everywhere: the crate turns on serde_json's
   `preserve_order`, so an `Interpolated` document (a Mongo `$sort`) renders
   as authored and issues come out in the definition's order, and pretty
   `publish_json`, `publish_xml` and `parse_xml` keep it through
-  `OwnedDataValue` (`tests/wire.rs`, `tests/run_json.rs`,
-  `tests/documents.rs`).
+  `OwnedDataValue` (`tests/it/wire.rs`, `tests/it/run_json.rs`,
+  `tests/it/documents.rs`).
 - **`Change::replaced` is the trace's alone;** an audit entry keeps v3's bytes.
   A trace records its own changes whatever `capture_changes` says
-  (`tests/trace.rs`).
+  (`tests/it/trace.rs`).
 - **The error context is the engine's slot:** `ErrorContext::new(path, limit)`
   refuses a root, a path at or below an engine `metadata` slot, and a limit of
   0; the engine removes the key at run start and mirrors each failing call's
-  records there (`tests/error_context.rs`).
+  records there (`tests/it/error_context.rs`).
 - **The bindings are held by a drift test.** `bindings/dataflow.d.ts` is
   rendered from the wire types under `ts` (`DATAFLOW_TS_WRITE=1 cargo test
   --features ts --test ts_types`); a doc edit on a wire type means regenerating
@@ -448,8 +480,8 @@ Each rule lives once in the code; the test named beside it is what pins it.
 - **`def::parse` reports every unknown key.** A near miss of a known key is a
   `LIKELY_TYPO` Defect; any other unknown key an `UNKNOWN_KEY` Advisory, kept
   in the node's `ext`; a v3 policy key beside a v4 one is refused; with the
-  reader off every unknown key is Rejected (`tests/parse.rs`, `tests/compat.rs`,
-  `tests/repository_definitions.rs` over every definition in the repository).
+  reader off every unknown key is Rejected (`tests/it/parse.rs`, `tests/it/compat.rs`,
+  `tests/it/repository_definitions.rs` over every definition in the repository).
 
 ## The wasm and UI packages
 
@@ -491,7 +523,13 @@ checkout's build, and `release.yml` rewrites the requirement at publish.
 
 Unit tests live in `mod tests` blocks beside the code they cover; `src/state/`
 has its model tests under `src/state/tests/`. The integration suite is one
-binary per topic under `tests/`, with shared fixtures in `tests/support/`:
+binary, `tests/it/`, with a module per topic and the shared fixtures in
+`tests/it/support/` (`golden` for every golden file, `run_helpers` for the
+end-to-end runs), so a build links the crate once rather than once per
+topic. Two files stay their own binaries: `tests/secrets_isolation.rs`
+installs the process's logger and asserts over everything it logged, and
+`tests/ts_types.rs` is named in the bindings' header and builds only under
+`ts`. Run one topic with `cargo test --test it run_basics::`:
 
 | File | Covers |
 |---|---|
@@ -500,6 +538,7 @@ binary per topic under `tests/`, with shared fixtures in `tests/support/`:
 | `compat.rs` | The compat reader: every 3.x spelling, `migrate_v3`, mixed spellings refused |
 | `compile.rs` | `Compiler::check`, `check_steps`, `compile_one`, the oracle |
 | `config_fields.rs` | Every `ConfigField` type and the derive's attributes |
+| `corpus.rs` | Every corpus case through the driver, held to `tests/golden/corpus/` |
 | `deadline.rs` | The run's deadline and token, a child run's, a host call at the limit |
 | `derive.rs` | The derive: nested configs, defaults, outputs, `resolve` |
 | `documents.rs` | `Interpolated` rendering end to end |
@@ -519,11 +558,11 @@ binary per topic under `tests/`, with shared fixtures in `tests/support/`:
 | `repository_definitions.rs` | Every definition in the repository parses and compiles |
 | `run_basics.rs`, `run_loops.rs` | The engine end to end: policies, groups, progress; loops |
 | `run_json.rs` | `Run` as JSON |
-| `secrets_isolation.rs` | The never-recorded guarantee, exit by exit |
-| `smoke.rs` | The crate version |
 | `trace.rs` | The trace: steps, changes, redaction, the budget, replay |
-| `ts_types.rs` | The bindings' drift and the wire check (needs `ts`) |
 | `wire.rs` | Messages and traces read back byte for byte |
+| `main.rs` | The modules, and the crate version |
+| `../secrets_isolation.rs` | The never-recorded guarantee, exit by exit (its own binary) |
+| `../ts_types.rs` | The bindings' drift and the wire check (its own binary, needs `ts`) |
 
 A host tests one function with `function::testing::call(f, json!({..}))`,
 which runs the real compile, overlay and layers with no engine assembled, and

@@ -1,0 +1,114 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY tasks[0].continue_on_error"
+      ],
+      "compiled": true
+    },
+    {
+      "issues": [
+        "INVALID_MAPPING REJECTED tasks[0].function.input.mappings[0].logic"
+      ],
+      "compiled": false
+    },
+    {
+      "issues": [
+        "INVALID_MAPPING REJECTED tasks[0].function.input.mappings[0].path"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "s": "str",
+              "list": [
+                0,
+                1,
+                2,
+                3
+              ]
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.list.1",
+                  "old_value": null,
+                  "new_value": 1
+                },
+                {
+                  "path": "data.list.2",
+                  "old_value": null,
+                  "new_value": 2
+                },
+                {
+                  "path": "data.list.3",
+                  "old_value": null,
+                  "new_value": 3
+                }
+              ],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "MAPPING_ERROR",
+              "message": "mappings[2] (data.s): the target holds a string, not an array",
+              "path": "data.s",
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "TASK_STATUS_ERROR",
+              "message": "Task t returned status 500",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w t executed 500"
+        ]
+      }
+    }
+  ]
+}

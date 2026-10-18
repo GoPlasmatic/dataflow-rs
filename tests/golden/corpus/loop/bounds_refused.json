@@ -1,0 +1,17 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "LOOP_BOUND_EMPTY REJECTED loop.max"
+      ],
+      "compiled": false
+    },
+    {
+      "issues": [
+        "LOOP_INCREMENT_TOO_SMALL REJECTED loop.increment"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": []
+}

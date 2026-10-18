@@ -60,6 +60,14 @@
       ],
       "errors": [
         {
+          "code": "MAPPING_ERROR",
+          "message": "mappings[0] (data.text): the target holds a string, not an array",
+          "path": "data.text",
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
+        {
           "code": "TASK_STATUS_ERROR",
           "message": "Task bad returned status 500",
           "path": null,
@@ -116,6 +124,14 @@
         }
       ],
       "errors": [
+        {
+          "code": "MAPPING_ERROR",
+          "message": "mappings[0] (data.text): the target holds a string, not an array",
+          "path": "data.text",
+          "workflow_id": "w",
+          "task_id": "bad",
+          "timestamp": "<timestamp>"
+        },
         {
           "code": "TASK_STATUS_ERROR",
           "message": "Task bad returned status 500",

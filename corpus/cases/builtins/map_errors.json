@@ -1,5 +1,5 @@
 {
-  "description": "A failing mapping is logged and the later mappings still run; the task returns 500 at the end, recorded as TASK_STATUS_ERROR.",
+  "description": "A failing mapping records MAPPING_ERROR at its path and the later mappings still run; the task returns 500 at the end, recorded as TASK_STATUS_ERROR after it.",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "continue_on_error": true, "function": {"name": "map", "input": {"mappings": [

@@ -112,8 +112,8 @@ let parsed = parse(
     ParseOptions::default(),
 );
 let def = parsed.def.expect("nothing was rejected");
-assert_eq!(def.id, "w");
-assert_eq!(def.tasks.len(), 1);
+assert_eq!(def.id(), "w");
+assert_eq!(def.tasks().len(), 1);
 
 // The near miss loads, kept in the task's `ext`, and is reported.
 assert_eq!(parsed.issues[0].code, IssueCode::LikelyTypo);
@@ -160,8 +160,8 @@ let parsed = parse(
     ParseOptions::default(),
 );
 let def = parsed.def.expect("the 3.x definition loads");
-let StepDef::Task(task) = &def.tasks[0] else { panic!("a task") };
-assert_eq!(task.on_failure, FailurePolicy::Continue);
+let StepDef::Task(task) = &def.tasks()[0] else { panic!("a task") };
+assert_eq!(task.on_failure(), FailurePolicy::Continue);
 assert_eq!(parsed.issues[0].code, IssueCode::V3Spelling);
 assert_eq!(parsed.issues[0].severity, Severity::Advisory);
 assert_eq!(parsed.issues[0].path.to_string(), "tasks[0].continue_on_error");

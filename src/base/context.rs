@@ -7,6 +7,7 @@
 use datavalue::{NumberValue, OwnedDataValue};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 /// The three roots, in the order a context holds them.
@@ -20,7 +21,9 @@ pub(crate) const ROOTS: [&str; 3] = ["data", "metadata", "temp_data"];
 /// that order, reads a missing one as `{}`, takes any value at each (a
 /// trace's redacted root is `null`), and refuses any other key: break 22,
 /// since expressions evaluate against the whole object and a fourth key
-/// would be readable by `{"var": …}`.
+/// would be readable by `{"var": …}`. An object anywhere in it holding a key
+/// twice is refused too: the engine reads the first, where a JSON parser
+/// keeps the last, so the two would disagree on what the context says.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Context {
     pub(crate) root: OwnedDataValue,
@@ -147,9 +150,11 @@ impl<'de> Visitor<'de> for Roots {
 
 /// A value read back as v4 wrote it: as [`OwnedDataValue`]'s own reader
 /// reads it, except that a number written with a fraction or an exponent
-/// stays a float, as `OwnedDataValue::from(&serde_json::Value)` keeps one.
-/// That reader makes `2.0` the integer `2`, which writes back as `2`, so a
-/// message holding a whole-number float would not read back byte for byte.
+/// stays a float, as `OwnedDataValue::from(&serde_json::Value)` keeps one,
+/// and an object holding a key twice is refused. That reader makes `2.0` the
+/// integer `2`, which writes back as `2`, so a message holding a
+/// whole-number float would not read back byte for byte; and it keeps both
+/// pairs of a repeated key, which every path rule reads as one.
 pub(crate) fn exact<'de, D: Deserializer<'de>>(d: D) -> Result<OwnedDataValue, D::Error> {
     d.deserialize_any(ExactValue)
 }
@@ -236,8 +241,68 @@ impl<'de> Visitor<'de> for ExactValue {
         while let Some(key) = map.next_key::<String>()? {
             pairs.push((key, map.next_value::<Exact>()?.0));
         }
+        if let Some(key) = repeated_key(&pairs) {
+            return Err(de::Error::custom(format_args!(
+                "an object holds the key `{key}` twice"
+            )));
+        }
         Ok(OwnedDataValue::Object(pairs))
     }
+}
+
+/// Above this many keys, an object finds a repeated key through a set
+/// rather than a scan.
+const SCAN: usize = 8;
+
+/// The first key `pairs` holds a second time, if any.
+pub(crate) fn repeated_key(pairs: &[(String, OwnedDataValue)]) -> Option<&str> {
+    if pairs.len() <= SCAN {
+        return pairs
+            .iter()
+            .enumerate()
+            .find(|(i, (key, _))| pairs[..*i].iter().any(|(k, _)| k == key))
+            .map(|(_, (key, _))| key.as_str());
+    }
+    let mut seen = HashSet::with_capacity(pairs.len());
+    pairs
+        .iter()
+        .map(|(key, _)| key.as_str())
+        .find(|key| !seen.insert(*key))
+}
+
+/// `value` with every object in it holding each key once: a repeated key
+/// keeps its first position and its last value, as `serde_json::Value`
+/// reads one.
+pub(crate) fn keep_last(value: &mut OwnedDataValue) {
+    match value {
+        OwnedDataValue::Object(pairs) => {
+            if repeated_key(pairs).is_some() {
+                fold_repeats(pairs);
+            }
+            pairs.iter_mut().for_each(|(_, v)| keep_last(v));
+        }
+        OwnedDataValue::Array(items) => items.iter_mut().for_each(keep_last),
+        _ => {}
+    }
+}
+
+/// [`keep_last`] on one object known to hold a key twice.
+#[cold]
+fn fold_repeats(pairs: &mut Vec<(String, OwnedDataValue)>) {
+    // Each pair's key's first index; a later pair moves its value there.
+    let mut first: HashMap<&str, usize> = HashMap::with_capacity(pairs.len());
+    let firsts: Vec<usize> = pairs
+        .iter()
+        .enumerate()
+        .map(|(i, (key, _))| *first.entry(key.as_str()).or_insert(i))
+        .collect();
+    for (i, &to) in firsts.iter().enumerate() {
+        if to != i {
+            pairs[to].1 = std::mem::take(&mut pairs[i].1);
+        }
+    }
+    let mut kept = firsts.iter().enumerate().map(|(i, &to)| to == i);
+    pairs.retain(|_| kept.next() == Some(true));
 }
 
 #[cfg(test)]
@@ -294,5 +359,34 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(big, OwnedDataValue::from(&json!(u64::MAX)));
+    }
+    #[test]
+    fn a_repeated_key_keeps_its_first_position_and_its_last_value() {
+        let fold = |text: &str| {
+            let mut value = OwnedDataValue::from_json(text).unwrap();
+            keep_last(&mut value);
+            serde_json::to_string(&value).unwrap()
+        };
+        assert_eq!(
+            fold(r#"{"a":1,"b":2,"a":3,"c":4,"b":5}"#),
+            r#"{"a":3,"b":5,"c":4}"#
+        );
+        // Inside arrays and objects, and inside a repeated key's last value.
+        assert_eq!(
+            fold(r#"[{"x":{"y":1,"y":2}},{"a":{"q":1},"a":{"q":2,"q":3}}]"#),
+            r#"[{"x":{"y":2}},{"a":{"q":3}}]"#
+        );
+        // Past the scan, through the set.
+        let wide: String = (0..12).map(|i| format!(r#""k{i}":{i},"#)).collect();
+        let wanted: String = (0..12)
+            .map(|i| format!(r#""k{i}":{},"#, if i == 3 { 99 } else { i }))
+            .collect();
+        assert_eq!(
+            fold(&format!(r#"{{{wide}"k3":99}}"#)),
+            format!("{{{}}}", wanted.trim_end_matches(','))
+        );
+        // Nothing repeated, nothing moves.
+        let plain = r#"{"b":1,"a":{"b":2},"c":[{"b":3}]}"#;
+        assert_eq!(fold(plain), plain);
     }
 }

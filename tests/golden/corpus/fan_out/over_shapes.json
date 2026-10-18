@@ -1,0 +1,114 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    },
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY tasks[0].continue_on_error"
+      ],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 2,
+          "workflows": [
+            {
+              "id": "empty",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            },
+            {
+              "id": "scalar",
+              "index": 1,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "empty": [],
+              "scalar": "x",
+              "empty_results": [],
+              "after_ran": true
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "scalar",
+                "task_id": "after",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "empty",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.empty_results",
+                  "old_value": null,
+                  "new_value": []
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "scalar",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "scalar",
+              "task_id": "after",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.after_ran",
+                  "old_value": null,
+                  "new_value": true
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": [
+            {
+              "code": "LOGIC_ERROR",
+              "message": "Task t error: Logic evaluation error: Task t: for_each.over must evaluate to an array, got a string",
+              "path": null,
+              "workflow_id": "scalar",
+              "task_id": "t",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "empty t executed 200",
+          "scalar t executed 500",
+          "scalar after executed 200"
+        ]
+      }
+    }
+  ]
+}

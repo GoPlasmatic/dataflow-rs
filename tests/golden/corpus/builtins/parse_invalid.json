@@ -1,0 +1,116 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "V3_SPELLING ADVISORY continue_on_error",
+        "V3_SPELLING ADVISORY tasks[0].continue_on_error",
+        "V3_SPELLING ADVISORY tasks[1].continue_on_error",
+        "V3_SPELLING ADVISORY tasks[2].continue_on_error"
+      ],
+      "compiled": true
+    },
+    {
+      "issues": [
+        "INPUT_PARSE REJECTED tasks[0].function.input.target"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed_with_errors",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "bad": "{not json",
+              "bad_xml": "<<<",
+              "obj": {
+                "a": 1
+              },
+              "out": "{not json"
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "not_string",
+                "status_code": 500
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "bad_json",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.out",
+                  "old_value": null,
+                  "new_value": "{not json"
+                }
+              ],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "bad_xml",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "not_string",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 500
+            }
+          ],
+          "errors": [
+            {
+              "code": "VALIDATION_ERROR",
+              "message": "Task bad_xml error: Validation error: Failed to parse XML: syntax error: tag not closed: `>` not found before end of input",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "bad_xml",
+              "timestamp": "<timestamp>"
+            },
+            {
+              "code": "VALIDATION_ERROR",
+              "message": "Task not_string error: Validation error: ParseXml: Source 'data.obj' is not a string",
+              "path": null,
+              "workflow_id": "w",
+              "task_id": "not_string",
+              "timestamp": "<timestamp>"
+            }
+          ]
+        },
+        "trace": [
+          "w bad_json executed 200",
+          "w bad_xml executed 500",
+          "w not_string executed 500"
+        ]
+      }
+    }
+  ]
+}

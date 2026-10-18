@@ -1,5 +1,3 @@
-#![cfg(feature = "ts")]
-
 // The generated TypeScript types of the wire shapes (I133), and the checks
 // that hold them.
 //
@@ -25,24 +23,24 @@
 // and every literal of a declared union must have been written by some
 // sample, so a key the serializers never write fails too.
 
-use dataflow_corpus::case::{AuditSpec, Step};
-use dataflow_rs::def::{ParseOptions, parse};
-use dataflow_rs::expr::{ExprEngine, Secrets};
+use dataflow_rs::RunOptions;
 use dataflow_rs::observe::{StepResult, Trace, TraceOptions, TraceStep};
 use dataflow_rs::program::{
-    AuthoredPath, CompileOptions, Issue, IssueCode, Severity, StepKind, TaskIx, WorkflowIx,
+    AuthoredPath, Issue, IssueCode, Severity, StepKind, TaskIx, WorkflowIx,
 };
 use dataflow_rs::run::{
-    AuditEntry, AuditMode, CancelToken, Change, Context, EngineConfig, ErrorContext, ErrorRecord,
-    RunStatus, Selection, WorkflowExit, WorkflowRecord,
+    AuditEntry, CancelToken, Change, Context, ErrorRecord, RunStatus, Selection, WorkflowExit,
+    WorkflowRecord,
 };
-use dataflow_rs::{Ctx, Engine, Error, Function, Message, Outcome, Path, Registry, Result, Run};
-use dataflow_rs::{RunOptions, WorkflowDef};
+use dataflow_rs::{Ctx, Engine, Error, Function, Message, Outcome, Result, Run};
 use datavalue::OwnedDataValue;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use ts_rs::{Config, TS};
+
+#[path = "it/support/corpus_driver.rs"]
+mod corpus_driver;
 
 // ---------------------------------------------------------------------------
 // The exporter
@@ -215,11 +213,9 @@ async fn every_wire_shape_holds_to_its_declaration() {
     let decls = tsd::parse(&render()).expect("the rendered text reads");
     let checker = tsd::Checker::new(&decls);
     let mut samples = Samples::default();
-    let ran = corpus(&mut samples).await;
-    assert!(
-        ran >= 60,
-        "the corpus ran {ran} steps: fewer than it should"
-    );
+    // The driver fails a case whose steps would run on an engine that
+    // compiled nothing, so every step here writes what it says.
+    corpus(&mut samples).await;
     made(&mut samples).await;
 
     let mut seen = tsd::Coverage::new();
@@ -268,122 +264,28 @@ impl Samples {
     }
 }
 
-/// What a corpus case's `Json` is, as a `serde_json::Value`.
-fn value(json: &impl Serialize) -> Value {
-    serde_json::to_value(json).expect("corpus JSON is JSON")
+/// Every corpus case the build satisfies, through the corpus driver, each
+/// run step run plain and traced with timings: every message, `Run`, trace
+/// and issue it makes.
+async fn corpus(samples: &mut Samples) {
+    for (path, case) in dataflow_corpus::load_cases() {
+        if !corpus_driver::satisfied(&case.requires) {
+            continue;
+        }
+        let name = dataflow_corpus::case_name(&path);
+        let options = corpus_driver::Options { timings: true };
+        corpus_driver::run_case(&name, &case, options, samples).await;
+    }
 }
 
-/// Every corpus case v4 builds, each run step run traced, with timings, on
-/// the case's message and options; every definition's parse and check
-/// issues. Returns the run steps run.
-async fn corpus(samples: &mut Samples) -> usize {
-    let mut ran = 0;
-    for (path, case) in dataflow_corpus::load_cases() {
-        let name = dataflow_corpus::case_name(&path);
-        let registry = || {
-            let mut exprs = ExprEngine::builder();
-            if let Some(secrets) = &case.engine.secrets {
-                let secrets = Secrets::new(OwnedDataValue::from(&value(secrets)));
-                exprs = exprs.secrets(secrets.expect("a case's secrets are an object"));
-            }
-            Registry::new(exprs.build().expect("the case's expression engine builds"))
-        };
-        let config = || {
-            let mut cfg = EngineConfig::default();
-            if let Some(ec) = &case.engine.error_context {
-                let path: Path = ec.path.parse().expect("an error context path");
-                let ec = ErrorContext::new(path, ec.limit.unwrap_or(50));
-                cfg = cfg.error_context(ec.expect("an error context"));
-            }
-            cfg
-        };
-        // The definitions v4 compiles, each on its own; the issues of all.
-        let build = |defs: &[Value], samples: &mut Samples| {
-            let registry = registry();
-            let compiler = registry.compiler(CompileOptions::default());
-            let mut kept: Vec<WorkflowDef> = Vec::new();
-            for (i, raw) in defs.iter().enumerate() {
-                let parsed = parse(raw, ParseOptions::default());
-                for issue in &parsed.issues {
-                    samples.push("Issue", format!("{name} definition {i}"), issue);
-                }
-                let Some(def) = parsed.def else { continue };
-                for issue in compiler.check(&def) {
-                    samples.push("Issue", format!("{name} definition {i}"), &issue);
-                }
-                if compiler.compile_one(&def).is_ok() {
-                    kept.push(def);
-                }
-            }
-            kept.into_iter()
-                .fold(Engine::builder().registry(registry), |b, def| {
-                    b.workflow(def)
-                })
-                .config(config())
-                .build()
-                .ok()
-        };
-        let defs: Vec<Value> = case.workflows.iter().map(value).collect();
-        let mut engine = build(&defs, samples);
-        for (i, step) in case.steps.iter().enumerate() {
-            let spec = match step {
-                Step::Reload(reload) => {
-                    let defs: Vec<Value> = reload.workflows.iter().map(value).collect();
-                    engine = build(&defs, samples);
-                    continue;
-                }
-                Step::Run(spec) => spec,
-            };
-            let Some(engine) = &engine else { continue };
-            let m = &spec.message;
-            let seed = |json: &Option<dataflow_corpus::Json>| {
-                json.as_ref()
-                    .map_or(OwnedDataValue::Null, |j| OwnedDataValue::from(&value(j)))
-            };
-            let mut message = Message::from_parts(
-                OwnedDataValue::from(&value(&m.payload)),
-                seed(&m.data),
-                seed(&m.metadata),
-            )
-            .with_id(m.id.clone());
-            let temp = seed(&m.temp_data);
-            if temp.is_object() {
-                let root: Path = "temp_data".parse().unwrap();
-                message.context_mut().set(&root, temp).unwrap();
-            }
-            let mut opts = RunOptions::default();
-            if let Some(channel) = &spec.channel {
-                opts = opts.channel(channel);
-            }
-            if let Some(bucket) = spec.routing_bucket {
-                opts = opts.routing_bucket(bucket);
-            }
-            if let Some(on) = spec.capture_changes {
-                opts = opts.capture_changes(on);
-            }
-            if let Some(mode) = &spec.audit_mode {
-                opts = opts.audit(match mode {
-                    AuditSpec::Full => AuditMode::Full,
-                    AuditSpec::Off => AuditMode::Off,
-                    AuditSpec::Last(n) => AuditMode::Last(*n),
-                });
-            }
-            if spec.trace.enabled {
-                let redact = spec.trace.redact_paths.iter();
-                let redact: Vec<Path> = redact.filter_map(|p| p.parse().ok()).collect();
-                opts = opts.trace(
-                    TraceOptions::default()
-                        .timings(true)
-                        .changes(spec.trace.changes)
-                        .redact(redact),
-                );
-            }
-            let run = engine.run_with(&mut message, &opts).await;
-            samples.run(&format!("{name} step {i}"), &message, &run);
-            ran += 1;
-        }
+impl corpus_driver::Sink for Samples {
+    fn issue(&mut self, label: &str, issue: &Issue) {
+        self.push("Issue", label, issue);
     }
-    ran
+
+    fn run(&mut self, label: &str, message: &Message, run: &Run) {
+        Self::run(self, label, message, run);
+    }
 }
 
 /// Writes `temp_data.r` from `temp_data.x`, and records an error carrying

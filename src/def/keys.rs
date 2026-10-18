@@ -139,7 +139,7 @@ pub(crate) struct BuiltinInput {
 pub(crate) fn builtin_input(name: &str) -> Option<BuiltinInput> {
     let (keys, elements) = match name {
         "map" => (MAP_KEYS, Some(("mappings", MAPPING_KEYS))),
-        "validation" => (VALIDATION_KEYS, Some(("rules", RULE_KEYS))),
+        super::VALIDATION => (VALIDATION_KEYS, Some(("rules", RULE_KEYS))),
         "filter" => (FILTER_KEYS, None),
         "log" => (LOG_KEYS, None),
         "parse_json" | "parse_xml" => (PARSE_KEYS, None),
@@ -164,6 +164,13 @@ impl Level {
     /// Whether `key` is one of the level's known keys.
     pub(super) fn knows(&self, key: &str) -> bool {
         self.known.contains(&key)
+    }
+
+    /// The level's known keys, for the tests that hold the table to the
+    /// walk, the serializer and the types.
+    #[cfg(test)]
+    pub(super) fn known(&self) -> &'static [&'static str] {
+        self.known
     }
 }
 

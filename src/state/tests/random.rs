@@ -69,6 +69,10 @@ pub fn value_at(rng: &mut Rng, depth: usize) -> OwnedDataValue {
     }
 }
 
+/// A random object, each key once, as every context is: the wire reader
+/// refuses an object holding a key twice and `parse_json` folds one. The
+/// write log takes a key for one slot, so a removed key held twice would
+/// read as absent while the tree still holds its second pair.
 fn object(rng: &mut Rng, depth: usize) -> OwnedDataValue {
     let mut pairs: Vec<(String, OwnedDataValue)> = Vec::new();
     for _ in 0..rng.below(5) {

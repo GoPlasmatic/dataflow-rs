@@ -1,0 +1,78 @@
+{
+  "definitions": [
+    {
+      "issues": [],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "v": 5,
+              "word": "not"
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "broken",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "quiet",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "loud",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 200
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "broken",
+              "timestamp": "<timestamp>",
+              "changes": [],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w quiet executed 200",
+          "w loud executed 200",
+          "w broken executed 200"
+        ]
+      }
+    }
+  ]
+}

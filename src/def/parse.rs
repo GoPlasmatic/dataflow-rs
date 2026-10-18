@@ -149,6 +149,7 @@ pub(crate) fn parse_steps(
     };
     let mut walk = Walk::new(opts.compat, issues, exts);
     let steps = walk.steps(Some(list), root, setup, depth);
+    walk.finish();
     let rejected = walk.rejected();
     ((!rejected).then_some(steps), walk.issues)
 }
@@ -179,6 +180,29 @@ pub(crate) fn fragment_place(root: &AuthoredPath) -> (bool, usize) {
     }
 }
 
+/// Whether a step object is a group: it carries a `tasks` key, whatever its
+/// value. The walk and the compat reader classify a step with this alone.
+pub(super) fn is_group(obj: &Map<String, Value>) -> bool {
+    obj.contains_key("tasks")
+}
+
+/// The kind every issue inside a step is stamped with: [`StepKind::Setup`]
+/// for any step of a `loop.setup` list, `setup`, else a group's or a task's.
+pub(super) fn step_kind(obj: &Map<String, Value>, setup: bool) -> StepKind {
+    match () {
+        () if setup => StepKind::Setup,
+        () if is_group(obj) => StepKind::Group,
+        () => StepKind::Task,
+    }
+}
+
+/// Whether a group `depth` groups deep has its members walked: the walk
+/// refuses a deeper one as `GROUP_TOO_DEEP` and the reader leaves it as
+/// written.
+pub(super) fn descends(depth: usize) -> bool {
+    depth < MAX_GROUP_DEPTH
+}
+
 /// The walk over `object`, its issues following `issues`, with the `ext`s the
 /// reader began.
 fn walk(
@@ -189,6 +213,7 @@ fn walk(
 ) -> Parsed {
     let mut walk = Walk::new(compat, issues, exts);
     let def = walk.workflow(object);
+    walk.finish();
     let rejected = walk.rejected();
     Parsed {
         def: (!rejected).then_some(def),
@@ -219,6 +244,26 @@ impl<'j> Walk<'j> {
             seen: HashMap::new(),
             step: None,
             exts,
+        }
+    }
+
+    /// Ends the walk: every `ext` the reader began must have been taken by
+    /// the node at its path. One left over is a key the reader moved and the
+    /// walk never reached, so the Advisory "kept in `ext`" would be false:
+    /// Rejected, so the definition is not loaded without it.
+    fn finish(&mut self) {
+        debug_assert!(
+            self.exts.is_empty(),
+            "the reader began an ext the walk never took: {:?}",
+            self.exts.keys().collect::<Vec<_>>()
+        );
+        let mut lost: Vec<AuthoredPath> = self.exts.drain().map(|(at, _)| at).collect();
+        lost.sort_by_key(ToString::to_string);
+        for at in lost {
+            self.parse_failed(
+                at,
+                "the compat reader moved keys into this node's ext, but the walk never                  reached the node",
+            );
         }
     }
 
@@ -370,15 +415,9 @@ impl<'j> Walk<'j> {
     fn step(&mut self, node: &'j Value, at: AuthoredPath, setup: bool, depth: usize) -> StepDef {
         static EMPTY: LazyLock<Map<String, Value>> = LazyLock::new(Map::new);
         let obj: &'j Map<String, Value> = node.as_object().unwrap_or(&EMPTY);
-        let group = obj.contains_key("tasks");
+        let group = is_group(obj);
         let id = non_empty_str(obj.get("id"));
-        let kind = if setup {
-            StepKind::Setup
-        } else if group {
-            StepKind::Group
-        } else {
-            StepKind::Task
-        };
+        let kind = step_kind(obj, setup);
         self.step = Some((kind, id));
         let mut ext = self.ext(&at, obj);
 
@@ -489,7 +528,7 @@ impl<'j> Walk<'j> {
             );
         }
         // 4.1 (v3 reports the depth after the node's other rules) and 4.7.
-        let too_deep = depth >= MAX_GROUP_DEPTH;
+        let too_deep = !descends(depth);
         let members = obj.get("tasks");
         if too_deep {
             self.report(

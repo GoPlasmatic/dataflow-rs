@@ -1,14 +1,20 @@
 //! The engine's dot paths on [`Json`], as 3.x's `set_nested_value` and
 //! `remove_nested_value` applied them: an independent model that
-//! `tests/path.rs` holds `Path` to.
+//! `tests/it/path.rs` holds `Path` to.
 //!
 //! A segment is a key on an object, with one leading `#` stripped, and an index
-//! on an array, parsed from the raw segment, so `#20` is never an index. A
+//! on an array, parsed from the raw segment, so `#20` is never an index, and
+//! at most [`MAX_INDEX`]: a larger number is a key, where 3.x read any `usize`
+//! (the one rule the engine departs from on purpose). A
 //! missing container is created on demand: an array when the next segment parses
 //! as an index, an object otherwise. A write either applies in full or does
 //! nothing, and the empty path reads the root and writes nothing.
 
 use crate::json::Json;
+
+/// The largest segment that is an index, `2^20 - 1`: the engine's
+/// `MAX_ARRAY_INDEX`, so no path can grow an array without bound.
+pub const MAX_INDEX: usize = (1 << 20) - 1;
 
 struct Seg<'a> {
     key: &'a str,
@@ -22,7 +28,7 @@ fn segs(path: &str) -> Vec<Seg<'_>> {
     path.split('.')
         .map(|raw| Seg {
             key: raw.strip_prefix('#').unwrap_or(raw),
-            index: raw.parse().ok(),
+            index: raw.parse().ok().filter(|&i| i <= MAX_INDEX),
         })
         .collect()
 }

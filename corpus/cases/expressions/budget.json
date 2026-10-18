@@ -1,5 +1,5 @@
 {
-  "description": "The ops budget bounds every evaluation, but only a host function's template reports BUDGET_EXCEEDED: a workflow condition over budget fails closed to false, a map mapping over budget is logged and the task returns 500 while later mappings still run, and a script value over budget returns Err with BUDGET_EXCEEDED. A cheap expression passes. The ceiling survives a reload, so the second run records the same message.",
+  "description": "The ops budget bounds every evaluation: a workflow condition over budget fails closed (selection condition_failed, BUDGET_EXCEEDED on the Run's workflow entry, no message error); a map mapping over budget fails the whole task with BUDGET_EXCEEDED and status 500, the later mapping unwritten (3.x logged it and ran the later mappings); a script value over budget returns Err with BUDGET_EXCEEDED. A cheap expression passes, and the ceiling survives a reload, so the second run records the same message.",
   "requires": {
     "on": [
       "budget"

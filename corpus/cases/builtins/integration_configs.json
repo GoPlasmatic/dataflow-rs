@@ -1,5 +1,5 @@
 {
-  "description": "http_call, enrich and publish_kafka are config only: the build succeeds without a handler and each task fails every message with FUNCTION_NOT_FOUND. Their configs refuse unknown fields when the definition parses.",
+  "description": "http_call, enrich and publish_kafka are no longer built in: their configs are the host's, so the compat reader leaves their inputs as written, a typo included, and with no host function of that name each definition is refused at build as UNKNOWN_FUNCTION (3.x built them and failed every message with FUNCTION_NOT_FOUND).",
   "workflows": [
     {"id": "w", "name": "w", "continue_on_error": true, "tasks": [
       {"id": "call", "name": "call", "continue_on_error": true, "function": {"name": "http_call", "input": {"connector": "c", "method": "POST", "path": "/x"}}},
@@ -7,6 +7,5 @@
       {"id": "kafka", "name": "kafka", "continue_on_error": true, "function": {"name": "publish_kafka", "input": {"connector": "c", "topic": "t"}}}]},
     {"id": "typo", "name": "typo", "tasks": [
       {"id": "kafka", "name": "kafka", "function": {"name": "publish_kafka", "input": {"connector": "c", "topic": "t", "tpoic": "typo"}}}]}
-  ],
-  "steps": [{"run": {"message": {}}}]
+  ]
 }

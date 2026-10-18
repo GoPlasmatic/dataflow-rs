@@ -84,8 +84,8 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 # authored and its issues come out in its order, in every host's build. A
 # host's `serde_json::Map` keeps insertion order with it.
 serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"] }
-datalogic-rs = { version = "5.7", features = ["serde_json", "templating"] }
-datavalue = { package = "datavalue-rs", version = "0.3.1", features = ["serde", "serde_json"] }
+datalogic-rs = { version = "5.8.2", features = ["serde_json", "templating"] }
+datavalue = { package = "datavalue-rs", version = "0.3.2", features = ["serde", "serde_json"] }
 # `Instant` that works on wasm32; `std::time::Instant` natively (I86).
 web-time = "1.1"
 bumpalo = "3.20"
@@ -121,6 +121,13 @@ tokio = { version = "1", features = ["full", "test-util"] }
 futures = "0.3"
 env_logger = "0.11"
 num_cpus = "1.17"
+
+# The integration suite is `tests/it/` (one binary, a module per topic) and
+# `tests/secrets_isolation.rs`, both discovered; `ts_types` builds only with
+# the `ts` feature it tests, rather than as an empty binary.
+[[test]]
+name = "ts_types"
+required-features = ["ts"]
 
 [workspace]
 members = [".", "wasm", "docs-tests", "corpus", "derive"]

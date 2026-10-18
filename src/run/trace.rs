@@ -167,7 +167,7 @@ impl Capture {
             if !redact[..shared]
                 .iter()
                 .zip(&at[..shared])
-                .all(|(a, b)| same(a, b))
+                .all(|(a, b)| Seg::may_alias(a, b))
             {
                 continue;
             }
@@ -191,13 +191,6 @@ impl Capture {
             prune(&mut change.new_value, &inside);
         }
     }
-}
-
-/// Whether two paths' segments can name one node: by key, as on an object,
-/// or by index, as on an array. Either reading matching is enough, so a
-/// change's path is never let past a redact path it might name.
-fn same(a: &Seg, b: &Seg) -> bool {
-    a.key == b.key || a.index.is_some_and(|i| b.index == Some(i))
 }
 
 /// The suffixes of `paths` that go on below object key `key`.

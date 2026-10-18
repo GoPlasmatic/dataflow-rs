@@ -177,22 +177,6 @@ fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
     })
 }
 
-/// The first rule a read `for_each` at `at` breaks, as `parse` reports it:
-/// its code, its path and its message. `parse` checks the object it reads;
-/// the compile walk checks the definition it is handed again, since a host
-/// may edit one after `parse`, and a fan-out with no call in flight, or a
-/// result array at a root, would run as a silent no-op or replace the root.
-pub(crate) fn for_each_issue(
-    def: &ForEachDef,
-    at: &AuthoredPath,
-) -> Option<(IssueCode, AuthoredPath, String)> {
-    let problem = over_problem(&def.over.0)
-        .or_else(|| as_problem(&def.r#as))
-        .or_else(|| concurrency_problem(def.max_concurrency))
-        .or_else(|| slots_problem(def.collect.as_deref(), def.into.as_deref(), &def.r#as))?;
-    Some(problem.at(at))
-}
-
 impl Problem {
     /// The problem as an issue of the `for_each` at `at`: at its key, or at
     /// `at` itself for the whole.

@@ -224,6 +224,7 @@ async fn main() {
     let mut arena = Arena::default();
     let mut gate = gate::Gate::new("loop_scaling");
     for &(sweeps, messages) in CONFIGS {
+        let messages = gate::count(messages, 1);
         for by_handler in [false, true] {
             let engine = engine(sweeps, by_handler);
             arena = arena.max(check(&engine, &base, sweeps).await);

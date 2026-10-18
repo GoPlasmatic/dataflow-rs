@@ -38,8 +38,8 @@ use super::host::{Invoked, Layers, call_start, invoke, keep_records, replaces_a_
 use super::interp::{Over, RunEnv, elements};
 use super::policy::{self, Decision, Flow, Policy, decide};
 use super::record::{self, Completed, Stamp};
-use crate::base::{Change, ErrorRecord};
-use crate::expr::{Path, Seg};
+use crate::base::{Change, Error, ErrorKind, ErrorRecord};
+use crate::expr::{MAX_ARRAY_INDEX, Path, Seg};
 use crate::function::{Binding, BoundCall, CallInfo, CallStart, Outcome, Overlay};
 use crate::program::{CallSite, CompiledWorkflow, FanSite};
 use crate::state::RunContext;
@@ -129,6 +129,28 @@ async fn call_element<'r>(
     (index, invoked)
 }
 
+/// `items`, unless `into` has no slot for one of them: an index past
+/// [`MAX_ARRAY_INDEX`] is a key, so its result's path would name no element
+/// and the trace's replay would put it nowhere.
+fn fits_into<'e>(
+    fan: &FanSite,
+    task: &str,
+    items: std::borrow::Cow<'e, [OwnedDataValue]>,
+) -> Result<std::borrow::Cow<'e, [OwnedDataValue]>, Error> {
+    if fan.into.is_none() || items.len() <= MAX_ARRAY_INDEX + 1 {
+        return Ok(items);
+    }
+    Err(Error::new(
+        ErrorKind::Eval,
+        format!(
+            "{} has {} elements, and into holds at most {}, one result per index up to {MAX_ARRAY_INDEX}",
+            Over::FanOut(task),
+            items.len(),
+            MAX_ARRAY_INDEX + 1
+        ),
+    ))
+}
+
 /// `into`'s segments and one more for an element's slot, which each
 /// element's fold sets to its index: no path is built per element.
 fn slot_segs(into: &Path) -> Vec<Seg> {
@@ -146,7 +168,8 @@ fn slot_segs(into: &Path) -> Vec<Seg> {
 /// element order, then the task's own policy; the flow.
 ///
 /// An `over` that is not an array is one `Err` of the task, decided under
-/// the task's policy and recorded with no element. An empty one writes
+/// the task's policy and recorded with no element, and so is one with more
+/// elements than `into` has slots for. An empty one writes
 /// `into = []` with one `Change`, whose old value is `null` as v3's, and
 /// records the task once, with no element.
 pub(crate) async fn fan_out<'p>(
@@ -160,7 +183,9 @@ pub(crate) async fn fan_out<'p>(
     let task = &wf.tasks[site.task as usize];
     let task_id = env.ids(site.task).task;
     let policy = site.policy;
-    let items = match elements(rc, env.exprs, &fan.over, Over::FanOut(&task.id)) {
+    let over = elements(rc, env.exprs, &fan.over, Over::FanOut(&task.id))
+        .and_then(|items| fits_into(fan, &task.id, items));
+    let items = match over {
         Ok(items) if !items.is_empty() => items,
         // Nothing to call: an empty array completes the task, anything else
         // fails it.

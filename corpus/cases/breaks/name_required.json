@@ -1,5 +1,5 @@
 {
-  "description": "v3 requires name on a workflow and on a task: each refuses at parse with DESERIALIZATION_ERROR (validate_authored reports EMPTY_WORKFLOW_NAME for the workflow, but only PARSE_FAILED with no path for the task). A group without a name already parses and runs. Only the two named definitions run.",
+  "description": "name is optional on a workflow, a task and a group: def::parse reports no issue for any of the four definitions, and all four run in order (3.x refused a workflow or a task without a name).",
   "workflows": [
     {
       "id": "no_workflow_name",

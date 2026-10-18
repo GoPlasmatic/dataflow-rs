@@ -44,6 +44,12 @@
             {
               "workflow_id": "w",
               "task_id": "map",
+              "code": "MAPPING_ERROR",
+              "status": 500
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "map",
               "code": "TASK_STATUS_ERROR",
               "status": 500
             },
@@ -131,6 +137,14 @@
           "timestamp": "<timestamp>"
         },
         {
+          "code": "MAPPING_ERROR",
+          "message": "mappings[0] (data.text): the target holds a string, not an array",
+          "path": "data.text",
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>"
+        },
+        {
           "code": "TASK_STATUS_ERROR",
           "message": "Task map returned status 500",
           "path": null,
@@ -182,6 +196,12 @@
                 "task_id": "rules",
                 "code": "VALIDATION_ERROR",
                 "status": 400
+              },
+              {
+                "workflow_id": "w",
+                "task_id": "map",
+                "code": "MAPPING_ERROR",
+                "status": 500
               },
               {
                 "workflow_id": "w",
@@ -283,6 +303,14 @@
           "timestamp": "<timestamp>"
         },
         {
+          "code": "MAPPING_ERROR",
+          "message": "mappings[0] (data.text): the target holds a string, not an array",
+          "path": "data.text",
+          "workflow_id": "w",
+          "task_id": "map",
+          "timestamp": "<timestamp>"
+        },
+        {
           "code": "TASK_STATUS_ERROR",
           "message": "Task map returned status 500",
           "path": null,
@@ -344,6 +372,12 @@
               "task_id": "rules",
               "code": "VALIDATION_ERROR",
               "status": 400
+            },
+            {
+              "workflow_id": "w",
+              "task_id": "map",
+              "code": "MAPPING_ERROR",
+              "status": 500
             },
             {
               "workflow_id": "w",
@@ -431,6 +465,14 @@
           "code": "VALIDATION_ERROR",
           "message": "no name",
           "path": null,
+          "timestamp": "<timestamp>"
+        },
+        {
+          "code": "MAPPING_ERROR",
+          "message": "mappings[0] (data.text): the target holds a string, not an array",
+          "path": "data.text",
+          "workflow_id": "w",
+          "task_id": "map",
           "timestamp": "<timestamp>"
         },
         {

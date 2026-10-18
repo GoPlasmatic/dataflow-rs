@@ -600,10 +600,12 @@ assert_eq!(err.code(), "BUDGET_EXCEEDED");
 ```
 
 The ceiling binds every evaluation in the engine, but what happens next
-depends on who evaluated: a condition that fails to evaluate counts as false
-and a `map` mapping over the ceiling is logged and skipped, failing its task
-with a `500`, while a host function's `Ctx::eval` returns the `Budget` error
-to the function. The ceiling lives on the `ExprEngine`, so it survives a
+depends on who evaluated: a workflow's, a group's or a task's condition that
+fails to evaluate counts as false (a workflow's selection says
+`ConditionFailed`); a built-in over the ceiling (a `map` mapping, a `filter`
+condition, a `validation` rule) fails its task with `BUDGET_EXCEEDED`, under
+its `on_failure`; and a host function's `Ctx::eval` returns the `Budget`
+error to the function. The ceiling lives on the `ExprEngine`, so it survives a
 reload through `Engine::compiler` and `with_program`.
 
 ## Best Practices

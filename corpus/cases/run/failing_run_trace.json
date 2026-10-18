@@ -1,5 +1,5 @@
 {
-  "description": "A run whose second task returns Err without continue_on_error stops the engine. v3's trace holds only the step before the failure: the failing step is missing (break 5). The failing handler's write stays in the context with an empty change list on its audit entry.",
+  "description": "A run whose second task returns Err under the default on_failure stops, partial, with PARTNER_DOWN on the Run. The trace holds the step before the failure and the failing step itself, and the failing handler's write is dropped with its overlay, leaving an empty change list on its audit entry (3.x's trace missed the failing step and kept the write).",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "ok", "name": "ok", "function": {"name": "map", "input": {"mappings": [

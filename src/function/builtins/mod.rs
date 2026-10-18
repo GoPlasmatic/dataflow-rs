@@ -64,14 +64,6 @@ impl BuiltinKind {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 
-    /// Whether no host function may take `name`: a built-in's name, or
-    /// `validate`, v3's alias for `validation`, which the compat reader
-    /// rewrites before a name is looked up, so a host function under it
-    /// could never be called.
-    pub(crate) fn reserved(name: &str) -> bool {
-        Self::from_name(name).is_some() || name == crate::def::V3_VALIDATE
-    }
-
     /// The name a task calls it by: its row of `def::BUILTIN_FUNCTIONS`,
     /// which [`Self::ALL`] follows.
     pub(crate) fn name(self) -> &'static str {
@@ -138,8 +130,8 @@ impl BuiltinKind {
         match self {
             Self::Map => MapConfig::compile(input, cx).map(Builtin::Map),
             Self::Validation => ValidationConfig::compile(input, cx).map(Builtin::Validation),
-            Self::Filter => FilterConfig::compile(input, cx).map(Builtin::Filter),
-            Self::Log => LogConfig::compile(input, cx).map(Builtin::Log),
+            Self::Filter => FilterConfig::compile(input, cx).map(|c| Builtin::Filter(c.into())),
+            Self::Log => LogConfig::compile(input, cx).map(|c| Builtin::Log(c.into())),
             Self::ParseJson => {
                 ParseConfig::compile(input, cx).map(|c| Builtin::ParseJson(c.into()))
             }
@@ -155,15 +147,16 @@ impl BuiltinKind {
 }
 
 /// A built-in call site's callee: its typed config, which is what the
-/// runtime matches on, with no trait object and no virtual call. The four
-/// parse and publish configs are boxed so a call site fits in 256 bytes; the
-/// hot ones stay inline.
+/// runtime matches on, with no trait object and no virtual call. A config
+/// holding an expression inline (`filter`, `log`, parse and publish) is
+/// boxed, so every call site stays small; `map` and `validation` hold only
+/// their lists.
 #[derive(Debug)]
 pub(crate) enum Builtin {
     Map(MapConfig),
     Validation(ValidationConfig),
-    Filter(FilterConfig),
-    Log(LogConfig),
+    Filter(Box<FilterConfig>),
+    Log(Box<LogConfig>),
     ParseJson(Box<ParseConfig>),
     ParseXml(Box<ParseConfig>),
     PublishJson(Box<PublishConfig>),

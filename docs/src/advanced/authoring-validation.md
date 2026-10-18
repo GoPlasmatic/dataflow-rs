@@ -162,8 +162,8 @@ assert_eq!(rows, [
     (IssueCode::UnknownKey, Severity::Advisory, "tasks[0].colour".to_owned()),
 ]);
 let def = parsed.def.unwrap();
-let dataflow_rs::def::StepDef::Task(task) = &def.tasks[0] else { unreachable!() };
-assert_eq!(task.header.ext["colour"], json!("teal"));
+let dataflow_rs::def::StepDef::Task(task) = &def.tasks()[0] else { unreachable!() };
+assert_eq!(task.header().ext()["colour"], json!("teal"));
 
 // With it off, every unknown key is refused, and nothing moves.
 let strict = parse(&json, ParseOptions::default().compat(false));

@@ -24,6 +24,7 @@ use super::splice::Hop;
 use crate::expr::Seg;
 use crate::expr::path;
 use crate::expr::path::MAX_PATH_SEGMENTS;
+use crate::expr::rules;
 use datavalue::{DataValue, OwnedDataValue};
 use std::collections::HashMap;
 
@@ -288,24 +289,6 @@ fn removes_an_element(at: At<'_>, new: &Mark) -> bool {
     matches!(new, Mark::Removed) && at.is_index(at.len() - 1)
 }
 
-/// A borrowed hop: a key as `&str`, or an index.
-#[derive(Clone, Copy, Debug)]
-enum KeyRef<'k> {
-    Name(&'k str),
-    Index(usize),
-}
-
-/// The child of a view node at `key`.
-fn view_child<'v>(v: DataValue<'v>, key: KeyRef<'_>) -> Option<DataValue<'v>> {
-    match (v, key) {
-        (DataValue::Object(pairs), KeyRef::Name(k)) => {
-            pairs.iter().find(|(pk, _)| **pk == *k).map(|(_, c)| *c)
-        }
-        (DataValue::Array(items), KeyRef::Index(i)) => items.get(i).copied(),
-        _ => None,
-    }
-}
-
 /// Turn `mark`, made where the view holds `here`, into one that needs no
 /// view: what the checkpoint's first phase does to every mark.
 fn settle_mark(mark: &mut Mark, here: Option<DataValue<'_>>) -> u32 {
@@ -328,63 +311,28 @@ fn settle_mark(mark: &mut Mark, here: Option<DataValue<'_>>) -> u32 {
     }
 }
 
-/// Apply a settled `mark` to the child of `parent` at `key`, with
-/// `path::set`'s single-segment rules: a key replaced or appended, an index
-/// padded and assigned.
-fn apply_mark(parent: &mut OwnedDataValue, key: KeyRef<'_>, mark: Mark) {
+/// Apply a settled `mark` to the child of `parent` at `key`, with the path
+/// rules' one-segment primitives: a key replaced or appended, an index
+/// padded and assigned, a child taken out.
+fn apply_mark(parent: &mut OwnedDataValue, key: rules::Hop<'_>, mark: Mark) {
     match mark {
-        Mark::Set(Some(v)) => assign(parent, key, v),
-        Mark::Removed => match (parent, key) {
-            (OwnedDataValue::Object(pairs), KeyRef::Name(k)) => {
-                if let Some(at) = pairs.iter().position(|(pk, _)| pk == k) {
-                    pairs.remove(at);
-                }
-            }
-            (OwnedDataValue::Array(items), KeyRef::Index(i)) if i < items.len() => {
-                items.remove(i);
-            }
-            _ => {}
-        },
+        Mark::Set(Some(v)) => {
+            rules::put(parent, key, v);
+        }
+        Mark::Removed => {
+            rules::take(parent, key);
+        }
         Mark::Appended {
             owned: Some(items), ..
-        } => match owned_child(parent, key) {
+        } => match rules::owned_child_mut(parent, key) {
             Some(OwnedDataValue::Array(existing)) => existing.extend(items),
-            _ => assign(parent, key, OwnedDataValue::Array(items)),
+            _ => {
+                rules::put(parent, key, OwnedDataValue::Array(items));
+            }
         },
         Mark::Set(None) | Mark::Appended { owned: None, .. } => {
             unreachable!("applied before settled")
         }
-    }
-}
-
-/// `path::set` for one segment.
-fn assign(parent: &mut OwnedDataValue, key: KeyRef<'_>, v: OwnedDataValue) {
-    match (parent, key) {
-        (OwnedDataValue::Object(pairs), KeyRef::Name(k)) => {
-            match pairs.iter_mut().find(|(pk, _)| pk == k) {
-                Some(slot) => slot.1 = v,
-                None => pairs.push((k.to_string(), v)),
-            }
-        }
-        (OwnedDataValue::Array(items), KeyRef::Index(i)) => {
-            if items.len() <= i {
-                items.resize(i + 1, OwnedDataValue::Null);
-            }
-            items[i] = v;
-        }
-        _ => {}
-    }
-}
-
-/// The owned child of `v` at `key`. An unmarked node of the log exists in
-/// the owned tree: a write is marked where it starts creating.
-fn owned_child<'v>(v: &'v mut OwnedDataValue, key: KeyRef<'_>) -> Option<&'v mut OwnedDataValue> {
-    match (v, key) {
-        (OwnedDataValue::Object(pairs), KeyRef::Name(k)) => {
-            pairs.iter_mut().find(|(pk, _)| pk == k).map(|(_, c)| c)
-        }
-        (OwnedDataValue::Array(items), KeyRef::Index(i)) => items.get_mut(i),
-        _ => None,
     }
 }
 
@@ -574,12 +522,12 @@ impl Writes {
     }
 
     /// A node's key as a borrowed hop.
-    fn key_ref(names: &str, key: Key) -> KeyRef<'_> {
+    fn key_ref(names: &str, key: Key) -> rules::Hop<'_> {
         match key {
             Key::Name { start, len, .. } => {
-                KeyRef::Name(&names[start as usize..(start + len) as usize])
+                rules::Hop::Key(&names[start as usize..(start + len) as usize])
             }
-            Key::Index(i) => KeyRef::Index(i),
+            Key::Index(i) => rules::Hop::Index(i),
             Key::Root => unreachable!("the root has no key"),
         }
     }
@@ -820,7 +768,7 @@ impl Writes {
             while c != NONE {
                 let child = &nodes[c as usize];
                 let below = if reads_view(child) {
-                    here.and_then(|v| view_child(v, Writes::key_ref(names, child.key)))
+                    here.and_then(|v| rules::view_child(v, Writes::key_ref(names, child.key)))
                 } else {
                     None
                 };
@@ -845,7 +793,7 @@ impl Writes {
                 match nodes[c as usize].mark.take() {
                     Some(mark) => apply_mark(here, key, mark),
                     None => {
-                        if let Some(below) = owned_child(here, key) {
+                        if let Some(below) = rules::owned_child_mut(here, key) {
                             walk(nodes, names, c, below);
                         }
                     }

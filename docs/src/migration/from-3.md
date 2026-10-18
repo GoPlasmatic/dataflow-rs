@@ -175,7 +175,7 @@ Every Rust host takes a major version. The table maps the 3.x surface onto
 
 | 3.x | 4.0 |
 |---|---|
-| `Workflow`, `Task`, `TaskGroup`, `LoopConfig`, `ForEach`, with hidden compiled fields | `def::WorkflowDef`, `TaskDef`, `GroupDef`, `LoopDef`, `ForEachDef`: plain data, entered through `def::parse` |
+| `Workflow`, `Task`, `TaskGroup`, `LoopConfig`, `ForEach`, with hidden compiled fields | `def::WorkflowDef`, `TaskDef`, `GroupDef`, `LoopDef`, `ForEachDef`: read-only data, entered through `def::parse` and read through accessors (`def.id()`, `task.on_failure()`) |
 | `Workflow::validate_authored`, `check_workflow` | `def::parse` and `Compiler::check`, same issue vocabulary |
 | `walk_authored_steps`, `is_group`, `MAX_GROUP_DEPTH` | `WorkflowDef::walk`, `StepDef::Group`, `def::MAX_GROUP_DEPTH` |
 | `Engine::new`, `new_with_operators`, `builder`, `with_new_workflows` | `Registry` + `Compiler` + `Engine::new`, or `Engine::builder`; a reload is `compiler()`, `link`, `with_program` |
@@ -253,7 +253,7 @@ for json in &stored {
     let Some(def) = parse(json, ParseOptions::default()).def else { continue };
     match compiler.compile_one(&def) {
         Ok(compiled) => workflows.push(compiled.workflow),
-        Err(issues) => eprintln!("{}: {} issues, quarantined", def.id, issues.len()),
+        Err(issues) => eprintln!("{}: {} issues, quarantined", def.id(), issues.len()),
     }
 }
 let engine = Engine::new(compiler.link(workflows), EngineConfig::default());
@@ -359,7 +359,10 @@ match engine.process_message(&mut message).await {
 ```
 
 4.0 returns a `Run` on every outcome and the status is read from it.
-`message.errors()` is unchanged and remains the only error list:
+`message.errors()` remains the only error list, with two additions: a failed
+`map` mapping records `MAPPING_ERROR` (its destination as the `path`) before
+the task's `TASK_STATUS_ERROR`, and a `filter` condition that fails to
+evaluate records `EVALUATION_ERROR` where 3.x recorded nothing:
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -560,7 +563,8 @@ assert!(e.is_retryable());
 ```
 
 The recorded codes `LOGIC_ERROR`, `TIMEOUT_ERROR`, `BUDGET_EXCEEDED`,
-`TASK_STATUS_ERROR` and `VALIDATION_ERROR` are unchanged; `CANCELLED` is new,
+`TASK_STATUS_ERROR` and `VALIDATION_ERROR` are unchanged; `CANCELLED` and
+`MAPPING_ERROR` are new,
 and `TIMEOUT_ERROR` is now also what the engine's own deadline writes.
 `FUNCTION_NOT_FOUND` and `DESERIALIZATION_ERROR` are gone: an unregistered
 function is the `UNKNOWN_FUNCTION` issue at build, and a value that does not
@@ -651,10 +655,11 @@ every status, so a host that showed snapshots replays instead.
 
 The message JSON is unchanged: `{id, payload, context, audit_trail,
 errors}`, the audit entry and the error record with the same keys in the
-same order, and every message 4.0 writes reads back byte for byte. Two
+same order, and every message 4.0 writes reads back byte for byte. Three
 things are refused on read: a context with a key besides `data`, `metadata`
-and `temp_data`, a context that is not an object, or a root named twice; and
-a root that is not an object. 3.x's `map` could write a fourth key for a path
+and `temp_data`, a context that is not an object, or a root named twice; a
+root that is not an object; and an object anywhere in the message holding a
+key twice, which no message 3.x wrote holds. 3.x's `map` could write a fourth key for a path
 outside the roots, or replace a root with a scalar; a stored message that
 carries either no longer reads. A `null` `metadata` used to drop every write
 under it silently, `metadata.progress` included.

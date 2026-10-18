@@ -1,0 +1,12 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "ESCAPED_TEMPLATE_KEY ADVISORY tasks[0].function.input.mappings[0].logic.$a",
+        "DUPLICATE_TEMPLATE_KEY REJECTED tasks[0].function.input.mappings[0].logic.a"
+      ],
+      "compiled": false
+    }
+  ],
+  "steps": []
+}

@@ -1,5 +1,5 @@
 {
-  "description": "An empty over writes into = [] with one audit record and no element; a non-array over is one task error, which continue_on_error lets the workflow carry on past.",
+  "description": "An empty over writes into = [] with one audit record and no element; a non-array over fails the task once with LOGIC_ERROR and status 500, which continue_on_error lets the workflow carry on past.",
   "workflows": [
     {"id": "empty", "name": "empty", "priority": 0, "tasks": [
       {"id": "t", "name": "t",

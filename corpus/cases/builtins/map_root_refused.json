@@ -1,5 +1,5 @@
 {
-  "description": "A computed path that resolves to a context root fails its unset mapping and leaves the root intact; the later mapping still writes and the task returns 500.",
+  "description": "A computed path that resolves to a context root fails its unset mapping with MAPPING_ERROR at data and leaves the root intact; the later mapping still writes and the task returns 500, recorded as TASK_STATUS_ERROR.",
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "continue_on_error": true, "function": {"name": "map", "input": {"mappings": [

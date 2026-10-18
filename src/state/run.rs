@@ -17,6 +17,7 @@
 use super::size;
 use super::splice::{self, Resolved};
 use super::writes::{At, Lookup, Mark, Writes};
+use crate::base::Change;
 use crate::expr::arena;
 use crate::expr::path;
 use crate::expr::{Filled, Path, Seg};
@@ -493,6 +494,22 @@ impl<'m, 'p> RunContext<'m, 'p> {
         size_hint: Option<usize>,
     ) -> bool {
         self.set_segs(path.segs(), value, size_hint)
+    }
+
+    /// [`Self::set`], first recording the write's [`Change::assign`] onto
+    /// `changes` when there is a list to record it on: the old value read
+    /// from the context as it was, the new one cloned for the record.
+    pub(crate) fn set_recorded(
+        &mut self,
+        path: &Path,
+        value: OwnedDataValue,
+        size_hint: Option<usize>,
+        changes: Option<&mut Vec<Change>>,
+    ) -> bool {
+        if let Some(changes) = changes {
+            changes.push(Change::assign(path, self.get_or_null(path), value.clone()));
+        }
+        self.set(path, value, size_hint)
     }
 
     /// [`Self::set`] at segments: how an applied overlay writes, with no

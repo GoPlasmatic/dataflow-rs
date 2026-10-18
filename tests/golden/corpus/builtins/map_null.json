@@ -1,0 +1,77 @@
+{
+  "definitions": [
+    {
+      "issues": [
+        "NULL_MAPPING ADVISORY tasks[0].function.input.mappings[3].logic"
+      ],
+      "compiled": true
+    }
+  ],
+  "steps": [
+    {
+      "run": {
+        "run": {
+          "status": "completed",
+          "retryable": false,
+          "partial": false,
+          "matched": 1,
+          "workflows": [
+            {
+              "id": "w",
+              "index": 0,
+              "selection": "ran",
+              "sweeps": 1,
+              "exit": "completed"
+            }
+          ]
+        },
+        "message": {
+          "id": "m1",
+          "payload": {},
+          "context": {
+            "data": {
+              "x": 1,
+              "w": 3,
+              "z": 5
+            },
+            "metadata": {
+              "processed_at": "<timestamp>",
+              "engine_version": "<engine_version>",
+              "progress": {
+                "workflow_id": "w",
+                "task_id": "t",
+                "status_code": 200
+              }
+            },
+            "temp_data": {}
+          },
+          "audit_trail": [
+            {
+              "workflow_id": "w",
+              "task_id": "t",
+              "timestamp": "<timestamp>",
+              "changes": [
+                {
+                  "path": "data.y",
+                  "old_value": 2,
+                  "new_value": null,
+                  "removed": true
+                },
+                {
+                  "path": "data.z",
+                  "old_value": null,
+                  "new_value": 5
+                }
+              ],
+              "status": 200
+            }
+          ],
+          "errors": []
+        },
+        "trace": [
+          "w t executed 200"
+        ]
+      }
+    }
+  ]
+}
