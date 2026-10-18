@@ -10,8 +10,9 @@ whose tasks run built-in or host functions over a message's context, with
 JSONLogic conditions and expressions compiled once at build.
 
 This is a **Cargo workspace with four published artifacts**, version-locked to
-the root `Cargo.toml` version; all four read `4.0.0-dev` until phase 8 sets
-4.0.0 from one tag:
+the engine's version — authored once in `[workspace.package] version` and
+inherited by the published Rust crates; all four read `4.0.0-dev` until phase
+8 sets 4.0.0 from one tag:
 
 | Path | Artifact | Registry |
 |---|---|---|
@@ -21,7 +22,9 @@ the root `Cargo.toml` version; all four read `4.0.0-dev` until phase 8 sets
 | `ui/` | `@goplasmatic/dataflow-ui`: the React debugger, on the wasm package's generated types | npm |
 
 `wasm/` and `derive/` are workspace members; `ui/` is a separate npm project
-driven by the release workflow. Bumping a version means bumping all four.
+driven by the release workflow. A release bumps `[workspace.package] version`
+and `ui/package.json`'s version; `scripts/check-versions.sh` holds the rest and
+runs on every PR.
 
 The other workspace members are not published: `docs-tests/` (the book's and
 the README's doctests, against the root) and `corpus/` (the workflow cases the
@@ -573,7 +576,8 @@ which runs the real compile, overlay and layers with no engine assembled, and
 Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI; it
 never publishes, and `docs.yml` runs only by hand until phase 8.
 `.github/workflows/release.yml` fires only on a `v*` tag, validates that the
-tag matches the root `Cargo.toml` version, then publishes the derive, the crate,
+tag matches the workspace version and runs `scripts/check-versions.sh` (the
+same agreement check CI runs on every PR), then publishes the derive, the crate,
 the wasm package and the UI package, and cuts a GitHub release whose notes are
 `CHANGELOG.md`'s section for the version (`validate` fails without one). The
 derive goes first, under its own crates.io check: the root's published
@@ -583,10 +587,11 @@ needs the `CRATES_IO_TOKEN` secret to carry the `publish-new` scope. `wasm/`
 is `publish = false`: it ships through npm only.
 
 **No tag may be cut from `main` before phase 8.** The root, the derive,
-`wasm/` and `ui/` read `4.0.0-dev`; `release.yml` checks that `wasm/`'s two
-versions, the derive's and the root's requirement on it, `ui/`'s and the
-install snippets' minor match the tag, and that `CHANGELOG.md` has the
-version's section.
+`wasm/` and `ui/` read `4.0.0-dev`; `scripts/check-versions.sh` — CI on every
+PR, `release.yml` against the tag — checks that the workspace version, the
+internal crates' pins, `ui/`'s versions and the install snippets' minor all
+agree, and (outside a `-dev` version) that `CHANGELOG.md` has the version's
+section.
 
 ## The machine
 

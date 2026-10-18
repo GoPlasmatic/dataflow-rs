@@ -1,6 +1,6 @@
 [package]
 name = "dataflow-rs"
-version = "4.0.0-dev"
+version.workspace = true
 edition = "2024"
 rust-version = "1.98"
 # Allowlist of what ships in the published .crate: the library, the TypeScript
@@ -91,7 +91,7 @@ web-time = "1.1"
 bumpalo = "3.20"
 self_cell = "1.3"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
-dataflow-rs-derive = { path = "derive", version = "=4.0.0-dev" }
+dataflow-rs-derive = { workspace = true }
 uuid = { version = "1.26", default-features = false, features = ["v7", "std"] }
 # The `log` built-in's target, and `map`'s failing-mapping lines.
 log = "0.4"
@@ -131,6 +131,20 @@ required-features = ["ts"]
 
 [workspace]
 members = [".", "wasm", "docs-tests", "corpus", "derive"]
+
+# The engine's version, authored once. Every published Rust artifact inherits
+# it (`version.workspace = true`); `scripts/check-versions.sh` holds the npm
+# artifacts and the docs' minor pins to it, on every PR and again at tag time.
+# A release bumps this line and `ui/package.json`'s version, by hand nowhere
+# else.
+[workspace.package]
+version = "4.0.0-dev"
+
+# The two crates.io artifacts, at the engine's version. The root and the wasm
+# crate name them through these entries, so the exact pin lives here once.
+[workspace.dependencies]
+dataflow-rs = { path = ".", version = "=4.0.0-dev" }
+dataflow-rs-derive = { path = "derive", version = "=4.0.0-dev" }
 
 # Lint policy lives here rather than only in the CI command line, so a local
 # `cargo clippy` and rust-analyzer enforce exactly what CI does. CI still passes

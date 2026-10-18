@@ -21,9 +21,9 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          VERSION=$(scripts/check-versions.sh --print)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Cargo.toml version: $VERSION"
+          echo "workspace version: $VERSION"
 
       - name: Validate tag matches version
         run: |
@@ -35,66 +35,10 @@ jobs:
           fi
           echo "Tag $GITHUB_REF_NAME matches Cargo.toml version $VERSION"
 
-      # The four artifacts are version-locked, but only the root Cargo.toml
-      # was ever checked. publish-wasm and publish-ui stamp their npm versions
-      # from it, so a stale in-repo value publishes fine and stays invisible —
-      # which is how a docs install snippet sat at the wrong version.
+      # The four artifacts are version-locked. The same check runs on every PR
+      # (ci.yml); here it must also agree with the tag's version.
       - name: Validate all artifact versions agree
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          FAILED=0
-
-          check() {
-            if [ "$2" != "$VERSION" ]; then
-              echo "::error::$1 is $2, expected $VERSION"
-              FAILED=1
-            else
-              echo "  ok  $1 = $2"
-            fi
-          }
-
-          check "wasm/Cargo.toml" \
-            "$(grep '^version = ' wasm/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')"
-          # A requirement carries its operator (`=` for an exact pin, as
-          # wasm/ pins the crate, or `^`/`~`), which a tag never does: strip
-          # it, so the version the requirement names is what is compared.
-          check "wasm/Cargo.toml dataflow-rs dep" \
-            "$(grep '^dataflow-rs = ' wasm/Cargo.toml | sed 's/.*version = "[=^~]*\([^"]*\)".*/\1/')"
-          check "ui/package.json" \
-            "$(node -p "require('./ui/package.json').version")"
-          # The derive is the fourth artifact: the root's published manifest
-          # names it from crates.io at exactly this version, so both the
-          # derive's own version and the root's requirement on it must agree.
-          check "derive/Cargo.toml" \
-            "$(grep '^version = ' derive/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')"
-          check "Cargo.toml dataflow-rs-derive dep" \
-            "$(grep '^dataflow-rs-derive = ' Cargo.toml | sed 's/.*version = "[=^~]*\([^"]*\)".*/\1/')"
-
-          # The GitHub release's notes are the changelog's section for this
-          # version (see github-release), so the section must exist.
-          if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
-            echo "  ok  CHANGELOG.md has a [$VERSION] section"
-          else
-            echo "::error::CHANGELOG.md has no '## [$VERSION]' section"
-            FAILED=1
-          fi
-
-          # Docs pin the minor only (`dataflow-rs = "3.3"`), so compare that.
-          MINOR="${VERSION%.*}"
-          while IFS= read -r hit; do
-            [ -n "$hit" ] || continue
-            FOUND=$(printf '%s' "$hit" | grep -oE '"[0-9]+\.[0-9]+' | head -1 | tr -d '"')
-            if [ "$FOUND" != "$MINOR" ]; then
-              echo "::error::stale version in $hit (expected $MINOR)"
-              FAILED=1
-            else
-              echo "  ok  ${hit%%:*} pins $FOUND"
-            fi
-          done < <(grep -rnE 'dataflow-rs = (\{ *version = )?"[0-9]+\.[0-9]+' \
-                     README.md docs/src/ 2>/dev/null)
-
-          [ "$FAILED" -eq 0 ] || exit 1
-          echo "All artifact and documentation versions agree on $VERSION"
+        run: scripts/check-versions.sh "${{ steps.version.outputs.version }}"
 
   # The full PR gate — fmt/clippy/tests, wasm32, MSRV, UI build, cargo-deny —
   # invoked as a reusable workflow, so the release gate is the same definition

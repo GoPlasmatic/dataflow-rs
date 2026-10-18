@@ -54,6 +54,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # The same check release.yml gates a tag on: the engine, its derive, the
+      # wasm and UI npm packages and the docs' minor pins must all agree.
+      - name: Check artifact versions agree
+        run: scripts/check-versions.sh
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:

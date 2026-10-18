@@ -19,9 +19,13 @@ version number, two members that are never published, and the book:
 | `corpus/` | The corpus: the cases the engine's tests load, and the tools that read them | — |
 
 `wasm/` and `derive/` are workspace members; `ui/` is a separate npm project
-driven by the release workflow. The root depends on the derive by path *and*
-by version, because `cargo publish` refuses a path dependency without one, so
-a release publishes the derive first.
+driven by the release workflow. The engine's version is authored once, in the
+root `Cargo.toml`'s `[workspace.package] version`: every published Rust
+artifact inherits it and names the internal crates through
+`[workspace.dependencies]`, which carries the version a `cargo publish`
+requires of a path dependency, so a release publishes the derive first.
+`scripts/check-versions.sh` holds the npm artifacts and the docs' minor pins
+to it and runs on every PR.
 
 ## Prerequisites
 
@@ -417,17 +421,17 @@ registration. It needs a case in the corpus, a row in `BUILTIN_FUNCTIONS`
 
 Releases are tag-gated and maintainer-run. Pushing to `main` runs CI and never
 publishes; the documentation site deploys by hand until 4.0 is released. A `v*` tag triggers `.github/workflows/release.yml`,
-which validates that the tag matches the root `Cargo.toml` version, that
-`wasm/` (its own version and its `dataflow-rs` requirement), `derive/` (its
-version and the root's requirement on it), `ui/` and the install snippets in
-`README.md` and `docs/src/` agree, and that `CHANGELOG.md` has the version's
-section; then publishes the derive, the crate and both npm packages, and
-cuts a GitHub release whose notes are that section. The `CRATES_IO_TOKEN`
+which validates that the tag matches the workspace version and runs
+`scripts/check-versions.sh` — the same agreement check CI runs on every PR —
+so `wasm/` (its inherited version and its `dataflow-rs` requirement),
+`derive/`, `ui/` and the install snippets in `README.md` and `docs/src/` must
+agree, and `CHANGELOG.md` must have the version's section; then publishes the
+derive, the crate and both npm packages, and cuts a GitHub release whose notes
+are that section. The `CRATES_IO_TOKEN`
 secret needs the `publish-new` scope for a crate's first release, the
-derive's included. The four published
-versions move together, the derive's included: the root's manifest names
-`dataflow-rs-derive` from crates.io at exactly the root's version, so the
-derive publishes first. Contributors do not need to bump versions in a PR,
+derive's included. A release bumps `[workspace.package] version` and
+`ui/package.json`'s version and runs `scripts/check-versions.sh`; everything
+else follows. Contributors do not need to bump versions in a PR,
 but a user-visible change gets a line under `CHANGELOG.md`'s `[Unreleased]`.
 
 ## Security

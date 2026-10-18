@@ -9,7 +9,9 @@ wasm-pack build --target web --out-dir pkg
 echo "Extracting metadata from Cargo.toml..."
 CARGO_TOML="Cargo.toml"
 
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$CARGO_TOML")
+# The crate inherits its version from the workspace, so read it through cargo
+# rather than the manifest (which carries `version.workspace = true`).
+VERSION=$(cargo pkgid -p dataflow-wasm | sed 's/.*@//')
 DESCRIPTION=$(sed -n 's/^description = "\(.*\)"/\1/p' "$CARGO_TOML")
 LICENSE=$(sed -n 's/^license = "\(.*\)"/\1/p' "$CARGO_TOML")
 REPOSITORY=$(sed -n 's/^repository = "\(.*\)"/\1/p' "$CARGO_TOML")
