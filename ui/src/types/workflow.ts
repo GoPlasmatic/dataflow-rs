@@ -106,8 +106,11 @@ export interface Task {
  * Whether a task's failure is recorded and the next task runs:
  * `on_failure: "continue"`, or 3.x's `continue_on_error: true` on its own.
  * Beside `halt_on: "failure"` that flag reads as `on_failure: "halt"`
- * instead, which {@link taskHaltsOnFailure} renders. The one place the two
- * spellings meet.
+ * instead, which {@link taskHaltsOnFailure} renders.
+ *
+ * The 3.x spellings are read only for a definition the compat reader refused,
+ * which `migrateDefinitions` keeps as authored: one it accepts already arrives
+ * as `on_failure`.
  */
 export function taskContinuesOnFailure(task: Task): boolean {
   return (
@@ -119,8 +122,9 @@ export function taskContinuesOnFailure(task: Task): boolean {
 /**
  * Whether the task's failing ends its workflow: `on_rejection: "halt"` (a
  * 4xx, which a failing `validation` returns), `on_failure: "halt"` (an error
- * or a 5xx), or 3.x's `halt_on: "failure"`, which the engine reads as the
- * former, or as both beside `continue_on_error: true`.
+ * or a 5xx), or, for a definition the reader refused, 3.x's `halt_on:
+ * "failure"`, which the engine reads as the former, or as both beside
+ * `continue_on_error: true`.
  */
 export function taskHaltsOnFailure(task: Task): boolean {
   return (
@@ -369,8 +373,8 @@ export interface Workflow {
 
 /**
  * Whether a failure that reaches the workflow lets the run go on, to the
- * next sweep or the next workflow: `on_failure: "continue"`, or 3.x's
- * `continue_on_error: true`. The one place the two spellings meet.
+ * next sweep or the next workflow: `on_failure: "continue"`, or, for a
+ * definition the compat reader refused, 3.x's `continue_on_error: true`.
  */
 export function workflowContinuesOnFailure(workflow: Workflow): boolean {
   return workflow.on_failure === 'continue' || workflow.continue_on_error === true;

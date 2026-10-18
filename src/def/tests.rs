@@ -64,6 +64,26 @@ fn strict(json: &Value) -> super::Parsed {
     parse(json, ParseOptions::default().compat(false))
 }
 
+/// The public `definition_keys()` is the very tables the walk reads: a tool
+/// holding its own view to the engine cannot drift from a key added here
+/// without this failing.
+#[test]
+fn the_definition_keys_api_is_the_level_tables() {
+    let keys = keys::definition_keys();
+    let expected = [
+        ("workflow", keys::WORKFLOW, keys.workflow),
+        ("task", keys::TASK, keys.task),
+        ("group", keys::GROUP, keys.group),
+        ("loop", keys::LOOP, keys.r#loop),
+        ("for_each", keys::FOR_EACH, keys.for_each),
+        ("rollout", keys::ROLLOUT, keys.rollout),
+        ("function", keys::FUNCTION, keys.function),
+    ];
+    for (level, table, api) in expected {
+        assert_eq!(api, table.known(), "{level}");
+    }
+}
+
 #[test]
 fn every_level_of_the_full_definition_sets_exactly_its_tables_keys() {
     let full = full();

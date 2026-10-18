@@ -13,6 +13,7 @@
 use super::parse::Walk;
 use crate::base::typo::unknown_key;
 use crate::base::{AuthoredPath, IssueCode, Severity};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -197,6 +198,43 @@ pub(super) const FOR_EACH: Level = Level::new(FOR_EACH_KEYS);
 pub(super) const ROLLOUT: Level = Level::new(ROLLOUT_KEYS);
 /// `function`.
 pub(super) const FUNCTION: Level = Level::new(FUNCTION_KEYS);
+
+/// The known keys at each level of a definition, as the reader, the walk and
+/// the serializer read them. A tool that shows definitions — the debugger
+/// reads it through the wasm package — holds its own view to these rather
+/// than keeping a copy that drifts when a key is added.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[non_exhaustive]
+pub struct DefinitionKeys {
+    /// A workflow's keys.
+    pub workflow: &'static [&'static str],
+    /// A task's keys.
+    pub task: &'static [&'static str],
+    /// A group's keys.
+    pub group: &'static [&'static str],
+    /// A workflow `loop`'s keys.
+    pub r#loop: &'static [&'static str],
+    /// A task `for_each`'s keys.
+    pub for_each: &'static [&'static str],
+    /// A workflow `rollout`'s keys.
+    pub rollout: &'static [&'static str],
+    /// A function reference's keys.
+    pub function: &'static [&'static str],
+}
+
+/// The known keys at each level of a definition.
+#[must_use]
+pub fn definition_keys() -> DefinitionKeys {
+    DefinitionKeys {
+        workflow: WORKFLOW_KEYS,
+        task: TASK_KEYS,
+        group: GROUP_KEYS,
+        r#loop: LOOP_KEYS,
+        for_each: FOR_EACH_KEYS,
+        rollout: ROLLOUT_KEYS,
+        function: FUNCTION_KEYS,
+    }
+}
 
 /// A node's `ext` as it is built: the authored object's entries, then the
 /// keys moved into it (by the compat reader, then by the walk), each

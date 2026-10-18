@@ -61,6 +61,7 @@ only through `parse`, which is also the linter, and serializes back in the
 | `Rollout`, `RolloutError` | A workflow's slice of its channel's traffic |
 | `defaults` | The values `parse` reads for an absent key (`PRIORITY`, `VERSION`, `CHANNEL`, `INIT`, `INCREMENT`, `MAX_CONCURRENCY`) |
 | `MAX_GROUP_DEPTH`, `BUILTIN_FUNCTIONS` | The nesting limit (8); the eight reserved names |
+| `definition_keys`, `DefinitionKeys` | The keys the engine knows at each level of a definition |
 
 ## `expr`: expressions
 

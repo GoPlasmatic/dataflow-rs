@@ -46,6 +46,7 @@ pub use types::{
     FailurePolicy, ForEachDef, FunctionRef, GroupDef, Logic, LoopDef, NodeHeader, RejectionPolicy,
     Status, StepDef, TaskDef, WorkflowDef, WorkflowFailurePolicy,
 };
+pub use keys::{DefinitionKeys, definition_keys};
 
 /// The deepest group nesting a definition may use.
 ///

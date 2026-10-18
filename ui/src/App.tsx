@@ -11,6 +11,7 @@ import { WorkflowVisualizer } from './components/workflow-visualizer';
 import { JsonEditor, StatusBar } from './components/common';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { defaultEngineFactory } from './engines';
+import { migrateDefinitions } from './engines/migrate';
 import { useResizable } from './components/workflow-visualizer/hooks';
 import { LAYOUT } from './components/workflow-visualizer/constants';
 import { ThemeProvider, useTheme } from './components/workflow-visualizer/context';
@@ -73,7 +74,9 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
         setWorkflowsError('Workflows must be an array');
         return;
       }
-      setWorkflows(parsed);
+      // Read through the engine's compat reader, so a 3.x definition renders
+      // as the 4.0 one the engine runs, not as authored.
+      setWorkflows(migrateDefinitions(parsed));
       setWorkflowsError(null);
     } catch (err) {
       setWorkflowsError(err instanceof Error ? err.message : 'Invalid JSON');
@@ -104,7 +107,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
     const sample = SAMPLE_WORKFLOWS[name];
     if (sample) {
       setSelectedExample(name);
-      setWorkflows(sample.workflows);
+      setWorkflows(migrateDefinitions(sample.workflows));
       setWorkflowsText(JSON.stringify(sample.workflows, null, 2));
       setWorkflowsError(null);
       setPayloadText(JSON.stringify(sample.payload, null, 2));

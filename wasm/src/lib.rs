@@ -170,6 +170,16 @@ export interface EngineFacts {
   loop_defaults: { init: number; increment: number };
   /** What a `for_each` reads for an absent `max_concurrency`. */
   for_each_defaults: { max_concurrency: number };
+  /** The keys the engine knows at each level of a definition. */
+  definition_keys: {
+    workflow: string[];
+    task: string[];
+    group: string[];
+    loop: string[];
+    for_each: string[];
+    rollout: string[];
+    function: string[];
+  };
 }
 
 /**
@@ -455,6 +465,7 @@ struct EngineFacts {
     max_group_depth: usize,
     loop_defaults: LoopDefaults,
     for_each_defaults: ForEachDefaults,
+    definition_keys: dataflow_rs::def::DefinitionKeys,
 }
 
 #[derive(Serialize)]
@@ -662,6 +673,7 @@ pub fn engine_facts() -> Result<JsValue, JsValue> {
         for_each_defaults: ForEachDefaults {
             max_concurrency: def::defaults::MAX_CONCURRENCY,
         },
+        definition_keys: def::definition_keys(),
     })
 }
 

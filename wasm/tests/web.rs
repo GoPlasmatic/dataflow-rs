@@ -586,6 +586,10 @@ fn engine_facts_name_the_built_ins_and_the_defaults() {
     assert_eq!(facts["max_group_depth"], 8);
     assert_eq!(facts["loop_defaults"], json!({"init": 0, "increment": 1}));
     assert_eq!(facts["for_each_defaults"], json!({"max_concurrency": 1}));
+    let keys = &facts["definition_keys"];
+    assert_eq!(keys["rollout"], json!(["bucket_start", "bucket_end"]));
+    assert!(keys["task"].as_array().unwrap().contains(&json!("for_each")));
+    assert!(keys["workflow"].as_array().unwrap().contains(&json!("loop")));
 }
 
 #[wasm_bindgen_test]
