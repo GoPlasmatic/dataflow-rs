@@ -3,10 +3,10 @@
 
 use super::{__private, Ctx, FunctionConfig};
 use crate::base::AuthoredPath;
-use crate::base::{IssueCode, Result};
+use crate::base::{IssueCode, Result, Severity};
 use crate::expr::{
-    CompileCx, ConfigField, Expr, ExprVisitor, FieldKind, FieldSpec, Interpolated, Output, Path,
-    Resolver, ValueKind, Visit,
+    CompileCx, ConfigField, Expr, ExprEngine, ExprVisitor, FieldKind, FieldSpec, Interpolated,
+    Output, Path, Resolver, ValueKind, Visit,
 };
 use datavalue::OwnedDataValue;
 use serde_json::Value;
@@ -186,6 +186,50 @@ fn field(kind: FieldKind, raw: &Value, cx: &mut CompileCx<'_>) -> Option<Templat
             None
         }
     }
+}
+
+/// Whether `spec`'s declared default compiles through its kind. A host bug,
+/// not the author's: `Some(why)` names it, and
+/// [`Registry::register`](super::Registry::register) fails once instead of
+/// every compile that leaves the key out.
+///
+/// Kinds a `FieldSpec` alone does not describe (a nested config, a list, a
+/// map, a runtime set) are left to the compile that owns them.
+pub(super) fn default_problem(exprs: &ExprEngine, spec: &FieldSpec) -> Option<String> {
+    let text = spec.default.as_deref()?;
+    if matches!(
+        spec.kind,
+        FieldKind::Templated | FieldKind::List(_) | FieldKind::Map(_) | FieldKind::Nested(_)
+    ) {
+        return None;
+    }
+    let raw: Value = match serde_json::from_str(text) {
+        Ok(raw) => raw,
+        Err(e) => {
+            return Some(format!(
+                "its field `{}`'s default is not JSON ({e})",
+                spec.name
+            ));
+        }
+    };
+    let mut issues = Vec::new();
+    let mut cx = CompileCx::new(exprs, &mut issues);
+    let compiled = field(spec.kind, &raw, &mut cx);
+    let rejected = issues
+        .iter()
+        .any(|issue| issue.severity == Severity::Rejected);
+    if compiled.is_some() && !rejected {
+        return None;
+    }
+    let why = issues
+        .iter()
+        .find(|issue| issue.severity == Severity::Rejected)
+        .map(|issue| issue.message.clone())
+        .unwrap_or_else(|| "it does not compile".to_owned());
+    Some(format!(
+        "its field `{}`'s default is invalid: {why}",
+        spec.name
+    ))
 }
 
 impl Templated {

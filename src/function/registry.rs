@@ -2,7 +2,7 @@
 
 use super::builtins::BuiltinKind;
 use super::erased::{Erased, ErasedFunction};
-use super::templated::primary_problem;
+use super::templated::{default_problem, primary_problem};
 use super::{CallLayer, Function, FunctionConfig, FunctionSpec};
 use crate::base::{AuthoredPath, Error, ErrorKind, PathSeg};
 use crate::expr::{ExprEngine, FieldKind, FieldSpec, ValueKind};
@@ -101,7 +101,11 @@ impl Registry {
     /// - `runtime_fields` holding several outputs without exactly one marked
     ///   [`primary`](FieldSpec::primary), which `#[derive(FunctionConfig)]`
     ///   refuses at expansion: no output, or a guess, would be the one
-    ///   [`Ctx::emit_default`](crate::Ctx::emit_default) writes through.
+    ///   [`Ctx::emit_default`](crate::Ctx::emit_default) writes through;
+    /// - a field's declared [`default`](FieldSpec::default) that its
+    ///   [`kind`](FieldSpec::kind) cannot compile, which would otherwise
+    ///   surface as the author's `INPUT_PARSE` in every compile that leaves
+    ///   the key out.
     pub fn register<F: Function>(&mut self, name: &str, f: F) {
         if let Err(error) = self.try_register(name, f) {
             panic!("{}", error.message());
@@ -128,8 +132,14 @@ impl Registry {
         }
         let erased = Erased::new(f);
         let templated = <F::Config as FunctionConfig>::TEMPLATED;
-        check_spec(name, erased.spec(), erased.fields(), templated)
-            .map_err(|message| Error::new(ErrorKind::Config, message))?;
+        check_spec(
+            name,
+            erased.spec(),
+            erased.fields(),
+            templated,
+            &self.inner.exprs,
+        )
+        .map_err(|message| Error::new(ErrorKind::Config, message))?;
         let erased: Arc<dyn ErasedFunction> = Arc::new(erased);
         Arc::make_mut(&mut self.inner)
             .hosts
@@ -200,6 +210,7 @@ fn check_spec(
     spec: &FunctionSpec,
     fields: &[FieldSpec],
     templated: bool,
+    exprs: &ExprEngine,
 ) -> Result<(), String> {
     match (templated, spec.runtime_fields.is_some()) {
         (false, true) => {
@@ -218,6 +229,11 @@ fn check_spec(
     }
     if let Some(problem) = spec.runtime_fields.as_deref().and_then(primary_problem) {
         return Err(format!("cannot register `{name}`: {problem}"));
+    }
+    for field in fields {
+        if let Some(problem) = default_problem(exprs, field) {
+            return Err(format!("cannot register `{name}`: {problem}"));
+        }
     }
     for reference in &spec.references {
         let field = &reference.field;

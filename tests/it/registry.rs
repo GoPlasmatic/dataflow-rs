@@ -19,6 +19,15 @@ struct FetchConfig {
     output: Output,
 }
 
+/// A derived config whose declared default its field's kind refuses: the
+/// author's `INPUT_PARSE` would otherwise wait for every compile that
+/// leaves `limit` out.
+#[derive(FunctionConfig)]
+struct BadDefault {
+    #[config(default = "abc")]
+    limit: Expr<u64>,
+}
+
 /// A host function whose `call` returns a future without `async`.
 struct Fetch;
 
@@ -316,6 +325,24 @@ fn runtime_outputs_register_with_one_primary_or_alone() {
     registry.register("marked", specced::<Templated>(outputs(&["a", "b"], &["b"])));
     registry.register("lone", specced::<Templated>(outputs(&["a"], &[])));
     assert_eq!(names(&registry), with_builtins(&["lone", "marked"]));
+}
+
+#[test]
+#[should_panic(expected = "cannot register `bad_runtime`: its field `limit`'s default is invalid")]
+fn a_runtime_field_default_its_kind_refuses_panics() {
+    let field = FieldSpec::runtime("limit", FieldKind::Literal(ValueKind::Number), false)
+        .with_default("\"five\"");
+    let spec = FunctionSpec::default().with_runtime_fields(vec![field]);
+    Registry::default().register("bad_runtime", specced::<Templated>(spec));
+}
+
+#[test]
+#[should_panic(expected = "cannot register `bad_derived`: its field `limit`'s default is invalid")]
+fn a_derived_field_default_its_kind_refuses_panics() {
+    Registry::default().register(
+        "bad_derived",
+        specced::<BadDefault>(FunctionSpec::default()),
+    );
 }
 
 #[test]
