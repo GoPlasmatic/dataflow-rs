@@ -30,6 +30,10 @@ pub struct RunOptions<'a> {
     /// has passed, is recorded as `TIMEOUT_ERROR` on its task; either way
     /// the run ends [`TimedOut`].
     ///
+    /// On wasm no timer exists, so nothing races a host call and it is
+    /// never cut short mid-flight: a deadline that passes while a call runs
+    /// is seen at the next check, after the call returns.
+    ///
     /// [`TimedOut`]: crate::run::RunStatus::TimedOut
     pub deadline: Option<Instant>,
     /// A token that cancels the run when it, or an ancestor, is cancelled;

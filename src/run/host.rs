@@ -20,7 +20,9 @@
 //! A fan-out's elements are host calls too: [`invoke`] is the one call, and
 //! [`fan_out`](super::fan_out::fan_out) settles and records each element.
 
-use super::cancel::{Limits, race};
+use super::cancel::Limits;
+#[cfg(not(target_arch = "wasm32"))]
+use super::cancel::race;
 use super::interp::RunEnv;
 use super::policy::{self, Flow};
 use super::record::{self, Completed, Stamp};
@@ -148,10 +150,15 @@ pub(crate) fn invoke<'r>(
     let mut ctx = Ctx::new(start, bound);
     async move {
         let chain = Next::new(layers.run, layers.registry, ctx.callee());
+        // Natively a limit is raced on a timer, boxed so the run's future
+        // carries neither the timer's state nor a second copy of the call's
+        // start. On wasm nothing races, so the call runs to its end and the
+        // checks around it are the whole limit: no box, no race.
         let ran = match limits.stop() {
             Some(stop) => Err(stop),
-            None if !limits.is_set() => Ok(chain.run(&mut ctx).await),
-            None => Box::pin(race(chain.run(&mut ctx), limits)).await,
+            #[cfg(not(target_arch = "wasm32"))]
+            None if limits.is_set() => Box::pin(race(chain.run(&mut ctx), limits)).await,
+            None => Ok(chain.run(&mut ctx).await),
         };
         let (result, cut_short) = match ran {
             // An `Err` once the run's own limit has passed is the limit's:

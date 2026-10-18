@@ -10,6 +10,9 @@
 
 use dataflow_wasm::*;
 use serde_json::{Value, json};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::*;
@@ -634,4 +637,126 @@ fn check_reports_an_unknown_function_at_its_path() {
             .unwrap(),
     );
     assert_eq!(clean, json!([]));
+}
+
+// ---------------------------------------------------------------------------
+// Limits on wasm: nothing races, so the checks are the whole limit
+//
+// The wasm package registers no host functions and exposes no token, so
+// these use the engine directly. Natively a host call is raced against the
+// deadline and cut short mid-flight; here the call runs to its end and the
+// checks around it see the deadline afterwards.
+// ---------------------------------------------------------------------------
+
+/// A host function that records that it ran and returns `Ok`.
+struct Once(Arc<AtomicBool>);
+
+impl dataflow_rs::Function for Once {
+    type Config = ();
+
+    async fn call(
+        &self,
+        _ctx: &mut dataflow_rs::Ctx<'_>,
+        _cfg: &(),
+    ) -> dataflow_rs::Result<dataflow_rs::Outcome> {
+        self.0.store(true, Ordering::SeqCst);
+        Ok(dataflow_rs::Outcome::Ok)
+    }
+}
+
+/// A host function that outlasts a deadline, then fails.
+struct Slow(Arc<AtomicBool>);
+
+impl dataflow_rs::Function for Slow {
+    type Config = ();
+
+    async fn call(
+        &self,
+        _ctx: &mut dataflow_rs::Ctx<'_>,
+        _cfg: &(),
+    ) -> dataflow_rs::Result<dataflow_rs::Outcome> {
+        // A call that outlasts the deadline without yielding: on wasm
+        // nothing races it, so it runs to its end and the check after it
+        // sees the deadline and overrides its `Err`.
+        let start = dataflow_rs::run::Instant::now();
+        while start.elapsed() < Duration::from_millis(200) {
+            std::hint::spin_loop();
+        }
+        self.0.store(true, Ordering::SeqCst);
+        Err(dataflow_rs::Error::service("BOOM", "the slow call failed"))
+    }
+}
+
+/// An engine whose one task calls `name`.
+fn host_engine<F: dataflow_rs::Function + 'static>(name: &str, f: F) -> dataflow_rs::Engine {
+    dataflow_rs::Engine::builder()
+        .register(name, f)
+        .workflow_json(
+            &json!({"id": "w", "tasks": [{"id": "t", "on_failure": "continue",
+            "function": {"name": name, "input": {}}}]}),
+        )
+        .build()
+        .expect("the workflow compiles")
+}
+
+#[wasm_bindgen_test]
+async fn a_non_zero_deadline_ends_a_loop_timed_out_mid_run() {
+    // The same loop as `timeout_ms: 0`, with a deadline that passes while it
+    // runs: at least one sweep completes before the check fires.
+    let engine = engine(json!([{
+        "id": "loop",
+        "loop": {"counter": "i", "max": 100000},
+        "tasks": [{"id": "t", "function": {"name": "map", "input": {
+            "mappings": [{"path": "data.n", "logic": {"var": "temp_data.i"}}]}}}]
+    }]));
+    let result = run(&engine, JsValue::NULL, Some(r#"{"timeout_ms": 5}"#)).await;
+    assert_eq!(result["run"]["status"], "timed_out");
+    assert_eq!(result["run"]["partial"], true);
+    let swept = result["message"]["context"]["data"]["n"]
+        .as_u64()
+        .expect("the loop wrote data.n before the deadline");
+    assert!(swept >= 1, "the loop ran no sweep: {result}");
+}
+
+#[wasm_bindgen_test]
+async fn a_cancelled_token_stops_the_run_before_the_call() {
+    use dataflow_rs::run::{CancelToken, RunStatus};
+    let ran = Arc::new(AtomicBool::new(false));
+    let engine = host_engine("record", Once(Arc::clone(&ran)));
+    let token = CancelToken::new();
+    token.cancel();
+    let opts = dataflow_rs::RunOptions::default().cancel(&token);
+    let run = engine
+        .run_with(&mut dataflow_rs::Message::from_json(&json!({})), &opts)
+        .await;
+    assert!(
+        matches!(run.status(), RunStatus::Cancelled),
+        "{:?}",
+        run.status()
+    );
+    assert!(
+        !ran.load(Ordering::SeqCst),
+        "the token stopped the run before the call"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn a_slow_host_call_is_not_cut_short_but_the_deadline_still_ends_the_run() {
+    use dataflow_rs::run::{Instant, RunStatus};
+    let finished = Arc::new(AtomicBool::new(false));
+    let engine = host_engine("slow", Slow(Arc::clone(&finished)));
+    let opts =
+        dataflow_rs::RunOptions::default().deadline(Instant::now() + Duration::from_millis(50));
+    let run = engine
+        .run_with(&mut dataflow_rs::Message::from_json(&json!({})), &opts)
+        .await;
+    assert!(
+        finished.load(Ordering::SeqCst),
+        "nothing races on wasm: the call ran to its end"
+    );
+    assert!(
+        matches!(run.status(), RunStatus::TimedOut),
+        "{:?}",
+        run.status()
+    );
 }

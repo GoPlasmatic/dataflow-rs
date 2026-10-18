@@ -108,9 +108,6 @@ pub(crate) async fn race<F: Future>(
     call: F,
     limits: Limits<'_>,
 ) -> std::result::Result<F::Output, Stop> {
-    if !limits.is_set() {
-        return Ok(call.await);
-    }
     let timer = match limits.deadline {
         Some(deadline) if limits.timers => Some(deadline),
         Some(_) => {
@@ -142,16 +139,6 @@ pub(crate) async fn race<F: Future>(
         () = cancelled => Err(Stop::Cancelled),
         () = timer => Err(Stop::TimedOut),
     }
-}
-
-/// On wasm nothing races: `call` runs to its end, and the checks around it
-/// are the only ones.
-#[cfg(target_arch = "wasm32")]
-pub(crate) async fn race<F: Future>(
-    call: F,
-    _limits: Limits<'_>,
-) -> std::result::Result<F::Output, Stop> {
-    Ok(call.await)
 }
 
 /// Whether a timer can be built on this thread.
