@@ -57,7 +57,7 @@ pub enum FieldKind {
 impl FieldKind {
     /// Whether the kind is an output, or holds one at any depth of a list or
     /// a map. The engine records every output's result whatever its field
-    /// says, so a field of such a kind records (break 16). A nested config's
+    /// says, so a field of such a kind records. A nested config's
     /// own fields say so for themselves.
     pub(crate) fn contains_output(self) -> bool {
         match self {
@@ -436,6 +436,13 @@ pub trait ConfigField: Sized + Send + Sync + 'static {
     /// `null` in an `Option<Self>` field means `None`.
     const NULL_IS_VALUE: bool = false;
 
+    /// Whether the field is an output: a destination its call writes to.
+    /// `false` unless the type is [`Output`](crate::expr::Output) or an
+    /// `Option` of one. The derive reads a field typed `Output` or marked
+    /// `#[output]` as an output and asserts that this is `true`, so a type
+    /// that merely shares the name is refused at compile time.
+    const IS_OUTPUT: bool = false;
+
     /// Compiles `raw`; `None` after recording at least one issue.
     fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self>;
 
@@ -586,6 +593,8 @@ impl<T: FromValue> ConfigField for Expr<T> {
 impl<T: ConfigField> ConfigField for Option<T> {
     /// `null` is `None`, or `T`'s own `null`.
     const NULL_IS_VALUE: bool = true;
+    /// An `Option<Output>` is an output too.
+    const IS_OUTPUT: bool = T::IS_OUTPUT;
     fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
         if raw.is_null() && !T::NULL_IS_VALUE {
             return Some(None);

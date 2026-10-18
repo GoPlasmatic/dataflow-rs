@@ -277,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn run_reports_by_i66() {
+    fn a_run_reports_its_workflows_and_their_exits() {
         let r = run(RunStatus::Completed);
         assert_eq!(r.matched(), 2);
         assert!(!r.retryable() && !r.partial());

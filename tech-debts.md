@@ -58,6 +58,21 @@ the *implementation* of such a rule is duplicated, unenforced or leaky.
 > `ran >= 60`, TST-9's weekly deep job, DOC-1's `message.rs` hit, DUP-9's
 > `builtins/tests.rs` tables and private `CHECK_EVERY`, and API-4's public
 > `def::is_reserved_function`.
+>
+> **Third batch (2026-10-18).** API-3, API-4a/h/i/j/k, DOC-1, VB-2, DX-2,
+> DX-7, CR-7, CR-8, VB-4 and DUP-9's safe subset are fixed; their entries
+> are kept until the next prune. In brief: `ErrorRecord` and `SyncCtx` share
+> the run's ids as `Arc<str>`; `compat::Rewrite` is a `RewriteKind`;
+> `Registry::try_register`, `ConfigField::IS_OUTPUT`,
+> `FunctionConfig::TEMPLATED` and a `publish` key Advisory replace the
+> panics and the silent `TypeId`/name guesses; a design-doc ID is gone from
+> `src`, `tests` and `corpus` and the CI grep now catches a bare `I54:` too;
+> an invalid rollout is `INVALID_ROLLOUT`; a deadline without a timer is
+> checked rather than dropped; the fan-out pre-fill is documented; a bare
+> root resolves to the root; `Trace::validate` guards a replay; a fragment
+> root must follow `(loop.setup | tasks)([i].tasks)*` and a literal `null`
+> condition is `NULL_CONDITION`; `CHECK_EVERY` is public, the `for_each`
+> message takes its owner, and `$` and the roots are spelled once.
 
 ## 0. Executive summary
 

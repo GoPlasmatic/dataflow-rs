@@ -109,6 +109,20 @@ impl Rollout {
         Ok(out)
     }
 
+    /// Check this range alone: an inverted range, or one reaching past bucket
+    /// 100, serves no traffic, so a workflow carrying it silently never runs.
+    /// [`Rollout::partition`] never builds one; a hand-written definition can.
+    ///
+    /// # Errors
+    ///
+    /// [`RolloutError::InvalidRange`] naming this range.
+    pub fn check(&self) -> Result<(), RolloutError> {
+        if self.bucket_end < self.bucket_start || u16::from(self.bucket_end) > BUCKETS {
+            return Err(RolloutError::InvalidRange { rollout: *self });
+        }
+        Ok(())
+    }
+
     /// Check that a set of ranges — the versions of one logical workflow —
     /// partitions `0..100`: every bucket served, none served twice.
     ///
@@ -145,9 +159,7 @@ impl Rollout {
         // Diagnose a broken range by its cause, before it shows up as a
         // confusing symptom elsewhere in the space.
         for r in &ranges {
-            if r.bucket_end < r.bucket_start || u16::from(r.bucket_end) > BUCKETS {
-                return Err(RolloutError::InvalidRange { rollout: **r });
-            }
+            r.check()?;
         }
 
         // 100 buckets against a handful of ranges: counting directly is both

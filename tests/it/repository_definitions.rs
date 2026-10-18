@@ -2,7 +2,7 @@
 // markdown fences, Rust raw strings and pure-literal `json!` macros, and the
 // UI's TypeScript samples, held to `def::parse`:
 //
-// * no definition gets a `LIKELY_TYPO` (R46), and
+// * no definition gets a `LIKELY_TYPO`, and
 // * every definition from the docs, the READMEs, `examples/` and the UI's
 //   samples loads, with no Rejected issue.
 //
@@ -846,7 +846,7 @@ const COMPILE_ALLOWLIST: &[(&str, &str, &str, &str, &str)] = &[
         "w",
         "INVALID_PATH",
         "tasks[0].function.input.mappings[0].path",
-        "break 15: a literal path outside the three roots is refused at compile; v3 wrote a new top-level key",
+        "a literal path outside the three roots is refused at compile; v3 wrote a new top-level key",
     ),
     (
         "corpus/cases/builtins/map_mode.json",
@@ -881,7 +881,7 @@ const COMPILE_ALLOWLIST: &[(&str, &str, &str, &str, &str)] = &[
         "w",
         "PAYLOAD_VAR",
         "tasks[0].function.input.mappings[0].logic",
-        "break 9: a literal `payload` path is a Defect; v3 read null",
+        "a literal `payload` path is a Defect; v3 read null",
     ),
     (
         "corpus/cases/expressions/secrets_refused.json",

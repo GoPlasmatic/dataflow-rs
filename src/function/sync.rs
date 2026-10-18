@@ -11,6 +11,7 @@ use crate::expr::{Expr, ExprEngine, FromValue, Path};
 use crate::function::Outcome;
 use crate::state::RunContext;
 use datavalue::{DataValue, OwnedDataValue};
+use std::sync::Arc;
 
 /// A built-in's call. Crate-private: hosts implement `Function`, since a
 /// second public kind of function would bring a second context type and
@@ -34,10 +35,10 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     pub(crate) exprs: &'p ExprEngine,
     /// The message's payload.
     pub(crate) payload: &'c OwnedDataValue,
-    /// The workflow's id.
-    pub(crate) workflow_id: &'p str,
-    /// The task's id.
-    pub(crate) task_id: &'p str,
+    /// The workflow's id, shared with the program's own `Arc<str>`.
+    pub(crate) workflow_id: Arc<str>,
+    /// The task's id, shared as `workflow_id` is.
+    pub(crate) task_id: Arc<str>,
     /// Whether `Change`s are recorded: only when the audit or the trace
     /// keeps them.
     pub(crate) capture: bool,
@@ -56,7 +57,7 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     /// The message's error list.
     pub(crate) errors: &'c mut Vec<ErrorRecord>,
     /// The run's clock reading, RFC 3339, for error records.
-    pub(crate) now: &'c str,
+    pub(crate) now: Arc<str>,
 }
 
 impl std::fmt::Debug for SyncCtx<'_, '_, '_> {
@@ -137,9 +138,9 @@ pub(crate) fn test(rc: &mut RunContext<'_, '_>, exprs: &ExprEngine, expr: &Expr)
 pub(crate) fn task_record(
     code: impl Into<String>,
     message: String,
-    workflow_id: &str,
-    task_id: &str,
-    now: &str,
+    workflow_id: &Arc<str>,
+    task_id: &Arc<str>,
+    now: &Arc<str>,
 ) -> ErrorRecord {
     let mut record = ErrorRecord::new(code, message);
     record.stamp(workflow_id, Some(task_id), now, None);
@@ -166,19 +167,20 @@ mod tests {
         }));
         let (mut changes, mut errors) = (Vec::new(), Vec::new());
         let mut rc = RunContext::new(&mut slot, Tuning::default());
+        let (workflow_id, task_id, now) = (Arc::from("w"), Arc::from("t"), Arc::from(NOW));
         f(&mut SyncCtx {
             rc: &mut rc,
             exprs: &exprs,
             payload: &OwnedDataValue::Null,
-            workflow_id: "w",
-            task_id: "t",
+            workflow_id,
+            task_id,
             capture,
             traced: false,
             changes: &mut changes,
             marked: false,
             mapping_ends: None,
             errors: &mut errors,
-            now: NOW,
+            now,
         });
         rc.finish();
         changes
@@ -237,7 +239,13 @@ mod tests {
 
     #[test]
     fn task_record_carries_the_ids_and_the_runs_timestamp() {
-        let record = task_record("X_FAILED", "it failed".into(), "w", "t", NOW);
+        let record = task_record(
+            "X_FAILED",
+            "it failed".into(),
+            &Arc::from("w"),
+            &Arc::from("t"),
+            &Arc::from(NOW),
+        );
         assert_eq!(
             serde_json::to_string(&record).unwrap(),
             r#"{"code":"X_FAILED","message":"it failed","path":null,"workflow_id":"w","task_id":"t","timestamp":"2026-10-14T00:00:00+00:00"}"#

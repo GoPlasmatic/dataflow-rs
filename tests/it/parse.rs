@@ -289,7 +289,7 @@ fn rule_2_name_and_description_are_optional_strings() {
         ]
     );
 
-    // An empty name is accepted (break 6), and so is null.
+    // An empty name is accepted, and so is null.
     let parsed = compat(&json!({"id": "w", "name": "", "description": null, "tasks": [leaf("t")]}));
     let def = built(parsed);
     assert_eq!(def.header().name(), Some(""));
@@ -996,6 +996,14 @@ fn rule_7_rollout_needs_both_bounds() {
             ],
         ),
         (json!(50), vec![row(C::ParseFailed, R, "rollout")]),
+        (
+            json!({"bucket_start": 60, "bucket_end": 20}),
+            vec![row(C::InvalidRollout, D, "rollout")],
+        ),
+        (
+            json!({"bucket_start": 0, "bucket_end": 200}),
+            vec![row(C::InvalidRollout, D, "rollout")],
+        ),
     ] {
         let json = json!({"id": "w", "rollout": rollout, "tasks": [leaf("t")]});
         assert_eq!(rows(&compat(&json)), expected, "{rollout}");
@@ -1332,8 +1340,8 @@ fn two_unknown_keys_moving_to_one_ext_name_refuse_the_second() {
     let parsed = compat(&json!({
         "id": "w", "loop.maxx": 1, "loop": {"max": 3, "maxx": 2}, "tasks": [leaf("t")]
     }));
-    // Different paths, `loop` then `maxx` and one key: before phase 3 both
-    // displayed as `loop.maxx`, and the one key is now quoted (I52).
+    // Different paths, `loop` then `maxx` and one key: both displayed as
+    // `loop.maxx` before, and the one key is now quoted.
     assert_eq!(
         rows(&parsed),
         vec![

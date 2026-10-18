@@ -210,8 +210,13 @@ impl SyncFunction for MapConfig {
                     failed = true;
                     let message = format!("mappings[{i}] ({}): {reason}", mapping.describe());
                     error!("Map: {message}");
-                    let mut record =
-                        task_record(MAPPING_ERROR, message, cx.workflow_id, cx.task_id, cx.now);
+                    let mut record = task_record(
+                        MAPPING_ERROR,
+                        message,
+                        &cx.workflow_id,
+                        &cx.task_id,
+                        &cx.now,
+                    );
                     record.path = path.map(|path| path.to_string());
                     cx.errors.push(record);
                 }
@@ -537,7 +542,7 @@ mod tests {
 
     #[test]
     fn a_path_outside_the_three_roots_is_invalid_path() {
-        // Break 15: v3 let `map` write any top-level context key.
+        // v3 let `map` write any top-level context key.
         let (config, issues) = one(json!({"path": "extra.x", "logic": 1}));
         assert!(config.is_none());
         assert_eq!(issues.len(), 1);
@@ -547,7 +552,7 @@ mod tests {
 
     #[test]
     fn a_literal_path_over_64_segments_is_invalid_path() {
-        // I74: a `Path` holds at most 64 segments, the root's included.
+        // A `Path` holds at most 64 segments, the root's included.
         let deep = |n: usize| format!("data{}", ".k".repeat(n - 1));
         let (config, issues) = one(json!({"path": deep(64), "logic": 1}));
         assert!(config.is_some() && issues.is_empty(), "{issues:?}");
@@ -1043,7 +1048,7 @@ mod tests {
 
     #[test]
     fn a_computed_path_that_is_not_a_context_path_fails_the_mapping() {
-        // Break 15's runtime half: v3 wrote any top-level context key; a
+        // The runtime half: v3 wrote any top-level context key; a
         // computed path that is not a `Path` fails its mapping.
         let input = json!({"mappings": [
             {"path": {"var": "data.where"}, "logic": 1},

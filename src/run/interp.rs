@@ -14,8 +14,9 @@
 //! the same, jumping back to the sweep's first op. The engine owns the
 //! counter: it lives in the [`Frame`], and the context only gets a copy.
 //!
-//! The run's [`Limits`] are checked every 64 ops and as each sweep starts,
-//! when one is set. A stop between ops ends the run with nothing recorded;
+//! The run's [`Limits`] are checked every [`CHECK_EVERY`] ops and as each
+//! sweep starts, when one is set. A stop between ops ends the run with
+//! nothing recorded;
 //! one as a sweep starts, after the counter's write, with the engine's step
 //! for that write, so a trace still replays to the message's context.
 //!
@@ -125,7 +126,7 @@ pub(crate) struct RunEnv<'r, 'p> {
     /// The run's deadline and token.
     pub(crate) limits: Limits<'r>,
     /// The ops the run has begun while a limit is set, across its
-    /// workflows: every 64th checks the limits.
+    /// workflows: every [`CHECK_EVERY`]th checks the limits.
     pub(crate) ops: u32,
     /// The expression engine the program was compiled with.
     pub(crate) exprs: &'p ExprEngine,
@@ -152,8 +153,9 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) watched: bool,
     /// The run's one clock reading.
     pub(crate) now: DateTime<Utc>,
-    /// The same reading, RFC 3339, for error records.
-    pub(crate) now_text: &'r str,
+    /// The same reading, RFC 3339, for error records: one `Arc<str>` per run,
+    /// shared by every record it stamps.
+    pub(crate) now_text: &'r Arc<str>,
     /// The changes of the call running, read by the recorder.
     pub(crate) changes: Vec<Change>,
     /// The current workflow's id.
@@ -193,8 +195,13 @@ impl Watch<'_> {
     }
 }
 
-/// How many ops run between two checks of the limits.
-const CHECK_EVERY: u32 = 64;
+/// How many ops run between two checks of the limits, when one is set.
+///
+/// The interpreter checks a deadline and a cancellation token at every host
+/// call, every fan-out element's start and every sweep, and here: at every
+/// `CHECK_EVERY`th op, so a loop of pure built-ins still stops. The number is
+/// public so a test can derive where a run stops instead of spelling `63`.
+pub const CHECK_EVERY: u32 = 64;
 
 impl<'p> RunEnv<'_, 'p> {
     /// At an op boundary: the run context's checkpoint when due, then, with
@@ -229,7 +236,7 @@ impl<'p> RunEnv<'_, 'p> {
     /// message, and the workflow's id.
     pub(crate) fn workflow_record(&self, error: &Error) -> ErrorRecord {
         let mut record = ErrorRecord::from(error);
-        record.workflow_id = Some(self.workflow_id.to_string());
+        record.workflow_id = Some(Arc::clone(self.workflow_id));
         record
     }
 
@@ -507,7 +514,7 @@ fn loop_next<'p>(
 /// None of these writes records a `Change` for the audit. A traced run
 /// gets the engine's step for them, `task: None` with the counter written,
 /// as each sweep is entered, as the loop exits on a counter it wrote, and as
-/// a limit stops the run after the counter's write (T2-C2), with each
+/// a limit stops the run after the counter's write, with each
 /// write's `Change` while the trace keeps changes.
 fn enter<'p>(
     rc: &mut RunContext<'_, 'p>,
@@ -653,13 +660,17 @@ fn call<'p>(
     builtin: &'p Builtin,
 ) -> Flow {
     let errors_before = env.errors.len();
+    // The program owns the ids, so copying the `Arc`s out borrows `env` only
+    // for the two reads, before `mapping_ends` takes `env.watch` mutably.
+    let workflow_id = Arc::clone(env.workflow_id);
+    let task_id = Arc::clone(&env.task_ids[site.task as usize]);
     // An unwatched run neither traces nor times a call.
     let (traced, started) = if env.watched {
         (env.traces_changes(), env.watch.timed.then(record::now))
     } else {
         (false, None)
     };
-    // Lent only to a call whose trace keeps changes (I127).
+    // Lent only to a call whose trace keeps changes.
     let mapping_ends = if traced {
         env.watch.trace.as_deref_mut().map(Capture::mapping_ends)
     } else {
@@ -669,15 +680,15 @@ fn call<'p>(
         rc: &mut *rc,
         exprs: env.exprs,
         payload: env.payload,
-        workflow_id: &wf.id,
-        task_id: &wf.tasks[site.task as usize].id,
+        workflow_id,
+        task_id,
         capture: env.capture,
         traced,
         changes: &mut env.changes,
         marked: false,
         mapping_ends,
         errors: &mut *env.errors,
-        now: env.now_text,
+        now: Arc::clone(env.now_text),
     };
     let result = builtin.call(&mut cx);
     let mut marked = cx.marked;
@@ -686,8 +697,7 @@ fn call<'p>(
     let elapsed = started.map(record::since);
     // An `Err` records no changes for the audit, as v3's recorder drops
     // them. Its writes stand, so a trace that keeps changes keeps them, for
-    // itself alone: the call's `Failed` or `Executed` step carries them
-    // (I19, T2-C4).
+    // itself alone: the call's `Failed` or `Executed` step carries them.
     if result.is_err() {
         if traced {
             for change in &mut env.changes {

@@ -1,4 +1,4 @@
-// The error context end to end (I108): after every recorded call that is not
+// The error context end to end: after every recorded call that is not
 // a `Skip`, each error record the call added, the recorder's own and the
 // call's, is mirrored at the configured path as `{workflow_id, task_id,
 // code, status}`, appended and trimmed to the newest `limit`; a non-array at
@@ -537,7 +537,7 @@ async fn a_non_array_at_the_path_is_replaced() {
 
 #[tokio::test]
 async fn the_path_is_reset_at_run_start() {
-    // Break 20: a message that arrives with records at the path loses them;
+    // A message that arrives with records at the path loses them;
     // the run's own are not appended to them.
     let workflows = [workflow("w", vec![goes_on(act("bad", json!(500)))])];
     let arriving = json!({"errors": [{"old": true}], "keep": 1});

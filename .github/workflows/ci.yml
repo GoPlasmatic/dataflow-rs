@@ -91,6 +91,17 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # `design-v4/` was deleted before 4.0, so an `(I125)`, an `I56:`, a
+      # "break 22" or a "phase 3" cites something no reader can follow. The
+      # reason next to it is what the comment needs; this keeps new IDs out of
+      # compiled sources. `\b(I|R|M)[0-9]{1,3}\b` catches a bare `I54:` too.
+      - name: Check for deleted design-doc IDs
+        run: |
+          if git grep -nE '\((I|R|M)[0-9]+\)|\b(I|R|M)[0-9]{1,3}\b|[Bb]reak [0-9]+|[Pp]hase [0-9]|T2-C[0-9]' -- src tests corpus; then
+            echo "::error::a design-v4/ ID is cited; state the reason instead"
+            exit 1
+          fi
+
       # `--workspace` so dataflow-wasm is covered too, and `--all-features` so
       # the `wasm-web` feature gets linted rather than silently skipped.
       - name: Run clippy

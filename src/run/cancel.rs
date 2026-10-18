@@ -2,7 +2,8 @@
 //! one rule that checks them.
 //!
 //! The interpreter checks them at every host call and every fan-out
-//! element's start, at every sweep, and every 64 ops, and only when one is
+//! element's start, at every sweep, and every
+//! [`CHECK_EVERY`](crate::run::CHECK_EVERY) ops, and only when one is
 //! set: a run with neither never reads the clock. The token is checked
 //! first. A stop between ops or at a sweep records nothing on the message;
 //! the [`Run`](super::Run) says why. Natively a host call also [`race`]s
@@ -20,6 +21,9 @@ pub(crate) struct Limits<'r> {
     pub(crate) deadline: Option<Instant>,
     /// The token that cancels the run.
     pub(crate) cancel: Option<&'r CancelToken>,
+    /// Whether this run's runtime can build a timer: probed once at the
+    /// run's start, so every call of the run races the same way.
+    pub(crate) timers: bool,
 }
 
 /// Why a run must stop short.
@@ -93,12 +97,31 @@ impl Limits<'_> {
 /// limit fires in wins; then the token, as [`Limits::stop`] reads it first.
 /// A call that wins with an `Err` is still the limit's: its caller checks
 /// the limits again.
+///
+/// A timer needs a Tokio runtime with its time driver enabled. Without one
+/// (`futures::executor::block_on`, smol, a runtime built without
+/// `enable_time`), the deadline falls back to the checks around each op and
+/// call, the mode wasm always uses, and warns once. A token still races,
+/// since it needs no timer.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn race<F: Future>(
     call: F,
     limits: Limits<'_>,
 ) -> std::result::Result<F::Output, Stop> {
     if !limits.is_set() {
+        return Ok(call.await);
+    }
+    let timer = match limits.deadline {
+        Some(deadline) if limits.timers => Some(deadline),
+        Some(_) => {
+            timers::warn_once();
+            None
+        }
+        None => None,
+    };
+    // A deadline with no timer and no token has nothing to race: the
+    // checks around the call are the whole limit.
+    if timer.is_none() && limits.cancel.is_none() {
         return Ok(call.await);
     }
     let cancelled = async {
@@ -108,7 +131,7 @@ pub(crate) async fn race<F: Future>(
         }
     };
     let timer = async {
-        match limits.deadline {
+        match timer {
             Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
             None => std::future::pending().await,
         }
@@ -129,6 +152,73 @@ pub(crate) async fn race<F: Future>(
     _limits: Limits<'_>,
 ) -> std::result::Result<F::Output, Stop> {
     Ok(call.await)
+}
+
+/// Whether a timer can be built on this thread.
+#[cfg(not(target_arch = "wasm32"))]
+mod timers {
+    use std::cell::Cell;
+
+    thread_local! {
+        /// This thread's answer, once probed. A thread does not change the
+        /// runtime context it polls in, so the answer is stable there; a
+        /// process-wide cache would be wrong when a host runs one runtime
+        /// with timers and another without.
+        static AVAILABLE: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    /// Whether `tokio::time::sleep_until` can be built here: a Tokio runtime
+    /// is current and its time driver is enabled.
+    ///
+    /// Tokio exposes neither question publicly. A `Sleep` fetches the driver
+    /// in its constructor, panicking when it is missing, so the probe builds
+    /// one and catches that panic. A missing runtime is cheaper to see and
+    /// panics nothing.
+    pub(super) fn available() -> bool {
+        AVAILABLE.with(|cell| match cell.get() {
+            Some(known) => known,
+            None => {
+                let known = probe();
+                cell.set(Some(known));
+                known
+            }
+        })
+    }
+
+    fn probe() -> bool {
+        if tokio::runtime::Handle::try_current().is_err() {
+            return false;
+        }
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            drop(tokio::time::sleep_until(tokio::time::Instant::now()));
+        }))
+        .is_ok()
+    }
+
+    /// Says once that a deadline is checked, not raced.
+    pub(super) fn warn_once() {
+        static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        WARNED.get_or_init(|| {
+            ::log::warn!(
+                "a run deadline cannot use a timer: no Tokio runtime with \
+                 `enable_time` is current. Limits are checked between ops and \
+                 calls instead, and a call is not cut short mid-flight."
+            );
+        });
+    }
+}
+
+/// Whether a run started on this thread can race a deadline with a timer.
+/// Probed once at the run's start; whatever it answers holds for the run.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn timers_available() -> bool {
+    timers::available()
+}
+
+/// On wasm a run never races a deadline.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn timers_available() -> bool {
+    false
 }
 
 /// The time a deadline is compared with.
@@ -182,6 +272,7 @@ mod tests {
         let passed = Limits {
             deadline: Some(now()),
             cancel: Some(&token),
+            timers: false,
         };
         assert!(passed.is_set());
         assert_eq!(passed.stop(), Some(Stop::TimedOut));
@@ -196,11 +287,13 @@ mod tests {
         let far = Limits {
             deadline: Some(now() + Duration::from_secs(3600)),
             cancel: None,
+            timers: false,
         };
         assert!(far.is_set() && far.check().is_ok());
         let past = Limits {
             deadline: Some(now()),
             cancel: None,
+            timers: false,
         };
         let e = past.check().unwrap_err();
         assert_eq!(
@@ -292,5 +385,28 @@ mod tests {
             .run_with(&mut Message::from_json(&json!({})), &opts)
             .await;
         assert!(reads() > before + 3, "{} reads", reads() - before);
+    }
+
+    #[test]
+    fn a_deadline_without_a_timer_falls_back_to_the_checks() {
+        // `futures::executor::block_on` has no Tokio runtime, so there is no
+        // time driver to race: the checks between ops and calls are the whole
+        // limit, and the call is not cut short mid-flight. Before DX-2 the
+        // first host call panicked here.
+        let engine = Engine::builder()
+            .register("answer", Answer(true))
+            .workflow_json(&json!({"id": "w", "tasks": [{"id": "a",
+                "function": {"name": "answer", "input": {}}}]}))
+            .build()
+            .unwrap();
+        let opts = RunOptions::default().deadline(now() + Duration::from_secs(3600));
+        let run = futures::executor::block_on(
+            engine.run_with(&mut Message::from_json(&json!({})), &opts),
+        );
+        assert!(
+            matches!(run.status(), crate::observe::RunStatus::Completed),
+            "{:?}",
+            run.status()
+        );
     }
 }

@@ -1,7 +1,7 @@
 // Loops end to end: the counter, its bounds and its sweeps, the condition
 // before every sweep, `setup`, `over`, `as` and `scratch`, a halt and a
-// failure inside a loop, I61's non-array `over`, the checkpoints a long loop
-// takes (I72), and the run future's `Send`. Each test reads the `Run` the
+// failure inside a loop, a non-array `over`, the checkpoints a long loop
+// takes, and the run future's `Send`. Each test reads the `Run` the
 // engine reports and asserts the facts it is about; most also hold every
 // message they run whole, key order included, to their golden file under
 // `tests/golden/run_loops/` (`support/run_helpers.rs`;
@@ -435,7 +435,7 @@ async fn an_empty_over_writes_init_and_runs_no_sweep() {
     assert!(m.audit().is_empty());
 }
 
-/// The one record I61 leaves for a non-array `over`, as JSON.
+/// The one record a non-array `over` leaves, as JSON.
 fn over_record(workflow: &str, kind: &str, now: &Value) -> Value {
     json!({
         "code": "LOGIC_ERROR",
@@ -448,7 +448,7 @@ fn over_record(workflow: &str, kind: &str, now: &Value) -> Value {
 
 #[tokio::test]
 async fn a_non_array_over_records_one_logic_error_and_writes_no_counter() {
-    // I61: one `LOGIC_ERROR` record, with no wrapper record beside it.
+    // One `LOGIC_ERROR` record, with no wrapper record beside it.
     for continues in [true, false] {
         for (scalar, kind) in [
             (json!("nope"), "a string"),
@@ -515,7 +515,7 @@ async fn a_non_array_over_records_one_logic_error_and_writes_no_counter() {
 
 #[tokio::test]
 async fn an_over_that_fails_to_evaluate_records_the_evaluation_error() {
-    // Not I61's case, decided by it: one record with the workflow id, the
+    // Not that case: one record with the workflow id, the
     // evaluation error's code and its own text, with no workflow wrapper.
     let workflows = [with(
         looping(
@@ -799,7 +799,7 @@ async fn a_long_loop_checkpoints_and_stays_within_the_arena_bound() {
     // The run's finish takes one checkpoint; the garbage rule took the rest.
     assert!(stats.checkpoints > 1, "{stats:?}");
     assert!(stats.views <= stats.checkpoints + 1, "{stats:?}");
-    // I72: 05's bound plus one op's garbage.
+    // The bound plus one op's garbage.
     let bound = 2 * stats.live_max.max(64 << 10) + (64 << 10);
     assert!(
         stats.peak_arena <= bound,

@@ -406,7 +406,7 @@ fn fields_carry_kind_required_records_default_and_doc() {
 
     let target = field(fields, "target");
     assert!(matches!(target.kind, FieldKind::Output));
-    // The engine records every output, so its field says so (break 16).
+    // The engine records every output, so its field says so.
     assert!(!target.required && target.records && target.primary);
     assert_eq!(target.default.as_deref(), Some("\"data\""));
     assert_eq!(
@@ -555,7 +555,7 @@ fn visit_reports_every_expression_with_its_relative_path() {
     assert_eq!(
         seen.exprs,
         [
-            // An `Output` is recorded without saying so (break 16).
+            // An `Output` is recorded without saying so.
             ("target".into(), json!("data"), true),
             ("errors".into(), json!("temp_data.err"), true),
             ("source".into(), json!(1), true),

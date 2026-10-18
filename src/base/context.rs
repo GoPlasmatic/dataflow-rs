@@ -19,7 +19,7 @@ pub(crate) const ROOTS: [&str; 3] = ["data", "metadata", "temp_data"];
 ///
 /// Read from JSON, it takes the three roots in any order and writes them in
 /// that order, reads a missing one as `{}`, takes any value at each (a
-/// trace's redacted root is `null`), and refuses any other key: break 22,
+/// trace's redacted root is `null`), and refuses any other key,
 /// since expressions evaluate against the whole object and a fourth key
 /// would be readable by `{"var": …}`. An object anywhere in it holding a key
 /// twice is refused too: the engine reads the first, where a JSON parser

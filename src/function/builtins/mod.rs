@@ -137,10 +137,10 @@ impl BuiltinKind {
             }
             Self::ParseXml => ParseConfig::compile(input, cx).map(|c| Builtin::ParseXml(c.into())),
             Self::PublishJson => {
-                PublishConfig::compile(input, cx).map(|c| Builtin::PublishJson(c.into()))
+                PublishConfig::compile_for(input, false, cx).map(|c| Builtin::PublishJson(c.into()))
             }
             Self::PublishXml => {
-                PublishConfig::compile(input, cx).map(|c| Builtin::PublishXml(c.into()))
+                PublishConfig::compile_for(input, true, cx).map(|c| Builtin::PublishXml(c.into()))
             }
         }
     }

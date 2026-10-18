@@ -47,9 +47,9 @@ impl SyncFunction for FilterConfig {
                 cx.errors.push(task_record(
                     EVALUATION_ERROR,
                     message,
-                    cx.workflow_id,
-                    cx.task_id,
-                    cx.now,
+                    &cx.workflow_id,
+                    &cx.task_id,
+                    &cx.now,
                 ));
                 false
             }

@@ -3,10 +3,9 @@
 use super::builtins::BuiltinKind;
 use super::erased::{Erased, ErasedFunction};
 use super::templated::primary_problem;
-use super::{CallLayer, Function, FunctionSpec, Templated};
-use crate::base::{AuthoredPath, PathSeg};
+use super::{CallLayer, Function, FunctionConfig, FunctionSpec};
+use crate::base::{AuthoredPath, Error, ErrorKind, PathSeg};
 use crate::expr::{ExprEngine, FieldKind, FieldSpec, ValueKind};
-use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
@@ -96,26 +95,46 @@ impl Registry {
     ///   literal of any JSON, an object or an array, a document, or a
     ///   runtime-declared set of fields;
     /// - [`runtime_fields`](FunctionSpec::runtime_fields) on a config that is
-    ///   not [`Templated`], which would never compile them;
-    /// - a [`Templated`] config with no `runtime_fields`, which has nothing
+    ///   not [`Templated`](super::Templated), which would never compile them;
+    /// - a [`Templated`](super::Templated) config with no `runtime_fields`, which has nothing
     ///   to compile;
     /// - `runtime_fields` holding several outputs without exactly one marked
     ///   [`primary`](FieldSpec::primary), which `#[derive(FunctionConfig)]`
     ///   refuses at expansion: no output, or a guess, would be the one
     ///   [`Ctx::emit_default`](crate::Ctx::emit_default) writes through.
     pub fn register<F: Function>(&mut self, name: &str, f: F) {
-        assert!(
-            !crate::def::is_reserved_function(name),
-            "cannot register `{name}`: the name is reserved for the built-in functions \
-             (def::BUILTIN_FUNCTIONS, and v3's alias for `validation`)"
-        );
+        if let Err(error) = self.try_register(name, f) {
+            panic!("{}", error.message());
+        }
+    }
+
+    /// [`register`](Self::register), refusing instead of panicking: a name
+    /// taken from data, or a `Function` implementation built at run time,
+    /// need not be a host bug.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Config`] for everything `register` panics on: a reserved
+    /// name, or a [`spec`](Function::spec) its config cannot honour.
+    pub fn try_register<F: Function>(&mut self, name: &str, f: F) -> Result<(), Error> {
+        if crate::def::is_reserved_function(name) {
+            return Err(Error::new(
+                ErrorKind::Config,
+                format!(
+                    "cannot register `{name}`: the name is reserved for the built-in functions \
+                     (def::BUILTIN_FUNCTIONS, and v3's alias for `validation`)"
+                ),
+            ));
+        }
         let erased = Erased::new(f);
-        let templated = TypeId::of::<F::Config>() == TypeId::of::<Templated>();
-        check_spec(name, erased.spec(), erased.fields(), templated);
+        let templated = <F::Config as FunctionConfig>::TEMPLATED;
+        check_spec(name, erased.spec(), erased.fields(), templated)
+            .map_err(|message| Error::new(ErrorKind::Config, message))?;
         let erased: Arc<dyn ErasedFunction> = Arc::new(erased);
         Arc::make_mut(&mut self.inner)
             .hosts
             .insert(Box::from(name), erased);
+        Ok(())
     }
 
     /// Adds a layer around every host call. The first registered is the
@@ -173,39 +192,51 @@ impl Registry {
 }
 
 /// Panics on a spec `register` refuses: runtime fields on a config that is
-/// not [`Templated`], none on one that is, several outputs among them
+/// not [`Templated`](super::Templated), none on one that is, several outputs among them
 /// without exactly one primary, or a reference that does not reach a field
 /// through `fields`, the config's fields, and the kinds below them.
-fn check_spec(name: &str, spec: &FunctionSpec, fields: &[FieldSpec], templated: bool) {
+fn check_spec(
+    name: &str,
+    spec: &FunctionSpec,
+    fields: &[FieldSpec],
+    templated: bool,
+) -> Result<(), String> {
     match (templated, spec.runtime_fields.is_some()) {
-        (false, true) => panic!(
-            "cannot register `{name}`: its spec declares runtime fields, but its config is not \
-             `Templated`, so it never compiles them"
-        ),
-        (true, false) => panic!(
-            "cannot register `{name}`: its config is `Templated`, but its spec declares no \
-             runtime fields, so every compile of it fails"
-        ),
+        (false, true) => {
+            return Err(format!(
+                "cannot register `{name}`: its spec declares runtime fields, but its config is \
+                 not `Templated`, so it never compiles them"
+            ));
+        }
+        (true, false) => {
+            return Err(format!(
+                "cannot register `{name}`: its config is `Templated`, but its spec declares no \
+                 runtime fields, so every compile of it fails"
+            ));
+        }
         _ => {}
     }
     if let Some(problem) = spec.runtime_fields.as_deref().and_then(primary_problem) {
-        panic!("cannot register `{name}`: {problem}");
+        return Err(format!("cannot register `{name}`: {problem}"));
     }
     for reference in &spec.references {
         let field = &reference.field;
-        let path = AuthoredPath::from_str(field).unwrap_or_else(|error| {
-            panic!(
+        let path = AuthoredPath::from_str(field).map_err(|error| {
+            format!(
                 "cannot register `{name}`: its reference field `{field}` is not an authored \
                  path ({error})"
             )
-        });
+        })?;
         if let Err(why) = reaches(fields, path.segs()) {
-            panic!("cannot register `{name}`: its reference field `{field}` {why}");
+            return Err(format!(
+                "cannot register `{name}`: its reference field `{field}` {why}"
+            ));
         }
     }
+    Ok(())
 }
 
-/// Whether `segs` reach a field (M3): the first names one of `fields`, and
+/// Whether `segs` reach a field: the first names one of `fields`, and
 /// each one below is walked through the kind above it. `Err` says why not.
 ///
 /// A nested config's fields are named by key, a list's elements by index

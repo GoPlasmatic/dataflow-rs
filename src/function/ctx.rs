@@ -1130,7 +1130,7 @@ mod tests {
 
     #[test]
     fn render_lends_each_hole_from_where_it_is_and_builds_no_tree() {
-        // R54: only a value the call wrote below a hole is converted.
+        // Only a value the call wrote below a hole is converted.
         let context = json!({"data": {"order": {"customer": "C", "qty": 3}},
             "metadata": {}, "temp_data": {}});
         let exprs = ExprEngine::default();

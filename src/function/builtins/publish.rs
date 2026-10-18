@@ -3,11 +3,12 @@
 
 use super::paths::{DataPath, PublishSource};
 use super::xml::{validation_error, value_to_xml};
-use crate::base::Result;
-use crate::expr::{Expr, Path};
+use crate::base::{IssueCode, Result, Severity};
+use crate::expr::{CompileCx, Expr, Path};
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use ::log::debug;
 use datavalue::OwnedDataValue;
+use serde_json::Value;
 use std::borrow::Cow;
 
 /// `publish_json`'s and `publish_xml`'s input.
@@ -30,6 +31,36 @@ pub(crate) struct PublishConfig {
 }
 
 impl PublishConfig {
+    /// Compiles `input` for `publish_json` (`xml` false) or `publish_xml`:
+    /// the other function's own field is ignored, with an Advisory naming
+    /// it, so a v3 definition that carried both still runs and a v4 one
+    /// learns the field does nothing here.
+    pub(crate) fn compile_for(input: &Value, xml: bool, cx: &mut CompileCx<'_>) -> Option<Self> {
+        let (other, owner) = if xml {
+            ("pretty", "publish_json")
+        } else {
+            ("root_element", "publish_xml")
+        };
+        let input = match input.get(other).is_some() {
+            false => Cow::Borrowed(input),
+            true => {
+                let mut owned = input.clone();
+                if let Value::Object(object) = &mut owned {
+                    object.remove(other);
+                }
+                cx.at(other, |cx| {
+                    cx.issue_as(
+                        IssueCode::UnknownKey,
+                        Severity::Advisory,
+                        format!("`{other}` is `{owner}`'s field; this call ignores it"),
+                    );
+                });
+                Cow::Owned(owned)
+            }
+        };
+        <Self as FunctionConfig>::compile(&input, cx)
+    }
+
     /// The paths this call reads and writes: the source with its fallback,
     /// then the target.
     #[allow(clippy::type_complexity, reason = "one call site")]
@@ -160,8 +191,8 @@ mod tests {
     fn compact_pretty_and_xml_keep_the_sources_key_order() {
         // Built from JSON text so the keys stay out of order whatever
         // serde_json's map type is. All three write the source's order in
-        // every build (break 23: v3's default build sorted pretty's and
-        // XML's keys).
+        // every build: v3's default build sorted pretty's and
+        // XML's keys.
         let text = r#"{"data":{"obj":{"z":1,"a":{"y":2,"b":[3,{"q":1,"c":2.0}]}}},"metadata":{},"temp_data":{}}"#;
         let context = || OwnedDataValue::from_json(text).expect("JSON");
         let compact = json!({"source": "obj", "target": "out"});

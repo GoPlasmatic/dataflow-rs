@@ -323,7 +323,7 @@ fn a_field_spec_builds() {
     assert_eq!(s.name, "limit");
     assert!(!s.required && !s.records && !s.primary);
     assert_eq!(s.default.as_deref(), Some("5"));
-    // An output records, at any depth (break 16).
+    // An output records, at any depth.
     assert!(FieldSpec::runtime("out", FieldKind::Output, false).records);
     assert!(FieldSpec::runtime("outs", <Vec<Output>>::kind(), false).records);
 }

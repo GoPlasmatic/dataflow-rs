@@ -334,6 +334,7 @@ impl ConfigField for Templated {
 }
 
 impl FunctionConfig for Templated {
+    const TEMPLATED: bool = true;
     fn compile(input: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
         Self::compile_fields(input, cx)
     }

@@ -1,6 +1,6 @@
 // `ExprEngineBuilder::ops_budget`: the per-evaluation operation ceiling, and
 // the `ErrorKind::Budget` (`BUDGET_EXCEEDED`) it raises. v3's
-// `tests/ops_budget.rs` ported (I111), with the reload through `compiler()`,
+// `tests/ops_budget.rs` ported, with the reload through `compiler()`,
 // `link` and `with_program`, plus the built-ins over the ceiling: a `map`
 // mapping, a `filter` condition and a `validation` rule each fail their task.
 //

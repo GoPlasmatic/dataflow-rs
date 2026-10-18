@@ -1,4 +1,4 @@
-// The generated TypeScript types of the wire shapes (I133), and the checks
+// The generated TypeScript types of the wire shapes, and the checks
 // that hold them.
 //
 // The exporter renders every declaration, in a fixed order, into one text:

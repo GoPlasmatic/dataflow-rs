@@ -2,7 +2,7 @@
 //! recorded call, skipped step and engine write, each with its changes, so a
 //! replay from `initial` rebuilds the context after every step.
 
-use crate::base::{Change, Context, ErrorRecord, TaskIx, WorkflowIx};
+use crate::base::{Change, Context, Error, ErrorKind, ErrorRecord, TaskIx, WorkflowIx};
 use crate::expr::{Path, path};
 use datavalue::OwnedDataValue;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -170,6 +170,90 @@ impl Trace {
         }
         Some(out)
     }
+
+    /// Checks what a replay needs and a trace read from elsewhere may lack:
+    /// every step's [`mapping_ends`](TraceStep::mapping_ends) fits its
+    /// changes, every change's path parses, and no change leaves a root
+    /// anything but an object, or the `null` a redaction writes.
+    ///
+    /// [`contexts`](Self::contexts) and [`mapping_contexts`](Self::mapping_contexts)
+    /// trust their trace: a change that does not parse is skipped and a
+    /// root written whole stands, as the splice and `Ctx::set` allow. A host
+    /// that reads a trace from a caller (the wasm bindings do) calls this
+    /// first and reports a failure as `INVALID_TRACE`.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Config`] naming the step and what is wrong.
+    pub fn validate(&self) -> crate::base::Result<()> {
+        match self.initial.as_value() {
+            OwnedDataValue::Object(roots) => {
+                for (root, value) in roots {
+                    check_root(root, value)?;
+                }
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Config,
+                    "a trace's initial context is not an object of roots",
+                ));
+            }
+        }
+        for (i, step) in self.steps.iter().enumerate() {
+            let mut before = 0u32;
+            for &end in &step.mapping_ends {
+                if end < before || end as usize > step.changes.len() {
+                    return Err(Error::new(
+                        ErrorKind::Config,
+                        format!(
+                            "step {i}'s mapping_ends {:?} do not fit its {} change(s)",
+                            step.mapping_ends,
+                            step.changes.len()
+                        ),
+                    ));
+                }
+                before = end;
+            }
+            for change in &step.changes {
+                let at = change.path.parse::<Path>().map_err(|_| {
+                    Error::new(
+                        ErrorKind::Config,
+                        format!(
+                            "step {i}'s change path {:?} is not a context path",
+                            change.path
+                        ),
+                    )
+                })?;
+                if !at.is_root() {
+                    continue;
+                }
+                if change.removed {
+                    return Err(Error::new(
+                        ErrorKind::Config,
+                        format!(
+                            "step {i} removes the root `{}`, which a context always keeps",
+                            change.path
+                        ),
+                    ));
+                }
+                check_root(&change.path, &change.new_value)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Checks a context root's value: an object, or the `null` a redaction
+/// writes. `Path::set` refuses anything else at a root, so a trace holding
+/// one did not come from a run.
+fn check_root(name: &str, value: &OwnedDataValue) -> crate::base::Result<()> {
+    if matches!(value, OwnedDataValue::Object(_) | OwnedDataValue::Null) {
+        return Ok(());
+    }
+    Err(Error::new(
+        ErrorKind::Config,
+        format!("`{name}` is a context root and holds neither an object nor null"),
+    ))
 }
 
 /// One change applied to `root`, the object holding the three roots, by
@@ -209,7 +293,7 @@ pub enum StepResult {
     /// workflow.
     Skipped,
     /// The failure went to the workflow's policy, or stopped the run: the
-    /// step v3 dropped (break 5). A workflow's own failure is one too.
+    /// step v3 dropped. A workflow's own failure is one too.
     Failed,
 }
 
@@ -403,5 +487,45 @@ mod tests {
         let mut backwards = trace();
         backwards.steps[1].mapping_ends = vec![3, 1];
         assert!(backwards.mapping_contexts(1).is_none());
+    }
+
+    #[test]
+    fn validate_refuses_what_a_replay_cannot_stand() {
+        assert!(trace().validate().is_ok());
+
+        // A root takes only an object in a run; a scalar or an array would
+        // make the replayed context one no run produced.
+        let mut scalar = trace();
+        scalar.steps[1]
+            .changes
+            .push(Change::write("metadata", value(json!({})), value(json!(5))));
+        assert!(scalar.validate().is_err());
+
+        // A root cannot be removed, and `Path::set` says so.
+        let mut removed = trace();
+        removed.steps[0].changes = vec![Change::removal("data", value(json!({})))];
+        assert!(removed.validate().is_err());
+
+        // An unparsable path is refused, not silently skipped.
+        let mut bad_path = trace();
+        bad_path.steps[0].changes = vec![Change::write(
+            "outside",
+            value(json!(null)),
+            value(json!(1)),
+        )];
+        assert!(bad_path.validate().is_err());
+
+        // The initial context's roots are checked too.
+        let mut bad_initial = trace();
+        bad_initial.initial = Context::from_root(value(json!({
+            "data": 5, "metadata": {}, "temp_data": {}
+        })));
+        assert!(bad_initial.validate().is_err());
+
+        // A redacted root's `null` is legitimate.
+        let mut redacted = trace();
+        redacted.steps[0].changes =
+            vec![Change::write("data", value(json!({})), value(json!(null)))];
+        assert!(redacted.validate().is_ok());
     }
 }

@@ -1,5 +1,5 @@
 // The secrets guarantee, exit by exit: v3's `tests/secrets_isolation.rs`
-// ported (I111).
+// ported.
 //
 // A workflow reads a secret from every place it is allowed to, runs under
 // every trace policy v4 has, and then every surface a host could observe is
@@ -14,7 +14,7 @@
 // It also pins the access vectors that must *not* reach the store: a `var`
 // path that looks like a root, a `Path` naming one, the whole-context read,
 // a message carrying its own `secret` / `secrets` keys, and one read from
-// JSON with a fourth `secrets` root, which v4 refuses to read (break 22).
+// JSON with a fourth `secrets` root, which v4 refuses to read.
 //
 // Dropped with their v3 surfaces: mapping contexts, snapshot audit scopes and
 // `final_message` (v4's trace is `initial` plus each step's changes; its
@@ -774,7 +774,7 @@ async fn context_keys_named_secret_neither_shadow_nor_expose_the_store() {
     );
 
     // A message read from JSON with a fourth `secrets` root, which v3 read
-    // and ran: v4 refuses the read (break 22), so the root never reaches a
+    // and ran: v4 refuses the read, so the root never reaches a
     // run, and the refusal names the key, not what it holds.
     let err = serde_json::from_value::<Message>(json!({
         "id": "m", "payload": {},

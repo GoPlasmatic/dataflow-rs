@@ -680,27 +680,12 @@ pub fn parse(
     to_js(&ParseResult { definition, issues })
 }
 
-/// A trace read back, its `mapping_ends` checked before anything indexes by
-/// them.
+/// A trace read back, validated before anything replays or indexes it.
 fn read_trace(trace: &JsValue) -> Result<Trace, JsValue> {
     let trace: Trace = from_js(trace, "trace")?;
-    for (i, step) in trace.steps.iter().enumerate() {
-        let mut before = 0u32;
-        for &end in &step.mapping_ends {
-            if end < before || end as usize > step.changes.len() {
-                return Err(engine_error(
-                    "INVALID_TRACE",
-                    format!(
-                        "step {i}'s mapping_ends {:?} do not fit its {} change(s)",
-                        step.mapping_ends,
-                        step.changes.len()
-                    ),
-                    None,
-                ));
-            }
-            before = end;
-        }
-    }
+    trace
+        .validate()
+        .map_err(|error| engine_error("INVALID_TRACE", error.message().to_owned(), None))?;
     Ok(trace)
 }
 
@@ -708,8 +693,10 @@ fn read_trace(trace: &JsValue) -> Result<Trace, JsValue> {
 /// changes from `trace.initial`; one per step, in order. The last one is the
 /// message's context after the run, unless the trace is `truncated`.
 ///
-/// Throws `"INVALID_TRACE"` for a trace whose `mapping_ends` do not fit its
-/// changes, and `"INVALID_ARGUMENT"` for one that does not read as a trace.
+/// Throws `"INVALID_TRACE"` for a trace that cannot be replayed: a step's
+/// `mapping_ends` that do not fit its changes, a change whose path does not
+/// parse, or a root written to anything but an object or `null`. It throws
+/// `"INVALID_ARGUMENT"` for one that does not read as a trace.
 #[wasm_bindgen(unchecked_return_type = "Context[]")]
 pub fn contexts(
     #[wasm_bindgen(unchecked_param_type = "Trace")] trace: JsValue,

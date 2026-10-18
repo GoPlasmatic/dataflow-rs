@@ -239,6 +239,42 @@ fn a_templated_config_without_runtime_fields_panics() {
     Registry::default().register("no_fields", specced::<Templated>(FunctionSpec::default()));
 }
 
+#[test]
+fn try_register_refuses_a_reserved_name_without_panicking() {
+    let mut registry = Registry::default();
+    let error = registry.try_register("map", Fetch).unwrap_err();
+    assert!(error.message().contains("`map`"), "{}", error.message());
+    assert!(
+        registry
+            .catalogue()
+            .all(|row| row.name != "map" || row.builtin)
+    );
+}
+
+#[test]
+fn try_register_refuses_a_bad_spec_without_panicking() {
+    let mut registry = Registry::default();
+    let error = registry
+        .try_register("not_templated", specced::<FetchConfig>(runtime_fields()))
+        .unwrap_err();
+    assert!(
+        error.message().contains("not `Templated`"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn try_register_registers_what_register_does() {
+    let mut registry = Registry::default();
+    registry.try_register("fetch", Fetch).unwrap();
+    assert!(
+        registry
+            .catalogue()
+            .any(|row| row.name == "fetch" && !row.builtin)
+    );
+}
+
 /// Runtime fields holding the outputs `names`, those in `primary` marked
 /// primary.
 fn outputs(names: &[&'static str], primary: &[&str]) -> FunctionSpec {
@@ -361,7 +397,7 @@ fn a_reference_below_an_expression_panics() {
 
 #[test]
 fn a_reference_reaches_a_nested_field_a_list_element_and_a_map_value() {
-    // Each segment through the field kinds (M3): a nested config's field, a
+    // Each segment through the field kinds: a nested config's field, a
     // list's index, a map's key, and anything below a literal of any JSON.
     let mut registry = Registry::default();
     for (name, field) in [

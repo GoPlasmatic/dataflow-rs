@@ -29,7 +29,7 @@ use crate::state::{RunContext, Tuning};
 use datavalue::OwnedDataValue;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// The run's clock reading; every timestamp observed is normalised to
 /// [`TIMESTAMP`] first.
@@ -178,25 +178,27 @@ impl Task {
         errors: &mut Vec<ErrorRecord>,
     ) -> (Option<u16>, Option<String>) {
         let workflow = &self.compiled.workflow;
-        let (workflow_id, task_id) = (&workflow.id, &workflow.tasks[0].id);
+        let workflow_id: Arc<str> = Arc::from(workflow.id.as_str());
+        let task_id: Arc<str> = Arc::from(workflow.tasks[0].id.as_str());
+        let now: Arc<str> = Arc::from(NOW);
         let outcome = self.builtin().call(&mut SyncCtx {
             rc,
             exprs: workflow.registry.exprs(),
             payload,
-            workflow_id,
-            task_id,
+            workflow_id: Arc::clone(&workflow_id),
+            task_id: Arc::clone(&task_id),
             capture,
             traced: false,
             changes,
             marked: false,
             mapping_ends: None,
             errors: &mut *errors,
-            now: NOW,
+            now: Arc::clone(&now),
         });
         let error_code = outcome.as_ref().err().map(|e| e.code().to_owned());
-        let decision = decide(workflow.calls[0].policy, task_id, outcome);
+        let decision = decide(workflow.calls[0].policy, &task_id, outcome);
         if let Some((code, message)) = decision.record {
-            errors.push(task_record(code, message, workflow_id, task_id, NOW));
+            errors.push(task_record(code, message, &workflow_id, &task_id, &now));
         }
         (decision.status, error_code)
     }
@@ -219,7 +221,7 @@ impl Task {
         }
         for error in &mut errors {
             if error.timestamp.is_some() {
-                error.timestamp = Some(TIMESTAMP.to_owned());
+                error.timestamp = Some(Arc::from(TIMESTAMP));
             }
         }
         Observed {

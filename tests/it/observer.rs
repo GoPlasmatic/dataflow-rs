@@ -1,7 +1,7 @@
 // Observers end to end, through `Engine::builder()` and `run_with`: v3's
-// `tests/observer.rs` ported (I111), with `validation` where v3 reported
-// `validate` (break 8) and the `Run`'s status where v3 returned an `Err`,
-// plus the interest rules (I104): each observer is called with only the
+// `tests/observer.rs` ported, with `validation` where v3 reported
+// `validate` and the `Run`'s status where v3 returned an `Err`,
+// plus the interest rules: each observer is called with only the
 // events its interest names, `elapsed` is `Some` only for one holding
 // `TIMINGS`, and the interest is read once per run.
 //
@@ -262,7 +262,7 @@ async fn every_recorded_call_reports_sync_builtins_included() {
     let tasks = timeline.tasks();
     let ids: Vec<_> = tasks.iter().map(|t| t.task_id.as_str()).collect();
     assert_eq!(ids, ["m", "v", "l", "custom"], "every call reports");
-    // The registered names: `validation`, the one spelling (break 8).
+    // The registered names: `validation`, the one spelling.
     let functions: Vec<_> = tasks.iter().map(|t| t.function.as_str()).collect();
     assert_eq!(functions, ["map", "validation", "log", "logger"]);
     assert!(tasks.iter().all(|t| t.status == Some(200)), "{tasks:?}");

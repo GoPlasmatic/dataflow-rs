@@ -26,5 +26,5 @@ pub use issue::{
 };
 // The clock a deadline is read on, named by `run::Instant` and by
 // `Ctx::deadline`: `web_time::Instant`, which is `std::time::Instant` on native
-// targets and a `performance.now()` clock on wasm32, where `std`'s panics (I86).
+// targets and a `performance.now()` clock on wasm32, where `std`'s panics.
 pub use web_time::Instant;

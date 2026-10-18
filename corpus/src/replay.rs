@@ -29,7 +29,7 @@ pub fn rebuild(initial: &Json, steps: &[Json]) -> Vec<Option<Json>> {
 /// merged into it, because that is what `map` does there and what its change
 /// records: only the keys it wrote. A handler's `ctx.set` at a root replaces
 /// it instead. v3's format cannot tell the two apart, and the corpus has no
-/// such write; v4's change says `replaced: true` for the replacement (I106),
+/// such write; v4's change says `replaced: true` for the replacement,
 /// which is then set like any other write.
 pub fn apply(context: &mut Json, change: &Json) {
     let Some(at) = change.get("path").and_then(Json::as_str) else {

@@ -554,6 +554,24 @@ fn generate(
         }
     });
 
+    // A field the derive reads as an output must be an `Output` (or an
+    // `Option` of one): `IS_OUTPUT` is what the type says, so a type that
+    // merely shares the name fails here instead of compiling as a
+    // destination.
+    let assertions: Vec<TokenStream2> = fields
+        .iter()
+        .filter(|f| !f.serde)
+        .map(|f| {
+            let (ty, output) = (f.ty, f.output);
+            quote_spanned! {ty.span()=>
+                const _: () = ::core::assert!(
+                    !#output || <#ty as #p::ConfigField>::IS_OUTPUT,
+                    "a field the derive reads as an output must be an `Output` or an `Option<Output>`"
+                );
+            }
+        })
+        .collect();
+
     quote! {
         #[automatically_derived]
         impl #p::FunctionConfig for #name {
@@ -620,6 +638,8 @@ fn generate(
                 #p::FieldKind::Nested(<Self as #p::FunctionConfig>::fields)
             }
         }
+
+        #(#assertions)*
     }
 }
 

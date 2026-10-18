@@ -360,7 +360,7 @@ fn a_runtime_field_that_records_is_visited_as_recorded() {
     assert!(issues.is_empty(), "{issues:?}");
     let mut seen = Recorded::default();
     out.unwrap().visit(&mut seen);
-    // An `Output` is recorded, whatever its spec says (break 16).
+    // An `Output` is recorded, whatever its spec says.
     assert_eq!(
         seen.0,
         [

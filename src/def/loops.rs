@@ -27,8 +27,9 @@ pub(super) fn slots_overlap(a: &str, b: &str) -> bool {
 
 /// Why a literal `over` could never yield an array, if it is one. An object
 /// is an expression and an array is itself; any other literal is a constant
-/// that is not an array.
-pub(super) fn over_literal_problem(over: &Value) -> Option<String> {
+/// that is not an array. `owner` names the field's owner, `loop` or
+/// `for_each`.
+pub(super) fn over_literal_problem(owner: &str, over: &Value) -> Option<String> {
     let kind = match over {
         Value::Object(_) | Value::Array(_) => return None,
         Value::Null => "null",
@@ -37,7 +38,7 @@ pub(super) fn over_literal_problem(over: &Value) -> Option<String> {
         Value::String(_) => "a string",
     };
     Some(format!(
-        "loop over must be a JSONLogic expression or an array literal — {kind} can never \
+        "{owner} over must be a JSONLogic expression or an array literal — {kind} can never \
          evaluate to an array"
     ))
 }
@@ -114,7 +115,7 @@ impl<'j> Walk<'j> {
             );
         }
         if let Some(over) = over {
-            if let Some(problem) = over_literal_problem(over) {
+            if let Some(problem) = over_literal_problem("loop", over) {
                 self.report(IssueCode::LoopOverInvalid, at.join("over"), problem);
             }
             if init_or_default < 0 {
@@ -254,15 +255,18 @@ mod tests {
 
     #[test]
     fn only_an_object_or_an_array_can_yield_an_array() {
-        assert_eq!(over_literal_problem(&json!({"var": "data.x"})), None);
-        assert_eq!(over_literal_problem(&json!([1])), None);
+        assert_eq!(
+            over_literal_problem("loop", &json!({"var": "data.x"})),
+            None
+        );
+        assert_eq!(over_literal_problem("loop", &json!([1])), None);
         for (literal, kind) in [
             (json!(null), "null"),
             (json!(true), "a boolean"),
             (json!(3), "a number"),
             (json!("data.x"), "a string"),
         ] {
-            let problem = over_literal_problem(&literal).unwrap();
+            let problem = over_literal_problem("loop", &literal).unwrap();
             assert!(
                 problem.contains(&format!("— {kind} can never")),
                 "{problem}"

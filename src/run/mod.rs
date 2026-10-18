@@ -22,8 +22,10 @@ pub use crate::base::Instant;
 pub use crate::base::{CancelToken, Change, Context, Error, ErrorKind, ErrorRecord, Result};
 pub use crate::observe::{RunStatus, Selection, WorkflowExit, WorkflowRecord};
 pub use builder::EngineBuilder;
+pub(crate) use cancel::timers_available;
 pub use engine::{Engine, EngineConfig};
 pub use error_context::ErrorContext;
+pub use interp::CHECK_EVERY;
 pub use message::{AuditEntry, AuditMode, Message};
 pub use options::RunOptions;
 #[cfg(test)]

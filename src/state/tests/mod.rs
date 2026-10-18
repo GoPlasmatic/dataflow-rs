@@ -1,6 +1,6 @@
 //! The state module's tests: the splice against the owned write it stands for,
 //! the write log's rules, and the run context against a model of the owned
-//! tree. Seeds and case counts are phase 0's.
+//! tree. The seeds and case counts are the originals'.
 
 pub(crate) mod random;
 mod run_context;

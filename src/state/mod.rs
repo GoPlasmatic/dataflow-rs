@@ -1,6 +1,5 @@
 //! The run context and what it is built from: the run view, the write log and
-//! the checkpoint. Adopted from the phase 0 spike; the runtime uses it from
-//! phase 4's Task 4.
+//! the checkpoint.
 
 mod run;
 mod size;

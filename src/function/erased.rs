@@ -3,14 +3,11 @@
 //! downcast.
 
 use super::templated::primary_name;
-use super::{
-    BoxFuture, Ctx, Function, FunctionConfig, FunctionSpec, Outcome, Prepare, Primary, Templated,
-};
+use super::{BoxFuture, Ctx, Function, FunctionConfig, FunctionSpec, Outcome, Prepare, Primary};
 use crate::base::Result;
 use crate::expr::{CompileCx, ExprVisitor, FieldKind, FieldSpec, Resolver};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
-use std::any::TypeId;
 use std::sync::Arc;
 
 /// A registry entry: one host function, erased.
@@ -117,7 +114,7 @@ impl<F: Function> Erased<F> {
     /// error when the input left it unset.
     fn primary_field(&self) -> Option<&str> {
         let fields = self.fields();
-        if TypeId::of::<F::Config>() == TypeId::of::<Templated>() {
+        if <F::Config as FunctionConfig>::TEMPLATED {
             return primary_name(fields);
         }
         fields
@@ -268,7 +265,7 @@ mod tests {
 
         let mut paths = Paths::default();
         out.bound.expect("bound").visit(&mut paths);
-        // An `Output` is recorded, whatever its field says (break 16).
+        // An `Output` is recorded, whatever its field says.
         assert_eq!(
             paths.0,
             [("url".to_owned(), true), ("output".to_owned(), true)]

@@ -100,6 +100,10 @@ impl Element {
 
 /// One element's call: the task's `start` with the element bound and its
 /// index in the call's info, timed when `timed`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site's per-element facts, passed straight to `invoke`"
+)]
 async fn call_element<'r>(
     start: CallStart<'r>,
     fan: &'r FanSite,
@@ -108,6 +112,7 @@ async fn call_element<'r>(
     bound: &'r dyn BoundCall,
     layers: Layers<'r>,
     timed: bool,
+    timers: bool,
 ) -> (usize, Invoked) {
     let binding = Binding {
         item: &fan.r#as,
@@ -124,7 +129,7 @@ async fn call_element<'r>(
         ..start
     };
     let started = timed.then(record::now);
-    let mut invoked = invoke(start, bound, layers, fan.collect.as_ref()).await;
+    let mut invoked = invoke(start, bound, layers, fan.collect.as_ref(), timers).await;
     invoked.elapsed = started.map(record::since);
     (index, invoked)
 }
@@ -244,6 +249,7 @@ pub(crate) async fn fan_out<'p>(
                     bound,
                     layers,
                     env.watch.timed,
+                    env.limits.timers,
                 ));
             }
             let Some((index, invoked)) = in_flight.next().await else {

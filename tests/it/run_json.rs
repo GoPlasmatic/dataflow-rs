@@ -1,4 +1,4 @@
-// A `Run` as JSON (I126): `{status, error?, retryable, partial, matched,
+// A `Run` as JSON: `{status, error?, retryable, partial, matched,
 // workflows: [{id, index, selection, error?, sweeps, exit}]}`, with the
 // trace and the arena counters left out. Each test serializes a real run
 // and compares it with a literal.

@@ -67,10 +67,55 @@ pub struct Rewrite {
     /// The v3 key's authored path, such as `tasks[0].continue_on_error`
     /// or `tasks[0].function.name`.
     pub path: AuthoredPath,
-    /// The v3 spelling.
-    pub v3: String,
-    /// What it was read as.
-    pub v4: String,
+    /// What it was read as, in a form a host can apply.
+    pub kind: RewriteKind,
+}
+
+/// What a [`Rewrite`] changed: the v4 keys and values the reader wrote, so
+/// a host that migrates a stored definition applies them instead of parsing
+/// [`Display`](std::fmt::Display)'s prose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RewriteKind {
+    /// A v3 policy flag, read as the v4 policy keys written in its place.
+    Policy {
+        /// The v3 spelling as authored, such as `continue_on_error: true`;
+        /// display only.
+        v3: String,
+        /// The v4 keys written and their values, in the definition's order.
+        v4: Vec<(String, String)>,
+    },
+    /// A v3 function name, read as v4's: `validate` as `validation`.
+    Function {
+        /// The v3 name.
+        v3: String,
+        /// The v4 name.
+        v4: String,
+    },
+}
+
+impl std::fmt::Display for RewriteKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Policy { v3, v4 } => {
+                let v4 = v4
+                    .iter()
+                    .map(|(key, value)| format!("{key}: {value}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "`{v3}` is a v3 spelling, read as `{v4}`")
+            }
+            Self::Function { v3, v4 } => {
+                write!(f, "`{v3}` is a v3 spelling, read as `{v4}`")
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Rewrite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.kind.fmt(f)
+    }
 }
 
 /// What the reader found: its issues, in document order, its rewrites, and
@@ -195,14 +240,13 @@ impl Read {
     fn rewrite(
         &mut self,
         path: AuthoredPath,
-        v3: String,
-        v4: String,
+        kind: RewriteKind,
         step: Option<&Step>,
         field: Option<&str>,
     ) {
-        let message = format!("`{v3}` is a v3 spelling, read as `{v4}`");
+        let message = kind.to_string();
         self.report(IssueCode::V3Spelling, path.clone(), message, step, field);
-        self.rewrites.push(Rewrite { path, v3, v4 });
+        self.rewrites.push(Rewrite { path, kind });
     }
 
     fn workflow(&mut self, obj: &mut Map<String, Value>) {
@@ -258,9 +302,9 @@ impl Read {
         obj.insert("on_failure".into(), Value::String(policy.into()));
         let (v3, v4) = (
             format!("continue_on_error: {flag}"),
-            format!("on_failure: {policy}"),
+            vec![("on_failure".to_string(), policy.to_string())],
         );
-        self.rewrite(path, v3, v4, None, None);
+        self.rewrite(path, RewriteKind::Policy { v3, v4 }, None, None);
     }
 
     /// The steps of a list, as the walk visits them.
@@ -381,7 +425,7 @@ impl Read {
 
         // 06's policy table: the two flags make one policy. A flag beside a
         // v4 policy was refused above, so here neither policy is written.
-        let v4 = if has_flags && v4_policies.is_empty() {
+        let v4: Vec<(String, String)> = if has_flags && v4_policies.is_empty() {
             let (on_failure, on_rejection) = match (continue_on_error.is_set(), halt_on.is_set()) {
                 (false, false) => ("fail", "continue"),
                 (true, false) => ("continue", "continue"),
@@ -390,9 +434,12 @@ impl Read {
             };
             obj.insert("on_failure".into(), Value::String(on_failure.into()));
             obj.insert("on_rejection".into(), Value::String(on_rejection.into()));
-            format!("on_failure: {on_failure}, on_rejection: {on_rejection}")
+            vec![
+                ("on_failure".to_string(), on_failure.to_string()),
+                ("on_rejection".to_string(), on_rejection.to_string()),
+            ]
         } else {
-            String::new()
+            Vec::new()
         };
 
         for key in order {
@@ -408,7 +455,15 @@ impl Read {
                     match flag {
                         Flag::Absent => {}
                         Flag::Valid { text, .. } => {
-                            self.rewrite(path, text.clone(), v4.clone(), Some(step), None);
+                            self.rewrite(
+                                path,
+                                RewriteKind::Policy {
+                                    v3: text.clone(),
+                                    v4: v4.clone(),
+                                },
+                                Some(step),
+                                None,
+                            );
                         }
                         Flag::Refused { code, message } => {
                             self.report(*code, path, message.clone(), Some(step), None);
@@ -444,8 +499,15 @@ impl Read {
             if key == "name" {
                 if name == V3_VALIDATE {
                     fields.insert("name".into(), Value::String(VALIDATION.into()));
-                    let (v3, v4) = (V3_VALIDATE.into(), VALIDATION.into());
-                    self.rewrite(at.join("name"), v3, v4, Some(step), None);
+                    self.rewrite(
+                        at.join("name"),
+                        RewriteKind::Function {
+                            v3: V3_VALIDATE.into(),
+                            v4: VALIDATION.into(),
+                        },
+                        Some(step),
+                        None,
+                    );
                 }
             } else if let Some(Value::Object(input)) = fields.get_mut("input")
                 && let Some(known) = builtin

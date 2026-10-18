@@ -87,8 +87,12 @@ impl ParseFrom {
         if s == "payload" || s == "payload." {
             return Ok(Self::Payload);
         }
-        if s == "data." {
-            return Path::from_str("data").map(Self::Context);
+        // The same rule for every context root, so `metadata.` and
+        // `temp_data.` name their root as `data.` always has.
+        if let Some(root) = s.strip_suffix('.')
+            && crate::base::ROOTS.contains(&root)
+        {
+            return Path::from_str(root).map(Self::Context);
         }
         if let Some(rest) = s.strip_prefix("payload.") {
             return Path::from_str(&format!("data.{rest}")).map(Self::PayloadPath);
@@ -397,6 +401,29 @@ mod tests {
             crate::base::AuthoredPath::root(),
         ));
         seen.0
+    }
+
+    #[test]
+    fn every_context_roots_trailing_dot_names_the_root() {
+        // v3's "empty remainder names the root" rule, for all three roots:
+        // before CR-7 only `data.` was special-cased.
+        for (text, root) in [
+            ("data.", "data"),
+            ("metadata.", "metadata"),
+            ("temp_data.", "temp_data"),
+        ] {
+            assert!(
+                matches!(
+                    ParseFrom::parse(text).unwrap(),
+                    ParseFrom::Context(path) if path.to_string() == root
+                ),
+                "{text}"
+            );
+        }
+        assert!(matches!(
+            ParseFrom::parse("payload.").unwrap(),
+            ParseFrom::Payload
+        ));
     }
 
     #[test]

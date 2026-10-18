@@ -1,7 +1,7 @@
 //! The engine: a [`Program`] and its config, run over messages.
 
 use super::builder::EngineBuilder;
-use super::cancel::Limits;
+use super::cancel::{Limits, timers_available};
 use super::error_context::ErrorContext;
 use super::interp::{Exit, Frame, RunEnv, Watch, captures, run_workflow};
 use super::message::{Message, finish_audit, keeps_entries};
@@ -198,11 +198,10 @@ impl Engine {
         };
         let started = watch.observers.timed().then(record::now);
         let now = Utc::now();
-        let now_text = now.to_rfc3339();
+        let now_text: Arc<str> = Arc::from(now.to_rfc3339());
         let parts = msg.parts();
         stamp(parts.context, &now_text, opts.channel);
-        // Break 20: a message brings no records in at the error context's
-        // path (I108, S5).
+        // A message brings no records in at the error context's path.
         if let Some(ec) = &self.inner.config.error_context {
             ec.reset(parts.context);
         }
@@ -222,11 +221,14 @@ impl Engine {
             considered: active.len(),
         });
         // A call's changes are worth recording only in a mode that keeps
-        // an entry for them (I67).
+        // an entry for them.
         let capture_audit = opts.capture_changes && keeps_entries(opts.audit);
         let mut records = Vec::with_capacity(active.len());
         // Every 64th op of the run checks the limits, across workflows.
         let mut ops = 0;
+        // Whether this run's runtime can race a deadline with a timer: the
+        // runtime context is the run's, so the answer is the run's.
+        let timers = timers_available();
         // A bucket above 99 is served as 99, as in 3.x: the bucket space is
         // `0..100`, and `[x, 100)` is the range that serves the rest.
         let bucket = opts.routing_bucket.map(|b| b.min(Rollout::MAX_BUCKET));
@@ -261,6 +263,7 @@ impl Engine {
                     limits: Limits {
                         deadline: opts.deadline,
                         cancel: opts.cancel,
+                        timers,
                     },
                     ops,
                     exprs: program.registry().exprs(),

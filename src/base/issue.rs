@@ -362,6 +362,12 @@ issue_codes! {
     ///
     /// Default severity [`Severity::Advisory`].
     V3Spelling = "V3_SPELLING", Advisory;
+    /// A literal `null` `condition`. It is kept as the literal expression
+    /// `null`, which is falsy, so the step never runs; omit the key for no
+    /// condition, or write the expression that was meant.
+    ///
+    /// Default severity [`Severity::Advisory`].
+    NullCondition = "NULL_CONDITION", Advisory;
     /// A literal `var` rooted at `payload`. The evaluation context is `{data, metadata, temp_data}`, so it resolves to nothing.
     ///
     /// Default severity [`Severity::Defect`].
@@ -387,6 +393,13 @@ issue_codes! {
     /// Default severity [`Severity::Defect`]: the workflow loads, then fails
     /// every call.
     UnresolvedReference = "UNRESOLVED_REFERENCE", Defect;
+    /// A workflow's `rollout` range can never match: its `bucket_end` is
+    /// below `bucket_start`, or above 100. Such a range serves no traffic,
+    /// so the workflow silently never runs.
+    ///
+    /// Default severity [`Severity::Defect`]: the definition loads, then the
+    /// workflow is never selected.
+    InvalidRollout = "INVALID_ROLLOUT", Defect;
 }
 
 impl fmt::Display for IssueCode {
@@ -709,13 +722,19 @@ mod tests {
                 "UNKNOWN_KEY",
                 "V3_SPELLING",
                 "OPERATOR_IN_DOCUMENT",
+                "NULL_CONDITION",
             ])
         );
         assert_eq!(
             by(Severity::Defect),
-            HashSet::from(["LIKELY_TYPO", "PAYLOAD_VAR", "UNRESOLVED_REFERENCE",])
+            HashSet::from([
+                "LIKELY_TYPO",
+                "PAYLOAD_VAR",
+                "UNRESOLVED_REFERENCE",
+                "INVALID_ROLLOUT",
+            ])
         );
-        assert_eq!(by(Severity::Rejected).len(), IssueCode::ALL.len() - 10);
+        assert_eq!(by(Severity::Rejected).len(), IssueCode::ALL.len() - 12);
         assert!(by(Severity::Rejected).contains("SECRET_IN_DOCUMENT"));
         assert!(by(Severity::Rejected).contains("INVALID_PATH"));
     }

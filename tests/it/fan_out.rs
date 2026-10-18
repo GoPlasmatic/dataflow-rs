@@ -4,7 +4,7 @@
 // asks. Each test asserts the facts it is about, and every message it runs is
 // also held whole, key order included, to its golden file under
 // `tests/golden/fan_out/` (`support/run_helpers.rs`: the normalised wire text
-// and the outcome's code; `DATAFLOW_GOLDEN_WRITE=1` rewrites them). I91's
+// and the outcome's code; `DATAFLOW_GOLDEN_WRITE=1` rewrites them). The
 // error, the bound on calls in flight and the `Send` pin are checked against
 // literal expectations alone.
 //
@@ -1124,7 +1124,7 @@ async fn an_over_past_into_s_last_slot_is_one_logic_error_before_any_call() {
 
 #[tokio::test]
 async fn a_non_array_over_is_one_logic_error() {
-    // I91, a loop's rule: one `LOGIC_ERROR` of kind `Eval`, and the task's
+    // A loop's rule: one `LOGIC_ERROR` of kind `Eval`, and the task's
     // one record carries it.
     let text = "Task t: for_each.over must evaluate to an array, got a string";
     for workflow_continues in [false, true] {

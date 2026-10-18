@@ -1,6 +1,6 @@
 // Host function calls end to end, through `Engine::builder()` and
 // `run_with`: a `Ctx` reads the run's one view and writes an overlay, which
-// lands on `Ok` and is dropped on `Err` (break 1); the recorder then runs as
+// lands on `Ok` and is dropped on `Err`; the recorder then runs as
 // for a built-in; the run's layers wrap the registry's, which wrap the
 // function; and the run future stays `Send` with all of it in it.
 //
@@ -472,7 +472,7 @@ async fn a_constant_is_lent() {
 
 #[tokio::test]
 async fn an_err_drops_the_calls_writes_and_keeps_its_records() {
-    // Break 1 (the corpus's `breaks/handler_writes_then_err`): the writes
+    // The corpus's `breaks/handler_writes_then_err` breaks this: the writes
     // are dropped. The record a call adds (`run/host_contract`) is kept,
     // stamped with the task's ids and the run's timestamp, before the
     // recorder's own.
@@ -650,7 +650,7 @@ async fn a_status_applies_the_policies_as_a_builtin_does() {
 
 #[tokio::test]
 async fn a_root_write_takes_only_an_object_and_a_root_cannot_be_removed() {
-    // R52, as `Path::set` and `Path::remove` apply it: a `Config` error.
+    // As `Path::set` and `Path::remove` apply it: a `Config` error.
     for (writes, text) in [
         (
             json!({"data": 5}),
@@ -699,7 +699,7 @@ async fn a_root_write_takes_only_an_object_and_a_root_cannot_be_removed() {
     );
     assert_eq!(data(&m), json!({"fresh": true}));
     // The audit's copy of the root's `Change` carries no `replaced`: that
-    // flag is the trace's alone (I106, `tests/it/trace.rs`).
+    // flag is the trace's alone (`tests/it/trace.rs`).
     assert_eq!(
         changes(&m, "t"),
         json!([{"path": "data", "old_value": {"kept": true},
@@ -713,7 +713,7 @@ async fn a_root_write_takes_only_an_object_and_a_root_cannot_be_removed() {
 
 #[tokio::test]
 async fn a_non_object_written_at_a_root_is_refused_for_every_kind() {
-    // Break 21: `Ctx::set` refuses a non-object at a root (R52), so a
+    // `Ctx::set` refuses a non-object at a root, so a
     // function cannot turn `data` into an array, a string or a number; the
     // root is kept and the call fails with a `Config` error.
     for (value, kind) in [

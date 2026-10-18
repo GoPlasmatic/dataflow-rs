@@ -270,7 +270,7 @@ fn compiled(compiler: &Compiler, json: &Value) -> Vec<Issue> {
 }
 
 /// `n` nested `!`s around a `var`: past datalogic's depth limit of 256, the
-/// one pure-data compile error (phase 2's finding).
+/// one pure-data compile error.
 fn too_deep() -> Value {
     let mut rule = json!({"var": "data.x"});
     for _ in 0..300 {
@@ -319,7 +319,7 @@ fn an_unknown_function_near_a_catalogue_name_suggests_it() {
 #[test]
 fn a_host_config_reports_every_issue_at_its_field() {
     let issues = rejected(&compiler(), &one("fetch", json!({"uri": "x"})));
-    // A typo inside a config is Rejected (I23).
+    // A typo inside a config is Rejected.
     assert_eq!(
         rows(&issues),
         [

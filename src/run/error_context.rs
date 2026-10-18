@@ -6,7 +6,7 @@
 //! The recorder mirrors after the call's error record, for every recorded
 //! call that is not a `Skip` and added a record; the engine removes the
 //! path's key at run start, after the stamps and before the trace's
-//! `initial` (break 20).
+//! `initial`.
 
 use super::engine::slots;
 use crate::base::{Change, Error, ErrorKind, ErrorRecord, Result};
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn a_write_at_a_root_says_it_replaced_it() {
-        // Review A M-3, by I106's rule: a root that holds no object is
+        // A root that holds no object is
         // replaced, and the trace's change says so; a hop below a root is
         // assigned, and its change says nothing.
         for (path, seed, at, replaced) in [

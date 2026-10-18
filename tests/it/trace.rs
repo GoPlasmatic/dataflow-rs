@@ -1,5 +1,5 @@
-// The trace end to end, through `Engine::builder()` and `run_with` (I105 to
-// I107): the initial context after the stamps, then one step per recorded
+// The trace end to end, through `Engine::builder()` and `run_with`: the
+// initial context after the stamps, then one step per recorded
 // call, skipped step and engine write, each carrying its changes, so a
 // replay from `initial` rebuilds the context after every step. The rules
 // covered: redaction, the byte budget, timings, the failing step, and the
@@ -527,7 +527,7 @@ async fn a_failure_stepped_past_is_executed_with_its_error() {
     // The task's own policy steps past it: `continue` (in a workflow that
     // fails, and in one that continues) and `halt`. A failure the task's
     // policy sends to the workflow's is the `Failed` step, even when the
-    // workflow steps past it (I105).
+    // workflow steps past it.
     let continuing = |id: &str| {
         with(
             put(id, json!({}), json!("err")),
@@ -645,7 +645,7 @@ async fn skipped_steps_are_recorded_for_tasks_groups_and_workflows() {
             "{step:?}"
         );
     }
-    // A condition that fails to evaluate is a skip with its error (R34).
+    // A condition that fails to evaluate is a skip with its error.
     let Selection::ConditionFailed(e) = run.workflows().nth(2).unwrap().selection else {
         panic!("w3's condition fails: {run:?}");
     };
@@ -828,7 +828,7 @@ async fn the_trace_records_changes_when_capture_is_off_and_the_audit_keeps_nothi
     let e = engine(&workflows);
     let full = TraceOptions::default();
 
-    // Capture off: the audit's entries carry no changes; the trace does (R45).
+    // Capture off: the audit's entries carry no changes; the trace does.
     let mut m = message(json!({}));
     let opts = RunOptions::default()
         .capture_changes(false)
@@ -1029,7 +1029,7 @@ async fn redaction_nulls_the_path_in_initial_and_in_every_change_but_not_the_mes
             ),
             map("merge", "data", json!({"token": "tok3n", "x": 1})),
             map("copy", "data.copied", json!({"var": "data.secret"})),
-            // T2-C3's three shapes, each written below a redact path: its
+            // Three shapes, each written below a redact path: its
             // parent absent from `initial`, present, and removed first.
             put(
                 "deep",
@@ -1289,7 +1289,7 @@ impl Function for Cancel {
 
 #[tokio::test]
 async fn a_run_stopped_as_a_sweep_starts_records_the_counter_it_wrote() {
-    // T2-C2: the next sweep's counter is written before the limits are
+    // The next sweep's counter is written before the limits are
     // checked, so the stop's engine step carries that write and the trace
     // replays to the message. The token is cancelled from inside the call,
     // which completes in the same poll: no clock.
@@ -1539,7 +1539,7 @@ async fn the_serialized_shape() {
     let element = Json::from_text(&text(&trace.steps[3])).unwrap();
     assert_eq!(element.get("result"), Some(&Json::str("executed")));
     // A `map` step: each mapping's end, after the changes and before the
-    // records (I127).
+    // records.
     assert_eq!(trace.steps[4].task_id.as_deref(), Some("mf"));
     assert_eq!(
         keys_of(&trace.steps[4]),
@@ -1597,8 +1597,8 @@ fn codes(records: &[ErrorRecord]) -> Vec<&str> {
 
 #[tokio::test]
 async fn a_steps_errors_are_every_record_it_added() {
-    // I127: every record the step added to the message, in order: the
-    // call's own, then the recorder's (I96).
+    // Every record the step added to the message, in order: the
+    // call's own, then the recorder's.
     let e = engine(&[
         workflow(
             "w",
@@ -1671,7 +1671,7 @@ async fn a_steps_errors_are_every_record_it_added() {
 
 #[tokio::test]
 async fn a_condition_that_failed_to_evaluate_shows_its_record() {
-    // R34: a workflow whose condition fails to evaluate is skipped. Its
+    // A workflow whose condition fails to evaluate is skipped. Its
     // record reaches no message, so its step shows it: the only record on
     // a step that the message does not keep.
     let e = engine(&[workflow(
@@ -1750,7 +1750,7 @@ async fn mapping_ends_split_a_maps_changes_by_mapping() {
                 // A `null` result, skipped: none.
                 {"path": "data.b", "logic": {"var": "data.missing"}},
                 // An append creating its array: the trace's `[]`, then the
-                // element (I115).
+                // element.
                 {"path": "data.list", "logic": 7, "mode": "append"},
                 // A root, merged with two keys: one change, at the root.
                 {"path": "data", "logic": {"x": 1, "y": 2}},

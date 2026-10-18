@@ -1,10 +1,10 @@
-// The wire shapes read back (I125). A message and a trace v4 writes read
+// The wire shapes read back. A message and a trace v4 writes read
 // into v4 and write the same text, and a trace read back replays to the same
 // contexts; a message in the 3.x wire shape (a 3.15.0 run's, captured below)
 // reads into v4 and writes the same bytes. A context takes its three roots in
 // any order, writes them in order, reads a missing one as `{}` and any value
 // at each, and refuses any other key and a context that is not an object
-// (break 22). A message's context takes only an object at each root; a
+// A message's context takes only an object at each root; a
 // trace's takes a redacted root's `null`.
 
 use dataflow_rs::function::FunctionConfig;
@@ -157,7 +157,7 @@ fn a_missing_root_reads_as_an_empty_object() {
 
 #[test]
 fn a_fourth_context_key_is_refused() {
-    // Break 22: a fourth key would be readable by `{"var": …}` beside the
+    // A fourth key would be readable by `{"var": …}` beside the
     // three roots, so a context refuses it, wherever it sits.
     let smuggled =
         message_json(r#"{"data":{},"metadata":{},"temp_data":{},"secrets":{"partner_key":"k"}}"#);

@@ -117,7 +117,7 @@ fn publish_keys_are_the_publish_configs_fields() {
 
 #[test]
 fn the_readers_key_tables_are_the_configs_fields() {
-    // I54: what the reader leaves in a built-in's input is exactly what the
+    // What the reader leaves in a built-in's input is exactly what the
     // config knows, at the input and in its nested configs.
     for kind in BuiltinKind::ALL {
         let input = builtin_input(kind.name()).unwrap_or_else(|| panic!("{}", kind.name()));
@@ -390,7 +390,7 @@ fn a_parse_source_reads_v3s_spellings() {
 
 #[test]
 fn a_parse_source_outside_the_roots_is_invalid_path() {
-    // Break 15: v3 read any other name as a top-level context key.
+    // v3 read any other name as a top-level context key.
     for bad in ["extra.x", "", "payloads.x"] {
         let (source, issues) = field::<ParseSource>(&json!(bad));
         assert!(source.is_none(), "{bad}");
@@ -410,7 +410,7 @@ fn a_computed_parse_source_is_computed_unless_it_folds() {
     let source = source.unwrap();
     assert!(matches!(&source, ParseSource::Computed(e) if e.raw() == &raw));
 
-    // One that folds is resolved at compile (I71), by the resolver the run
+    // One that folds is resolved at compile, by the resolver the run
     // uses: a constant that is not a string, or names no source, is refused
     // as `Expr<Path>` refuses it.
     let folds = json!({"cat": ["pay", "load"]});
@@ -532,12 +532,18 @@ fn what_the_engine_records_is_visited_as_recorded() {
         )[0],
         v("source", computed, true)
     );
-    for kind in [BuiltinKind::PublishJson, BuiltinKind::PublishXml] {
+    for (kind, input) in [
+        (
+            BuiltinKind::PublishJson,
+            json!({"source": "out", "target": "text", "pretty": true}),
+        ),
+        (
+            BuiltinKind::PublishXml,
+            json!({"source": "out", "target": "text", "root_element": "root"}),
+        ),
+    ] {
         assert_eq!(
-            visited(
-                kind,
-                &json!({"source": "out", "target": "text", "pretty": true})
-            ),
+            visited(kind, &input),
             [
                 v("source", json!("out"), true),
                 v("target", json!("text"), true),
@@ -706,7 +712,7 @@ fn map_rows() -> Vec<Row> {
             "mappings[0].logic",
             InvalidMapping,
         ),
-        // Break 15: 3.x read a literal path outside the three roots as a
+        // 3.x read a literal path outside the three roots as a
         // top-level context key, and a non-string one as its text.
         refused(
             json!({"mappings": [{"path": "extra.x", "logic": 1}]}),
@@ -728,7 +734,7 @@ fn map_rows() -> Vec<Row> {
             NullMapping,
         ),
         refused(json!(null), "", InputParse),
-        // I54: the reader moves both into the task's `ext`.
+        // The reader moves both into the task's `ext`.
         ok_with(
             json!({"mappings": [mapping], "strict": true}),
             "strict",
@@ -825,7 +831,7 @@ fn validation_rows() -> Vec<Row> {
                              "message": {"cat": ["age must be positive, got ", {"var": "data.age"}]}}]})),
         ok(json!({"rules": [{"logic": true, "message": {"+": ["not", "a number"]}}]})),
         refused(json!(null), "", InputParse),
-        // I54: the reader moves both into the task's `ext`.
+        // The reader moves both into the task's `ext`.
         ok_with(
             json!({"rules": [rule], "strict": true}),
             "strict",
@@ -870,7 +876,7 @@ fn filter_rows() -> Vec<Row> {
             InputParse,
         ),
         refused(json!([]), "", InputParse),
-        // I54: moved into the task's `ext`, a Defect since it is a near miss.
+        // Moved into the task's `ext`, a Defect since it is a near miss.
         ok_with(
             json!({"condition": true, "on_rejct": "skip"}),
             "on_rejct",
@@ -905,7 +911,7 @@ fn log_rows() -> Vec<Row> {
         ok(json!({"message": "m", "fields": {"a": null, "b": 2}})),
         ok(json!({"message": "m", "fields": {"id": {"var": "data.id"}}})),
         refused(json!("m"), "", InputParse),
-        // I54: moved into the task's `ext`.
+        // Moved into the task's `ext`.
         ok_with(
             json!({"message": "m", "target": "stderr"}),
             "target",
@@ -926,7 +932,7 @@ fn parse_rows() -> Vec<Row> {
         ok(json!({"source": "data.raw", "target": "parsed"})),
         ok(json!({"source": "metadata.raw", "target": "parsed"})),
         ok(json!({"source": "temp_data.raw", "target": "parsed"})),
-        // Break 15, and its widening to a source that is not a string.
+        // Its widening to a source that is not a string.
         refused(
             json!({"source": "extra.x", "target": "t"}),
             "source",
@@ -944,7 +950,7 @@ fn parse_rows() -> Vec<Row> {
         ok(json!({"source": "payload", "target": {"cat": ["in_", {"var": "data.slot"}]}})),
         ok(json!({"source": "payload", "target": "data.t"})),
         ok(json!({"source": "payload", "target": ""})),
-        // The widened break 15: a target that is not a string.
+        // A target that is not a string.
         refused(
             json!({"source": "payload", "target": null}),
             "target",
@@ -956,7 +962,7 @@ fn parse_rows() -> Vec<Row> {
             InputParse,
         ),
         refused(json!(7), "", InputParse),
-        // I54: moved into the task's `ext`.
+        // Moved into the task's `ext`.
         ok_with(
             json!({"source": "payload", "target": "t", "format": "json"}),
             "format",
@@ -965,24 +971,47 @@ fn parse_rows() -> Vec<Row> {
     ]
 }
 
-fn publish_rows() -> Vec<Row> {
+fn publish_common_rows() -> Vec<Row> {
     use IssueCode::{InputParse, LikelyTypo};
     vec![
         ok(json!({"source": "output", "target": "json_string"})),
         refused(json!({"target": "t"}), "source", InputParse),
         refused(json!({"source": "s"}), "target", InputParse),
-        ok(json!({"source": "response.data", "target": "xmlOutput", "root_element": "Data"})),
-        // I56: `data.data.x`, else v3's fallback `data.x`; nothing is rewritten.
+        // `data.data.x`, else v3's fallback `data.x`; nothing is rewritten.
         ok(json!({"source": "data.x", "target": "t"})),
-        // corpus/cases/builtins/publish.json's spelling.
-        ok(json!({"source": "data.obj", "target": "pretty_out", "pretty": true})),
         ok(json!({"source": "", "target": ""})),
-        // The widened break 15: a source or target that is not a string.
+        // A source or target that is not a string.
         refused(json!({"source": null, "target": "t"}), "source", InputParse),
         refused(json!({"source": 7, "target": "t"}), "source", InputParse),
         refused(json!({"source": "s", "target": null}), "target", InputParse),
         refused(json!({"source": "s", "target": 7}), "target", InputParse),
-        ok(json!({"source": "s", "target": "t", "pretty": true})),
+        // tests/jsonlogic_params.rs's computed source and target.
+        ok(json!({"source": {"cat": ["in_", {"var": "data.slot"}]},
+                  "target": {"cat": ["out_", {"var": "data.slot"}]}})),
+        // docs/src/built-in-functions/publish.md's computed source and target.
+        ok(
+            json!({"source": {"cat": ["outputs.", {"var": "data.format"}]},
+                  "target": {"cat": ["rendered_", {"var": "data.format"}]}}),
+        ),
+        refused(json!(null), "", InputParse),
+        // Moved into the task's `ext`, a Defect since it is a near miss.
+        ok_with(
+            json!({"source": "s", "target": "t", "targte": "u"}),
+            "targte",
+            LikelyTypo,
+        ),
+    ]
+}
+
+/// `publish_json`'s rows: the common ones, its own `pretty`, and
+/// `root_element` as an Advisory rather than an unknown key.
+fn publish_json_rows() -> Vec<Row> {
+    use IssueCode::{InputParse, UnknownKey};
+    let mut rows = publish_common_rows();
+    rows.extend([
+        ok(json!({"source": "response.data", "target": "xmlOutput"})),
+        // corpus/cases/builtins/publish.json's spelling.
+        ok(json!({"source": "data.obj", "target": "pretty_out", "pretty": true})),
         refused(
             json!({"source": "s", "target": "t", "pretty": null}),
             "pretty",
@@ -993,25 +1022,53 @@ fn publish_rows() -> Vec<Row> {
             "pretty",
             InputParse,
         ),
+        ok_with(
+            json!({"source": "s", "target": "t", "root_element": null}),
+            "root_element",
+            UnknownKey,
+        ),
+        ok_with(
+            json!({"source": "s", "target": "t", "root_element": 7}),
+            "root_element",
+            UnknownKey,
+        ),
+        ok_with(
+            json!({"source": "doc", "target": "xml", "root_element": {"var": "data.doc_type"}}),
+            "root_element",
+            UnknownKey,
+        ),
+    ]);
+    rows
+}
+
+/// `publish_xml`'s rows: the common ones, its own `root_element`, and
+/// `pretty` as an Advisory rather than an unknown key.
+fn publish_xml_rows() -> Vec<Row> {
+    use IssueCode::UnknownKey;
+    let mut rows = publish_common_rows();
+    rows.extend([
+        ok(json!({"source": "response.data", "target": "xmlOutput", "root_element": "Data"})),
         ok(json!({"source": "s", "target": "t", "root_element": null})),
         ok(json!({"source": "s", "target": "t", "root_element": 7})),
-        // tests/jsonlogic_params.rs's computed source, target and root element.
-        ok(json!({"source": {"cat": ["in_", {"var": "data.slot"}]},
-                  "target": {"cat": ["out_", {"var": "data.slot"}]}})),
+        // tests/jsonlogic_params.rs's computed root element.
         ok(json!({"source": "doc", "target": "xml", "root_element": {"var": "data.doc_type"}})),
-        // docs/src/built-in-functions/publish.md's computed source and target.
-        ok(
-            json!({"source": {"cat": ["outputs.", {"var": "data.format"}]},
-                  "target": {"cat": ["rendered_", {"var": "data.format"}]}}),
-        ),
-        refused(json!(null), "", InputParse),
-        // Moved into the task's `ext` (R41), a Defect since it is a near miss.
         ok_with(
-            json!({"source": "s", "target": "t", "targte": "u"}),
-            "targte",
-            LikelyTypo,
+            json!({"source": "data.obj", "target": "pretty_out", "pretty": true}),
+            "pretty",
+            UnknownKey,
         ),
-    ]
+        ok_with(
+            json!({"source": "s", "target": "t", "pretty": null}),
+            "pretty",
+            UnknownKey,
+        ),
+        ok_with(
+            json!({"source": "s", "target": "t", "pretty": "yes"}),
+            "pretty",
+            UnknownKey,
+        ),
+    ]);
+    rows
 }
 
 /// Where a row's v4 issues differ from what the row says, if they do.
@@ -1028,13 +1085,14 @@ fn mismatch(row: &Row, issues: &[(String, IssueCode, Severity)]) -> Option<Strin
 
 #[test]
 fn every_config_accepts_and_refuses_what_its_rows_say() {
-    let tables: [(&[&str], Vec<Row>); 6] = [
+    let tables: [(&[&str], Vec<Row>); 7] = [
         (&["map"], map_rows()),
         (&["validation"], validation_rows()),
         (&["filter"], filter_rows()),
         (&["log"], log_rows()),
         (&["parse_json", "parse_xml"], parse_rows()),
-        (&["publish_json", "publish_xml"], publish_rows()),
+        (&["publish_json"], publish_json_rows()),
+        (&["publish_xml"], publish_xml_rows()),
     ];
     let mut failures = Vec::new();
     for (names, rows) in &tables {

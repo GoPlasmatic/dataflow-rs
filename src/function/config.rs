@@ -69,6 +69,37 @@ use serde_json::Value;
 /// }
 /// ```
 ///
+/// A field merely *named* `Output` is not one: the derive asserts the type's
+/// `ConfigField::IS_OUTPUT`, so an implementor that leaves it `false` is
+/// refused instead of silently compiling as a destination:
+///
+/// ```compile_fail
+/// use dataflow_rs::expr::{CompileCx, ConfigField, FieldKind, Resolver};
+/// use dataflow_rs::function::FunctionConfig;
+///
+/// struct Output;
+///
+/// impl ConfigField for Output {
+///     fn compile(_raw: &serde_json::Value, _cx: &mut CompileCx<'_>) -> Option<Self> {
+///         Some(Self)
+///     }
+///     fn resolve(
+///         &self,
+///         _r: &mut dyn Resolver,
+///     ) -> dataflow_rs::Result<Option<dataflow_rs::datavalue::OwnedDataValue>> {
+///         Ok(None)
+///     }
+///     fn kind() -> FieldKind {
+///         FieldKind::Output
+///     }
+/// }
+///
+/// #[derive(FunctionConfig)]
+/// struct Writes {
+///     out: Output,
+/// }
+/// ```
+///
 /// The derive refuses what it cannot honour. An unknown `config` key:
 ///
 /// ```compile_fail
@@ -169,6 +200,12 @@ use serde_json::Value;
 /// }
 /// ```
 pub trait FunctionConfig: Sized + Send + Sync + 'static {
+    /// Whether this is [`Templated`](super::Templated), whose fields are
+    /// declared by the call's input rather than by a struct: the registry
+    /// checks its spec against that, and the erasure walks its primary
+    /// output by its own rule.
+    const TEMPLATED: bool = false;
+
     /// Every issue in the config, each at its exact path below the
     /// [`CompileCx`]'s root. `None` when any is Rejected.
     fn compile(input: &Value, cx: &mut CompileCx<'_>) -> Option<Self>;

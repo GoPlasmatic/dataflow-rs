@@ -4,8 +4,8 @@
 //! The reader is taken in its own statement and the `Ctx` holds only it, so
 //! no `&RunView` is held across the call's `.await`. Once the call returns,
 //! an `Ok`, whatever its `Outcome`, applies the overlay through the run
-//! context in order and keeps the call's `Change`s; an `Err` drops both
-//! (break 1). The records the call added are kept either way. Then the
+//! context in order and keeps the call's `Change`s; an `Err` drops both,
+//! and the records the call added are kept either way. Then the
 //! recorder runs as for a built-in.
 //!
 //! The run's limits are checked before each call and, natively, raced
@@ -137,10 +137,12 @@ pub(crate) fn invoke<'r>(
     bound: &'r dyn BoundCall,
     layers: Layers<'r>,
     collect: Option<&Path>,
+    timers: bool,
 ) -> impl Future<Output = Invoked> {
     let limits = Limits {
         deadline: start.deadline,
         cancel: start.cancel,
+        timers,
     };
     let function = start.info.function;
     let mut ctx = Ctx::new(start, bound);
@@ -223,7 +225,7 @@ pub(crate) async fn call_host<'p>(
     } = {
         let reader = rc.reader();
         let (start, layers) = call_start(env, reader, wf, site);
-        invoke(start, bound, layers, None).await
+        invoke(start, bound, layers, None, env.limits.timers).await
     };
     let elapsed = started.map(record::since);
     // Read after the call, so the run's future keeps neither across its

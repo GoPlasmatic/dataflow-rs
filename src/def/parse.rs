@@ -15,6 +15,16 @@
 //! 6. the steps of `loop.setup`, walked like `tasks`;
 //! 7. the workflow's other keys, `rollout` with its unknown keys, then the
 //!    workflow's own unknown keys.
+//!
+//! A key whose value is `null` is read by its own rule, and the rules are:
+//!
+//! - `name`, `description`, `loop`, `rollout` and `for_each` treat `null` as
+//!   absent, since a missing value and an explicit one mean the same;
+//! - `condition` keeps it, as the literal expression `null`, which is falsy:
+//!   the step never runs, and a `NULL_CONDITION` Advisory says so;
+//! - `over` is refused;
+//! - `channel`, `priority`, `tags` and `ext` are a `PARSE_FAILED`, since
+//!   `null` is not the type they name.
 
 use super::keys::{Ext, FUNCTION, GROUP, ROLLOUT, TASK, WORKFLOW};
 use super::reader::{self, Rewrite};
@@ -44,8 +54,7 @@ pub struct ParseOptions {
     /// v3 spellings inside a task's `function` are not `parse`'s to refuse:
     /// `validate` stays the function's name, and a key a built-in's input
     /// does not know stays in its `input`, for the
-    /// function's lookup and config to refuse when the workflow is compiled
-    /// (phase 3).
+    /// function's lookup and config to refuse when the workflow is compiled.
     pub compat: bool,
 }
 
@@ -160,12 +169,26 @@ fn is(seg: &PathSeg, name: &str) -> bool {
 }
 
 /// Whether a fragment can sit at `root`: at a `tasks` list, or at
-/// `loop.setup`.
+/// `loop.setup`, with any number of groups below: the grammar is
+/// `(loop.setup | tasks)([i].tasks)*`. A path that only ends in `tasks`, such
+/// as `data.tasks`, names no list of steps.
 pub(crate) fn holds_steps(root: &AuthoredPath) -> bool {
-    match root.segs() {
-        [loop_, setup] if is(loop_, "loop") && is(setup, "setup") => true,
-        [.., last] => is(last, "tasks"),
-        [] => false,
+    let rest = match root.segs() {
+        [loop_, setup, rest @ ..] if is(loop_, "loop") && is(setup, "setup") => rest,
+        [tasks, rest @ ..] if is(tasks, "tasks") => rest,
+        _ => return false,
+    };
+    let mut rest = rest;
+    loop {
+        match rest {
+            [] => return true,
+            [index, tasks, tail @ ..]
+                if matches!(index, PathSeg::Index(_)) && is(tasks, "tasks") =>
+            {
+                rest = tail;
+            }
+            _ => return false,
+        }
     }
 }
 
@@ -377,7 +400,7 @@ impl<'j> Walk<'j> {
                 ext: ext.into_map(),
             },
             priority,
-            condition: obj.get("condition").cloned().map(Logic),
+            condition: self.condition(obj, &root),
             tasks,
             on_failure,
             channel,
@@ -481,7 +504,7 @@ impl<'j> Walk<'j> {
             let function = self.function(obj, &at, &mut ext);
             // 4.8
             let header = self.header(obj, &at);
-            let condition = obj.get("condition").cloned().map(Logic);
+            let condition = self.condition(obj, &at);
             let on_failure = self.spelled(obj, "on_failure", &at);
             let on_rejection = self.spelled(obj, "on_rejection", &at);
             self.ext_is_object(obj, &at);
@@ -549,7 +572,7 @@ impl<'j> Walk<'j> {
         }
         // 4.8
         let header = self.header(obj, &at);
-        let condition = obj.get("condition").cloned().map(Logic);
+        let condition = self.condition(obj, &at);
         self.ext_is_object(obj, &at);
         // `halt_on` and `for_each` were refused above, not unknown.
         self.unknown_keys(obj, &GROUP, &["halt_on", "for_each"], &at, "", &mut ext);
@@ -622,6 +645,24 @@ impl<'j> Walk<'j> {
             name: self.opt_string(obj, "name", at),
             description: self.opt_string(obj, "description", at),
             ext: Map::new(),
+        }
+    }
+
+    /// A node's `condition`: absent is none, and a literal `null` is kept as
+    /// the falsy expression it is, with an Advisory.
+    fn condition(&mut self, obj: &Map<String, Value>, at: &AuthoredPath) -> Option<Logic> {
+        match obj.get("condition") {
+            None => None,
+            Some(Value::Null) => {
+                self.report(
+                    IssueCode::NullCondition,
+                    at.join("condition"),
+                    "a literal `null` condition is falsy, so the step never runs; omit it for no \
+                     condition",
+                );
+                Some(Logic(Value::Null))
+            }
+            Some(value) => Some(Logic(value.clone())),
         }
     }
 
@@ -767,7 +808,11 @@ impl<'j> Walk<'j> {
         let start = self.bucket(obj, "bucket_start", &at);
         let end = self.bucket(obj, "bucket_end", &at);
         self.unknown_keys(obj, &ROLLOUT, &[], &at, "rollout.", ext);
-        Some(Rollout::new(start?, end?))
+        let rollout = Rollout::new(start?, end?);
+        if let Err(error) = rollout.check() {
+            self.report(IssueCode::InvalidRollout, at, error.to_string());
+        }
+        Some(rollout)
     }
 
     fn bucket(&mut self, obj: &Map<String, Value>, key: &str, at: &AuthoredPath) -> Option<u8> {
@@ -878,6 +923,51 @@ mod tests {
         assert!(issues.iter().all(|i| i.code != IssueCode::V3Spelling));
         assert!(issues.iter().any(|i| i.severity == Severity::Rejected
             && i.path.to_string() == "tasks[2].tasks[1].continue_on_error"));
+    }
+
+    #[test]
+    fn a_fragment_sits_only_at_a_tasks_list_or_loop_setup() {
+        for root in [
+            "tasks",
+            "tasks[0].tasks",
+            "tasks[0].tasks[1].tasks",
+            "loop.setup",
+            "loop.setup[0].tasks",
+        ] {
+            let root: crate::base::AuthoredPath = root.parse().unwrap();
+            assert!(holds_steps(&root), "{root}");
+        }
+        for root in [
+            "data.tasks",
+            "loop.tasks",
+            "loop.setup[0]",
+            "tasks[0]",
+            "tasks[0].data.tasks",
+        ] {
+            let root: crate::base::AuthoredPath = root.parse().unwrap();
+            assert!(!holds_steps(&root), "{root}");
+        }
+        assert!(!holds_steps(&crate::base::AuthoredPath::root()));
+    }
+
+    #[test]
+    fn a_null_condition_is_kept_falsy_with_an_advisory() {
+        let steps = json!([{"id": "t", "function": {"name": "f"}, "condition": null}]);
+        let (def, issues) = steps_at(&steps, "tasks");
+        let def = def.expect("a step");
+        assert_eq!(
+            rows(&issues),
+            [row(
+                IssueCode::NullCondition,
+                Severity::Advisory,
+                "tasks[0].condition"
+            )]
+        );
+        let condition = match &def[0] {
+            StepDef::Task(task) => task.condition(),
+            StepDef::Group(group) => group.condition(),
+        };
+        assert!(matches!(condition, Some(Logic(Value::Null))));
     }
 
     #[test]

@@ -66,7 +66,13 @@ impl SyncFunction for ValidationConfig {
                     )
                 }
             };
-            records.push(task_record(code, text, cx.workflow_id, cx.task_id, cx.now));
+            records.push(task_record(
+                code,
+                text,
+                &cx.workflow_id,
+                &cx.task_id,
+                &cx.now,
+            ));
         }
         if records.is_empty() {
             return Ok(Outcome::Ok);

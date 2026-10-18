@@ -220,7 +220,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Rewrites, in document order:");
     for rewrite in &migrated.rewrites {
         let path = rewrite.path.to_string();
-        println!("  {path:<32} {}  ->  {}", rewrite.v3, rewrite.v4);
+        println!("  {path:<32} {rewrite}");
     }
 
     println!("\nIssues the reader reported (none rejected):");

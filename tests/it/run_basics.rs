@@ -1,6 +1,6 @@
 // The engine end to end, through `Engine::builder()`, over workflows without
 // loops: the run's stamps, the recorder, the policies, the selection rules,
-// what a `Run` reports, and the builder's rules (I66, I67, I68).
+// what a `Run` reports, and the builder's rules.
 
 use dataflow_rs::def::{ParseOptions, parse};
 use dataflow_rs::function::{FunctionConfig, FunctionSpec, Reference};
@@ -805,7 +805,7 @@ fn build_fails_with_every_rejected_issue() {
 
 #[test]
 fn build_keeps_a_rejected_definitions_parse_issues_first() {
-    // I68: a definition its parse reads, with issues, and its compile
+    // A definition its parse reads, with issues, and its compile
     // rejects: a v3 spelling, a near-miss key, and an unknown function.
     let raw = json!({"id": "w", "tasks": [{"id": "t", "continue_on_error": true, "conditon": true,
         "function": {"name": "fetch"}}]});
@@ -879,8 +879,8 @@ async fn with_program_keeps_the_config() {
 }
 
 #[tokio::test]
-async fn the_i65_stop_is_gone() {
-    // Phase 4 stopped the run at a host call (I65); phase 5 runs it, between
+async fn a_host_call_no_longer_stops_the_run() {
+    // The engine used to stop the run at a host call; it now runs it, between
     // the tasks around it, and records it as a built-in.
     let e = Engine::builder()
         .register("query", Query)

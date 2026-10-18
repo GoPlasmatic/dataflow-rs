@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn a_computed_source_that_is_no_source_fails_the_task() {
         // v3 read any name as a top-level key and found nothing; v4 refuses a
-        // name outside the three roots (break 15): at compile when it folds,
+        // name outside the three roots: at compile when it folds,
         // as an error of the call when it does not.
         let folds = json!({"source": {"cat": ["extra", ".x"]}, "target": "out"});
         assert!(task("parse_json", &folds).is_none());

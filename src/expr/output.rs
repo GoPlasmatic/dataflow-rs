@@ -28,11 +28,12 @@ impl Output {
 }
 
 impl ConfigField for Output {
+    const IS_OUTPUT: bool = true;
     fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Self> {
         <Expr<Path>>::compile(raw, cx).map(Self)
     }
     /// Visited as recorded, wherever it sits: a destination lands in every
-    /// `Change` written through it, so it may not read a secret (break 16).
+    /// `Change` written through it, so it may not read a secret.
     fn visit(&self, v: &mut Visit<'_>) {
         v.recording(true, |v| v.expr(self.0.raw()));
     }

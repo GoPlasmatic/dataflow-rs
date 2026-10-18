@@ -844,7 +844,7 @@ fn reduces_initial_value_is_read_from_the_context_and_reported() {
 }
 
 // ---------------------------------------------------------------------------
-// Break 16: a destination is recorded
+// A destination is recorded
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -906,7 +906,7 @@ fn a_secret_in_a_host_field_that_is_not_recorded_is_clean() {
 }
 
 // ---------------------------------------------------------------------------
-// Break 2b: a host's expression fields are checked as a built-in's are
+// A host's expression fields are checked as a built-in's are
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -941,7 +941,7 @@ fn a_host_expression_field_is_checked_as_a_builtins_is_break_2b() {
             "{function}"
         );
         assert!(compiler().compile_one(&def(&json)).is_err(), "{function}");
-        // A literal `payload` read is a Defect (break 9): it still compiles.
+        // A literal `payload` read is a Defect: it still compiles.
         let json = wf(json!([task(
             "t",
             function,

@@ -1,6 +1,6 @@
 // `function::testing`: one call of one function through the real compile,
 // the real `Ctx` and overlay, and the layers given, with no registry,
-// compiler, definition or engine assembled by hand (R59, I93).
+// compiler, definition or engine assembled by hand.
 
 use dataflow_rs::datalogic_rs::{self, CustomOperator};
 use dataflow_rs::expr::{CompileCx, ExprEngine, ExprVisitor, FieldSpec, Output, Resolver};
@@ -198,7 +198,7 @@ impl Function for Flaky {
         ctx.set(&path("data.partial"), dv(json!(true)))?;
         ctx.record_error(ErrorRecord::new("PARTNER_SLOW", "slow"));
         let mut dated = ErrorRecord::new("PARTNER_RETRIED", "retried");
-        dated.timestamp = Some("then".to_owned());
+        dated.timestamp = Some(Arc::from("then"));
         ctx.record_error(dated);
         Err(Error::service("PARTNER_DOWN", "down"))
     }
@@ -219,7 +219,7 @@ impl Function for Replace {
 #[tokio::test]
 async fn a_write_at_a_root_says_replaced_as_recorded() {
     // `Called::changes` keeps the flag as the call recorded it; only the
-    // audit entry's copy reads `false` (I106).
+    // audit entry's copy reads `false`.
     let called = testing::call(Replace, json!({})).await;
     assert_eq!(called.changes.len(), 1);
     assert!(called.changes[0].replaced, "{:?}", called.changes);
@@ -250,7 +250,7 @@ async fn an_err_leaves_the_message_as_given_and_keeps_the_records() {
     assert!(called.message.audit().is_empty());
 
     // The records are kept as given, a timestamp added where they carry
-    // none (I96), and kept on the message as a run keeps them.
+    // none, and kept on the message as a run keeps them.
     let codes: Vec<&str> = called.errors.iter().map(|r| r.code.as_str()).collect();
     assert_eq!(codes, ["PARTNER_SLOW", "PARTNER_RETRIED"]);
     let stamped = called.errors[0].timestamp.as_deref().expect("stamped");

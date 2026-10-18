@@ -4,7 +4,7 @@
 // `migrate_v3`, whose output parses with the reader off to an equal
 // definition.
 
-use dataflow_rs::compat::{Migrated, migrate_v3};
+use dataflow_rs::compat::{Migrated, RewriteKind, migrate_v3};
 use dataflow_rs::def::{
     FailurePolicy, GroupDef, ParseOptions, Parsed, RejectionPolicy, StepDef, TaskDef, WorkflowDef,
     WorkflowFailurePolicy, parse,
@@ -79,12 +79,25 @@ fn group(step: &StepDef) -> &GroupDef {
     }
 }
 
-/// `(path, v3, v4)` of each rewrite `migrate_v3` reports.
+/// `(path, v3, v4)` of each rewrite `migrate_v3` reports, as each displays.
 fn rewrites(migrated: &Migrated) -> Vec<(String, String, String)> {
     migrated
         .rewrites
         .iter()
-        .map(|r| (r.path.to_string(), r.v3.clone(), r.v4.clone()))
+        .map(|r| {
+            let (v3, v4) = match &r.kind {
+                RewriteKind::Policy { v3, v4 } => (
+                    v3.clone(),
+                    v4.iter()
+                        .map(|(key, value)| format!("{key}: {value}"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+                RewriteKind::Function { v3, v4 } => (v3.clone(), v4.clone()),
+                _ => unreachable!("a rewrite kind added later needs a display here"),
+            };
+            (r.path.to_string(), v3, v4)
+        })
         .collect()
 }
 
@@ -597,7 +610,7 @@ fn minimal(name: &str) -> Value {
 
 #[test]
 fn a_stray_key_in_any_builtin_input_moves_to_the_tasks_ext() {
-    // I54: v3's configs ignored a key they did not know; `validate`'s input
+    // v3's configs ignored a key they did not know; `validate`'s input
     // is `validation`'s.
     for name in [
         "map",
@@ -992,7 +1005,7 @@ fn with_compat_off_every_v3_spelling_is_rejected() {
 
 #[test]
 fn with_compat_off_validate_and_the_aliases_stay_as_written() {
-    // Phase 3 reports `validate` unregistered and the alias in its config;
+    // The compat reader reports `validate` unregistered and the alias in its config;
     // the walk has nothing to say about either.
     for json in [
         calling("validate", json!({"rules": []})),
@@ -1248,7 +1261,7 @@ fn every_corpus_definition_migrates_to_one_that_parses_with_compat_off_to_an_equ
         assert_eq!(again.json, m.json, "{name}");
         assert!(again.rewrites.is_empty(), "{name}");
 
-        // I56: the publish case's `data.obj` source is not rewritten; the
+        // The publish case's `data.obj` source is not rewritten; the
         // config keeps v3's fallback (`PublishSource`).
         if name == "builtins/publish#0" {
             assert!(

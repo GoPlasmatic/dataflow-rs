@@ -35,6 +35,15 @@ pub struct AuditEntry {
 }
 
 /// Which audit entries a run keeps on the message. `Full` by default.
+///
+/// An entry is one recorded call, skip or engine write. A fan-out's `into`
+/// pre-fill is not one: before the first element runs, the engine writes one
+/// `null` per element there, so an element that fails or never runs keeps
+/// its slot. A halted fan-out therefore leaves `into` as `[0, 1, null,
+/// null]` while the trail holds only the entries for `.0` and `.1`, and
+/// replaying the trail does not rebuild the context. A trace does keep the
+/// pre-fill, as the first change of the first folded element's step, when
+/// [`TraceOptions::changes`](crate::observe::TraceOptions::changes) is on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AuditMode {

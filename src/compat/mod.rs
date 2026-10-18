@@ -56,11 +56,23 @@
 //!     }]})
 //! );
 //! assert_eq!(migrated.rewrites[0].path.to_string(), "tasks[0].continue_on_error");
-//! assert_eq!(migrated.rewrites[0].v3, "continue_on_error: true");
-//! assert_eq!(migrated.rewrites[0].v4, "on_failure: continue, on_rejection: continue");
+//! assert_eq!(
+//!     migrated.rewrites[0].kind,
+//!     dataflow_rs::compat::RewriteKind::Policy {
+//!         v3: "continue_on_error: true".into(),
+//!         v4: vec![
+//!             ("on_failure".into(), "continue".into()),
+//!             ("on_rejection".into(), "continue".into()),
+//!         ],
+//!     }
+//! );
+//! assert_eq!(
+//!     migrated.rewrites[0].to_string(),
+//!     "`continue_on_error: true` is a v3 spelling, read as `on_failure: continue, on_rejection: continue`"
+//! );
 //! ```
 
-pub use crate::def::reader::Rewrite;
+pub use crate::def::reader::{Rewrite, RewriteKind};
 
 use crate::base::any_rejected;
 use crate::def::{ParseOptions, parse_with_rewrites};

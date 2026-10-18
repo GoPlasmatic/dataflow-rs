@@ -87,7 +87,7 @@ pub(crate) fn now() -> Instant {
 
 /// In the lib's own tests, `result` turned into an `Err` once the call has
 /// written, while a test asks: a built-in that writes, then fails, which no
-/// built-in does today (T2-C4).
+/// built-in does today.
 #[cfg(test)]
 pub(crate) fn failing_after_its_writes(
     result: crate::Result<crate::function::Outcome>,
@@ -299,8 +299,7 @@ fn watched<'p>(
         if let Some(record) = record {
             push_record(env, ids, stamp, record);
         }
-        // Every record the call added, its own and the recorder's (I96,
-        // I108).
+        // Every record the call added, its own and the recorder's.
         if let Some(ec) = env.watch.error_context
             && let Some(change) = ec.mirror(
                 rc,
@@ -332,7 +331,7 @@ fn watched<'p>(
         step.status = status;
         step.changes = changes;
         step.mapping_ends = mapping_ends;
-        // Every record the call added, in the message's order (I127).
+        // Every record the call added, in the message's order.
         #[cfg(test)]
         traced_work();
         step.errors = env.errors[errors_before..].to_vec();
@@ -775,7 +774,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_untraced_run_does_no_trace_work() {
-        // I127: a step's records and a map's mapping ends are made only
+        // A step's records and a map's mapping ends are made only
         // under a trace, so a run without one, watched or not, does none of
         // that work: every call site that adds a record, a map of two
         // mappings, a workflow's own failure and a condition that fails.
@@ -928,7 +927,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_builtin_that_writes_then_fails_gives_its_writes_to_the_trace_alone() {
-        // T2-C4: no built-in writes, then returns `Err`, today, so the hook
+        // No built-in writes, then returns `Err`, today, so the hook
         // makes `map` do it. Its write stands: its `Failed` step carries it
         // and the trace replays to the message. The audit entry gets none,
         // as v3's recorder dropped them, with a trace and without one.

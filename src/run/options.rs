@@ -23,8 +23,8 @@ pub struct RunOptions<'a> {
     /// Which audit entries the message keeps. `Full` by default.
     pub audit: AuditMode,
     /// When the run must end; `None` by default. It is checked at every
-    /// host call, every fan-out element's start, every sweep and every 64
-    /// ops. Natively each host call also races it, on a Tokio timer, so a
+    /// host call, every fan-out element's start, every sweep and every
+    /// [`CHECK_EVERY`](crate::run::CHECK_EVERY) ops. Natively each host call also races it, on a Tokio timer, so a
     /// run with a deadline is polled inside a Tokio runtime with its time
     /// driver enabled. A call it cuts short, or that returns `Err` once it
     /// has passed, is recorded as `TIMEOUT_ERROR` on its task; either way

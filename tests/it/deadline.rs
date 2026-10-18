@@ -1,4 +1,4 @@
-// The run's deadline and its cancellation token (I92), end to end, under a
+// The run's deadline and its cancellation token, end to end, under a
 // paused clock: nothing here sleeps for real. Tokio advances the clock to
 // the next timer whenever every task waits, so a call that sleeps ten
 // seconds past a one-second deadline costs no wall time.
@@ -8,14 +8,14 @@
 // A call cut short shows which of those stand.
 
 use dataflow_rs::function::FunctionConfig;
-use dataflow_rs::run::{CancelToken, ErrorRecord, Instant, RunStatus, WorkflowExit};
+use dataflow_rs::run::{CHECK_EVERY, CancelToken, ErrorRecord, Instant, RunStatus, WorkflowExit};
 use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result, Run, RunOptions};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// Compiles only while `run::Instant` is `std::time::Instant` natively (I86).
+/// Compiles only while `run::Instant` is `std::time::Instant` natively.
 fn same(i: std::time::Instant) -> dataflow_rs::run::Instant {
     i
 }
@@ -57,7 +57,7 @@ impl Function for Slow {
 /// how its child run ended.
 type Saw = (Option<Instant>, bool, String);
 
-/// R60's child run: `nested` runs with the parent's deadline and a child of
+/// A child run: `nested` runs with the parent's deadline and a child of
 /// its token, so the child reports how it ended instead of being dropped.
 struct Parent {
     nested: Engine,
@@ -272,7 +272,9 @@ async fn a_deadline_is_checked_between_ops_and_at_every_sweep() {
     assert_eq!(considered(&run), [("w", 0, Some(WorkflowExit::Stopped))]);
 
     // Between ops: with no loop and no host call, the clock is read every
-    // 64 ops, so of 100 `map`s the first 63 run. The stop records nothing.
+    // `CHECK_EVERY` ops, so of 100 `map`s the first `CHECK_EVERY - 1` run
+    // (the check that stops it comes after the next op). The stop records
+    // nothing.
     let maps = (0..100)
         .map(|i| map(&format!("m{i}"), &format!("data.m{i}"), json!(i)))
         .collect();
@@ -280,7 +282,7 @@ async fn a_deadline_is_checked_between_ops_and_at_every_sweep() {
     let mut m = message();
     let run = e.run_with(&mut m, &passed).await;
     assert!(matches!(run.status(), RunStatus::TimedOut));
-    assert_eq!(m.audit().len(), 63);
+    assert_eq!(m.audit().len(), (CHECK_EVERY - 1) as usize);
     assert!(m.errors().is_empty());
     assert_eq!(considered(&run), [("w", 1, Some(WorkflowExit::Stopped))]);
 
@@ -398,7 +400,7 @@ async fn a_fan_out_cut_short_folds_nothing_and_keeps_its_calls_records() {
     // the second outlasts the deadline. Nothing is folded, the finished
     // elements' writes and results included; the records every call that
     // returned added are kept, in element order, each stamped with its
-    // element, as a single call cut short keeps its own (I96). The task is
+    // element, as a single call cut short keeps its own. The task is
     // recorded once, with no element, as a call cut short is, and the run
     // stops.
     let raced = [workflow(
@@ -504,7 +506,7 @@ enum ChildStop {
     Cancelled,
 }
 
-/// R60's child run, propagated: `nested` runs under a limit of its own, and
+/// A child run, propagated: `nested` runs under a limit of its own, and
 /// the call returns its `into_result()?`, so the child's stop is the
 /// call's `Err`.
 struct Propagate {
@@ -585,7 +587,7 @@ async fn a_child_runs_stop_is_the_calls_error_not_the_runs_limit() {
 
 // -- A call's `Err` once its run's own limit has passed --
 //
-// Found by Orion's port of `channel_call` (phase 7c, Task O10): its tests
+// Found by Orion's port of `channel_call`: its tests
 // `the_runs_deadline_during_the_child_ends_the_run_timed_out` and
 // `the_runs_token_tripped_during_the_child_ends_the_run_cancelled`, in
 // `crates/orion-server/src/engine/functions/channel_call.rs`, ended the
@@ -596,7 +598,7 @@ async fn a_child_runs_stop_is_the_calls_error_not_the_runs_limit() {
 // it short; on wasm nothing races at all. A call's `Err` once its run's own
 // limit has passed is now the limit's, so the run ends on the limit.
 
-/// R60's child run as Orion's `channel_call` makes it: `nested` runs under
+/// A child run as Orion's `channel_call` makes it: `nested` runs under
 /// the run's deadline, or the call's own `own` ms when that is strictly
 /// earlier (a tie is the run's), and a child of the run's token; the call
 /// returns its `into_result()?`, so the child's stop is the call's `Err`.

@@ -55,8 +55,7 @@ fn opt_str<'v>(
 
 /// An `over` that is a literal, which cannot be an array of elements.
 fn over_problem(over: &Value) -> Option<Problem> {
-    over_literal_problem(over)
-        .map(|problem| invalid("over", problem.replacen("loop over", "for_each over", 1)))
+    over_literal_problem("for_each", over).map(|problem| invalid("over", problem))
 }
 
 /// An `as` that is not a `temp_data` slot.

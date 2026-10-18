@@ -172,7 +172,7 @@ impl Capture {
                 continue;
             }
             if redact.len() <= at.len() {
-                // T2-C3: at the change's own prefix, so the container kind
+                // At the change's own prefix, so the container kind
                 // a replay writes through is the real one, and as a write of
                 // `null`, a removal's included.
                 if redact.len() < at.len() {

@@ -147,6 +147,17 @@ section says how to run the benchmarks.
   types, replays each step's context from the trace, shows the failing step
   and each step's errors, and reads the engine's facts in place of hand-kept
   mirrors.
+- **`Registry::try_register`**, the fallible `register`: a name taken from
+  data, or a function the host builds at run time, is refused with a
+  `CONFIG` error instead of a panic. `ConfigField::IS_OUTPUT` and
+  `FunctionConfig::TEMPLATED` say what a config's types are, so the derive
+  refuses a field that merely has an output's name and the registry no longer
+  compares `TypeId`s.
+- **`Trace::validate`**, for a trace read from elsewhere: it checks each
+  step's `mapping_ends`, every change path, and every root write, so a replay
+  never meets a change the run could not have made.
+- **`run::CHECK_EVERY`**, the op interval between two limit checks, public
+  so a host or a test can read it rather than restate `64`.
 
 ### Changed
 
@@ -300,6 +311,26 @@ observe. The migration page has each one with its code.
 - **`publish_xml` sanitizes its root element** as it always sanitized
   child keys. 3.x wrote `root_element` raw, so a name computed from the
   message could close the root and inject elements.
+- **A v3 rewrite is structured.** `compat::Rewrite` carries a `RewriteKind`:
+  `Policy` with the v4 keys and values the reader wrote, or `Function` with
+  the two names. `Display` renders the same prose, so a host can apply a
+  migration instead of parsing it.
+- **A publish call names the other function's field.** `publish_json` with
+  `root_element`, or `publish_xml` with `pretty`, still runs and reports an
+  `UNKNOWN_KEY` Advisory at that key; it is no longer silent.
+- **A rollout that serves nothing is refused.** An inverted range, or one
+  reaching past bucket 100, is an `INVALID_ROLLOUT` Defect at `rollout`,
+  where it used to parse and then never run.
+- **A bare root is the root.** `"data."`, `"metadata."` and `"temp_data."`
+  name the root itself, not a key of that name inside it; `payload.` follows
+  for the payload.
+- **A literal `null` condition is an Advisory.** It stays the falsy
+  expression it is, so the step never runs, and `NULL_CONDITION` says so;
+  the parser's one policy for a `null` value is written down.
+- **A deadline without a Tokio timer still applies.** A run with a deadline
+  started outside a runtime, or on one without `enable_time`, checks it
+  between ops and calls instead of losing it, and says once that a call is
+  not cut short mid-flight.
 
 ### Removed
 

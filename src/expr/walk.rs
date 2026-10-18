@@ -1,5 +1,6 @@
 //! Two pure walks over authored JSON, for the checks that need them.
 
+use super::engine::TEMPLATE_KEY_ESCAPE;
 use super::secrets::SECRET_OPERATOR as SECRET;
 use crate::base::AuthoredPath;
 use serde_json::Value;
@@ -24,7 +25,10 @@ fn walk_escaped(value: &Value, at: &AuthoredPath, out: &mut Vec<AuthoredPath>) {
         }
         Value::Object(map) => {
             for key in map.keys() {
-                if key.starts_with('$') && !key.starts_with("$$") {
+                let mut chars = key.chars();
+                if chars.next() == Some(TEMPLATE_KEY_ESCAPE)
+                    && chars.next() != Some(TEMPLATE_KEY_ESCAPE)
+                {
                     out.push(at.join(key.as_str()));
                 }
             }

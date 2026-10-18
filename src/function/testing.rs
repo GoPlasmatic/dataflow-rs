@@ -299,7 +299,7 @@ impl<F: Function> Call<F> {
             };
         };
         // The clock is read once, as a run reads it, for the records' stamp.
-        let now_text = Utc::now().to_rfc3339();
+        let now_text: Arc<str> = Arc::from(Utc::now().to_rfc3339());
         let parts = message.parts();
         let mut rc = RunContext::new(parts.context, Tuning::default());
         let Invoked {
@@ -335,7 +335,7 @@ impl<F: Function> Call<F> {
                 run: &layers,
                 registry: &[],
             };
-            invoke(start, &*bound, layers, None).await
+            invoke(start, &*bound, layers, None, crate::run::timers_available()).await
         };
         // The settle, as a run's: an `Ok` applies the overlay and keeps the
         // `Change`s; an `Err` drops both. The settle takes the overlay, so
@@ -348,10 +348,11 @@ impl<F: Function> Call<F> {
             (Vec::new(), Vec::new())
         };
         rc.finish();
+        let test_id: Arc<str> = Arc::from(TEST);
         let errors: Vec<ErrorRecord> = errors
             .into_iter()
             .map(|mut record| {
-                record.stamp(TEST, Some(TEST), &now_text, None);
+                record.stamp(&test_id, Some(&test_id), &now_text, None);
                 record
             })
             .collect();

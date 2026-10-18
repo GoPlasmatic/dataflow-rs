@@ -40,10 +40,30 @@ pub enum Root {
 }
 
 impl Root {
+    /// The root's row in [`ROOTS`](crate::base::ROOTS), written out so
+    /// reordering the enum cannot silently name another root.
+    fn row(self) -> usize {
+        match self {
+            Self::Data => 0,
+            Self::Metadata => 1,
+            Self::TempData => 2,
+        }
+    }
+
+    /// The root at `row` in [`ROOTS`](crate::base::ROOTS), if any.
+    fn from_row(row: usize) -> Option<Self> {
+        match row {
+            0 => Some(Self::Data),
+            1 => Some(Self::Metadata),
+            2 => Some(Self::TempData),
+            _ => None,
+        }
+    }
+
     /// The root's key in the context, as a path spells it: its row of the
     /// context's roots, which the variants follow.
     pub fn as_str(self) -> &'static str {
-        crate::base::ROOTS[self as usize]
+        crate::base::ROOTS[self.row()]
     }
 }
 
@@ -146,11 +166,13 @@ impl FromStr for Path {
             Some((first, rest)) => (first, Some(rest)),
             None => (dotted, None),
         };
-        let root = match first {
-            "data" => Root::Data,
-            "metadata" => Root::Metadata,
-            "temp_data" => Root::TempData,
-            _ => {
+        let root = match crate::base::ROOTS
+            .iter()
+            .position(|root| *root == first)
+            .and_then(Root::from_row)
+        {
+            Some(root) => root,
+            None => {
                 return Err(Error::new(
                     ErrorKind::Config,
                     format!("path `{dotted}` must start at `data`, `metadata` or `temp_data`"),

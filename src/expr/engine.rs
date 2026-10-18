@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// The key prefix that escapes a template key into data: `{"$cat": …}` is the
 /// literal object, `{"cat": …}` the operator. Always on, applied at the one
 /// place an engine is built, so an engine in a test agrees with one that runs.
-const TEMPLATE_KEY_ESCAPE: char = '$';
+pub(super) const TEMPLATE_KEY_ESCAPE: char = '$';
 
 /// Adapter handing a shared operator to the datalogic builder, which takes
 /// ownership of what it registers.
