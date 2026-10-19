@@ -148,7 +148,7 @@ dependencies cannot be classified as unused merely because the default
 engine does not call them. Large files also contain substantial docs and
 tests; line count alone is not a reason to split them.
 
-## Remaining improvement candidates
+## Candidates identified in the initial review
 
 These are follow-up candidates, not measured performance regressions.
 They require representative measurements or a deliberate API decision.
@@ -210,6 +210,30 @@ tasks 100 times. Five interleaved baseline/candidate runs had medians of
 within the observed noise. This confirms no reliable end-to-end speed
 claim; the improvement is removal of the redundant owned-input copy. The
 borrowed API still copies when compatibility rewriting requires ownership.
+
+### 3. UI bundle loading: completed
+
+Logic editors now share one lazy import, including condition tooltips.
+Workflow and folder diagrams load through separate lazy entries. Loading
+states use Suspense while the explorer and run results remain available.
+The engine WASM remains required for the application, and the upstream
+4.1 MB logic-WASM chunk remains deferred rather than removed.
+
+The built application entry falls from 912.38 kB to 324.17 kB, approximately
+64% smaller; Vite reports gzip sizes of 272.01 kB and 100.28 kB. The build
+manifest confirms the logic editor and both diagram entries are outside
+the initial static import graph. A post-build verifier enforces that boundary.
+
+The library retains its ESM and CommonJS entries, external dependencies and
+stylesheet export. Internal chunks use `.js` for ESM and `.cjs` for CommonJS;
+the library verifier loads both entries and all generated chunks, skipping
+only browser stylesheet imports. Tests cover deferred editor loading, prop
+forwarding and opening both diagram views. UI lint, all 28 UI tests, the
+library declaration/runtime checks and the application build pass.
+
+The lower-priority secret-metadata and runtime-field lookup candidates
+remain for focused profiling. No extra caches or field-handle API were
+introduced without evidence that those changes are worthwhile.
 
 ## Validation
 

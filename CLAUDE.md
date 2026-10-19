@@ -521,7 +521,12 @@ step with `errors` are errors; a step with `task: null` is the workflow's own
 replace the UI's hand-kept mirrors, so `await init()` of the wasm package
 comes before the UI reads them. The UI's checks are `npm ci`, `npm run
 wasm:local`, `npm run lint`, `npm test` (vitest over the overlaid engine),
-`npm run build:lib` and `npm run build`. The UI's `@goplasmatic/dataflow-wasm`
+`npm run build:lib` and `npm run build`.
+Both builds verify their artifacts: the library checks declarations and loads
+ESM/CJS chunks, while the application checks its manifest keeps logic editors
+and workflow diagrams outside the initial import graph. Those views use
+React lazy loading and Suspense; their CSS stays in the public stylesheet.
+The UI's `@goplasmatic/dataflow-wasm`
 requirement stays at the last published version; `wasm:local` overlays this
 checkout's build, and `release.yml` rewrites the requirement at publish.
 

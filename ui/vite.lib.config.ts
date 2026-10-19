@@ -27,19 +27,15 @@ export default defineConfig({
     lib: {
       entry: resolve(import.meta.dirname, 'src/lib.ts'),
       name: 'DataflowUI',
-      formats: ['es', 'cjs'],
       fileName: (format) => `index.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
       // Match bare specifiers and deep imports (e.g. react/jsx-runtime, @xyflow/react/internal)
       external: (id) => external.some((dep) => id === dep || id.startsWith(dep + '/')),
-      output: {
-        globals: {
-          react: 'React',
-          'react-dom': 'ReactDOM',
-          'react/jsx-runtime': 'jsxRuntime',
-        },
-      },
+      output: [
+        { format: 'es', chunkFileNames: 'chunks/[name]-[hash].js' },
+        { format: 'cjs', chunkFileNames: 'chunks/[name]-[hash].cjs' },
+      ],
     },
     cssCodeSplit: false,
     sourcemap: false,

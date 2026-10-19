@@ -1,4 +1,4 @@
-import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
+import { LazyLogicEditor as DataLogicEditor } from '../../../common/LazyLogicEditor';
 import type { Context, JsonLogicValue, MappingItem, ValidationRule } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
 import { useTheme } from '../../context';

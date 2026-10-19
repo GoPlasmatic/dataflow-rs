@@ -13,6 +13,7 @@ export default defineConfig(({ command }) => ({
   },
   // Use /dataflow-rs/debugger/ base path for production build (GitHub Pages)
   base: command === 'build' ? '/dataflow-rs/debugger/' : '/',
+  build: { manifest: true },
   server: {
     port: 3000,
     fs: {

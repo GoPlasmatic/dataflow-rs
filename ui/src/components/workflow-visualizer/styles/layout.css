@@ -3,6 +3,11 @@
    ============================================ */
 
 /* Root */
+.df-details-loading {
+  padding: 16px;
+  color: var(--df-text-secondary);
+}
+
 .df-root {
   font-family: var(--font-ui);
   font-size: 14px;

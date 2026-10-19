@@ -25,6 +25,11 @@ React components for visualizing and debugging [dataflow-rs](https://github.com/
 - **Theme Support**: light, dark and system
 - **Monaco Editor Integration**: JSON editing with syntax highlighting
 
+Logic editors and workflow diagrams load when opened, with a loading state
+while their code arrives. The debugger keeps one engine replay cursor and
+requests selected contexts on demand. When copying a built library, keep
+its generated `chunks/` directory alongside `index.js` and `index.cjs`.
+
 ## Installation
 
 ```bash

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, GitBranch } from 'lucide-react';
-import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
+import { LazyLogicEditor as DataLogicEditor } from '../../common/LazyLogicEditor';
 import '@goplasmatic/datalogic-ui/styles.css';
 import type { JsonLogicValue } from '../../../types';
 

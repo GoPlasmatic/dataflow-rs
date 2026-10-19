@@ -1,4 +1,4 @@
-import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
+import { LazyLogicEditor as DataLogicEditor } from '../../../common/LazyLogicEditor';
 import type { JsonLogicValue } from '../../../../types';
 import { useTheme } from '../../context';
 

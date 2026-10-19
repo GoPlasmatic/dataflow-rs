@@ -42,6 +42,7 @@
     "predev": "node scripts/use-local-wasm.mjs --if-available",
     "dev": "vite",
     "build": "tsc && vite build",
+    "postbuild": "node scripts/verify-app-bundle.mjs",
     "build:lib": "tsc && vite build --config vite.lib.config.ts",
     "postbuild:lib": "node scripts/verify-dts.mjs",
     "preview": "vite preview",

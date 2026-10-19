@@ -1,4 +1,5 @@
 import { Layers } from 'lucide-react';
+import { lazy, Suspense } from 'react';
 import '@xyflow/react/dist/style.css';
 import '@goplasmatic/datalogic-ui/styles.css';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
@@ -11,7 +12,11 @@ import {
   MappingContent,
   ValidationRuleContent,
 } from './detail-views';
-import { WorkflowFlowDiagram, GroupFlowDiagram } from './flow-diagram';
+const WorkflowFlowDiagram = lazy(() => import('./flow-diagram/WorkflowFlowDiagram')
+  .then(({ WorkflowFlowDiagram }) => ({ default: WorkflowFlowDiagram })));
+const GroupFlowDiagram = lazy(() => import('./flow-diagram/GroupFlowDiagram')
+  .then(({ GroupFlowDiagram }) => ({ default: GroupFlowDiagram })));
+const diagramLoading = <div className="df-details-loading" role="status">Loading diagram…</div>;
 
 interface DetailsPanelProps {
   selection: TreeSelectionType;
@@ -67,11 +72,13 @@ export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
   if (selection.type === 'folder' && onSelect) {
     return (
       <div className="df-details-panel">
-        <GroupFlowDiagram
-          workflows={selection.workflows}
-          name={selection.name}
-          onSelect={onSelect}
-        />
+        <Suspense fallback={diagramLoading}>
+          <GroupFlowDiagram
+            workflows={selection.workflows}
+            name={selection.name}
+            onSelect={onSelect}
+          />
+        </Suspense>
       </div>
     );
   }
@@ -79,7 +86,9 @@ export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
   if (selection.type === 'workflow' && onSelect) {
     return (
       <div className="df-details-panel">
-        <WorkflowFlowDiagram workflow={selection.workflow} onSelect={onSelect} />
+        <Suspense fallback={diagramLoading}>
+          <WorkflowFlowDiagram workflow={selection.workflow} onSelect={onSelect} />
+        </Suspense>
       </div>
     );
   }
