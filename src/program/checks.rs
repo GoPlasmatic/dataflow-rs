@@ -226,20 +226,23 @@ impl Hook for Checks<'_> {
 /// object's keys go in its iteration order, so the later key is reported.
 fn duplicate_keys(raw: &Value, escape: char) -> Vec<(AuthoredPath, String)> {
     let mut out = Vec::new();
-    walk_duplicates(raw, &AuthoredPath::root(), escape, &mut out);
+    let mut at = AuthoredPath::root();
+    walk_duplicates(raw, &mut at, escape, &mut out);
     out
 }
 
 fn walk_duplicates(
     value: &Value,
-    at: &AuthoredPath,
+    at: &mut AuthoredPath,
     escape: char,
     out: &mut Vec<(AuthoredPath, String)>,
 ) {
     match value {
         Value::Array(items) => {
             for (i, item) in items.iter().enumerate() {
-                walk_duplicates(item, &at.join(i), escape, out);
+                at.push(i);
+                walk_duplicates(item, at, escape, out);
+                at.pop();
             }
         }
         Value::Object(map) => {
@@ -264,7 +267,9 @@ fn walk_duplicates(
                 }
             }
             for (key, child) in map {
-                walk_duplicates(child, &at.join(key.as_str()), escape, out);
+                at.push(key.as_str());
+                walk_duplicates(child, at, escape, out);
+                at.pop();
             }
         }
         _ => {}

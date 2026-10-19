@@ -12,15 +12,18 @@ use serde_json::Value;
 /// emit something other than what was written.
 pub fn escaped_keys(raw: &Value) -> impl Iterator<Item = AuthoredPath> + '_ {
     let mut out = Vec::new();
-    walk_escaped(raw, &AuthoredPath::root(), &mut out);
+    let mut at = AuthoredPath::root();
+    walk_escaped(raw, &mut at, &mut out);
     out.into_iter()
 }
 
-fn walk_escaped(value: &Value, at: &AuthoredPath, out: &mut Vec<AuthoredPath>) {
+fn walk_escaped(value: &Value, at: &mut AuthoredPath, out: &mut Vec<AuthoredPath>) {
     match value {
         Value::Array(items) => {
             for (i, item) in items.iter().enumerate() {
-                walk_escaped(item, &at.join(i), out);
+                at.push(i);
+                walk_escaped(item, at, out);
+                at.pop();
             }
         }
         Value::Object(map) => {
@@ -33,7 +36,9 @@ fn walk_escaped(value: &Value, at: &AuthoredPath, out: &mut Vec<AuthoredPath>) {
                 }
             }
             for (key, child) in map {
-                walk_escaped(child, &at.join(key.as_str()), out);
+                at.push(key.as_str());
+                walk_escaped(child, at, out);
+                at.pop();
             }
         }
         _ => {}
@@ -84,7 +89,13 @@ pub fn secret_refs(raw: &Value) -> impl Iterator<Item = (Option<&str>, AuthoredP
 }
 
 /// Whether `raw` reads a secret anywhere, a computed name included: whether
-/// [`secret_refs`] finds any.
+/// [`secret_refs`] finds any, checked without allocating paths.
 pub(crate) fn reads_secret(raw: &Value) -> bool {
-    secret_refs(raw).next().is_some()
+    match raw {
+        Value::Object(map) => {
+            (map.len() == 1 && map.contains_key(SECRET)) || map.values().any(reads_secret)
+        }
+        Value::Array(items) => items.iter().any(reads_secret),
+        _ => false,
+    }
 }

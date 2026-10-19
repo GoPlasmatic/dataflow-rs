@@ -143,9 +143,10 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) watch: &'r mut Watch<'p>,
     /// The run's one clock reading.
     pub(crate) now: DateTime<Utc>,
-    /// The same reading, RFC 3339, for error records: one `Arc<str>` per run,
-    /// shared by every record it stamps.
-    pub(crate) now_text: &'r Arc<str>,
+    /// The same reading, RFC 3339, for error records: allocated at most once
+    /// per run, on the first error record it stamps, and shared by every
+    /// record of the run.
+    pub(crate) now_text: &'r mut Option<Arc<str>>,
     /// The changes of the call running, read by the recorder.
     pub(crate) changes: Vec<Change>,
     /// The current workflow's id.
@@ -265,6 +266,13 @@ impl<'p> RunEnv<'_, 'p> {
             }
         }
         Ok(())
+    }
+
+    /// The run's RFC 3339 timestamp, allocated once when first requested.
+    pub(crate) fn now_text(&mut self) -> &Arc<str> {
+        let now = self.now;
+        self.now_text
+            .get_or_insert_with(|| Arc::from(now.to_rfc3339()))
     }
 
     /// Whether the trace keeps changes: only then are the engine's writes
@@ -628,13 +636,17 @@ fn engine_write<'p>(
     path: &Path,
     traced: bool,
     changes: &mut Vec<Change>,
-    owned: impl Fn() -> OwnedDataValue,
+    owned: impl FnOnce() -> OwnedDataValue,
     view: impl for<'q> FnOnce(&'q Owner<'p>) -> DataValue<'q>,
 ) {
     let old = traced.then(|| rc.get_or_null(path));
-    rc.engine_set(path, &owned, view);
     if let Some(old) = old {
-        changes.push(Change::write(Arc::clone(path.dotted()), old, owned()));
+        let new = owned();
+        let new_clone = new.clone();
+        rc.engine_set(path, || new_clone, view);
+        changes.push(Change::write(Arc::clone(path.dotted()), old, new));
+    } else {
+        rc.engine_set(path, owned, view);
     }
 }
 
@@ -730,7 +742,8 @@ fn call<'p>(
         marked: false,
         mapping_ends,
         errors: &mut *env.errors,
-        now: env.now_text,
+        now: env.now,
+        now_text: &mut *env.now_text,
     };
     let result = builtin.call(&mut cx);
     let mut marked = cx.marked;

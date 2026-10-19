@@ -243,23 +243,24 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
         value: DataValue<'q>,
         owned: Option<OwnedDataValue>,
     ) -> bool {
-        self.set_segs(path.segs(), value, owned)
+        self.set_segs(path.segs(), value, owned).0
     }
 
-    /// [`Self::set`] at segments.
+    /// [`Self::set`] at segments, also returning the displaced old value when
+    /// one was there.
     pub(crate) fn set_segs(
         &mut self,
         segs: &[Seg],
         value: DataValue<'q>,
         owned: Option<OwnedDataValue>,
-    ) -> bool {
+    ) -> (bool, Option<DataValue<'q>>) {
         let before = self.root();
-        let Some((after, r)) = splice::set_resolved(self.arena(), before, segs, value) else {
-            return false;
+        let Some((after, r, old)) = splice::set_resolved(self.arena(), before, segs, value) else {
+            return (false, None);
         };
         *self.root = self.arena().alloc(after);
         self.mark_new(before, At::new(segs, r.kinds), r.created, owned);
-        true
+        (true, old)
     }
 
     /// Overwrites values of the small object at `object` where they are, so
@@ -286,57 +287,54 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
         ) -> Option<[(&'v Path, Option<DataValue<'q>>); N]>,
     ) -> bool {
         let before = self.root();
-        let Some(DataValue::Object(pairs)) = splice::get(before, object.segs()) else {
-            return false;
-        };
-        let Some(values) = values(pairs) else {
-            return false;
-        };
-        debug_assert!(
-            pairs.len() == N
-                && pairs.iter().zip(&values).all(|((k, _), (leaf, _))| {
-                    matches!(leaf.segs().split_last(),
-                        Some((last, parent)) if parent == object.segs() && *last.key == **k)
-                }),
-            "`values` names the object's keys, in its order"
-        );
-        if values.iter().all(|(_, value)| value.is_none()) {
-            return true;
-        }
         let arena = self.arena();
-        let updated = DataValue::Object(
-            arena.alloc_slice_fill_with(N, |i| (pairs[i].0, values[i].1.unwrap_or(pairs[i].1))),
-        );
-        let Some((after, r)) = splice::set_resolved(arena, before, object.segs(), updated) else {
-            unreachable!("an object in the view takes a write")
+        let Some((after, kinds, mark_at)) =
+            splice::update_object(arena, before, object.segs(), |arena, pairs| {
+                let values = values(pairs)?;
+                debug_assert!(
+                    pairs.len() == N
+                        && pairs.iter().zip(&values).all(|((k, _), (leaf, _))| {
+                            matches!(leaf.segs().split_last(),
+                                Some((last, parent)) if parent == object.segs() && *last.key == **k)
+                        }),
+                    "`values` names the object's keys, in its order"
+                );
+                if values.iter().all(|(_, value)| value.is_none()) {
+                    return Some((pairs, None));
+                }
+                let updated = arena
+                    .alloc_slice_fill_with(N, |i| (pairs[i].0, values[i].1.unwrap_or(pairs[i].1)));
+                let mut changed = values.iter().filter(|(_, value)| value.is_some());
+                let leaf = match (changed.next(), changed.next()) {
+                    (Some((leaf, _)), None) => Some(*leaf),
+                    _ => None,
+                };
+                let each_once = || (1..N).all(|i| pairs[..i].iter().all(|(k, _)| *k != pairs[i].0));
+                let at = match leaf {
+                    Some(leaf) if each_once() => leaf,
+                    _ => object,
+                };
+                Some((updated, Some(at)))
+            })
+        else {
+            return false;
         };
-        debug_assert_eq!(r.created, None, "the object was there");
-        *self.root = arena.alloc(after);
-        let mut changed = values.iter().filter(|(_, value)| value.is_some());
-        let leaf = match (changed.next(), changed.next()) {
-            (Some((leaf, _)), None) => Some(leaf),
-            _ => None,
-        };
-        let each_once = || (1..N).all(|i| pairs[..i].iter().all(|(k, _)| *k != pairs[i].0));
-        let at = match leaf {
-            Some(leaf) if each_once() => leaf.segs(),
-            _ => object.segs(),
-        };
-        self.log.mark(At::new(at, r.kinds), Mark::Set(None));
+        if let Some(at) = mark_at {
+            *self.root = arena.alloc(after);
+            self.log.mark(At::new(at.segs(), kinds), Mark::Set(None));
+        }
         true
     }
 
-    /// Remove `path`. Returns whether something was there.
-    pub(crate) fn remove(&mut self, path: &Path) -> bool {
+    /// Remove `path`, returning the removed value when something was there.
+    pub(crate) fn remove(&mut self, path: &Path) -> Option<DataValue<'q>> {
         self.remove_segs(path.segs())
     }
 
     /// [`Self::remove`] at segments.
-    pub(crate) fn remove_segs(&mut self, segs: &[Seg]) -> bool {
+    pub(crate) fn remove_segs(&mut self, segs: &[Seg]) -> Option<DataValue<'q>> {
         let before = self.root();
-        let Some((after, kinds)) = splice::remove_resolved(self.arena(), before, segs) else {
-            return false;
-        };
+        let (after, kinds, removed) = splice::remove_resolved(self.arena(), before, segs)?;
         let at = At::new(segs, kinds);
         *self.root = self.arena().alloc(after);
         // A key that comes back later moves to the end of its object, which
@@ -345,7 +343,7 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
             self.log.reorder(at.prefix(at.len() - 1));
         }
         self.log.mark(at, Mark::Removed);
-        true
+        Some(removed)
     }
 
     /// `map`'s append and extend. `Ok(false)` when the path is unreachable,
@@ -396,20 +394,16 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
             .alloc(splice::merge_root(self.arena(), before, key, value));
         match (slot, value) {
             (Some(DataValue::Object(_)), DataValue::Object(new_pairs)) => {
-                let root_seg = Seg::key(key);
                 let mut owned = match owned {
                     Some(OwnedDataValue::Object(pairs)) => Some(pairs.into_iter().map(|(_, v)| v)),
                     _ => None,
                 };
                 for (k, _) in new_pairs {
-                    let segs = [root_seg.clone(), Seg::key(k)];
                     let v = owned.as_mut().and_then(Iterator::next);
-                    self.log.mark(At::new(&segs, 0), Mark::Set(v));
+                    self.log.mark_root_key(key, Some(k), Mark::Set(v));
                 }
             }
-            _ => self
-                .log
-                .mark(At::new(&[Seg::key(key)], 0), Mark::Set(owned)),
+            _ => self.log.mark_root_key(key, None, Mark::Set(owned)),
         }
     }
 }
@@ -526,7 +520,7 @@ impl<'m, 'p> RunContext<'m, 'p> {
             if !(self.tuning.invalidate && large) {
                 return self.edit(|e| {
                     let av = value.to_arena(e.arena());
-                    e.set_segs(segs, av, Some(value))
+                    e.set_segs(segs, av, Some(value)).0
                 });
             }
             self.checkpoint();
@@ -577,7 +571,7 @@ impl<'m, 'p> RunContext<'m, 'p> {
     pub(crate) fn remove_segs(&mut self, segs: &[Seg]) -> bool {
         match &mut self.state {
             State::Owned(owner) => path::remove(&mut owner.ctx, segs).is_some(),
-            _ => self.edit(|e| e.remove_segs(segs)),
+            _ => self.edit(|e| e.remove_segs(segs).is_some()),
         }
     }
 

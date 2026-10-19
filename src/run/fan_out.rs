@@ -46,6 +46,7 @@ use crate::program::{CallSite, CompiledWorkflow, FanSite};
 use crate::state::RunContext;
 use datavalue::OwnedDataValue;
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 /// What one element's call left once its `Ctx` was settled: all the fold
@@ -256,7 +257,7 @@ pub(crate) async fn fan_out<'p>(
                 slot.map(|element| element.invoked.errors)
             };
             if let Some(errors) = errors {
-                keep_records(ids, env.now_text, env.errors, errors, Some(index));
+                keep_records(ids, env.now, env.now_text, env.errors, errors, Some(index));
             }
         }
         let decision = policy::cut_short(task_id, stop, &e);
@@ -269,20 +270,21 @@ pub(crate) async fn fan_out<'p>(
     // audit, and in a trace that keeps changes the first change of the first
     // folded element's step.
     if let Some(into) = &fan.into {
+        let prefill = OwnedDataValue::Array(vec![OwnedDataValue::Null; n]);
         if let Some(trace) = env.watch.trace.as_deref_mut().filter(|t| t.changes()) {
             trace.push_prelude(Change::write(
                 Arc::clone(into.dotted()),
                 rc.get_or_null(into),
-                OwnedDataValue::Array(vec![OwnedDataValue::Null; n]),
+                prefill.clone(),
             ));
         }
-        rc.set(
-            into,
-            OwnedDataValue::Array(vec![OwnedDataValue::Null; n]),
-            None,
-        );
+        rc.set(into, prefill, None);
     }
-    let mut slot = fan.into.as_ref().map(|into| (into, slot_segs(into)));
+    let mut slot = fan.into.as_ref().map(|into| {
+        let at = format!("{into}.");
+        let base = at.len();
+        (slot_segs(into), at, base)
+    });
     let mut halted = false;
     let mut rejected = false;
     let mut failed = false;
@@ -300,9 +302,9 @@ pub(crate) async fn fan_out<'p>(
         } = settle(rc, env, site.task, invoked, Some(index));
         let ok = result.is_ok();
         let (rejected_here, failed_here) = (decision.rejected(), decision.failed());
-        if let Some((into, segs)) = slot.as_mut() {
+        if let Some((segs, at, base)) = slot.as_mut() {
             if let Some(last) = segs.last_mut() {
-                *last = Seg::index(index);
+                last.set_index(index);
             }
             let value = match collected {
                 Some(value) if !rejected_here && !failed_here => value,
@@ -311,8 +313,10 @@ pub(crate) async fn fan_out<'p>(
             // An `Err` records no change, its result's included, as v3's.
             if ok && env.capture.captures() {
                 // The dotted path `into.index_child(index)` would have.
+                at.truncate(*base);
+                let _ = write!(at, "{index}");
                 env.changes.push(Change::write(
-                    Arc::from(format!("{}.{index}", into.dotted())),
+                    at.as_str(),
                     OwnedDataValue::Null,
                     value.clone(),
                 ));

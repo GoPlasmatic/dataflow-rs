@@ -102,6 +102,7 @@ impl Seg {
     }
 
     /// A segment that is always an object key, never an index.
+    #[cfg(test)]
     pub(crate) fn key(key: &str) -> Self {
         Self {
             key: key.into(),
@@ -120,6 +121,14 @@ impl Seg {
             key: key.into(),
             index: Some(i),
         }
+    }
+
+    /// Updates the index of an existing index segment in place, without
+    /// allocating a new `Box<str>` when the caller only writes into a known
+    /// array (such as a fan-out's `into` array).
+    pub(crate) fn set_index(&mut self, i: usize) {
+        debug_assert!(i <= MAX_ARRAY_INDEX, "index {i} is past the cap");
+        self.index = Some(i);
     }
 }
 

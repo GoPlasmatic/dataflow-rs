@@ -46,8 +46,10 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     pub(crate) mapping_ends: Option<&'c mut Vec<u32>>,
     /// The message's error list.
     pub(crate) errors: &'c mut Vec<ErrorRecord>,
+    /// The run's one clock reading.
+    pub(crate) now: chrono::DateTime<chrono::Utc>,
     /// The run's clock reading, RFC 3339, for error records.
-    pub(crate) now: &'c Arc<str>,
+    pub(crate) now_text: &'c mut Option<Arc<str>>,
 }
 
 impl std::fmt::Debug for SyncCtx<'_, '_, '_> {
@@ -87,8 +89,11 @@ impl<'p> SyncCtx<'_, '_, 'p> {
     }
 
     /// An error record stamped with this task's ids and the run's timestamp.
-    pub(crate) fn record(&self, code: impl Into<String>, message: String) -> ErrorRecord {
-        task_record(code, message, self.workflow_id, self.task_id, self.now)
+    pub(crate) fn record(&mut self, code: impl Into<String>, message: String) -> ErrorRecord {
+        let now = self
+            .now_text
+            .get_or_insert_with(|| Arc::from(self.now.to_rfc3339()));
+        task_record(code, message, self.workflow_id, self.task_id, now)
     }
 }
 
@@ -157,7 +162,8 @@ mod tests {
         }));
         let (mut changes, mut errors) = (Vec::new(), Vec::new());
         let mut rc = RunContext::new(&mut slot, Tuning::default());
-        let (workflow_id, task_id, now) = (Arc::from("w"), Arc::from("t"), Arc::from(NOW));
+        let (workflow_id, task_id, mut now_text) =
+            (Arc::from("w"), Arc::from("t"), Some(Arc::from(NOW)));
         f(&mut SyncCtx {
             rc: &mut rc,
             exprs: &exprs,
@@ -170,7 +176,8 @@ mod tests {
             marked: false,
             mapping_ends: None,
             errors: &mut errors,
-            now: &now,
+            now: chrono::Utc::now(),
+            now_text: &mut now_text,
         });
         rc.finish();
         changes

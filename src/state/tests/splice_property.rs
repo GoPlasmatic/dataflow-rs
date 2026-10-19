@@ -92,11 +92,11 @@ fn apply<'a>(
             let wrote = path::set(owned, &segs, value.clone());
             let tracked = splice::set_resolved(arena, view, &segs, value.to_arena(arena));
             assert_eq!(
-                tracked.map(|(_, r)| r),
+                tracked.map(|(_, r, _)| r),
                 hops,
                 "case {case}: one walk resolves as resolve does"
             );
-            let spliced = tracked.map(|(root, _)| root);
+            let spliced = tracked.map(|(root, _, _)| root);
             assert_eq!(
                 spliced.is_some(),
                 wrote,
@@ -114,14 +114,19 @@ fn apply<'a>(
                 removed.is_some(),
                 "case {case}: remove {dotted:?}"
             );
-            if let Some((_, kinds)) = spliced {
+            if let Some((_, kinds, removed_view)) = spliced {
                 assert_eq!(
                     Some(kinds),
                     splice::resolve(view, &segs).map(|r| r.kinds),
                     "case {case}: remove {dotted:?} resolves"
                 );
+                assert_eq!(
+                    Some(random::exact(&removed_view.to_owned())),
+                    removed.as_ref().map(random::exact),
+                    "case {case}: remove {dotted:?} removed value"
+                );
             }
-            spliced.map_or(view, |(root, _)| root)
+            spliced.map_or(view, |(root, _, _)| root)
         }
         Op::Append(dotted, items) => {
             let segs = random::segs(dotted);

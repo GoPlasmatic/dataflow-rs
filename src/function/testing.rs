@@ -283,7 +283,8 @@ impl<F: Function> Call<F> {
             };
         };
         // The clock is read once, as a run reads it, for the records' stamp.
-        let now_text: Arc<str> = Arc::from(Utc::now().to_rfc3339());
+        let now = Utc::now();
+        let mut now_text = None;
         let parts = message.parts();
         let mut rc = RunContext::new(parts.context, Tuning::default());
         let Invoked {
@@ -338,7 +339,7 @@ impl<F: Function> Call<F> {
             task: &test_id,
         };
         let errors_before = parts.errors.len();
-        keep_records(ids, &now_text, parts.errors, errors, None);
+        keep_records(ids, now, &mut now_text, parts.errors, errors, None);
         let errors = parts.errors[errors_before..].to_vec();
         let changes = apply_writes(&mut rc, ok, overlay, changes);
         rc.finish();

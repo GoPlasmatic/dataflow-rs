@@ -181,6 +181,7 @@ impl Task {
         let workflow_id: Arc<str> = Arc::from(workflow.id.as_str());
         let task_id: Arc<str> = Arc::from(workflow.tasks[0].id.as_str());
         let now: Arc<str> = Arc::from(NOW);
+        let mut now_text = Some(Arc::clone(&now));
         let outcome = self.builtin().call(&mut SyncCtx {
             rc,
             exprs: workflow.registry.exprs(),
@@ -193,7 +194,8 @@ impl Task {
             marked: false,
             mapping_ends: None,
             errors: &mut *errors,
-            now: &now,
+            now: chrono::Utc::now(),
+            now_text: &mut now_text,
         });
         let error_code = outcome.as_ref().err().map(|e| e.code().to_owned());
         let decision = decide(workflow.calls[0].policy, &task_id, outcome);

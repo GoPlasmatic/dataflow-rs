@@ -100,8 +100,12 @@ fn on_failure(policy: FailurePolicy, error: impl FnOnce() -> Error) -> Flow {
 
 /// The error record `(code, message)` for a task's `Err`.
 fn error_record(task_id: &str, error: &Error) -> (Cow<'static, str>, String) {
+    let code = match error.kind() {
+        crate::base::ErrorKind::Service { code } if !code.is_empty() => code.clone(),
+        _ => Cow::Borrowed(error.code_static()),
+    };
     (
-        Cow::Owned(error.code().to_owned()),
+        code,
         format!("Task {task_id} error: {}", error.record_text()),
     )
 }

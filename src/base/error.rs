@@ -114,14 +114,22 @@ impl Error {
     /// The recorded code for this error.
     pub fn code(&self) -> &str {
         match &self.kind {
+            ErrorKind::Service { code } if !code.is_empty() => code,
+            _ => self.code_static(),
+        }
+    }
+
+    /// The static code for any non-service error, or for a service error with
+    /// an empty code.
+    pub(crate) fn code_static(&self) -> &'static str {
+        match &self.kind {
             ErrorKind::Eval => "LOGIC_ERROR",
             ErrorKind::Budget => "BUDGET_EXCEEDED",
             ErrorKind::TimedOut => "TIMEOUT_ERROR",
             ErrorKind::Cancelled => "CANCELLED",
             ErrorKind::Config => "CONFIG_ERROR",
             ErrorKind::Compile => "COMPILATION_ERROR",
-            ErrorKind::Service { code } if code.is_empty() => TASK_ERROR,
-            ErrorKind::Service { code } => code,
+            ErrorKind::Service { .. } => TASK_ERROR,
         }
     }
 

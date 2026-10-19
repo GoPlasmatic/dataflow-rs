@@ -269,7 +269,8 @@ fn push_record(
     stamp: Stamp,
     (code, message): (Cow<'static, str>, String),
 ) {
-    let mut record = task_record(code, message, ids.workflow, ids.task, env.now_text);
+    let now = env.now_text();
+    let mut record = task_record(code, message, ids.workflow, ids.task, now);
     record.element_index = stamp.element_index;
     env.errors.push(record);
 }
@@ -395,7 +396,9 @@ fn audited(change: &mut Change) -> bool {
 /// task completed.
 pub(crate) fn workflow_failure(env: &mut RunEnv<'_, '_>, error: &Error) {
     let mut record = env.workflow_record(error);
-    record.stamp(env.workflow_id, None, env.now_text, None);
+    let workflow_id = env.workflow_id;
+    let now = env.now_text();
+    record.stamp(workflow_id, None, now, None);
     if env.watch.trace.is_some() {
         let mut step = env.workflow_step(StepResult::Failed);
         #[cfg(test)]

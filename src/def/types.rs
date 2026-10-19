@@ -231,15 +231,11 @@ impl WorkflowDef {
     pub fn walk(&self) -> impl Iterator<Item = (AuthoredPath, StepKind, &StepDef)> {
         let mut out = Vec::new();
         if let Some(config) = &self.r#loop {
-            let at = AuthoredPath::root().join("loop").join("setup");
-            collect(&config.setup, &at, true, &mut out);
+            let mut at = AuthoredPath::root().join("loop").join("setup");
+            collect(&config.setup, &mut at, true, &mut out);
         }
-        collect(
-            &self.tasks,
-            &AuthoredPath::root().join("tasks"),
-            false,
-            &mut out,
-        );
+        let mut at = AuthoredPath::root().join("tasks");
+        collect(&self.tasks, &mut at, false, &mut out);
         out.into_iter()
     }
 }
@@ -247,16 +243,19 @@ impl WorkflowDef {
 /// Appends `steps` and their members to `out`, pre-order.
 fn collect<'d>(
     steps: &'d [StepDef],
-    at: &AuthoredPath,
+    at: &mut AuthoredPath,
     setup: bool,
     out: &mut Vec<(AuthoredPath, StepKind, &'d StepDef)>,
 ) {
     for (i, step) in steps.iter().enumerate() {
-        let path = at.join(i);
-        out.push((path.clone(), step.kind(setup), step));
+        at.push(i);
+        out.push((at.clone(), step.kind(setup), step));
         if let StepDef::Group(group) = step {
-            collect(&group.tasks, &path.join("tasks"), setup, out);
+            at.push("tasks");
+            collect(&group.tasks, at, setup, out);
+            at.pop();
         }
+        at.pop();
     }
 }
 

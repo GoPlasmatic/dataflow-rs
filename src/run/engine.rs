@@ -21,7 +21,7 @@ use crate::state::{RunContext, Tuning};
 use chrono::Utc;
 use datavalue::OwnedDataValue;
 use std::fmt;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 /// What an [`Engine`] is configured with beside its program. A reload,
 /// [`Engine::with_program`], keeps it.
@@ -118,10 +118,6 @@ pub(crate) mod slots {
     pub(crate) const ALL: [&str; 4] = [PROGRESS, PROCESSED_AT, ENGINE_VERSION, CHANNEL];
 }
 
-static PROCESSED_AT: LazyLock<Path> = LazyLock::new(|| metadata(slots::PROCESSED_AT));
-static ENGINE_VERSION: LazyLock<Path> = LazyLock::new(|| metadata(slots::ENGINE_VERSION));
-static CHANNEL: LazyLock<Path> = LazyLock::new(|| metadata(slots::CHANNEL));
-
 /// `metadata.<key>`.
 pub(crate) fn metadata(key: &str) -> Path {
     format!("metadata.{key}")
@@ -199,7 +195,7 @@ impl Engine {
         let started = watch.observers.timed().then(record::now);
         let now = Utc::now();
         let now_str = now.to_rfc3339();
-        let now_text: Arc<str> = Arc::from(now_str.as_str());
+        let mut now_text: Option<Arc<str>> = None;
         let parts = msg.parts();
         stamp(parts.context, now_str, opts.channel);
         // A message brings no records in at the error context's path.
@@ -275,7 +271,7 @@ impl Engine {
                     capture: CaptureMode::new(capture_audit, &watch),
                     watch: &mut watch,
                     now,
-                    now_text: &now_text,
+                    now_text: &mut now_text,
                     changes: Vec::new(),
                     workflow_id,
                     task_ids,
@@ -374,10 +370,37 @@ impl Engine {
 /// Writes the run's stamps, owned: no view exists yet. Each replaces its key
 /// in place or is appended, as v3's `set_processing_metadata`.
 fn stamp(context: &mut OwnedDataValue, now: String, channel: Option<&str>) {
-    PROCESSED_AT.assign(context, OwnedDataValue::String(now));
-    ENGINE_VERSION.assign(context, OwnedDataValue::String(crate::VERSION.to_owned()));
+    let OwnedDataValue::Object(roots) = context else {
+        return;
+    };
+    let Some((_, OwnedDataValue::Object(meta))) = roots.iter_mut().find(|(k, _)| k == "metadata")
+    else {
+        return;
+    };
+    let need = 2 + usize::from(channel.is_some());
+    if meta.capacity() < meta.len() + need {
+        meta.reserve(need);
+    }
+    match meta.iter_mut().find(|(k, _)| k == slots::PROCESSED_AT) {
+        Some((_, slot)) => *slot = OwnedDataValue::String(now),
+        None => meta.push((slots::PROCESSED_AT.to_owned(), OwnedDataValue::String(now))),
+    }
+    put_meta_str(meta, slots::ENGINE_VERSION, crate::VERSION);
     if let Some(channel) = channel {
-        CHANNEL.assign(context, OwnedDataValue::String(channel.to_owned()));
+        put_meta_str(meta, slots::CHANNEL, channel);
+    }
+}
+
+fn put_meta_str(meta: &mut Vec<(String, OwnedDataValue)>, key: &str, text: &str) {
+    match meta.iter_mut().find(|(k, _)| k == key) {
+        Some((_, OwnedDataValue::String(s))) => {
+            if s != text {
+                s.clear();
+                s.push_str(text);
+            }
+        }
+        Some((_, slot)) => *slot = OwnedDataValue::String(text.to_owned()),
+        None => meta.push((key.to_owned(), OwnedDataValue::String(text.to_owned()))),
     }
 }
 

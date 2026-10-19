@@ -506,6 +506,40 @@ impl Writes {
         id
     }
 
+    /// Whether a child node key matches the object key `name` with `hash`.
+    fn matches_name(&self, key: Key, name: &str, hash: u32) -> bool {
+        matches!(key, Key::Name { start, len, hash: h } if h == hash && self.name(start, len) == name)
+    }
+
+    /// The child of `parent` for the object key `name` (with `hash`), created
+    /// when missing, last in insertion order.
+    fn child_name(&mut self, parent: u32, name: &str, hash: u32) -> u32 {
+        let mut c = self.nodes[parent as usize].first;
+        while c != NONE {
+            if self.matches_name(self.nodes[c as usize].key, name, hash) {
+                return c;
+            }
+            c = self.nodes[c as usize].next;
+        }
+        let start = self.names.len() as u32;
+        self.names.push_str(name);
+        let key = Key::Name {
+            start,
+            len: self.names.len() as u32 - start,
+            hash,
+        };
+        let id = self.nodes.len() as u32;
+        self.nodes.push(Node::new(key));
+        let last = self.nodes[parent as usize].last;
+        if last == NONE {
+            self.nodes[parent as usize].first = id;
+        } else {
+            self.nodes[last as usize].next = id;
+        }
+        self.nodes[parent as usize].last = id;
+        id
+    }
+
     /// Detaches a node's children: a subsumed subtree is unlinked, not freed.
     fn unlink_children(&mut self, n: u32) {
         let node = &mut self.nodes[n as usize];
@@ -532,6 +566,45 @@ impl Writes {
                 break;
             }
             n = self.child(n, at, i);
+        }
+        let has_children = self.nodes[n as usize].first != NONE;
+        let node = &mut self.nodes[n as usize];
+        let mark = combine(node.mark.take(), new, has_children);
+        let keep = matches!(mark, Mark::Appended { .. }) && !has_children;
+        node.reorder = false;
+        node.mark = Some(mark);
+        if !keep {
+            self.unlink_children(n);
+        }
+    }
+
+    /// Records a write at a root key (`root`), or at `root.field` when `field`
+    /// is `Some`, without allocating temporary `Seg`s.
+    pub(crate) fn mark_root_key(&mut self, root: &str, field: Option<&str>, new: Mark) {
+        use crate::expr::path::key_hash;
+        let root_hash = key_hash(root);
+        let mut n = self.child_name(0, root, root_hash);
+        if let Some(field) = field {
+            let field_hash = key_hash(field);
+            if let Some(above) = self.nodes[n as usize].mark.as_mut() {
+                match above {
+                    Mark::Set(Some(value)) => {
+                        let applied = match new {
+                            Mark::Set(Some(v)) => {
+                                rules::put(value, rules::Hop::Key(field), v).is_some()
+                            }
+                            _ => false,
+                        };
+                        if !applied {
+                            *above = Mark::Set(None);
+                        }
+                    }
+                    Mark::Set(None) => {}
+                    Mark::Removed | Mark::Appended { .. } => *above = Mark::Set(None),
+                }
+                return;
+            }
+            n = self.child_name(n, field, field_hash);
         }
         let has_children = self.nodes[n as usize].first != NONE;
         let node = &mut self.nodes[n as usize];

@@ -29,22 +29,25 @@ pub struct Context {
     pub(crate) root: OwnedDataValue,
 }
 
-/// A seed for a root: an object as it is, anything else `{}`.
-fn slot(seed: OwnedDataValue) -> OwnedDataValue {
+/// A seed for a root: an object as it is, anything else `{}` with capacity
+/// `cap`.
+fn slot(seed: OwnedDataValue, cap: usize) -> OwnedDataValue {
     if seed.is_object() {
         seed
     } else {
-        OwnedDataValue::Object(Vec::new())
+        OwnedDataValue::Object(Vec::with_capacity(cap))
     }
 }
 
 impl Context {
     /// A context seeded with `data` and `metadata`, each ignored when it is
-    /// not an object, and an empty `temp_data`.
+    /// not an object, and an empty `temp_data`. `metadata` is sized for the
+    /// engine's run stamps and progress object so the first run does not
+    /// reallocate it.
     pub(crate) fn new(data: OwnedDataValue, metadata: OwnedDataValue) -> Self {
         Self::from_roots([
-            slot(data),
-            slot(metadata),
+            slot(data, 0),
+            slot(metadata, 4),
             OwnedDataValue::Object(Vec::new()),
         ])
     }

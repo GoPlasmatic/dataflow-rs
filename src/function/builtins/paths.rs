@@ -40,8 +40,9 @@ fn compile_path<T>(
     };
     // `Expr<String>` lends a folded non-string as its JSON text, so `[1]`
     // would read as the name "[1]". A literal string is a string; an object
-    // that folded is compiled again to see whether it folded to a string.
-    if !raw.is_string() && !(raw.is_object() && folds_to_string(raw, cx)) {
+    // that folded is evaluated once in the arena to see whether it folded to
+    // a string.
+    if !raw.is_string() && !(raw.is_object() && folds_to_string(expr.logic(), cx)) {
         cx.issue(
             IssueCode::InputParse,
             format!("`{raw}` must be a path string, or JSONLogic computing one"),
@@ -62,11 +63,14 @@ fn compile_path<T>(
     }
 }
 
-/// Whether `raw`, which compiled and folded, folded to a string.
-fn folds_to_string(raw: &Value, cx: &CompileCx<'_>) -> bool {
-    cx.exprs()
-        .compile::<OwnedDataValue>(raw)
-        .is_ok_and(|expr| matches!(expr.constant(), Some(OwnedDataValue::String(_))))
+/// Whether `raw`, which compiled to `logic` and folded, folded to a string.
+fn folds_to_string(logic: &datalogic_rs::Logic, cx: &CompileCx<'_>) -> bool {
+    crate::expr::arena::with_arena(|arena| {
+        cx.exprs()
+            .logic()
+            .evaluate(logic, datavalue::DataValue::Object(&[]), arena)
+            .is_ok_and(|v| matches!(v, datavalue::DataValue::String(_)))
+    })
 }
 
 /// Where a parse reads from, resolved: the one form the runtime reads.

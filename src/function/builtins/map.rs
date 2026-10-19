@@ -181,39 +181,42 @@ impl MapConfig {
         if cx.capture {
             cx.changes.reserve(self.mappings.len());
         }
-        for (i, mapping) in self.mappings.iter().enumerate() {
-            let (exprs, capture, traced) = (cx.exprs, cx.capture, cx.traced);
-            let (changes, marked) = (&mut *cx.changes, &mut cx.marked);
-            let ends = cx.mapping_ends.as_deref_mut();
-            let applied = cx.rc.edit(|e| {
-                let mut w = Writer {
-                    e,
-                    exprs,
-                    capture,
-                    traced,
-                    changes,
-                    marked,
-                    ends,
-                };
+        let (exprs, capture, traced) = (cx.exprs, cx.capture, cx.traced);
+        let (changes, marked) = (&mut *cx.changes, &mut cx.marked);
+        let ends = cx.mapping_ends.as_deref_mut();
+        let mut failures: Vec<(usize, &Mapping, Option<Arc<str>>, String)> = Vec::new();
+        let budget = cx.rc.edit(|e| {
+            let mut w = Writer {
+                e,
+                exprs,
+                capture,
+                traced,
+                changes,
+                marked,
+                ends,
+            };
+            for (i, mapping) in self.mappings.iter().enumerate() {
                 let applied = mapping.apply(&mut w);
                 w.end();
-                applied
-            });
-            match applied {
-                Ok(()) => {}
-                Err(failure) => {
-                    let (path, reason) = match *failure {
-                        Failed::Budget(e) => return Err(e),
-                        Failed::Mapping { path, reason } => (path, reason),
-                    };
-                    failed = true;
-                    let message = format!("mappings[{i}] ({}): {reason}", mapping.describe());
-                    error!("Map: {message}");
-                    let mut record = cx.record(MAPPING_ERROR, message);
-                    record.path = path.map(|path| path.to_string());
-                    cx.errors.push(record);
+                if let Err(failure) = applied {
+                    match *failure {
+                        Failed::Budget(err) => return Err(err),
+                        Failed::Mapping { path, reason } => {
+                            failures.push((i, mapping, path, reason));
+                        }
+                    }
                 }
             }
+            Ok(())
+        });
+        budget?;
+        for (i, mapping, path, reason) in failures {
+            failed = true;
+            let message = format!("mappings[{i}] ({}): {reason}", mapping.describe());
+            error!("Map: {message}");
+            let mut record = cx.record(MAPPING_ERROR, message);
+            record.path = path.map(|path| path.to_string());
+            cx.errors.push(record);
         }
         Ok(if failed {
             Outcome::Status(500)
@@ -370,8 +373,7 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
     }
 
     /// Writes `result` at `path`: a root merges, anything else is assigned.
-    /// The change is recorded first, with the old value read from the view;
-    /// under capture the mark keeps the owned new value, which the `Change`
+    /// Under capture the mark keeps the owned new value, which the `Change`
     /// needed anyway, so the checkpoint converts nothing twice. A failure
     /// when `path` is a root and `result` is not an object: a root takes
     /// only an object, as `Ctx::set`'s does.
@@ -381,18 +383,36 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
             return Err(Failed::at(Some(path), reason));
         }
         let owned = self.capture.then(|| result.owned());
-        if let Some(new_value) = &owned {
-            let old_value = self.old(path);
-            self.changes.push(Change::write(
-                Arc::clone(path.dotted()),
-                old_value,
-                new_value.clone(),
-            ));
-        }
         if path.is_root() {
+            if let Some(new_value) = &owned {
+                let old_value = self
+                    .e
+                    .get(path)
+                    .map_or(OwnedDataValue::Null, |v| v.to_owned());
+                self.changes.push(Change::write(
+                    Arc::clone(path.dotted()),
+                    old_value,
+                    new_value.clone(),
+                ));
+            }
             self.e.merge_root(path.root().as_str(), result.view, owned);
         } else {
-            self.e.set(path, result.view, owned);
+            let new_for_change = owned.clone();
+            let (wrote, old) = self.e.set_segs(path.segs(), result.view, owned);
+            if let Some(new_value) = new_for_change {
+                let old_value = if wrote {
+                    old.map_or(OwnedDataValue::Null, |v| v.to_owned())
+                } else {
+                    self.e
+                        .get(path)
+                        .map_or(OwnedDataValue::Null, |v| v.to_owned())
+                };
+                self.changes.push(Change::write(
+                    Arc::clone(path.dotted()),
+                    old_value,
+                    new_value,
+                ));
+            }
         }
         Ok(())
     }
@@ -484,9 +504,8 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
                 "a root cannot be removed".to_owned(),
             ));
         }
-        let old_value = self.capture.then(|| self.e.get(path)).flatten();
-        if self.e.remove(path)
-            && let Some(old_value) = old_value
+        if let Some(old_value) = self.e.remove(path)
+            && self.capture
         {
             self.changes.push(Change::removal(
                 Arc::clone(path.dotted()),
@@ -494,13 +513,6 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
             ));
         }
         Ok(())
-    }
-
-    /// The value at `path` before a write, converted; `null` when absent.
-    fn old(&self, path: &Path) -> OwnedDataValue {
-        self.e
-            .get(path)
-            .map_or(OwnedDataValue::Null, |v| v.to_owned())
     }
 }
 

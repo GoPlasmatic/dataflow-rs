@@ -9,7 +9,7 @@ use bumpalo::Bump;
 use datalogic_rs::{CustomOperator, DataValue, Engine, Logic};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// The key prefix that escapes a template key into data: `{"$cat": …}` is the
@@ -102,6 +102,7 @@ impl<'r> EvalRoot<'r> for &'r Value {}
 struct Inner {
     logic: Engine,
     operators: Vec<Operator>,
+    by_name: HashMap<Box<str>, usize>,
     secrets: Arc<Secrets>,
 }
 
@@ -147,7 +148,10 @@ impl ExprEngine {
 
     /// The operator named `name`, if the engine has one.
     pub(crate) fn operator(&self, name: &str) -> Option<&Operator> {
-        self.operators().iter().find(|op| op.name == name)
+        self.inner
+            .by_name
+            .get(name)
+            .map(|&i| &self.inner.operators[i])
     }
 
     /// The secrets the `secret` operator reads.
@@ -495,11 +499,17 @@ impl ExprEngineBuilder {
             logic.operators().flat_map(Operator::from_logic).collect();
         operators.extend(infos);
         operators.push(Operator::secret());
+        let by_name: HashMap<Box<str>, usize> = operators
+            .iter()
+            .enumerate()
+            .map(|(i, op)| (Box::from(&*op.name), i))
+            .collect();
 
         Ok(ExprEngine {
             inner: Arc::new(Inner {
                 logic,
                 operators,
+                by_name,
                 secrets,
             }),
         })

@@ -143,21 +143,38 @@ pub(crate) async fn race<F: Future>(
 /// Whether a timer can be built on this thread.
 #[cfg(not(target_arch = "wasm32"))]
 mod timers {
+    use std::cell::Cell;
+
+    thread_local! {
+        /// Cached `(runtime_id, has_time_driver)` for the last Tokio runtime
+        /// probed on this thread, avoiding a timer registration and
+        /// `catch_unwind` on every run with a deadline.
+        static LAST_RUNTIME: Cell<Option<(tokio::runtime::Id, bool)>> = const { Cell::new(None) };
+    }
+
     /// Whether `tokio::time::sleep_until` can be built here: a Tokio runtime
     /// is current and its time driver is enabled.
     ///
     /// A `Sleep` fetches the driver in its constructor, panicking when it is
     /// missing, so the probe builds one and catches that panic. A missing
-    /// runtime is cheaper to see and panics nothing. Probe for each run:
+    /// runtime is cheaper to see and panics nothing. Probed per runtime ID:
     /// the same thread can enter runtimes with different time drivers.
     pub(super) fn available() -> bool {
-        if tokio::runtime::Handle::try_current().is_err() {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
             return false;
+        };
+        let id = handle.id();
+        if let Some((last_id, ok)) = LAST_RUNTIME.get()
+            && last_id == id
+        {
+            return ok;
         }
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             drop(tokio::time::sleep_until(tokio::time::Instant::now()));
         }))
-        .is_ok()
+        .is_ok();
+        LAST_RUNTIME.set(Some((id, ok)));
+        ok
     }
 
     /// Says once that a deadline is checked, not raced.

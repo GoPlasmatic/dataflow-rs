@@ -216,13 +216,18 @@ pub(crate) fn invoke<'r>(
 /// a fan-out the element's index, where it carries none of its own.
 pub(crate) fn keep_records(
     ids: TaskIds<'_>,
-    now_text: &Arc<str>,
+    now: chrono::DateTime<chrono::Utc>,
+    now_text: &mut Option<Arc<str>>,
     out: &mut Vec<ErrorRecord>,
     records: Vec<ErrorRecord>,
     element_index: Option<usize>,
 ) {
+    if records.is_empty() {
+        return;
+    }
+    let now = now_text.get_or_insert_with(|| Arc::from(now.to_rfc3339()));
     for mut record in records {
-        record.stamp(ids.workflow, Some(ids.task), now_text, element_index);
+        record.stamp(ids.workflow, Some(ids.task), now, element_index);
         out.push(record);
     }
 }
@@ -283,7 +288,14 @@ pub(crate) fn settle(
     } = invoked;
     let errors_before = env.errors.len();
     let ids = env.ids(task);
-    keep_records(ids, env.now_text, env.errors, errors, element_index);
+    keep_records(
+        ids,
+        env.now,
+        env.now_text,
+        env.errors,
+        errors,
+        element_index,
+    );
     env.changes = apply_writes(rc, result.is_ok(), overlay, changes);
     let marked = replaces_a_root(&env.changes);
     Settled {
