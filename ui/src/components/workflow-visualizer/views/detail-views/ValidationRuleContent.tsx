@@ -1,6 +1,5 @@
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
 import type { Context } from '../../../../types';
-import { contextAtStep } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
 import { useTheme } from '../../context';
 import { useTaskDebugStep } from '../../hooks/useTreeNodeDebugState';
@@ -19,7 +18,7 @@ export function ValidationRuleContent({ selection }: ValidationRuleContentProps)
   // records. A skipped task read nothing.
   let debugData: Context | undefined;
   if (shown && shown.step.result !== 'skipped') {
-    debugData = contextAtStep(shown.trace, shown.contexts, shown.stepIndex - 1);
+    debugData = shown.contextBefore;
   }
 
   return (

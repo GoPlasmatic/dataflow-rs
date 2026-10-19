@@ -109,6 +109,7 @@ if (!dtsName) {
     'export interface RunResult',
     'export interface EngineError',
     'export class WasmEngine',
+    'export class TraceReplay',
   ];
   const absent = wanted.filter((decl) => !dts.includes(decl));
   if (absent.length > 0) {

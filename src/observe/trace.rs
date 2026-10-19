@@ -240,7 +240,7 @@ impl Trace {
 
 /// Whether every end in `step.mapping_ends` is non-decreasing and fits
 /// within `step.changes`.
-fn valid_mapping_ends(step: &TraceStep) -> bool {
+pub(super) fn valid_mapping_ends(step: &TraceStep) -> bool {
     let mut before = 0u32;
     for &end in &step.mapping_ends {
         if end < before || usize::try_from(end).map_or(true, |e| e > step.changes.len()) {
@@ -266,7 +266,7 @@ fn check_root(name: &str, value: &OwnedDataValue) -> crate::base::Result<()> {
 
 /// One change applied to `root`, the object holding the three roots, by
 /// [`Trace::contexts`]'s rule.
-fn apply(root: &mut OwnedDataValue, change: &Change) {
+pub(super) fn apply(root: &mut OwnedDataValue, change: &Change) {
     let Ok(at) = change.path.parse::<Path>() else {
         return;
     };

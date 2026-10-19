@@ -4,7 +4,7 @@ import '@goplasmatic/datalogic-ui/styles.css';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useDebuggerOptional } from '../context';
 import type { Context, Trace } from '../../../types';
-import { contextAtStep, findTaskStepIndex, isEngineStep } from '../../../types';
+import { findTaskStepIndex, isEngineStep } from '../../../types';
 import {
   DataLogicView,
   TaskContent,
@@ -94,7 +94,7 @@ export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
   // record (`selection`) says so.
   let conditionDebugData: Context | undefined;
   if (dbgContext?.state.isActive && dbgContext.state.trace && dbgContext.state.currentStepIndex >= 0) {
-    const { trace, run, contexts, currentStepIndex } = dbgContext.state;
+    const { trace, run, currentStepIndex } = dbgContext.state;
 
     let stepIndex = -1;
     if (selection.type === 'task-condition') {
@@ -108,7 +108,7 @@ export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
       }
     }
     if (stepIndex !== -1) {
-      conditionDebugData = contextAtStep(trace, contexts, stepIndex - 1);
+      conditionDebugData = dbgContext.contextAt(stepIndex - 1) ?? undefined;
     }
   }
 

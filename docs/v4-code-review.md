@@ -164,6 +164,34 @@ They require representative measurements or a deliberate API decision.
 Use the existing interleaved benchmark gate for performance changes. This
 pass makes no throughput or memory-improvement claim from source inspection.
 
+## Sequential follow-up work
+
+### 1. Large-trace replay: completed
+
+Added `observe::Replay` and the WASM `TraceReplay` class. They retain a
+trace and one working context, applying only intervening steps for forward
+seeks and restarting from the initial context for backward seeks. Mapping
+access copies only the requested mapping context. The snapshot APIs remain
+available, and the wire trace shape is unchanged.
+
+The UI uses a cursor instead of retaining a context array. It releases the
+cursor when clearing or replacing the run and on unmount. The draft UI
+state field changes from `contexts` to `replay`; detail views use the
+provider's `contextAt` and `mappingContextAt` readers.
+
+`wasm/scripts/bench-replay.mjs` compares both APIs on the same WASM build in
+separate Node processes. For 256 steps over a 256 KiB context, three
+interleaved runs measured median retained JS heap growth of 63.02 MiB for
+snapshots versus 0.27 MiB for the cursor, and RSS growth of 333.16 MiB versus
+8.56 MiB. Timings varied substantially, so these measurements establish the
+memory reduction, not a stable speedup. Backward seeks deliberately trade
+replay work for bounded retained memory.
+
+The cursor is compared with every corpus trace in both directions and at
+every recorded mapping boundary. Native tests, Clippy, rustdoc, WASM tests,
+UI tests and both UI builds pass. The WASM artifact verifier also requires
+the new class declaration.
+
 ## Validation
 
 The review uses the existing behavioral suites, plus regressions for the

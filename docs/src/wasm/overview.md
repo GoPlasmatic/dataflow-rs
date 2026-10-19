@@ -373,6 +373,27 @@ another build, throws `code: "INVALID_TRACE"` rather than failing the page.
 `mapping_contexts` gives an empty array for a step that is not a `map`, and
 throws `"INVALID_ARGUMENT"` for a step past the trace's last.
 
+For long traces, `TraceReplay` validates the trace once and retains one
+working context instead of a snapshot per step:
+
+```typescript
+import { TraceReplay } from '@goplasmatic/dataflow-wasm';
+
+const replay = new TraceReplay(trace);
+try {
+  const before = replay.context_at(-1); // initial context
+  const after = replay.context_at(0);   // after step 0
+  const mapping = replay.mapping_context_at(0, 0); // first mapping, or null
+} finally {
+  replay.free();
+}
+```
+
+Forward seeks apply only intervening steps. Backward seeks replay from the
+initial context, trading seek time for bounded retained memory. Returned JS
+contexts are independent snapshots. The debugger uses this cursor; its
+`DebuggerState.replay` replaces the draft's eager `contexts` array.
+
 `trace.truncated` is `true` when `max_bytes` was crossed. From the step that
 crossed it on, every step's changes are empty, so the contexts replayed from
 there on are not whole.

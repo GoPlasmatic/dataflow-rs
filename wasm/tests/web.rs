@@ -472,6 +472,42 @@ async fn mapping_contexts_give_the_context_after_each_mapping() {
 }
 
 #[wasm_bindgen_test]
+async fn a_replay_cursor_seeks_both_directions_and_reads_one_mapping() {
+    let result = run(&traced_engine(), JsValue::NULL, Some(r#"{"trace": true}"#)).await;
+    let raw = js(&result["trace"].to_string());
+    let snapshots = json_of(&contexts(raw.clone()).unwrap());
+    let mut cursor = TraceReplay::new(raw.clone()).unwrap();
+    let len = snapshots.as_array().unwrap().len();
+    for i in (0..len).chain((0..len).rev()) {
+        assert_eq!(json_of(&cursor.context_at(i as f64).unwrap()), snapshots[i]);
+    }
+    assert_eq!(
+        json_of(&cursor.context_at(-1.0).unwrap()),
+        result["trace"]["initial"]
+    );
+    let mappings = json_of(&mapping_contexts(raw, 0.0).unwrap());
+    for (i, expected) in mappings.as_array().unwrap().iter().enumerate() {
+        assert_eq!(
+            &json_of(&cursor.mapping_context_at(0.0, i as f64).unwrap()),
+            expected
+        );
+    }
+    assert!(cursor.mapping_context_at(0.0, 99.0).unwrap().is_null());
+    for bad in [-2.0, 0.5, f64::NAN, f64::INFINITY, len as f64] {
+        assert_eq!(
+            error_parts(&cursor.context_at(bad).unwrap_err()).0,
+            "INVALID_ARGUMENT"
+        );
+    }
+    let mut bad = result["trace"].clone();
+    bad["steps"][0]["mapping_ends"] = json!([999]);
+    assert_eq!(
+        error_parts(&TraceReplay::new(js(&bad.to_string())).unwrap_err()).0,
+        "INVALID_TRACE"
+    );
+}
+
+#[wasm_bindgen_test]
 async fn a_malformed_trace_is_refused_before_it_is_indexed() {
     let engine = traced_engine();
     let result = run(&engine, JsValue::NULL, Some(r#"{"trace": true}"#)).await;

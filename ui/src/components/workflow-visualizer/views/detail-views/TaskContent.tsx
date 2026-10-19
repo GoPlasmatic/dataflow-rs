@@ -1,6 +1,5 @@
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
 import type { Context, JsonLogicValue, MappingItem, ValidationRule } from '../../../../types';
-import { contextAtStep } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
 import { useTheme } from '../../context';
 import { useTaskDebugStep } from '../../hooks/useTreeNodeDebugState';
@@ -26,7 +25,7 @@ export function TaskContent({ selection }: TaskContentProps) {
   let debugData: Context | undefined;
   if (shown && shown.step.result !== 'skipped') {
     if (functionName === 'map' || functionName === 'validation') {
-      debugData = contextAtStep(shown.trace, shown.contexts, shown.stepIndex - 1);
+      debugData = shown.contextBefore;
     }
   }
 

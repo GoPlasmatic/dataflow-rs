@@ -1,9 +1,5 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef, useMemo, ReactNode } from 'react';
-// The replay lives in the engine: `contexts(trace)` rebuilds the context after
-// every step from `trace.initial` and the steps' changes, under the engine's
-// own rules (`replaced` roots, removals, `mapping_ends`). Aliased so it does
-// not shadow the `contexts` the state keeps.
-import { contexts as replayContexts } from '@goplasmatic/dataflow-wasm';
+import { TraceReplay } from '@goplasmatic/dataflow-wasm';
 import type {
   DebuggerState,
   DebuggerAction,
@@ -18,7 +14,7 @@ import type {
   DataflowEngine,
   EngineFactory,
 } from '../../../types';
-import { contextAtStep, stepErrors, traceIsReplayable } from '../../../types';
+import { stepErrors, traceIsReplayable } from '../../../types';
 import { PLAYBACK } from '../constants';
 
 /**
@@ -29,7 +25,7 @@ export const initialState: DebuggerState = {
   trace: null,
   run: null,
   message: null,
-  contexts: [],
+  replay: null,
   currentStepIndex: -1,
   playbackState: 'stopped',
   playbackSpeed: PLAYBACK.DEFAULT_SPEED_MS,
@@ -90,7 +86,7 @@ export function debuggerReducer(state: DebuggerState, action: DebuggerAction): D
         trace: null,
         run: null,
         message: null,
-        contexts: [],
+        replay: null,
         currentStepIndex: -1,
         playbackState: 'stopped',
       };
@@ -104,7 +100,7 @@ export function debuggerReducer(state: DebuggerState, action: DebuggerAction): D
         trace: action.result.trace ?? null,
         run: action.result.run,
         message: action.result.message,
-        contexts: action.contexts,
+        replay: action.replay,
         currentStepIndex: -1, // Start at "ready" state, before step 0
         playbackState: 'paused',
       };
@@ -142,7 +138,7 @@ export function debuggerReducer(state: DebuggerState, action: DebuggerAction): D
         trace: null,
         run: null,
         message: null,
-        contexts: [],
+        replay: null,
         currentStepIndex: -1,
         playbackState: 'stopped',
         executionError: null,
@@ -245,6 +241,10 @@ interface DebuggerContextValue {
    * before step 0. `null` without a trace.
    */
   currentContext: Context | null;
+  /** A context requested on demand; -1 is the initial context. */
+  contextAt: (step: number) => Context | null;
+  /** One mapping's context, or undefined when it was not recorded. */
+  mappingContextAt: (step: number, mapping: number) => Context | undefined;
   /** The step's own changes */
   currentChanges: Change[];
   /** The records the step added to the message */
@@ -310,17 +310,14 @@ export function DebuggerProvider({
     []
   );
   const executeResult = useCallback((result: RunResult) => {
-    // One replay per run, here, so no view replays on its own. A truncated
-    // trace is not replayed: past the budget its steps carry no changes, so
-    // the contexts would be wrong without saying so; `contextAtStep` then
-    // shows `initial` for every step. A trace the engine cannot read throws
-    // its own `INVALID_TRACE`, which the caller reports like any other
-    // failure to run: it comes from a host's engine, never from the
-    // package's own run.
-    const contexts =
-      result.trace && traceIsReplayable(result.trace) ? replayContexts(result.trace) : [];
-    dispatch({ type: 'EXECUTE_RESULT', result, contexts });
+    // Validate once and retain one working context. Truncated traces keep
+    // the initial-context fallback because their later changes are missing.
+    const replay = result.trace && traceIsReplayable(result.trace)
+      ? new TraceReplay(result.trace)
+      : null;
+    dispatch({ type: 'EXECUTE_RESULT', result, replay });
   }, []);
+  useEffect(() => () => state.replay?.free(), [state.replay]);
   const startExecution = useCallback(() => dispatch({ type: 'START_EXECUTION' }), []);
   const setExecutionError = useCallback(
     (error: ExecutionError) => dispatch({ type: 'EXECUTION_ERROR', error }),
@@ -394,11 +391,16 @@ export function DebuggerProvider({
     [state.trace, state.currentStepIndex]
   );
 
+  const contextAt = useCallback((step: number): Context | null => {
+    if (!state.trace) return null;
+    return state.replay?.context_at(step) ?? state.trace.initial;
+  }, [state.trace, state.replay]);
+  const mappingContextAt = useCallback((step: number, mapping: number): Context | undefined =>
+    state.replay?.mapping_context_at(step, mapping) ?? undefined,
+  [state.replay]);
   const currentContext = useMemo(
-    () => state.trace
-      ? contextAtStep(state.trace, state.contexts, state.currentStepIndex)
-      : null,
-    [state.trace, state.contexts, state.currentStepIndex]
+    () => contextAt(state.currentStepIndex),
+    [contextAt, state.currentStepIndex]
   );
 
   const currentChanges = useMemo(
@@ -454,6 +456,8 @@ export function DebuggerProvider({
       runExecution,
       currentStep,
       currentContext,
+      contextAt,
+      mappingContextAt,
       currentChanges,
       currentErrors,
       isAtStart,
@@ -487,6 +491,8 @@ export function DebuggerProvider({
       runExecution,
       currentStep,
       currentContext,
+      contextAt,
+      mappingContextAt,
       currentChanges,
       currentErrors,
       isAtStart,

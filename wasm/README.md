@@ -197,6 +197,26 @@ for (const [i, step] of trace.steps.entries()) {
 
 A step is `{ workflow, workflow_id, task, task_id, result, status, changes, mapping_ends?, errors?, elapsed_us?, loop_counter?, element_index? }`. `errors` holds every record the step added to the message; `loop_counter` tells a loop's sweeps apart; `element_index` a fan-out's elements. A trace can be stored and replayed later: `contexts` and `mapping_contexts` read it back and check it before indexing, and refuse a malformed one with `code: "INVALID_TRACE"`.
 
+For long traces, use `TraceReplay` to read only the context being viewed:
+
+```typescript
+import { TraceReplay } from '@goplasmatic/dataflow-wasm';
+
+const replay = new TraceReplay(trace); // reads and validates once
+try {
+  replay.context_at(-1);              // initial context
+  replay.context_at(0);               // after step 0
+  replay.mapping_context_at(0, 0);    // after its first mapping, or null
+} finally {
+  replay.free();
+}
+```
+
+The cursor keeps one working context. Forward seeks apply intervening
+changes; backward seeks restart from `initial`. It returns a new JS object
+for each requested context, so editing that object cannot alter the replay.
+The debugger uses this API instead of retaining every step's snapshot.
+
 ### `engine.check(definition)`
 
 The issues one definition has, parsed and checked against this engine's functions, each at its authored path. An empty array means it would load:

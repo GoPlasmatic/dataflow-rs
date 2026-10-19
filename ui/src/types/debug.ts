@@ -21,6 +21,7 @@ import type {
   RunResult,
   Trace,
   TraceStep,
+  TraceReplay,
 } from '@goplasmatic/dataflow-wasm';
 
 export type {
@@ -106,10 +107,10 @@ export interface DebuggerState {
   /** The message after the last run */
   message: Message | null;
   /**
-   * The context after each step of `trace`, replayed once per run through
-   * the engine's `contexts`. Empty when the trace cannot be replayed.
+   * An on-demand engine replay cursor. Null when the trace cannot be replayed.
+   * The provider releases it when the run is replaced or cleared.
    */
-  contexts: Context[];
+  replay: TraceReplay | null;
   /** Current step index being viewed; -1 is the ready state, before step 0 */
   currentStepIndex: number;
   /** Playback state */
@@ -134,7 +135,7 @@ export type DebuggerAction =
   | { type: 'DEACTIVATE' }
   | { type: 'SET_INPUT_PAYLOAD'; payload: Record<string, unknown> }
   | { type: 'START_EXECUTION' }
-  | { type: 'EXECUTE_RESULT'; result: RunResult; contexts: Context[] }
+  | { type: 'EXECUTE_RESULT'; result: RunResult; replay: TraceReplay | null }
   | { type: 'EXECUTION_ERROR'; error: ExecutionError }
   | { type: 'PLAY' }
   | { type: 'PAUSE' }

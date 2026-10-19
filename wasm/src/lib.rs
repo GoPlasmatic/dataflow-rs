@@ -45,7 +45,7 @@
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::def::{self, ParseOptions, Rollout};
 use dataflow_rs::expr::{ExprEngine, Path, Secrets};
-use dataflow_rs::observe::{Trace, TraceOptions};
+use dataflow_rs::observe::{Replay, Trace, TraceOptions};
 use dataflow_rs::run::{AuditMode, Context, Engine, Instant, Message, Run, RunOptions};
 use dataflow_rs::{Issue, Registry};
 use serde::de::DeserializeOwned;
@@ -701,6 +701,71 @@ fn read_trace(trace: &JsValue) -> Result<Trace, JsValue> {
     Ok(trace)
 }
 
+/// A validated trace replayed on demand, keeping one working context.
+/// Forward navigation applies only intervening changes; backward navigation
+/// restarts from the initial context. Call `free()` when finished.
+#[wasm_bindgen]
+#[derive(Debug)]
+pub struct TraceReplay {
+    replay: Replay,
+}
+
+#[wasm_bindgen]
+impl TraceReplay {
+    /// Reads and validates `trace` once, without constructing step snapshots.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        #[wasm_bindgen(unchecked_param_type = "Trace")] trace: JsValue,
+    ) -> Result<Self, JsValue> {
+        Ok(Self {
+            replay: Replay::new(read_trace(&trace)?),
+        })
+    }
+
+    /// The context after `step`, or the initial context for `-1`.
+    /// Throws `INVALID_ARGUMENT` for any other index outside the trace.
+    #[wasm_bindgen(unchecked_return_type = "Context")]
+    pub fn context_at(&mut self, step: f64) -> Result<JsValue, JsValue> {
+        let step = if step == -1.0 {
+            None
+        } else {
+            Some(trace_step(step, self.replay.trace().steps.len())?)
+        };
+        let context = self
+            .replay
+            .context_at(step)
+            .ok_or_else(|| invalid("step", "outside the trace"))?;
+        to_js(context)
+    }
+
+    /// The context after one mapping, or `null` if that mapping was not
+    /// recorded. Throws `INVALID_ARGUMENT` for an invalid step or a mapping
+    /// index that is negative, fractional or non-finite.
+    #[wasm_bindgen(unchecked_return_type = "Context | null")]
+    pub fn mapping_context_at(&mut self, step: f64, mapping: f64) -> Result<JsValue, JsValue> {
+        let step = trace_step(step, self.replay.trace().steps.len())?;
+        if !mapping.is_finite()
+            || mapping.fract() != 0.0
+            || mapping < 0.0
+            || mapping >= usize::MAX as f64
+        {
+            return Err(invalid("mapping", "must be a non-negative integer index"));
+        }
+        to_js(&self.replay.mapping_context_at(step, mapping as usize))
+    }
+}
+
+/// An authored JS index, checked before conversion to a platform integer.
+fn trace_step(step: f64, len: usize) -> Result<usize, JsValue> {
+    if !step.is_finite() || step.fract() != 0.0 || step < 0.0 || step >= len as f64 {
+        return Err(invalid(
+            "step",
+            format!("{step} is not a step of the trace, which has {len}"),
+        ));
+    }
+    Ok(step as usize)
+}
+
 /// `contexts(trace)`: the context after each step, replaying the steps'
 /// changes from `trace.initial`; one per step, in order. The last one is the
 /// message's context after the run, unless the trace is `truncated`.
@@ -731,13 +796,7 @@ pub fn mapping_contexts(
     let trace = read_trace(&trace)?;
     // A JS number, checked here rather than wrapped by the glue: `NaN`, a
     // fraction, a negative number and one past the last step are refused.
-    let len = trace.steps.len();
-    if !step.is_finite() || step.fract() != 0.0 || step < 0.0 || step >= len as f64 {
-        return Err(invalid(
-            "step",
-            format!("{step} is not a step of the trace, which has {len}"),
-        ));
-    }
-    let contexts = trace.mapping_contexts(step as usize).unwrap_or_default();
+    let step = trace_step(step, trace.steps.len())?;
+    let contexts = trace.mapping_contexts(step).unwrap_or_default();
     to_js(&contexts)
 }

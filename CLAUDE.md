@@ -492,7 +492,8 @@ Each rule lives once in the code; the test named beside it is what pins it.
 `WasmEngine` with `new(workflows, options?)`, `run(payload, options?)`,
 `check(definition)`, `workflow_count` and `workflow_ids`, and the free
 functions `engine_version`, `engine_facts`, `parse`, `contexts(trace)` and
-`mapping_contexts(trace, step)`. JSON crosses the boundary as text through
+`mapping_contexts(trace, step)`, plus `TraceReplay` for on-demand replay.
+JSON crosses the boundary as text through
 `js-sys` (`JSON.stringify` in, `JSON.parse` out), so no serde-wasm crate is in
 the lock and `null` stays `null`. `run` **resolves on every status** with
 `{message, run, trace?}`; what the package throws is an `EngineError`, a JS
@@ -502,7 +503,7 @@ takes, and `INVALID_TRACE` from the replay exports alone. The package's
 `.d.ts` embeds `bindings/dataflow.d.ts` whole through a
 `typescript_custom_section`, so the generated wire types reach the UI from
 one package; `wasm/scripts/verify-wasm.mjs` checks the declarations are
-there. **The replay lives once, in Rust** (`Trace::contexts`,
+there. **The replay lives once, in Rust** (`Replay`, `Trace::contexts`,
 `Trace::mapping_contexts`): the UI calls the exports and keeps no TypeScript
 copy of the rules. `wasm-pack test --node` in `wasm/` runs the package's
 tests, the one run of v4 on wasm32.
@@ -510,8 +511,10 @@ tests, the one run of v4 on wasm32.
 `ui/` imports every wire type from `@goplasmatic/dataflow-wasm` and keeps the
 authored definition shape as its own (`src/types/workflow.ts`, in v4
 spellings with v3's still rendered). The debugger holds the trace, the run,
-the message and the replayed contexts; the context at step `i` is
-`contexts[i]`, before step 0 `trace.initial`; a `failed` step and an executed
+the message and one `TraceReplay` cursor, released when its run is cleared
+or replaced. `context_at(i)` reads after step `i`, `context_at(-1)` before
+step 0; detail views request only their selected mapping. No array of full
+contexts is retained. A `failed` step and an executed
 step with `errors` are errors; a step with `task: null` is the workflow's own
 (its skip, its failure, or the engine's counter write). The engine's facts
 (`engine_facts()`: the built-in names, the group depth, the loop defaults)

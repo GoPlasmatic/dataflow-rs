@@ -370,11 +370,12 @@ export function useValidationRuleDebugState(task: Task, workflow: Workflow, rule
 
 /**
  * The step of a task that the detail views read, with the trace and its
- * replayed contexts.
+ * context before it and an on-demand mapping reader.
  */
 export interface TaskDebugStep {
   trace: Trace;
-  contexts: Context[];
+  contextBefore: Context;
+  mappingContextAt: (step: number, mapping: number) => Context | undefined;
   /** The step's index in `trace.steps` */
   stepIndex: number;
   step: TraceStep;
@@ -395,12 +396,16 @@ export function useTaskDebugStep(task: Task, workflow: Workflow): TaskDebugStep 
     if (!dbgContext || !dbgContext.state.isActive || !dbgContext.state.trace) {
       return null;
     }
-    const { trace, contexts, currentStepIndex } = dbgContext.state;
+    const { trace, currentStepIndex } = dbgContext.state;
     const stepIndex = findTaskStepIndex(trace, currentStepIndex, workflow.id, task.id);
     if (stepIndex === -1 || stepIndex > currentStepIndex) {
       return null;
     }
-    return { trace, contexts, stepIndex, step: trace.steps[stepIndex] };
+    return {
+      trace, stepIndex, step: trace.steps[stepIndex],
+      contextBefore: dbgContext.contextAt(stepIndex - 1)!,
+      mappingContextAt: dbgContext.mappingContextAt,
+    };
   }, [dbgContext, task.id, workflow.id]);
 }
 

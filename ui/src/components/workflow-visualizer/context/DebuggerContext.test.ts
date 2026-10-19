@@ -1,5 +1,5 @@
 import { createElement, type ReactNode } from 'react';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   debuggerReducer,
@@ -86,11 +86,7 @@ describe('debuggerReducer and getFilteredStepIndices', () => {
     state = debuggerReducer(state, {
       type: 'EXECUTE_RESULT',
       result: sampleResult,
-      contexts: [
-        { data: { x: 1 }, metadata: {}, temp_data: {} },
-        { data: { x: 1 }, metadata: {}, temp_data: {} },
-        { data: { x: 2 }, metadata: {}, temp_data: {} },
-      ],
+      replay: null,
     });
     expect(state.isExecuting).toBe(false);
     expect(state.currentStepIndex).toBe(-1);
@@ -161,6 +157,24 @@ describe('debuggerReducer and getFilteredStepIndices', () => {
 });
 
 describe('debugger engine lifecycle', () => {
+  it('replays selected contexts on demand and releases the cursor on reset', () => {
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(DebuggerProvider, { children });
+    const { result, unmount } = renderHook(() => useDebugger(), { wrapper });
+    act(() => result.current.executeResult(sampleResult));
+    expect(result.current.currentContext?.data).toEqual({ x: 0 });
+    act(() => result.current.goToStep(2));
+    expect(result.current.currentContext?.data).toEqual({ x: 2 });
+    expect(result.current.contextAt(0)?.data).toEqual({ x: 1 });
+    expect(result.current.contextAt(2)?.data).toEqual({ x: 2 });
+    const free = vi.spyOn(result.current.state.replay!, 'free');
+    act(() => result.current.reset());
+    expect(free).toHaveBeenCalledTimes(1);
+    expect(result.current.currentContext).toBeNull();
+    unmount();
+    expect(free).toHaveBeenCalledTimes(1);
+  });
+
   it('reuses engines and rebuilds after a replacement fails without reusing a disposed handle', async () => {
     const run = vi.fn().mockResolvedValue(sampleResult);
     const dispose = vi.fn();

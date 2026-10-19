@@ -1,10 +1,6 @@
 import { useMemo } from 'react';
 import { DataLogicEditor } from '@goplasmatic/datalogic-ui';
-// The replay lives in the engine: `mapping_contexts` rebuilds the context
-// after each of a map step's mappings from its `changes` and `mapping_ends`.
-import { mapping_contexts } from '@goplasmatic/dataflow-wasm';
 import type { Context, JsonLogicValue } from '../../../../types';
-import { contextAtStep } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
 import { useTheme } from '../../context';
 import { useTaskDebugStep } from '../../hooks/useTreeNodeDebugState';
@@ -24,26 +20,18 @@ export function MappingContent({ selection }: MappingContentProps) {
     [describeMappingPath(mapping.path)]: describeMappingValue(mapping),
   };
 
-  // One replay per step, not per mapping node: the engine gives the context
-  // after every mapping of the step at once (an empty array for a step that
-  // is not a map's, or recorded no changes).
-  const trace = shown?.trace ?? null;
   const stepIndex = shown && shown.step.result !== 'skipped' ? shown.stepIndex : -1;
-  const mappingContexts = useMemo(
-    () => (trace && stepIndex >= 0 ? mapping_contexts(trace, stepIndex) : []),
-    [trace, stepIndex]
-  );
+  const contextBefore = shown?.contextBefore;
+  const mappingContextAt = shown?.mappingContextAt;
 
   // The editor's `data` is what this mapping was evaluated against: the
   // context after the mapping before it, which for the first is the context
   // before the step. Undefined when the step recorded no mapping ends, as a
   // failed map's may not.
-  let debugData: Context | undefined;
-  if (trace && shown && stepIndex >= 0) {
-    debugData = mappingIndex === 0
-      ? contextAtStep(trace, shown.contexts, stepIndex - 1)
-      : mappingContexts[mappingIndex - 1];
-  }
+  const debugData: Context | undefined = useMemo(() => {
+    if (stepIndex < 0) return undefined;
+    return mappingIndex === 0 ? contextBefore : mappingContextAt?.(stepIndex, mappingIndex - 1);
+  }, [stepIndex, mappingIndex, contextBefore, mappingContextAt]);
 
   return (
     <div className="df-details-content">

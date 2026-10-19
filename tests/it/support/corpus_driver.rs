@@ -338,6 +338,26 @@ fn line(step: &dataflow_rs::observe::TraceStep) -> String {
 fn replays(label: &str, trace: &Trace, message: &Message) {
     let context = text(message.context());
     let contexts: Vec<String> = trace.contexts().map(|c| text(&c)).collect();
+    let mut cursor = dataflow_rs::observe::Replay::new(trace.clone());
+    assert_eq!(text(cursor.context_at(None).unwrap()), text(&trace.initial));
+    for i in (0..contexts.len()).chain((0..contexts.len()).rev()) {
+        assert_eq!(
+            text(cursor.context_at(Some(i)).unwrap()),
+            contexts[i],
+            "{label}: cursor at {i}"
+        );
+        if let Some(mappings) = trace.mapping_contexts(i) {
+            for (mapping, expected) in mappings.iter().enumerate() {
+                assert_eq!(
+                    cursor.mapping_context_at(i, mapping).as_ref(),
+                    Some(expected),
+                    "{label}: mapping {i}/{mapping}"
+                );
+            }
+        }
+    }
+    assert!(cursor.context_at(Some(usize::MAX)).is_none());
+    assert!(cursor.mapping_context_at(trace.steps.len(), 0).is_none());
     let last = contexts
         .last()
         .cloned()
