@@ -18,7 +18,7 @@ inherited by the published Rust crates; all four read `4.0.0-dev` until phase
 |---|---|---|
 | `.` | `dataflow-rs`: the engine (nothing publishes from `main` until phase 8) | crates.io |
 | `derive/` | `dataflow-rs-derive`: `#[derive(FunctionConfig)]`, published first | crates.io |
-| `wasm/` | `@goplasmatic/dataflow-wasm`: the root crate on `wasm32-unknown-unknown` with `wasm-web` and `all-operators` | npm |
+| `wasm/` | `@goplasmatic/dataflow-wasm`: the root crate on `wasm32-unknown-unknown` with `wasm-web`, `datetime` and `ExprEngineBuilder::all_operators` | npm |
 | `ui/` | `@goplasmatic/dataflow-ui`: the React debugger, on the wasm package's generated types | npm |
 
 `wasm/` and `derive/` are workspace members; `ui/` is a separate npm project
@@ -137,8 +137,8 @@ warnings behind.
 The third line is not redundant: bare at the root, it lints the root's
 **default** build, which is what `cargo add dataflow-rs` delivers. `--workspace`
 cannot do it: `dataflow-wasm` depends on the root with `wasm-web` and
-`all-operators`, and cargo unifies features across the members one invocation
-selects, so under `--workspace` the root itself has every operator family on.
+`datetime`, and cargo unifies features across the members one invocation
+selects, so under `--workspace` the root itself has `datetime` on.
 Same reasoning applies to `cargo test`.
 
 The root's own checks, beside the workspace-wide ones above:
@@ -147,14 +147,13 @@ The root's own checks, beside the workspace-wide ones above:
 cargo clippy --all-targets -- -D warnings
 cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
 cargo clippy --target wasm32-unknown-unknown --features wasm-web -- -D warnings
-cargo clippy --target wasm32-unknown-unknown --features wasm-web,all-operators -- -D warnings
+cargo clippy --target wasm32-unknown-unknown --features wasm-web,datetime -- -D warnings
 cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
 cargo test
 cargo test --features ts --test ts_types
 cargo test -p dataflow-corpus
 cargo test -p dataflow-docs-tests
-for f in datetime ext-string ext-array ext-math ext-control ext-object \
-         error-handling all-operators tensor budget; do
+for f in datetime tensor budget; do
   cargo test --no-default-features --features "$f"
 done
 cargo +1.98 check --workspace --all-targets --all-features --locked
@@ -180,10 +179,10 @@ scans each newly linked test binary on its first launch, which can add minutes.
 `cargo test --workspace --all-features` runs the root library and its three
 integration binaries (`it`, `secrets_isolation`, `ts_types`), the derive crate,
 the corpus crate, and `dataflow-docs-tests` (which compiles the book's and
-READMEs' Rust blocks against a default-feature build). Because the operator
-families are `#[cfg]`-gated, the root's test count legitimately varies by
-feature set (`--all-features` vs default vs `--no-default-features --features
-all-operators`). Do not hard-code absolute test counts in docs or tests.
+READMEs' Rust blocks against a default-feature build). Because `datetime`,
+`tensor` and `budget` are `#[cfg]`-gated, the root's test count legitimately
+varies by feature set (`--all-features` vs default). Do not hard-code absolute
+test counts in docs or tests.
 
 ### Examples
 
@@ -440,15 +439,16 @@ Each rule lives once in the code; the test named beside it is what pins it.
   output-template shape, which is why there is no "unknown operator" lint
   (the escape in `tests/it/checks.rs`; the shape in `src/expr/engine.rs`'s
   `an_unrecognised_operator_is_not_an_error_under_templating`).
-- **Operator families are opt-in, and enabling one is not a no-op.** The
-  engine evaluates in templating mode, so an operator whose family is off is
-  literal data; turning a family on makes `{"length": …}` live, and `datetime`
-  changes `==` on date-shaped strings. `tensor` is deliberately outside
-  `all-operators`: its names (`shape`, `cast`, `concat`) are ordinary JSON keys
-  in workflows that already ship. `budget` is a config knob, not a family:
-  `ExprEngineBuilder::ops_budget` installs the ceiling, exceeded as
-  `ErrorKind::Budget` (`src/expr/engine.rs`'s gated-operator tests,
-  `tests/it/operators.rs`, `tests/it/ops_budget.rs`).
+- **Operator families are opt-in at runtime, and enabling one is not a no-op.**
+  The engine evaluates in templating mode, so an operator whose family is off is
+  literal data; turning a family on (`ExprEngineBuilder::family`, `families`,
+  `all_operators`) makes `{"length": …}` live, and the `datetime` cargo feature
+  changes `==` on date-shaped strings. `OperatorFamily::Tensor` (behind the
+  `tensor` feature) is deliberately outside `all_operators`: its names (`shape`,
+  `cast`, `concat`) are ordinary JSON keys in workflows that already ship.
+  `budget` is a config knob, not a family: `ExprEngineBuilder::ops_budget`
+  installs the ceiling, exceeded as `ErrorKind::Budget` (`src/expr/engine.rs`'s
+  gated-operator tests, `tests/it/operators.rs`, `tests/it/ops_budget.rs`).
 - **Secrets are an operator, not a context root.** `{"secret": "name"}` reads
   the `ExprEngine`'s `Secrets`; nothing is composed into the message, a `map`
   mapping, a `log` expression and an `Output` may not read one, `Ctx::input()`

@@ -2,7 +2,7 @@
 
 use super::arena::with_arena;
 use super::expr::{Evaluated, Expr, FromValue};
-use super::operators::{FAMILIES, Operator, OperatorFamily};
+use super::operators::{ALL_OPERATORS, Operator, OperatorFamily};
 use super::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
 use crate::base::{Error, ErrorKind, Result};
 use bumpalo::Bump;
@@ -139,8 +139,8 @@ impl ExprEngine {
     }
 
     /// Every operator this engine evaluates: the datalogic built-ins its
-    /// features enable, then the host's operators in registration order, then
-    /// `secret`.
+    /// selected families enable, then the host's operators in registration
+    /// order, then `secret`.
     pub fn operators(&self) -> &[Operator] {
         &self.inner.operators
     }
@@ -307,8 +307,13 @@ fn eval_error(e: datalogic_rs::Error) -> Error {
 }
 
 /// Builds an [`ExprEngine`].
+///
+/// Defaults to [`OperatorFamily::Core`] (and [`OperatorFamily::Secret`]) only.
+/// Select optional operator families at runtime with [`family`](Self::family),
+/// [`families`](Self::families) or [`all_operators`](Self::all_operators).
 #[derive(Default)]
 pub struct ExprEngineBuilder {
+    families: Vec<OperatorFamily>,
     operators: Vec<(Operator, Arc<dyn CustomOperator>)>,
     secrets: Secrets,
     #[cfg(feature = "budget")]
@@ -316,10 +321,11 @@ pub struct ExprEngineBuilder {
 }
 
 impl std::fmt::Debug for ExprEngineBuilder {
-    /// The custom operators' names and the secrets, redacted.
+    /// The selected families, the custom operators' names and the secrets, redacted.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let operators: Vec<&str> = self.operators.iter().map(|(info, _)| &*info.name).collect();
         f.debug_struct("ExprEngineBuilder")
+            .field("families", &self.families)
             .field("operators", &operators)
             .field("secrets", &self.secrets)
             .finish_non_exhaustive()
@@ -327,6 +333,45 @@ impl std::fmt::Debug for ExprEngineBuilder {
 }
 
 impl ExprEngineBuilder {
+    /// Enables one built-in [`OperatorFamily`].
+    ///
+    /// Enabling a family is not a no-op for existing workflows: under
+    /// templating mode an unknown operator name passes through as literal data,
+    /// so `{"length": ...}` starts evaluating once
+    /// [`OperatorFamily::ExtString`] is enabled (`{"$length": ...}` pins the
+    /// literal). [`OperatorFamily::Datetime`] and [`OperatorFamily::Tensor`]
+    /// also require their cargo features (`datetime`, `tensor`) to be enabled.
+    #[must_use]
+    pub fn family(mut self, family: OperatorFamily) -> Self {
+        self.families.push(family);
+        self
+    }
+
+    /// Enables each built-in [`OperatorFamily`] in `families`.
+    #[must_use]
+    pub fn families(mut self, families: impl IntoIterator<Item = OperatorFamily>) -> Self {
+        self.families.extend(families);
+        self
+    }
+
+    /// Enables the standard optional operator families:
+    /// [`ExtString`](OperatorFamily::ExtString),
+    /// [`ExtArray`](OperatorFamily::ExtArray),
+    /// [`ExtMath`](OperatorFamily::ExtMath),
+    /// [`ExtControl`](OperatorFamily::ExtControl),
+    /// [`ExtObject`](OperatorFamily::ExtObject),
+    /// [`ErrorHandling`](OperatorFamily::ErrorHandling), and (when the
+    /// `datetime` cargo feature is enabled)
+    /// [`Datetime`](OperatorFamily::Datetime).
+    ///
+    /// [`OperatorFamily::Tensor`] is deliberately left out: names like
+    /// `shape`, `full`, `cast` and `concat` are ordinary JSON keys, which a
+    /// live operator would start evaluating.
+    #[must_use]
+    pub fn all_operators(self) -> Self {
+        self.families(ALL_OPERATORS.iter().copied())
+    }
+
     /// Registers a custom operator, neither scoping nor deterministic.
     ///
     /// # Dependency
@@ -367,14 +412,42 @@ impl ExprEngineBuilder {
         self
     }
 
-    /// Builds the engine, with the operator families this crate's features
-    /// turn on and no other. [`ErrorKind::Config`] when a custom operator is
-    /// named `secret`, is named like a built-in operator of those families,
-    /// or is registered twice.
+    /// Builds the engine, with [`OperatorFamily::Core`],
+    /// [`OperatorFamily::Secret`] and the families selected on this builder,
+    /// and no other. [`ErrorKind::Config`] when [`OperatorFamily::Custom`] or
+    /// an uncompiled cargo-feature family (`Datetime`, `Tensor`) is requested,
+    /// or when a custom operator is named `secret`, is named like a built-in
+    /// operator of the selected families, or is registered twice.
     pub fn build(self) -> Result<ExprEngine> {
+        let mut upstream_families = Vec::with_capacity(self.families.len());
+        for family in self.families {
+            match family {
+                OperatorFamily::Core | OperatorFamily::Secret => {}
+                OperatorFamily::Custom => {
+                    return Err(Error::new(
+                        ErrorKind::Config,
+                        "custom operators are registered with `operator`, not `family`",
+                    ));
+                }
+                other => {
+                    let upstream = other
+                        .to_upstream()
+                        .expect("every built-in family maps to a datalogic family");
+                    if !upstream.is_compiled() {
+                        return Err(Error::new(
+                            ErrorKind::Config,
+                            format!(
+                                "operator family `{other:?}` requires its cargo feature to be enabled"
+                            ),
+                        ));
+                    }
+                    upstream_families.push(upstream);
+                }
+            }
+        }
         let secrets = Arc::new(self.secrets);
         let mut builder = Engine::builder()
-            .with_families(FAMILIES.iter().copied())
+            .with_families(upstream_families)
             .with_templating(true)
             .with_template_key_escape(TEMPLATE_KEY_ESCAPE);
         // `with_config` replaces the whole `EvaluationConfig`, and `default()`
@@ -536,12 +609,11 @@ mod tests {
         );
     }
 
-    /// With `ext-string` off, `starts_with` is not a name the engine knows, so
-    /// it is indistinguishable from the typo above: silent pass-through. This
-    /// is the failure mode a workflow author hits when they reach for an
-    /// operator whose family this build did not enable — no error, just a
-    /// wrong value.
-    #[cfg(not(feature = "ext-string"))]
+    /// With `ExtString` off (the default), `starts_with` is not a name the
+    /// engine knows, so it is indistinguishable from the typo above: silent
+    /// pass-through. This is the failure mode a workflow author hits when they
+    /// reach for an operator whose family the engine did not enable — no error,
+    /// just a wrong value.
     #[test]
     fn a_gated_operator_echoes_back_while_its_family_is_off() {
         let e = ExprEngine::default();
@@ -554,18 +626,20 @@ mod tests {
     }
 
     /// The other side of the same coin, and the reason enabling a family is
-    /// not a no-op for existing workflows: `ext-string` converts a previously
+    /// not a no-op for existing workflows: `ExtString` converts a previously
     /// inert `{"starts_with": [...]}` *literal* into a live operator call.
     /// Anyone carrying such an object as data through a `map` mapping sees
     /// their value silently replaced by the operator's result.
-    #[cfg(feature = "ext-string")]
     #[test]
     fn a_gated_operator_evaluates_once_its_family_is_on() {
-        let e = ExprEngine::default();
+        let e = ExprEngine::builder()
+            .family(OperatorFamily::ExtString)
+            .build()
+            .unwrap();
         assert_eq!(
             e.eval_json(&json!({"starts_with": ["hello", "he"]})),
             json!(true),
-            "with ext-string on, starts_with must evaluate, not echo"
+            "with ExtString on, starts_with must evaluate, not echo"
         );
     }
 
@@ -585,56 +659,67 @@ mod tests {
         assert_eq!(e.eval_json(&logic), json!(false));
     }
 
-    /// Each family's cargo feature actually reaches `datalogic-rs`. One
-    /// representative operator per family is enough — the feature either
-    /// forwards or it does not.
-    #[cfg(feature = "ext-string")]
+    /// Each family selected on `ExprEngineBuilder` reaches `datalogic-rs`. One
+    /// representative operator per family is enough.
     #[test]
-    fn ext_string_feature_reaches_datalogic() {
-        let e = ExprEngine::default();
+    fn ext_string_family_reaches_datalogic() {
+        let e = ExprEngine::builder()
+            .family(OperatorFamily::ExtString)
+            .build()
+            .unwrap();
         assert_eq!(e.eval_json(&json!({"upper": "ab"})), json!("AB"));
     }
 
-    #[cfg(feature = "ext-array")]
     #[test]
-    fn ext_array_feature_reaches_datalogic() {
-        let e = ExprEngine::default();
+    fn ext_array_family_reaches_datalogic() {
+        let e = ExprEngine::builder()
+            .family(OperatorFamily::ExtArray)
+            .build()
+            .unwrap();
         assert_eq!(e.eval_json(&json!({"sort": [[3, 1, 2]]})), json!([1, 2, 3]));
     }
 
-    #[cfg(feature = "ext-math")]
     #[test]
-    fn ext_math_feature_reaches_datalogic() {
-        let e = ExprEngine::default();
+    fn ext_math_family_reaches_datalogic() {
+        let e = ExprEngine::builder()
+            .family(OperatorFamily::ExtMath)
+            .build()
+            .unwrap();
         assert_eq!(e.eval_json(&json!({"abs": -5})), json!(5));
     }
 
-    #[cfg(feature = "ext-control")]
     #[test]
-    fn ext_control_feature_reaches_datalogic() {
-        let e = ExprEngine::default();
+    fn ext_control_family_reaches_datalogic() {
+        let e = ExprEngine::builder()
+            .family(OperatorFamily::ExtControl)
+            .build()
+            .unwrap();
         assert_eq!(
             e.eval_json(&json!({"??": [null, "fallback"]})),
             json!("fallback")
         );
     }
 
-    #[cfg(feature = "ext-object")]
     #[test]
-    fn ext_object_feature_reaches_datalogic() {
-        let e = ExprEngine::default();
+    fn ext_object_family_reaches_datalogic() {
+        let e = ExprEngine::builder()
+            .family(OperatorFamily::ExtObject)
+            .build()
+            .unwrap();
         assert_eq!(
             e.eval_json(&json!({"keys": [{"a": 1, "b": 2}]})),
             json!(["a", "b"])
         );
     }
 
-    #[cfg(feature = "error-handling")]
     #[test]
-    fn error_handling_feature_reaches_datalogic() {
-        // `error-handling` is the JSONLogic `try`/`throw` pair — unrelated to
+    fn error_handling_family_reaches_datalogic() {
+        // `ErrorHandling` is the JSONLogic `try`/`throw` pair — unrelated to
         // this crate's own always-on error handling.
-        let e = ExprEngine::default();
+        let e = ExprEngine::builder()
+            .family(OperatorFamily::ErrorHandling)
+            .build()
+            .unwrap();
         assert_eq!(
             e.eval_json(&json!({"try": [{"throw": "boom"}, "recovered"]})),
             json!("recovered")
@@ -643,15 +728,24 @@ mod tests {
 
     /// The `datetime` family's own operators. Their exact output depends on
     /// the ambient clock and on format details this crate does not pin, so
-    /// assert only the property the feature actually buys: the operator is
-    /// recognised and evaluates, rather than echoing back as a literal.
+    /// assert only the property the family actually buys: the operator is
+    /// recognised and evaluates once `OperatorFamily::Datetime` is selected,
+    /// and echoes back as a literal on `ExprEngine::default()`.
     #[cfg(feature = "datetime")]
     #[test]
-    fn datetime_feature_reaches_datalogic() {
-        let e = ExprEngine::default();
+    fn datetime_family_reaches_datalogic() {
         let logic = json!({"now": []});
+        assert_eq!(
+            ExprEngine::default().eval_json(&logic),
+            logic,
+            "without OperatorFamily::Datetime selected, `now` echoes back"
+        );
+        let e = ExprEngine::builder()
+            .family(OperatorFamily::Datetime)
+            .build()
+            .unwrap();
         let result = e.eval_json(&logic);
-        assert_ne!(result, logic, "with datetime on, `now` must not echo back");
+        assert_ne!(result, logic, "with Datetime on, `now` must not echo back");
         assert!(!result.is_null(), "`now` should produce a value, got null");
     }
     #[cfg(feature = "budget")]

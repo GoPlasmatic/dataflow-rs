@@ -418,7 +418,7 @@ Workflows run in priority order (lowest first); equal priorities keep their
 input order. Only `active` workflows run: a `paused` or `archived` one is kept
 in the program and never selected.
 
-```json
+```jsonc
 [
     {"id": "high", "priority": 1, "tasks": [...]},
     {"id": "low", "priority": 10, "tasks": [...]}
@@ -436,7 +436,7 @@ outside its range; a run with no bucket is admitted by every rollout. See
 A workflow's condition decides whether it runs. The engine evaluates it
 against the **full message context** (`data`, `metadata`, and `temp_data`):
 
-```json
+```jsonc
 {
     "id": "premium_order",
     "name": "Premium Order Processing",

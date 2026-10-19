@@ -2,19 +2,20 @@
 //!
 //! # Features
 //!
-//! None is on by default.
+//! None is on by default. The six standard extension operator families
+//! (`ExtString`, `ExtArray`, `ExtMath`, `ExtControl`, `ExtObject` and
+//! `ErrorHandling`) are compiled in unconditionally and selected at runtime on
+//! [`expr::ExprEngineBuilder`], which defaults to [`expr::OperatorFamily::Core`]
+//! (and `secret`) only.
 //!
-//! - `datetime`, `ext-string`, `ext-array`, `ext-math`, `ext-control`,
-//!   `ext-object` and `error-handling`: the seven operator families, each the
-//!   `datalogic-rs` feature of the same name. Enabling one is not a no-op: an
-//!   operator whose family is off is literal data, so a `{"length": ...}`
-//!   value starts evaluating once `ext-string` is on, and `{"$length": ...}`
-//!   pins the literal. `datetime` also changes `==` and the ordering
-//!   operators on date-shaped strings.
-//! - `all-operators`: the seven families.
-//! - `tensor`: the `Tensor` value and its operators. Not in `all-operators`,
-//!   since names like `shape`, `full`, `cast` and `concat` are ordinary JSON
-//!   keys.
+//! - `datetime`: compiles in the [`expr::OperatorFamily::Datetime`] operators
+//!   (still selected at runtime on [`expr::ExprEngineBuilder`]) and changes
+//!   `==` and the ordering operators on plain date-shaped strings across the
+//!   build.
+//! - `tensor`: the `Tensor` value and [`expr::OperatorFamily::Tensor`]
+//!   operators (selected at runtime on [`expr::ExprEngineBuilder`]). Not in
+//!   [`expr::ExprEngineBuilder::all_operators`], since names like `shape`,
+//!   `full`, `cast` and `concat` are ordinary JSON keys.
 //! - `budget`: a ceiling on the operations of one evaluation, which
 //!   `ExprEngineBuilder::ops_budget` sets.
 //! - `wasm-web`: the browser's clock and randomness, which

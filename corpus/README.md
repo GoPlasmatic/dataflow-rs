@@ -73,11 +73,12 @@ serde cannot: the `requires` names, `on` and `off` not both set, an `ops_budget`
 
 - **`workflows`** are raw definitions, each parsed and compiled on its own, so a refused definition
   does not hide the others: the engine links the ones that compiled.
-- **`requires`** names the features a case needs on or off (`case::FEATURES`: the operator
-  families, `all-operators` and `budget`). CI runs two builds, default (nothing on) and
-  `--all-features` (everything on), so a case never needs features both on and off.
-- **`engine`** configures the engine the steps run on: its secrets, the ops budget, an error
-  context, custom operators by name (`shout`), and an observer whose events are kept.
+- **`requires`** names the cargo features a case needs on or off (`case::FEATURES`: `datetime`,
+  `tensor` and `budget`). CI runs two builds, default (nothing on) and `--all-features`
+  (everything on), so a case never needs features both on and off.
+- **`engine`** configures the engine the steps run on: its `families` (`case::FAMILIES`),
+  `secrets`, `ops_budget`, an `error_context`, custom `operators` by name (`shout`), and an
+  `observer` whose events are kept.
 - **A `run` step** runs on a fresh message (`id` defaults to `m1`, `payload` to `{}`) with its
   channel, routing bucket, `capture_changes` and `audit_mode` (`"full"`, `"off"` or
   `{"last": n}`). `trace` is `false` to skip the traced run (default `true`). `same_as: n`

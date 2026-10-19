@@ -38,7 +38,9 @@ fn the_table_is_complete_and_operators_lists_builtins_customs_then_secret() {
         .operator("beta", Nop)
         .build()
         .unwrap();
-    let live: Vec<&str> = datalogic_rs::Engine::new()
+    let live: Vec<&str> = datalogic_rs::Engine::builder()
+        .with_families([])
+        .build()
         .builtin_operator_names()
         .collect();
     let ops = engine.operators();
@@ -53,8 +55,7 @@ fn the_table_is_complete_and_operators_lists_builtins_customs_then_secret() {
     // Builtins keep datalogic's order, customs registration order, secret last.
     assert_eq!(&names[names.len() - 3..], ["alpha", "beta", "secret"]);
     for o in ops.iter().filter(|o| live.contains(&&*o.name)) {
-        assert_ne!(o.family, OperatorFamily::Custom, "{}", o.name);
-        assert_ne!(o.family, OperatorFamily::Secret, "{}", o.name);
+        assert_eq!(o.family, OperatorFamily::Core, "{}", o.name);
     }
     let secret = ops.last().unwrap();
     assert_eq!(secret.family, OperatorFamily::Secret);
@@ -67,7 +68,7 @@ fn the_table_is_complete_and_operators_lists_builtins_customs_then_secret() {
 #[cfg(feature = "datetime")]
 #[test]
 fn now_is_the_only_non_deterministic_builtin() {
-    let engine = ExprEngine::default();
+    let engine = ExprEngine::builder().all_operators().build().unwrap();
     let non: Vec<&str> = engine
         .operators()
         .iter()
@@ -92,6 +93,28 @@ fn the_builder_refuses_secret_a_builtin_and_a_repeat() {
             .build()
     ));
     assert!(ExprEngine::builder().operator("once", Nop).build().is_ok());
+    // `upper` is free on the default Core-only engine, and taken once
+    // `ExtString` is selected.
+    assert!(ExprEngine::builder().operator("upper", Nop).build().is_ok());
+    assert!(config_error(
+        ExprEngine::builder()
+            .family(OperatorFamily::ExtString)
+            .operator("upper", Nop)
+            .build()
+    ));
+    assert!(config_error(
+        ExprEngine::builder().family(OperatorFamily::Custom).build()
+    ));
+    #[cfg(not(feature = "datetime"))]
+    assert!(config_error(
+        ExprEngine::builder()
+            .family(OperatorFamily::Datetime)
+            .build()
+    ));
+    #[cfg(not(feature = "tensor"))]
+    assert!(config_error(
+        ExprEngine::builder().family(OperatorFamily::Tensor).build()
+    ));
 }
 
 #[test]

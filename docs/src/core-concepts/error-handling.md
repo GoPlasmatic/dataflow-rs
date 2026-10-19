@@ -71,7 +71,7 @@ says what a failure that reaches it does.
 
 ### `on_failure`
 
-```json
+```jsonc
 {
     "id": "optional_task",
     "on_failure": "continue",
@@ -87,7 +87,7 @@ says what a failure that reaches it does.
 
 ### `on_rejection`
 
-```json
+```jsonc
 {
     "id": "validate_input",
     "on_rejection": "halt",
@@ -133,7 +133,7 @@ So a workflow marked `on_failure: continue` whose tasks leave their policy
 unset still stops at its first failing task, but it does not take the rest of
 the run down with it:
 
-```json
+```jsonc
 {
     "id": "resilient_workflow",
     "on_failure": "continue",
@@ -498,7 +498,7 @@ runs.
 
 Validate data before critical operations, and gate on the result:
 
-```json
+```jsonc
 {
     "tasks": [
         {

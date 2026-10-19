@@ -511,7 +511,7 @@ impl WasmEngine {
             Some(o) => from_js(&o.into(), "options")?,
             None => EngineOptionsIn::default(),
         };
-        let mut exprs = ExprEngine::builder();
+        let mut exprs = ExprEngine::builder().all_operators();
         if let Some(secrets) = options.secrets {
             let store = Secrets::new(OwnedDataValue::from(&secrets))
                 .map_err(|e| invalid("options.secrets", e))?;

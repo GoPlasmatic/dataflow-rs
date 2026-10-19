@@ -253,8 +253,8 @@ and `validate`, the 3.x name of this function, to `validation`. See
 
 ### String length
 
-Needs the `ext-string`
-[operator family](../advanced/jsonlogic.md#operator-families-cargo-features);
+Needs the `ExtString`
+[operator family](../advanced/jsonlogic.md#operator-families);
 without it, `{"length": …}` is literal data, which is not `true`, so the rule
 fails on every message.
 

@@ -1,6 +1,7 @@
 {
   "description": "With the families on, the same literals become live operator calls: starts_with, abs and the tensor shape evaluate, and == compares datetime-shaped strings as instants. Enabling a family changes what existing definitions do.",
-  "requires": {"on": ["all-operators", "tensor"]},
+  "requires": {"on": ["datetime", "tensor"]},
+  "engine": {"families": ["all-operators", "tensor"]},
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

@@ -481,8 +481,6 @@ fn skipped_workflow(env: &mut RunEnv<'_, '_>, error: Option<&Error>) {
     }
     let mut step = env.workflow_step(StepResult::Skipped);
     if let Some(e) = error {
-        #[cfg(test)]
-        super::record::traced_work();
         step.errors.push(env.workflow_record(e));
     }
     env.push_step(step);
@@ -738,8 +736,6 @@ fn call<'p>(
     };
     let result = builtin.call(&mut cx);
     let mut marked = cx.marked;
-    #[cfg(test)]
-    let result = record::failing_after_its_writes(result);
     let elapsed = started.map(record::since);
     // An `Err` records no changes for the audit, as v3's recorder drops
     // them. Its writes stand, so a trace that keeps changes keeps them, for

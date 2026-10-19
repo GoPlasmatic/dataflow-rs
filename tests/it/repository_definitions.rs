@@ -81,14 +81,6 @@ const DELIBERATE_TYPOS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Markdown `json` fences holding `"tasks"` that are not valid JSON and are
-/// not `...`-elided, as `(file, reason)`. Empty today; anything else fails.
-const SKIPPED_FENCES: &[(&str, &str)] = &[];
-
-/// The UI-samples normaliser notes that are expected, as substrings. Empty:
-/// every `workflows` array normalises.
-const EXPECTED_TS_SKIPS: &[&str] = &[];
-
 /// Every source the scanner reads must yield at least one definition, so a
 /// scanner that goes silent on one source cannot hide behind the others.
 const EXPECTED_GROUPS: &[&str] = &[
@@ -132,6 +124,37 @@ fn find_definitions(value: &Value, out: &mut Vec<Value>) {
         Value::Array(items) => items.iter().for_each(|v| find_definitions(v, out)),
         _ => {}
     }
+}
+
+/// Wraps a standalone task-level markdown fragment (an id-less `{"tasks": …}`
+/// object, a single task object with `id` and `function`, or a bare
+/// `{"function": …}` task snippet) in a synthetic workflow so `def::parse` and
+/// `Compiler::compile_one` check it alongside full definitions.
+fn wrap_task_fragment(value: &Value) -> Option<Value> {
+    let object = value.as_object()?;
+    if is_definition(object) {
+        return None;
+    }
+    if object.get("tasks").is_some_and(Value::is_array) && !object.contains_key("id") {
+        let mut wf = object.clone();
+        wf.insert("id".to_owned(), Value::String("__fragment__".to_owned()));
+        return Some(Value::Object(wf));
+    }
+    let has_function = object
+        .get("function")
+        .and_then(Value::as_object)
+        .is_some_and(|f| f.get("name").is_some_and(Value::is_string));
+    if !has_function {
+        return None;
+    }
+    let mut task = object.clone();
+    if !task.contains_key("id") {
+        task.insert("id".to_owned(), Value::String("__task__".to_owned()));
+    }
+    Some(serde_json::json!({
+        "id": "__fragment__",
+        "tasks": [Value::Object(task)],
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -640,7 +663,6 @@ fn collect() -> (Vec<Found>, Vec<String>, Vec<String>) {
     .map(|f| root().join(f))
     .collect();
     walk(&root().join("docs/src"), "md", &mut markdown);
-    let mut elided = 0;
     for path in markdown {
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
@@ -651,35 +673,22 @@ fn collect() -> (Vec<Found>, Vec<String>, Vec<String>) {
         } else {
             format!("md: {file}")
         };
+        let strict = file != "CLAUDE.md";
         for (line, body) in markdown_fences(&text) {
             match serde_json::from_str::<Value>(&body) {
-                Ok(v) => add(
-                    &mut found,
-                    &file,
-                    Some(line),
-                    &group,
-                    file != "CLAUDE.md",
-                    &v,
-                ),
-                Err(_) => {
-                    // Fragments, `...` elisions and comments; counted only
-                    // when one would have held a definition.
-                    if body.contains("\"tasks\"") {
-                        if body.contains("...") {
-                            elided += 1;
-                        } else if !SKIPPED_FENCES.iter().any(|(f, _)| *f == file) {
-                            problems.push(format!(
-                                "json fence with tasks that is not valid JSON: {file}:{line}"
-                            ));
-                        }
+                Ok(v) => {
+                    if let Some(wrapped) = wrap_task_fragment(&v) {
+                        add(&mut found, &file, Some(line), &group, strict, &wrapped);
+                    } else {
+                        add(&mut found, &file, Some(line), &group, strict, &v);
                     }
+                }
+                Err(e) => {
+                    problems.push(format!("json fence is not valid JSON: {file}:{line}: {e}"));
                 }
             }
         }
     }
-    notes.push(format!(
-        "skipped {elided} json fences that elide with `...` (fragments, not definitions)"
-    ));
 
     // Rust sources: raw strings and pure-literal `json!` bodies.
     for path in files_under(&["examples", "docs-tests", "wasm", "corpus"], "rs") {
@@ -707,11 +716,7 @@ fn collect() -> (Vec<Found>, Vec<String>, Vec<String>) {
         let file = rel(&ts);
         let (arrays, skipped) = ts_workflow_arrays(&text);
         for s in skipped {
-            if EXPECTED_TS_SKIPS.iter().any(|e| s.contains(e)) {
-                notes.push(format!("skipped in {file}: {s}"));
-            } else {
-                problems.push(format!("not normalised in {file}: {s}"));
-            }
+            problems.push(format!("not normalised in {file}: {s}"));
         }
         for (line, v) in arrays {
             add(&mut found, &file, Some(line), "ts: ui samples", true, &v);

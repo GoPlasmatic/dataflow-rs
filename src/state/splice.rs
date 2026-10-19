@@ -405,39 +405,3 @@ pub(crate) fn resolve(root: DataValue<'_>, segs: &[Seg]) -> Option<Resolved> {
     }
     Some(Resolved { kinds, created })
 }
-
-#[cfg(test)]
-impl Resolved {
-    /// The hops, built: for the tests.
-    pub(crate) fn hops(&self, segs: &[Seg]) -> Vec<Hop> {
-        super::writes::At::new(segs, self.kinds).to_hops()
-    }
-}
-
-/// One resolved step of a path: what the tests read the write log's keys as.
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) enum Hop {
-    /// A key on an object.
-    Key(Box<str>),
-    /// An index on an array.
-    Index(usize),
-}
-
-#[cfg(test)]
-impl Hop {
-    /// The segment that addresses exactly this hop: a key never reads as an
-    /// index, and an index is spelled in decimal.
-    pub(crate) fn to_seg(&self) -> Seg {
-        match self {
-            Self::Key(k) => Seg::key(k),
-            Self::Index(i) => Seg::index(*i),
-        }
-    }
-}
-
-/// The segments that address `hops` exactly.
-#[cfg(test)]
-pub(crate) fn segs_of(hops: &[Hop]) -> Vec<Seg> {
-    hops.iter().map(Hop::to_seg).collect()
-}

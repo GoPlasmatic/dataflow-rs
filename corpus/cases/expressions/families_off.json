@@ -1,6 +1,6 @@
 {
-  "description": "With every operator family off (the default build), a gated operator is no name the engine knows: under templating it echoes back as a literal object, and datetime-shaped strings compare as plain strings.",
-  "requires": {"off": ["all-operators", "tensor"]},
+  "description": "With every operator family off (the default), a gated operator is no name the engine knows: under templating it echoes back as a literal object, and datetime-shaped strings compare as plain strings.",
+  "requires": {"off": ["datetime", "tensor"]},
   "workflows": [
     {"id": "w", "name": "w", "tasks": [
       {"id": "t", "name": "t", "function": {"name": "map", "input": {"mappings": [

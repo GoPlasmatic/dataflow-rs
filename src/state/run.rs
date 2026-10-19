@@ -156,7 +156,7 @@ pub(crate) struct RunContext<'m, 'p> {
     /// The context, owned or viewed.
     state: State<'p>,
     /// Writes since the view was built.
-    log: Writes,
+    pub(super) log: Writes,
     /// Arena bytes in use right after the view was built: its spines.
     live: usize,
     /// The knobs.

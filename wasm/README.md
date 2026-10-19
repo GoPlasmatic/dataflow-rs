@@ -15,7 +15,7 @@ The [dataflow-rs](https://github.com/GoPlasmatic/dataflow-rs) 4.0 engine compile
 
 ## Features
 
-- **The engine, not a port**: the Rust crate built for `wasm32-unknown-unknown` with `all-operators`, every optional operator family except `tensor`
+- **The engine, not a port**: the Rust crate built for `wasm32-unknown-unknown` with `datetime` and `ExprEngineBuilder::all_operators`, every optional operator family except `tensor`
 - **Built-in functions**: `parse_json`, `parse_xml`, `map`, `validation`, `filter`, `log`, `publish_json`, `publish_xml`
 - **Typed end to end**: the package's `.d.ts` carries the engine's wire types (`Message`, `Run`, `Trace`, `Issue` and the rest), generated from the crate
 - **A result on every status**: a run that stops, times out or fails resolves, with `run.status` saying how

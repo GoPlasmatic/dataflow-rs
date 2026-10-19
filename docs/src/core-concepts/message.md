@@ -47,7 +47,7 @@ The accessors are `id()`, `payload()`, `context()` and `context_mut()`,
 
 The context is structured as:
 
-```json
+```jsonc
 {
     "data": { ... },
     "metadata": { ... },
@@ -301,7 +301,7 @@ stopped early and why; see [Error Handling](./error-handling.md).
 
 In workflow conditions and mappings, access message fields using JSONLogic:
 
-```json
+```jsonc
 // Access data fields
 {"var": "data.name"}
 {"var": "data.user.email"}

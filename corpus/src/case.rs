@@ -32,9 +32,12 @@ pub struct Requires {
     pub off: Vec<String>,
 }
 
-/// Every feature name a case may require: the operator families, `all-operators`
-/// (the seven other than `tensor`), and `budget`.
-pub const FEATURES: &[&str] = &[
+/// Every cargo feature name a case may require: `datetime`, `tensor`, and
+/// `budget`.
+pub const FEATURES: &[&str] = &["datetime", "tensor", "budget"];
+
+/// Every operator-family name `engine.families` may select at runtime.
+pub const FAMILIES: &[&str] = &[
     "datetime",
     "ext-string",
     "ext-array",
@@ -44,7 +47,6 @@ pub const FEATURES: &[&str] = &[
     "error-handling",
     "tensor",
     "all-operators",
-    "budget",
 ];
 
 #[derive(Debug, Default, Deserialize)]
@@ -56,6 +58,10 @@ pub struct EngineSpec {
     pub ops_budget: Option<u64>,
     #[serde(default)]
     pub error_context: Option<ErrorContextSpec>,
+    /// Built-in operator families to enable on `ExprEngineBuilder`
+    /// ([`FAMILIES`]).
+    #[serde(default)]
+    pub families: Vec<String>,
     /// Custom operators to register, by the driver's names (`shout`).
     #[serde(default)]
     pub operators: Vec<String>,
@@ -154,8 +160,9 @@ fn yes() -> bool {
 impl Case {
     /// The rules between a case's keys that serde cannot state: every
     /// `requires` name is a [`FEATURES`] entry, `on` and `off` are not both
-    /// set, an `ops_budget` requires `budget`, and a `same_as` names an
-    /// earlier run step.
+    /// set, every `engine.families` name is a [`FAMILIES`] entry, an
+    /// `ops_budget` requires `budget`, and a `same_as` names an earlier run
+    /// step.
     pub fn validate(&self) -> Result<(), String> {
         let names = self.requires.on.iter().chain(&self.requires.off);
         if let Some(name) = names.into_iter().find(|n| !FEATURES.contains(&n.as_str())) {
@@ -163,6 +170,16 @@ impl Case {
         }
         if !self.requires.on.is_empty() && !self.requires.off.is_empty() {
             return Err("requires has features both on and off: no CI build has both".to_owned());
+        }
+        if let Some(family) = self
+            .engine
+            .families
+            .iter()
+            .find(|f| !FAMILIES.contains(&f.as_str()))
+        {
+            return Err(format!(
+                "engine.families names `{family}`, which is no family"
+            ));
         }
         if self.engine.ops_budget.is_some() && !self.requires.on.iter().any(|n| n == "budget") {
             return Err("engine.ops_budget without requires.on budget runs unbounded".to_owned());
@@ -224,6 +241,10 @@ mod tests {
         assert!(
             refused(r#"{"description":"d","workflows":[],"requires":{"on":["fast"]}}"#)
                 .contains("`fast`")
+        );
+        assert!(
+            refused(r#"{"description":"d","workflows":[],"engine":{"families":["flagd"]}}"#)
+                .contains("`flagd`")
         );
         assert!(refused(
             r#"{"description":"d","workflows":[],"requires":{"on":["budget"],"off":["tensor"]}}"#

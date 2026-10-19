@@ -372,8 +372,6 @@ impl<'q, 'p> Writer<'_, '_, 'q, 'p> {
     /// wrote nothing leaves where the one before it did.
     fn end(&mut self) {
         if let Some(ends) = self.ends.as_deref_mut() {
-            #[cfg(test)]
-            crate::run::traced_work();
             ends.push(u32::try_from(self.changes.len()).unwrap_or(u32::MAX));
         }
     }

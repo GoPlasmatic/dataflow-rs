@@ -4,31 +4,45 @@
 use datalogic_rs::ScopedArg;
 use std::borrow::Cow;
 
-/// The family an operator belongs to: the cargo feature that turns it on.
+/// The family an operator belongs to.
+///
+/// [`Core`](Self::Core) and [`Secret`](Self::Secret) are always on; the
+/// extension families are selected at runtime on
+/// [`ExprEngineBuilder`](super::ExprEngineBuilder) ([`family`], [`families`],
+/// [`all_operators`]). [`Datetime`](Self::Datetime) and
+/// [`Tensor`](Self::Tensor) also need their cargo features (`datetime`,
+/// `tensor`) compiled in.
 ///
 /// This crate's own, not `datalogic_rs::Family`: it adds the engine's
 /// [`Secret`](Self::Secret) and a host's [`Custom`](Self::Custom). The names
 /// differ, so a host imports both unaliased.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// [`family`]: super::ExprEngineBuilder::family
+/// [`families`]: super::ExprEngineBuilder::families
+/// [`all_operators`]: super::ExprEngineBuilder::all_operators
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum OperatorFamily {
     /// Always present.
     Core,
-    /// The `datetime` feature.
+    /// Date and time operators (`now`, `datetime`, `timestamp`, `parse_date`,
+    /// `format_date`, `date_diff`). Needs the `datetime` feature.
     Datetime,
-    /// The `ext-string` feature.
+    /// String operators (`length`, `starts_with`, `ends_with`, `upper`,
+    /// `lower`, `trim`, `split`).
     ExtString,
-    /// The `ext-array` feature.
+    /// Array operators (`sort`, `slice`, `group_by`, `distinct`).
     ExtArray,
-    /// The `ext-math` feature.
+    /// Math operators (`abs`, `ceil`, `floor`).
     ExtMath,
-    /// The `ext-control` feature.
+    /// Control-flow operators (`exists`, `??`, `switch`, `type`).
     ExtControl,
-    /// The `ext-object` feature.
+    /// Object operators (`keys`, `values`, `entries`).
     ExtObject,
-    /// The `error-handling` feature.
+    /// JSONLogic's `try` and `throw` operators.
     ErrorHandling,
-    /// The `tensor` feature.
+    /// Tensor operators (`tensor`, `shape`, `full`, `cast`, `concat`, …).
+    /// Needs the `tensor` feature.
     Tensor,
     /// The engine's own `secret` operator.
     Secret,
@@ -38,7 +52,7 @@ pub enum OperatorFamily {
 
 impl OperatorFamily {
     /// The family of datalogic's family `upstream`. `None` for one this
-    /// crate has no feature for, which the engine never turns on.
+    /// crate has no variant for (`flagd`), which the engine never turns on.
     fn of(upstream: datalogic_rs::Family) -> Option<Self> {
         use datalogic_rs::Family as F;
         Some(match upstream {
@@ -55,6 +69,24 @@ impl OperatorFamily {
         })
     }
 
+    /// The datalogic family `self` selects on `EngineBuilder::with_families`,
+    /// or `None` for [`Secret`](Self::Secret) and [`Custom`](Self::Custom).
+    pub(crate) fn to_upstream(self) -> Option<datalogic_rs::Family> {
+        use datalogic_rs::Family as F;
+        Some(match self {
+            Self::Core => F::Core,
+            Self::Datetime => F::DateTime,
+            Self::ExtString => F::ExtString,
+            Self::ExtArray => F::ExtArray,
+            Self::ExtMath => F::ExtMath,
+            Self::ExtControl => F::ExtControl,
+            Self::ExtObject => F::ExtObject,
+            Self::ErrorHandling => F::ErrorHandling,
+            Self::Tensor => F::Tensor,
+            Self::Secret | Self::Custom => return None,
+        })
+    }
+
     /// The family datalogic names `name` in an operator's description.
     fn named(name: &str) -> Option<Self> {
         datalogic_rs::Family::ALL
@@ -64,26 +96,20 @@ impl OperatorFamily {
     }
 }
 
-/// The datalogic families this build turns on: each by this crate's feature
-/// of its name, and no other. A family another crate's features compile into
-/// datalogic stays off here, so it can never change what a definition does.
-pub(crate) const FAMILIES: &[datalogic_rs::Family] = &[
+/// The operator families [`ExprEngineBuilder::all_operators`](super::ExprEngineBuilder::all_operators)
+/// turns on: the six always-compiled extension families, plus
+/// [`OperatorFamily::Datetime`] when the `datetime` feature is compiled in.
+/// [`OperatorFamily::Tensor`] stays out: its operator names (`shape`, `full`,
+/// `cast`, `concat`) are ordinary JSON keys.
+pub(crate) const ALL_OPERATORS: &[OperatorFamily] = &[
     #[cfg(feature = "datetime")]
-    datalogic_rs::Family::DateTime,
-    #[cfg(feature = "ext-string")]
-    datalogic_rs::Family::ExtString,
-    #[cfg(feature = "ext-array")]
-    datalogic_rs::Family::ExtArray,
-    #[cfg(feature = "ext-math")]
-    datalogic_rs::Family::ExtMath,
-    #[cfg(feature = "ext-control")]
-    datalogic_rs::Family::ExtControl,
-    #[cfg(feature = "ext-object")]
-    datalogic_rs::Family::ExtObject,
-    #[cfg(feature = "error-handling")]
-    datalogic_rs::Family::ErrorHandling,
-    #[cfg(feature = "tensor")]
-    datalogic_rs::Family::Tensor,
+    OperatorFamily::Datetime,
+    OperatorFamily::ExtString,
+    OperatorFamily::ExtArray,
+    OperatorFamily::ExtMath,
+    OperatorFamily::ExtControl,
+    OperatorFamily::ExtObject,
+    OperatorFamily::ErrorHandling,
 ];
 
 /// One operator an engine can evaluate.
@@ -191,15 +217,20 @@ mod tests {
         json!([{"a": 1}, {"a": 2}])
     }
 
-    /// Every operator this build lists, as `ExprEngine::operators` does.
+    /// Every operator `all_operators` lists, as `ExprEngine::operators` does.
     fn listed() -> Vec<Operator> {
-        ExprEngine::default().operators().to_vec()
+        ExprEngine::builder()
+            .all_operators()
+            .build()
+            .unwrap()
+            .operators()
+            .to_vec()
     }
 
     #[test]
     fn the_expanded_names_are_datalogics_in_its_order_with_no_duplicate() {
         let logic = datalogic_rs::Engine::builder()
-            .with_families(FAMILIES.iter().copied())
+            .with_families(ALL_OPERATORS.iter().filter_map(|f| f.to_upstream()))
             .build();
         let ours: Vec<String> = listed()
             .into_iter()
@@ -231,14 +262,10 @@ mod tests {
             .filter(|o| !o.deterministic)
             .map(|o| &*o.name)
             .collect();
-        let mut want_scoping = vec!["filter", "map", "reduce", "all", "some", "none"];
+        let mut want_scoping = vec![
+            "filter", "map", "reduce", "all", "some", "none", "sort", "group_by", "distinct", "try",
+        ];
         let mut want_non = Vec::new();
-        if cfg!(feature = "ext-array") {
-            want_scoping.extend(["sort", "group_by", "distinct"]);
-        }
-        if cfg!(feature = "error-handling") {
-            want_scoping.push("try");
-        }
         if cfg!(feature = "datetime") {
             want_non.push("now");
         }
@@ -250,9 +277,7 @@ mod tests {
         let at = |name: &str| ops.iter().find(|o| o.name == name).unwrap().scoped;
         assert_eq!(at("map"), Some(ScopedArg::Index(1)));
         assert_eq!(at("reduce"), Some(ScopedArg::Index(1)));
-        #[cfg(feature = "ext-array")]
         assert_eq!(at("sort"), Some(ScopedArg::Index(2)));
-        #[cfg(feature = "error-handling")]
         assert_eq!(at("try"), Some(ScopedArg::LastOfMany));
     }
 
@@ -268,6 +293,9 @@ mod tests {
                 "{}",
                 family.name()
             );
+            if let Some(ours) = mapped {
+                assert_eq!(ours.to_upstream(), Some(*family));
+            }
         }
     }
 
@@ -276,7 +304,7 @@ mod tests {
         // `deterministic` reads `effect`: a new effect fails here at the
         // bump that brings it, rather than silently counting as pure.
         let logic = datalogic_rs::Engine::builder()
-            .with_families(FAMILIES.iter().copied())
+            .with_families(ALL_OPERATORS.iter().filter_map(|f| f.to_upstream()))
             .build();
         let mut effects: Vec<&str> = logic.operators().map(|o| o.effect).collect();
         effects.sort_unstable();
@@ -319,10 +347,12 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "ext-array")]
     #[test]
     fn ext_array_scoping_operators_read_the_element() {
-        let e = ExprEngine::default();
+        let e = ExprEngine::builder()
+            .family(OperatorFamily::ExtArray)
+            .build()
+            .unwrap();
         let a = rows();
         assert_eq!(
             probe(&e, json!({"sort": [a, false, {"var": "a"}]})),

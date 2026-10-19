@@ -2,11 +2,320 @@
 //! a model of the owned tree.
 
 use super::random;
-use crate::state::splice::Hop;
-use crate::state::writes::list::List;
-use crate::state::writes::{Dirty, Drained, OwnedAt};
+use crate::expr::Seg;
+use crate::state::splice::Resolved;
+use crate::state::writes::{
+    At, Key, NONE, Node, WRITES_POOL, absorb, combine, read_under, removes_an_element,
+};
 use crate::state::{Lookup, Mark, Writes};
 use datavalue::OwnedDataValue;
+use list::List;
+
+/// One resolved step of a path: what the tests read the write log's keys as.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(super) enum Hop {
+    /// A key on an object.
+    Key(Box<str>),
+    /// An index on an array.
+    Index(usize),
+}
+
+impl Hop {
+    /// The segment that addresses exactly this hop: a key never reads as an
+    /// index, and an index is spelled in decimal.
+    pub(super) fn to_seg(&self) -> Seg {
+        match self {
+            Self::Key(k) => Seg::key(k),
+            Self::Index(i) => Seg::index(*i),
+        }
+    }
+}
+
+/// The segments that address `hops` exactly.
+pub(super) fn segs_of(hops: &[Hop]) -> Vec<Seg> {
+    hops.iter().map(Hop::to_seg).collect()
+}
+
+impl Resolved {
+    /// The hops, built: for the tests.
+    pub(super) fn hops(&self, segs: &[Seg]) -> Vec<Hop> {
+        At::new(segs, self.kinds).to_hops()
+    }
+}
+
+impl At<'_> {
+    /// Segment `i` as the hop the log keys by.
+    pub(super) fn hop(&self, i: usize) -> Hop {
+        match self.index(i) {
+            Some(j) => Hop::Index(j),
+            None => Hop::Key(self.segs()[i].key.clone()),
+        }
+    }
+
+    /// Every segment as a hop.
+    pub(super) fn to_hops(self) -> Vec<Hop> {
+        (0..self.len()).map(|i| self.hop(i)).collect()
+    }
+}
+
+/// Hops with their segments, for a caller that holds them: tests.
+struct OwnedAt {
+    /// The segments, each spelled so it resolves as its hop does.
+    segs: Vec<Seg>,
+    /// Bit `i` set when segment `i` is an index.
+    kinds: u64,
+}
+
+impl OwnedAt {
+    /// The borrowed form the log is asked with.
+    fn at(&self) -> At<'_> {
+        At::new(&self.segs, self.kinds)
+    }
+}
+
+impl From<&[Hop]> for OwnedAt {
+    fn from(hops: &[Hop]) -> Self {
+        let kinds = hops
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| matches!(h, Hop::Index(_)))
+            .fold(0u64, |k, (i, _)| k | 1 << i);
+        Self {
+            segs: hops.iter().map(Hop::to_seg).collect(),
+            kinds,
+        }
+    }
+}
+
+/// One topmost marked path and what the checkpoint must do there.
+#[derive(Clone, Debug, PartialEq)]
+struct Dirty {
+    /// Where the mark sits.
+    at: Vec<Hop>,
+    /// What happened there.
+    mark: Mark,
+}
+
+/// Everything the checkpoint applies: the marks, in the order their paths
+/// were first marked, then the objects whose key order must follow the view.
+#[derive(Debug, Default, PartialEq)]
+struct Drained {
+    /// The topmost marks.
+    dirty: Vec<Dirty>,
+    /// The objects whose key order must follow the view.
+    reorder: Vec<Vec<Hop>>,
+}
+
+/// The capacities, nodes and name bytes, of the storage this thread's pool
+/// holds: for the test of what is pooled.
+fn pooled() -> Vec<(usize, usize)> {
+    WRITES_POOL.with(|p| {
+        p.borrow()
+            .iter()
+            .map(|(nodes, names)| (nodes.capacity(), names.capacity()))
+            .collect()
+    })
+}
+
+impl Writes {
+    /// Every topmost mark under `n`, with its path built: for `visit`.
+    fn each(&self, n: u32, at: &mut Vec<Hop>, f: &mut dyn FnMut(&[Hop], &Node)) {
+        let node = &self.nodes[n as usize];
+        if node.mark.is_some() || node.reorder {
+            f(at, node);
+            if node.mark.is_some() {
+                return;
+            }
+        }
+        let mut c = node.first;
+        while c != NONE {
+            at.push(self.hop(self.nodes[c as usize].key));
+            self.each(c, at, f);
+            at.pop();
+            c = self.nodes[c as usize].next;
+        }
+    }
+
+    /// The hop a node's key names.
+    fn hop(&self, key: Key) -> Hop {
+        match key {
+            Key::Name { start, len, .. } => Hop::Key(self.name(start, len).into()),
+            Key::Index(i) => Hop::Index(i),
+            Key::Root => unreachable!("the root has no key"),
+        }
+    }
+
+    /// Every topmost mark, without draining: what the tests read the log's
+    /// marks through.
+    fn visit(&self, f: &mut dyn FnMut(&[Hop], &Mark)) {
+        self.each(0, &mut Vec::new(), &mut |at, node| {
+            if let Some(mark) = &node.mark {
+                f(at, mark);
+            }
+        });
+    }
+
+    /// The topmost marks and the reorders, leaving the log empty: what the
+    /// tests read the log's marks through.
+    fn drain(&mut self) -> Drained {
+        fn walk(log: &mut Writes, n: u32, at: &mut Vec<Hop>, out: &mut Drained) {
+            if let Some(mark) = log.nodes[n as usize].mark.take() {
+                return out.dirty.push(Dirty {
+                    at: at.clone(),
+                    mark,
+                });
+            }
+            if log.nodes[n as usize].reorder {
+                out.reorder.push(at.clone());
+            }
+            let mut c = log.nodes[n as usize].first;
+            while c != NONE {
+                at.push(log.hop(log.nodes[c as usize].key));
+                walk(log, c, at, out);
+                at.pop();
+                c = log.nodes[c as usize].next;
+            }
+        }
+        let mut out = Drained::default();
+        walk(self, 0, &mut Vec::new(), &mut out);
+        self.reset();
+        out
+    }
+}
+
+/// The measured alternative to [`Writes`], kept for the tests only: a flat
+/// list of disjoint marks, scanned on every call. `the_trie_and_the_list_agree_on_random_marks`
+/// holds the trie to it.
+mod list {
+    use super::{
+        At, Dirty, Drained, Hop, Lookup, Mark, absorb, combine, read_under, removes_an_element,
+    };
+
+    impl At<'_> {
+        /// Whether segment `i` is `hop`.
+        fn matches(&self, i: usize, hop: &Hop) -> bool {
+            match hop {
+                Hop::Index(j) => self.index(i) == Some(*j),
+                Hop::Key(k) => !self.is_index(i) && *self.segs()[i].key == **k,
+            }
+        }
+
+        /// Whether `hops` is this path or a prefix of it.
+        fn under(&self, hops: &[Hop]) -> bool {
+            hops.len() <= self.len() && hops.iter().enumerate().all(|(i, h)| self.matches(i, h))
+        }
+
+        /// Whether this path is a strict prefix of `hops`.
+        fn above(&self, hops: &[Hop]) -> bool {
+            hops.len() > self.len() && (0..self.len()).all(|i| self.matches(i, &hops[i]))
+        }
+    }
+
+    /// The write log as a flat list of disjoint marks, scanned on every call:
+    /// the measured alternative to [`Writes`].
+    #[derive(Default, Debug)]
+    pub(super) struct List {
+        entries: Vec<(Vec<Hop>, Mark)>,
+        reorder: Vec<Vec<Hop>>,
+    }
+
+    impl List {
+        /// Marks `at` as `Writes::mark` does, by scanning the list.
+        pub(super) fn mark(&mut self, at: At<'_>, new: Mark) {
+            debug_assert!(!at.is_empty(), "a write has a path");
+            // A strict ancestor absorbs the write.
+            if let Some((path, above)) = self
+                .entries
+                .iter_mut()
+                .find(|(p, _)| p.len() < at.len() && at.under(p))
+            {
+                let depth = path.len();
+                return absorb(above, at, depth, new);
+            }
+            // An array element's removal rewrites the array (as `Writes::mark`).
+            if removes_an_element(at, &new) {
+                return self.mark(at.prefix(at.len() - 1), Mark::Set(None));
+            }
+            // A reorder flag below counts as a child, as a trie node it creates
+            // does; one at the path itself is cleared by any mark.
+            let has_children = self.entries.iter().any(|(p, _)| at.above(p))
+                || self.reorder.iter().any(|p| at.above(p));
+            self.reorder
+                .retain(|p| !(p.len() == at.len() && at.under(p)));
+            // Combined in place, so a path keeps the position it was first
+            // marked at, as the trie's child order does.
+            let place = self
+                .entries
+                .iter()
+                .position(|(p, _)| p.len() == at.len() && at.under(p));
+            let old = place.map(|i| std::mem::replace(&mut self.entries[i].1, Mark::Removed));
+            let mark = combine(old, new, has_children);
+            if !matches!(mark, Mark::Appended { .. }) || has_children {
+                self.entries.retain(|(p, _)| !at.above(p));
+                self.reorder.retain(|p| !at.above(p));
+            }
+            match self
+                .entries
+                .iter()
+                .position(|(p, _)| p.len() == at.len() && at.under(p))
+            {
+                Some(i) => self.entries[i].1 = mark,
+                None => self.entries.push((at.to_hops(), mark)),
+            }
+        }
+
+        /// Flags the object at `at` for a reorder.
+        pub(super) fn reorder(&mut self, at: At<'_>) {
+            let covered = self.entries.iter().any(|(p, _)| at.under(p));
+            if !covered
+                && !self
+                    .reorder
+                    .iter()
+                    .any(|p| p.len() == at.len() && at.under(p))
+            {
+                self.reorder.push(at.to_hops());
+            }
+        }
+
+        /// Every mark.
+        pub(super) fn visit(&self, f: &mut dyn FnMut(&[Hop], &Mark)) {
+            for (at, mark) in &self.entries {
+                f(at, mark);
+            }
+        }
+
+        /// What a read of `at` finds.
+        pub(super) fn lookup(&self, at: At<'_>) -> Lookup<'_> {
+            if let Some((path, mark)) = self.entries.iter().find(|(p, _)| at.under(p)) {
+                return read_under(mark, &at.segs()[path.len()..]);
+            }
+            let below =
+                |p: &Vec<Hop>| p.len() >= at.len() && (0..at.len()).all(|i| at.matches(i, &p[i]));
+            if self.entries.iter().any(|(p, _)| below(p)) || self.reorder.iter().any(below) {
+                Lookup::Dirty
+            } else {
+                Lookup::Clean
+            }
+        }
+
+        /// The marks and reorders, leaving the list empty.
+        pub(super) fn drain(&mut self) -> Drained {
+            Drained {
+                dirty: self
+                    .entries
+                    .drain(..)
+                    .map(|(at, mark)| Dirty { at, mark })
+                    .collect(),
+                reorder: std::mem::take(&mut self.reorder),
+            }
+        }
+
+        /// Whether nothing is marked and no reorder is flagged.
+        pub(super) fn is_empty(&self) -> bool {
+            self.entries.is_empty() && self.reorder.is_empty()
+        }
+    }
+}
 
 /// The log's view of a path given as hops.
 fn p(hops: &[Hop]) -> OwnedAt {
@@ -609,15 +918,13 @@ fn a_log_that_grew_past_its_caps_is_not_pooled() {
     w.mark(p(&[k("data"), k(&huge)]).at(), owned(n(1)));
     drop(w);
     assert!(
-        crate::state::writes::pooled()
-            .iter()
-            .all(|&(_, names)| names < huge.len()),
+        pooled().iter().all(|&(_, names)| names < huge.len()),
         "{:?}",
-        crate::state::writes::pooled()
+        pooled()
     );
     // A small one is pooled, unless the pool is full already.
     let mut w = Writes::default();
     w.mark(p(&[k("data"), k("small")]).at(), owned(n(1)));
     drop(w);
-    assert!(!crate::state::writes::pooled().is_empty());
+    assert!(!pooled().is_empty());
 }

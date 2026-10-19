@@ -29,7 +29,7 @@ use dataflow_rs::datalogic_rs::bumpalo::Bump;
 use dataflow_rs::datalogic_rs::operator::EvalContext;
 use dataflow_rs::datalogic_rs::{self, ArenaExt, CustomOperator, DataValue};
 use dataflow_rs::def::{ParseOptions, parse};
-use dataflow_rs::expr::{CompileCx, ExprEngine, Secrets};
+use dataflow_rs::expr::{CompileCx, ExprEngine, OperatorFamily, Secrets};
 use dataflow_rs::function::FunctionConfig;
 use dataflow_rs::observe::{Event, Interest, Trace, TraceOptions, WorkflowExit};
 use dataflow_rs::program::{CompileOptions, CompiledWorkflow, Compiler, IssueCode};
@@ -67,45 +67,19 @@ pub(crate) struct Options {
     pub(crate) timings: bool,
 }
 
-/// Each operator family, by the cargo feature that turns it on.
-const FAMILIES: &[(&str, bool)] = &[
+/// Each cargo feature a case may require, by whether this build turns it on.
+const FEATURES: &[(&str, bool)] = &[
     ("datetime", cfg!(feature = "datetime")),
-    ("ext-string", cfg!(feature = "ext-string")),
-    ("ext-array", cfg!(feature = "ext-array")),
-    ("ext-math", cfg!(feature = "ext-math")),
-    ("ext-control", cfg!(feature = "ext-control")),
-    ("ext-object", cfg!(feature = "ext-object")),
-    ("error-handling", cfg!(feature = "error-handling")),
     ("tensor", cfg!(feature = "tensor")),
     ("budget", cfg!(feature = "budget")),
-];
-
-/// What `all-operators` turns on: every family but `tensor`.
-const ALL_OPERATORS: &[&str] = &[
-    "datetime",
-    "ext-string",
-    "ext-array",
-    "ext-math",
-    "ext-control",
-    "ext-object",
-    "error-handling",
 ];
 
 /// Whether this build has every feature `requires` names on, on, and every
 /// one it names off, off. Read from this crate's own features, which are
 /// exactly the engine's in its own tests.
 pub(crate) fn satisfied(requires: &Requires) -> bool {
-    let on = |name: &str| FAMILIES.iter().any(|(f, on)| *f == name && *on);
-    let expand = |names: &[String]| -> Vec<String> {
-        names
-            .iter()
-            .flat_map(|name| match name.as_str() {
-                "all-operators" => ALL_OPERATORS.iter().map(|f| (*f).to_owned()).collect(),
-                other => vec![other.to_owned()],
-            })
-            .collect()
-    };
-    expand(&requires.on).iter().all(|f| on(f)) && expand(&requires.off).iter().all(|f| !on(f))
+    let on = |name: &str| FEATURES.iter().any(|(f, on)| *f == name && *on);
+    requires.on.iter().all(|f| on(f)) && requires.off.iter().all(|f| !on(f))
 }
 
 /// What the engine does with `case`, named `name`, as its golden file holds
@@ -177,9 +151,23 @@ pub(crate) async fn run_case(name: &str, case: &Case, opts: Options, sink: &mut 
 }
 
 /// The case's registry: `script`, over an expression engine with the case's
-/// secrets, custom operators and ops budget.
+/// operator families, secrets, custom operators and ops budget.
 fn registry(name: &str, spec: &EngineSpec) -> Registry {
     let mut exprs = ExprEngine::builder();
+    for family in &spec.families {
+        exprs = match family.as_str() {
+            "all-operators" => exprs.all_operators(),
+            "datetime" => exprs.family(OperatorFamily::Datetime),
+            "ext-string" => exprs.family(OperatorFamily::ExtString),
+            "ext-array" => exprs.family(OperatorFamily::ExtArray),
+            "ext-math" => exprs.family(OperatorFamily::ExtMath),
+            "ext-control" => exprs.family(OperatorFamily::ExtControl),
+            "ext-object" => exprs.family(OperatorFamily::ExtObject),
+            "error-handling" => exprs.family(OperatorFamily::ErrorHandling),
+            "tensor" => exprs.family(OperatorFamily::Tensor),
+            other => panic!("{name}: no operator family is named {other}"),
+        };
+    }
     if let Some(secrets) = &spec.secrets {
         let secrets = Secrets::new(owned(secrets))
             .unwrap_or_else(|e| panic!("{name}: the case's secrets: {e}"));

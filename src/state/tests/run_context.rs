@@ -7,7 +7,7 @@
 use super::random::{self, exact};
 use crate::expr::{Path, arena, path};
 use crate::state::splice;
-use crate::state::writes::fault;
+use crate::state::writes::{Key, Mark, NONE, Node};
 use crate::state::{RunContext, Stats, Tuning};
 use datavalue::OwnedDataValue;
 use std::borrow::Cow;
@@ -233,10 +233,14 @@ fn tunings() -> [(&'static str, Tuning); 4] {
 fn the_run_matches_the_model() {
     let deep = random::deep();
     // State is feature-independent: run in the default build, or whenever
-    // `DATAFLOW_DEEP` is set, rather than repeating in every operator-family
-    // feature build.
+    // `DATAFLOW_DEEP` is set, rather than repeating in every cargo-feature
+    // build.
     if !deep
-        && (!crate::expr::FAMILIES.is_empty() || cfg!(any(feature = "tensor", feature = "budget")))
+        && cfg!(any(
+            feature = "datetime",
+            feature = "tensor",
+            feature = "budget"
+        ))
     {
         return;
     }
@@ -500,6 +504,29 @@ fn stats_report_the_view_and_the_arena() {
     assert!(stats.peak_arena >= live, "{stats:?}");
 }
 
+/// Arms a node in `rc.log` that panics during `phase` (`"settle"` or
+/// `"apply"`): a `Key::Root` child with `Mark::Set(None)` panics in `settle`
+/// when `reads_view` resolves its key, while one with `Mark::Removed` skips
+/// `reads_view` during `settle` and panics in `apply` when `key_ref` is
+/// called.
+fn arm_checkpoint_panic(rc: &mut RunContext<'_, '_>, phase: &str) {
+    let mut node = Node::new(Key::Root);
+    node.mark = Some(match phase {
+        "settle" => Mark::Set(None),
+        "apply" => Mark::Removed,
+        other => unreachable!("unknown phase {other}"),
+    });
+    let id = rc.log.nodes.len() as u32;
+    rc.log.nodes.push(node);
+    let last = rc.log.nodes[0].last;
+    if last == NONE {
+        rc.log.nodes[0].first = id;
+    } else {
+        rc.log.nodes[last as usize].next = id;
+    }
+    rc.log.nodes[0].last = id;
+}
+
 /// A panic inside the checkpoint's `settle` or `apply` must not lose the
 /// message's context: the slot holds an object with the three roots
 /// afterwards, never `null`.
@@ -514,7 +541,7 @@ fn a_panic_inside_a_checkpoint_keeps_the_context() {
                 let v = OwnedDataValue::from(2).to_arena(e.arena());
                 e.set(&rooted("data.pending"), v, None)
             });
-            fault::arm(phase);
+            arm_checkpoint_panic(&mut rc, phase);
             rc.checkpoint();
         }));
         assert!(outcome.is_err(), "{phase}: the fault fired");

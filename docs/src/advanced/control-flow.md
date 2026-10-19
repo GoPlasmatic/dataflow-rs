@@ -313,7 +313,7 @@ whether the *rest* of the pipeline should run at all, and it can
 because the alternative is two tasks per exit whose conditions are hand-written
 negations of each other:
 
-```json
+```jsonc
 { "id": "respond_404",
   "condition": {"!": [{"var": "temp_data.user"}]},
   "function": { "name": "map", "input": { "mappings": [] } } },

@@ -13,6 +13,8 @@ mod options;
 pub(crate) mod policy;
 mod record;
 mod report;
+#[cfg(test)]
+mod tests;
 mod trace;
 
 /// The clock a deadline is read on: `web_time::Instant`, which is
@@ -30,8 +32,6 @@ pub use interp::CHECK_EVERY;
 pub use message::{AuditEntry, AuditMode, Message};
 pub use options::RunOptions;
 pub(crate) use record::TaskIds;
-#[cfg(test)]
-pub(crate) use record::traced_work;
 #[doc(hidden)]
 pub use report::ArenaStats;
 pub use report::Run;

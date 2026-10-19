@@ -217,7 +217,7 @@ fn now() -> Instant {
 mod tests {
     use super::*;
     use crate::run::RunOptions;
-    use crate::run::record::clock_reads as reads;
+    use crate::run::tests::clock_reads as reads;
     use crate::{Engine, Message};
     use serde_json::json;
     use std::time::Duration;

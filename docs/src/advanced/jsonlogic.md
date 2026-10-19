@@ -23,7 +23,7 @@ folds to a constant then and is never evaluated again.
 
 JSONLogic operations are objects with a single key (the operator) and value (the arguments):
 
-```json
+```jsonc
 {"operator": [argument1, argument2, ...]}
 ```
 
@@ -31,7 +31,7 @@ JSONLogic operations are objects with a single key (the operator) and value (the
 
 ### var - Access Data
 
-```json
+```jsonc
 // Access top-level field
 {"var": "data.name"}
 
@@ -49,7 +49,7 @@ JSONLogic operations are objects with a single key (the operator) and value (the
 
 The context an expression evaluates against is one object with three roots:
 
-```json
+```jsonc
 {
     "data": { ... },
     "metadata": { ... },
@@ -59,7 +59,7 @@ The context an expression evaluates against is one object with three roots:
 
 Access fields with:
 
-```json
+```jsonc
 {"var": "data.field"}
 {"var": "metadata.type"}
 {"var": "temp_data.intermediate"}
@@ -81,7 +81,7 @@ and what it guarantees.
 
 ### Equality
 
-```json
+```jsonc
 {"==": [{"var": "data.status"}, "active"]}
 {"===": [{"var": "data.count"}, 0]}  // Strict equality
 {"!=": [{"var": "data.status"}, "deleted"]}
@@ -90,7 +90,7 @@ and what it guarantees.
 
 ### Numeric Comparisons
 
-```json
+```jsonc
 {">": [{"var": "data.age"}, 18]}
 {">=": [{"var": "data.score"}, 60]}
 {"<": [{"var": "data.price"}, 100]}
@@ -99,7 +99,7 @@ and what it guarantees.
 
 ### Between
 
-```json
+```jsonc
 {"<=": [1, {"var": "data.x"}, 10]}  // 1 <= x <= 10
 {"<": [1, {"var": "data.x"}, 10]}   // 1 < x < 10
 ```
@@ -108,7 +108,7 @@ and what it guarantees.
 
 ### and, or, not
 
-```json
+```jsonc
 {"and": [
     {">=": [{"var": "data.age"}, 18]},
     {"==": [{"var": "data.verified"}, true]}
@@ -124,7 +124,7 @@ and what it guarantees.
 
 ### Truthy/Falsy
 
-```json
+```jsonc
 // Check if value is truthy (not null, false, 0, "", [], {})
 {"!!": {"var": "data.email"}}
 
@@ -168,14 +168,14 @@ implementations treat any object as truthy; this one does not.
 
 ### substr - Substring
 
-```json
+```jsonc
 {"substr": [{"var": "data.text"}, 0, 10]}  // First 10 characters
 {"substr": [{"var": "data.text"}, -5]}     // Last 5 characters
 ```
 
 ### in - Contains
 
-```json
+```jsonc
 // Check if substring exists
 {"in": ["@", {"var": "data.email"}]}
 
@@ -187,7 +187,7 @@ implementations treat any object as truthy; this one does not.
 
 ### Arithmetic
 
-```json
+```jsonc
 {"+": [{"var": "data.a"}, {"var": "data.b"}]}
 {"-": [{"var": "data.total"}, {"var": "data.discount"}]}
 {"*": [{"var": "data.price"}, {"var": "data.quantity"}]}
@@ -197,7 +197,7 @@ implementations treat any object as truthy; this one does not.
 
 ### Min/Max
 
-```json
+```jsonc
 {"min": [{"var": "data.a"}, {"var": "data.b"}, 100]}
 {"max": [{"var": "data.x"}, 0]}  // Ensure non-negative
 ```
@@ -215,7 +215,7 @@ implementations treat any object as truthy; this one does not.
 
 ### map - Transform Array
 
-```json
+```jsonc
 {"map": [
     {"var": "data.items"},
     {"*": [{"var": ""}, 2]}  // Double each item
@@ -224,7 +224,7 @@ implementations treat any object as truthy; this one does not.
 
 ### filter - Filter Array
 
-```json
+```jsonc
 {"filter": [
     {"var": "data.items"},
     {">=": [{"var": ""}, 10]}  // Items >= 10
@@ -233,7 +233,7 @@ implementations treat any object as truthy; this one does not.
 
 ### reduce - Aggregate Array
 
-```json
+```jsonc
 {"reduce": [
     {"var": "data.items"},
     {"+": [{"var": "accumulator"}, {"var": "current"}]},
@@ -243,7 +243,7 @@ implementations treat any object as truthy; this one does not.
 
 ### all/some/none
 
-```json
+```jsonc
 {"all": [{"var": "data.items"}, {">=": [{"var": ""}, 0]}]}
 {"some": [{"var": "data.items"}, {"==": [{"var": ""}, "special"]}]}
 {"none": [{"var": "data.items"}, {"<": [{"var": ""}, 0]}]}
@@ -265,7 +265,7 @@ skips their bodies for that reason.
 
 ### Safe Field Access
 
-```json
+```jsonc
 // Default to empty string
 {"var": ["data.optional", ""]}
 
@@ -289,11 +289,11 @@ skips their bodies for that reason.
 
 ### Type Checking
 
-The operator is `type`, not `typeof`, and it requires the `ext-control`
-[operator family](#operator-families-cargo-features). It returns `"null"`,
+The operator is `type`, not `typeof`, and it requires the `ExtControl`
+[operator family](#operator-families). It returns `"null"`,
 `"boolean"`, `"number"`, `"string"`, `"array"` or `"object"`.
 
-```json
+```jsonc
 // Check if string
 {"===": [{"type": {"var": "data.field"}}, "string"]}
 
@@ -304,37 +304,46 @@ The operator is `type`, not `typeof`, and it requires the `ext-control`
 With the `datetime` family also enabled, `type` classifies date-shaped strings
 as `"datetime"` or `"duration"` rather than `"string"`.
 
-## Operator Families (Cargo Features)
+## Operator Families
 
 Everything documented above this section is core JSONLogic and is always
-available. The remaining operators ship behind cargo features, all **off by
-default**:
+available. The remaining operators are grouped into [`OperatorFamily`] variants,
+all **off by default** on `ExprEngine::default()` and selected at runtime on
+`ExprEngineBuilder`:
 
-| Feature | Operators |
-|---|---|
-| `ext-string` | `length`, `starts_with`, `ends_with`, `upper`, `lower`, `trim`, `split` |
-| `ext-array` | `sort`, `slice`, `group_by`, `distinct` |
-| `ext-math` | `abs`, `ceil`, `floor` |
-| `ext-control` | `exists`, `??`, `switch` (alias `match`), `type` |
-| `ext-object` | `keys`, `values`, `entries` |
-| `error-handling` | `try`, `throw` |
-| `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
-| `all-operators` | every family above |
-| `tensor` | `tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype` (**not** in `all-operators`, see below) |
+| `OperatorFamily` | Cargo feature | Operators |
+|---|---|---|
+| `ExtString` | *(always compiled in)* | `length`, `starts_with`, `ends_with`, `upper`, `lower`, `trim`, `split` |
+| `ExtArray` | *(always compiled in)* | `sort`, `slice`, `group_by`, `distinct` |
+| `ExtMath` | *(always compiled in)* | `abs`, `ceil`, `floor` |
+| `ExtControl` | *(always compiled in)* | `exists`, `??`, `switch` (alias `match`), `type` |
+| `ExtObject` | *(always compiled in)* | `keys`, `values`, `entries` |
+| `ErrorHandling` | *(always compiled in)* | `try`, `throw` |
+| `Datetime` | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
+| *(via `all_operators()`)* | — | every compiled-in family above |
+| `Tensor` | `tensor` | `tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype` (**not** in `all_operators()`, see below) |
 
-```toml
-[dependencies]
-dataflow-rs = { version = "4.0", features = ["ext-string", "ext-control"] }
+```rust
+use dataflow_rs::expr::{ExprEngine, OperatorFamily};
+use dataflow_rs::Registry;
+
+let exprs = ExprEngine::builder()
+    .families([OperatorFamily::ExtString, OperatorFamily::ExtControl])
+    .build()
+    .unwrap();
+let registry = Registry::new(exprs);
+# let _ = registry;
 ```
 
-### `tensor` is opt-in separately
+### `Tensor` is opt-in separately
 
-`tensor` is the one family `all-operators` leaves out. A third of its names are
-ordinary JSON keys (`shape`, `full`, `cast`, `pad`, `crop`, `concat`, `stack`),
-and under templating mode a single-key object whose key is a live operator is
-*evaluated*, not passed through. Folding it into `all-operators` would quietly
-change what `{"shape": ...}` means in workflows that already run, so you opt
-in to it deliberately:
+`Tensor` is the one family `ExprEngineBuilder::all_operators` leaves out. A
+third of its names are ordinary JSON keys (`shape`, `full`, `cast`, `pad`,
+`crop`, `concat`, `stack`), and under templating mode a single-key object whose
+key is a live operator is *evaluated*, not passed through. Folding it into
+`all_operators()` would quietly change what `{"shape": ...}` means in workflows
+that already run, so you enable the `tensor` cargo feature and opt in to
+`OperatorFamily::Tensor` deliberately:
 
 ```toml
 [dependencies]
@@ -343,16 +352,16 @@ dataflow-rs = { version = "4.0", features = ["tensor"] }
 
 With it on, write `{"$shape": ...}` wherever you need the literal object.
 
-`error-handling` names the JSONLogic `try`/`throw` operators. It has nothing to
+`ErrorHandling` names the JSONLogic `try`/`throw` operators. It has nothing to
 do with dataflow-rs's own [error handling](../core-concepts/error-handling.md),
 which is always on.
 
-Three placements are easy to get wrong: `length` is in `ext-string`, not
-`ext-array`, even though it counts array elements as well as string characters;
-`type` is in `ext-control`, not a family of its own; and the split between the
+Three placements are easy to get wrong: `length` is in `ExtString`, not
+`ExtArray`, even though it counts array elements as well as string characters;
+`type` is in `ExtControl`, not a family of its own; and the split between the
 last two array-flavoured families follows the *input*, not the output:
-`entries` is in `ext-object` even though it produces an array (of
-`{key, value}` rows), while `group_by` and `distinct` are in `ext-array` even
+`entries` is in `ExtObject` even though it produces an array (of
+`{key, value}` rows), while `group_by` and `distinct` are in `ExtArray` even
 though they are natural companions to it. Iterating an object's entries with
 `group_by` therefore needs both families enabled.
 

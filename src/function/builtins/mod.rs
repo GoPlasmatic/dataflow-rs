@@ -161,6 +161,9 @@ pub(crate) enum Builtin {
     ParseXml(Box<ParseConfig>),
     PublishJson(Box<PublishConfig>),
     PublishXml(Box<PublishConfig>),
+    /// A test built-in that writes `1` at `data.a` and then returns `Err`.
+    #[cfg(test)]
+    Fault,
 }
 
 impl Builtin {
@@ -168,7 +171,7 @@ impl Builtin {
     #[cfg(test)]
     pub(crate) fn kind(&self) -> BuiltinKind {
         match self {
-            Self::Map(_) => BuiltinKind::Map,
+            Self::Map(_) | Self::Fault => BuiltinKind::Map,
             Self::Validation(_) => BuiltinKind::Validation,
             Self::Filter(_) => BuiltinKind::Filter,
             Self::Log(_) => BuiltinKind::Log,
@@ -190,6 +193,12 @@ impl Builtin {
             Self::ParseXml(c) => c.xml(cx),
             Self::PublishJson(c) => c.json(cx),
             Self::PublishXml(c) => c.xml(cx),
+            #[cfg(test)]
+            Self::Fault => {
+                let target: crate::expr::Path = "data.a".parse().expect("a path");
+                cx.write(&target, datavalue::OwnedDataValue::from_i64(1), None);
+                Err(crate::Error::service("BROKE", "after its writes"))
+            }
         }
     }
 
@@ -202,6 +211,8 @@ impl Builtin {
             Self::Log(c) => c.visit(v),
             Self::ParseJson(c) | Self::ParseXml(c) => c.visit(v),
             Self::PublishJson(c) | Self::PublishXml(c) => c.visit(v),
+            #[cfg(test)]
+            Self::Fault => {}
         }
     }
 }

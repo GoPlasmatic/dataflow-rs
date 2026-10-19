@@ -23,43 +23,25 @@ repository = "https://github.com/GoPlasmatic/dataflow-rs"
 keywords = ["rules-engine", "ifttt", "automation", "jsonlogic", "workflow"]
 categories = ["data-structures", "development-tools", "config"]
 
-# docs.rs renders the operator families so their operator docs resolve, plus
-# `budget`. `wasm-web` (a platform switch) and `ts` (a generator) are not API.
+# docs.rs renders the feature-gated operator families (`datetime`, `tensor`)
+# and `budget`. `wasm-web` (a platform switch) and `ts` (a generator) are not
+# API.
 [package.metadata.docs.rs]
-features = ["all-operators", "budget"]
+features = ["datetime", "tensor", "budget"]
 
 [features]
 default = []
 
-# Optional `datalogic-rs` operator families, each forwarding to the identically
-# named feature there. Off by default, and enabling one is *not* a no-op for
-# existing workflows: the engine evaluates in templating mode, where an unknown
-# operator name passes through as literal data, so a `{"length": ...}` value
-# starts evaluating once `ext-string` is on (`{"$length": ...}` pins the
-# literal). `datetime` also changes `==` and the ordering operators on plain
-# date-shaped strings. `error-handling` is JSONLogic's `try`/`throw`, not the
-# engine's own error handling.
+# The `datetime` operator family and its date-string comparison on `==` and the
+# ordering operators. Stays a cargo feature alongside runtime selection on
+# `ExprEngineBuilder`: `datalogic-rs` gates its plain-string comparison and
+# temporal arithmetic on `#[cfg(feature = "datetime")]`, so compiling it in
+# changes `==` even on an engine that leaves `OperatorFamily::Datetime` out.
 datetime = ["datalogic-rs/datetime"]
-ext-string = ["datalogic-rs/ext-string"]
-ext-array = ["datalogic-rs/ext-array"]
-ext-math = ["datalogic-rs/ext-math"]
-ext-control = ["datalogic-rs/ext-control"]
-ext-object = ["datalogic-rs/ext-object"]
-error-handling = ["datalogic-rs/error-handling"]
-# Every family above. Not datalogic's `flagd`, which is feature-flag specific
-# and the one family with an extra dependency.
-all-operators = [
-    "datetime",
-    "ext-string",
-    "ext-array",
-    "ext-math",
-    "ext-control",
-    "ext-object",
-    "error-handling",
-]
-# The `Tensor` value and its 20 operators. Deliberately not in `all-operators`:
-# names like `shape`, `full`, `cast` and `concat` are ordinary JSON keys, which
-# a live operator would start evaluating.
+# The `Tensor` value and its 20 operators. Selected at runtime through
+# `ExprEngineBuilder` (`OperatorFamily::Tensor`), and deliberately outside
+# `ExprEngineBuilder::all_operators`: names like `shape`, `full`, `cast` and
+# `concat` are ordinary JSON keys, which a live operator would start evaluating.
 tensor = ["datalogic-rs/tensor", "datavalue/tensor"]
 # The per-evaluation operation ceiling: a config knob, not a family. Costs an
 # add-and-compare per dispatched node whether or not a ceiling is set.
@@ -84,7 +66,20 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 # authored and its issues come out in its order, in every host's build. A
 # host's `serde_json::Map` keeps insertion order with it.
 serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"] }
-datalogic-rs = { version = "5.8.2", features = ["serde_json", "templating"] }
+# The six pure-operator extension families (`ext-string`, `ext-array`,
+# `ext-math`, `ext-control`, `ext-object`, `error-handling`) are compiled in
+# unconditionally and selected per engine at runtime through
+# `ExprEngineBuilder`, which defaults to Core only.
+datalogic-rs = { version = "5.8.2", features = [
+    "serde_json",
+    "templating",
+    "ext-string",
+    "ext-array",
+    "ext-math",
+    "ext-control",
+    "ext-object",
+    "error-handling",
+] }
 datavalue = { package = "datavalue-rs", version = "0.3.2", features = ["serde", "serde_json"] }
 # `Instant` that works on wasm32; `std::time::Instant` natively.
 web-time = "1.1"

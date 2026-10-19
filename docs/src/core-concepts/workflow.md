@@ -13,7 +13,7 @@ Workflows provide:
 
 ## Workflow Structure
 
-```json
+```jsonc
 {
     "id": "premium_order",
     "name": "Premium Order Processing",
@@ -174,7 +174,7 @@ assert_eq!(parsed.issues[0].path.to_string(), "tasks[0].continue_on_error");
 
 Workflows execute in priority order (lowest first). This enables the **THAT** (chaining) in the IF → THEN → THAT model:
 
-```json
+```jsonc
 // Executes first (priority 1): validate input
 {
     "id": "validation",
@@ -206,7 +206,7 @@ the one before it did.
 
 Use JSONLogic conditions to control when workflows run. Conditions evaluate against the **full message context** (`data`, `metadata`, and `temp_data`) and may also read `{"secret": "name"}` from the engine's [secret store](../advanced/secrets.md), which is never part of the message:
 
-```json
+```jsonc
 {
     "id": "premium_user_workflow",
     "condition": {
@@ -225,7 +225,7 @@ evaluate counts as false: the `Run` reports the workflow as
 
 ### Common Condition Patterns
 
-```json
+```jsonc
 // Match on data fields
 {">=": [{"var": "data.order.total"}, 1000]}
 
@@ -249,7 +249,7 @@ evaluate counts as false: the `Run` reports the workflow as
 
 ### Stop the Run (Default)
 
-```json
+```jsonc
 {
     "id": "strict_workflow",
     "on_failure": "fail",
@@ -264,7 +264,7 @@ are not considered, and the failure is recorded in `message.errors()`.
 
 ### Continue to the Next Workflow
 
-```json
+```jsonc
 {
     "id": "resilient_workflow",
     "on_failure": "continue",
@@ -324,7 +324,7 @@ Workflows support lifecycle management with status, versioning, and tagging. All
 
 Control whether a workflow runs with the `status` field:
 
-```json
+```jsonc
 {"id": "my_workflow", "status": "active", "tasks": [...]}
 {"id": "old_workflow", "status": "paused", "tasks": [...]}
 {"id": "legacy_workflow", "status": "archived", "tasks": [...]}
@@ -341,7 +341,7 @@ workflow; `Run::workflows()` never does, since a run never considers it.
 
 Group workflows by channel for message routing:
 
-```json
+```jsonc
 [
     {"id": "order_validation", "channel": "orders", "priority": 1, "tasks": [...]},
     {"id": "order_process", "channel": "orders", "priority": 2, "tasks": [...]},
@@ -371,7 +371,7 @@ channel considers every active workflow, whatever its channel.
 
 Use `version` and `tags` for workflow organization:
 
-```json
+```jsonc
 {
     "id": "discount_workflow",
     "version": 3,
@@ -385,7 +385,7 @@ Use `version` and `tags` for workflow organization:
 Give a workflow a slice of its channel's traffic with a half-open bucket range
 over `0..100`:
 
-```json
+```jsonc
 {
     "id": "checkout_v2",
     "channel": "checkout",

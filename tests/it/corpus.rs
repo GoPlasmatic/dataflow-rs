@@ -22,9 +22,9 @@ use std::path::Path;
 const SKIPPED_BY_DEFAULT: &[&str] = &["expressions/budget", "expressions/families_on"];
 const SKIPPED_WITH_EVERYTHING: &[&str] = &["expressions/families_off"];
 
-/// Whether this build has every family and `budget` on.
+/// Whether this build has `datetime`, `tensor` and `budget` on.
 const EVERYTHING: bool = cfg!(all(
-    feature = "all-operators",
+    feature = "datetime",
     feature = "tensor",
     feature = "budget"
 ));
@@ -32,12 +32,6 @@ const EVERYTHING: bool = cfg!(all(
 /// Whether this build has none on.
 const NOTHING: bool = !cfg!(any(
     feature = "datetime",
-    feature = "ext-string",
-    feature = "ext-array",
-    feature = "ext-math",
-    feature = "ext-control",
-    feature = "ext-object",
-    feature = "error-handling",
     feature = "tensor",
     feature = "budget"
 ));

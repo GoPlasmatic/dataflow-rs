@@ -63,7 +63,7 @@ it is a key; on an array a numeric segment is an index, so `data.list.2`
 writes the third element of `data.list`, padding with `null` as needed, and
 creates `data.list` as an array when it is missing:
 
-```json
+```jsonc
 {"path": "data.list.0", "logic": "zero"},
 {"path": "data.list.2", "logic": "two"}
 ```
@@ -288,7 +288,7 @@ removing the path under `on_null: "unset"`.
 
 Each element added records one `Change`, at its index:
 
-```json
+```jsonc
 {"path": "data.log.0", "old_value": null, "new_value": {"turn": 1}},
 {"path": "data.log.1", "old_value": null, "new_value": {"turn": 2}}
 ```

@@ -7,6 +7,7 @@
 //! against its reference.
 
 use super::random;
+use super::writes::segs_of;
 use crate::expr::{path, rules};
 use crate::state::splice;
 use bumpalo::Bump;
@@ -79,7 +80,7 @@ fn apply<'a>(
             let hops = splice::resolve(view, &segs);
             if let Some(hops) = hops.map(|r| r.hops(&segs)) {
                 let mut by_hops = owned.clone();
-                path::set(&mut by_hops, &splice::segs_of(&hops), value.clone());
+                path::set(&mut by_hops, &segs_of(&hops), value.clone());
                 let mut by_path = owned.clone();
                 path::set(&mut by_path, &segs, value.clone());
                 assert_eq!(

@@ -85,7 +85,7 @@ A list of tasks that run in order. A workflow has:
 - **Condition** - JSONLogic evaluated against the full context (`data`, `metadata`, `temp_data`); absent means the workflow always runs
 - **Failure policy** - `on_failure` says whether a failure that reaches the workflow stops the run (`fail`, the default) or lets the next workflow run (`continue`)
 
-```json
+```jsonc
 {
     "id": "premium_order",
     "name": "Premium Order Processing",
@@ -103,7 +103,7 @@ An individual processing unit within a workflow. A task:
 - Can have a condition for conditional execution
 - Says what its outcome does: `on_failure` for a failure (a `5xx` or an `Err`), `on_rejection` for a rejection (a `4xx`)
 
-```json
+```jsonc
 {
     "id": "apply_discount",
     "name": "Apply Discount",
@@ -209,7 +209,7 @@ Dataflow-rs uses [JSONLogic](https://jsonlogic.com/) for:
 
 Common operations:
 
-```json
+```jsonc
 // Access data
 {"var": "data.name"}
 

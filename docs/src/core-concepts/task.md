@@ -94,7 +94,7 @@ one through `parse`, which is where every structural rule is checked.
 
 The `function` object specifies what the task does:
 
-```json
+```jsonc
 {
     "function": {
         "name": "function_name",
@@ -204,7 +204,7 @@ A task whose condition is false is skipped: no audit entry, no
 
 ### Common Patterns
 
-```json
+```jsonc
 // Only if field exists
 {"!!": {"var": "data.email"}}
 
@@ -237,7 +237,7 @@ A function call ends in one of four `Outcome`s, or an `Err`:
 
 ### Failure
 
-```json
+```jsonc
 {
     "id": "optional_task",
     "on_failure": "continue",
@@ -253,7 +253,7 @@ A function call ends in one of four `Outcome`s, or an `Err`:
 
 ### Rejection
 
-```json
+```jsonc
 {
     "id": "validate_input",
     "on_rejection": "halt",

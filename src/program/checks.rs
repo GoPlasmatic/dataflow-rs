@@ -416,10 +416,11 @@ mod tests {
     }
 
     /// The paths `raw` reads from the root that are rooted at `payload`, as
-    /// the compiled rule's own facts report them: this build's operators, and
-    /// a host's `host_each`.
+    /// the compiled rule's own facts report them: `all_operators`, and a
+    /// host's `host_each`.
     fn payload_reads(raw: &Value) -> Vec<String> {
         let exprs = ExprEngine::builder()
+            .all_operators()
             .operator_with(Operator::custom("host_each").scoping(true), Each)
             .build()
             .unwrap();
@@ -470,7 +471,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "ext-array")]
     #[test]
     fn a_payload_read_in_distincts_key_is_not_a_root_read() {
         assert!(
@@ -483,7 +483,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "error-handling")]
     #[test]
     fn a_payload_read_in_trys_catch_arm_is_not_a_root_read() {
         assert_eq!(
@@ -506,7 +505,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "ext-control")]
     #[test]
     fn a_payload_read_through_exists_is_a_root_read() {
         // `exists` takes segment names, like `val`: `"payload"` or

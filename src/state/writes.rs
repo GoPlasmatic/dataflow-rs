@@ -19,8 +19,6 @@
 //! of names, only when the log keeps a new one. The tests read the marks back
 //! as resolved hops.
 
-#[cfg(test)]
-use super::splice::Hop;
 use crate::expr::Seg;
 use crate::expr::path;
 use crate::expr::path::MAX_PATH_SEGMENTS;
@@ -96,53 +94,6 @@ impl<'a> At<'a> {
             kinds: self.kinds & mask(n),
         }
     }
-
-    /// Segment `i` as the hop the log keys by.
-    #[cfg(test)]
-    pub(crate) fn hop(&self, i: usize) -> Hop {
-        match self.index(i) {
-            Some(j) => Hop::Index(j),
-            None => Hop::Key(self.segs[i].key.clone()),
-        }
-    }
-
-    /// Every segment as a hop.
-    #[cfg(test)]
-    pub(crate) fn to_hops(self) -> Vec<Hop> {
-        (0..self.len()).map(|i| self.hop(i)).collect()
-    }
-}
-
-/// Hops with their segments, for a caller that holds them: tests.
-#[cfg(test)]
-pub(crate) struct OwnedAt {
-    /// The segments, each spelled so it resolves as its hop does.
-    segs: Vec<Seg>,
-    /// Bit `i` set when segment `i` is an index.
-    kinds: u64,
-}
-
-#[cfg(test)]
-impl OwnedAt {
-    /// The borrowed form the log is asked with.
-    pub(crate) fn at(&self) -> At<'_> {
-        At::new(&self.segs, self.kinds)
-    }
-}
-
-#[cfg(test)]
-impl From<&[Hop]> for OwnedAt {
-    fn from(hops: &[Hop]) -> Self {
-        let kinds = hops
-            .iter()
-            .enumerate()
-            .filter(|(_, h)| matches!(h, Hop::Index(_)))
-            .fold(0u64, |k, (i, _)| k | 1 << i);
-        Self {
-            segs: hops.iter().map(Hop::to_seg).collect(),
-            kinds,
-        }
-    }
 }
 
 /// What a write leaves at its path until the next checkpoint.
@@ -176,33 +127,12 @@ pub(crate) enum Lookup<'l> {
     Owned(Option<&'l OwnedDataValue>),
 }
 
-/// One topmost marked path and what the checkpoint must do there.
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Dirty {
-    /// Where the mark sits.
-    pub(crate) at: Vec<Hop>,
-    /// What happened there.
-    pub(crate) mark: Mark,
-}
-
-/// Everything the checkpoint applies: the marks, in the order their paths
-/// were first marked, then the objects whose key order must follow the view.
-#[cfg(test)]
-#[derive(Debug, Default, PartialEq)]
-pub(crate) struct Drained {
-    /// The topmost marks.
-    pub(crate) dirty: Vec<Dirty>,
-    /// The objects whose key order must follow the view.
-    pub(crate) reorder: Vec<Vec<Hop>>,
-}
-
 /// A write at segment `i` on of `at`, below an ancestor already marked
 /// `above`. A marked node never has marked descendants, so the ancestor
 /// accounts for the write, changing its own mark when it must. An owned
 /// ancestor mirrors the view, so the write's own segments apply to it as they
 /// did to the view.
-fn absorb(above: &mut Mark, at: At<'_>, i: usize, new: Mark) {
+pub(super) fn absorb(above: &mut Mark, at: At<'_>, i: usize, new: Mark) {
     match above {
         // An owned ancestor takes an owned write into its value. Without an
         // owned value to apply, it reads the whole subtree from the view.
@@ -243,7 +173,7 @@ fn absorb(above: &mut Mark, at: At<'_>, i: usize, new: Mark) {
 
 /// The mark at a node that had `old` and receives `new`, given whether the
 /// node has marked descendants (which a set or removal drops).
-fn combine(old: Option<Mark>, new: Mark, has_children: bool) -> Mark {
+pub(super) fn combine(old: Option<Mark>, new: Mark, has_children: bool) -> Mark {
     match (old, new) {
         (_, new @ (Mark::Set(_) | Mark::Removed)) => new,
         (Some(Mark::Appended { from, owned: a }), Mark::Appended { owned: b, .. }) => {
@@ -274,7 +204,7 @@ fn combine(old: Option<Mark>, new: Mark, has_children: bool) -> Mark {
 }
 
 /// What a read of `rest` under a mark finds.
-fn read_under<'l>(mark: &'l Mark, rest: &[Seg]) -> Lookup<'l> {
+pub(super) fn read_under<'l>(mark: &'l Mark, rest: &[Seg]) -> Lookup<'l> {
     match mark {
         Mark::Set(Some(v)) => Lookup::Owned(path::get(v, rest)),
         Mark::Removed => Lookup::Owned(None),
@@ -285,7 +215,7 @@ fn read_under<'l>(mark: &'l Mark, rest: &[Seg]) -> Lookup<'l> {
 /// Whether `new`, at the last segment of `at`, removes an array element:
 /// that shifts the elements after it, so no path names what changed, and
 /// the array itself is rewritten.
-fn removes_an_element(at: At<'_>, new: &Mark) -> bool {
+pub(super) fn removes_an_element(at: At<'_>, new: &Mark) -> bool {
     matches!(new, Mark::Removed) && at.is_index(at.len() - 1)
 }
 
@@ -382,11 +312,11 @@ fn key_order(v: Option<DataValue<'_>>) -> Vec<Box<str>> {
 // ---------------------------------------------------------------------------
 
 /// No node: the end of a child list.
-const NONE: u32 = u32::MAX;
+pub(super) const NONE: u32 = u32::MAX;
 
 /// A node's key: a name in the trie's buffer, an index, or the root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Key {
+pub(super) enum Key {
     /// The trie's root, which has no key.
     Root,
     /// An object key: `len` bytes of the trie's name buffer from `start`.
@@ -404,27 +334,27 @@ enum Key {
 
 /// A node of the trie: a key, its mark and reorder flag, and its children.
 #[derive(Debug)]
-struct Node {
+pub(super) struct Node {
     /// This node's key under its parent.
-    key: Key,
+    pub(super) key: Key,
     /// What a write left here, if anything.
-    mark: Option<Mark>,
+    pub(super) mark: Option<Mark>,
     /// Whether a key of this object was removed.
-    reorder: bool,
+    pub(super) reorder: bool,
     /// The view's key order, taken by `settle` for a reorder.
     order: Vec<Box<str>>,
     /// Children as a list in insertion order, which is the order new keys
     /// reach the owned tree: first, last, and each child's next sibling.
-    first: u32,
+    pub(super) first: u32,
     /// The last child.
-    last: u32,
+    pub(super) last: u32,
     /// The next sibling.
-    next: u32,
+    pub(super) next: u32,
 }
 
 impl Node {
     /// A node with no mark and no children.
-    fn new(key: Key) -> Self {
+    pub(super) fn new(key: Key) -> Self {
         Self {
             key,
             mark: None,
@@ -447,7 +377,7 @@ impl Node {
 #[derive(Debug)]
 pub(crate) struct Writes {
     /// Every node, the root first.
-    nodes: Vec<Node>,
+    pub(super) nodes: Vec<Node>,
     /// Every name, one after another.
     names: String,
 }
@@ -462,7 +392,7 @@ const WRITES_NAMES_CAP: usize = 64 << 10;
 
 thread_local! {
     /// Storage of logs that were dropped, reused by the next.
-    static WRITES_POOL: std::cell::RefCell<Vec<(Vec<Node>, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+    pub(super) static WRITES_POOL: std::cell::RefCell<Vec<(Vec<Node>, String)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 impl Default for Writes {
@@ -496,28 +426,16 @@ impl Drop for Writes {
     }
 }
 
-/// The capacities, nodes and name bytes, of the storage this thread's pool
-/// holds: for the test of what is pooled.
-#[cfg(test)]
-pub(super) fn pooled() -> Vec<(usize, usize)> {
-    WRITES_POOL.with(|p| {
-        p.borrow()
-            .iter()
-            .map(|(nodes, names)| (nodes.capacity(), names.capacity()))
-            .collect()
-    })
-}
-
 impl Writes {
     /// Empties the log, keeping its storage.
-    fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.nodes.clear();
         self.nodes.push(Node::new(Key::Root));
         self.names.clear();
     }
 
     /// The key text stored at `start..start + len`.
-    fn name(&self, start: u32, len: u32) -> &str {
+    pub(super) fn name(&self, start: u32, len: u32) -> &str {
         &self.names[start as usize..(start + len) as usize]
     }
 
@@ -594,35 +512,6 @@ impl Writes {
         node.first = NONE;
         node.last = NONE;
     }
-
-    /// Every topmost mark under `n`, with its path built: for `visit`.
-    #[cfg(test)]
-    fn each(&self, n: u32, at: &mut Vec<Hop>, f: &mut dyn FnMut(&[Hop], &Node)) {
-        let node = &self.nodes[n as usize];
-        if node.mark.is_some() || node.reorder {
-            f(at, node);
-            if node.mark.is_some() {
-                return;
-            }
-        }
-        let mut c = node.first;
-        while c != NONE {
-            at.push(self.hop(self.nodes[c as usize].key));
-            self.each(c, at, f);
-            at.pop();
-            c = self.nodes[c as usize].next;
-        }
-    }
-
-    /// The hop a node's key names.
-    #[cfg(test)]
-    fn hop(&self, key: Key) -> Hop {
-        match key {
-            Key::Name { start, len, .. } => Hop::Key(self.name(start, len).into()),
-            Key::Index(i) => Hop::Index(i),
-            Key::Root => unreachable!("the root has no key"),
-        }
-    }
 }
 
 impl Writes {
@@ -670,17 +559,6 @@ impl Writes {
         }
     }
 
-    /// Every topmost mark, without draining: what the tests read the log's
-    /// marks through.
-    #[cfg(test)]
-    pub(crate) fn visit(&self, f: &mut dyn FnMut(&[Hop], &Mark)) {
-        self.each(0, &mut Vec::new(), &mut |at, node| {
-            if let Some(mark) = &node.mark {
-                f(at, mark);
-            }
-        });
-    }
-
     /// What a read of `at` finds: the owned tree is current, only the view
     /// knows, or the log holds the answer.
     pub(crate) fn lookup(&self, at: At<'_>) -> Lookup<'_> {
@@ -702,34 +580,6 @@ impl Writes {
         }
     }
 
-    /// The topmost marks and the reorders, leaving the log empty: what the
-    /// tests read the log's marks through.
-    #[cfg(test)]
-    pub(crate) fn drain(&mut self) -> Drained {
-        fn walk(log: &mut Writes, n: u32, at: &mut Vec<Hop>, out: &mut Drained) {
-            if let Some(mark) = log.nodes[n as usize].mark.take() {
-                return out.dirty.push(Dirty {
-                    at: at.clone(),
-                    mark,
-                });
-            }
-            if log.nodes[n as usize].reorder {
-                out.reorder.push(at.clone());
-            }
-            let mut c = log.nodes[n as usize].first;
-            while c != NONE {
-                at.push(log.hop(log.nodes[c as usize].key));
-                walk(log, c, at, out);
-                at.pop();
-                c = log.nodes[c as usize].next;
-            }
-        }
-        let mut out = Drained::default();
-        walk(self, 0, &mut Vec::new(), &mut out);
-        self.reset();
-        out
-    }
-
     /// Whether nothing is marked and no reorder is flagged.
     pub(crate) fn is_empty(&self) -> bool {
         let root = &self.nodes[0];
@@ -746,8 +596,6 @@ impl Writes {
     /// already holds its owned value, or a removal, takes nothing from it,
     /// and that is most marks under capture.
     pub(crate) fn settle(&mut self, root: DataValue<'_>) -> u32 {
-        #[cfg(test)]
-        fault::trip("settle");
         /// Whether settling `node` reads the view at it.
         fn reads_view(node: &Node) -> bool {
             match &node.mark {
@@ -784,8 +632,6 @@ impl Writes {
     /// The checkpoint's second phase: apply every mark to `owned`, then the
     /// reorders, leaving the log empty. Only after [`Self::settle`].
     pub(crate) fn apply(&mut self, owned: &mut OwnedDataValue) {
-        #[cfg(test)]
-        fault::trip("apply");
         fn walk(nodes: &mut [Node], names: &str, n: u32, here: &mut OwnedDataValue) {
             let mut c = nodes[n as usize].first;
             while c != NONE {
@@ -807,165 +653,5 @@ impl Writes {
         let Self { nodes, names } = self;
         walk(nodes, names, 0, owned);
         self.reset();
-    }
-}
-
-/// The measured alternative to [`Writes`], kept for the tests only: a flat
-/// list of disjoint marks, scanned on every call. `the_trie_and_the_list_agree_on_random_marks`
-/// holds the trie to it.
-#[cfg(test)]
-pub(super) mod list {
-    use super::{
-        At, Dirty, Drained, Hop, Lookup, Mark, absorb, combine, read_under, removes_an_element,
-    };
-
-    impl At<'_> {
-        /// Whether segment `i` is `hop`.
-        fn matches(&self, i: usize, hop: &Hop) -> bool {
-            match hop {
-                Hop::Index(j) => self.index(i) == Some(*j),
-                Hop::Key(k) => !self.is_index(i) && *self.segs()[i].key == **k,
-            }
-        }
-
-        /// Whether `hops` is this path or a prefix of it.
-        fn under(&self, hops: &[Hop]) -> bool {
-            hops.len() <= self.len() && hops.iter().enumerate().all(|(i, h)| self.matches(i, h))
-        }
-
-        /// Whether this path is a strict prefix of `hops`.
-        fn above(&self, hops: &[Hop]) -> bool {
-            hops.len() > self.len() && (0..self.len()).all(|i| self.matches(i, &hops[i]))
-        }
-    }
-
-    /// The write log as a flat list of disjoint marks, scanned on every call:
-    /// the measured alternative to [`Writes`].
-    #[derive(Default, Debug)]
-    pub(in crate::state) struct List {
-        entries: Vec<(Vec<Hop>, Mark)>,
-        reorder: Vec<Vec<Hop>>,
-    }
-
-    impl List {
-        /// Marks `at` as `Writes::mark` does, by scanning the list.
-        pub(in crate::state) fn mark(&mut self, at: At<'_>, new: Mark) {
-            debug_assert!(!at.is_empty(), "a write has a path");
-            // A strict ancestor absorbs the write.
-            if let Some((path, above)) = self
-                .entries
-                .iter_mut()
-                .find(|(p, _)| p.len() < at.len() && at.under(p))
-            {
-                let depth = path.len();
-                return absorb(above, at, depth, new);
-            }
-            // An array element's removal rewrites the array (as `Writes::mark`).
-            if removes_an_element(at, &new) {
-                return self.mark(at.prefix(at.len() - 1), Mark::Set(None));
-            }
-            // A reorder flag below counts as a child, as a trie node it creates
-            // does; one at the path itself is cleared by any mark.
-            let has_children = self.entries.iter().any(|(p, _)| at.above(p))
-                || self.reorder.iter().any(|p| at.above(p));
-            self.reorder
-                .retain(|p| !(p.len() == at.len() && at.under(p)));
-            // Combined in place, so a path keeps the position it was first
-            // marked at, as the trie's child order does.
-            let place = self
-                .entries
-                .iter()
-                .position(|(p, _)| p.len() == at.len() && at.under(p));
-            let old = place.map(|i| std::mem::replace(&mut self.entries[i].1, Mark::Removed));
-            let mark = combine(old, new, has_children);
-            if !matches!(mark, Mark::Appended { .. }) || has_children {
-                self.entries.retain(|(p, _)| !at.above(p));
-                self.reorder.retain(|p| !at.above(p));
-            }
-            match self
-                .entries
-                .iter()
-                .position(|(p, _)| p.len() == at.len() && at.under(p))
-            {
-                Some(i) => self.entries[i].1 = mark,
-                None => self.entries.push((at.to_hops(), mark)),
-            }
-        }
-
-        /// Flags the object at `at` for a reorder.
-        pub(in crate::state) fn reorder(&mut self, at: At<'_>) {
-            let covered = self.entries.iter().any(|(p, _)| at.under(p));
-            if !covered
-                && !self
-                    .reorder
-                    .iter()
-                    .any(|p| p.len() == at.len() && at.under(p))
-            {
-                self.reorder.push(at.to_hops());
-            }
-        }
-
-        /// Every mark.
-        pub(in crate::state) fn visit(&self, f: &mut dyn FnMut(&[Hop], &Mark)) {
-            for (at, mark) in &self.entries {
-                f(at, mark);
-            }
-        }
-
-        /// What a read of `at` finds.
-        pub(in crate::state) fn lookup(&self, at: At<'_>) -> Lookup<'_> {
-            if let Some((path, mark)) = self.entries.iter().find(|(p, _)| at.under(p)) {
-                return read_under(mark, &at.segs()[path.len()..]);
-            }
-            let below =
-                |p: &Vec<Hop>| p.len() >= at.len() && (0..at.len()).all(|i| at.matches(i, &p[i]));
-            if self.entries.iter().any(|(p, _)| below(p)) || self.reorder.iter().any(below) {
-                Lookup::Dirty
-            } else {
-                Lookup::Clean
-            }
-        }
-
-        /// The marks and reorders, leaving the list empty.
-        pub(in crate::state) fn drain(&mut self) -> Drained {
-            Drained {
-                dirty: self
-                    .entries
-                    .drain(..)
-                    .map(|(at, mark)| Dirty { at, mark })
-                    .collect(),
-                reorder: std::mem::take(&mut self.reorder),
-            }
-        }
-
-        /// Whether nothing is marked and no reorder is flagged.
-        pub(in crate::state) fn is_empty(&self) -> bool {
-            self.entries.is_empty() && self.reorder.is_empty()
-        }
-    }
-}
-
-/// A panic on demand inside `settle` or `apply`, for the test that holds
-/// that a panicking checkpoint never loses the message's context.
-#[cfg(test)]
-pub(super) mod fault {
-    use std::cell::Cell;
-
-    thread_local! {
-        /// The phase to panic in, once.
-        static ARMED: Cell<Option<&'static str>> = const { Cell::new(None) };
-    }
-
-    /// Panics in `phase` the next time it runs on this thread.
-    pub(in crate::state) fn arm(phase: &'static str) {
-        ARMED.set(Some(phase));
-    }
-
-    /// Panics if `phase` is armed, disarming it.
-    pub(super) fn trip(phase: &'static str) {
-        if ARMED.get() == Some(phase) {
-            ARMED.set(None);
-            panic!("injected fault in {phase}");
-        }
     }
 }

@@ -5,10 +5,7 @@
 | ID | Tag | Severity | Effort | Summary |
 |---|---|---|---|---|
 | [Orion follow-ups](#orion-follow-ups) | must | — | — | Required in Orion's `dataflow-4` when its pin moves past the batch. |
-| [DEP-3](#dep-3) | should | Medium | M | Select operator families at runtime through `ExprEngineBuilder`. |
 | [DEP-2](#dep-2) | should | Medium | M | Upstream float preservation in `datavalue-rs` and remove `ExactValue`. |
-| [TST-10](#tst-10) | should | Medium-Low | M | Move `writes.rs` test helpers and fault hooks out of production paths. |
-| [DOC-3](#doc-3) | should | Low | S | Tag elided `json` fences as `jsonc`/`text` and validate `json` fences. |
 
 ---
 
@@ -25,49 +22,9 @@
 - **Remediation:** add a `preserve_float` mode upstream, then delete
   `ExactValue`.
 
-<a id="dep-3"></a>
-### DEP-3 · Operator families as cargo features multiply the build matrix
-**Severity:** Medium · **Tag:** should · **Effort:** M
-
-- **Where:** `Cargo.toml:34-62`; `src/expr/operators.rs:66-83` (`FAMILIES`, built by `#[cfg(feature)]`); `.github/workflows/ci.yml` (`families` matrix at `:154-194`).
-- **Reasoning:**
-  - 12 CI configurations (2 in `check` plus 10 `families` matrix legs).
-  - Feature unification lets another crate change a host's operator set.
-  - The engine already calls datalogic's `with_families(...)`
-    (`engine.rs:343`, `operators.rs:185`), but only with the cfg-built
-    const, so the runtime switch exists and goes unused.
-- **Remediation:** compile the families in and select them at runtime through
-  `ExprEngineBuilder`, defaulting to Core only. First verify that leaving
-  `datetime` out at runtime also reverts its string comparison on `==`, which
-  is pinned by `datetime_feature_changes_plain_string_comparison`. Keep
-  `tensor` and `budget` as features.
-
 ---
 
-## 2. Test-suite & documentation debt
-
-<a id="tst-10"></a>
-### TST-10 · Test scaffolding and fault hooks woven into production modules
-**Severity:** Medium-Low · **Tag:** should · **Effort:** M
-
-- **Where:** `src/run/interp.rs:684-685` (`#[cfg(test)] let result = record::failing_after_its_writes(result);` on the built-in call path; another `cfg(test)` at `:431`); `record.rs:83-84` (`CLOCK_READS`); seventeen `#[cfg(test)]` items interleaved in `src/state/writes.rs` (971 lines: `list`, `fault`, `OwnedAt`, `Dirty`…), plus `splice.rs:409-455`.
-- **Reasoning:**
-  - Lib unit tests run a slightly different interpreter from the shipped one.
-  - About 30% of `writes.rs` is test scaffolding, which hides the trie's real size (≈700 lines).
-  - The fault hook simulates a built-in that writes and then fails.
-- **Remediation:** move scaffolding into `src/**/tests/`. Inject faults with
-  a crate-private test built-in rather than a `cfg(test)` branch in `interp`.
-
-<a id="doc-3"></a>
-### DOC-3 · Elided JSON fences in docs use `json` instead of `jsonc` or `text`
-**Severity:** Low · **Tag:** should · **Effort:** S
-
-- **Where:** 49 of 153 `json` fences in `docs/src` and `README.md` use `...` elisions or `//` comments (`tests/it/repository_definitions.rs:657-684`).
-- **Remediation:** tag elided blocks `jsonc` or `text`, assert that every `json` fence parses as valid JSON, and wrap task-level fragments in a synthetic workflow.
-
----
-
-## 3. Performance candidates (gated on `bench/gate.py compare`)
+## 2. Performance candidates (gated on `bench/gate.py compare`)
 
 Run `bench/gate.py compare` with A/B interleaving before acting on any item below.
 

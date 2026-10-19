@@ -129,9 +129,9 @@ jobs:
       # Everything above is --all-features. These two steps are bare, with no
       # `--workspace` and no `-p`, on purpose: they compile the root the way
       # `cargo add dataflow-rs` delivers it. `--workspace` cannot: `wasm/`
-      # depends on the root with `wasm-web` and `all-operators`, and cargo
-      # unifies features across the members one invocation selects, so under
-      # `--workspace` the root itself has every operator family on.
+      # depends on the root with `wasm-web` and `datetime`, and cargo unifies
+      # features across the members one invocation selects, so under
+      # `--workspace` the root itself has `datetime` on.
       - name: Run clippy (default features)
         run: cargo clippy --all-targets --locked -- -D warnings
 
@@ -157,7 +157,7 @@ jobs:
       # The README's and the book's Rust examples, in a default build. A single
       # `-p` builds the root with its default features, so they hold for a
       # user who ran `cargo add dataflow-rs`, which `--workspace` cannot show:
-      # there the root has every family on.
+      # there the root has `datetime` on.
       - name: Run the README's and the book's doctests (default features)
         run: cargo test -p dataflow-docs-tests --locked
 
@@ -170,12 +170,12 @@ jobs:
         run: mdbook build docs
 
   # `--all-features` and the default build are the two endpoints; neither
-  # catches a family that only compiles when another one is also on. Each
-  # family runs in its own matrix leg (`fail-fast: false`), building only the
+  # catches a cargo feature that only compiles when another one is also on.
+  # Each runs in its own matrix leg (`fail-fast: false`), building only the
   # library and test targets (`--lib --tests`) so examples and doctests are not
-  # rebuilt ten times.
+  # rebuilt three times.
   families:
-    name: Family (${{ matrix.family }})
+    name: Feature (${{ matrix.family }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -183,13 +183,6 @@ jobs:
       matrix:
         family:
           - datetime
-          - ext-string
-          - ext-array
-          - ext-math
-          - ext-control
-          - ext-object
-          - error-handling
-          - all-operators
           - tensor
           - budget
     steps:
@@ -293,10 +286,10 @@ jobs:
           # No `--all-targets` for the root: its dev-dependency `tokio` has
           # `full`, which tokio refuses on wasm targets, so its tests and
           # examples do not build for wasm32 and only the library is linted.
-          # `wasm-web` is the platform switch; `all-operators` adds datetime.
+          # `wasm-web` is the platform switch; `datetime` adds the wasm clock.
           cargo clippy --target wasm32-unknown-unknown --features wasm-web --locked -- -D warnings
           cargo clippy --target wasm32-unknown-unknown \
-            --features wasm-web,all-operators --locked -- -D warnings
+            --features wasm-web,datetime --locked -- -D warnings
 
       # `--node` needs no browser driver; tests/web.rs is not browser-gated.
       - name: Run wasm tests

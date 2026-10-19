@@ -408,14 +408,13 @@ None is on by default.
 
 | Feature | What it turns on |
 |---|---|
-| `datetime`, `ext-string`, `ext-array`, `ext-math`, `ext-control`, `ext-object`, `error-handling` | The seven `datalogic-rs` operator families. Not a no-op: an operator whose family is off is literal data, so `{"length": ...}` starts evaluating once `ext-string` is on, and `{"$length": ...}` pins the literal. `datetime` also changes `==` and the ordering operators on date-shaped strings |
-| `all-operators` | The seven families |
-| `tensor` | The `Tensor` value and its operators. Not in `all-operators`: `shape`, `full`, `cast` and `concat` are ordinary JSON keys |
+| `datetime` | Compiles in `OperatorFamily::Datetime` (selected at runtime on `ExprEngineBuilder`) and changes `==` and the ordering operators on plain date-shaped strings |
+| `tensor` | The `Tensor` value and `OperatorFamily::Tensor` (selected at runtime on `ExprEngineBuilder`). Not in `ExprEngineBuilder::all_operators`: `shape`, `full`, `cast` and `concat` are ordinary JSON keys |
 | `budget` | A ceiling on one evaluation's operations, set by `ExprEngineBuilder::ops_budget` |
 | `wasm-web` | The browser's clock and randomness, for `wasm32-unknown-unknown` |
 | `ts` | Derives `ts_rs::TS` on the wire shapes, from which `bindings/dataflow.d.ts` is rendered. Outside semver |
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "4.0", features = ["all-operators"] }
+dataflow-rs = { version = "4.0", features = ["datetime", "budget"] }
 ```

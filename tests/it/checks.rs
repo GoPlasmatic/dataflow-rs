@@ -8,7 +8,7 @@
 
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::def::{ParseOptions, WorkflowDef, parse};
-use dataflow_rs::expr::{ExprEngine, Output, Secrets};
+use dataflow_rs::expr::{ExprEngine, OperatorFamily, Output, Secrets};
 use dataflow_rs::function::{
     FieldKind, FieldSpec, FunctionConfig, FunctionSpec, Templated, ValueKind,
 };
@@ -805,17 +805,29 @@ fn a_payload_read_through_missing_is_a_defect() {
     }
 }
 
-#[cfg(feature = "ext-control")]
 #[test]
 fn a_payload_read_through_exists_is_a_defect() {
+    let compiler = Registry::new(
+        ExprEngine::builder()
+            .family(OperatorFamily::ExtControl)
+            .build()
+            .unwrap(),
+    )
+    .compiler(CompileOptions::default());
     for read in [
         json!({"exists": "payload"}),
         json!({"exists": ["payload", "x"]}),
     ] {
         let e = json!({"cat": [read, "x"]});
         let json = wf(json!([map("t", e)]));
+        let issues = compiler.check(&def(&json));
+        let rows: Vec<Row> = issues
+            .into_iter()
+            .filter(|i| i.code == C::PayloadVar)
+            .map(|i| row(i.code, i.severity, &i.path.to_string()))
+            .collect();
         assert_eq!(
-            rows_of(&json, &[C::PayloadVar]),
+            rows,
             [row(
                 C::PayloadVar,
                 Severity::Defect,
@@ -827,7 +839,12 @@ fn a_payload_read_through_exists_is_a_defect() {
     // Like `val`, a single string is one key name, not a dotted path.
     let e = json!({"cat": [{"exists": "payload.x"}, "x"]});
     let json = wf(json!([map("t", e)]));
-    assert_eq!(issues_of(&json, &[C::PayloadVar]), []);
+    assert!(
+        !compiler
+            .check(&def(&json))
+            .iter()
+            .any(|i| i.code == C::PayloadVar)
+    );
 }
 
 #[test]

@@ -37,12 +37,13 @@ wasm-opt = [
 [dependencies]
 # The root crate, v4, at the root's version: phase 8 bumps the two together.
 # `wasm-web` is the browser's clock and randomness, which wasm32-unknown-unknown
-# needs. `all-operators` on the dependency line, not via `--features` at release
+# needs. `datetime` on the dependency line, not via `--features` at release
 # time, so `wasm-pack test` and any from-source build get the same operator set
-# the published npm artifact has; JS consumers have no cargo-feature knob.
-# `tensor` stays off: its operator names (`shape`, `cast`, `concat`) are
-# ordinary JSON keys in workflows that already ship.
-dataflow-rs = { workspace = true, features = ["wasm-web", "all-operators"] }
+# the published npm artifact has; `WasmEngine` turns every standard family on
+# through `ExprEngineBuilder::all_operators`. `tensor` stays off: its operator
+# names (`shape`, `cast`, `concat`) are ordinary JSON keys in workflows that
+# already ship.
+dataflow-rs = { workspace = true, features = ["wasm-web", "datetime"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

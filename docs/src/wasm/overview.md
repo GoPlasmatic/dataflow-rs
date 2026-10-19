@@ -413,17 +413,18 @@ rewritten form.
 
 ## Operator availability
 
-This package is built with `all-operators`, so every optional operator family
-(`ext-string`, `ext-array`, `ext-object`, `ext-math`, `ext-control`,
-`error-handling` and `datetime`) is live in the browser. `tensor` is not
-included: its operator names (`shape`, `cast`, `concat`) are ordinary JSON
-keys in workflows that already ship.
+This package is built with `datetime` and `ExprEngineBuilder::all_operators`,
+so every optional operator family (`ExtString`, `ExtArray`, `ExtObject`,
+`ExtMath`, `ExtControl`, `ErrorHandling` and `Datetime`) is live in the browser.
+`Tensor` is not included: its operator names (`shape`, `cast`, `concat`) are
+ordinary JSON keys in workflows that already ship.
 
-A default `cargo add dataflow-rs` build enables **none** of them. Because the
+A default `ExprEngine::default()` in Rust enables **none** of them. Because the
 engine evaluates in templating mode, an operator whose family is off is not an
 error: it passes through as literal data. An expression using `length` or
-`switch` therefore works in the browser and is silently inert in a default Rust
-build. See [JSONLogic](../advanced/jsonlogic.md#operator-families-cargo-features).
+`switch` therefore works in the browser and is silently inert on a default Rust
+`ExprEngine` unless its family is enabled on `ExprEngineBuilder`. See
+[JSONLogic](../advanced/jsonlogic.md#operator-families).
 
 ## Building from Source
 

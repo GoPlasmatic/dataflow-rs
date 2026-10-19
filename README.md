@@ -82,16 +82,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1.0"
 ```
 
-JSONLogic's extended operator families are opt-in; the default build ships core
-JSONLogic only. Add the families your rules use:
-
-```toml
-[dependencies]
-dataflow-rs = { version = "4.0", features = ["ext-string", "ext-control"] }
-```
-
+JSONLogic's extended operator families are opt-in at runtime on
+`ExprEngineBuilder`; `ExprEngine::default()` enables core JSONLogic only.
 Read [JSONLogic → Operator Families](docs/src/advanced/jsonlogic.md)
-first: enabling a family can change how an existing rule behaves.
+before enabling a family: turning one on can change how an existing rule behaves.
 
 ### 2. Define Rules in JSON
 
@@ -591,7 +585,7 @@ started on one.
 
 Workflows support lifecycle management fields:
 
-```json
+```jsonc
 {
     "id": "my_rule",
     "channel": "orders",
@@ -623,7 +617,7 @@ All fields are optional. A key the engine does not know is kept in the node's
 Give a workflow a slice of its channel's traffic with a half-open bucket range
 over `0..100`, so a new version can roll out gradually alongside the old one:
 
-```json
+```jsonc
 {
     "id": "checkout_v2",
     "channel": "checkout",
