@@ -284,6 +284,51 @@ fn try_register_registers_what_register_does() {
     );
 }
 
+#[test]
+fn duplicate_runtime_fields_are_refused_without_replacing_a_registered_function() {
+    let mut registry = Registry::default();
+    registry.register("plugin", Plugin);
+    let spec = FunctionSpec::default().with_runtime_fields(vec![
+        FieldSpec::runtime("value", FieldKind::Expr(ValueKind::Any), false),
+        FieldSpec::runtime("value", FieldKind::Literal(ValueKind::String), false),
+    ]);
+    let error = registry
+        .try_register("plugin", specced::<Templated>(spec))
+        .unwrap_err();
+    assert_eq!(
+        error.message(),
+        "cannot register `plugin`: its field `value` is declared twice"
+    );
+    let plugin = registry
+        .catalogue()
+        .find(|row| row.name == "plugin")
+        .unwrap();
+    assert_eq!(field_names(plugin.fields), ["record", "out"]);
+}
+
+#[test]
+fn runtime_field_kinds_that_templated_cannot_compile_are_refused_at_registration() {
+    for kind in [
+        FieldKind::Templated,
+        FieldKind::Nested(|| &[]),
+        FieldKind::List(|| FieldKind::Literal(ValueKind::Any)),
+        FieldKind::Map(|| FieldKind::Literal(ValueKind::Any)),
+    ] {
+        let spec = FunctionSpec::default()
+            .with_runtime_fields(vec![FieldSpec::runtime("value", kind, false)]);
+        let mut registry = Registry::default();
+        let error = registry
+            .try_register("plugin", specced::<Templated>(spec))
+            .unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("runtime field `value` has an unsupported kind")
+        );
+        assert!(registry.catalogue().all(|row| row.name != "plugin"));
+    }
+}
+
 /// Runtime fields holding the outputs `names`, those in `primary` marked
 /// primary.
 fn outputs(names: &[&'static str], primary: &[&str]) -> FunctionSpec {

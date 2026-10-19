@@ -487,7 +487,6 @@ impl<'w> Walk<'w> {
         let row = next(self.conds.len());
         self.conds.push(CondSite {
             expr,
-            path: at,
             step: step.map(|(_, id)| id.to_owned()),
         });
         Some(row)
@@ -542,7 +541,11 @@ impl<'w> Walk<'w> {
     /// A fragment's steps at `root`, as a workflow's would be walked: lowered
     /// with every failure to the end, and with no workflow condition or loop.
     fn fragment(&mut self, steps: &[StepDef], root: &AuthoredPath) {
-        self.steps(steps, root, def::fragment_place(root).0);
+        self.steps(
+            steps,
+            root,
+            def::fragment_place(root).is_some_and(|(setup, _)| setup),
+        );
     }
 
     /// The steps of the list at `at`, pre-order: each group before its
@@ -1024,31 +1027,19 @@ mod tests {
             Callee::Builtin(Builtin::Map(_))
         ));
 
-        // Every condition, with its path and its step.
+        // Every condition, with its step and authored expression.
         let conds: Vec<_> = w
             .conds
             .iter()
-            .map(|c| (c.path.to_string(), c.step.as_deref(), c.expr.raw().clone()))
+            .map(|c| (c.step.as_deref(), c.expr.raw().clone()))
             .collect();
         assert_eq!(
             conds,
             [
-                ("condition".to_owned(), None, json!({"var": "metadata.go"})),
-                (
-                    "loop.setup[0].condition".to_owned(),
-                    Some("s"),
-                    json!({"var": "data.s"})
-                ),
-                (
-                    "tasks[0].condition".to_owned(),
-                    Some("g"),
-                    json!({"var": "data.g"})
-                ),
-                (
-                    "tasks[0].tasks[0].condition".to_owned(),
-                    Some("f"),
-                    json!({"var": "data.f"})
-                ),
+                (None, json!({"var": "metadata.go"})),
+                (Some("s"), json!({"var": "data.s"})),
+                (Some("g"), json!({"var": "data.g"})),
+                (Some("f"), json!({"var": "data.f"})),
             ]
         );
 

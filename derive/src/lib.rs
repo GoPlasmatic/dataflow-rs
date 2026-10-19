@@ -402,21 +402,7 @@ fn json_text(lit: &LitStr) -> Result<String> {
 
 /// `s` as a JSON string literal.
 fn json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if u32::from(c) < 0x20 => out.push_str(&format!("\\u{:04x}", u32::from(c))),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+    serde_json::to_string(s).expect("a string always serializes as JSON")
 }
 
 fn option<T: quote::ToTokens>(value: Option<T>) -> TokenStream2 {

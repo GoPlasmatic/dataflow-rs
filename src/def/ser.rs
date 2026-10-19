@@ -14,8 +14,18 @@ use super::types::{
     FailurePolicy, ForEachDef, FunctionRef, GroupDef, Logic, LoopDef, NodeHeader, RejectionPolicy,
     Status, StepDef, TaskDef, WorkflowDef, WorkflowFailurePolicy, defaults,
 };
+use chrono::{DateTime, Utc};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::convert::Infallible;
+
+/// Formats a timestamp as RFC 3339 only in the write pass, not in [`Count`].
+struct Rfc3339<'a>(&'a DateTime<Utc>);
+
+impl Serialize for Rfc3339<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0.to_rfc3339())
+    }
+}
 
 /// Where a node's present fields go. Each node lists them once, and that list
 /// is run twice: counted, then written, so the map's length is exact for a
@@ -122,10 +132,10 @@ impl Node for WorkflowDef {
         out.opt("loop", self.r#loop.as_ref())?;
         out.field_if(!self.tags.is_empty(), "tags", &self.tags)?;
         if let Some(at) = &self.created_at {
-            out.field("created_at", &at.to_rfc3339())?;
+            out.field("created_at", &Rfc3339(at))?;
         }
         if let Some(at) = &self.updated_at {
-            out.field("updated_at", &at.to_rfc3339())?;
+            out.field("updated_at", &Rfc3339(at))?;
         }
         ext(&self.header, out)
     }

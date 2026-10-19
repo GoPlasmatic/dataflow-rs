@@ -18,8 +18,8 @@ export default defineConfig(({ command }) => ({
     fs: {
       // Allow serving files from parent directories (for local linked packages)
       allow: [
-        path.resolve(__dirname, '..'),  // dataflow-rs root
-        path.resolve(__dirname, '../../datalogic-rs'),  // datalogic-rs for @goplasmatic/datalogic-ui
+        path.resolve(import.meta.dirname, '..'),  // dataflow-rs root
+        path.resolve(import.meta.dirname, '../../datalogic-rs'),  // datalogic-rs for @goplasmatic/datalogic-ui
       ],
     },
   },

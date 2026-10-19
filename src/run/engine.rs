@@ -228,7 +228,7 @@ impl Engine {
         let mut ops = 0;
         // Whether this run's runtime can race a deadline with a timer: the
         // runtime context is the run's, so the answer is the run's.
-        let timers = timers_available();
+        let timers = opts.deadline.is_some() && timers_available();
         // A bucket above 99 is served as 99, as in 3.x: the bucket space is
         // `0..100`, and `[x, 100)` is the range that serves the rest.
         let bucket = opts.routing_bucket.map(|b| b.min(Rollout::MAX_BUCKET));

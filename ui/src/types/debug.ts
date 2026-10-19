@@ -248,36 +248,13 @@ export function getWorkflowState(
   currentStepIndex: number,
   workflowId: string
 ): DebugNodeState {
-  // One pass over the trace, collecting the indices this workflow owns. Every
-  // later question is answered from those indices directly — re-deriving them
-  // with `trace.steps.indexOf(step)` inside a predicate is what made this
-  // quadratic in trace length, on a function that re-runs on every tick.
-  const workflowStepIndices: number[] = [];
-  for (let i = 0; i < trace.steps.length; i++) {
-    if (trace.steps[i].workflow_id === workflowId) {
-      workflowStepIndices.push(i);
-    }
-  }
-
-  if (workflowStepIndices.length === 0) {
-    return 'pending';
-  }
-
-  // Indices are collected in order, so the first is the smallest.
-  if (workflowStepIndices[0] > currentStepIndex) {
-    return 'pending';
-  }
-
   let skipped = false;
   let hasError = false;
   let hasExecuted = false;
 
-  for (const stepIndex of workflowStepIndices) {
-    // Ascending, so everything from here on is after the current position.
-    if (stepIndex > currentStepIndex) {
-      break;
-    }
+  for (let stepIndex = 0; stepIndex <= currentStepIndex && stepIndex < trace.steps.length; stepIndex++) {
     const step = trace.steps[stepIndex];
+    if (step.workflow_id !== workflowId) continue;
 
     // The workflow's own skipped step: its condition or its rollout refused
     // it. The engine's steps (its loop's counter writes) are the workflow's

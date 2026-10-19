@@ -53,31 +53,6 @@ fn opt_str<'v>(
     }
 }
 
-/// An `over` that is a literal, which cannot be an array of elements.
-fn over_problem(over: &Value) -> Option<Problem> {
-    over_literal_problem("for_each", over).map(|problem| invalid("over", problem))
-}
-
-/// An `as` that is not a `temp_data` slot.
-fn as_problem(item: &str) -> Option<Problem> {
-    (!is_slot_path(item)).then(|| {
-        invalid(
-            "as",
-            format!("for_each as must be a non-empty temp_data field path, got {item:?}"),
-        )
-    })
-}
-
-/// A `max_concurrency` that would start no call.
-fn concurrency_problem(max_concurrency: usize) -> Option<Problem> {
-    (max_concurrency == 0).then(|| {
-        invalid(
-            "max_concurrency",
-            "for_each max_concurrency must be at least 1",
-        )
-    })
-}
-
 /// `collect` and `into`, beside the binding `item`: given together, each a
 /// context path below a root, and overlapping neither each other nor a
 /// binding.
@@ -142,14 +117,17 @@ fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
         .get("as")
         .ok_or_else(|| parse_failed("as", "missing field `as`"))?;
 
-    if let Some(problem) = over_problem(over) {
-        return Err(problem);
+    if let Some(problem) = over_literal_problem("for_each", over) {
+        return Err(invalid("over", problem));
     }
     let item = item
         .as_str()
         .ok_or_else(|| parse_failed("as", "expected a string"))?;
-    if let Some(problem) = as_problem(item) {
-        return Err(problem);
+    if !is_slot_path(item) {
+        return Err(invalid(
+            "as",
+            format!("for_each as must be a non-empty temp_data field path, got {item:?}"),
+        ));
     }
     let max_concurrency = match obj.get("max_concurrency") {
         None => defaults::MAX_CONCURRENCY,
@@ -158,8 +136,11 @@ fn read(obj: &Map<String, Value>) -> Result<ForEachDef, Problem> {
             .and_then(|n| usize::try_from(n).ok())
             .ok_or_else(|| parse_failed("max_concurrency", "expected a non-negative integer"))?,
     };
-    if let Some(problem) = concurrency_problem(max_concurrency) {
-        return Err(problem);
+    if max_concurrency == 0 {
+        return Err(invalid(
+            "max_concurrency",
+            "for_each max_concurrency must be at least 1",
+        ));
     }
 
     let collect = opt_str(obj, "collect")?;

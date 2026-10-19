@@ -43,40 +43,6 @@ pub(super) fn over_literal_problem(owner: &str, over: &Value) -> Option<String> 
     ))
 }
 
-/// The loop's bound rules, each broken one as `(code, path, message)`,
-/// in v3's order: an `increment` below 1, then a `max` at or below `init`.
-/// `parse` checks what it read, an unreadable `increment` or `max` as `None`.
-/// A definition cannot be edited after it, so the interpreter's termination
-/// rests here alone.
-fn bound_issues(
-    init: i64,
-    increment: Option<i64>,
-    max: Option<i64>,
-) -> impl Iterator<Item = (IssueCode, AuthoredPath, String)> {
-    let at = AuthoredPath::root().join("loop");
-    let increment = increment.filter(|&i| i < 1).map(|increment| {
-        (
-            IssueCode::LoopIncrementTooSmall,
-            at.join("increment"),
-            format!(
-                "loop increment must be >= 1, got {increment} (a non-advancing counter would \
-                 never reach max)"
-            ),
-        )
-    });
-    let bound = max.filter(|&max| max <= init).map(|max| {
-        (
-            IssueCode::LoopBoundEmpty,
-            at.join("max"),
-            format!(
-                "loop max ({max}) must be greater than init ({init}) — the bound is half-open, \
-                 so this could never run a sweep"
-            ),
-        )
-    });
-    increment.into_iter().chain(bound)
-}
-
 impl<'j> Walk<'j> {
     /// Rule 5, then rule 6: the loop's own rules and unknown keys, then the
     /// steps of its `setup`.
@@ -94,9 +60,26 @@ impl<'j> Walk<'j> {
         let increment = self.optional_integer(config, &at, "increment");
 
         // v3 bounds an unreadable `init` at its default.
-        let init_or_default = init.flatten().unwrap_or(defaults::INIT);
-        for (code, path, message) in bound_issues(init_or_default, increment.flatten(), max) {
-            self.report(code, path, message);
+        let init_or_default = init.unwrap_or(defaults::INIT);
+        if let Some(increment) = increment.filter(|&i| i < 1) {
+            self.report(
+                IssueCode::LoopIncrementTooSmall,
+                at.join("increment"),
+                format!(
+                    "loop increment must be >= 1, got {increment} (a non-advancing counter would \
+                     never reach max)"
+                ),
+            );
+        }
+        if let Some(max) = max.filter(|&max| max <= init_or_default) {
+            self.report(
+                IssueCode::LoopBoundEmpty,
+                at.join("max"),
+                format!(
+                    "loop max ({max}) must be greater than init ({init_or_default}) — the bound \
+                     is half-open, so this could never run a sweep"
+                ),
+            );
         }
 
         let counter = self.slot(config, &at, "counter", IssueCode::LoopCounterInvalid);
@@ -168,7 +151,7 @@ impl<'j> Walk<'j> {
         LoopDef {
             counter,
             init: init_or_default,
-            increment: increment.flatten().unwrap_or(defaults::INCREMENT),
+            increment: increment.unwrap_or(defaults::INCREMENT),
             max: max.unwrap_or(0),
             setup,
             over: over.cloned().map(Logic),
@@ -186,14 +169,14 @@ impl<'j> Walk<'j> {
         value
     }
 
-    /// `None` when absent; `Some(None)` when present and not an integer.
+    /// An optional integer: `None` when absent or not an integer.
     fn optional_integer(
         &mut self,
         config: &Map<String, Value>,
         at: &AuthoredPath,
         key: &str,
-    ) -> Option<Option<i64>> {
-        config.get(key).map(|raw| self.integer(raw, at, key))
+    ) -> Option<i64> {
+        config.get(key).and_then(|raw| self.integer(raw, at, key))
     }
 
     /// A slot path: absent or `null` is `None`, a non-string is

@@ -148,7 +148,7 @@ impl Trace {
     /// from another build may have.
     pub fn mapping_contexts(&self, step: usize) -> Option<Vec<Context>> {
         let at = self.steps.get(step)?;
-        if at.mapping_ends.is_empty() {
+        if at.mapping_ends.is_empty() || !valid_mapping_ends(at) {
             return None;
         }
         let mut root = self.initial.as_value().clone();
@@ -160,9 +160,8 @@ impl Trace {
         let mut out = Vec::with_capacity(at.mapping_ends.len());
         let mut from = 0usize;
         for &end in &at.mapping_ends {
-            let end = usize::try_from(end).ok()?;
-            let changes = at.changes.get(from..end)?;
-            for change in changes {
+            let end = end as usize;
+            for change in &at.changes[from..end] {
                 apply(&mut root, change);
             }
             out.push(Context::from_root(root.clone()));
@@ -200,19 +199,15 @@ impl Trace {
             }
         }
         for (i, step) in self.steps.iter().enumerate() {
-            let mut before = 0u32;
-            for &end in &step.mapping_ends {
-                if end < before || end as usize > step.changes.len() {
-                    return Err(Error::new(
-                        ErrorKind::Config,
-                        format!(
-                            "step {i}'s mapping_ends {:?} do not fit its {} change(s)",
-                            step.mapping_ends,
-                            step.changes.len()
-                        ),
-                    ));
-                }
-                before = end;
+            if !valid_mapping_ends(step) {
+                return Err(Error::new(
+                    ErrorKind::Config,
+                    format!(
+                        "step {i}'s mapping_ends {:?} do not fit its {} change(s)",
+                        step.mapping_ends,
+                        step.changes.len()
+                    ),
+                ));
             }
             for change in &step.changes {
                 let at = change.path.parse::<Path>().map_err(|_| {
@@ -241,6 +236,19 @@ impl Trace {
         }
         Ok(())
     }
+}
+
+/// Whether every end in `step.mapping_ends` is non-decreasing and fits
+/// within `step.changes`.
+fn valid_mapping_ends(step: &TraceStep) -> bool {
+    let mut before = 0u32;
+    for &end in &step.mapping_ends {
+        if end < before || usize::try_from(end).map_or(true, |e| e > step.changes.len()) {
+            return false;
+        }
+        before = end;
+    }
+    true
 }
 
 /// Checks a context root's value: an object, or the `null` a redaction

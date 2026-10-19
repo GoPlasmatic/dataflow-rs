@@ -7,7 +7,7 @@
 use datavalue::{NumberValue, OwnedDataValue};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 
 /// The three roots, in the order a context holds them.
@@ -255,7 +255,7 @@ impl<'de> Visitor<'de> for ExactValue {
 const SCAN: usize = 8;
 
 /// The first key `pairs` holds a second time, if any.
-pub(crate) fn repeated_key(pairs: &[(String, OwnedDataValue)]) -> Option<&str> {
+fn repeated_key(pairs: &[(String, OwnedDataValue)]) -> Option<&str> {
     if pairs.len() <= SCAN {
         return pairs
             .iter()
@@ -270,15 +270,21 @@ pub(crate) fn repeated_key(pairs: &[(String, OwnedDataValue)]) -> Option<&str> {
         .find(|key| !seen.insert(*key))
 }
 
+/// Ensures `pairs` holds each key once: a repeated key keeps its first
+/// position and its last value, as `serde_json::Value` reads one.
+pub(crate) fn dedup_object(pairs: &mut Vec<(String, OwnedDataValue)>) {
+    if repeated_key(pairs).is_some() {
+        fold_repeats(pairs);
+    }
+}
+
 /// `value` with every object in it holding each key once: a repeated key
 /// keeps its first position and its last value, as `serde_json::Value`
 /// reads one.
 pub(crate) fn keep_last(value: &mut OwnedDataValue) {
     match value {
         OwnedDataValue::Object(pairs) => {
-            if repeated_key(pairs).is_some() {
-                fold_repeats(pairs);
-            }
+            dedup_object(pairs);
             pairs.iter_mut().for_each(|(_, v)| keep_last(v));
         }
         OwnedDataValue::Array(items) => items.iter_mut().for_each(keep_last),
@@ -289,20 +295,17 @@ pub(crate) fn keep_last(value: &mut OwnedDataValue) {
 /// [`keep_last`] on one object known to hold a key twice.
 #[cold]
 fn fold_repeats(pairs: &mut Vec<(String, OwnedDataValue)>) {
-    // Each pair's key's first index; a later pair moves its value there.
-    let mut first: HashMap<&str, usize> = HashMap::with_capacity(pairs.len());
-    let firsts: Vec<usize> = pairs
-        .iter()
-        .enumerate()
-        .map(|(i, (key, _))| *first.entry(key.as_str()).or_insert(i))
-        .collect();
-    for (i, &to) in firsts.iter().enumerate() {
-        if to != i {
-            pairs[to].1 = std::mem::take(&mut pairs[i].1);
+    let mut len = 0;
+    for i in 0..pairs.len() {
+        let (key, value) = std::mem::take(&mut pairs[i]);
+        if let Some((_, slot)) = pairs[..len].iter_mut().find(|(k, _)| *k == key) {
+            *slot = value;
+        } else {
+            pairs[len] = (key, value);
+            len += 1;
         }
     }
-    let mut kept = firsts.iter().enumerate().map(|(i, &to)| to == i);
-    pairs.retain(|_| kept.next() == Some(true));
+    pairs.truncate(len);
 }
 
 #[cfg(test)]

@@ -44,16 +44,19 @@ export const initialState: DebuggerState = {
  * Returns indices of steps that should be shown during debugging.
  */
 export function getFilteredStepIndices(trace: Trace | null, skipFailedConditions: boolean): number[] {
-  if (!trace || trace.steps.length === 0) {
-    return [];
+  const indices: number[] = [];
+  trace?.steps.forEach((step, index) => {
+    if (!skipFailedConditions || step.result !== 'skipped') indices.push(index);
+  });
+  return indices;
+}
+
+/** Find the next visible step in one direction, without building an index list. */
+function nextVisibleStep(trace: Trace, from: number, direction: 1 | -1, skip: boolean): number {
+  for (let i = from + direction; i >= 0 && i < trace.steps.length; i += direction) {
+    if (!skip || trace.steps[i].result !== 'skipped') return i;
   }
-  if (!skipFailedConditions) {
-    return trace.steps.map((_, i) => i);
-  }
-  return trace.steps
-    .map((step, i) => ({ step, index: i }))
-    .filter(({ step }) => step.result !== 'skipped')
-    .map(({ index }) => index);
+  return -1;
 }
 
 /**
@@ -114,7 +117,7 @@ export function debuggerReducer(state: DebuggerState, action: DebuggerAction): D
       };
 
     case 'PLAY':
-      if (!state.trace || state.trace.steps.length === 0) return state;
+      if (!state.trace || nextVisibleStep(state.trace, state.currentStepIndex, 1, state.skipFailedConditions) === -1) return state;
       return {
         ...state,
         playbackState: 'playing',
@@ -146,36 +149,9 @@ export function debuggerReducer(state: DebuggerState, action: DebuggerAction): D
       };
 
     case 'STEP_FORWARD': {
-      if (!state.trace || state.trace.steps.length === 0) {
-        return state;
-      }
-
-      const filteredIndices = getFilteredStepIndices(state.trace, state.skipFailedConditions);
-      if (filteredIndices.length === 0) {
-        return state;
-      }
-
-      // Find current position in filtered list
-      const currentFilteredPos = filteredIndices.findIndex(i => i === state.currentStepIndex);
-
-      let nextIndex: number;
-      if (state.currentStepIndex === -1) {
-        // At ready state, go to first filtered step
-        nextIndex = filteredIndices[0];
-      } else if (currentFilteredPos === -1) {
-        // Current step is not in filtered list (shouldn't happen), go to first
-        nextIndex = filteredIndices[0];
-      } else if (currentFilteredPos >= filteredIndices.length - 1) {
-        // At end of filtered steps, pause
-        return {
-          ...state,
-          playbackState: 'paused',
-        };
-      } else {
-        // Move to next filtered step
-        nextIndex = filteredIndices[currentFilteredPos + 1];
-      }
-
+      if (!state.trace) return state;
+      const nextIndex = nextVisibleStep(state.trace, state.currentStepIndex, 1, state.skipFailedConditions);
+      if (nextIndex === -1) return { ...state, playbackState: 'paused' };
       return {
         ...state,
         currentStepIndex: nextIndex,
@@ -187,30 +163,9 @@ export function debuggerReducer(state: DebuggerState, action: DebuggerAction): D
         return state;
       }
 
-      const filteredIndices = getFilteredStepIndices(state.trace, state.skipFailedConditions);
-      if (filteredIndices.length === 0) {
-        return {
-          ...state,
-          currentStepIndex: -1,
-          playbackState: 'paused',
-        };
-      }
-
-      // Find current position in filtered list
-      const currentFilteredPos = filteredIndices.findIndex(i => i === state.currentStepIndex);
-
-      let prevIndex: number;
-      if (currentFilteredPos <= 0) {
-        // At or before first filtered step, go to ready state
-        prevIndex = -1;
-      } else {
-        // Move to previous filtered step
-        prevIndex = filteredIndices[currentFilteredPos - 1];
-      }
-
       return {
         ...state,
-        currentStepIndex: prevIndex,
+        currentStepIndex: nextVisibleStep(state.trace, state.currentStepIndex, -1, state.skipFailedConditions),
         playbackState: 'paused',
       };
     }
@@ -234,15 +189,12 @@ export function debuggerReducer(state: DebuggerState, action: DebuggerAction): D
       if (action.skip && state.trace && state.currentStepIndex >= 0) {
         const currentStep = state.trace.steps[state.currentStepIndex];
         if (currentStep && currentStep.result === 'skipped') {
-          // Find the next non-skipped step, or go to ready state
-          const filteredIndices = getFilteredStepIndices(state.trace, true);
-          const nextValidIndex = filteredIndices.find(i => i > state.currentStepIndex);
-          const prevValidIndex = [...filteredIndices].reverse().find(i => i < state.currentStepIndex);
+          const next = nextVisibleStep(state.trace, state.currentStepIndex, 1, true);
 
           return {
             ...state,
             skipFailedConditions: action.skip,
-            currentStepIndex: nextValidIndex ?? prevValidIndex ?? -1,
+            currentStepIndex: next !== -1 ? next : nextVisibleStep(state.trace, state.currentStepIndex, -1, true),
           };
         }
       }
@@ -341,10 +293,11 @@ export function DebuggerProvider({
     isActive: autoActivate,
   });
 
-  const playbackTimerRef = useRef<number | null>(null);
-  const engineRef = useRef<DataflowEngine | null>(null);
-  const lastWorkflowsJsonRef = useRef<string | null>(null);
-  const lastEngineFactoryRef = useRef<EngineFactory | undefined>(undefined);
+  const engineRef = useRef<{
+    engine: DataflowEngine;
+    workflowsJson: string;
+    factory: EngineFactory;
+  } | null>(null);
 
   // Determine if engine is ready for execution
   const isEngineReady = Boolean(engineFactory);
@@ -399,38 +352,18 @@ export function DebuggerProvider({
         return null;
       }
 
-      try {
-        const workflowsJson = JSON.stringify(workflows);
-
-        // Create new engine if workflows or engineFactory changed or no engine exists
-        if (
-          lastWorkflowsJsonRef.current !== workflowsJson ||
-          lastEngineFactoryRef.current !== engineFactory ||
-          !engineRef.current
-        ) {
-          // Dispose previous engine
-          if (engineRef.current?.dispose) {
-            engineRef.current.dispose();
-          }
-          // Drop refs *before* building the replacement. `engineFactory`
-          // throws for a definition that no longer loads, and the disposed
-          // engine must not stay reachable: a later run that happens to match
-          // `lastWorkflowsJson` would skip the rebuild and call into a freed
-          // wasm handle ("null pointer passed to rust").
-          engineRef.current = null;
-          lastWorkflowsJsonRef.current = null;
-          lastEngineFactoryRef.current = undefined;
-          engineRef.current = engineFactory(workflows);
-          lastWorkflowsJsonRef.current = workflowsJson;
-          lastEngineFactoryRef.current = engineFactory;
-        }
-        // Ask for the trace explicitly: the wasm adapter traces by default,
-        // but a host's own engine only knows what it is asked.
-        return await engineRef.current.run(payload, { trace: true });
-      } catch (error) {
-        console.error('Execution error:', error);
-        throw error;
+      const workflowsJson = JSON.stringify(workflows);
+      let cached = engineRef.current;
+      if (cached?.workflowsJson !== workflowsJson || cached.factory !== engineFactory) {
+        // Clear the cache before disposing or building: either can throw,
+        // and a later run must never reuse a disposed engine.
+        engineRef.current = null;
+        cached?.engine.dispose?.();
+        cached = { engine: engineFactory(workflows), workflowsJson, factory: engineFactory };
+        engineRef.current = cached;
       }
+      // Hosts must be asked for a trace explicitly.
+      return cached.engine.run(payload, { trace: true });
     },
     [engineFactory]
   );
@@ -438,31 +371,19 @@ export function DebuggerProvider({
   // Cleanup engine on unmount
   useEffect(() => {
     return () => {
-      if (engineRef.current?.dispose) {
-        engineRef.current.dispose();
-        engineRef.current = null;
-      }
+      const cached = engineRef.current;
+      engineRef.current = null;
+      cached?.engine.dispose?.();
     };
   }, []);
 
   // Handle playback timer
   useEffect(() => {
-    if (state.playbackState === 'playing') {
-      playbackTimerRef.current = window.setInterval(() => {
-        dispatch({ type: 'STEP_FORWARD' });
-      }, state.playbackSpeed);
-    } else {
-      if (playbackTimerRef.current) {
-        clearInterval(playbackTimerRef.current);
-        playbackTimerRef.current = null;
-      }
-    }
-
-    return () => {
-      if (playbackTimerRef.current) {
-        clearInterval(playbackTimerRef.current);
-      }
-    };
+    if (state.playbackState !== 'playing') return;
+    const timer = window.setInterval(() => {
+      dispatch({ type: 'STEP_FORWARD' });
+    }, state.playbackSpeed);
+    return () => window.clearInterval(timer);
   }, [state.playbackState, state.playbackSpeed]);
 
   // Memoize computed values to avoid unnecessary re-renders of consumers

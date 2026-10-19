@@ -13,7 +13,7 @@ pub(crate) mod typo;
 pub use cancel::CancelToken;
 pub use change::Change;
 pub use context::Context;
-pub(crate) use context::{ROOTS, exact, keep_last};
+pub(crate) use context::{ROOTS, dedup_object, exact, keep_last};
 pub(crate) use error::{
     EVALUATION_ERROR, MAPPING_ERROR, TASK_ERROR, TASK_STATUS_ERROR, VALIDATION_ERROR,
 };

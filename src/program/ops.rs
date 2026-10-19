@@ -71,16 +71,6 @@ const _: () = assert!(size_of::<Op>() == 16);
 /// A compiled condition: the workflow's, a group's or a task's.
 pub(crate) struct CondSite {
     pub(crate) expr: Expr,
-    /// Where the condition is authored.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "only the lowering's tests read it yet; 05's `CondSite` keeps it for the \
-                      runtime's reports"
-        )
-    )]
-    pub(crate) path: AuthoredPath,
     /// The group's or task's id; `None` for the workflow's.
     pub(crate) step: Option<String>,
 }

@@ -98,6 +98,10 @@ impl Registry {
     ///   not [`Templated`](super::Templated), which would never compile them;
     /// - a [`Templated`](super::Templated) config with no `runtime_fields`, which has nothing
     ///   to compile;
+    /// - two config fields with the same name, which would make lookup and
+    ///   resolution disagree;
+    /// - a runtime field with a nested, list, map or templated kind, which
+    ///   [`Templated`](super::Templated) cannot compile;
     /// - `runtime_fields` holding several outputs without exactly one marked
     ///   [`primary`](FieldSpec::primary), which `#[derive(FunctionConfig)]`
     ///   refuses at expansion: no output, or a guess, would be the one
@@ -230,7 +234,28 @@ fn check_spec(
     if let Some(problem) = spec.runtime_fields.as_deref().and_then(primary_problem) {
         return Err(format!("cannot register `{name}`: {problem}"));
     }
-    for field in fields {
+    for (index, field) in fields.iter().enumerate() {
+        if fields[..index].iter().any(|other| other.name == field.name) {
+            return Err(format!(
+                "cannot register `{name}`: its field `{}` is declared twice",
+                field.name
+            ));
+        }
+        if templated
+            && matches!(
+                field.kind,
+                FieldKind::Nested(_)
+                    | FieldKind::List(_)
+                    | FieldKind::Map(_)
+                    | FieldKind::Templated
+            )
+        {
+            return Err(format!(
+                "cannot register `{name}`: its runtime field `{}` has an unsupported kind; \
+                 use an expression, document, literal or output",
+                field.name
+            ));
+        }
         if let Some(problem) = default_problem(exprs, field) {
             return Err(format!("cannot register `{name}`: {problem}"));
         }

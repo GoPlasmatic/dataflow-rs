@@ -33,7 +33,7 @@
 //! The reader refuses a `continue_on_error` that is not a bool
 //! (`PARSE_FAILED`), a `halt_on` that is not `"never"` or `"failure"`
 //! (`INVALID_HALT_ON`, v3's message), and a v3 key written beside a v4 one
-//! (`PARSE_FAILED` at the v3 key): on one node, any v3 policy key
+//! (`MIXED_SPELLING` at the v3 key): on one node, any v3 policy key
 //! (`continue_on_error`, a task's `halt_on`) beside any v4 policy key
 //! (`on_failure`, a task's `on_rejection`). The two flags make one policy,
 //! so a v3 flag beside the v4 key of the other axis would be a guess at how
@@ -41,8 +41,7 @@
 //! same, so the walk does not report it twice.
 
 use super::keys::{
-    BuiltinInput, Ext, GROUP_V3_KEYS, TASK_POLICIES, TASK_V3_KEYS, WORKFLOW_POLICIES,
-    WORKFLOW_V3_KEYS, builtin_input,
+    BuiltinInput, Ext, TASK_POLICIES, TASK_V3_KEYS, WORKFLOW_POLICIES, builtin_input,
 };
 use super::parse::{descends, is_group, step_kind};
 use super::{V3_VALIDATE, VALIDATION};
@@ -250,13 +249,9 @@ impl Read {
     }
 
     fn workflow(&mut self, obj: &mut Map<String, Value>) {
+        const WANTED: &[&str] = &["continue_on_error", "loop", "tasks"];
         let root = AuthoredPath::root();
-        let wanted: Vec<&'static str> = WORKFLOW_V3_KEYS
-            .iter()
-            .copied()
-            .chain(["loop", "tasks"])
-            .collect();
-        for key in keys_among(obj, &wanted) {
+        for key in keys_among(obj, WANTED) {
             match key {
                 "continue_on_error" => self.workflow_flag(obj, &root),
                 "loop" => {
@@ -342,8 +337,8 @@ impl Read {
         depth: usize,
     ) {
         // A group too deep is not descended into, as the walk does not.
-        let wanted: Vec<&'static str> = GROUP_V3_KEYS.iter().copied().chain(["tasks"]).collect();
-        for key in keys_among(obj, &wanted) {
+        const WANTED: &[&str] = &["continue_on_error", "tasks"];
+        for key in keys_among(obj, WANTED) {
             if key == "continue_on_error" {
                 self.group_flag(obj, at, step);
             } else if descends(depth)
@@ -386,8 +381,8 @@ impl Read {
     }
 
     fn task(&mut self, obj: &mut Map<String, Value>, at: &AuthoredPath, step: &Step) {
-        let wanted: Vec<&'static str> = TASK_V3_KEYS.iter().copied().chain(["function"]).collect();
-        let order = keys_among(obj, &wanted);
+        const WANTED: &[&str] = &["continue_on_error", "halt_on", "function"];
+        let order = keys_among(obj, WANTED);
         let has_flags = TASK_V3_KEYS.iter().any(|key| obj.contains_key(*key));
         // Any v4 policy beside any v3 flag refuses every flag.
         let v4_policies = policies_in(obj, TASK_POLICIES);
@@ -484,20 +479,14 @@ impl Read {
         let mut fields = std::mem::take(slot);
         let task = at;
         let at = at.join("function");
-        let name = fields
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        // `validate`'s input is `validation`'s, whichever key comes first.
-        let builtin = builtin_input(if name == V3_VALIDATE {
-            VALIDATION
-        } else {
-            &name
-        });
+        let (is_validate, builtin) = match fields.get("name").and_then(Value::as_str) {
+            Some(V3_VALIDATE) => (true, builtin_input(VALIDATION)),
+            Some(name) => (false, builtin_input(name)),
+            None => (false, None),
+        };
         for key in keys_among(&fields, &["input", "name"]) {
             if key == "name" {
-                if name == V3_VALIDATE {
+                if is_validate {
                     fields.insert("name".into(), Value::String(VALIDATION.into()));
                     self.rewrite(
                         at.join("name"),

@@ -144,7 +144,7 @@ pub(crate) fn parse_steps(
         );
         return (None, vec![issue]);
     };
-    let (setup, depth) = fragment_place(root);
+    let (setup, depth) = fragment_place(root).unwrap_or((false, 0));
     let rewritten: Value;
     let (list, issues, exts) = if opts.compat {
         // As `parse_with_rewrites` does: the reader rewrites a copy, and the
@@ -168,39 +168,36 @@ fn is(seg: &PathSeg, name: &str) -> bool {
     matches!(seg, PathSeg::Key(key) if &**key == name)
 }
 
-/// Whether a fragment can sit at `root`: at a `tasks` list, or at
-/// `loop.setup`, with any number of groups below: the grammar is
-/// `(loop.setup | tasks)([i].tasks)*`. A path that only ends in `tasks`, such
-/// as `data.tasks`, names no list of steps.
-pub(crate) fn holds_steps(root: &AuthoredPath) -> bool {
-    let rest = match root.segs() {
-        [loop_, setup, rest @ ..] if is(loop_, "loop") && is(setup, "setup") => rest,
-        [tasks, rest @ ..] if is(tasks, "tasks") => rest,
-        _ => return false,
+/// Where a fragment at `root` sits: under `loop.setup` or not, and inside how
+/// many groups. `None` when `root` cannot hold steps: a fragment sits at a
+/// `tasks` list or at `loop.setup`, with any number of groups below, so the
+/// grammar is `(loop.setup | tasks)([i].tasks)*`. A path that only ends in
+/// `tasks`, such as `data.tasks`, names no list of steps.
+pub(crate) fn fragment_place(root: &AuthoredPath) -> Option<(bool, usize)> {
+    let (setup, mut rest) = match root.segs() {
+        [loop_, setup, rest @ ..] if is(loop_, "loop") && is(setup, "setup") => (true, rest),
+        [tasks, rest @ ..] if is(tasks, "tasks") => (false, rest),
+        _ => return None,
     };
-    let mut rest = rest;
+    let mut depth = 0;
     loop {
         match rest {
-            [] => return true,
+            [] => return Some((setup, depth)),
             [index, tasks, tail @ ..]
                 if matches!(index, PathSeg::Index(_)) && is(tasks, "tasks") =>
             {
+                depth += 1;
                 rest = tail;
             }
-            _ => return false,
+            _ => return None,
         }
     }
 }
 
-/// Where a fragment at `root` sits: under `loop.setup` or not, and inside how
-/// many groups.
-pub(crate) fn fragment_place(root: &AuthoredPath) -> (bool, usize) {
-    let lists = root.segs().iter().filter(|seg| is(seg, "tasks")).count();
-    match root.segs() {
-        [first, second, ..] if is(first, "loop") && is(second, "setup") => (true, lists),
-        // The body's first list is the workflow's own `tasks`.
-        _ => (false, lists.saturating_sub(1)),
-    }
+/// Whether a fragment can sit at `root`: at a `tasks` list, or at
+/// `loop.setup`, with any number of groups below.
+pub(crate) fn holds_steps(root: &AuthoredPath) -> bool {
+    fragment_place(root).is_some()
 }
 
 /// Whether a step object is a group: it carries a `tasks` key, whatever its
@@ -212,10 +209,12 @@ pub(super) fn is_group(obj: &Map<String, Value>) -> bool {
 /// The kind every issue inside a step is stamped with: [`StepKind::Setup`]
 /// for any step of a `loop.setup` list, `setup`, else a group's or a task's.
 pub(super) fn step_kind(obj: &Map<String, Value>, setup: bool) -> StepKind {
-    match () {
-        () if setup => StepKind::Setup,
-        () if is_group(obj) => StepKind::Group,
-        () => StepKind::Task,
+    if setup {
+        StepKind::Setup
+    } else if is_group(obj) {
+        StepKind::Group
+    } else {
+        StepKind::Task
     }
 }
 
@@ -285,7 +284,8 @@ impl<'j> Walk<'j> {
         for at in lost {
             self.parse_failed(
                 at,
-                "the compat reader moved keys into this node's ext, but the walk never                  reached the node",
+                "the compat reader moved keys into this node's ext, but the walk never \
+                 reached the node",
             );
         }
     }
@@ -348,8 +348,7 @@ impl<'j> Walk<'j> {
         }
 
         // 2.
-        let name = self.opt_string(obj, "name", &root);
-        let description = self.opt_string(obj, "description", &root);
+        let header = self.header(obj, &root);
 
         // 3.
         let tasks = obj.get("tasks");
@@ -394,11 +393,7 @@ impl<'j> Walk<'j> {
 
         WorkflowDef {
             id: id.unwrap_or_default(),
-            header: NodeHeader {
-                name,
-                description,
-                ext: ext.into_map(),
-            },
+            header: header.with_ext(ext),
             priority,
             condition: self.condition(obj, &root),
             tasks,
@@ -674,7 +669,7 @@ impl<'j> Walk<'j> {
     }
 
     /// An optional string: absent or `null` is `None`.
-    pub(super) fn opt_string(
+    fn opt_string(
         &mut self,
         obj: &Map<String, Value>,
         key: &str,

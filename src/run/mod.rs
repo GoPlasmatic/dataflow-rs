@@ -22,8 +22,7 @@ mod trace;
 /// wasm32.
 pub use crate::base::Instant;
 pub use crate::base::{CancelToken, Change, Context, ErrorRecord};
-pub use crate::observe::status::RunStatus;
-pub use crate::observe::{Selection, WorkflowExit, WorkflowRecord};
+pub use crate::observe::status::{RunStatus, Selection, WorkflowExit, WorkflowRecord};
 pub use builder::EngineBuilder;
 pub(crate) use cancel::timers_available;
 pub use engine::{Engine, EngineConfig};

@@ -31,8 +31,9 @@ use dataflow_rs::datalogic_rs::{self, ArenaExt, CustomOperator, DataValue};
 use dataflow_rs::def::{ParseOptions, parse};
 use dataflow_rs::expr::{CompileCx, ExprEngine, OperatorFamily, Secrets};
 use dataflow_rs::function::FunctionConfig;
-use dataflow_rs::observe::{Event, Interest, Trace, TraceOptions, WorkflowExit};
+use dataflow_rs::observe::{Event, Interest, Trace, TraceOptions};
 use dataflow_rs::program::{CompileOptions, CompiledWorkflow, Compiler, IssueCode};
+use dataflow_rs::run::WorkflowExit;
 use dataflow_rs::run::{AuditMode, EngineConfig, ErrorContext, ErrorRecord};
 use dataflow_rs::{
     Ctx, Engine, Error, Expr, Function, Issue, Message, Observer, Outcome, Path, Registry, Result,

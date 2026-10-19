@@ -124,9 +124,7 @@ impl Error {
             ErrorKind::Service { code } => code,
         }
     }
-}
 
-impl Error {
     /// The text of this error's record: what v3's `Display` prints for the
     /// variant `kind` corresponds to, which the recorder wraps as
     /// "Task {id} error: {text}". A kind v3 has no variant for, and a service

@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { createElement, type ReactNode } from 'react';
+import { renderHook } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import {
   debuggerReducer,
   getFilteredStepIndices,
   initialState,
+  DebuggerProvider,
+  useDebugger,
 } from './DebuggerContext';
-import type { RunResult, Trace } from '../../../types';
+import type { EngineFactory, RunResult, Trace, Workflow } from '../../../types';
 
 const sampleTrace: Trace = {
   initial: { data: { x: 0 }, metadata: {}, temp_data: {} },
@@ -119,5 +123,67 @@ describe('debuggerReducer and getFilteredStepIndices', () => {
     expect(state.trace).toBeNull();
     expect(state.run).toBeNull();
     expect(state.currentStepIndex).toBe(-1);
+  });
+
+  it('steps in the requested direction from a hidden step selected manually', () => {
+    const state = {
+      ...initialState,
+      trace: sampleTrace,
+      currentStepIndex: 1,
+      skipFailedConditions: true,
+    };
+    expect(debuggerReducer(state, { type: 'STEP_FORWARD' }).currentStepIndex).toBe(2);
+    expect(debuggerReducer(state, { type: 'STEP_BACKWARD' }).currentStepIndex).toBe(0);
+  });
+
+  it('does not start playback when no visible steps remain', () => {
+    for (const trace of [
+      { ...sampleTrace, steps: [] },
+      { ...sampleTrace, steps: [sampleTrace.steps[1]] },
+    ]) {
+      const state = { ...initialState, trace, skipFailedConditions: true };
+      expect(debuggerReducer(state, { type: 'PLAY' }).playbackState).toBe('stopped');
+      expect(debuggerReducer({ ...state, playbackState: 'playing' }, { type: 'STEP_FORWARD' }).playbackState).toBe('paused');
+    }
+    const state = { ...initialState, trace: sampleTrace, currentStepIndex: 2 };
+    expect(debuggerReducer(state, { type: 'PLAY' }).playbackState).toBe('stopped');
+  });
+
+  it('falls back to a previous visible step, or ready, when enabling the filter', () => {
+    for (const [steps, index] of [
+      [[sampleTrace.steps[0], sampleTrace.steps[1]], 0],
+      [[sampleTrace.steps[1], sampleTrace.steps[1]], -1],
+    ] as const) {
+      const state = { ...initialState, trace: { ...sampleTrace, steps: [...steps] }, currentStepIndex: 1 };
+      expect(debuggerReducer(state, { type: 'SET_SKIP_FAILED_CONDITIONS', skip: true }).currentStepIndex).toBe(index);
+    }
+  });
+});
+
+describe('debugger engine lifecycle', () => {
+  it('reuses engines and rebuilds after a replacement fails without reusing a disposed handle', async () => {
+    const run = vi.fn().mockResolvedValue(sampleResult);
+    const dispose = vi.fn();
+    const factory = vi.fn<EngineFactory>()
+      .mockImplementationOnce(() => ({ run, dispose }))
+      .mockImplementationOnce(() => { throw new Error('rejected definition'); })
+      .mockImplementationOnce(() => ({ run, dispose }));
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(DebuggerProvider, { engineFactory: factory, children });
+    const { result, unmount } = renderHook(() => useDebugger(), { wrapper });
+    const workflows: Workflow[] = [{ id: 'w', name: 'Valid', tasks: [] }];
+
+    await result.current.runExecution(workflows, {});
+    await result.current.runExecution(workflows, {});
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith({}, { trace: true });
+
+    await expect(result.current.runExecution([{ id: 'bad', name: 'Invalid', tasks: [] }], {})).rejects.toThrow('rejected definition');
+    expect(dispose).toHaveBeenCalledTimes(1);
+    await result.current.runExecution(workflows, {});
+    expect(factory).toHaveBeenCalledTimes(3);
+    expect(run).toHaveBeenCalledTimes(3);
+    unmount();
+    expect(dispose).toHaveBeenCalledTimes(2);
   });
 });

@@ -143,35 +143,14 @@ pub(crate) async fn race<F: Future>(
 /// Whether a timer can be built on this thread.
 #[cfg(not(target_arch = "wasm32"))]
 mod timers {
-    use std::cell::Cell;
-
-    thread_local! {
-        /// This thread's answer, once probed. A thread does not change the
-        /// runtime context it polls in, so the answer is stable there; a
-        /// process-wide cache would be wrong when a host runs one runtime
-        /// with timers and another without.
-        static AVAILABLE: Cell<Option<bool>> = const { Cell::new(None) };
-    }
-
     /// Whether `tokio::time::sleep_until` can be built here: a Tokio runtime
     /// is current and its time driver is enabled.
     ///
-    /// Tokio exposes neither question publicly. A `Sleep` fetches the driver
-    /// in its constructor, panicking when it is missing, so the probe builds
-    /// one and catches that panic. A missing runtime is cheaper to see and
-    /// panics nothing.
+    /// A `Sleep` fetches the driver in its constructor, panicking when it is
+    /// missing, so the probe builds one and catches that panic. A missing
+    /// runtime is cheaper to see and panics nothing. Probe for each run:
+    /// the same thread can enter runtimes with different time drivers.
     pub(super) fn available() -> bool {
-        AVAILABLE.with(|cell| match cell.get() {
-            Some(known) => known,
-            None => {
-                let known = probe();
-                cell.set(Some(known));
-                known
-            }
-        })
-    }
-
-    fn probe() -> bool {
         if tokio::runtime::Handle::try_current().is_err() {
             return false;
         }
@@ -221,6 +200,23 @@ mod tests {
     use crate::{Engine, Message};
     use serde_json::json;
     use std::time::Duration;
+
+    #[test]
+    fn timer_availability_follows_the_current_runtime_on_the_same_thread() {
+        assert!(!timers_available());
+        let timed = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let untimed = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        for (runtime, expected) in [(&timed, true), (&untimed, false), (&timed, true)] {
+            let _entered = runtime.enter();
+            assert_eq!(timers_available(), expected);
+        }
+        assert!(!timers_available());
+    }
 
     #[test]
     fn the_token_is_checked_before_the_deadline_and_neither_when_unset() {

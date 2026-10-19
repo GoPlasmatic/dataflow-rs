@@ -84,13 +84,13 @@ const ROLLOUT_KEYS: &[&str] = &["bucket_start", "bucket_end"];
 const FUNCTION_KEYS: &[&str] = &["name", "input"];
 
 /// A workflow's v3 spellings, which the compat reader rewrites.
-pub(super) const WORKFLOW_V3_KEYS: &[&str] = &["continue_on_error"];
+const WORKFLOW_V3_KEYS: &[&str] = &["continue_on_error"];
 
 /// A task's v3 spellings, which the compat reader rewrites.
 pub(super) const TASK_V3_KEYS: &[&str] = &["continue_on_error", "halt_on"];
 
 /// A group's v3 spelling, which the compat reader moves into its `ext`.
-pub(super) const GROUP_V3_KEYS: &[&str] = &["continue_on_error"];
+const GROUP_V3_KEYS: &[&str] = &["continue_on_error"];
 
 /// A workflow's v4 policy, which its v3 spelling becomes.
 pub(super) const WORKFLOW_POLICIES: &[&str] = &["on_failure"];
@@ -99,27 +99,28 @@ pub(super) const WORKFLOW_POLICIES: &[&str] = &["on_failure"];
 pub(super) const TASK_POLICIES: &[&str] = &["on_failure", "on_rejection"];
 
 /// The keys of a `map` input.
-pub(crate) const MAP_KEYS: &[&str] = &["mappings"];
+const MAP_KEYS: &[&str] = &["mappings"];
 
 /// The keys of one of `map`'s mappings.
-pub(crate) const MAPPING_KEYS: &[&str] = &["path", "logic", "unset", "on_null", "mode"];
+const MAPPING_KEYS: &[&str] = &["path", "logic", "unset", "on_null", "mode"];
 
 /// The keys of a `validation` input.
-pub(crate) const VALIDATION_KEYS: &[&str] = &["rules"];
+const VALIDATION_KEYS: &[&str] = &["rules"];
 
 /// The keys of one of `validation`'s rules.
-pub(crate) const RULE_KEYS: &[&str] = &["logic", "message"];
+const RULE_KEYS: &[&str] = &["logic", "message"];
 
 /// The keys of a `filter` input.
-pub(crate) const FILTER_KEYS: &[&str] = &["condition", "on_reject"];
+const FILTER_KEYS: &[&str] = &["condition", "on_reject"];
 
 /// The keys of a `log` input.
-pub(crate) const LOG_KEYS: &[&str] = &["level", "message", "fields"];
+const LOG_KEYS: &[&str] = &["level", "message", "fields"];
 
 /// The keys of a `parse_json` or `parse_xml` input.
-pub(crate) const PARSE_KEYS: &[&str] = &["source", "target"];
+const PARSE_KEYS: &[&str] = &["source", "target"];
 
 /// The keys of a `publish_json` or `publish_xml` input.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const PUBLISH_KEYS: &[&str] = &["source", "target", "pretty", "root_element"];
 
 /// What the compat reader knows of a built-in's input: its keys and,

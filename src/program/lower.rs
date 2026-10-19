@@ -530,8 +530,8 @@ mod tests {
             ],
         );
         // A condition folding to `true` keeps no row.
-        let conds: Vec<_> = wf.conds.iter().map(|c| c.path.to_string()).collect();
-        assert_eq!(conds, ["condition", "tasks[0].condition"]);
+        let conds: Vec<_> = wf.conds.iter().map(|c| c.expr.raw()).collect();
+        assert_eq!(conds, [&kind_is_x(), &json!({"var": "data.go"})]);
     }
 
     #[test]

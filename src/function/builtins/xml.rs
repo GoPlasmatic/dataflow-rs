@@ -6,12 +6,11 @@
 //! its own order, in every build. v3 went through [`serde_json::Value`], whose
 //! keys its default build sorted; v4 reads and writes `OwnedDataValue`.
 
-use crate::base::{Error, Result, VALIDATION_ERROR};
+use crate::base::{Error, Result, VALIDATION_ERROR, dedup_object};
 use datavalue::{NumberValue, OwnedDataValue};
 use serde::Deserializer;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt;
 
 /// A `VALIDATION_ERROR`, with the `Validation error: ` prefix v3's display
@@ -46,10 +45,6 @@ impl<'de> de::Deserialize<'de> for Read {
         d.deserialize_any(InOrder).map(Read)
     }
 }
-
-/// Above this many keys, an object finds a repeated key through an index
-/// rather than a scan.
-const SCAN: usize = 8;
 
 impl<'de> Visitor<'de> for InOrder {
     type Value = OwnedDataValue;
@@ -118,28 +113,11 @@ impl<'de> Visitor<'de> for InOrder {
         self,
         mut map: A,
     ) -> std::result::Result<OwnedDataValue, A::Error> {
-        let mut pairs: Vec<(String, OwnedDataValue)> = Vec::new();
-        let mut index: HashMap<String, usize> = HashMap::new();
-        while let Some(key) = map.next_key::<String>()? {
-            let Read(value) = map.next_value()?;
-            let at = if pairs.len() <= SCAN {
-                pairs.iter().position(|(k, _)| *k == key)
-            } else {
-                if index.is_empty() {
-                    index.extend(pairs.iter().enumerate().map(|(i, (k, _))| (k.clone(), i)));
-                }
-                index.get(&key).copied()
-            };
-            match at {
-                Some(at) => pairs[at].1 = value,
-                None => {
-                    if !index.is_empty() {
-                        index.insert(key.clone(), pairs.len());
-                    }
-                    pairs.push((key, value));
-                }
-            }
+        let mut pairs = Vec::with_capacity(map.size_hint().unwrap_or(0));
+        while let Some((key, Read(value))) = map.next_entry()? {
+            pairs.push((key, value));
         }
+        dedup_object(&mut pairs);
         Ok(OwnedDataValue::Object(pairs))
     }
 }
@@ -153,16 +131,7 @@ pub(super) fn value_to_xml(value: &OwnedDataValue, root_element: &str) -> String
     let root_element = &*root_element;
     let mut out = String::new();
     tag(&mut out, "<", root_element);
-    match value {
-        OwnedDataValue::Array(items) => {
-            for item in items {
-                out.push_str("<item>");
-                content(item, &mut out);
-                out.push_str("</item>");
-            }
-        }
-        _ => content(value, &mut out),
-    }
+    content(value, &mut out);
     tag(&mut out, "</", root_element);
     out
 }
