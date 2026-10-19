@@ -358,7 +358,7 @@ pub(crate) async fn run_workflow<'p>(
     let mut unjudged = true;
     env.frame.sweeps = u32::from(wf.loops.is_empty());
     if !wf.judged_first() {
-        begin(env, wf);
+        begin(env);
     }
     let mut pc = 0;
     let exit = loop {
@@ -387,7 +387,7 @@ pub(crate) async fn run_workflow<'p>(
                     if std::mem::take(&mut unjudged) {
                         selection = match passed {
                             Ok(true) => {
-                                begin(env, wf);
+                                begin(env);
                                 Selection::Ran
                             }
                             Ok(false) => {
@@ -448,14 +448,14 @@ pub(crate) async fn run_workflow<'p>(
         };
     };
     if matches!(selection, Selection::Ran) {
-        begin(env, wf);
+        begin(env);
     }
     (exit, selection)
 }
 
 /// The workflow's `WorkflowStarted`, once, and in a timed run the clock
 /// reading its elapsed time starts from.
-fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
+fn begin(env: &mut RunEnv<'_, '_>) {
     if !env.watch.observers.workflows() || std::mem::replace(&mut env.frame.begun, true) {
         return;
     }
@@ -466,7 +466,7 @@ fn begin(env: &mut RunEnv<'_, '_>, wf: &CompiledWorkflow) {
     }
     env.watch.observers.emit(Event::WorkflowStarted {
         workflow: env.workflow_ix,
-        id: &wf.id,
+        id: env.workflow_id,
     });
 }
 
@@ -704,10 +704,8 @@ fn call<'p>(
     builtin: &'p Builtin,
 ) -> Flow {
     let errors_before = env.errors.len();
-    // The program owns the ids, so copying the `Arc`s out borrows `env` only
-    // for the two reads, before `mapping_ends` takes `env.watch` mutably.
-    let workflow_id = Arc::clone(env.workflow_id);
-    let task_id = Arc::clone(&env.task_ids[site.task as usize]);
+    let workflow_id = env.workflow_id;
+    let task_id = &env.task_ids[site.task as usize];
     // An unwatched run neither traces nor times a call.
     let (traced, started) = if env.capture.is_watched() {
         (env.traces_changes(), env.watch.timed.then(record::now))
@@ -732,7 +730,7 @@ fn call<'p>(
         marked: false,
         mapping_ends,
         errors: &mut *env.errors,
-        now: Arc::clone(env.now_text),
+        now: env.now_text,
     };
     let result = builtin.call(&mut cx);
     let mut marked = cx.marked;

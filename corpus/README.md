@@ -107,8 +107,7 @@ keeping its key's position, so key order is still compared:
 | `metadata.engine_version` | `<engine_version>` |
 | Every audit entry's and error's `timestamp` | `<timestamp>` |
 | An error-context record's `timestamp` | `<timestamp>` |
-| A trace step's `started_at` | `<timestamp>` |
-| A trace step's `duration_us` | `<duration>` |
+| Dependency error message tails | `<dependency message>` |
 
 Every message id is set by the case, so none is generated.
 

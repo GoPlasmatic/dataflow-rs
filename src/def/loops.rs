@@ -141,7 +141,7 @@ impl<'j> Walk<'j> {
         let setup_at = at.join("setup");
         let setup = match config.get("setup") {
             None => Vec::new(),
-            Some(list @ Value::Array(_)) => self.steps(Some(list), &setup_at, true, 0),
+            Some(Value::Array(items)) => self.steps(items, &setup_at, true, 0),
             Some(_) => {
                 self.parse_failed(setup_at, "expected an array of steps");
                 Vec::new()
@@ -190,25 +190,15 @@ impl<'j> Walk<'j> {
         key: &str,
         invalid: IssueCode,
     ) -> Option<String> {
-        match config.get(key) {
-            None | Some(Value::Null) => None,
-            Some(Value::String(path)) => {
-                if !is_slot_path(path) {
-                    self.report(
-                        invalid,
-                        at.join(key),
-                        format!(
-                            "loop {key} must be a non-empty temp_data field path, got {path:?}"
-                        ),
-                    );
-                }
-                Some(path.clone())
-            }
-            Some(_) => {
-                self.parse_failed(at.join(key), "expected a string");
-                None
-            }
+        let path = self.opt_string(config, key, at)?;
+        if !is_slot_path(&path) {
+            self.report(
+                invalid,
+                at.join(key),
+                format!("loop {key} must be a non-empty temp_data field path, got {path:?}"),
+            );
         }
+        Some(path)
     }
 }
 

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Play, CheckCircle, ArrowRight, Check, GitBranch, ExternalLink } from 'lucide-react';
 import type { Workflow, Task, JsonLogicValue } from '../../../types';
-import { flattenSteps } from '../../../types';
+import { flattenSteps, hasCondition } from '../../../types';
 import { FunctionTypeBadge } from '../cards/FunctionTypeBadge';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 
@@ -25,7 +25,7 @@ function ConditionIcon({
   onClick?: () => void;
   isSelected?: boolean;
 }) {
-  const isAlways = condition === undefined || condition === null || condition === true;
+  const isAlways = !hasCondition(condition);
   const isClickable = !isAlways && onClick;
 
   return (

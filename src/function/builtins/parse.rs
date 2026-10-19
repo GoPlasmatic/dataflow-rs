@@ -51,22 +51,20 @@ impl ParseConfig {
         // is copied.
         let (value, hint) = match lookup(cx.payload, cx.rc, &from) {
             None => (OwnedDataValue::Null, None),
-            Some(found) => {
-                let parsed = match &*found {
-                    OwnedDataValue::String(s) => {
-                        let mut json = OwnedDataValue::from_json(s).ok();
-                        json.iter_mut().for_each(keep_last);
-                        Some((json, s.len()))
+            Some(found) => match &*found {
+                OwnedDataValue::String(s) => {
+                    let len = s.len();
+                    match OwnedDataValue::from_json(s) {
+                        Ok(mut json) => {
+                            keep_last(&mut json);
+                            (json, Some(len))
+                        }
+                        // Not JSON: the string as it is.
+                        Err(_) => (found.into_owned(), Some(len)),
                     }
-                    _ => None,
-                };
-                match parsed {
-                    Some((Some(json), len)) => (json, Some(len)),
-                    // Not JSON: the string as it is.
-                    Some((None, len)) => (found.into_owned(), Some(len)),
-                    None => (found.into_owned(), None),
                 }
-            }
+                _ => (found.into_owned(), None),
+            },
         };
         cx.write(&target, value, hint);
         debug!("Parse: Successfully stored data to '{target}'");

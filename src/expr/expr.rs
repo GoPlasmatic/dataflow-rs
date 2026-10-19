@@ -56,7 +56,7 @@ pub(crate) mod sealed {
 /// any finite number, the only kind JSON carries; anything else is an
 /// error), [`bool`] (itself; anything else is an error) and [`Path`]
 /// (`Cow<Path>`; a string parsed as a path).
-pub trait FromValue: Sized + Send + Sync + 'static + sealed::Sealed {
+pub trait FromValue: Sized + Clone + Send + Sync + 'static + sealed::Sealed {
     /// What kind of value the type is, for a field's schema.
     #[doc(hidden)]
     const KIND: ValueKind;
@@ -73,7 +73,9 @@ pub trait FromValue: Sized + Send + Sync + 'static + sealed::Sealed {
     fn give<'a>(v: Self) -> Self::Out<'a>;
     /// A folded constant as an owned value, for a resolved config.
     #[doc(hidden)]
-    fn to_value(c: &Self) -> OwnedDataValue;
+    fn to_value(c: &Self) -> OwnedDataValue {
+        Self::into_value(c.clone())
+    }
     /// An evaluated value as an owned one, for a resolved config.
     #[doc(hidden)]
     fn into_value(v: Self) -> OwnedDataValue;
@@ -102,9 +104,6 @@ impl FromValue for OwnedDataValue {
     fn give<'a>(v: Self) -> Self::Out<'a> {
         Cow::Owned(v)
     }
-    fn to_value(c: &Self) -> OwnedDataValue {
-        c.clone()
-    }
     fn into_value(v: Self) -> OwnedDataValue {
         v
     }
@@ -130,9 +129,6 @@ impl FromValue for String {
     fn give<'a>(v: Self) -> Self::Out<'a> {
         Cow::Owned(v)
     }
-    fn to_value(c: &Self) -> OwnedDataValue {
-        OwnedDataValue::String(c.clone())
-    }
     fn into_value(v: Self) -> OwnedDataValue {
         OwnedDataValue::String(v)
     }
@@ -157,9 +153,6 @@ impl FromValue for u64 {
     }
     fn give<'a>(v: Self) -> Self::Out<'a> {
         v
-    }
-    fn to_value(c: &Self) -> OwnedDataValue {
-        (*c).into()
     }
     fn into_value(v: Self) -> OwnedDataValue {
         v.into()
@@ -189,9 +182,6 @@ impl FromValue for i64 {
     }
     fn give<'a>(v: Self) -> Self::Out<'a> {
         v
-    }
-    fn to_value(c: &Self) -> OwnedDataValue {
-        (*c).into()
     }
     fn into_value(v: Self) -> OwnedDataValue {
         v.into()
@@ -223,9 +213,6 @@ impl FromValue for f64 {
         v
     }
     /// A float, as the JSON bridge builds one: `2.0` stays `2.0`.
-    fn to_value(c: &Self) -> OwnedDataValue {
-        OwnedDataValue::Number(NumberValue::Float(*c))
-    }
     fn into_value(v: Self) -> OwnedDataValue {
         OwnedDataValue::Number(NumberValue::Float(v))
     }
@@ -252,9 +239,6 @@ impl FromValue for bool {
     fn give<'a>(v: Self) -> Self::Out<'a> {
         v
     }
-    fn to_value(c: &Self) -> OwnedDataValue {
-        (*c).into()
-    }
     fn into_value(v: Self) -> OwnedDataValue {
         v.into()
     }
@@ -280,9 +264,6 @@ impl FromValue for Path {
     }
     fn give<'a>(v: Self) -> Self::Out<'a> {
         Cow::Owned(v)
-    }
-    fn to_value(c: &Self) -> OwnedDataValue {
-        OwnedDataValue::String(c.to_string())
     }
     fn into_value(v: Self) -> OwnedDataValue {
         OwnedDataValue::String(v.to_string())

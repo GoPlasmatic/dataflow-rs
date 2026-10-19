@@ -61,26 +61,17 @@ pub mod __private {
         key: &'static str,
         /// The default, as JSON text.
         default: Option<&'static str>,
-        /// `Struct::field`, for the message of a default that is not JSON,
-        /// which the derive refuses at expansion.
-        site: &'static str,
         /// An output: an explicit `null` is absent.
         output: bool,
     }
 
     impl Key {
-        /// A field's key: its authored name, its default as JSON text,
-        /// `Struct::field`, and whether it is an output.
-        pub const fn new(
-            key: &'static str,
-            default: Option<&'static str>,
-            site: &'static str,
-            output: bool,
-        ) -> Self {
+        /// A field's key: its authored name, its default as JSON text, and
+        /// whether it is an output.
+        pub const fn new(key: &'static str, default: Option<&'static str>, output: bool) -> Self {
             Self {
                 key,
                 default,
-                site,
                 output,
             }
         }
@@ -108,15 +99,15 @@ pub mod __private {
     fn raw(object: &Map<String, Value>, key: Key) -> Option<Cow<'_, Value>> {
         match object.get(key.key) {
             Some(raw) if !(key.output && raw.is_null()) => Some(Cow::Borrowed(raw)),
-            _ => key.default.map(|text| Cow::Owned(default(text, key.site))),
+            _ => key.default.map(|text| Cow::Owned(default(text, key.key))),
         }
     }
 
     /// A declared default, parsed. The derive writes every default as JSON
     /// and refuses a `default_json` that is not, so this cannot fail.
-    fn default(text: &str, site: &str) -> Value {
+    fn default(text: &str, key: &str) -> Value {
         serde_json::from_str(text).unwrap_or_else(|e| {
-            unreachable!("the default of `{site}` was validated by the derive ({e}): {text}")
+            unreachable!("the default of `{key}` was validated by the derive ({e}): {text}")
         })
     }
 
@@ -148,7 +139,7 @@ pub mod __private {
     ) -> Option<T> {
         cx.at(key.key, |cx| {
             let Some(raw) = raw(object, key) else {
-                return serde_json::from_value(Value::Null).map_or_else(
+                return T::deserialize(&Value::Null).map_or_else(
                     |_| {
                         missing(key.key, cx);
                         None
@@ -156,7 +147,7 @@ pub mod __private {
                     Some,
                 );
             };
-            serde_json::from_value(raw.into_owned())
+            T::deserialize(&*raw)
                 .map_err(|e| cx.issue(IssueCode::InputParse, e.to_string()))
                 .ok()
         })
@@ -165,7 +156,7 @@ pub mod __private {
     /// Whether a `#[config(serde)]` field is required: `T` cannot be read
     /// from `null`.
     pub fn serde_required<T: DeserializeOwned>() -> bool {
-        serde_json::from_value::<T>(Value::Null).is_err()
+        T::deserialize(&Value::Null).is_err()
     }
 
     /// A resolved config's entries, in declaration order.

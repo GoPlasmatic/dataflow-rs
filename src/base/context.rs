@@ -42,7 +42,11 @@ impl Context {
     /// A context seeded with `data` and `metadata`, each ignored when it is
     /// not an object, and an empty `temp_data`.
     pub(crate) fn new(data: OwnedDataValue, metadata: OwnedDataValue) -> Self {
-        Self::from_roots([slot(data), slot(metadata), slot(OwnedDataValue::Null)])
+        Self::from_roots([
+            slot(data),
+            slot(metadata),
+            OwnedDataValue::Object(Vec::new()),
+        ])
     }
 
     /// A context over `root`, the object holding the three roots: a trace's
@@ -140,7 +144,7 @@ impl<'de> Visitor<'de> for Roots {
             if values[at].is_some() {
                 return Err(de::Error::duplicate_field(ROOTS[at]));
             }
-            values[at] = Some(map.next_value::<Exact>()?.0);
+            values[at] = Some(map.next_value::<ReadValue<false>>()?.0);
         }
         Ok(Context::from_roots(values.map(|value| {
             value.unwrap_or_else(|| OwnedDataValue::Object(Vec::new()))
@@ -156,22 +160,31 @@ impl<'de> Visitor<'de> for Roots {
 /// whole-number float would not read back byte for byte; and it keeps both
 /// pairs of a repeated key, which every path rule reads as one.
 pub(crate) fn exact<'de, D: Deserializer<'de>>(d: D) -> Result<OwnedDataValue, D::Error> {
-    d.deserialize_any(ExactValue)
+    d.deserialize_any(ValueVisitor::<false>)
 }
 
-/// A value read by [`exact`].
-struct Exact(OwnedDataValue);
+/// A value read in document order, folding any repeated object key to its
+/// first position and last value (as `serde_json::Value` with `preserve_order`
+/// reads one).
+pub(crate) fn in_order<'de, D: Deserializer<'de>>(d: D) -> Result<OwnedDataValue, D::Error> {
+    d.deserialize_any(ValueVisitor::<true>)
+}
 
-impl<'de> Deserialize<'de> for Exact {
+/// A value read by [`ValueVisitor`].
+struct ReadValue<const DEDUP: bool>(OwnedDataValue);
+
+impl<'de, const DEDUP: bool> Deserialize<'de> for ReadValue<DEDUP> {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        exact(d).map(Exact)
+        d.deserialize_any(ValueVisitor::<DEDUP>).map(Self)
     }
 }
 
-/// [`exact`]'s reader: `OwnedDataValue`'s, but for `visit_f64`.
-struct ExactValue;
+/// [`exact`]'s and [`in_order`]'s reader: `OwnedDataValue`'s, keeping floats
+/// as floats and either refusing (`DEDUP = false`) or folding (`DEDUP = true`)
+/// repeated object keys.
+struct ValueVisitor<const DEDUP: bool>;
 
-impl<'de> Visitor<'de> for ExactValue {
+impl<'de, const DEDUP: bool> Visitor<'de> for ValueVisitor<DEDUP> {
     type Value = OwnedDataValue;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -187,7 +200,7 @@ impl<'de> Visitor<'de> for ExactValue {
     }
 
     fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<OwnedDataValue, D::Error> {
-        exact(d)
+        d.deserialize_any(Self)
     }
 
     fn visit_bool<E: de::Error>(self, v: bool) -> Result<OwnedDataValue, E> {
@@ -217,7 +230,11 @@ impl<'de> Visitor<'de> for ExactValue {
     }
 
     fn visit_f64<E: de::Error>(self, v: f64) -> Result<OwnedDataValue, E> {
-        Ok(OwnedDataValue::Number(NumberValue::Float(v)))
+        Ok(if v.is_finite() {
+            OwnedDataValue::Number(NumberValue::Float(v))
+        } else {
+            OwnedDataValue::Null
+        })
     }
 
     fn visit_str<E: de::Error>(self, v: &str) -> Result<OwnedDataValue, E> {
@@ -230,7 +247,7 @@ impl<'de> Visitor<'de> for ExactValue {
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<OwnedDataValue, A::Error> {
         let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0));
-        while let Some(Exact(item)) = seq.next_element()? {
+        while let Some(ReadValue(item)) = seq.next_element::<ReadValue<DEDUP>>()? {
             items.push(item);
         }
         Ok(OwnedDataValue::Array(items))
@@ -238,10 +255,12 @@ impl<'de> Visitor<'de> for ExactValue {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<OwnedDataValue, A::Error> {
         let mut pairs = Vec::with_capacity(map.size_hint().unwrap_or(0));
-        while let Some(key) = map.next_key::<String>()? {
-            pairs.push((key, map.next_value::<Exact>()?.0));
+        while let Some((key, ReadValue(value))) = map.next_entry::<String, ReadValue<DEDUP>>()? {
+            pairs.push((key, value));
         }
-        if let Some(key) = repeated_key(&pairs) {
+        if DEDUP {
+            dedup_object(&mut pairs);
+        } else if let Some(key) = repeated_key(&pairs) {
             return Err(de::Error::custom(format_args!(
                 "an object holds the key `{key}` twice"
             )));
@@ -272,7 +291,7 @@ fn repeated_key(pairs: &[(String, OwnedDataValue)]) -> Option<&str> {
 
 /// Ensures `pairs` holds each key once: a repeated key keeps its first
 /// position and its last value, as `serde_json::Value` reads one.
-pub(crate) fn dedup_object(pairs: &mut Vec<(String, OwnedDataValue)>) {
+fn dedup_object(pairs: &mut Vec<(String, OwnedDataValue)>) {
     if repeated_key(pairs).is_some() {
         fold_repeats(pairs);
     }

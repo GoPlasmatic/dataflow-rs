@@ -39,6 +39,7 @@ use super::interp::{Over, RunEnv, elements};
 use super::policy::{self, Decision, Flow, Policy, decide};
 use super::record::{self, Completed};
 use crate::base::{Change, Error, ErrorKind};
+use crate::expr::path::MAX_PATH_SEGMENTS;
 use crate::expr::{MAX_ARRAY_INDEX, Path, Seg};
 use crate::function::{Binding, BoundCall, CallInfo, CallStart, Outcome};
 use crate::program::{CallSite, CompiledWorkflow, FanSite};
@@ -50,27 +51,22 @@ use std::sync::Arc;
 /// What one element's call left once its `Ctx` was settled: all the fold
 /// needs, owned, so no element holds the view.
 struct Element {
-    index: usize,
     invoked: Invoked,
     /// The call's decision under the per-element policy.
     decision: Decision,
 }
 
 impl Element {
-    /// Element `index`'s call, once it returned without being cut short,
-    /// decided under `policy`.
-    fn new(index: usize, mut invoked: Invoked, policy: Policy, task_id: &str) -> Self {
+    /// An element's call, once it returned without being cut short, decided
+    /// under `policy`.
+    fn new(mut invoked: Invoked, policy: Policy, task_id: &str) -> Self {
         let result = match &mut invoked.result {
             CallResult::Returned(Ok(outcome)) => Ok(*outcome),
             CallResult::Returned(Err(e)) => Err(std::mem::replace(e, Error::service("", ""))),
             CallResult::CutShort(..) => unreachable!("a call cut short breaks out before Element"),
         };
         let decision = decide(policy, task_id, result);
-        Self {
-            index,
-            invoked,
-            decision,
-        }
+        Self { invoked, decision }
     }
 
     /// Whether the element fails the task or halts the workflow, under the
@@ -143,7 +139,7 @@ fn fits_into<'e>(
 /// element's fold sets to its index: no path is built per element.
 fn slot_segs(into: &Path) -> Vec<Seg> {
     debug_assert!(
-        into.index_child(0).is_some(),
+        into.segs().len() < MAX_PATH_SEGMENTS,
         "the compiler leaves room below `into` for an index"
     );
     let mut segs = Vec::with_capacity(into.segs().len() + 1);
@@ -168,11 +164,10 @@ pub(crate) async fn fan_out<'p>(
     fan: &'p FanSite,
     bound: &'p dyn BoundCall,
 ) -> Flow {
-    let task = &wf.tasks[site.task as usize];
     let task_id = env.ids(site.task).task;
     let policy = site.policy;
-    let over = elements(rc, env.exprs, &fan.over, Over::FanOut(&task.id))
-        .and_then(|items| fits_into(fan, &task.id, items));
+    let over = elements(rc, env.exprs, &fan.over, Over::FanOut(task_id))
+        .and_then(|items| fits_into(fan, task_id, items));
     let items = match over {
         Ok(items) if !items.is_empty() => items,
         // Nothing to call: an empty array completes the task, anything else
@@ -244,24 +239,25 @@ pub(crate) async fn fan_out<'p>(
                 cut = Some((index, invoked.errors, stop, error, invoked.elapsed));
                 break;
             }
-            let element = Element::new(index, invoked, per_element, task_id);
+            let element = Element::new(invoked, per_element, task_id);
             stop |= element.stops();
             finished[index] = Some(element);
         }
     }
     drop(items);
-    if let Some((index, errors, stop, e, elapsed)) = cut {
+    if let Some((cut_index, cut_errors, stop, e, elapsed)) = cut {
         let errors_before = env.errors.len();
         let ids = env.ids(site.task);
-        let mut kept: Vec<_> = finished
-            .into_iter()
-            .flatten()
-            .map(|element| (element.index, element.invoked.errors))
-            .collect();
-        kept.push((index, errors));
-        kept.sort_unstable_by_key(|&(index, _)| index);
-        for (index, errors) in kept {
-            keep_records(ids, env.now_text, env.errors, errors, Some(index));
+        let mut cut_errors = Some(cut_errors);
+        for (index, slot) in finished.into_iter().enumerate() {
+            let errors = if index == cut_index {
+                cut_errors.take()
+            } else {
+                slot.map(|element| element.invoked.errors)
+            };
+            if let Some(errors) = errors {
+                keep_records(ids, env.now_text, env.errors, errors, Some(index));
+            }
         }
         let decision = policy::cut_short(task_id, stop, &e);
         let done = Completed::new(env, site.task, None, elapsed, errors_before, false);
@@ -290,12 +286,10 @@ pub(crate) async fn fan_out<'p>(
     let mut halted = false;
     let mut rejected = false;
     let mut failed = false;
-    for element in finished.into_iter().flatten() {
-        let Element {
-            index,
-            invoked,
-            decision,
-        } = element;
+    for (index, element) in finished.into_iter().enumerate() {
+        let Some(Element { invoked, decision }) = element else {
+            continue;
+        };
         let Settled {
             result,
             collected,

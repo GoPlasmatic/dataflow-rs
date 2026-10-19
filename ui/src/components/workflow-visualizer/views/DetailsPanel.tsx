@@ -75,7 +75,6 @@ export function DetailsPanel({ selection, onSelect }: DetailsPanelProps) {
         <Suspense fallback={diagramLoading}>
           <GroupFlowDiagram
             workflows={selection.workflows}
-            name={selection.name}
             onSelect={onSelect}
           />
         </Suspense>

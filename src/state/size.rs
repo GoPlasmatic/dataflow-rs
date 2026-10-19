@@ -14,8 +14,7 @@ const NODE: usize = size_of::<DataValue<'static>>();
 /// only `limit / NODE` steps.
 pub(crate) fn exceeds(v: &OwnedDataValue, limit: usize) -> bool {
     let mut budget = limit;
-    let mut visited = 0;
-    !charge(v, NODE, &mut budget, &mut visited)
+    !charge(v, NODE, &mut budget)
 }
 
 /// Charges `v`'s size (`node_cost` per node plus every string's and key's
@@ -23,13 +22,7 @@ pub(crate) fn exceeds(v: &OwnedDataValue, limit: usize) -> bool {
 /// budget cannot cover the current node. Shared by the run context's
 /// invalidation check (`node_cost = size_of::<DataValue>()`) and the trace's
 /// byte budget (`node_cost = size_of::<usize>()`).
-pub(crate) fn charge(
-    v: &OwnedDataValue,
-    node_cost: usize,
-    budget: &mut usize,
-    visited: &mut usize,
-) -> bool {
-    *visited += 1;
+pub(crate) fn charge(v: &OwnedDataValue, node_cost: usize, budget: &mut usize) -> bool {
     let cost = node_cost
         + match v {
             OwnedDataValue::String(s) => s.len(),
@@ -40,15 +33,13 @@ pub(crate) fn charge(
     }
     *budget -= cost;
     match v {
-        OwnedDataValue::Array(items) => items
-            .iter()
-            .all(|item| charge(item, node_cost, budget, visited)),
+        OwnedDataValue::Array(items) => items.iter().all(|item| charge(item, node_cost, budget)),
         OwnedDataValue::Object(pairs) => pairs.iter().all(|(k, item)| {
             if k.len() > *budget {
                 return false;
             }
             *budget -= k.len();
-            charge(item, node_cost, budget, visited)
+            charge(item, node_cost, budget)
         }),
         _ => true,
     }
@@ -73,8 +64,7 @@ mod tests {
         // `limit` (`1024 / NODE + 1` = 33 nodes) without visiting the rest.
         let big = OwnedDataValue::Array((0..1_000_000).map(OwnedDataValue::from).collect());
         let mut budget = 1024;
-        let mut visited = 0;
-        assert!(!charge(&big, NODE, &mut budget, &mut visited));
-        assert_eq!(visited, 1024 / NODE + 1);
+        assert!(!charge(&big, NODE, &mut budget));
+        assert_eq!(budget, 1024 % NODE);
     }
 }

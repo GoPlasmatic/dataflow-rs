@@ -1,2 +1,2 @@
 export { findPathLineNumbers } from './jsonUtils';
-export { convertMappingsToObject, safeStringify } from './dataUtils';
+export { convertMappingsToObject } from './dataUtils';

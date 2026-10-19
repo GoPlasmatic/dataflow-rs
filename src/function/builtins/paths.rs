@@ -27,14 +27,21 @@ fn compile_path<T>(
     cx: &mut CompileCx<'_>,
     resolve: fn(&str) -> Result<T>,
 ) -> Option<(Expr<String>, Option<T>)> {
+    if matches!(raw, Value::Null | Value::Bool(_) | Value::Number(_)) {
+        cx.issue(
+            IssueCode::InputParse,
+            format!("`{raw}` must be a path string, or JSONLogic computing one"),
+        );
+        return None;
+    }
     let expr = <Expr<String>>::compile(raw, cx)?;
     let Some(text) = expr.constant() else {
         return Some((expr, None));
     };
-    // `Expr<String>` lends a folded non-string as its JSON text, so `7` would
-    // read as the name "7". A literal string is a string; anything else that
-    // folded is compiled again to see what it folded to.
-    if !raw.is_string() && !folds_to_string(raw, cx) {
+    // `Expr<String>` lends a folded non-string as its JSON text, so `[1]`
+    // would read as the name "[1]". A literal string is a string; an object
+    // that folded is compiled again to see whether it folded to a string.
+    if !raw.is_string() && !(raw.is_object() && folds_to_string(raw, cx)) {
         cx.issue(
             IssueCode::InputParse,
             format!("`{raw}` must be a path string, or JSONLogic computing one"),
@@ -333,10 +340,9 @@ impl PublishSource {
         let primary = DataPath::resolve(s)?;
         // v3's empty remainder is `data` itself (`get_nested_value(data, "")`),
         // so a source of `""` or `"data."` falls back to the whole of `data`.
-        let root = || Path::from_str("data").ok();
         let fallback = match s.strip_prefix("data.") {
-            _ if s.is_empty() => root(),
-            Some("") => root(),
+            _ if s.is_empty() => Some(primary.prefix(1)),
+            Some("") => Some(primary.prefix(1)),
             Some(rest) => DataPath::resolve(rest).ok(),
             None => None,
         };

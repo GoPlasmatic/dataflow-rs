@@ -269,15 +269,7 @@ fn compiled(compiler: &Compiler, json: &Value) -> Vec<Issue> {
     compiled.issues
 }
 
-/// `n` nested `!`s around a `var`: past datalogic's depth limit of 256, the
-/// one pure-data compile error.
-fn too_deep() -> Value {
-    let mut rule = json!({"var": "data.x"});
-    for _ in 0..300 {
-        rule = json!({"!": rule});
-    }
-    rule
-}
+use crate::support::too_deep;
 
 #[test]
 fn a_clean_workflow_compiles_with_no_issue() {

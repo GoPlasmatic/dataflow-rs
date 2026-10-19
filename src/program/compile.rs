@@ -167,18 +167,18 @@ impl Compiler {
                 )];
             }
         };
-        if !def::holds_steps(&root) {
+        let Some((setup, _)) = def::fragment_place(&root) else {
             let message = format!(
                 "`{root}` holds no steps: a fragment sits at a `tasks` list, such as `tasks` or \
                  `tasks[2].tasks`, or at `loop.setup`"
             );
             return vec![Issue::new(IssueCode::ParseFailed, root, message)];
-        }
+        };
         let (parsed, mut issues) = def::parse_steps(steps, &root, ParseOptions::default());
         if let Some(steps) = parsed {
             let mut checks = Checks::new(self.registry.exprs());
             let mut walk = Walk::new(self, "", &mut checks);
-            walk.fragment(&steps, &root);
+            walk.steps(&steps, &root, setup);
             issues.append(&mut walk.issues);
         }
         issues
@@ -538,16 +538,6 @@ impl<'w> Walk<'w> {
         row
     }
 
-    /// A fragment's steps at `root`, as a workflow's would be walked: lowered
-    /// with every failure to the end, and with no workflow condition or loop.
-    fn fragment(&mut self, steps: &[StepDef], root: &AuthoredPath) {
-        self.steps(
-            steps,
-            root,
-            def::fragment_place(root).is_some_and(|(setup, _)| setup),
-        );
-    }
-
     /// The steps of the list at `at`, pre-order: each group before its
     /// members, every one a setup step when `setup`. This is
     /// [`WorkflowDef::walk`]'s order.
@@ -649,7 +639,7 @@ impl<'w> Walk<'w> {
         };
         let collect = context(&config.collect, "collect");
         let into = context(&config.into, "into").and_then(|into| {
-            if into.index_child(0).is_some() {
+            if into.segs().len() < MAX_PATH_SEGMENTS {
                 return Some(into);
             }
             let message = format!(
@@ -918,7 +908,7 @@ mod tests {
         let compiler = compiler();
         let mut recorder = Recorder::default();
         let mut walk = Walk::new(&compiler, "", &mut recorder);
-        walk.fragment(&parsed, &root);
+        walk.steps(&parsed, &root, false);
         assert!(walk.issues.is_empty(), "{:?}", walk.issues);
         let paths: Vec<_> = recorder.0.iter().map(|(at, ..)| at.as_str()).collect();
         assert_eq!(

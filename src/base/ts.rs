@@ -81,9 +81,9 @@ pub(crate) fn object(props: &[Prop]) -> String {
 
 /// A union of the string literals `names`, as ts-rs's derive writes one for
 /// an enum of unit variants.
-pub(crate) fn literals(names: &[&str]) -> String {
+pub(crate) fn literals(names: impl IntoIterator<Item = impl std::fmt::Display>) -> String {
     names
-        .iter()
+        .into_iter()
         .map(|n| format!("\"{n}\""))
         .collect::<Vec<_>>()
         .join(" | ")

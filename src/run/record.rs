@@ -132,8 +132,8 @@ impl Completed {
         Self {
             task,
             stamp: Stamp {
-                loop_counter: env.frame.loop_counter,
                 element_index,
+                ..Stamp::sweep(env)
             },
             elapsed,
             errors_before,
@@ -365,7 +365,6 @@ fn watched<'p>(
         super::tests::on_trace_work();
         step.errors = env.errors[errors_before..].to_vec();
         step.elapsed = elapsed.filter(|_| timings);
-        step.loop_counter = stamp.loop_counter;
         step.element_index = stamp.element_index;
         env.push_step(step);
     }

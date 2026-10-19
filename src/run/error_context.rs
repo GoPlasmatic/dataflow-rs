@@ -179,14 +179,12 @@ impl ErrorContext {
     /// missing or replaced. Each hop is read by key, so an array is a hop to
     /// replace, whatever the segment.
     fn walk(&self, rc: &RunContext<'_, '_>) -> (Cow<'_, Path>, Option<OwnedDataValue>) {
-        for len in 1..self.path.segs().len() {
-            let hop = self.path.prefix(len);
-            match rc.get(&hop) {
-                Some(value) if matches!(*value, OwnedDataValue::Object(_)) => {}
-                found => {
-                    let found = found.map(Cow::into_owned);
-                    return (Cow::Owned(hop), found);
-                }
+        let segs = self.path.segs();
+        for len in 1..segs.len() {
+            if !rc.is_object_at(&segs[..len]) {
+                let hop = self.path.prefix(len);
+                let found = rc.get(&hop).map(Cow::into_owned);
+                return (Cow::Owned(hop), found);
             }
         }
         let old = rc.get(&self.path).map(Cow::into_owned);

@@ -21,14 +21,20 @@ const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const PRIME: u64 = 0x0000_0100_0000_01b3;
 const PREFIX: &str = "v1:";
 
-/// FNV-1a 64.
-fn fnv1a(bytes: &[u8]) -> u64 {
+/// Feeds `bytes` into an FNV-1a 64 state `h`.
+fn fnv1a_step(h: u64, bytes: &[u8]) -> u64 {
     bytes
         .iter()
-        .fold(OFFSET, |h, b| (h ^ u64::from(*b)).wrapping_mul(PRIME))
+        .fold(h, |h, b| (h ^ u64::from(*b)).wrapping_mul(PRIME))
+}
+
+#[cfg(test)]
+fn fnv1a(bytes: &[u8]) -> u64 {
+    fnv1a_step(OFFSET, bytes)
 }
 
 /// The bytes the hash is taken over.
+#[cfg(test)]
 fn encode(ops: &BTreeSet<String>, data: &BTreeSet<String>) -> Vec<u8> {
     fn put(out: &mut Vec<u8>, s: &str) {
         let len = u32::try_from(s.len()).expect("a key is shorter than 2^32 bytes");
@@ -52,7 +58,15 @@ pub struct Fingerprint(u64);
 impl Fingerprint {
     /// The fingerprint of the two sets.
     pub(crate) fn of(ops: &BTreeSet<String>, data: &BTreeSet<String>) -> Self {
-        Self(fnv1a(&encode(ops, data)))
+        fn put(h: u64, s: &str) -> u64 {
+            let len = u32::try_from(s.len()).expect("a key is shorter than 2^32 bytes");
+            let h = fnv1a_step(h, &len.to_le_bytes());
+            fnv1a_step(h, s.as_bytes())
+        }
+        let h = ops.iter().fold(OFFSET, |h, s| put(h, s));
+        let h = fnv1a_step(h, &u32::MAX.to_le_bytes());
+        let h = data.iter().fold(h, |h, s| put(h, s));
+        Self(h)
     }
 }
 

@@ -1,7 +1,6 @@
 //! The operators an engine evaluates, as datalogic-rs describes its own
 //! (`Engine::operators`), plus the engine's `secret` and the host's.
 
-use datalogic_rs::ScopedArg;
 use std::borrow::Cow;
 
 /// The family an operator belongs to.
@@ -137,9 +136,6 @@ pub struct Operator {
     pub scoping: bool,
     /// The same arguments always give the same result.
     pub deterministic: bool,
-    /// Which argument a datalogic operator evaluates per element: its
-    /// `scoped_arg`. A host's scoping operator declares none.
-    pub(crate) scoped: Option<ScopedArg>,
 }
 
 impl Operator {
@@ -150,7 +146,6 @@ impl Operator {
             family: OperatorFamily::Custom,
             scoping: false,
             deterministic: false,
-            scoped: None,
         }
     }
 
@@ -174,7 +169,6 @@ impl Operator {
             family: OperatorFamily::Secret,
             scoping: false,
             deterministic: true,
-            scoped: None,
         }
     }
 
@@ -190,16 +184,16 @@ impl Operator {
             op.name,
             op.family
         );
-        std::iter::once(op.name)
-            .chain(op.aliases.iter().copied())
-            .filter(move |_| family.is_some())
-            .map(move |name| Self {
-                name: Cow::Borrowed(name),
-                family: family.unwrap_or(OperatorFamily::Core),
-                scoping: op.scoped_arg.is_some(),
-                deterministic: op.effect != "clock",
-                scoped: op.scoped_arg,
-            })
+        family.into_iter().flat_map(move |family| {
+            std::iter::once(op.name)
+                .chain(op.aliases.iter().copied())
+                .map(move |name| Self {
+                    name: Cow::Borrowed(name),
+                    family,
+                    scoping: op.scoped_arg.is_some(),
+                    deterministic: op.effect != "clock",
+                })
+        })
     }
 }
 
@@ -274,11 +268,6 @@ mod tests {
         want_scoping.sort_unstable();
         assert_eq!(scoping, want_scoping);
         assert_eq!(non, want_non);
-        let at = |name: &str| ops.iter().find(|o| o.name == name).unwrap().scoped;
-        assert_eq!(at("map"), Some(ScopedArg::Index(1)));
-        assert_eq!(at("reduce"), Some(ScopedArg::Index(1)));
-        assert_eq!(at("sort"), Some(ScopedArg::Index(2)));
-        assert_eq!(at("try"), Some(ScopedArg::LastOfMany));
     }
 
     #[test]

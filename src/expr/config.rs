@@ -480,7 +480,7 @@ fn scalar<T: serde::de::DeserializeOwned>(
     cx: &mut CompileCx<'_>,
     expected: &str,
 ) -> Option<T> {
-    match serde_json::from_value::<T>(raw.clone()) {
+    match T::deserialize(raw) {
         Ok(v) => Some(v),
         Err(_) => {
             cx.issue(IssueCode::InputParse, format!("expected {expected}"));
@@ -627,12 +627,15 @@ impl<T: ConfigField> ConfigField for Vec<T> {
             return None;
         };
         // Every element is compiled, so every issue is reported.
-        let compiled: Vec<Option<T>> = items
-            .iter()
-            .enumerate()
-            .map(|(i, item)| cx.at(i, |cx| T::compile(item, cx)))
-            .collect();
-        compiled.into_iter().collect()
+        let mut out = Self::with_capacity(items.len());
+        let mut ok = true;
+        for (i, item) in items.iter().enumerate() {
+            match cx.at(i, |cx| T::compile(item, cx)) {
+                Some(v) => out.push(v),
+                None => ok = false,
+            }
+        }
+        ok.then_some(out)
     }
     fn visit(&self, v: &mut Visit<'_>) {
         for (i, item) in self.iter().enumerate() {
@@ -657,14 +660,17 @@ impl<T: ConfigField> ConfigField for BTreeMap<String, T> {
             cx.issue(IssueCode::InputParse, "expected an object");
             return None;
         };
-        let compiled: Vec<Option<(String, T)>> = entries
-            .iter()
-            .map(|(key, value)| {
-                cx.at(key.as_str(), |cx| T::compile(value, cx))
-                    .map(|v| (key.clone(), v))
-            })
-            .collect();
-        compiled.into_iter().collect()
+        let mut out = Self::new();
+        let mut ok = true;
+        for (key, value) in entries {
+            match cx.at(key.as_str(), |cx| T::compile(value, cx)) {
+                Some(v) => {
+                    out.insert(key.clone(), v);
+                }
+                None => ok = false,
+            }
+        }
+        ok.then_some(out)
     }
     fn visit(&self, v: &mut Visit<'_>) {
         for (key, item) in self {

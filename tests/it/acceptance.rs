@@ -285,14 +285,10 @@ fn a_literal_is_checked_against_its_kind_and_a_folded_expr_too() {
 
 #[test]
 fn a_field_whose_expression_does_not_compile_is_template_compile() {
-    // Found by probing datalogic-rs 5.7.1: the only pure-data compile error is
-    // nesting past its depth limit of 256, so 300 nested levels is refused.
-    let mut rule = json!({"var": "data.x"});
-    for _ in 0..300 {
-        rule = json!({"!": rule});
-    }
-    let (out, issues) =
-        compile::<Templated>(&json!({"record": rule, "spec": []}), Some(&fixedwidth()));
+    let (out, issues) = compile::<Templated>(
+        &json!({"record": crate::support::too_deep(), "spec": []}),
+        Some(&fixedwidth()),
+    );
     assert!(out.is_none());
     assert_eq!(
         triples(&issues),

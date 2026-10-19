@@ -21,7 +21,7 @@ const wasmName = files.find((f) => f.endsWith('_bg.wasm'));
 const glueName = files.find((f) => f.endsWith('.js') && !f.endsWith('_bg.js'));
 
 if (!wasmName || !glueName) {
-  console.error(`✗ ${pkgDir}: expected a *_bg.wasm and a glue .js, found: ${files.join(', ')}`);
+  fail(`${pkgDir}: expected a *_bg.wasm and a glue .js, found: ${files.join(', ')}`);
   process.exit(1);
 }
 

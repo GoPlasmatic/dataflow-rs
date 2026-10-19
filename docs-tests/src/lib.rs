@@ -28,12 +28,9 @@
 //!
 //! # Conventions
 //!
-//! Every ```` ```rust ```` block in the listed pages is compiled. Blocks that
-//! are illustrative fragments rather than runnable code — API signature
-//! listings, snippets that assume an `engine` or `message` binding from
-//! surrounding prose — are tagged ```` ```rust,ignore ```` in the Markdown and
-//! skipped. Prefer fixing a block over tagging it: an `ignore` is an
-//! unverified claim in user-facing docs.
+//! Every ```` ```rust ```` block in the listed pages is compiled. Fragments
+//! that assume surrounding bindings use a hidden `# ` preamble rather than an
+//! `ignore` tag, so every example stays verified.
 
 #![cfg(doctest)]
 
@@ -86,14 +83,7 @@ doc_pages! {
 
     WasmOverview => "../../docs/src/wasm/overview.md",
     UiOverview => "../../docs/src/ui/overview.md",
+
+    ReadmeDoctests => "../../README.md",
+    DeriveReadmeDoctests => "../../derive/README.md",
 }
-
-/// `README.md`'s Rust examples, compiled against the root crate the README
-/// describes.
-#[doc = include_str!("../../README.md")]
-pub struct ReadmeDoctests;
-
-/// `derive/README.md`'s Rust example, the derive crate's front page on
-/// crates.io, compiled against the root crate it tells readers to depend on.
-#[doc = include_str!("../../derive/README.md")]
-pub struct DeriveReadmeDoctests;

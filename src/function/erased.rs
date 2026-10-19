@@ -5,7 +5,7 @@
 use super::templated::primary_name;
 use super::{BoxFuture, Ctx, Function, FunctionConfig, FunctionSpec, Outcome, Prepare, Primary};
 use crate::base::Result;
-use crate::expr::{CompileCx, ExprVisitor, FieldKind, FieldSpec, Resolver};
+use crate::expr::{CompileCx, ExprVisitor, FieldSpec, Resolver};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
 use std::sync::Arc;
@@ -107,20 +107,11 @@ impl<F: Function> ErasedFunction for Erased<F> {
 }
 
 impl<F: Function> Erased<F> {
-    /// The field the config's primary output is, when its fields say: a
-    /// `Templated` config's by its own rule, the only `Output` field or the
-    /// one marked primary; any other's, the `Output` field marked primary,
-    /// as the derive marks it. Only names the field in `emit_default`'s
-    /// error when the input left it unset.
+    /// The field the config's primary output is, when its fields say: the only
+    /// `Output` field or, of several, the one marked primary. Only names the
+    /// field in `emit_default`'s error when the input left it unset.
     fn primary_field(&self) -> Option<&str> {
-        let fields = self.fields();
-        if <F::Config as FunctionConfig>::TEMPLATED {
-            return primary_name(fields);
-        }
-        fields
-            .iter()
-            .find(|f| f.primary && matches!(f.kind, FieldKind::Output))
-            .map(|f| &*f.name)
+        primary_name(self.fields())
     }
 }
 

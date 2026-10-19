@@ -112,14 +112,7 @@ fn summary(issues: &[Issue]) -> Vec<(IssueCode, String)> {
         .collect()
 }
 
-/// An expression datalogic refuses to compile: nesting past its depth limit.
-fn too_deep() -> Value {
-    let mut deep = json!(1);
-    for _ in 0..300 {
-        deep = json!({"!": [deep]});
-    }
-    deep
-}
+use crate::support::too_deep;
 
 fn valid() -> Value {
     json!({"errors": "temp_data.err", "source": 1})

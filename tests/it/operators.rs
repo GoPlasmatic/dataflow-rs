@@ -1,7 +1,7 @@
+use dataflow_rs::Result;
 use dataflow_rs::datalogic_rs::{self, CustomOperator};
 use dataflow_rs::datavalue::OwnedDataValue;
 use dataflow_rs::expr::{ExprEngine, OperatorFamily, Secrets};
-use dataflow_rs::{Error, Result};
 
 struct Nop;
 
@@ -134,5 +134,4 @@ fn secrets_mask_their_values_and_reject_non_objects() {
     let engine = ExprEngine::builder().secrets(secrets).build().unwrap();
     assert_eq!(engine.secrets().names().collect::<Vec<_>>(), ["a", "k"]);
     assert!(Secrets::new(OwnedDataValue::from(&serde_json::json!([1]))).is_err());
-    let _: fn(Error) = drop;
 }

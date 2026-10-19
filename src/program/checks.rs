@@ -171,6 +171,9 @@ impl<'e> Checks<'e> {
     /// Rule 3: every path rooted at `payload` the expression reads at the
     /// root, at the expression, from the compiled rule's own `facts()`.
     fn payload_vars(&self, at: &AuthoredPath, raw: &Value, report: &mut Report<'_>) {
+        if !matches!(raw, Value::Object(_) | Value::Array(_)) {
+            return;
+        }
         // The compile walk compiled `raw` too; this asks the same engine for
         // the one answer it needs, the rule's reads. A rule the engine cannot
         // compile is reported elsewhere and has no reads to check.
@@ -240,21 +243,23 @@ fn walk_duplicates(
             }
         }
         Value::Object(map) => {
-            let mut emitted: HashMap<&str, &str> = HashMap::new();
-            for key in map.keys() {
-                let name = key.strip_prefix(escape).unwrap_or(key);
-                match emitted.entry(name) {
-                    Entry::Vacant(slot) => {
-                        slot.insert(key);
-                    }
-                    Entry::Occupied(first) => {
-                        let first = first.get();
-                        let message = format!(
-                            "`{first}` and `{key}` both emit the key `{name}`, so the object \
-                             would carry it twice: a later read sees only the first, while \
-                             serialization emits both"
-                        );
-                        out.push((at.join(key.as_str()), message));
+            if map.len() > 1 {
+                let mut emitted: HashMap<&str, &str> = HashMap::with_capacity(map.len());
+                for key in map.keys() {
+                    let name = key.strip_prefix(escape).unwrap_or(key);
+                    match emitted.entry(name) {
+                        Entry::Vacant(slot) => {
+                            slot.insert(key);
+                        }
+                        Entry::Occupied(first) => {
+                            let first = first.get();
+                            let message = format!(
+                                "`{first}` and `{key}` both emit the key `{name}`, so the object \
+                                 would carry it twice: a later read sees only the first, while \
+                                 serialization emits both"
+                            );
+                            out.push((at.join(key.as_str()), message));
+                        }
                     }
                 }
             }

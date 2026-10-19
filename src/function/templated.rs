@@ -174,11 +174,12 @@ fn field(kind: FieldKind, raw: &Value, cx: &mut CompileCx<'_>) -> Option<Templat
                 cx.issue(IssueCode::InputParse, format!("expected {}", expected(vk)));
                 return None;
             }
-            if vk == ValueKind::Path && !constant_fits(vk, &OwnedDataValue::from(raw)) {
+            let value = OwnedDataValue::from(raw);
+            if vk == ValueKind::Path && !constant_fits(vk, &value) {
                 cx.issue(IssueCode::InvalidPath, "not a valid context path");
                 return None;
             }
-            Some(TemplatedField::Literal(OwnedDataValue::from(raw)))
+            Some(TemplatedField::Literal(value))
         }
         FieldKind::Output => Output::compile(raw, cx).map(TemplatedField::Output),
         _ => {
@@ -217,13 +218,11 @@ pub(super) fn default_problem(exprs: &ExprEngine, spec: &FieldSpec) -> Option<St
     let compiled = field(spec.kind, &raw, &mut cx);
     let rejected = issues
         .iter()
-        .any(|issue| issue.severity == Severity::Rejected);
-    if compiled.is_some() && !rejected {
+        .find(|issue| issue.severity == Severity::Rejected);
+    if compiled.is_some() && rejected.is_none() {
         return None;
     }
-    let why = issues
-        .iter()
-        .find(|issue| issue.severity == Severity::Rejected)
+    let why = rejected
         .map(|issue| issue.message.clone())
         .unwrap_or_else(|| "it does not compile".to_owned());
     Some(format!(

@@ -1,9 +1,8 @@
-import { LazyLogicEditor as DataLogicEditor } from '../../../common/LazyLogicEditor';
 import type { Context, JsonLogicValue, MappingItem, ValidationRule } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
-import { useTheme } from '../../context';
 import { useTaskDebugStep } from '../../hooks/useTreeNodeDebugState';
 import { convertMappingsToObject } from '../../../../utils/dataUtils';
+import { DataLogicView } from './DataLogicView';
 
 interface TaskContentProps {
   selection: Extract<TreeSelectionType, { type: 'task' }>;
@@ -11,7 +10,6 @@ interface TaskContentProps {
 
 export function TaskContent({ selection }: TaskContentProps) {
   const { task } = selection;
-  const { resolvedTheme } = useTheme();
   const shown = useTaskDebugStep(task, selection.workflow);
   const functionName = task.function.name;
   const input = task.function.input as Record<string, unknown> | undefined;
@@ -33,19 +31,7 @@ export function TaskContent({ selection }: TaskContentProps) {
   if (functionName === 'map') {
     const mappings = (input?.mappings as MappingItem[]) || [];
     const visualData = convertMappingsToObject(mappings);
-    return (
-      <div className="df-details-content">
-        <div className="df-details-logic-editor">
-          <DataLogicEditor
-            value={visualData}
-            theme={resolvedTheme}
-            templating={true}
-            className="df-datalogic-viewer"
-            data={debugData}
-          />
-        </div>
-      </div>
-    );
+    return <DataLogicView value={visualData} data={debugData} />;
   }
 
   // For validation function, show all rules as AND expression
@@ -54,32 +40,9 @@ export function TaskContent({ selection }: TaskContentProps) {
     const andExpression: JsonLogicValue = {
       and: rules.map((rule) => rule.logic),
     };
-    return (
-      <div className="df-details-content">
-        <div className="df-details-logic-editor">
-          <DataLogicEditor
-            value={andExpression}
-            theme={resolvedTheme}
-            templating={true}
-            className="df-datalogic-viewer"
-            data={debugData}
-          />
-        </div>
-      </div>
-    );
+    return <DataLogicView value={andExpression} data={debugData} />;
   }
 
   // For custom functions, show the full input
-  return (
-    <div className="df-details-content">
-      <div className="df-details-logic-editor">
-        <DataLogicEditor
-          value={task.function.input as JsonLogicValue}
-          theme={resolvedTheme}
-          templating={true}
-          className="df-datalogic-viewer"
-        />
-      </div>
-    </div>
-  );
+  return <DataLogicView value={task.function.input as JsonLogicValue} />;
 }

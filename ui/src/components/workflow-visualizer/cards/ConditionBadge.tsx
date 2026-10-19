@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { Check, GitBranch } from 'lucide-react';
 import { LazyLogicEditor as DataLogicEditor } from '../../common/LazyLogicEditor';
 import '@goplasmatic/datalogic-ui/styles.css';
-import type { JsonLogicValue } from '../../../types';
+import { hasCondition, type JsonLogicValue } from '../../../types';
+import { useTheme } from '../context';
 
 interface ConditionBadgeProps {
   condition: JsonLogicValue | undefined;
@@ -83,10 +84,11 @@ interface TooltipPosition {
 }
 
 export function ConditionBadge({ condition, className = '', onClick }: ConditionBadgeProps) {
+  const { resolvedTheme } = useTheme();
   const [showTooltip, setShowTooltip] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition>({ top: 0, left: 0, showBelow: false });
   const badgeRef = useRef<HTMLSpanElement>(null);
-  const isAlways = condition === undefined || condition === null || condition === true;
+  const isAlways = !hasCondition(condition);
   const preview = formatConditionPreview(condition);
 
   useEffect(() => {
@@ -152,10 +154,10 @@ export function ConditionBadge({ condition, className = '', onClick }: Condition
           }}
         >
           <div className="df-condition-tooltip-header">Logic</div>
-          <div className="df-condition-tooltip-content">
+          <div className="df-condition-tooltip-content" data-theme={resolvedTheme}>
             <DataLogicEditor
               value={condition}
-              theme="dark"
+              theme={resolvedTheme}
               templating={true}
               className="df-condition-tooltip-editor"
             />

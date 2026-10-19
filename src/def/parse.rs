@@ -159,19 +159,17 @@ pub(crate) fn parse_steps(
         return (None, vec![issue]);
     };
     let (setup, depth) = fragment_place(root).unwrap_or((false, 0));
-    let rewritten: Value;
-    let (list, issues, exts) = if opts.compat {
+    let mut items = Cow::Borrowed(items.as_slice());
+    let (issues, exts) = if opts.compat {
         // As `parse_with_rewrites` does: the reader rewrites a copy, and the
         // walk reads the copy and goes on building the `ext`s it began.
-        let mut copy = items.clone();
-        let read = reader::read_steps(&mut copy, root, setup, depth);
-        rewritten = Value::Array(copy);
-        (&rewritten, read.issues, read.exts)
+        let read = reader::read_steps(items.to_mut(), root, setup, depth);
+        (read.issues, read.exts)
     } else {
-        (steps, Vec::new(), HashMap::new())
+        (Vec::new(), HashMap::new())
     };
     let mut walk = Walk::new(opts.compat, issues, exts);
-    let steps = walk.steps(Some(list), root, setup, depth);
+    let steps = walk.steps(&items, root, setup, depth);
     walk.finish();
     let rejected = walk.rejected();
     ((!rejected).then_some(steps), walk.issues)
@@ -206,12 +204,6 @@ pub(crate) fn fragment_place(root: &AuthoredPath) -> Option<(bool, usize)> {
             _ => return None,
         }
     }
-}
-
-/// Whether a fragment can sit at `root`: at a `tasks` list, or at
-/// `loop.setup`, with any number of groups below.
-pub(crate) fn holds_steps(root: &AuthoredPath) -> bool {
-    fragment_place(root).is_some()
 }
 
 /// Whether a step object is a group: it carries a `tasks` key, whatever its
@@ -365,11 +357,8 @@ impl<'j> Walk<'j> {
         let header = self.header(obj, &root);
 
         // 3.
-        let tasks = obj.get("tasks");
-        if !tasks
-            .and_then(Value::as_array)
-            .is_some_and(|tasks| !tasks.is_empty())
-        {
+        let tasks = obj.get("tasks").and_then(Value::as_array);
+        if !tasks.is_some_and(|tasks| !tasks.is_empty()) {
             self.report(
                 IssueCode::NoTasks,
                 root.join("tasks"),
@@ -378,7 +367,12 @@ impl<'j> Walk<'j> {
         }
 
         // 4.
-        let tasks = self.steps(tasks, &root.join("tasks"), false, 0);
+        let tasks = self.steps(
+            tasks.map_or(&[], Vec::as_slice),
+            &root.join("tasks"),
+            false,
+            0,
+        );
         self.step = None;
 
         // 5 and 6.
@@ -423,18 +417,14 @@ impl<'j> Walk<'j> {
         }
     }
 
-    /// The steps of a list, `tasks` or `loop.setup`, at `at`. A list that is
-    /// not an array yields none; its owner reports the shape.
+    /// The steps of a list, `tasks` or `loop.setup`, at `at`.
     pub(super) fn steps(
         &mut self,
-        list: Option<&'j Value>,
+        items: &'j [Value],
         at: &AuthoredPath,
         setup: bool,
         depth: usize,
     ) -> Vec<StepDef> {
-        let Some(items) = list.and_then(Value::as_array) else {
-            return Vec::new();
-        };
         items
             .iter()
             .enumerate()
@@ -561,17 +551,14 @@ impl<'j> Walk<'j> {
         }
         // 4.1 (v3 reports the depth after the node's other rules) and 4.7.
         let too_deep = !descends(depth);
-        let members = obj.get("tasks");
+        let members = obj.get("tasks").and_then(Value::as_array);
         if too_deep {
             self.report(
                 IssueCode::GroupTooDeep,
                 at.clone(),
                 format!("task groups nested deeper than {MAX_GROUP_DEPTH} levels"),
             );
-        } else if !members
-            .and_then(Value::as_array)
-            .is_some_and(|members| !members.is_empty())
-        {
+        } else if !members.is_some_and(|members| !members.is_empty()) {
             self.report(
                 IssueCode::EmptyGroup,
                 at.join("tasks"),
@@ -590,7 +577,12 @@ impl<'j> Walk<'j> {
         let tasks = if too_deep {
             Vec::new()
         } else {
-            self.steps(members, &at.join("tasks"), setup, depth + 1)
+            self.steps(
+                members.map_or(&[], Vec::as_slice),
+                &at.join("tasks"),
+                setup,
+                depth + 1,
+            )
         };
         StepDef::Group(GroupDef {
             id,
@@ -683,7 +675,7 @@ impl<'j> Walk<'j> {
     }
 
     /// An optional string: absent or `null` is `None`.
-    fn opt_string(
+    pub(super) fn opt_string(
         &mut self,
         obj: &Map<String, Value>,
         key: &str,
@@ -944,7 +936,7 @@ mod tests {
             "loop.setup[0].tasks",
         ] {
             let root: crate::base::AuthoredPath = root.parse().unwrap();
-            assert!(holds_steps(&root), "{root}");
+            assert!(fragment_place(&root).is_some(), "{root}");
         }
         for root in [
             "data.tasks",
@@ -954,9 +946,9 @@ mod tests {
             "tasks[0].data.tasks",
         ] {
             let root: crate::base::AuthoredPath = root.parse().unwrap();
-            assert!(!holds_steps(&root), "{root}");
+            assert!(fragment_place(&root).is_none(), "{root}");
         }
-        assert!(!holds_steps(&crate::base::AuthoredPath::root()));
+        assert!(fragment_place(&crate::base::AuthoredPath::root()).is_none());
     }
 
     #[test]

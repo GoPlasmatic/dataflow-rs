@@ -78,48 +78,22 @@ fn osa(a: &[char], b: &[char]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const WORKFLOW_KEYS: &[&str] = &[
-        "id",
-        "name",
-        "description",
-        "priority",
-        "condition",
-        "tasks",
-        "on_failure",
-        "channel",
-        "status",
-        "version",
-        "rollout",
-        "loop",
-        "tags",
-        "created_at",
-        "updated_at",
-        "ext",
-    ];
-    const TASK_KEYS: &[&str] = &[
-        "id",
-        "name",
-        "description",
-        "condition",
-        "function",
-        "on_failure",
-        "on_rejection",
-        "terminal",
-        "for_each",
-        "ext",
-    ];
+    use crate::def::definition_keys;
 
     #[test]
     fn a_missing_letter_is_found() {
-        assert_eq!(near_miss("conditon", TASK_KEYS), Some("condition"));
+        assert_eq!(
+            near_miss("conditon", definition_keys().task),
+            Some("condition")
+        );
     }
 
     #[test]
     fn the_threshold_scales_with_the_key_length() {
         // "ui" is distance 2 from "id"; a key of up to five characters allows 1.
-        assert_eq!(near_miss("ui", WORKFLOW_KEYS), None);
-        assert_eq!(near_miss("path", WORKFLOW_KEYS), None);
+        let workflow_keys = definition_keys().workflow;
+        assert_eq!(near_miss("ui", workflow_keys), None);
+        assert_eq!(near_miss("path", workflow_keys), None);
     }
 
     #[test]
@@ -154,9 +128,11 @@ mod tests {
 
     #[test]
     fn the_rolled_distance_equals_the_full_matrix() {
-        let words: Vec<&str> = WORKFLOW_KEYS
+        let keys = definition_keys();
+        let words: Vec<&str> = keys
+            .workflow
             .iter()
-            .chain(TASK_KEYS)
+            .chain(keys.task)
             .copied()
             .chain([
                 "",
@@ -188,31 +164,33 @@ mod tests {
 
     #[test]
     fn a_key_far_longer_than_every_candidate_is_no_near_miss() {
+        let keys = definition_keys();
         // Every candidate is skipped on length alone: no distance is computed.
         let key = "x".repeat(1_000_000);
-        assert_eq!(near_miss(&key, WORKFLOW_KEYS), None);
+        assert_eq!(near_miss(&key, keys.workflow), None);
         // A key one longer than the threshold allows is skipped too.
-        assert_eq!(near_miss("conditionxyz", TASK_KEYS), None);
-        assert_eq!(near_miss("conditionx", TASK_KEYS), Some("condition"));
+        assert_eq!(near_miss("conditionxyz", keys.task), None);
+        assert_eq!(near_miss("conditionx", keys.task), Some("condition"));
     }
 
     #[test]
     fn ties_go_to_the_first_and_exact_matches_are_not_near() {
         assert_eq!(near_miss("ab", &["ac", "ad"]), Some("ac"));
-        assert_eq!(near_miss("id", WORKFLOW_KEYS), None);
+        assert_eq!(near_miss("id", definition_keys().workflow), None);
     }
 
     #[test]
     fn an_unknown_key_is_a_typo_naming_its_near_key_or_unknown() {
+        let task_keys = definition_keys().task;
         assert_eq!(
-            unknown_key("conditon", TASK_KEYS),
+            unknown_key("conditon", task_keys),
             (
                 IssueCode::LikelyTypo,
                 "unknown key `conditon`, did you mean `condition`?".to_owned()
             )
         );
         assert_eq!(
-            unknown_key("owner", TASK_KEYS),
+            unknown_key("owner", task_keys),
             (IssueCode::UnknownKey, "unknown key `owner`".to_owned())
         );
     }

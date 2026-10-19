@@ -51,7 +51,6 @@ impl Capture {
         let paths: Vec<&[Seg]> = options.redact.iter().map(Path::segs).collect();
         let sized = options.max_bytes.is_some();
         let (initial, bytes) = redacting_clone(context, &paths, sized);
-        let bytes = if sized { bytes } else { 0 };
         let truncated = options.max_bytes.is_some_and(|max| bytes > max);
         Self {
             options,
@@ -222,28 +221,31 @@ fn redacting_clone(
     paths: &[&[Seg]],
     sized: bool,
 ) -> (OwnedDataValue, usize) {
+    let node_size = if sized { NODE_SIZE } else { 0 };
     let measure = |v: &OwnedDataValue| if sized { approx_size(v) } else { 0 };
     if paths.iter().any(|p| p.is_empty()) {
-        return (OwnedDataValue::Null, NODE_SIZE);
+        return (OwnedDataValue::Null, node_size);
     }
     if paths.is_empty() {
         return (value.clone(), measure(value));
     }
     match value {
         OwnedDataValue::Object(pairs) => {
-            let mut size = NODE_SIZE;
+            let mut size = node_size;
             let pairs = pairs
                 .iter()
                 .map(|(key, child)| {
                     let (child, child_size) = redacting_clone(child, &below_key(paths, key), sized);
-                    size += key.len() + child_size;
+                    if sized {
+                        size += key.len() + child_size;
+                    }
                     (key.clone(), child)
                 })
                 .collect();
             (OwnedDataValue::Object(pairs), size)
         }
         OwnedDataValue::Array(items) => {
-            let mut size = NODE_SIZE;
+            let mut size = node_size;
             let items = items
                 .iter()
                 .enumerate()
@@ -288,8 +290,7 @@ fn prune(value: &mut OwnedDataValue, paths: &[&[Seg]]) {
 /// shared [`crate::state::charge_size`] walker.
 fn approx_size(value: &OwnedDataValue) -> usize {
     let mut budget = usize::MAX;
-    let mut visited = 0;
-    let _ = crate::state::charge_size(value, NODE_SIZE, &mut budget, &mut visited);
+    let _ = crate::state::charge_size(value, NODE_SIZE, &mut budget);
     usize::MAX - budget
 }
 
@@ -300,9 +301,8 @@ fn charge_change(change: &Change, budget: &mut usize) -> bool {
         return false;
     }
     *budget -= change.path.len();
-    let mut visited = 0;
-    crate::state::charge_size(&change.old_value, NODE_SIZE, budget, &mut visited)
-        && crate::state::charge_size(&change.new_value, NODE_SIZE, budget, &mut visited)
+    crate::state::charge_size(&change.old_value, NODE_SIZE, budget)
+        && crate::state::charge_size(&change.new_value, NODE_SIZE, budget)
 }
 
 #[cfg(test)]

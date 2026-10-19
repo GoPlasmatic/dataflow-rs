@@ -239,6 +239,7 @@ impl Path {
     /// `{self}.{index}` parses to, built from these segments and one more
     /// rather than re-parsed. `None` when this path already holds the most
     /// segments a path can.
+    #[cfg(test)]
     pub(crate) fn index_child(&self, index: usize) -> Option<Self> {
         if self.segs.len() >= MAX_PATH_SEGMENTS {
             return None;

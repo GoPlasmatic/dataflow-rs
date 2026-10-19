@@ -137,9 +137,6 @@ impl<'r> Reader<'r> {
 
     /// [`Self::find`] for a path already resolved against the view.
     fn find_resolved(self, path: &Path, r: Resolved) -> Option<Filled<'r>> {
-        if self.log.is_empty() {
-            return path.get(self.owned).map(Filled::lent);
-        }
         match self.log.lookup(At::new(path.segs(), r.kinds)) {
             Lookup::Clean => path.get(self.owned).map(Filled::lent),
             Lookup::Owned(v) => v.map(Filled::lent),
@@ -399,14 +396,14 @@ impl<'q, 'p> Edit<'_, 'q, 'p> {
             .alloc(splice::merge_root(self.arena(), before, key, value));
         match (slot, value) {
             (Some(DataValue::Object(_)), DataValue::Object(new_pairs)) => {
-                let owned: Vec<Option<OwnedDataValue>> = match owned {
-                    Some(OwnedDataValue::Object(pairs)) => {
-                        pairs.into_iter().map(|(_, v)| Some(v)).collect()
-                    }
-                    _ => vec![None; new_pairs.len()],
+                let root_seg = Seg::key(key);
+                let mut owned = match owned {
+                    Some(OwnedDataValue::Object(pairs)) => Some(pairs.into_iter().map(|(_, v)| v)),
+                    _ => None,
                 };
-                for ((k, _), v) in new_pairs.iter().zip(owned) {
-                    let segs = [Seg::key(key), Seg::key(k)];
+                for (k, _) in new_pairs {
+                    let segs = [root_seg.clone(), Seg::key(k)];
+                    let v = owned.as_mut().and_then(Iterator::next);
                     self.log.mark(At::new(&segs, 0), Mark::Set(v));
                 }
             }
@@ -448,9 +445,9 @@ impl<'m, 'p> RunContext<'m, 'p> {
         matches!(self.state, State::Viewed(_))
     }
 
-    /// The view, built now if there is none: at the first read, not at run
+    /// Builds the view now if there is none: at the first read, not at run
     /// start.
-    fn view(&mut self) -> &mut RunView<'p> {
+    fn ensure_view(&mut self) {
         if let State::Owned(_) = self.state {
             let State::Owned(owner) = std::mem::replace(&mut self.state, State::Taken) else {
                 unreachable!()
@@ -461,23 +458,23 @@ impl<'m, 'p> RunContext<'m, 'p> {
             self.stats.views += 1;
             self.state = State::Viewed(view);
         }
-        match &mut self.state {
-            State::Viewed(view) => view,
-            _ => unreachable!("a run context is not used after its context went back"),
-        }
     }
 
     /// Read against the view. `f` may evaluate any `&'p` expression; what it
     /// returns cannot borrow the view.
     pub(crate) fn read<R>(&mut self, f: impl for<'q> FnOnce(&'q Owner<'p>, Root<'q>) -> R) -> R {
-        self.view().with_dependent(|owner, root| f(owner, root))
+        self.ensure_view();
+        let State::Viewed(view) = &self.state else {
+            unreachable!("a run context is not used after its context went back")
+        };
+        view.with_dependent(|owner, root| f(owner, root))
     }
 
     /// Write against the view, building it first.
     pub(crate) fn edit<R>(&mut self, f: impl for<'e, 'q> FnOnce(&mut Edit<'e, 'q, 'p>) -> R) -> R {
-        self.view();
+        self.ensure_view();
         let State::Viewed(view) = &mut self.state else {
-            unreachable!()
+            unreachable!("a run context is not used after its context went back")
         };
         let log = &mut self.log;
         view.with_dependent_mut(|owner, root| f(&mut Edit { owner, root, log }))
@@ -584,6 +581,20 @@ impl<'m, 'p> RunContext<'m, 'p> {
         }
     }
 
+    /// Whether `segs` currently holds an object, checked without converting
+    /// from the view.
+    pub(crate) fn is_object_at(&self, segs: &[Seg]) -> bool {
+        match &self.state {
+            State::Owned(owner) => {
+                path::get(&owner.ctx, segs).is_some_and(OwnedDataValue::is_object)
+            }
+            State::Viewed(view) => {
+                splice::get(**view.borrow_dependent(), segs).is_some_and(|v| v.is_object())
+            }
+            State::Taken => unreachable!("a run context is not used after its context went back"),
+        }
+    }
+
     /// The value at `path`: borrowed from the owned tree unless the log says
     /// it changed, else converted from the view.
     pub(crate) fn get(&self, path: &Path) -> Option<Cow<'_, OwnedDataValue>> {
@@ -602,9 +613,9 @@ impl<'m, 'p> RunContext<'m, 'p> {
 
     /// What a host call holds across its `.await`. Builds the view first.
     pub(crate) fn reader(&mut self) -> Reader<'_> {
-        self.view();
+        self.ensure_view();
         let State::Viewed(view) = &self.state else {
-            unreachable!()
+            unreachable!("a run context is not used after its context went back")
         };
         self.reader_of(view)
     }

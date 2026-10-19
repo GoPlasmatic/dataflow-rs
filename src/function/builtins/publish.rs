@@ -41,22 +41,21 @@ impl PublishConfig {
         } else {
             ("root_element", "publish_xml")
         };
-        let input = match input.get(other).is_some() {
-            false => Cow::Borrowed(input),
-            true => {
-                let mut owned = input.clone();
-                if let Value::Object(object) = &mut owned {
-                    object.remove(other);
-                }
-                cx.at(other, |cx| {
-                    cx.issue_as(
-                        IssueCode::UnknownKey,
-                        Severity::Advisory,
-                        format!("`{other}` is `{owner}`'s field; this call ignores it"),
-                    );
-                });
-                Cow::Owned(owned)
+        let input = if input.get(other).is_some() {
+            let mut owned = input.clone();
+            if let Value::Object(object) = &mut owned {
+                object.remove(other);
             }
+            cx.at(other, |cx| {
+                cx.issue_as(
+                    IssueCode::UnknownKey,
+                    Severity::Advisory,
+                    format!("`{other}` is `{owner}`'s field; this call ignores it"),
+                );
+            });
+            Cow::Owned(owned)
+        } else {
+            Cow::Borrowed(input)
         };
         <Self as FunctionConfig>::compile(&input, cx)
     }

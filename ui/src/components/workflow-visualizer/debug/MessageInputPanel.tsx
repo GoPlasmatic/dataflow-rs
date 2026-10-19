@@ -11,8 +11,6 @@ interface MessageInputPanelProps {
   className?: string;
 }
 
-type PayloadSection = 'payload';
-
 /**
  * Panel for inputting test payload data
  *
@@ -28,52 +26,38 @@ export function MessageInputPanel({
   const { setInputPayload, state } = useDebugger();
   const { inputPayload } = state;
 
-  const [expandedSections, setExpandedSections] = useState<Set<PayloadSection>>(
-    new Set(['payload'])
-  );
-  const [editingSection, setEditingSection] = useState<PayloadSection | null>(null);
+  const [isExpanded, setIsExpanded] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState('');
   const [parseError, setParseError] = useState<string | null>(null);
 
   const payload = inputPayload || {};
 
-  const toggleSection = (section: PayloadSection) => {
-    setExpandedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(section)) {
-        next.delete(section);
-      } else {
-        next.add(section);
-      }
-      return next;
-    });
-  };
-
   const startEditing = () => {
-    setEditingSection('payload');
+    setIsEditing(true);
     setEditText(JSON.stringify(payload, null, 2));
     setParseError(null);
   };
 
   const cancelEditing = () => {
-    setEditingSection(null);
+    setIsEditing(false);
     setEditText('');
     setParseError(null);
   };
 
   const saveEditing = useCallback(() => {
-    if (!editingSection) return;
+    if (!isEditing) return;
 
     try {
       const parsed = JSON.parse(editText);
       setInputPayload(parsed);
-      setEditingSection(null);
+      setIsEditing(false);
       setEditText('');
       setParseError(null);
     } catch (err) {
       setParseError(err instanceof Error ? err.message : 'Invalid JSON');
     }
-  }, [editingSection, editText, setInputPayload]);
+  }, [isEditing, editText, setInputPayload]);
 
   const handleLoadSample = () => {
     setInputPayload({
@@ -96,8 +80,6 @@ export function MessageInputPanel({
   };
 
   const isEmptyPayload = Object.keys(payload).length === 0;
-  const isExpanded = expandedSections.has('payload');
-  const isEditing = editingSection === 'payload';
 
   return (
     <div className={`df-debug-input-panel ${className}`}>
@@ -127,7 +109,7 @@ export function MessageInputPanel({
         <div className="df-debug-input-section">
           <div
             className="df-debug-input-section-header"
-            onClick={() => !isEditing && toggleSection('payload')}
+            onClick={() => !isEditing && setIsExpanded((prev) => !prev)}
           >
             <span className="df-debug-section-toggle">
               {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

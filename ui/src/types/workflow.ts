@@ -252,6 +252,24 @@ export function countLeafSteps(steps: Step[]): number {
 }
 
 /**
+ * Every leaf task in a workflow, in execution order: `loop.setup` steps first,
+ * then `tasks`.
+ */
+export function workflowTasks(workflow: Workflow): Task[] {
+  return [
+    ...flattenSteps(workflow.loop?.setup ?? []),
+    ...flattenSteps(workflow.tasks ?? []),
+  ];
+}
+
+/**
+ * Whether a condition is active (present and not trivially `true`).
+ */
+export function hasCondition(condition: unknown): condition is JsonLogicValue {
+  return condition !== undefined && condition !== null && condition !== true;
+}
+
+/**
  * Engine-managed `for` loop over a workflow's task list.
  *
  * Mirrors `LoopDef` in the engine's `src/def/types.rs`. A workflow carrying a

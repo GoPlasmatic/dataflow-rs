@@ -7,7 +7,6 @@ use crate::base::{Change, Error, ErrorKind, IssueCode, MAPPING_ERROR, Result};
 use crate::expr::arena::with_arena;
 use crate::expr::rules::{self, Shape};
 use crate::expr::{CompileCx, Expr, ExprEngine, MAX_ARRAY_INDEX, Path};
-use crate::function::sync::task_record;
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use crate::state::{Edit, kind};
 use ::log::error;
@@ -210,13 +209,7 @@ impl MapConfig {
                     failed = true;
                     let message = format!("mappings[{i}] ({}): {reason}", mapping.describe());
                     error!("Map: {message}");
-                    let mut record = task_record(
-                        MAPPING_ERROR,
-                        message,
-                        &cx.workflow_id,
-                        &cx.task_id,
-                        &cx.now,
-                    );
+                    let mut record = cx.record(MAPPING_ERROR, message);
                     record.path = path.map(|path| path.to_string());
                     cx.errors.push(record);
                 }

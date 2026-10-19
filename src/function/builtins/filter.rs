@@ -2,7 +2,6 @@
 
 use crate::base::{EVALUATION_ERROR, ErrorKind, Result};
 use crate::expr::Expr;
-use crate::function::sync::task_record;
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use ::log::debug;
 use serde::{Deserialize, Serialize};
@@ -44,13 +43,8 @@ impl FilterConfig {
             Err(e) => {
                 debug!("Filter: condition evaluation error: {e:?}");
                 let message = format!("Filter condition failed to evaluate: {e}");
-                cx.errors.push(task_record(
-                    EVALUATION_ERROR,
-                    message,
-                    &cx.workflow_id,
-                    &cx.task_id,
-                    &cx.now,
-                ));
+                let record = cx.record(EVALUATION_ERROR, message);
+                cx.errors.push(record);
                 false
             }
         };
@@ -69,7 +63,7 @@ mod tests {
 
     /// The filter's status, after checking it wrote nothing, failed nothing
     /// and recorded no error.
-    async fn filter(condition: Value, on_reject: Option<&str>) -> Option<u16> {
+    fn filter(condition: Value, on_reject: Option<&str>) -> Option<u16> {
         let (status, errors) = filter_recording(condition, on_reject);
         assert_eq!(errors, "[]", "a condition that evaluates records nothing");
         status
@@ -94,19 +88,19 @@ mod tests {
         (observed.status, observed.errors)
     }
 
-    #[tokio::test]
-    async fn a_literal_true_passes() {
+    #[test]
+    fn a_literal_true_passes() {
         for condition in [
             json!(true),
             json!({"var": "data.ok"}),
             json!({">": [{"var": "data.a"}, 1]}),
         ] {
-            assert_eq!(filter(condition, None).await, Some(200));
+            assert_eq!(filter(condition, None), Some(200));
         }
     }
 
-    #[tokio::test]
-    async fn anything_else_rejects_as_halt_or_skip() {
+    #[test]
+    fn anything_else_rejects_as_halt_or_skip() {
         for condition in [
             json!(false),
             json!(1),
@@ -116,14 +110,10 @@ mod tests {
             json!({"var": "data.missing"}),
         ] {
             // `halt` is the default; it is `Halt`, status 299.
-            assert_eq!(
-                filter(condition.clone(), None).await,
-                Some(299),
-                "{condition}"
-            );
-            assert_eq!(filter(condition.clone(), Some("halt")).await, Some(299));
+            assert_eq!(filter(condition.clone(), None), Some(299), "{condition}");
+            assert_eq!(filter(condition.clone(), Some("halt")), Some(299));
             // `skip` leaves no audit entry at all.
-            assert_eq!(filter(condition, Some("skip")).await, None);
+            assert_eq!(filter(condition, Some("skip")), None);
         }
     }
 

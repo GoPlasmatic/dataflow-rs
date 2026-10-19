@@ -634,15 +634,12 @@ crate::base::ts::ts_decl!(
     IssueCode,
     "IssueCode",
     [" What an issue is about: its SCREAMING_SNAKE code, such as `UNKNOWN_FUNCTION`."],
-    |_cfg| {
-        let codes: Vec<&str> = IssueCode::ALL.iter().map(|c| c.as_str()).collect();
-        crate::base::ts::literals(&codes)
-    }
+    |_cfg| crate::base::ts::literals(IssueCode::ALL.iter().map(|c| c.as_str()))
 );
 
 #[cfg(feature = "ts")]
 crate::base::ts::ts_decl!(Severity, "Severity", [" When an issue bites."], |_cfg| {
-    crate::base::ts::literals(&Severity::ALL.map(Severity::as_str))
+    crate::base::ts::literals(Severity::ALL.map(Severity::as_str))
 });
 
 #[cfg(feature = "ts")]
@@ -650,7 +647,7 @@ crate::base::ts::ts_decl!(
     StepKind,
     "StepKind",
     [" What kind of step an issue sits in."],
-    |_cfg| crate::base::ts::literals(&StepKind::ALL.map(StepKind::as_str))
+    |_cfg| crate::base::ts::literals(StepKind::ALL.map(StepKind::as_str))
 );
 
 #[cfg(feature = "ts")]

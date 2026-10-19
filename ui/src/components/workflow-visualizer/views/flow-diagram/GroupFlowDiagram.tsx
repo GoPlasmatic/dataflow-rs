@@ -15,11 +15,10 @@ const nodeTypes: NodeTypes = {
 
 interface GroupFlowDiagramProps {
   workflows: Workflow[];
-  name: string;
   onSelect: (selection: TreeSelectionType) => void;
 }
 
-export function GroupFlowDiagram({ workflows, name: _name, onSelect }: GroupFlowDiagramProps) {
+export function GroupFlowDiagram({ workflows, onSelect }: GroupFlowDiagramProps) {
   const { resolvedTheme } = useTheme();
   const { nodes, edges } = useMemo(() => buildGroupFlowGraph(workflows), [workflows]);
 

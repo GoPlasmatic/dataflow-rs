@@ -120,8 +120,7 @@ const LOG_KEYS: &[&str] = &["level", "message", "fields"];
 const PARSE_KEYS: &[&str] = &["source", "target"];
 
 /// The keys of a `publish_json` or `publish_xml` input.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) const PUBLISH_KEYS: &[&str] = &["source", "target", "pretty", "root_element"];
+const PUBLISH_KEYS: &[&str] = &["source", "target", "pretty", "root_element"];
 
 /// What the compat reader knows of a built-in's input: its keys and,
 /// for an input holding an array of nested configs, that array's key and the
@@ -325,8 +324,9 @@ impl Walk<'_> {
                 continue;
             }
             let name = format!("{prefix}{key}");
-            match ext.keep(key, name.clone(), value.clone(), path.clone()) {
-                Ok(()) => self.report(code, path, format!("{message} (kept in `ext` as `{name}`)")),
+            let kept = format!("{message} (kept in `ext` as `{name}`)");
+            match ext.keep(key, name, value.clone(), path.clone()) {
+                Ok(()) => self.report(code, path, kept),
                 Err(collision) => self.report(IssueCode::ExtCollision, path, collision),
             }
         }

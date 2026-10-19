@@ -1,10 +1,9 @@
 import { useMemo } from 'react';
-import { LazyLogicEditor as DataLogicEditor } from '../../../common/LazyLogicEditor';
 import type { Context, JsonLogicValue } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
-import { useTheme } from '../../context';
 import { useTaskDebugStep } from '../../hooks/useTreeNodeDebugState';
 import { describeMappingPath, describeMappingValue } from '../../../../utils/dataUtils';
+import { DataLogicView } from './DataLogicView';
 
 interface MappingContentProps {
   selection: Extract<TreeSelectionType, { type: 'mapping' }>;
@@ -12,7 +11,6 @@ interface MappingContentProps {
 
 export function MappingContent({ selection }: MappingContentProps) {
   const { mapping, mappingIndex } = selection;
-  const { resolvedTheme } = useTheme();
   const shown = useTaskDebugStep(selection.task, selection.workflow);
 
   // Show the mapping as { path: logic }
@@ -33,17 +31,5 @@ export function MappingContent({ selection }: MappingContentProps) {
     return mappingIndex === 0 ? contextBefore : mappingContextAt?.(stepIndex, mappingIndex - 1);
   }, [stepIndex, mappingIndex, contextBefore, mappingContextAt]);
 
-  return (
-    <div className="df-details-content">
-      <div className="df-details-logic-editor">
-        <DataLogicEditor
-          value={visualData}
-          theme={resolvedTheme}
-          templating={true}
-          className="df-datalogic-viewer"
-          data={debugData}
-        />
-      </div>
-    </div>
-  );
+  return <DataLogicView value={visualData} data={debugData} />;
 }

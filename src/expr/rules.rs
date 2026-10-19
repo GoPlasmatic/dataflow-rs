@@ -209,7 +209,7 @@ impl Node for DataValue<'_> {
     }
 }
 
-/// [`owned_child`], mutably.
+/// The child of an owned node at `hop`, mutably: the first matching key.
 pub(crate) fn owned_child_mut<'v>(
     v: &'v mut OwnedDataValue,
     hop: Hop<'_>,

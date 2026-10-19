@@ -3,7 +3,6 @@
 
 use crate::base::{EVALUATION_ERROR, ErrorKind, Result, VALIDATION_ERROR};
 use crate::expr::Expr;
-use crate::function::sync::task_record;
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use ::log::{debug, error};
 
@@ -36,7 +35,7 @@ impl ValidationConfig {
     /// the classifier records as `BUDGET_EXCEEDED` and `on_failure` governs,
     /// so a runaway rule cannot pass as a 400 (3.x made it one).
     pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
-        let mut records = Vec::new();
+        let mut passed = true;
         for (idx, rule) in self.rules.iter().enumerate() {
             debug!("Processing validation rule {idx}");
             let (code, text) = match cx.test(&rule.logic) {
@@ -66,19 +65,15 @@ impl ValidationConfig {
                     )
                 }
             };
-            records.push(task_record(
-                code,
-                text,
-                &cx.workflow_id,
-                &cx.task_id,
-                &cx.now,
-            ));
+            passed = false;
+            let record = cx.record(code, text);
+            cx.errors.push(record);
         }
-        if records.is_empty() {
-            return Ok(Outcome::Ok);
-        }
-        cx.errors.extend(records);
-        Ok(Outcome::Status(400))
+        Ok(if passed {
+            Outcome::Ok
+        } else {
+            Outcome::Status(400)
+        })
     }
 }
 

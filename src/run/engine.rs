@@ -198,9 +198,10 @@ impl Engine {
         };
         let started = watch.observers.timed().then(record::now);
         let now = Utc::now();
-        let now_text: Arc<str> = Arc::from(now.to_rfc3339());
+        let now_str = now.to_rfc3339();
+        let now_text: Arc<str> = Arc::from(now_str.as_str());
         let parts = msg.parts();
-        stamp(parts.context, &now_text, opts.channel);
+        stamp(parts.context, now_str, opts.channel);
         // A message brings no records in at the error context's path.
         if let Some(ec) = &self.inner.config.error_context {
             ec.reset(parts.context);
@@ -372,8 +373,8 @@ impl Engine {
 
 /// Writes the run's stamps, owned: no view exists yet. Each replaces its key
 /// in place or is appended, as v3's `set_processing_metadata`.
-fn stamp(context: &mut OwnedDataValue, now: &str, channel: Option<&str>) {
-    PROCESSED_AT.assign(context, OwnedDataValue::String(now.to_owned()));
+fn stamp(context: &mut OwnedDataValue, now: String, channel: Option<&str>) {
+    PROCESSED_AT.assign(context, OwnedDataValue::String(now));
     ENGINE_VERSION.assign(context, OwnedDataValue::String(crate::VERSION.to_owned()));
     if let Some(channel) = channel {
         CHANNEL.assign(context, OwnedDataValue::String(channel.to_owned()));

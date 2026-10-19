@@ -85,13 +85,6 @@ impl Json {
         }
     }
 
-    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Self>> {
-        match self {
-            Self::Array(items) => Some(items),
-            _ => None,
-        }
-    }
-
     pub fn as_object(&self) -> Option<&[(String, Self)]> {
         match self {
             Self::Object(pairs) => Some(pairs),
@@ -122,44 +115,10 @@ impl Json {
         }
         Some(at)
     }
-
-    pub fn pointer_mut(&mut self, pointer: &str) -> Option<&mut Self> {
-        if pointer.is_empty() {
-            return Some(self);
-        }
-        let mut at = self;
-        for token in pointer.strip_prefix('/')?.split('/') {
-            let token = unescape(token);
-            at = match at {
-                Self::Object(_) => at.get_mut(&token)?,
-                Self::Array(items) => items.get_mut(token.parse::<usize>().ok()?)?,
-                _ => return None,
-            };
-        }
-        Some(at)
-    }
 }
 
 pub(crate) fn unescape(token: &str) -> String {
     token.replace("~1", "/").replace("~0", "~")
-}
-
-impl From<&serde_json::Value> for Json {
-    fn from(v: &serde_json::Value) -> Self {
-        use serde_json::Value;
-        match v {
-            Value::Null => Self::Null,
-            Value::Bool(b) => Self::Bool(*b),
-            Value::Number(n) => Self::Number(n.clone()),
-            Value::String(s) => Self::String(s.clone()),
-            Value::Array(items) => Self::Array(items.iter().map(Self::from).collect()),
-            Value::Object(map) => Self::Object(
-                map.iter()
-                    .map(|(k, v)| (k.clone(), Self::from(v)))
-                    .collect(),
-            ),
-        }
-    }
 }
 
 impl Serialize for Json {

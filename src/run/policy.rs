@@ -98,6 +98,14 @@ fn on_failure(policy: FailurePolicy, error: impl FnOnce() -> Error) -> Flow {
     }
 }
 
+/// The error record `(code, message)` for a task's `Err`.
+fn error_record(task_id: &str, error: &Error) -> (Cow<'static, str>, String) {
+    (
+        Cow::Owned(error.code().to_owned()),
+        format!("Task {task_id} error: {}", error.record_text()),
+    )
+}
+
 /// The only definition of failed, rejected and halted. Pure.
 ///
 /// | Result | Status | Record | Flow before the upgrade |
@@ -139,10 +147,7 @@ pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> 
             (s, Some(record), flow)
         }
         Err(e) => {
-            let record = (
-                Cow::Owned(e.code().to_owned()),
-                format!("Task {task_id} error: {}", e.record_text()),
-            );
+            let record = error_record(task_id, &e);
             (500, Some(record), on_failure(policy.on_failure, || e))
         }
     };
@@ -165,10 +170,7 @@ pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> 
 pub(crate) fn cut_short(task_id: &str, stop: Stop, error: &Error) -> Decision {
     Decision {
         status: Some(500),
-        record: Some((
-            Cow::Owned(error.code().to_owned()),
-            format!("Task {task_id} error: {}", error.record_text()),
-        )),
+        record: Some(error_record(task_id, error)),
         flow: Flow::Stop(stop),
     }
 }

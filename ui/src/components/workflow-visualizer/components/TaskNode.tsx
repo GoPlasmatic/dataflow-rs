@@ -1,5 +1,5 @@
 import { Box, GitBranch, ArrowRightLeft, CheckCircle } from 'lucide-react';
-import type { Workflow, Task, JsonLogicValue, MappingItem, ValidationRule } from '../../../types';
+import { hasCondition as isConditional, type Workflow, type Task, type JsonLogicValue, type MappingItem, type ValidationRule } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useTaskDebugState, useTaskConditionDebugState, useMappingDebugState, useValidationRuleDebugState } from '../hooks';
 import { TreeNode } from './TreeNode';
@@ -116,7 +116,7 @@ export function TaskNode({
   const functionName = task.function.name;
   const input = task.function.input as Record<string, unknown> | undefined;
 
-  const hasCondition = task.condition !== undefined && task.condition !== null && task.condition !== true;
+  const hasCondition = isConditional(task.condition);
   const mappings = functionName === 'map' ? (input?.mappings as MappingItem[]) || [] : [];
   const rules = functionName === 'validation' ? (input?.rules as ValidationRule[]) || [] : [];
   const hasChildren = hasCondition || mappings.length > 0 || rules.length > 0;

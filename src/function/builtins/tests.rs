@@ -9,7 +9,7 @@ use super::paths::{DataPath, ParseFrom, ParseSource, PublishSource};
 use super::validation::Rule;
 use super::*;
 use crate::base::{AuthoredPath, Issue, IssueCode, Severity};
-use crate::def::keys::{PUBLISH_KEYS, builtin_input};
+use crate::def::keys::builtin_input;
 use crate::def::{BUILTIN_FUNCTIONS, ParseOptions, StepDef, parse};
 use crate::expr::{CompileCx, ConfigField, ExprEngine, ExprVisitor, FieldSpec, Path};
 use crate::function::{FunctionConfig, RetrySafety};
@@ -109,13 +109,6 @@ fn set<'k>(keys: &[&'k str]) -> BTreeSet<&'k str> {
 }
 
 #[test]
-fn publish_keys_are_the_publish_configs_fields() {
-    // The compat reader moves any other key out of a publish input before the
-    // config compiles, so the two lists must be one set.
-    assert_eq!(set(PUBLISH_KEYS), names(PublishConfig::fields()));
-}
-
-#[test]
 fn the_readers_key_tables_are_the_configs_fields() {
     // What the reader leaves in a built-in's input is exactly what the
     // config knows, at the input and in its nested configs.
@@ -130,7 +123,6 @@ fn the_readers_key_tables_are_the_configs_fields() {
         };
         assert_eq!(elements, expected, "{}", kind.name());
     }
-    assert_eq!(builtin_input("publish_xml").unwrap().keys, PUBLISH_KEYS);
     // `validate` is rewritten before the reader asks; a host function is not
     // a built-in.
     assert!(builtin_input("validate").is_none());

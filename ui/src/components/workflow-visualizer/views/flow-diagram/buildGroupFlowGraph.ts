@@ -1,7 +1,7 @@
 import dagre from '@dagrejs/dagre';
 import { assignBranchSides } from './assignBranchSides';
 import type { Node, Edge } from '@xyflow/react';
-import type { Workflow } from '../../../../types';
+import { countLeafSteps, hasCondition, type Workflow } from '../../../../types';
 
 const NODE_WIDTH = 260;
 const NODE_HEIGHT_PILL = 40;
@@ -9,8 +9,11 @@ const NODE_HEIGHT_DIAMOND = 80;
 const NODE_HEIGHT_GROUP = 72;
 const NODE_HEIGHT_SKIP = 40;
 
-function hasCondition(condition: unknown): boolean {
-  return condition !== undefined && condition !== null && condition !== true;
+function nodeHeight(type: string | undefined): number {
+  if (type === 'condition') return NODE_HEIGHT_DIAMOND;
+  if (type === 'workflowGroup') return NODE_HEIGHT_GROUP;
+  if (type === 'skip') return NODE_HEIGHT_SKIP;
+  return NODE_HEIGHT_PILL;
 }
 
 export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edges: Edge[] } {
@@ -70,7 +73,7 @@ export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edg
         data: {
           workflowName: workflow.name,
           priority: workflow.priority,
-          taskCount: workflow.tasks.length,
+          taskCount: countLeafSteps(workflow.tasks),
           hasCondition: true,
           workflowId: workflow.id,
           loop: workflow.loop,
@@ -134,7 +137,7 @@ export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edg
         data: {
           workflowName: workflow.name,
           priority: workflow.priority,
-          taskCount: workflow.tasks.length,
+          taskCount: countLeafSteps(workflow.tasks),
           hasCondition: false,
           workflowId: workflow.id,
           loop: workflow.loop,
@@ -178,11 +181,7 @@ export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edg
   g.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80, marginx: 20, marginy: 20 });
 
   for (const node of nodes) {
-    let height = NODE_HEIGHT_PILL;
-    if (node.type === 'condition') height = NODE_HEIGHT_DIAMOND;
-    else if (node.type === 'workflowGroup') height = NODE_HEIGHT_GROUP;
-    else if (node.type === 'skip') height = NODE_HEIGHT_SKIP;
-    g.setNode(node.id, { width: NODE_WIDTH, height });
+    g.setNode(node.id, { width: NODE_WIDTH, height: nodeHeight(node.type) });
   }
 
   for (const edge of edges) {
@@ -193,10 +192,7 @@ export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edg
 
   for (const node of nodes) {
     const pos = g.node(node.id);
-    let height = NODE_HEIGHT_PILL;
-    if (node.type === 'condition') height = NODE_HEIGHT_DIAMOND;
-    else if (node.type === 'workflowGroup') height = NODE_HEIGHT_GROUP;
-    else if (node.type === 'skip') height = NODE_HEIGHT_SKIP;
+    const height = nodeHeight(node.type);
     node.position = {
       x: pos.x - NODE_WIDTH / 2,
       y: pos.y - height / 2,

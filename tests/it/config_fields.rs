@@ -138,11 +138,7 @@ fn an_expr_classifies_its_errors() {
     assert!(i.is_empty() && v.is_some());
     let (_, i) = compile::<Expr<bool>>(&json!("yes"), root());
     assert_eq!(i[0].code, IssueCode::InputParse);
-    let mut deep = json!(1);
-    for _ in 0..300 {
-        deep = json!({"!": [deep]});
-    }
-    let (_, i) = compile::<Expr<bool>>(&deep, root());
+    let (_, i) = compile::<Expr<bool>>(&crate::support::too_deep(), root());
     assert_eq!(i[0].code, IssueCode::TemplateCompile);
     assert!(!i[0].message.is_empty());
 }

@@ -66,13 +66,9 @@ fn division_by_zero_compiles_and_fails_at_eval() {
 #[test]
 fn a_datalogic_compile_failure_is_compile() {
     let e = ExprEngine::default();
-    // Nesting past datalogic's compile depth limit is the refusal reachable
-    // from pure data.
-    let mut deep = json!(1);
-    for _ in 0..300 {
-        deep = json!({"!": [deep]});
-    }
-    let err = e.compile::<OwnedDataValue>(&deep).unwrap_err();
+    let err = e
+        .compile::<OwnedDataValue>(&crate::support::too_deep())
+        .unwrap_err();
     assert_eq!(err.kind(), &ErrorKind::Compile);
     assert_eq!(err.code(), "COMPILATION_ERROR");
 }

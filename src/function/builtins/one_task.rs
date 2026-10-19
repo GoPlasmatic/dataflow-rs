@@ -185,15 +185,15 @@ impl Task {
             rc,
             exprs: workflow.registry.exprs(),
             payload,
-            workflow_id: Arc::clone(&workflow_id),
-            task_id: Arc::clone(&task_id),
+            workflow_id: &workflow_id,
+            task_id: &task_id,
             capture,
             traced: false,
             changes,
             marked: false,
             mapping_ends: None,
             errors: &mut *errors,
-            now: Arc::clone(&now),
+            now: &now,
         });
         let error_code = outcome.as_ref().err().map(|e| e.code().to_owned());
         let decision = decide(workflow.calls[0].policy, &task_id, outcome);

@@ -6,7 +6,6 @@ use crate::json::Json;
 use crate::path;
 
 pub const TIMESTAMP: &str = "<timestamp>";
-pub const DURATION: &str = "<duration>";
 pub const ENGINE_VERSION: &str = "<engine_version>";
 pub const DEPENDENCY_MESSAGE: &str = "<dependency message>";
 
@@ -85,20 +84,6 @@ pub fn context(ctx: &mut Json, error_context: Option<&str>) {
     }
 }
 
-/// One trace step, with its snapshot message and its mapping contexts.
-pub fn trace_step(step: &mut Json, error_context: Option<&str>) {
-    replace(step, "started_at", TIMESTAMP);
-    replace(step, "duration_us", DURATION);
-    if let Some(m @ Json::Object(_)) = step.get_mut("message") {
-        message(m, error_context);
-    }
-    if let Some(Json::Array(contexts)) = step.get_mut("mapping_contexts") {
-        for ctx in contexts {
-            context(ctx, error_context);
-        }
-    }
-}
-
 /// Replace `key`'s value with `placeholder` when it is present and not null.
 fn replace(object: &mut Json, key: &str, placeholder: &str) {
     if let Some(value) = object.get_mut(key)
@@ -132,16 +117,6 @@ mod tests {
         assert_eq!(
             m.pointer("/context/metadata/failures/0/timestamp"),
             Some(&Json::str(TIMESTAMP))
-        );
-    }
-
-    #[test]
-    fn a_trace_step_loses_its_clock_and_its_snapshot_is_normalised() {
-        let mut s = Json::from_text(r#"{"workflow_id":"w","started_at":"t","duration_us":12,"message":{"context":{"metadata":{"processed_at":"t"}}},"mapping_contexts":[{"metadata":{"engine_version":"3"}}]}"#).unwrap();
-        trace_step(&mut s, None);
-        assert_eq!(
-            s.to_text(),
-            r#"{"workflow_id":"w","started_at":"<timestamp>","duration_us":"<duration>","message":{"context":{"metadata":{"processed_at":"<timestamp>"}}},"mapping_contexts":[{"metadata":{"engine_version":"<engine_version>"}}]}"#
         );
     }
 

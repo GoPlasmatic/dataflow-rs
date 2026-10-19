@@ -5,11 +5,41 @@ pub(crate) mod golden;
 pub(crate) mod run_helpers;
 
 use dataflow_rs::function::FunctionConfig;
-use dataflow_rs::run::EngineBuilder;
-use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result};
+use dataflow_rs::run::{EngineBuilder, Selection, WorkflowExit};
+use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result, Run};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+
+/// An expression datalogic refuses to compile: nesting past its depth limit
+/// of 256, the one pure-data compile error.
+pub(crate) fn too_deep() -> Value {
+    let mut rule = json!({"var": "data.x"});
+    for _ in 0..300 {
+        rule = json!({"!": rule});
+    }
+    rule
+}
+
+/// One workflow a run considered: `(id, selection, sweeps, exit)`, the
+/// selection by name.
+pub(crate) type Considered = (String, &'static str, u32, Option<WorkflowExit>);
+
+/// Each workflow a run considered.
+pub(crate) fn considered(run: &Run) -> Vec<Considered> {
+    run.workflows()
+        .map(|w| {
+            let selection = match w.selection {
+                Selection::Ran => "ran",
+                Selection::SkippedByCondition => "condition",
+                Selection::ConditionFailed(_) => "condition failed",
+                Selection::SkippedByRollout => "rollout",
+                _ => "other",
+            };
+            (w.id.to_owned(), selection, w.sweeps, w.exit)
+        })
+        .collect()
+}
 
 /// An engine over `workflows` with no custom host functions, which must build.
 pub(crate) fn engine(workflows: &[Value]) -> Engine {

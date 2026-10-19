@@ -145,7 +145,7 @@ crate::base::ts::ts_decl!(
     RunStatus,
     "RunStatus",
     [" How a run ended: a stopped run's error is its `error`."],
-    |_cfg| crate::base::ts::literals(&[
+    |_cfg| crate::base::ts::literals([
         "completed",
         "completed_with_errors",
         "stopped",
@@ -162,7 +162,7 @@ crate::base::ts::ts_decl!(
         " Why a workflow did or did not run: a failed condition's error is its",
         " record's `error`.",
     ],
-    |_cfg| crate::base::ts::literals(&[
+    |_cfg| crate::base::ts::literals([
         "ran",
         "skipped_by_condition",
         "condition_failed",
@@ -175,7 +175,7 @@ crate::base::ts::ts_decl!(
     WorkflowExit,
     "WorkflowExit",
     [" How a workflow that ran ended."],
-    |_cfg| crate::base::ts::literals(&["completed", "halted", "failed", "stopped"])
+    |_cfg| crate::base::ts::literals(["completed", "halted", "failed", "stopped"])
 );
 
 #[cfg(feature = "ts")]

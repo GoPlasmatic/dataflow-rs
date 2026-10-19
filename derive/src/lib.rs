@@ -428,7 +428,6 @@ fn generate(
     let compiles = fields.iter().zip(&vars).map(|(f, var)| {
         let (ty, key, output) = (f.ty, &f.key, f.output);
         let default = option(f.default.as_deref());
-        let site = format!("{}::{}", name.unraw(), f.ident.unraw());
         let helper = if f.serde {
             quote!(serde_field)
         } else {
@@ -437,7 +436,7 @@ fn generate(
         quote! {
             let #var = #p::#helper::<#ty>(
                 __object,
-                #p::Key::new(#key, #default, #site, #output),
+                #p::Key::new(#key, #default, #output),
                 cx,
             );
         }

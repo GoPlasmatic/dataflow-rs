@@ -26,9 +26,9 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     /// The message's payload.
     pub(crate) payload: &'c OwnedDataValue,
     /// The workflow's id, shared with the program's own `Arc<str>`.
-    pub(crate) workflow_id: Arc<str>,
+    pub(crate) workflow_id: &'c Arc<str>,
     /// The task's id, shared as `workflow_id` is.
-    pub(crate) task_id: Arc<str>,
+    pub(crate) task_id: &'c Arc<str>,
     /// Whether `Change`s are recorded: only when the audit or the trace
     /// keeps them.
     pub(crate) capture: bool,
@@ -47,7 +47,7 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     /// The message's error list.
     pub(crate) errors: &'c mut Vec<ErrorRecord>,
     /// The run's clock reading, RFC 3339, for error records.
-    pub(crate) now: Arc<str>,
+    pub(crate) now: &'c Arc<str>,
 }
 
 impl std::fmt::Debug for SyncCtx<'_, '_, '_> {
@@ -84,6 +84,11 @@ impl<'p> SyncCtx<'_, '_, 'p> {
     pub(crate) fn write(&mut self, target: &Path, value: OwnedDataValue, hint: Option<usize>) {
         let changes = self.capture.then_some(&mut *self.changes);
         self.rc.set_recorded(target, value, hint, changes);
+    }
+
+    /// An error record stamped with this task's ids and the run's timestamp.
+    pub(crate) fn record(&self, code: impl Into<String>, message: String) -> ErrorRecord {
+        task_record(code, message, self.workflow_id, self.task_id, self.now)
     }
 }
 
@@ -157,15 +162,15 @@ mod tests {
             rc: &mut rc,
             exprs: &exprs,
             payload: &OwnedDataValue::Null,
-            workflow_id,
-            task_id,
+            workflow_id: &workflow_id,
+            task_id: &task_id,
             capture,
             traced: false,
             changes: &mut changes,
             marked: false,
             mapping_ends: None,
             errors: &mut errors,
-            now,
+            now: &now,
         });
         rc.finish();
         changes

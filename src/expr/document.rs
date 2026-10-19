@@ -4,7 +4,6 @@ use super::config::{CompileCx, ConfigField, FieldKind, Resolver, Visit};
 use super::engine::ExprEngine;
 use super::path::Path;
 use super::secrets::SECRET_OPERATOR;
-use crate::base::any_rejected;
 use crate::base::{Issue, IssueCode};
 use datavalue::{DataValue, OwnedDataValue};
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
@@ -246,15 +245,17 @@ pub(crate) fn compile(raw: &Value, cx: &mut CompileCx<'_>) -> Option<Interpolate
     let node = walk(raw, cx, Some(&mut holes));
     (cx.rejected() == before).then(|| Interpolated {
         raw: raw.clone(),
-        node,
+        node: node.unwrap_or_else(|| Node::Literal(raw.clone())),
         holes,
     })
 }
 
-/// Walks one node. `holes` is `None` inside a hole's default, which is data
-/// through and through: a `var` there opens no hole, and is an operator left
-/// as data like any other.
-fn walk(raw: &Value, cx: &mut CompileCx<'_>, mut holes: Option<&mut Vec<Hole>>) -> Node {
+/// Walks one node, returning `Some(Node)` only when the subtree contains at
+/// least one `var` hole (`None` means the subtree is literal data, avoiding
+/// bottom-up clones of hole-free subtrees). `holes` is `None` inside a hole's
+/// default, which is data through and through: a `var` there opens no hole,
+/// and is an operator left as data like any other.
+fn walk(raw: &Value, cx: &mut CompileCx<'_>, mut holes: Option<&mut Vec<Hole>>) -> Option<Node> {
     match raw {
         Value::Object(o) => {
             if o.len() == 1 {
@@ -262,7 +263,7 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, mut holes: Option<&mut Vec<Hole>>) 
                 if key == "var"
                     && let Some(holes) = holes.as_deref_mut()
                 {
-                    return hole(raw, arg, cx, holes);
+                    return hole(arg, cx, holes);
                 }
                 match key.as_str() {
                     SECRET_OPERATOR => {
@@ -270,7 +271,7 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, mut holes: Option<&mut Vec<Hole>>) 
                             IssueCode::SecretInDocument,
                             "a document cannot read a secret",
                         );
-                        return Node::Literal(raw.clone());
+                        return None;
                     }
                     name if cx.exprs().operator(name).is_some() => {
                         cx.at(name, |cx| {
@@ -286,37 +287,42 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, mut holes: Option<&mut Vec<Hole>>) 
                     _ => {}
                 }
             }
-            let children: Vec<(String, Node)> = o
+            let children: Vec<Option<Node>> = o
                 .iter()
-                .map(|(k, v)| {
-                    let node = cx.at(k.as_str(), |cx| walk(v, cx, holes.as_deref_mut()));
-                    (k.clone(), node)
-                })
+                .map(|(k, v)| cx.at(k.as_str(), |cx| walk(v, cx, holes.as_deref_mut())))
                 .collect();
-            if children.iter().all(|(_, n)| matches!(n, Node::Literal(_))) {
-                Node::Literal(raw.clone())
-            } else {
-                Node::Object(children)
-            }
+            children.iter().any(Option::is_some).then(|| {
+                Node::Object(
+                    o.iter()
+                        .zip(children)
+                        .map(|((k, v), node)| {
+                            (k.clone(), node.unwrap_or_else(|| Node::Literal(v.clone())))
+                        })
+                        .collect(),
+                )
+            })
         }
         Value::Array(a) => {
-            let children: Vec<Node> = a
+            let children: Vec<Option<Node>> = a
                 .iter()
                 .enumerate()
                 .map(|(i, v)| cx.at(i, |cx| walk(v, cx, holes.as_deref_mut())))
                 .collect();
-            if children.iter().all(|n| matches!(n, Node::Literal(_))) {
-                Node::Literal(raw.clone())
-            } else {
-                Node::Array(children)
-            }
+            children.iter().any(Option::is_some).then(|| {
+                Node::Array(
+                    a.iter()
+                        .zip(children)
+                        .map(|(v, node)| node.unwrap_or_else(|| Node::Literal(v.clone())))
+                        .collect(),
+                )
+            })
         }
-        other => Node::Literal(other.clone()),
+        _ => None,
     }
 }
 
 /// A `var` node: a hole reading its path, its default walked as data.
-fn hole(raw: &Value, arg: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>) -> Node {
+fn hole(arg: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>) -> Option<Node> {
     let (path, default) = match arg {
         Value::String(p) => (Some(p.as_str()), None),
         Value::Array(a) if matches!(a.len(), 1 | 2) => (a[0].as_str(), a.get(1)),
@@ -344,14 +350,12 @@ fn hole(raw: &Value, arg: &Value, cx: &mut CompileCx<'_>, holes: &mut Vec<Hole>)
     if let Some(default) = default {
         cx.at("var", |cx| cx.at(1, |cx| walk(default, cx, None)));
     }
-    let Ok(path) = parsed else {
-        return Node::Literal(raw.clone());
-    };
+    let path = parsed.ok()?;
     holes.push(Hole {
         path,
         default: default.map_or(OwnedDataValue::Null, OwnedDataValue::from),
     });
-    Node::Hole(holes.len() - 1)
+    Some(Node::Hole(holes.len() - 1))
 }
 
 impl ConfigField for Interpolated {
@@ -388,10 +392,7 @@ impl ExprEngine {
             let mut cx = CompileCx::new(self, &mut issues);
             compile(raw, &mut cx)
         };
-        match doc {
-            Some(doc) if !any_rejected(&issues) => Ok(doc),
-            _ => Err(issues),
-        }
+        doc.ok_or(issues)
     }
 }
 

@@ -274,13 +274,9 @@ pub(super) fn apply(root: &mut OwnedDataValue, change: &Change) {
         path::remove(root, at.segs());
         return;
     }
-    if at.is_root()
-        && !change.replaced
-        && matches!(change.new_value, OwnedDataValue::Object(_))
-        && matches!(path::get(root, at.segs()), Some(OwnedDataValue::Object(_)))
-    {
+    if at.is_root() && !change.replaced {
         // `map`'s merge, as the splice does it: a key there is replaced
-        // where it is, a new one appended.
+        // where it is, a new one appended; a non-object replaces the slot.
         path::merge_root(root, at.root().as_str(), change.new_value.clone());
         return;
     }

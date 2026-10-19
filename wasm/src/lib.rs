@@ -749,26 +749,25 @@ impl TraceReplay {
     #[wasm_bindgen(unchecked_return_type = "Context | null")]
     pub fn mapping_context_at(&mut self, step: f64, mapping: f64) -> Result<JsValue, JsValue> {
         let step = trace_step(step, self.replay.trace().steps.len())?;
-        if !mapping.is_finite()
-            || mapping.fract() != 0.0
-            || mapping < 0.0
-            || mapping >= usize::MAX as f64
-        {
-            return Err(invalid("mapping", "must be a non-negative integer index"));
-        }
-        to_js(&self.replay.mapping_context_at(step, mapping as usize))
+        let mapping = js_index(mapping, usize::MAX)
+            .ok_or_else(|| invalid("mapping", "must be a non-negative integer index"))?;
+        to_js(&self.replay.mapping_context_at(step, mapping))
     }
+}
+
+/// Converts a finite, non-negative integer JS number below `max` to `usize`.
+fn js_index(n: f64, max: usize) -> Option<usize> {
+    (n.is_finite() && n.fract() == 0.0 && n >= 0.0 && n < max as f64).then_some(n as usize)
 }
 
 /// An authored JS index, checked before conversion to a platform integer.
 fn trace_step(step: f64, len: usize) -> Result<usize, JsValue> {
-    if !step.is_finite() || step.fract() != 0.0 || step < 0.0 || step >= len as f64 {
-        return Err(invalid(
+    js_index(step, len).ok_or_else(|| {
+        invalid(
             "step",
             format!("{step} is not a step of the trace, which has {len}"),
-        ));
-    }
-    Ok(step as usize)
+        )
+    })
 }
 
 /// `contexts(trace)`: the context after each step, replaying the steps'

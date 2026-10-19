@@ -269,39 +269,7 @@ export function useTaskConditionDebugState(task: Task, workflow: Workflow): Tree
  * Hook to get debug state for a mapping node within a task
  */
 export function useMappingDebugState(task: Task, workflow: Workflow, _mappingIndex: number): TreeNodeDebugState {
-  const dbgContext = useDebuggerOptional();
-
-  return useMemo(() => {
-    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.hasTrace || !dbgContext.state.trace) {
-      return nullState;
-    }
-
-    if (dbgContext.state.currentStepIndex < 0) {
-      return nullState;
-    }
-
-    const state = getTaskState(
-      dbgContext.state.trace,
-      dbgContext.state.currentStepIndex,
-      workflow.id,
-      task.id
-    );
-
-    const isCurrent = isTaskCurrent(
-      dbgContext.state.trace,
-      dbgContext.state.currentStepIndex,
-      workflow.id,
-      task.id
-    );
-
-    return {
-      state,
-      isCurrent,
-      isExecuted: state === 'executed',
-      isSkipped: state === 'skipped',
-      hasError: state === 'error',
-    };
-  }, [dbgContext, task.id, workflow.id]);
+  return useTaskDebugState(task, workflow);
 }
 
 /**

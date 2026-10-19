@@ -22,18 +22,6 @@ export function useExpandedState(initialExpanded: string[] = []) {
     });
   }, []);
 
-  const expand = useCallback((id: string) => {
-    setExpandedIds((prev) => new Set(prev).add(id));
-  }, []);
-
-  const collapse = useCallback((id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  }, []);
-
   const expandAll = useCallback((ids: string[]) => {
     setExpandedIds(new Set(ids));
   }, []);
@@ -45,10 +33,7 @@ export function useExpandedState(initialExpanded: string[] = []) {
   return {
     isExpanded,
     toggle,
-    expand,
-    collapse,
     expandAll,
     collapseAll,
-    expandedIds,
   };
 }

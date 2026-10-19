@@ -4,6 +4,7 @@ import type { Node, Edge } from '@xyflow/react';
 import type { Workflow, Task, Step, TaskGroup } from '../../../../types';
 import {
   groupMembers,
+  hasCondition,
   isTaskGroup,
   loopGuardLabel,
   loopStepLabel,
@@ -16,10 +17,6 @@ const NODE_HEIGHT_PILL = 40;
 const NODE_HEIGHT_DIAMOND = 80;
 const NODE_HEIGHT_TASK = 72;
 const NODE_HEIGHT_SKIP = 40;
-
-function hasCondition(condition: unknown): boolean {
-  return condition !== undefined && condition !== null && condition !== true;
-}
 
 /** Layout height for a node type. Used twice — before and after dagre runs. */
 function nodeHeight(type: string | undefined): number {

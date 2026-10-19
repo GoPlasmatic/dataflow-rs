@@ -55,25 +55,7 @@ fn json_of(m: &Message) -> Value {
     m.to_json()
 }
 
-/// One workflow the run considered: `(id, selection, sweeps, exit)`, the
-/// selection by name.
-type Considered = (String, &'static str, u32, Option<WorkflowExit>);
-
-/// Each workflow the run considered.
-fn considered(run: &Run) -> Vec<Considered> {
-    run.workflows()
-        .map(|w| {
-            let selection = match w.selection {
-                Selection::Ran => "ran",
-                Selection::SkippedByCondition => "condition",
-                Selection::ConditionFailed(_) => "condition failed",
-                Selection::SkippedByRollout => "rollout",
-                _ => "other",
-            };
-            (w.id.to_owned(), selection, w.sweeps, w.exit)
-        })
-        .collect()
-}
+use crate::support::{Considered, considered};
 
 /// `(workflow, task, status)` of each audit entry.
 fn audit(m: &Message) -> Vec<(String, String, usize)> {

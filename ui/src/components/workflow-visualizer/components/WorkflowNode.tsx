@@ -1,6 +1,6 @@
 import { Layers, GitBranch } from 'lucide-react';
 import type { Workflow, JsonLogicValue } from '../../../types';
-import { flattenSteps } from '../../../types';
+import { hasCondition as isConditional, workflowTasks } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useWorkflowDebugState, useWorkflowConditionDebugState } from '../hooks';
 import { LoopBadge } from '../cards';
@@ -30,11 +30,11 @@ export function WorkflowNode({
 }: WorkflowNodeProps) {
   const workflowId = NODE_IDS.workflow(workflow.id);
   const isExpanded = expandedNodes.has(workflowId);
-  const hasCondition = workflow.condition !== undefined && workflow.condition !== null && workflow.condition !== true;
+  const hasCondition = isConditional(workflow.condition);
   // Groups are an authoring convenience; the tree shows the tasks that run —
   // a loop's setup steps first, as they run first. Ids are unique across
   // both lists, so they stay valid React keys.
-  const tasks = [...flattenSteps(workflow.loop?.setup ?? []), ...flattenSteps(workflow.tasks)];
+  const tasks = workflowTasks(workflow);
   const hasTasks = tasks.length > 0;
   const hasChildren = hasCondition || hasTasks;
 

@@ -37,10 +37,8 @@ mod tests;
 mod types;
 
 pub use keys::{DefinitionKeys, definition_keys};
-pub(crate) use parse::parse_steps;
-pub(crate) use parse::parse_with_rewrites;
 pub use parse::{ParseOptions, Parsed, parse, parse_owned};
-pub(crate) use parse::{fragment_place, holds_steps};
+pub(crate) use parse::{fragment_place, parse_steps, parse_with_rewrites};
 pub use rollout::{Rollout, RolloutError};
 pub use types::defaults;
 pub use types::{
@@ -57,11 +55,11 @@ pub const MAX_GROUP_DEPTH: usize = 8;
 
 /// v3's alias for `validation`, which the compat reader rewrites and no
 /// host function may take.
-pub(crate) const V3_VALIDATE: &str = "validate";
+const V3_VALIDATE: &str = "validate";
 
 /// The `validation` built-in's name, which the compat reader writes for
 /// [`V3_VALIDATE`].
-pub(crate) const VALIDATION: &str = "validation";
+const VALIDATION: &str = "validation";
 
 /// Whether no host function may be registered as `name`: a name in
 /// [`BUILTIN_FUNCTIONS`], since a built-in cannot be shadowed, or `validate`,

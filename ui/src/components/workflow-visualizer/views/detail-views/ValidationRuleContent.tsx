@@ -1,8 +1,7 @@
-import { LazyLogicEditor as DataLogicEditor } from '../../../common/LazyLogicEditor';
 import type { Context } from '../../../../types';
 import type { TreeSelectionType } from '../../WorkflowVisualizer';
-import { useTheme } from '../../context';
 import { useTaskDebugStep } from '../../hooks/useTreeNodeDebugState';
+import { DataLogicView } from './DataLogicView';
 
 interface ValidationRuleContentProps {
   selection: Extract<TreeSelectionType, { type: 'validation-rule' }>;
@@ -10,7 +9,6 @@ interface ValidationRuleContentProps {
 
 export function ValidationRuleContent({ selection }: ValidationRuleContentProps) {
   const { rule } = selection;
-  const { resolvedTheme } = useTheme();
   const shown = useTaskDebugStep(selection.task, selection.workflow);
 
   // The editor's `data` is what the rule was evaluated against: the context
@@ -21,17 +19,5 @@ export function ValidationRuleContent({ selection }: ValidationRuleContentProps)
     debugData = shown.contextBefore;
   }
 
-  return (
-    <div className="df-details-content">
-      <div className="df-details-logic-editor">
-        <DataLogicEditor
-          value={rule.logic}
-          theme={resolvedTheme}
-          templating={true}
-          className="df-datalogic-viewer"
-          data={debugData}
-        />
-      </div>
-    </div>
-  );
+  return <DataLogicView value={rule.logic} data={debugData} />;
 }

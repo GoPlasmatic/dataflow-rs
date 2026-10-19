@@ -9,8 +9,8 @@
 
 use crate::support::run_helpers::{Golden, Ran, Run, build, data, run_on};
 use crate::support::{map, message, with};
-use dataflow_rs::run::{RunStatus, Selection, WorkflowExit};
-use dataflow_rs::{Run as Report, RunOptions};
+use dataflow_rs::RunOptions;
+use dataflow_rs::run::{RunStatus, WorkflowExit};
 use serde_json::{Value, json};
 
 /// A `map` task appending `logic` to the array at `path`.
@@ -54,24 +54,7 @@ async fn golden_runs(golden: &mut Golden, workflows: &[Value], runs: &[Run]) -> 
     ran
 }
 
-/// One workflow the run considered: `(id, selection, sweeps, exit)`.
-type Considered = (String, &'static str, u32, Option<WorkflowExit>);
-
-fn considered(report: &Report) -> Vec<Considered> {
-    report
-        .workflows()
-        .map(|w| {
-            let selection = match w.selection {
-                Selection::Ran => "ran",
-                Selection::SkippedByCondition => "condition",
-                Selection::ConditionFailed(_) => "condition failed",
-                Selection::SkippedByRollout => "rollout",
-                _ => "other",
-            };
-            (w.id.to_owned(), selection, w.sweeps, w.exit)
-        })
-        .collect()
-}
+use crate::support::{Considered, considered};
 
 fn ran(id: &str, sweeps: u32, exit: WorkflowExit) -> Considered {
     (id.to_owned(), "ran", sweeps, Some(exit))

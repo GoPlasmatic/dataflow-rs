@@ -6,12 +6,10 @@
 //! its own order, in every build. v3 went through [`serde_json::Value`], whose
 //! keys its default build sorted; v4 reads and writes `OwnedDataValue`.
 
-use crate::base::{Error, Result, VALIDATION_ERROR, dedup_object};
+use crate::base::{Error, Result, VALIDATION_ERROR, in_order};
 use datavalue::{NumberValue, OwnedDataValue};
-use serde::Deserializer;
-use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::Deserialize;
 use std::borrow::Cow;
-use std::fmt;
 
 /// A `VALIDATION_ERROR`, with the `Validation error: ` prefix v3's display
 /// adds, so the record's text stays v3's.
@@ -28,98 +26,12 @@ pub(super) fn validation_error(message: impl std::fmt::Display) -> Error {
 /// `VALIDATION_ERROR` "Validation error: Failed to parse XML: …" when the
 /// text is not a document the reader accepts.
 pub(super) fn xml_to_value(xml: &str) -> Result<OwnedDataValue> {
-    quick_xml::de::from_str(xml)
+    #[derive(Deserialize)]
+    struct Read(#[serde(deserialize_with = "in_order")] OwnedDataValue);
+
+    quick_xml::de::from_str::<Read>(xml)
         .map(|Read(value)| value)
         .map_err(|e| validation_error(format_args!("Failed to parse XML: {e}")))
-}
-
-/// [`xml_to_value`]'s reader: what `serde_json::Value`'s reader builds,
-/// bridged to an [`OwnedDataValue`], with an object's keys in the order read.
-struct InOrder;
-
-/// One value read by [`InOrder`].
-struct Read(OwnedDataValue);
-
-impl<'de> de::Deserialize<'de> for Read {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        d.deserialize_any(InOrder).map(Read)
-    }
-}
-
-impl<'de> Visitor<'de> for InOrder {
-    type Value = OwnedDataValue;
-
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("any valid JSON value")
-    }
-
-    fn visit_unit<E: de::Error>(self) -> std::result::Result<OwnedDataValue, E> {
-        Ok(OwnedDataValue::Null)
-    }
-
-    fn visit_none<E: de::Error>(self) -> std::result::Result<OwnedDataValue, E> {
-        Ok(OwnedDataValue::Null)
-    }
-
-    fn visit_some<D: Deserializer<'de>>(
-        self,
-        d: D,
-    ) -> std::result::Result<OwnedDataValue, D::Error> {
-        d.deserialize_any(Self)
-    }
-
-    fn visit_bool<E: de::Error>(self, v: bool) -> std::result::Result<OwnedDataValue, E> {
-        Ok(OwnedDataValue::Bool(v))
-    }
-
-    fn visit_i64<E: de::Error>(self, v: i64) -> std::result::Result<OwnedDataValue, E> {
-        Ok(OwnedDataValue::Number(NumberValue::Integer(v)))
-    }
-
-    fn visit_u64<E: de::Error>(self, v: u64) -> std::result::Result<OwnedDataValue, E> {
-        Ok(OwnedDataValue::Number(NumberValue::from_u64(v)))
-    }
-
-    /// A finite float; anything else is `null`, as `serde_json::Value` reads
-    /// one.
-    fn visit_f64<E: de::Error>(self, v: f64) -> std::result::Result<OwnedDataValue, E> {
-        Ok(if v.is_finite() {
-            OwnedDataValue::Number(NumberValue::Float(v))
-        } else {
-            OwnedDataValue::Null
-        })
-    }
-
-    fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<OwnedDataValue, E> {
-        Ok(OwnedDataValue::String(v.to_owned()))
-    }
-
-    fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<OwnedDataValue, E> {
-        Ok(OwnedDataValue::String(v))
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(
-        self,
-        mut seq: A,
-    ) -> std::result::Result<OwnedDataValue, A::Error> {
-        let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0));
-        while let Some(Read(item)) = seq.next_element()? {
-            items.push(item);
-        }
-        Ok(OwnedDataValue::Array(items))
-    }
-
-    fn visit_map<A: MapAccess<'de>>(
-        self,
-        mut map: A,
-    ) -> std::result::Result<OwnedDataValue, A::Error> {
-        let mut pairs = Vec::with_capacity(map.size_hint().unwrap_or(0));
-        while let Some((key, Read(value))) = map.next_entry()? {
-            pairs.push((key, value));
-        }
-        dedup_object(&mut pairs);
-        Ok(OwnedDataValue::Object(pairs))
-    }
 }
 
 /// `value` as an XML document under `root_element`, its keys in the value's

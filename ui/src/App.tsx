@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Sun, Moon, BookOpen, ChevronDown, PanelLeftClose, PanelLeft, Braces } from 'lucide-react';
 
 const GithubIcon = ({ size = 16 }: { size?: number }) => (
@@ -167,6 +167,14 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
     setCursorPosition({ line, column });
   }, []);
 
+  const debugPayload = useMemo(() => {
+    try {
+      return JSON.parse(payloadText);
+    } catch {
+      return {};
+    }
+  }, [payloadText]);
+
   return (
     <>
       <div className="app" data-theme={resolvedTheme}>
@@ -311,13 +319,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
                   engineFactory,
                   autoExecute: true,
                 }}
-                debugPayload={(() => {
-                  try {
-                    return JSON.parse(payloadText);
-                  } catch {
-                    return {};
-                  }
-                })()}
+                debugPayload={debugPayload}
               />
             </div>
           </div>

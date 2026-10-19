@@ -381,9 +381,12 @@ impl Read {
     }
 
     fn task(&mut self, obj: &mut Map<String, Value>, at: &AuthoredPath, step: &Step) {
+        if !TASK_V3_KEYS.iter().any(|key| obj.contains_key(*key)) {
+            self.function(obj, at, step);
+            return;
+        }
         const WANTED: &[&str] = &["continue_on_error", "halt_on", "function"];
         let order = keys_among(obj, WANTED);
-        let has_flags = TASK_V3_KEYS.iter().any(|key| obj.contains_key(*key));
         // Any v4 policy beside any v3 flag refuses every flag.
         let v4_policies = policies_in(obj, TASK_POLICIES);
         let refuse_mixed = |v3: &str| Flag::Refused {
@@ -420,7 +423,7 @@ impl Read {
 
         // 06's policy table: the two flags make one policy. A flag beside a
         // v4 policy was refused above, so here neither policy is written.
-        let v4: Vec<(String, String)> = if has_flags && v4_policies.is_empty() {
+        let v4: Vec<(String, String)> = if v4_policies.is_empty() {
             let (on_failure, on_rejection) = match (continue_on_error.is_set(), halt_on.is_set()) {
                 (false, false) => ("fail", "continue"),
                 (true, false) => ("continue", "continue"),
@@ -520,46 +523,43 @@ impl Read {
         known: BuiltinInput,
         step: &Step,
     ) {
-        let order: Vec<String> = input.keys().cloned().collect();
-        for key in order {
+        input.retain(|key, value| {
             if !known.keys.contains(&key.as_str()) {
-                if let Some(value) = take(input, &key) {
-                    let at = StrayKey {
-                        key: &key,
-                        field: &key,
-                        below: AuthoredPath::root().join(key.as_str()),
-                    };
-                    self.stray(obj, task, at, known.keys, value, step);
-                }
-            } else if let Some((array, element_keys)) = known.elements
+                let at = StrayKey {
+                    key,
+                    field: key,
+                    below: AuthoredPath::root().join(key.as_str()),
+                };
+                self.stray(obj, task, at, known.keys, std::mem::take(value), step);
+                return false;
+            }
+            if let Some((array, element_keys)) = known.elements
                 && key == array
-                && let Some(Value::Array(items)) = input.get_mut(array)
+                && let Value::Array(items) = value
             {
                 for (i, item) in items.iter_mut().enumerate() {
                     let Value::Object(element) = item else {
                         continue;
                     };
-                    let strays: Vec<String> = element
-                        .keys()
-                        .filter(|k| !element_keys.contains(&k.as_str()))
-                        .cloned()
-                        .collect();
-                    for stray in strays {
-                        if let Some(value) = take(element, &stray) {
-                            let at = StrayKey {
-                                key: &stray,
-                                field: array,
-                                below: AuthoredPath::root()
-                                    .join(array)
-                                    .join(i)
-                                    .join(stray.as_str()),
-                            };
-                            self.stray(obj, task, at, element_keys, value, step);
+                    element.retain(|stray, val| {
+                        if element_keys.contains(&stray.as_str()) {
+                            return true;
                         }
-                    }
+                        let at = StrayKey {
+                            key: stray,
+                            field: array,
+                            below: AuthoredPath::root()
+                                .join(array)
+                                .join(i)
+                                .join(stray.as_str()),
+                        };
+                        self.stray(obj, task, at, element_keys, std::mem::take(val), step);
+                        false
+                    });
                 }
             }
-        }
+            true
+        });
     }
 
     /// A built-in input's key that its level does not know (`known` are the
@@ -575,13 +575,16 @@ impl Read {
         step: &Step,
     ) {
         let StrayKey { key, field, below } = at;
-        let input = AuthoredPath::root().join("function").join("input");
-        let name = input.extend(&below).to_string();
+        let rel = AuthoredPath::root()
+            .join("function")
+            .join("input")
+            .extend(&below);
+        let name = rel.to_string();
         let (code, message) = unknown_key(key, known);
         let message = format!("{message} (kept in `ext` as `{name}`)");
         let moved = Moved {
             key,
-            path: task.extend(&input).extend(&below),
+            path: task.extend(&rel),
             field: Some(field),
             name,
             value,

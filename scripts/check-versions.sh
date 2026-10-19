@@ -80,10 +80,23 @@ done
 
 # The npm artifacts keep their versions in JSON; the release stamps them from
 # the engine's, so an in-repo value can go stale invisibly.
-check "ui/package.json" "$(python3 -c 'import json; print(json.load(open("ui/package.json"))["version"])')"
-check "ui/package-lock.json" "$(python3 -c 'import json; print(json.load(open("ui/package-lock.json"))["version"])')"
-check "ui/package-lock.json packages.\"\"" \
-  "$(python3 -c 'import json; print(json.load(open("ui/package-lock.json"))["packages"][""]["version"])')"
+{
+  IFS= read -r PKG_VER
+  IFS= read -r LOCK_VER
+  IFS= read -r LOCK_ROOT_VER
+} < <(python3 -c '
+import json
+with open("ui/package.json") as f:
+    pkg = json.load(f)
+with open("ui/package-lock.json") as f:
+    lock = json.load(f)
+print(pkg["version"])
+print(lock["version"])
+print(lock["packages"][""]["version"])
+')
+check "ui/package.json" "$PKG_VER"
+check "ui/package-lock.json" "$LOCK_VER"
+check "ui/package-lock.json packages.\"\"" "$LOCK_ROOT_VER"
 
 # The docs pin the minor only (`dataflow-rs = "4.0"`), so compare that.
 MINOR="${VERSION%.*}"
