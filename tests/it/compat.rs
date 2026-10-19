@@ -31,7 +31,12 @@ fn row(code: C, severity: Severity, path: &str) -> Row {
 }
 
 fn compat(json: &Value) -> Parsed {
-    parse(json, ParseOptions::default())
+    let parsed = parse(json, ParseOptions::default());
+    assert_eq!(
+        dataflow_rs::def::parse_owned(json.clone(), ParseOptions::default()),
+        parsed
+    );
+    parsed
 }
 
 fn strict(json: &Value) -> Parsed {

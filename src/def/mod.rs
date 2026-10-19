@@ -1,7 +1,7 @@
 //! Definitions: the authored form of workflows and tasks.
 //!
 //! A definition is plain data with raw expressions. It enters only through
-//! [`parse`], which is also the linter: one walk over the authored JSON builds
+//! [`parse`] or [`parse_owned`], which also lint: one walk over the authored JSON builds
 //! a [`WorkflowDef`] and reports every issue at the path the author typed, at
 //! v3's codes for v3's rules. With [`ParseOptions::compat`] on, the compat
 //! reader rewrites v3's spellings first (see [`compat`](crate::compat)). A
@@ -39,7 +39,7 @@ mod types;
 pub use keys::{DefinitionKeys, definition_keys};
 pub(crate) use parse::parse_steps;
 pub(crate) use parse::parse_with_rewrites;
-pub use parse::{ParseOptions, Parsed, parse};
+pub use parse::{ParseOptions, Parsed, parse, parse_owned};
 pub(crate) use parse::{fragment_place, holds_steps};
 pub use rollout::{Rollout, RolloutError};
 pub use types::defaults;

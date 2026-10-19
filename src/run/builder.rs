@@ -3,7 +3,7 @@
 
 use super::engine::{Engine, EngineConfig};
 use crate::base::Issue;
-use crate::def::{ParseOptions, WorkflowDef, parse};
+use crate::def::{ParseOptions, Parsed, WorkflowDef, parse, parse_owned};
 use crate::function::{CallLayer, Function, Registry};
 use crate::program::CompileOptions;
 use serde_json::Value;
@@ -105,8 +105,18 @@ impl EngineBuilder {
     /// its parse issues, and one it reads but the compile rejects with its
     /// parse issues, then its compile issues.
     #[must_use]
-    pub fn workflow_json(mut self, raw: &Value) -> Self {
-        let parsed = parse(raw, ParseOptions::default());
+    pub fn workflow_json(self, raw: &Value) -> Self {
+        self.parsed(parse(raw, ParseOptions::default()))
+    }
+
+    /// Adds an owned definition, avoiding the compatibility reader's copy.
+    /// Otherwise identical to [`Self::workflow_json`].
+    #[must_use]
+    pub fn workflow_json_owned(self, raw: Value) -> Self {
+        self.parsed(parse_owned(raw, ParseOptions::default()))
+    }
+
+    fn parsed(mut self, parsed: Parsed) -> Self {
         self.pending.push(match parsed.def {
             Some(def) => Pending::Parsed(Box::new(def), parsed.issues),
             None => Pending::Refused(parsed.issues),

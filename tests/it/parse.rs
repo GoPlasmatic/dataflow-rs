@@ -5,7 +5,7 @@
 use dataflow_rs::def::{
     BUILTIN_FUNCTIONS, FailurePolicy, ForEachDef, GroupDef, LoopDef, MAX_GROUP_DEPTH, ParseOptions,
     Parsed, RejectionPolicy, Rollout, Status, StepDef, TaskDef, WorkflowDef, WorkflowFailurePolicy,
-    parse,
+    parse, parse_owned,
 };
 use dataflow_rs::program::{IssueCode as C, Severity, StepKind};
 use serde_json::{Value, json};
@@ -30,12 +30,34 @@ fn row(code: C, severity: Severity, path: &str) -> Row {
 
 /// Parsed with the defaults: the compat reader on.
 fn compat(json: &Value) -> Parsed {
-    parse(json, ParseOptions::default())
+    compared(json, ParseOptions::default())
 }
 
 /// Parsed with the compat reader off.
 fn strict(json: &Value) -> Parsed {
-    parse(json, ParseOptions::default().compat(false))
+    compared(json, ParseOptions::default().compat(false))
+}
+
+fn compared(json: &Value, opts: ParseOptions) -> Parsed {
+    let borrowed = parse(json, opts);
+    assert_eq!(parse_owned(json.clone(), opts), borrowed, "{json}");
+    borrowed
+}
+
+#[test]
+fn owned_and_borrowed_builders_report_the_same_issues() {
+    let raw = json!({"id": "w", "continue_on_error": true, "tasks": [
+        {"id": "t", "function": {"name": "not_registered"}}
+    ]});
+    let borrowed = dataflow_rs::Engine::builder()
+        .workflow_json(&raw)
+        .build()
+        .unwrap_err();
+    let owned = dataflow_rs::Engine::builder()
+        .workflow_json_owned(raw)
+        .build()
+        .unwrap_err();
+    assert_eq!(owned, borrowed);
 }
 
 /// A task running a custom function.

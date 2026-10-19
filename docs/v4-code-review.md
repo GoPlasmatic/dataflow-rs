@@ -192,6 +192,25 @@ every recorded mapping boundary. Native tests, Clippy, rustdoc, WASM tests,
 UI tests and both UI builds pass. The WASM artifact verifier also requires
 the new class declaration.
 
+### 2. Definition parsing copies: completed
+
+Added `def::parse_owned` and `EngineBuilder::workflow_json_owned`. The owned
+and borrowed entry points share the same compatibility reader and walk
+through a `Cow` over the input object. Owned JSON is rewritten in place,
+removing one full-document clone. The WASM constructor, check and parse
+entry points now consume the JSON they already own.
+
+Existing parsing and compatibility tests compare both entry points, including
+refused inputs and exact issue ordering. A builder test compares errors after
+parsing and compilation. Native, WASM and UI suites pass.
+
+`wasm/scripts/bench-definition-loading.mjs` loads a 1 MiB definition with 64
+tasks 100 times. Five interleaved baseline/candidate runs had medians of
+464.64 ms and 478.46 ms; the median paired ratio was approximately 1.03,
+within the observed noise. This confirms no reliable end-to-end speed
+claim; the improvement is removal of the redundant owned-input copy. The
+borrowed API still copies when compatibility rewriting requires ownership.
+
 ## Validation
 
 The review uses the existing behavioral suites, plus regressions for the

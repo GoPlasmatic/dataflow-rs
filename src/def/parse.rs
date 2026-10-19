@@ -36,6 +36,7 @@ use crate::base::any_rejected;
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, Severity, StepKind};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -95,6 +96,16 @@ pub fn parse(json: &Value, opts: ParseOptions) -> Parsed {
     parse_with_rewrites(json, opts).0
 }
 
+/// Reads a definition by value. The compatibility reader rewrites the owned
+/// JSON in place, avoiding the full-document copy required by [`parse`].
+/// The resulting definition and issue ordering are identical to `parse`.
+pub fn parse_owned(json: Value, opts: ParseOptions) -> Parsed {
+    match json {
+        Value::Object(object) => parse_object(Cow::Owned(object), opts).0,
+        other => parse(&other, opts),
+    }
+}
+
 /// [`parse`], keeping the compat reader's rewrites for
 /// [`migrate_v3`](crate::compat::migrate_v3).
 pub(crate) fn parse_with_rewrites(json: &Value, opts: ParseOptions) -> (Parsed, Vec<Rewrite>) {
@@ -109,17 +120,20 @@ pub(crate) fn parse_with_rewrites(json: &Value, opts: ParseOptions) -> (Parsed, 
         };
         return (parsed, Vec::new());
     };
+    parse_object(Cow::Borrowed(object), opts)
+}
+
+fn parse_object(
+    mut object: Cow<'_, Map<String, Value>>,
+    opts: ParseOptions,
+) -> (Parsed, Vec<Rewrite>) {
     if !opts.compat {
-        return (walk(object, false, Vec::new(), HashMap::new()), Vec::new());
+        return (walk(&object, false, Vec::new(), HashMap::new()), Vec::new());
     }
-    // The reader rewrites a copy; the walk reads the copy, and goes on
-    // building the `ext`s the reader moved keys into.
-    let mut rewritten = object.clone();
-    let read = reader::read(&mut rewritten);
-    (
-        walk(&rewritten, true, read.issues, read.exts),
-        read.rewrites,
-    )
+    // Borrowed input is copied for the reader; owned input is rewritten in
+    // place. The walk builds on the `ext`s the reader moved keys into.
+    let read = reader::read(object.to_mut());
+    (walk(&object, true, read.issues, read.exts), read.rewrites)
 }
 
 /// Reads a fragment: the steps at `root`, as [`parse`] reads a workflow's,

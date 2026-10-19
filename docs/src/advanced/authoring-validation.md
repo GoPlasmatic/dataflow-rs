@@ -18,6 +18,12 @@ that quarantines bad rows and runs the rest uses the two stages directly.
 
 ## Parsing a definition
 
+If the caller already owns the JSON `Value`, `def::parse_owned(value, options)`
+rewrites compatibility spellings in place instead of copying the whole
+document. It returns the same definition and ordered issues as `parse`.
+`EngineBuilder::workflow_json_owned(value)` uses this path too; the borrowed
+`parse` and `workflow_json` methods remain available.
+
 `parse` never fails. It returns a `Parsed` whose `issues` lists every
 problem and whose `def` is `Some` exactly when none of them is Rejected:
 

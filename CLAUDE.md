@@ -49,7 +49,7 @@ GoPlasmatic/Orion#385.
   `ErrorRecord`, `Change`, `Context`, `Issue` and its codes, the ids
   (`ProgramId`, `WorkflowIx`, `TaskIx`), `CancelToken`, `Instant`, the typo
   distance, and the `ts` feature's hand-written declarations.
-- `src/def/`: definitions. `parse` is the one entry and the linter; `types.rs`
+- `src/def/`: definitions. `parse` and `parse_owned` share the reader and linter; `types.rs`
   the read-only data (`WorkflowDef`, `TaskDef`, `GroupDef`, `LoopDef`,
   `ForEachDef`, the policies, `defaults`), crate-private fields behind read
   accessors, so nothing edits a def after `parse`; `reader.rs` the compat reader;

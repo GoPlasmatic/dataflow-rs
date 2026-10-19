@@ -519,8 +519,8 @@ impl WasmEngine {
         }
         let exprs = exprs.build().map_err(|e| invalid("options", e))?;
         let mut builder = Engine::builder().registry(Registry::new(exprs));
-        for raw in &definitions {
-            builder = builder.workflow_json(raw);
+        for raw in definitions {
+            builder = builder.workflow_json_owned(raw);
         }
         let inner = builder.build().map_err(|issues| {
             let rejected = issues
@@ -619,7 +619,7 @@ impl WasmEngine {
         #[wasm_bindgen(unchecked_param_type = "JsonValue")] definition: JsValue,
     ) -> Result<JsValue, JsValue> {
         let raw = self::definition(&definition, "definition")?;
-        let mut parsed = def::parse(&raw, ParseOptions::default());
+        let mut parsed = def::parse_owned(raw, ParseOptions::default());
         if let Some(def) = &parsed.def {
             parsed.issues.extend(self.inner.compiler().check(def));
         }
@@ -685,11 +685,16 @@ pub fn parse(
     #[wasm_bindgen(unchecked_param_type = "JsonValue")] definition: JsValue,
 ) -> Result<JsValue, JsValue> {
     let raw = self::definition(&definition, "definition")?;
-    let (definition, issues) = match dataflow_rs::compat::migrate_v3(&raw) {
-        Ok(migrated) => (Some(migrated.json), migrated.issues),
-        Err(issues) => (None, issues),
-    };
-    to_js(&ParseResult { definition, issues })
+    let parsed = def::parse_owned(raw, ParseOptions::default());
+    let definition = parsed
+        .def
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| invalid("definition", error))?;
+    to_js(&ParseResult {
+        definition,
+        issues: parsed.issues,
+    })
 }
 
 /// A trace read back, validated before anything replays or indexes it.
