@@ -89,7 +89,7 @@
           "errors": [
             {
               "code": "VALIDATION_ERROR",
-              "message": "Task bad_xml error: Validation error: Failed to parse XML: syntax error: tag not closed: `>` not found before end of input",
+              "message": "Task bad_xml error: Validation error: Failed to parse XML: <dependency message>",
               "path": null,
               "workflow_id": "w",
               "task_id": "bad_xml",

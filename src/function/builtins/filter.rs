@@ -3,7 +3,7 @@
 use crate::base::{EVALUATION_ERROR, ErrorKind, Result};
 use crate::expr::Expr;
 use crate::function::sync::task_record;
-use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
+use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use ::log::debug;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ pub(crate) enum RejectAction {
     Skip,
 }
 
-impl SyncFunction for FilterConfig {
+impl FilterConfig {
     /// `Ok` when the condition is a literal `true`. Anything else rejects:
     /// `Halt` or `Skip` by `on_reject`. A condition that fails to evaluate
     /// also records `EVALUATION_ERROR`, so the rejection says why.
@@ -37,7 +37,7 @@ impl SyncFunction for FilterConfig {
     /// An exceeded ops budget is no rejection: it is the call's `Err`, which
     /// the classifier records as `BUDGET_EXCEEDED` and `on_failure` governs,
     /// as `validation`'s (3.x made it a silent rejection).
-    fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
+    pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let met = match cx.test(&self.condition) {
             Ok(met) => met,
             Err(e) if e.kind() == &ErrorKind::Budget => return Err(e),
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn an_evaluation_error_rejects_and_records_why() {
-        let record = r#"[{"code":"EVALUATION_ERROR","message":"Filter condition failed to evaluate: Thrown: {\"type\":\"NaN\"} (in operator: /)","path":null,"workflow_id":"w","task_id":"t","timestamp":"<timestamp>"}]"#;
+        let record = r#"[{"code":"EVALUATION_ERROR","message":"Filter condition failed to evaluate: Thrown: <dependency message>","path":null,"workflow_id":"w","task_id":"t","timestamp":"<timestamp>"}]"#;
         let condition = json!({"/": [1, {"var": "data.zero"}]});
         for (on_reject, status) in [(None, Some(299)), (Some("skip"), None)] {
             assert_eq!(

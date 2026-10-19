@@ -38,7 +38,7 @@
               "selection": "condition_failed",
               "error": {
                 "code": "BUDGET_EXCEEDED",
-                "message": "Operation budget exceeded: 42 operations charged against a budget of 30 (in operator: reduce)",
+                "message": "Operation budget exceeded: <dependency message>",
                 "retryable": false
               },
               "sweeps": 0,
@@ -160,7 +160,7 @@
           "errors": [
             {
               "code": "BUDGET_EXCEEDED",
-              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "message": "Task t error: Operation budget exceeded: <dependency message>",
               "path": null,
               "workflow_id": "mapw",
               "task_id": "t",
@@ -168,7 +168,7 @@
             },
             {
               "code": "BUDGET_EXCEEDED",
-              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "message": "Task t error: Operation budget exceeded: <dependency message>",
               "path": null,
               "workflow_id": "scriptw",
               "task_id": "t",
@@ -220,7 +220,7 @@
               "selection": "condition_failed",
               "error": {
                 "code": "BUDGET_EXCEEDED",
-                "message": "Operation budget exceeded: 42 operations charged against a budget of 30 (in operator: reduce)",
+                "message": "Operation budget exceeded: <dependency message>",
                 "retryable": false
               },
               "sweeps": 0,
@@ -342,7 +342,7 @@
           "errors": [
             {
               "code": "BUDGET_EXCEEDED",
-              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "message": "Task t error: Operation budget exceeded: <dependency message>",
               "path": null,
               "workflow_id": "mapw",
               "task_id": "t",
@@ -350,7 +350,7 @@
             },
             {
               "code": "BUDGET_EXCEEDED",
-              "message": "Task t error: Operation budget exceeded: 41 operations charged against a budget of 30 (in operator: reduce)",
+              "message": "Task t error: Operation budget exceeded: <dependency message>",
               "path": null,
               "workflow_id": "scriptw",
               "task_id": "t",

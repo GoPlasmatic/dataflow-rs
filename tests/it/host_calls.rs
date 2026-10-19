@@ -187,26 +187,12 @@ impl CallLayer for Named {
 /// An engine over `workflows` with the probe registered, and what it sees.
 fn engine(workflows: &[Value]) -> (Engine, Shared) {
     let seen = Shared::default();
-    let e = workflows
-        .iter()
-        .fold(
-            Engine::builder().register("probe", Probe(Arc::clone(&seen))),
-            |b, w| b.workflow_json(w),
-        )
-        .build()
-        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"));
+    let e =
+        crate::support::engine_with(workflows, |b| b.register("probe", Probe(Arc::clone(&seen))));
     (e, seen)
 }
 
-/// A message whose `data` is `data`.
-fn message(data: Value) -> Message {
-    Message::from_parts(
-        OwnedDataValue::Null,
-        OwnedDataValue::from(&data),
-        OwnedDataValue::Null,
-    )
-    .with_id("m")
-}
+use crate::support::{map, message, with};
 
 /// A probe task.
 fn probe(id: &str, reads: Value, writes: Value, outcome: Value) -> Value {
@@ -214,23 +200,9 @@ fn probe(id: &str, reads: Value, writes: Value, outcome: Value) -> Value {
         "reads": reads, "writes": writes, "outcome": outcome}}})
 }
 
-/// A `map` task writing `logic` at `path`.
-fn map(id: &str, path: &str, logic: Value) -> Value {
-    json!({"id": id, "function": {"name": "map", "input": {
-        "mappings": [{"path": path, "logic": logic}]}}})
-}
-
-/// `task` with each `(key, value)` of `extra`.
-fn with(mut task: Value, extra: &[(&str, Value)]) -> Value {
-    for (key, value) in extra {
-        task[*key] = value.clone();
-    }
-    task
-}
-
 /// A workflow `id` holding `tasks`, with each `(key, value)` of `extra`.
 fn workflow(id: &str, extra: &[(&str, Value)], tasks: Vec<Value>) -> Value {
-    with(json!({"id": id, "tasks": tasks}), extra)
+    crate::support::workflow(id, tasks, extra)
 }
 
 fn data(m: &Message) -> Value {

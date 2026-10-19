@@ -390,7 +390,7 @@ pub(crate) fn get_mut<'v>(
     Some(v)
 }
 
-/// v3's `set_nested_value_parts`, returning whether it wrote.
+/// Sets `value` at `segs` in `v`, returning whether it wrote.
 pub(crate) fn set(v: &mut OwnedDataValue, segs: &[Seg], value: OwnedDataValue) -> bool {
     let Some((last, parents)) = segs.split_last() else {
         return false;
@@ -466,15 +466,15 @@ pub(crate) fn remove(v: &mut OwnedDataValue, segs: &[Seg]) -> Option<OwnedDataVa
     }
 }
 
-/// The kind of a value, for an error: v3's `describe_kind`.
+/// The kind of a value, for an error.
 pub(crate) fn kind(v: &OwnedDataValue) -> &'static str {
     Shape::of_owned(v).describe()
 }
 
-/// `map`'s append and extend (v3's `append_owned`): extend the array at
-/// `segs`, or create it over a missing or `null` target. `Ok(false)` when
-/// the path is unreachable, which v3 treats as success with nothing written;
-/// `Err` names the kind of any other target.
+/// `map`'s append and extend: extend the array at `segs`, or create it over a
+/// missing or `null` target. `Ok(false)` when the path is unreachable, which
+/// is treated as success with nothing written; `Err` names the kind of any
+/// other target.
 pub(crate) fn append(
     v: &mut OwnedDataValue,
     segs: &[Seg],
@@ -490,29 +490,24 @@ pub(crate) fn append(
     Ok(set(v, segs, OwnedDataValue::Array(items)))
 }
 
-/// `map`'s write to a root slot (v3's `merge_root_field`): two objects merge,
-/// existing keys replaced in place and new keys appended in order; anything
-/// else replaces the slot. The owned statement of the rules the splice's
-/// `merge_root` follows, which a trace's replay applies.
+/// `map`'s write to a root slot: two objects merge, existing keys replaced in
+/// place and new keys appended in order; anything else replaces the slot. The
+/// owned statement of the rules the splice's `merge_root` follows, which a
+/// trace's replay applies.
 pub(crate) fn merge_root(context: &mut OwnedDataValue, key: &str, value: OwnedDataValue) {
-    let OwnedDataValue::Object(slots) = context else {
+    if !matches!(context, OwnedDataValue::Object(_)) {
         *context = OwnedDataValue::Object(vec![(key.to_string(), value)]);
         return;
-    };
-    let Some(slot) = slots.iter_mut().find(|(k, _)| k == key) else {
-        slots.push((key.to_string(), value));
-        return;
-    };
-    match (&mut slot.1, value) {
-        (OwnedDataValue::Object(existing), OwnedDataValue::Object(new_pairs)) => {
+    }
+    match (rules::owned_child_mut(context, rules::Hop::Key(key)), value) {
+        (Some(slot @ OwnedDataValue::Object(_)), OwnedDataValue::Object(new_pairs)) => {
             for (k, v) in new_pairs {
-                match existing.iter_mut().find(|(ek, _)| *ek == k) {
-                    Some(s) => s.1 = v,
-                    None => existing.push((k, v)),
-                }
+                rules::put(slot, rules::Hop::Key(&k), v);
             }
         }
-        (slot, value) => *slot = value,
+        (_, value) => {
+            rules::put(context, rules::Hop::Key(key), value);
+        }
     }
 }
 

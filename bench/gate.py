@@ -61,6 +61,7 @@ import datetime
 import json
 import math
 import os
+import platform
 import shutil
 import statistics
 import subprocess
@@ -204,17 +205,28 @@ def run_once(bins, name):
 
 
 def machine(load_before):
-    def ctl(key):
-        return sh("sysctl", "-n", key)
+    if sys.platform == "darwin":
+        def ctl(key):
+            return sh("sysctl", "-n", key)
 
-    power = sh("pmset", "-g", "batt").splitlines()
+        power = sh("pmset", "-g", "batt").splitlines()
+        return {
+            "model": ctl("hw.model"),
+            "cpu": ctl("machdep.cpu.brand_string"),
+            "cores": int(ctl("hw.ncpu")),
+            "memory_gb": round(int(ctl("hw.memsize")) / 2**30),
+            "os": "macOS " + sh("sw_vers", "-productVersion"),
+            "power": power[0] if power else "unknown",
+            "load_avg_before": [round(x, 2) for x in load_before],
+        }
+    u = platform.uname()
     return {
-        "model": ctl("hw.model"),
-        "cpu": ctl("machdep.cpu.brand_string"),
-        "cores": int(ctl("hw.ncpu")),
-        "memory_gb": round(int(ctl("hw.memsize")) / 2**30),
-        "os": "macOS " + sh("sw_vers", "-productVersion"),
-        "power": power[0] if power else "unknown",
+        "model": u.machine,
+        "cpu": u.processor or u.machine,
+        "cores": os.cpu_count() or 1,
+        "memory_gb": 0,
+        "os": f"{u.system} {u.release}",
+        "power": "unknown",
         "load_avg_before": [round(x, 2) for x in load_before],
     }
 

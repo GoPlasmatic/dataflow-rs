@@ -483,7 +483,8 @@ fn mark(rng: &mut random::Rng) -> Mark {
 /// answer every lookup alike and drain the same marks and reorders.
 #[test]
 fn the_trie_and_the_list_agree_on_random_marks() {
-    let mut rng = random::Rng::new(0x7e1e);
+    let seed = random::seed(0x7e1e);
+    let mut rng = random::Rng::new(seed);
     for case in 0..20_000 {
         let (mut trie, mut list) = (Writes::default(), List::default());
         for step in 0..1 + rng.below(12) {
@@ -501,17 +502,24 @@ fn the_trie_and_the_list_agree_on_random_marks() {
                 assert_eq!(
                     trie.lookup(p(&probe).at()),
                     list.lookup(p(&probe).at()),
-                    "case {case}, step {step}, {probe:?}"
+                    "seed {seed:#x}, case {case}, step {step}, {probe:?}"
                 );
             }
         }
-        assert_eq!(trie.is_empty(), list.is_empty(), "case {case}: emptiness");
+        assert_eq!(
+            trie.is_empty(),
+            list.is_empty(),
+            "seed {seed:#x}, case {case}: emptiness"
+        );
         let (mut tv, mut lv) = (Vec::new(), Vec::new());
         trie.visit(&mut |at, m| tv.push(format!("{at:?} {}", text(m))));
         list.visit(&mut |at, m| lv.push(format!("{at:?} {}", text(m))));
         tv.sort();
         lv.sort();
-        assert_eq!(tv, lv, "case {case}: the same visited marks");
+        assert_eq!(
+            tv, lv,
+            "seed {seed:#x}, case {case}: the same visited marks"
+        );
         // The same marks and reorders. Their order is checked where it
         // matters, by the run-context model test: siblings may differ here
         // for a node first touched through a deeper path, which the run
@@ -520,12 +528,12 @@ fn the_trie_and_the_list_agree_on_random_marks() {
         assert_eq!(
             texts(&sorted(t.dirty)),
             texts(&sorted(l.dirty)),
-            "case {case}: the same marks"
+            "seed {seed:#x}, case {case}: the same marks"
         );
         let (mut tr, mut lr) = (t.reorder, l.reorder);
         tr.sort();
         lr.sort();
-        assert_eq!(tr, lr, "case {case}: the same reorders");
+        assert_eq!(tr, lr, "seed {seed:#x}, case {case}: the same reorders");
     }
 }
 
@@ -535,7 +543,8 @@ fn the_trie_and_the_list_agree_on_random_marks() {
 /// empties the log.
 #[test]
 fn random_marks_drain_disjoint_and_leave_the_log_empty() {
-    let mut rng = random::Rng::new(0x7e1f);
+    let seed = random::seed(0x7e1f);
+    let mut rng = random::Rng::new(seed);
     for case in 0..20_000 {
         let (mut w, mut list) = (Writes::default(), List::default());
         for _ in 0..1 + rng.below(12) {

@@ -21,6 +21,7 @@
 // fan-out it reads its asks from the same slot, and the index is `null`.
 
 use crate::support::run_helpers::{Golden, Run, build_with, data, run_on};
+use crate::support::{engine_with, workflow};
 use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next};
 use dataflow_rs::run::{ErrorRecord, RunStatus, WorkflowExit};
 use dataflow_rs::{
@@ -220,15 +221,6 @@ fn seed(path: &str, value: Value) -> Value {
         {"path": path, "logic": value}]}}})
 }
 
-/// Workflow `id`, with `extra` on it.
-fn workflow(id: &str, tasks: Vec<Value>, extra: &[(&str, Value)]) -> Value {
-    let mut w = json!({"id": id, "tasks": tasks});
-    for (key, value) in extra {
-        w[*key] = value.clone();
-    }
-    w
-}
-
 /// The fan-out, then `after`, in workflow `w`.
 fn fanning(for_each: Value, extra: &[(&str, Value)]) -> Vec<Value> {
     vec![workflow(
@@ -258,13 +250,12 @@ fn over(ps: Value) -> Run {
 
 /// The engine over `workflows`, `echo` registered.
 fn engine(workflows: &[Value]) -> Engine {
-    build_with(workflows, |b| b.register("echo", Echo::default()))
-        .unwrap_or_else(|e| panic!("builds: {e}"))
+    engine_with(workflows, |b| b.register("echo", Echo::default()))
 }
 
 /// The golden file of test `name`.
 fn golden(name: &str) -> Golden {
-    Golden::new("fan_out", name)
+    Golden::new(crate::support::golden::module_dir(module_path!()), name)
 }
 
 /// `run` over `workflows`, added to `golden`: the message as JSON, the

@@ -61,3 +61,41 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+
+/// Seeded xorshift64* PRNG shared by the property and path tests: no
+/// external dependency, and every failure reproduces from its seed.
+#[derive(Clone, Copy, Debug)]
+pub struct Rng(u64);
+
+impl Rng {
+    /// A generator seeded with `seed` (clamped to at least 1).
+    pub fn new(seed: u64) -> Self {
+        Self(seed.max(1))
+    }
+
+    /// The next pseudo-random `u64`.
+    #[expect(clippy::should_implement_trait, reason = "not an iterator")]
+    pub fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+
+    /// A uniform index in `0..n`.
+    pub fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+
+    /// True with probability `num / den`.
+    pub fn chance(&mut self, num: u64, den: u64) -> bool {
+        self.next() % den < num
+    }
+
+    /// One element of `items`.
+    pub fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+        &items[self.below(items.len())]
+    }
+}

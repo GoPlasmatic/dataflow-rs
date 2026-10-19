@@ -360,7 +360,10 @@ mod tests {
                 "payload.x",
                 "Validation error: ParseXml: Source 'payload.x' is not a string",
             ),
-            ("data.broken", "Validation error: Failed to parse XML: "),
+            (
+                "data.broken",
+                "Validation error: Failed to parse XML: <dependency message>",
+            ),
         ] {
             let observed = golden.observe(
                 "parse_xml",

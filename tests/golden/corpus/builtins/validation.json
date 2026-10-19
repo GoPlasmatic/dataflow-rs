@@ -78,7 +78,7 @@
             },
             {
               "code": "EVALUATION_ERROR",
-              "message": "Failed to evaluate rule 2: Thrown: {\"type\":\"NaN\"} (in operator: +)",
+              "message": "Failed to evaluate rule 2: Thrown: <dependency message>",
               "path": null,
               "workflow_id": "w",
               "task_id": "check",

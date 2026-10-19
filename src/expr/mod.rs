@@ -25,6 +25,8 @@ pub use document::{Interpolated, Rendered};
 pub use engine::{EvalRoot, ExprEngine, ExprEngineBuilder};
 pub(crate) use expr::sealed::CRATE;
 pub use expr::{Evaluated, Expr, FromValue, ResolveExpr};
+#[cfg(test)]
+pub(crate) use operators::FAMILIES;
 pub use operators::{Operator, OperatorFamily};
 pub use output::Output;
 pub(crate) use path::Seg;

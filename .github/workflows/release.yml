@@ -6,12 +6,13 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -51,6 +52,7 @@ jobs:
     name: Publish to crates.io
     needs: [validate, ci]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -114,6 +116,10 @@ jobs:
     name: Publish WASM to npm
     needs: [validate, ci]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -123,25 +129,22 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      # Pinned, and deliberately not the `| sh` installer: that tracks whatever
-      # wasm-pack is latest on the day of the release, which is how the
-      # toolchain drifted unnoticed in the first place. wasm-pack fetches a
-      # matching binaryen itself, so no system binaryen is installed — an
+      # Pinned prebuilt binary, shared with CI and docs.yml: wasm-pack fetches
+      # a matching binaryen itself, so no system binaryen is installed — an
       # apt-provided one is old enough to mishandle the externref table.
       - name: Install wasm-pack (pinned)
-        run: cargo install wasm-pack --version 0.14.0 --locked
+        run: scripts/install-wasm-pack.sh
 
       - name: Cache cargo
         uses: actions/cache@v6
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            wasm/target/
-          key: ${{ runner.os }}-wasm-${{ hashFiles('wasm/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-wasm-
+            target/
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-wasm-
 
       - name: Build WASM
         run: |
@@ -221,7 +224,13 @@ jobs:
 
       - name: Publish to npm
         if: steps.check.outputs.skip != 'true'
-        run: cd wasm/pkg && npm publish --access public
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          TAG="latest"
+          if [[ "$VERSION" == *-* ]]; then
+            TAG="next"
+          fi
+          cd wasm/pkg && npm publish --access public --provenance --tag "$TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -238,6 +247,10 @@ jobs:
     name: Publish UI to npm
     needs: [validate, publish-wasm]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -311,7 +324,13 @@ jobs:
 
       - name: Publish to npm
         if: steps.check.outputs.skip != 'true'
-        run: cd ui && npm publish --access public
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          TAG="latest"
+          if [[ "$VERSION" == *-* ]]; then
+            TAG="next"
+          fi
+          cd ui && npm publish --access public --provenance --tag "$TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -319,6 +338,9 @@ jobs:
     name: Create GitHub Release
     needs: [validate, publish-crate, publish-wasm, publish-ui]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -345,9 +367,14 @@ jobs:
       - name: Create release
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
+          PRERELEASE_FLAG=()
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE_FLAG=(--prerelease)
+          fi
           gh release create "v$VERSION" \
             --title "v$VERSION" \
             --notes-file release-notes.md \
-            --verify-tag
+            --verify-tag \
+            "${PRERELEASE_FLAG[@]}"
         env:
           GH_TOKEN: ${{ github.token }}

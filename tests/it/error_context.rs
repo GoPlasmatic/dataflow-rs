@@ -80,14 +80,7 @@ fn build(workflows: &[Value], error_context: Option<ErrorContext>) -> Engine {
     if let Some(ec) = error_context {
         config = config.error_context(ec);
     }
-    workflows
-        .iter()
-        .fold(
-            Engine::builder().register("act", Act).config(config),
-            |b, w| b.workflow_json(w),
-        )
-        .build()
-        .unwrap_or_else(|issues| panic!("builds: {issues:?}"))
+    crate::support::engine_with(workflows, |b| b.register("act", Act).config(config))
 }
 
 /// The build of `workflows`, with its error context at `path`, keeping
@@ -151,7 +144,7 @@ impl Golden {
     /// Compares the recorded runs with the golden file, or rewrites it under
     /// `DATAFLOW_GOLDEN_WRITE`.
     fn check(self) {
-        let file = golden::file("error_context", self.name);
+        let file = golden::file(golden::module_dir(module_path!()), self.name);
         golden::hold(&file, &self.runs.to_pretty());
     }
 }
@@ -175,15 +168,11 @@ fn records(records: &[(&str, &str, &str, u16)]) -> String {
     format!("[{}]", items.join(","))
 }
 
+use crate::support::{map, with};
+
 /// An `act` task running `outcome`.
 fn act(id: &str, outcome: Value) -> Value {
     json!({"id": id, "function": {"name": "act", "input": {"outcome": outcome}}})
-}
-
-/// A `map` task writing `logic` at `path`.
-fn map(id: &str, path: &str, logic: Value) -> Value {
-    json!({"id": id, "function": {"name": "map", "input": {
-        "mappings": [{"path": path, "logic": logic}]}}})
 }
 
 /// A `map` task that returns 500: an append to `data.text`, which every run
@@ -206,14 +195,6 @@ fn bad_xml(id: &str) -> Value {
         "source": "data.xml", "target": "doc"}}})
 }
 
-/// `node` with each `(key, value)` of `extra` set on it.
-fn with(mut node: Value, extra: &[(&str, Value)]) -> Value {
-    for (key, value) in extra {
-        node[*key] = value.clone();
-    }
-    node
-}
-
 /// A task that steps past its own failure.
 fn goes_on(task: Value) -> Value {
     with(task, &[("continue_on_error", json!(true))])
@@ -221,7 +202,7 @@ fn goes_on(task: Value) -> Value {
 
 /// A workflow `id` over `tasks`.
 fn workflow(id: &str, tasks: Vec<Value>) -> Value {
-    json!({"id": id, "tasks": tasks})
+    crate::support::workflow(id, tasks, &[])
 }
 
 /// The data every run is seeded with unless it says otherwise.
@@ -788,19 +769,19 @@ async fn a_reload_keeps_the_error_context() {
     .unwrap();
     let program = compiler.link([compiler.compile_one(&def).unwrap().workflow]);
     let reloaded = e.with_program(program);
-    let config = |e: &Engine| {
-        let debug = format!("{e:?}");
-        debug[debug.find("config:").expect("the config is shown")..].to_owned()
-    };
-    assert_eq!(config(&reloaded), config(&e));
+    assert_eq!(reloaded.config().error_context, e.config().error_context);
+    let ec = reloaded
+        .config()
+        .error_context
+        .as_ref()
+        .expect("the error context is kept");
+    assert_eq!(ec.path().to_string(), "metadata.errors");
+    assert_eq!(ec.limit(), 2);
     // A path shows as its dotted text (review B M-9).
     assert!(
-        config(&reloaded)
-            .contains(r#"error_context: Some(ErrorContext { path: Path("metadata.errors")"#),
-        "{}",
-        config(&reloaded)
+        format!("{ec:?}").contains(r#"path: Path("metadata.errors")"#),
+        "{ec:?}"
     );
-    assert!(config(&reloaded).contains("limit: 2"));
 
     let mut m = message(json!({}), json!({}));
     reloaded.run(&mut m).await;
@@ -823,7 +804,7 @@ async fn a_reload_keeps_the_error_context() {
     let plain = build(&workflows, None);
     let (text, code) = run_over(&plain, seeded(), json!({})).await;
     assert_eq!(slot(&text, "metadata.errors"), None);
-    assert!(format!("{plain:?}").contains("error_context: None"));
+    assert_eq!(plain.config().error_context, None);
     let mut golden = Golden::new("a_reload_keeps_the_error_context");
     golden.record("none configured", &text, &code);
     golden.check();

@@ -8,7 +8,7 @@ use crate::expr::arena::with_arena;
 use crate::expr::rules::{self, Shape};
 use crate::expr::{CompileCx, Expr, ExprEngine, MAX_ARRAY_INDEX, Path};
 use crate::function::sync::task_record;
-use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
+use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use crate::state::{Edit, kind};
 use ::log::error;
 use datavalue::{DataValue, OwnedDataValue};
@@ -164,7 +164,7 @@ impl Mapping {
     }
 }
 
-impl SyncFunction for MapConfig {
+impl MapConfig {
     /// Each mapping in order, each against the view as the ones before it
     /// left it. A failing mapping records `MAPPING_ERROR`, with its
     /// destination as the record's `path` when it resolved one, and is
@@ -175,7 +175,7 @@ impl SyncFunction for MapConfig {
     /// An exceeded ops budget is no failed mapping: it is the call's `Err`,
     /// which the classifier records as `BUDGET_EXCEEDED` and `on_failure`
     /// governs, as `validation`'s (3.x made it a 500).
-    fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
+    pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let mut failed = false;
         // Most mappings record one change: sized once, as v3's
         // `with_capacity`, rather than grown by doubling.
@@ -269,7 +269,7 @@ impl Failed {
 
 /// One mapping's write against the view, inside one edit: what it evaluates
 /// with and where its changes go. The edit holds the run context, so a change
-/// is pushed here rather than through [`SyncCtx::change`], by its rule: only
+/// is pushed here rather than through [`SyncCtx::write`], by its rule: only
 /// under capture, and only then is anything converted for it.
 struct Writer<'w, 'e, 'q, 'p> {
     e: &'w mut Edit<'e, 'q, 'p>,
@@ -361,13 +361,7 @@ impl Mapping {
             return Ok(Cow::Borrowed(path));
         }
         let root = w.e.root_ref();
-        let resolved = with_arena(|arena| {
-            w.exprs
-                .eval_in(self.path.logic(), root, arena)
-                .and_then(|view| self.path.convert(view))
-        });
-        resolved
-            .map(Cow::Owned)
+        with_arena(|arena| w.exprs.eval_view(&self.path, root, arena))
             .map_err(|e| Failed::eval(e, None, "the destination"))
     }
 }
@@ -1040,7 +1034,7 @@ mod tests {
             concat!(
                 r#"[{"code":"MAPPING_ERROR","message":"mappings[0] (data.n): the target holds a number, not an array","path":"data.n","workflow_id":"w","task_id":"t","timestamp":"<timestamp>"},"#,
                 r#"{"code":"MAPPING_ERROR","message":"mappings[1] (data.xs): `extend` needs an array, got a number","path":"data.xs","workflow_id":"w","task_id":"t","timestamp":"<timestamp>"},"#,
-                r#"{"code":"MAPPING_ERROR","message":"mappings[2] (data.q): the logic failed to evaluate: Thrown: {\"type\":\"NaN\"} (in operator: /)","path":"data.q","workflow_id":"w","task_id":"t","timestamp":"<timestamp>"},"#,
+                r#"{"code":"MAPPING_ERROR","message":"mappings[2] (data.q): the logic failed to evaluate: Thrown: <dependency message>","path":"data.q","workflow_id":"w","task_id":"t","timestamp":"<timestamp>"},"#,
                 r#"{"code":"TASK_STATUS_ERROR","message":"Task t returned status 500","path":null,"workflow_id":"w","task_id":"t","timestamp":"<timestamp>"}]"#,
             )
         );

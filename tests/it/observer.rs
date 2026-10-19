@@ -17,6 +17,7 @@
 // times for a later element, so the elements finish in reverse order), and
 // `fail` returns a service error.
 
+use crate::support::{engine_with, message, workflow};
 use dataflow_rs::def::{ParseOptions, parse};
 use dataflow_rs::observe::{Event, Interest, Observer};
 use dataflow_rs::run::{EngineConfig, RunStatus, WorkflowExit};
@@ -186,15 +187,6 @@ fn host(id: &str, function: &str) -> Value {
     json!({"id": id, "function": {"name": function}})
 }
 
-/// A workflow `id` over `tasks`, with each `(key, value)` of `extra`.
-fn workflow(id: &str, tasks: Vec<Value>, extra: &[(&str, Value)]) -> Value {
-    let mut w = json!({"id": id, "tasks": tasks});
-    for (key, value) in extra {
-        w[*key] = value.clone();
-    }
-    w
-}
-
 /// An engine over `workflows`, the host functions registered and
 /// `observer` the engine's, if any.
 fn engine(workflows: &[Value], observer: Option<&Timeline>) -> Engine {
@@ -202,27 +194,11 @@ fn engine(workflows: &[Value], observer: Option<&Timeline>) -> Engine {
     if let Some(observer) = observer {
         config = config.observer(Arc::new(observer.clone()));
     }
-    workflows
-        .iter()
-        .fold(
-            Engine::builder()
-                .register("logger", Logger)
-                .register("fail", Failing)
-                .config(config),
-            |b, w| b.workflow_json(w),
-        )
-        .build()
-        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"))
-}
-
-/// A message whose `data` is `data`.
-fn message(data: Value) -> Message {
-    Message::from_parts(
-        OwnedDataValue::Null,
-        OwnedDataValue::from(&data),
-        OwnedDataValue::Null,
-    )
-    .with_id("m")
+    engine_with(workflows, |b| {
+        b.register("logger", Logger)
+            .register("fail", Failing)
+            .config(config)
+    })
 }
 
 /// The timeline of one run of `workflows` over an empty message, under
@@ -385,14 +361,8 @@ async fn the_observer_survives_a_reload() {
     .unwrap();
     let program = compiler.link([compiler.compile_one(&def).unwrap().workflow]);
     let reloaded = e.with_program(program);
-    let config = |e: &Engine| {
-        let debug = format!("{e:?}");
-        debug[debug.find("config:").expect("the config is shown")..].to_owned()
-    };
-    assert_eq!(
-        config(&reloaded),
-        "config: EngineConfig { observer: present, error_context: None, .. } }"
-    );
+    assert!(reloaded.config().observer.is_some());
+    assert_eq!(reloaded.config().error_context, None);
     reloaded.run(&mut message(json!({}))).await;
     assert_eq!(
         timeline.tasks().len(),

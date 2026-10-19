@@ -22,15 +22,23 @@ import './App.css';
 
 function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
   const { resolvedTheme, setTheme } = useTheme();
+  const initialSampleName = Object.keys(SAMPLE_WORKFLOWS)[0];
+  const initialSample = SAMPLE_WORKFLOWS[initialSampleName];
 
-  const [workflowsText, setWorkflowsText] = useState('');
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [workflowsText, setWorkflowsText] = useState(() =>
+    initialSample ? JSON.stringify(initialSample.workflows, null, 2) : ''
+  );
+  const [workflows, setWorkflows] = useState<Workflow[]>(() =>
+    initialSample ? migrateDefinitions(initialSample.workflows) : []
+  );
   const [workflowsError, setWorkflowsError] = useState<string | null>(null);
 
-  const [payloadText, setPayloadText] = useState('{}');
+  const [payloadText, setPayloadText] = useState(() =>
+    initialSample ? JSON.stringify(initialSample.payload, null, 2) : '{}'
+  );
   const [payloadError, setPayloadError] = useState<string | null>(null);
 
-  const [selectedExample, setSelectedExample] = useState(Object.keys(SAMPLE_WORKFLOWS)[0]);
+  const [selectedExample, setSelectedExample] = useState(initialSampleName);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -115,15 +123,6 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
       setDropdownOpen(false);
     }
   }, []);
-
-  // Load first sample on mount.
-  // TODO(react-hooks): mount-time data seeding via setState. Could move into
-  // lazy `useState` initialisers. Dev demo app only — not part of the
-  // published library entry point (`src/lib.ts`).
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadSample(Object.keys(SAMPLE_WORKFLOWS)[0]);
-  }, [loadSample]);
 
   // Close dropdown on outside click
   useEffect(() => {

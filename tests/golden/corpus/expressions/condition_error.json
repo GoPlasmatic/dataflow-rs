@@ -27,7 +27,7 @@
               "selection": "condition_failed",
               "error": {
                 "code": "LOGIC_ERROR",
-                "message": "Thrown: {\"type\":\"NaN\"} (in operator: +)",
+                "message": "Thrown: <dependency message>",
                 "retryable": false
               },
               "sweeps": 0,
@@ -86,7 +86,7 @@
           "errors": [
             {
               "code": "LOGIC_ERROR",
-              "message": "Task host error: Logic evaluation error: Thrown: {\"type\":\"NaN\"} (in operator: +)",
+              "message": "Task host error: Logic evaluation error: Thrown: <dependency message>",
               "path": null,
               "workflow_id": "w",
               "task_id": "host",

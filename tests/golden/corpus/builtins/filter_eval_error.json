@@ -53,7 +53,7 @@
           "errors": [
             {
               "code": "EVALUATION_ERROR",
-              "message": "Filter condition failed to evaluate: Thrown: {\"type\":\"NaN\"} (in operator: +)",
+              "message": "Filter condition failed to evaluate: Thrown: <dependency message>",
               "path": null,
               "workflow_id": "w",
               "task_id": "gate",

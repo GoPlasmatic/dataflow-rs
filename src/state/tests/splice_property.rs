@@ -69,11 +69,11 @@ fn apply<'a>(
     arena: &'a Bump,
     owned: &mut OwnedDataValue,
     view: DataValue<'a>,
-    op: Op,
+    op: &Op,
 ) -> DataValue<'a> {
     match op {
         Op::Set(dotted, value) => {
-            let segs = random::segs(&dotted);
+            let segs = random::segs(dotted);
             // The hops a write resolves to agree on what does nothing, and
             // address exactly what the raw path does.
             let hops = splice::resolve(view, &segs);
@@ -105,7 +105,7 @@ fn apply<'a>(
             spliced.unwrap_or(view)
         }
         Op::Remove(dotted) => {
-            let segs = random::segs(&dotted);
+            let segs = random::segs(dotted);
             let removed = path::remove(owned, &segs);
             let spliced = splice::remove_resolved(arena, view, &segs);
             assert_eq!(
@@ -123,7 +123,7 @@ fn apply<'a>(
             spliced.map_or(view, |(root, _)| root)
         }
         Op::Append(dotted, items) => {
-            let segs = random::segs(&dotted);
+            let segs = random::segs(dotted);
             let mut reference = owned.clone();
             let expected = reference_append(&mut reference, &segs, items.clone());
             let got = path::append(owned, &segs, items.clone());
@@ -174,29 +174,28 @@ fn apply<'a>(
 
 #[test]
 fn every_splice_matches_the_owned_write() {
-    let mut rng = random::Rng::new(0xa11ce);
+    let seed = random::seed(0xa11ce);
+    let mut rng = random::Rng::new(seed);
     for case in 0..50_000 {
-        let mut owned = random::tree(&mut rng, 4);
+        let owned = random::tree(&mut rng, 4);
         let arena = Bump::new();
         let view = owned.view_in(&arena);
         let op = op(&mut rng, &owned);
-        let what = format!("{op:?} on {owned:?}");
         // `view` borrows `owned`, so the owned side writes to a copy.
         let mut written = owned.clone();
-        let root = apply(case, &arena, &mut written, view, op);
+        let root = apply(case, &arena, &mut written, view, &op);
         assert_eq!(
             random::exact(&root.to_owned()),
             random::exact(&written),
-            "case {case}: {what}"
+            "seed {seed:#x}, case {case}: {op:?} on {owned:?}"
         );
-        owned = written;
-        drop(owned);
     }
 }
 
 #[test]
 fn sequences_of_splices_over_a_spliced_root_match() {
-    let mut rng = random::Rng::new(0xb0b);
+    let seed = random::seed(0xb0b);
+    let mut rng = random::Rng::new(seed);
     for case in 0..5_000 {
         let start = random::tree(&mut rng, 4);
         let arena = Bump::new();
@@ -204,11 +203,11 @@ fn sequences_of_splices_over_a_spliced_root_match() {
         let mut owned = start.clone();
         for step in 0..1 + rng.below(20) {
             let op = op(&mut rng, &owned);
-            view = apply(case * 100 + step, &arena, &mut owned, view, op);
+            view = apply(case * 100 + step, &arena, &mut owned, view, &op);
             assert_eq!(
                 random::exact(&view.to_owned()),
                 random::exact(&owned),
-                "case {case}, step {step}"
+                "seed {seed:#x}, case {case}, step {step}"
             );
         }
     }
@@ -297,7 +296,6 @@ fn every_small_tree_and_path_agrees_with_the_owned_rule_and_the_model() {
                 let arena = Bump::new();
                 let view = context.view_in(&arena);
                 let mut written = context.clone();
-                let what = format!("{op:?} on {text}");
                 let mut theirs = Json::from_text(&text).expect("a context parses");
                 match &op {
                     Op::Set(at, v) => {
@@ -309,17 +307,17 @@ fn every_small_tree_and_path_agrees_with_the_owned_rule_and_the_model() {
                     _ => {}
                 }
                 let checks_model = !matches!(op, Op::Append(..));
-                let root = apply(case, &arena, &mut written, view, op);
+                let root = apply(case, &arena, &mut written, view, &op);
                 assert_eq!(
                     random::exact(&root.to_owned()),
                     random::exact(&written),
-                    "case {case}: {what}"
+                    "case {case}: {op:?} on {text}"
                 );
                 if checks_model {
                     assert_eq!(
                         random::exact(&written),
                         theirs.to_text(),
-                        "case {case}: model, {what}"
+                        "case {case}: model, {op:?} on {text}"
                     );
                 }
             }

@@ -15,7 +15,7 @@
 // under `tests/golden/trace/`; `DATAFLOW_GOLDEN_WRITE=1 cargo test --test
 // trace` rewrites them.
 
-use crate::support::golden;
+use crate::support::{Put, golden, map, message, with, workflow};
 use dataflow_corpus::json::Json;
 use dataflow_corpus::{normalise, replay};
 use dataflow_rs::function::FunctionConfig;
@@ -26,47 +26,8 @@ use dataflow_rs::{
 };
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-/// `put`'s config.
-#[derive(FunctionConfig)]
-struct PutConfig {
-    /// Written through `Ctx::set` in key order. A key's text after a space
-    /// is a label, so one path can be written twice.
-    writes: BTreeMap<String, Expr>,
-    /// `"ok"`, `"skip"`, `"halt"`, `"err"` (a `PARTNER_DOWN` service error),
-    /// or a status.
-    outcome: Expr,
-}
-
-/// Writes, then returns what its config names.
-struct Put;
-
-impl Function for Put {
-    type Config = PutConfig;
-
-    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &PutConfig) -> Result<Outcome> {
-        tokio::task::yield_now().await;
-        for (key, expr) in &cfg.writes {
-            let path = key.split_once(' ').map_or(key.as_str(), |(path, _)| path);
-            let value = ctx.eval(expr)?.into_owned();
-            ctx.set(&path.parse()?, value)?;
-        }
-        let outcome = Value::from(&*ctx.eval(&cfg.outcome)?);
-        match outcome.as_str() {
-            Some("ok") => Ok(Outcome::Ok),
-            Some("skip") => Ok(Outcome::Skip),
-            Some("halt") => Ok(Outcome::Halt),
-            Some("err") => Err(Error::service("PARTNER_DOWN", "down")),
-            _ => {
-                let status = outcome.as_u64().expect("an outcome is a word or a status");
-                Ok(Outcome::Status(u16::try_from(status).unwrap()))
-            }
-        }
-    }
-}
 
 /// Keeps the whole context, its three roots, as each call sees it.
 #[derive(Clone, Default)]
@@ -141,58 +102,23 @@ impl Function for Wrap {
 /// An engine over `workflows` with `put`, `peek` (over `peeked`), `slow`,
 /// `note` and `wrap` registered.
 fn engine_with(workflows: &[Value], peeked: &Peek) -> Engine {
-    workflows
-        .iter()
-        .fold(
-            Engine::builder()
-                .register("put", Put)
-                .register("peek", peeked.clone())
-                .register("slow", Slow)
-                .register("note", Note)
-                .register("wrap", Wrap),
-            |b, w| b.workflow_json(w),
-        )
-        .build()
-        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"))
+    crate::support::engine_with(workflows, |b| {
+        b.register("put", Put)
+            .register("peek", peeked.clone())
+            .register("slow", Slow)
+            .register("note", Note)
+            .register("wrap", Wrap)
+    })
 }
 
 fn engine(workflows: &[Value]) -> Engine {
     engine_with(workflows, &Peek::default())
 }
 
-/// A message whose `data` is `data`.
-fn message(data: Value) -> Message {
-    Message::from_parts(
-        OwnedDataValue::Null,
-        OwnedDataValue::from(&data),
-        OwnedDataValue::Null,
-    )
-    .with_id("m")
-}
-
-/// A `map` task writing `logic` at `path`.
-fn map(id: &str, path: &str, logic: Value) -> Value {
-    json!({"id": id, "function": {"name": "map", "input": {
-        "mappings": [{"path": path, "logic": logic}]}}})
-}
-
 /// A `put` task writing `writes` and returning `outcome`.
 fn put(id: &str, writes: Value, outcome: Value) -> Value {
     json!({"id": id, "function": {"name": "put", "input": {
         "writes": writes, "outcome": outcome}}})
-}
-
-/// `node` with each `(key, value)` of `extra` set on it.
-fn with(mut node: Value, extra: &[(&str, Value)]) -> Value {
-    for (key, value) in extra {
-        node[*key] = value.clone();
-    }
-    node
-}
-
-/// A workflow `id` over `tasks`, with each `(key, value)` of `extra`.
-fn workflow(id: &str, tasks: Vec<Value>, extra: &[(&str, Value)]) -> Value {
-    with(json!({"id": id, "tasks": tasks}), extra)
 }
 
 /// One run of `e` over `m` under `opts`: the report and its trace.
@@ -919,7 +845,10 @@ fn golden(name: &str, runs: Vec<(&str, Json)>) {
     for (run, message) in runs {
         actual.insert(run, message);
     }
-    golden::hold(&golden::file("trace", name), &(actual.to_pretty() + "\n"));
+    golden::hold(
+        &golden::file(golden::module_dir(module_path!()), name),
+        &(actual.to_pretty() + "\n"),
+    );
 }
 
 #[tokio::test]

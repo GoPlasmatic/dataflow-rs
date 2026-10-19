@@ -3,33 +3,11 @@
 // trace and the arena counters left out. Each test serializes a real run
 // and compares it with a literal.
 
+use crate::support::{engine, map, message};
 use dataflow_rs::run::CancelToken;
-use dataflow_rs::{Engine, Error, Message, Run, RunOptions};
-use datavalue::OwnedDataValue;
+use dataflow_rs::{Error, Run, RunOptions};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
-
-fn engine(workflows: &[Value]) -> Engine {
-    workflows
-        .iter()
-        .fold(Engine::builder(), |b, w| b.workflow_json(w))
-        .build()
-        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"))
-}
-
-fn message(data: Value) -> Message {
-    Message::from_parts(
-        OwnedDataValue::Null,
-        OwnedDataValue::from(&data),
-        OwnedDataValue::Null,
-    )
-    .with_id("m")
-}
-
-fn map(id: &str, path: &str, logic: Value) -> Value {
-    json!({"id": id, "function": {"name": "map", "input": {
-        "mappings": [{"path": path, "logic": logic}]}}})
-}
 
 /// An append to `data.s`, which fails over a string.
 fn fails(id: &str) -> Value {
@@ -48,11 +26,7 @@ fn rejects(id: &str, on_reject: &str) -> Value {
 }
 
 fn workflow(id: &str, extra: &[(&str, Value)], tasks: Vec<Value>) -> Value {
-    let mut w = json!({"id": id, "tasks": tasks});
-    for (key, value) in extra {
-        w[*key] = value.clone();
-    }
-    w
+    crate::support::workflow(id, tasks, extra)
 }
 
 fn json_of(run: &Run) -> Value {

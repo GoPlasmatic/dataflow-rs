@@ -481,7 +481,7 @@ impl<'w> Walk<'w> {
     /// true condition costs nothing at run time.
     fn cond(&mut self, raw: &Logic, at: AuthoredPath, step: Stamp<'_>) -> Option<u32> {
         let expr = self.expr(raw, &at, false, step)?;
-        if expr.constant() == Some(&OwnedDataValue::Bool(true)) {
+        if expr.is_trivially_true() {
             return None;
         }
         let row = next(self.conds.len());

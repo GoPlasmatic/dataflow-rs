@@ -4,7 +4,7 @@
 use crate::base::{EVALUATION_ERROR, ErrorKind, Result, VALIDATION_ERROR};
 use crate::expr::Expr;
 use crate::function::sync::task_record;
-use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
+use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use ::log::{debug, error};
 
 /// `validation`'s input.
@@ -24,7 +24,7 @@ pub(crate) struct Rule {
     pub message: Expr<String>,
 }
 
-impl SyncFunction for ValidationConfig {
+impl ValidationConfig {
     /// Every rule in order, none of them stopping the rest. A rule passes only
     /// on a literal `true`; one that does not records its message, rendered
     /// only then, and one that fails to evaluate records
@@ -35,7 +35,7 @@ impl SyncFunction for ValidationConfig {
     /// An exceeded ops budget is no rejection: it is the call's `Err`, which
     /// the classifier records as `BUDGET_EXCEEDED` and `on_failure` governs,
     /// so a runaway rule cannot pass as a 400 (3.x made it one).
-    fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
+    pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let mut records = Vec::new();
         for (idx, rule) in self.rules.iter().enumerate() {
             debug!("Processing validation rule {idx}");

@@ -11,7 +11,8 @@
 //! returns `Err` is checked again once it has, natively and on wasm alike:
 //! a limit that has passed by then is why it failed.
 
-use crate::base::{CancelToken, Error, ErrorKind, Instant, Result};
+use crate::base::{CancelToken, Error, ErrorKind, Instant};
+use crate::observe::status::RunStatus;
 
 /// The run's deadline and token, as its [`RunOptions`](super::RunOptions)
 /// set them.
@@ -36,17 +37,16 @@ pub(crate) enum Stop {
 }
 
 impl Stop {
-    /// The error a stop between ops or at a sweep ends the run with. Nothing
-    /// records it; its kind is the run's status.
-    fn error(self) -> Error {
+    /// The run's status when this stop ends it.
+    pub(crate) fn status(self) -> RunStatus {
         match self {
-            Self::Cancelled => Error::new(ErrorKind::Cancelled, "the run was cancelled"),
-            Self::TimedOut => Error::new(ErrorKind::TimedOut, "the run's deadline passed"),
+            Self::Cancelled => RunStatus::Cancelled,
+            Self::TimedOut => RunStatus::TimedOut,
         }
     }
 
-    /// The error of a call to `function` this stop cut short, recorded on
-    /// its task.
+    /// The error a call to `function` this stop cut short ends with, recorded
+    /// on its task.
     pub(crate) fn during(self, function: &str) -> Error {
         match self {
             Self::Cancelled => Error::new(
@@ -80,10 +80,9 @@ impl Limits<'_> {
         }
     }
 
-    /// `Err` of kind `Cancelled` when the token tripped, else of kind
-    /// `TimedOut` when the deadline passed.
-    pub(crate) fn check(&self) -> Result<()> {
-        self.stop().map_or(Ok(()), |stop| Err(stop.error()))
+    /// `Err(Stop)` when the token tripped or the deadline passed.
+    pub(crate) fn check(&self) -> std::result::Result<(), Stop> {
+        self.stop().map_or(Ok(()), Err)
     }
 }
 
@@ -208,44 +207,20 @@ pub(crate) fn timers_available() -> bool {
     false
 }
 
-/// The time a deadline is compared with.
+/// The time a deadline is compared with, on the run's shared clock
+/// ([`super::record::now`]).
 fn now() -> Instant {
-    #[cfg(test)]
-    tests::CLOCK_READS.with(|reads| reads.set(reads.get() + 1));
-    clock()
-}
-
-/// Natively, tokio's clock, the one a host call's timer runs on: the system
-/// clock, unless a test paused it, when the checks see the time the timers
-/// see.
-#[cfg(not(target_arch = "wasm32"))]
-fn clock() -> Instant {
-    tokio::time::Instant::now().into_std()
-}
-
-/// On wasm, the system clock.
-#[cfg(target_arch = "wasm32")]
-fn clock() -> Instant {
-    Instant::now()
+    super::record::now()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::run::RunOptions;
+    use crate::run::record::clock_reads as reads;
     use crate::{Engine, Message};
     use serde_json::json;
-    use std::cell::Cell;
     use std::time::Duration;
-
-    thread_local! {
-        /// How many times this thread read the limits' clock.
-        pub(super) static CLOCK_READS: Cell<u32> = const { Cell::new(0) };
-    }
-
-    fn reads() -> u32 {
-        CLOCK_READS.with(Cell::get)
-    }
 
     #[test]
     fn the_token_is_checked_before_the_deadline_and_neither_when_unset() {
@@ -264,10 +239,11 @@ mod tests {
         assert!(passed.is_set());
         assert_eq!(passed.stop(), Some(Stop::TimedOut));
         token.cancel();
-        let e = passed.check().unwrap_err();
+        assert_eq!(passed.check(), Err(Stop::Cancelled));
+        let e = Stop::Cancelled.during("f");
         assert_eq!(
             (e.code(), e.message()),
-            ("CANCELLED", "the run was cancelled")
+            ("CANCELLED", "the run was cancelled during `f`")
         );
         assert!(!e.is_retryable());
 
@@ -282,10 +258,11 @@ mod tests {
             cancel: None,
             timers: false,
         };
-        let e = past.check().unwrap_err();
+        assert_eq!(past.check(), Err(Stop::TimedOut));
+        let e = Stop::TimedOut.during("f");
         assert_eq!(
             (e.code(), e.message()),
-            ("TIMEOUT_ERROR", "the run's deadline passed")
+            ("TIMEOUT_ERROR", "the run's deadline passed during `f`")
         );
         assert!(e.is_retryable());
     }
@@ -296,7 +273,7 @@ mod tests {
     impl crate::Function for Answer {
         type Config = ();
 
-        async fn call(&self, _: &mut crate::Ctx<'_>, _: &()) -> Result<crate::Outcome> {
+        async fn call(&self, _: &mut crate::Ctx<'_>, _: &()) -> crate::Result<crate::Outcome> {
             if self.0 {
                 Ok(crate::Outcome::Ok)
             } else {

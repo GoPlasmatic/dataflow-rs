@@ -30,14 +30,14 @@
 //! refuses, the engine's step as a sweep is entered or a loop exits, and,
 //! through the recorder, a workflow's own `Failed` step.
 
-use super::cancel::Limits;
+use super::cancel::{Limits, Stop};
 use super::error_context::ErrorContext;
 use super::fan_out::fan_out;
 use super::host::call_host;
 use super::message::{AuditEntry, AuditMode};
 use super::observers::Observers;
 use super::policy::{self, Flow};
-use super::record::{self, Completed, Stamp, TaskIds};
+use super::record::{self, Completed, TaskIds};
 use super::trace::Capture;
 use crate::base::{Change, Error, ErrorKind, ErrorRecord, Instant, ProgramId, TaskIx, WorkflowIx};
 use crate::def::WorkflowFailurePolicy;
@@ -68,12 +68,11 @@ pub(crate) enum Exit {
     /// `on_failure: fail` in a workflow whose own is `fail`, or a step the
     /// interpreter refuses.
     Stopped(Error),
-    /// The run's deadline passed or its token was cancelled, as this error
-    /// of kind `TimedOut` or `Cancelled` says: at a check between ops, as a
-    /// sweep starts, or cutting a call short. Only this exit makes the
-    /// run `TimedOut` or `Cancelled`; an `Err` of either kind a function
-    /// returned is a task's failure like any other.
-    Limited(Error),
+    /// The run's deadline passed or its token was cancelled: at a check
+    /// between ops, as a sweep starts, or cutting a call short. Only this
+    /// exit makes the run `TimedOut` or `Cancelled`; an `Err` of either kind
+    /// a function returned is a task's failure like any other.
+    Limited(Stop),
 }
 
 /// The loop frame: the sweep the workflow is in.
@@ -138,19 +137,10 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) audit: &'r mut Vec<AuditEntry>,
     /// Which audit entries the message keeps.
     pub(crate) mode: AuditMode,
-    /// Whether a call records its `Change`s: the audit or the trace wants
-    /// them.
-    pub(crate) capture: bool,
-    /// Whether the audit entry gets the call's `Change`s: change capture is
-    /// on and the mode keeps entries.
-    pub(crate) capture_audit: bool,
+    /// Which recorder a call takes, and which changes it captures.
+    pub(crate) capture: CaptureMode,
     /// What the run reports beyond the message, held by `run_with`.
     pub(crate) watch: &'r mut Watch<'p>,
-    /// Whether a call is recorded beyond the message: the run is traced,
-    /// mirrors its records into an error context, or tells an observer of
-    /// the task events ([`Watch::records_calls`]). An unwatched call takes
-    /// the plain recorder, so the run's other outputs cost it one branch.
-    pub(crate) watched: bool,
     /// The run's one clock reading.
     pub(crate) now: DateTime<Utc>,
     /// The same reading, RFC 3339, for error records: one `Arc<str>` per run,
@@ -186,12 +176,72 @@ pub(crate) struct Watch<'p> {
     pub(crate) error_context: Option<&'p ErrorContext>,
 }
 
-impl Watch<'_> {
-    /// Whether a recorded call has anything to report beyond the message:
-    /// a trace step, an error-context mirror or a `TaskFinished`. Fixed for
-    /// the run: a trace stays, its budget crossed or not.
-    pub(crate) fn records_calls(&self) -> bool {
-        self.trace.is_some() || self.error_context.is_some() || self.observers.tasks()
+/// Which recorder a call takes, and which changes it captures.
+///
+/// An unwatched run has no trace, no error-context mirror and no observer of
+/// the task events, so it never times a call and captures only what its
+/// audit keeps: its calls take the plain recorder unless a change is marked,
+/// and that invariant is this type. A watched run takes the full recorder,
+/// and captures while its audit or its trace wants changes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CaptureMode {
+    /// No trace, no error-context mirror and no task observer: `audit` is
+    /// both whether a call captures changes and whether its audit entry gets
+    /// them.
+    Plain { audit: bool },
+    /// A trace, an error-context mirror or a task observer is attached:
+    /// `audit` is whether the audit entry gets a call's changes, and
+    /// `traced` whether the trace still keeps changes (cleared once its byte
+    /// budget is crossed).
+    Watched { audit: bool, traced: bool },
+}
+
+impl CaptureMode {
+    /// The mode for `watch` and `capture_audit`, computed once as a workflow
+    /// starts.
+    pub(crate) fn new(capture_audit: bool, watch: &Watch<'_>) -> Self {
+        let traced = watch.trace.as_deref().is_some_and(Capture::changes);
+        if watch.trace.is_some() || watch.error_context.is_some() || watch.observers.tasks() {
+            Self::Watched {
+                audit: capture_audit,
+                traced,
+            }
+        } else {
+            debug_assert!(!watch.timed, "only a task observer or a trace times a call");
+            Self::Plain {
+                audit: capture_audit,
+            }
+        }
+    }
+
+    /// Whether a call records its `Change`s: the audit or the trace wants
+    /// them.
+    #[inline(always)]
+    pub(crate) fn captures(self) -> bool {
+        match self {
+            Self::Plain { audit } => audit,
+            Self::Watched { audit, traced } => audit || traced,
+        }
+    }
+
+    /// Whether the audit entry gets a call's `Change`s.
+    #[inline(always)]
+    pub(crate) fn audit(self) -> bool {
+        match self {
+            Self::Plain { audit } | Self::Watched { audit, .. } => audit,
+        }
+    }
+
+    /// Whether the trace keeps changes.
+    #[inline(always)]
+    pub(crate) fn traced(self) -> bool {
+        matches!(self, Self::Watched { traced: true, .. })
+    }
+
+    /// Whether the run is watched beyond the message.
+    #[inline(always)]
+    pub(crate) fn is_watched(self) -> bool {
+        matches!(self, Self::Watched { .. })
     }
 }
 
@@ -206,7 +256,7 @@ pub const CHECK_EVERY: u32 = 64;
 impl<'p> RunEnv<'_, 'p> {
     /// At an op boundary: the run context's checkpoint when due, then, with
     /// a limit set, the limits at every 64th op.
-    fn tick(&mut self, rc: &mut RunContext<'_, '_>) -> Result<(), Error> {
+    fn tick(&mut self, rc: &mut RunContext<'_, '_>) -> Result<(), Stop> {
         rc.tick();
         if self.limits.is_set() {
             self.ops = self.ops.wrapping_add(1);
@@ -220,7 +270,7 @@ impl<'p> RunEnv<'_, 'p> {
     /// Whether the trace keeps changes: only then are the engine's writes
     /// recorded, and their old values read.
     pub(crate) fn traces_changes(&self) -> bool {
-        self.watch.trace.as_ref().is_some_and(|t| t.changes())
+        self.capture.traced()
     }
 
     /// The ids of the current workflow's task at row `task`, as the program
@@ -261,15 +311,11 @@ impl<'p> RunEnv<'_, 'p> {
     pub(crate) fn push_step(&mut self, step: TraceStep) {
         if let Some(trace) = self.watch.trace.as_deref_mut() {
             trace.push(step);
-            self.capture = captures(self.capture_audit, Some(trace));
+            if let CaptureMode::Watched { traced, .. } = &mut self.capture {
+                *traced = trace.changes();
+            }
         }
     }
-}
-
-/// Whether a call records its `Change`s: the audit wants them, or the trace
-/// keeps them.
-pub(crate) fn captures(capture_audit: bool, trace: Option<&Capture>) -> bool {
-    capture_audit || trace.is_some_and(Capture::changes)
 }
 
 /// Where a failure `on_failure: continue` steps past goes from `op`.
@@ -665,7 +711,7 @@ fn call<'p>(
     let workflow_id = Arc::clone(env.workflow_id);
     let task_id = Arc::clone(&env.task_ids[site.task as usize]);
     // An unwatched run neither traces nor times a call.
-    let (traced, started) = if env.watched {
+    let (traced, started) = if env.capture.is_watched() {
         (env.traces_changes(), env.watch.timed.then(record::now))
     } else {
         (false, None)
@@ -682,7 +728,7 @@ fn call<'p>(
         payload: env.payload,
         workflow_id,
         task_id,
-        capture: env.capture,
+        capture: env.capture.captures(),
         traced,
         changes: &mut env.changes,
         marked: false,
@@ -709,12 +755,6 @@ fn call<'p>(
         }
     }
     let decision = policy::decide(site.policy, env.ids(site.task).task, result);
-    let done = Completed {
-        task: site.task,
-        stamp: Stamp::sweep(env),
-        elapsed,
-        errors_before,
-        marked,
-    };
+    let done = Completed::new(env, site.task, None, elapsed, errors_before, marked);
     record::record(rc, env, wf, done, decision)
 }

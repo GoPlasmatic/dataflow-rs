@@ -92,7 +92,7 @@ bumpalo = "3.20"
 self_cell = "1.3"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 dataflow-rs-derive = { workspace = true }
-uuid = { version = "1.26", default-features = false, features = ["v7", "std"] }
+uuid = { version = "1.28", default-features = false, features = ["v7", "std"] }
 # The `log` built-in's target, and `map`'s failing-mapping lines.
 log = "0.4"
 # `parse_xml` and `publish_xml`, at v3's requirement.
@@ -106,7 +106,7 @@ ts-rs = { version = "12.0.1", optional = true, features = ["no-serde-warnings"] 
 
 # Native-only: a thread-local PRNG instead of one `getrandom` per id, as v3 does.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-uuid = { version = "1.26", default-features = false, features = ["fast-rng"] }
+uuid = { version = "1.28", default-features = false, features = ["fast-rng"] }
 # Native-only: a host call's race against the run's deadline and token,
 # with the timer, the token's `Notify` and `select!`. On wasm only the checks run.
 tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "macros"] }

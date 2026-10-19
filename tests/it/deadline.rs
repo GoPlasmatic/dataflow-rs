@@ -87,15 +87,11 @@ impl Function for Parent {
     }
 }
 
+use crate::support::{engine_with, map};
+
 /// An engine over `workflows`, `slow` registered.
 fn engine(workflows: &[Value]) -> Engine {
-    workflows
-        .iter()
-        .fold(Engine::builder().register("slow", Slow), |b, w| {
-            b.workflow_json(w)
-        })
-        .build()
-        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"))
+    engine_with(workflows, |b| b.register("slow", Slow))
 }
 
 /// A `slow` task sleeping `ms`.
@@ -114,23 +110,12 @@ fn fan(over: Value, max: usize) -> Value {
 
 /// A message whose `data` is `{"input": 1}`.
 fn message() -> Message {
-    Message::from_parts(
-        OwnedDataValue::Null,
-        OwnedDataValue::from(&json!({"input": 1})),
-        OwnedDataValue::Null,
-    )
-    .with_id("m")
-}
-
-/// A `map` task writing `logic` at `path`.
-fn map(id: &str, path: &str, logic: Value) -> Value {
-    json!({"id": id, "function": {"name": "map", "input": {
-        "mappings": [{"path": path, "logic": logic}]}}})
+    crate::support::message(json!({"input": 1}))
 }
 
 /// A workflow `id` holding `tasks`.
 fn workflow(id: &str, tasks: Vec<Value>) -> Value {
-    json!({"id": id, "tasks": tasks})
+    crate::support::workflow(id, tasks, &[])
 }
 
 /// A deadline `ms` from now, on the paused clock.

@@ -2,7 +2,7 @@
 
 use crate::base::Result;
 use crate::expr::Expr;
-use crate::function::{FunctionConfig, Outcome, SyncCtx, SyncFunction};
+use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use datavalue::OwnedDataValue;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -69,10 +69,10 @@ fn stringify<'p>(cx: &mut SyncCtx<'_, '_, 'p>, expr: &'p Expr, line: &mut String
     }
 }
 
-impl SyncFunction for LogConfig {
+impl LogConfig {
     /// Emits the line, `message [key=value, ...]`, at the level. A level the
     /// logger filters out evaluates nothing, and the call is `Ok` either way.
-    fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
+    pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let level = self.level.level();
         if !::log::log_enabled!(target: TARGET, level) {
             return Ok(Outcome::Ok);

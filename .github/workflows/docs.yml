@@ -19,58 +19,37 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v2
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: nightly
-          target: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install wasm-pack (pinned)
+        run: scripts/install-wasm-pack.sh
 
-      - name: Build WASM
-        run: wasm-pack build wasm --target web --release
-
-      # The playground loads this binary, so it hits the same failure mode as
-      # the npm package if the externref table comes out non-growable.
-      - name: Verify WASM artifact
-        run: node scripts/verify-wasm.mjs pkg
-        working-directory: wasm
-
-      - name: Copy WASM to docs
-        run: |
-          mkdir -p docs/src/wasm
-          cp wasm/pkg/dataflow_wasm.js docs/src/wasm/
-          cp wasm/pkg/dataflow_wasm_bg.wasm docs/src/wasm/
-
-      - name: Setup mdBook
+      - name: Setup mdBook (pinned)
         uses: peaceiris/actions-mdbook@v2
         with:
-          mdbook-version: 'latest'
-
-      - name: Build documentation
-        run: mdbook build docs
+          mdbook-version: '0.4.43'
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
 
-      - name: Build Debugger UI
-        run: |
-          cd ui
-          # This workflow runs in parallel with Release on a tag push, so the
-          # version of @goplasmatic/dataflow-wasm referenced in package.json
-          # may not yet exist on npm. Use the locally-built wasm/pkg instead.
-          npm pkg set 'dependencies.@goplasmatic/dataflow-wasm'='file:../wasm/pkg'
-          npm install --no-package-lock --no-audit --no-fund
-          npm run build
-          mkdir -p ../docs/book/debugger
-          cp -r dist/* ../docs/book/debugger/
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Build documentation and debugger
+        run: docs/build-with-debugger.sh
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
@@ -85,6 +64,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: build
     steps:
       - name: Deploy to GitHub Pages

@@ -34,59 +34,42 @@
 //! of an `over` with nothing to call the time from its evaluation to its
 //! record, as v3's.
 
-use super::host::{Invoked, Layers, call_start, invoke, keep_records, replaces_a_root};
+use super::host::{CallResult, Invoked, Layers, Settled, call_start, invoke, keep_records, settle};
 use super::interp::{Over, RunEnv, elements};
 use super::policy::{self, Decision, Flow, Policy, decide};
-use super::record::{self, Completed, Stamp};
-use crate::base::{Change, Error, ErrorKind, ErrorRecord};
+use super::record::{self, Completed};
+use crate::base::{Change, Error, ErrorKind};
 use crate::expr::{MAX_ARRAY_INDEX, Path, Seg};
-use crate::function::{Binding, BoundCall, CallInfo, CallStart, Outcome, Overlay};
+use crate::function::{Binding, BoundCall, CallInfo, CallStart, Outcome};
 use crate::program::{CallSite, CompiledWorkflow, FanSite};
 use crate::state::RunContext;
 use datavalue::OwnedDataValue;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::sync::Arc;
-use std::time::Duration;
 
 /// What one element's call left once its `Ctx` was settled: all the fold
 /// needs, owned, so no element holds the view.
 struct Element {
     index: usize,
-    /// Whether the call returned `Ok`, whatever its outcome: only then do
-    /// its writes, its `Change`s and its result's `Change` stand.
-    ok: bool,
+    invoked: Invoked,
     /// The call's decision under the per-element policy.
     decision: Decision,
-    overlay: Overlay,
-    changes: Vec<Change>,
-    errors: Vec<ErrorRecord>,
-    /// The value at `collect` as the call saw it, when it returned `Ok`.
-    collected: Option<OwnedDataValue>,
-    /// How long the call ran, in a timed run.
-    elapsed: Option<Duration>,
 }
 
 impl Element {
-    /// Element `index`'s call, decided under `policy`.
-    fn new(index: usize, invoked: Invoked, policy: Policy, task_id: &str) -> Self {
-        let Invoked {
-            result,
-            overlay,
-            changes,
-            errors,
-            collected,
-            elapsed,
-            ..
-        } = invoked;
+    /// Element `index`'s call, once it returned without being cut short,
+    /// decided under `policy`.
+    fn new(index: usize, mut invoked: Invoked, policy: Policy, task_id: &str) -> Self {
+        let result = match &mut invoked.result {
+            CallResult::Returned(Ok(outcome)) => Ok(*outcome),
+            CallResult::Returned(Err(e)) => Err(std::mem::replace(e, Error::service("", ""))),
+            CallResult::CutShort(..) => unreachable!("a call cut short breaks out before Element"),
+        };
+        let decision = decide(policy, task_id, result);
         Self {
             index,
-            ok: result.is_ok(),
-            decision: decide(policy, task_id, result),
-            overlay,
-            changes,
-            errors,
-            collected,
-            elapsed,
+            invoked,
+            decision,
         }
     }
 
@@ -200,7 +183,7 @@ pub(crate) async fn fan_out<'p>(
             let result = no_calls.map(|_| {
                 if let Some(into) = &fan.into {
                     rc.set(into, OwnedDataValue::Array(Vec::new()), None);
-                    if env.capture {
+                    if env.capture.captures() {
                         env.changes.push(Change::write(
                             Arc::clone(into.dotted()),
                             OwnedDataValue::Null,
@@ -211,13 +194,14 @@ pub(crate) async fn fan_out<'p>(
                 Outcome::Ok
             });
             let decision = decide(policy, task_id, result);
-            let done = Completed {
-                task: site.task,
-                stamp: Stamp::sweep(env),
-                elapsed: started.map(record::since),
+            let done = Completed::new(
+                env,
+                site.task,
+                None,
+                started.map(record::since),
                 errors_before,
-                marked: false,
-            };
+                false,
+            );
             return record::record(rc, env, wf, done, decision);
         }
     };
@@ -255,10 +239,9 @@ pub(crate) async fn fan_out<'p>(
             let Some((index, invoked)) = in_flight.next().await else {
                 break;
             };
-            if invoked.cut_short {
+            if let CallResult::CutShort(stop, error) = invoked.result {
                 // Dropping `in_flight` drops the calls still running.
-                let error = invoked.result.expect_err("a call cut short is an `Err`");
-                cut = Some((index, invoked.errors, error, invoked.elapsed));
+                cut = Some((index, invoked.errors, stop, error, invoked.elapsed));
                 break;
             }
             let element = Element::new(index, invoked, per_element, task_id);
@@ -267,26 +250,21 @@ pub(crate) async fn fan_out<'p>(
         }
     }
     drop(items);
-    if let Some((index, errors, e, elapsed)) = cut {
+    if let Some((index, errors, stop, e, elapsed)) = cut {
         let errors_before = env.errors.len();
+        let ids = env.ids(site.task);
         let mut kept: Vec<_> = finished
             .into_iter()
             .flatten()
-            .map(|element| (element.index, element.errors))
+            .map(|element| (element.index, element.invoked.errors))
             .collect();
         kept.push((index, errors));
         kept.sort_unstable_by_key(|&(index, _)| index);
         for (index, errors) in kept {
-            keep_records(env, site.task, errors, Some(index));
+            keep_records(ids, env.now_text, env.errors, errors, Some(index));
         }
-        let decision = policy::cut_short(task_id, e);
-        let done = Completed {
-            task: site.task,
-            stamp: Stamp::sweep(env),
-            elapsed,
-            errors_before,
-            marked: false,
-        };
+        let decision = policy::cut_short(task_id, stop, &e);
+        let done = Completed::new(env, site.task, None, elapsed, errors_before, false);
         return record::record(rc, env, wf, done, decision);
     }
 
@@ -315,21 +293,18 @@ pub(crate) async fn fan_out<'p>(
     for element in finished.into_iter().flatten() {
         let Element {
             index,
-            ok,
+            invoked,
             decision,
-            overlay,
-            changes,
-            errors,
+        } = element;
+        let Settled {
+            result,
             collected,
             elapsed,
-        } = element;
-        let errors_before = env.errors.len();
-        keep_records(env, site.task, errors, Some(index));
-        if ok {
-            overlay.apply(rc);
-            env.changes = changes;
-        }
-        let marked = replaces_a_root(&env.changes);
+            errors_before,
+            marked,
+            ..
+        } = settle(rc, env, site.task, invoked, Some(index));
+        let ok = result.is_ok();
         let (rejected_here, failed_here) = (decision.rejected(), decision.failed());
         if let Some((into, segs)) = slot.as_mut() {
             if let Some(last) = segs.last_mut() {
@@ -340,7 +315,7 @@ pub(crate) async fn fan_out<'p>(
                 _ => OwnedDataValue::Null,
             };
             // An `Err` records no change, its result's included, as v3's.
-            if ok && env.capture {
+            if ok && env.capture.captures() {
                 // The dotted path `into.index_child(index)` would have.
                 env.changes.push(Change::write(
                     Arc::from(format!("{}.{index}", into.dotted())),
@@ -352,16 +327,7 @@ pub(crate) async fn fan_out<'p>(
         }
         rejected |= rejected_here;
         failed |= failed_here;
-        let done = Completed {
-            task: site.task,
-            stamp: Stamp {
-                element_index: Some(index),
-                ..Stamp::sweep(env)
-            },
-            elapsed,
-            errors_before,
-            marked,
-        };
+        let done = Completed::new(env, site.task, Some(index), elapsed, errors_before, marked);
         let flow = record::record(rc, env, wf, done, decision);
         rc.tick();
         match flow {

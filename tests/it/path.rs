@@ -2,25 +2,9 @@
 // contexts, random paths below a random root, every result compared as text
 // so key order counts.
 
-use dataflow_corpus::{Json, path};
+use dataflow_corpus::{Json, Rng, path};
 use dataflow_rs::Path;
 use datavalue::OwnedDataValue;
-
-/// xorshift64*, seeded: no dependency, and every failure reproduces.
-struct Rng(u64);
-
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    }
-
-    fn below(&mut self, n: u64) -> usize {
-        (self.next() % n) as usize
-    }
-}
 
 const SEED: u64 = 0x00C0_FFEE_D00D_F00D;
 /// Segments, `1048576` among them: one past the index cap, so a key even on
@@ -60,7 +44,7 @@ fn path_of(rng: &mut Rng) -> String {
     let root = ROOTS[rng.below(3)];
     let n = 1 + rng.below(4);
     let segs: Vec<&str> = (0..n)
-        .map(|_| SEGMENTS[rng.below(SEGMENTS.len() as u64)])
+        .map(|_| SEGMENTS[rng.below(SEGMENTS.len())])
         .collect();
     format!("{root}.{}", segs.join("."))
 }
@@ -92,8 +76,22 @@ fn debug_prints_the_dotted_text() {
 }
 
 #[test]
+fn a_64_segment_path_parses_and_a_65_segment_path_is_refused() {
+    let segs_64 = std::iter::once("data")
+        .chain(std::iter::repeat_n("a", 63))
+        .collect::<Vec<_>>()
+        .join(".");
+    assert!(segs_64.parse::<Path>().is_ok(), "64 segments must parse");
+    let segs_65 = format!("{segs_64}.a");
+    assert!(
+        segs_65.parse::<Path>().is_err(),
+        "65 segments must be refused"
+    );
+}
+
+#[test]
 fn get_set_and_remove_agree_with_v3_on_random_contexts() {
-    let mut rng = Rng(SEED);
+    let mut rng = Rng::new(SEED);
     for round in 0..2000 {
         let start = format!(
             "{{\"data\":{},\"metadata\":{},\"temp_data\":{}}}",

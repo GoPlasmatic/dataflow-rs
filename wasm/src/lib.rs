@@ -697,7 +697,7 @@ fn read_trace(trace: &JsValue) -> Result<Trace, JsValue> {
     let trace: Trace = from_js(trace, "trace")?;
     trace
         .validate()
-        .map_err(|error| engine_error("INVALID_TRACE", error.message().to_owned(), None))?;
+        .map_err(|error| engine_error("INVALID_TRACE", error.message(), None))?;
     Ok(trace)
 }
 

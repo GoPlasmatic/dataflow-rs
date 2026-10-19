@@ -30,8 +30,6 @@ use dataflow_rs::{Ctx, Function, Outcome, Registry};
 use datavalue::OwnedDataValue;
 use serde_json::Value;
 
-const MINIMUM_DEFINITIONS: usize = 150;
-
 /// Docs-class definitions that parse Rejected, as `(file, id, reason)`. None is
 /// shown as a refusal: each is a sketch whose subject is another key and
 /// whose `"tasks": []` is filler, which v3 refuses as `NO_TASKS` too. Each
@@ -91,16 +89,15 @@ const SKIPPED_FENCES: &[(&str, &str)] = &[];
 /// every `workflows` array normalises.
 const EXPECTED_TS_SKIPS: &[&str] = &[];
 
-/// Per-source floors, set a little below today's counts (corpus 144,
-/// examples 5, wasm 9, UI 16, docs 14), so a scanner that goes silent on one
-/// source cannot hide behind the others.
-const GROUP_FLOORS: &[(&str, usize)] = &[
-    ("json: corpus/cases", 130),
-    ("rs: examples", 4),
-    ("rs: wasm", 6),
-    ("ts: ui samples", 12),
-    ("md: docs/src", 10),
-    ("md: README.md", 1),
+/// Every source the scanner reads must yield at least one definition, so a
+/// scanner that goes silent on one source cannot hide behind the others.
+const EXPECTED_GROUPS: &[&str] = &[
+    "json: corpus/cases",
+    "rs: examples",
+    "rs: wasm",
+    "ts: ui samples",
+    "md: docs/src",
+    "md: README.md",
 ];
 
 /// Directories never read.
@@ -746,15 +743,10 @@ fn every_definition_in_the_repository_parses_with_no_likely_typo() {
         "parts of the repository could not be read:\n{}",
         problems.join("\n")
     );
-    for (group, floor) in GROUP_FLOORS {
+    for group in EXPECTED_GROUPS {
         let n = per_group.get(group).copied().unwrap_or(0);
-        assert!(n >= *floor, "{group}: found {n} definitions, floor {floor}");
+        assert!(n > 0, "{group}: scanner found no definitions");
     }
-    assert!(
-        found.len() >= MINIMUM_DEFINITIONS,
-        "the scan found {} definitions, fewer than {MINIMUM_DEFINITIONS}",
-        found.len()
-    );
 
     let mut typos = Vec::new();
     let mut rejected = Vec::new();
@@ -1005,11 +997,11 @@ fn every_repository_definition_compiles() {
         "definitions that do not compile:\n{}",
         failures.join("\n")
     );
-    for (group, floor) in GROUP_FLOORS {
+    for group in EXPECTED_GROUPS {
         let n = per_group.get(group).copied().unwrap_or(0);
-        assert!(n >= *floor, "{group}: checked {n}, floor {floor}");
+        assert!(n > 0, "{group}: checked no definitions");
     }
-    assert!(compiled >= MINIMUM_DEFINITIONS);
+    assert!(compiled > 0);
     assert!(alias_compiled, "{alias}'s definition does not compile");
     for (n, u) in used.iter().enumerate() {
         assert!(

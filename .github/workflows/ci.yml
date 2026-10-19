@@ -50,6 +50,7 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -160,28 +161,37 @@ jobs:
       - name: Run the README's and the book's doctests (default features)
         run: cargo test -p dataflow-docs-tests --locked
 
-      # `--all-features` and the default build are the two endpoints; neither
-      # catches a family that only compiles when another one is also on. The
-      # list adds `tensor` (outside `all-operators`) and the `budget` knob.
-      - name: Test each operator family in isolation
-        run: |
-          set -euo pipefail
-          for f in datetime ext-string ext-array ext-math ext-control ext-object \
-                   error-handling all-operators tensor budget; do
-            echo "::group::$f"
-            cargo test --no-default-features --features "$f" --locked
-            echo "::endgroup::"
-          done
+      - name: Setup mdBook (pinned)
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: '0.4.43'
 
-  # Too slow for every push: the run-context model test at its full 2,000
-  # sequences per tuning (the default build runs 150), and every benchmark's
-  # startup check against the fat-LTO release build the gate measures. Weekly
-  # (the schedule above), on demand, and before every release: release.yml
-  # calls this workflow on a tag, which keeps the tag's ref.
-  deep:
-    name: Deep
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+      - name: Build documentation book
+        run: mdbook build docs
+
+  # `--all-features` and the default build are the two endpoints; neither
+  # catches a family that only compiles when another one is also on. Each
+  # family runs in its own matrix leg (`fail-fast: false`), building only the
+  # library and test targets (`--lib --tests`) so examples and doctests are not
+  # rebuilt ten times.
+  families:
+    name: Family (${{ matrix.family }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        family:
+          - datetime
+          - ext-string
+          - ext-array
+          - ext-math
+          - ext-control
+          - ext-object
+          - error-handling
+          - all-operators
+          - tensor
+          - budget
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -199,11 +209,39 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
 
-      # Bare, the default build: the only one in which the model test is not
-      # ignored (src/state/tests/run_context.rs).
+      - name: Test ${{ matrix.family }} in isolation
+        run: cargo test --lib --tests --no-default-features --features "${{ matrix.family }}" --locked
+
+  # Too slow for every push: the run-context model test at its full 2,000
+  # sequences per tuning (the default build runs 150), and every benchmark's
+  # startup check against the fat-LTO release build the gate measures. Weekly
+  # (the schedule above), on demand, and before every release: release.yml
+  # calls this workflow on a tag, which keeps the tag's ref.
+  deep:
+    name: Deep
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
       - name: Run the run-context model at full depth
         env:
-          DATAFLOW_V4_DEEP: '1'
+          DATAFLOW_DEEP: '1'
         run: |
           cargo test --lib --locked state::
 
@@ -221,6 +259,7 @@ jobs:
   wasm:
     name: Wasm
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -242,12 +281,10 @@ jobs:
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-wasm-
 
-      # Prebuilt binary — seconds, versus a multi-minute from-source
-      # `cargo install` on every cache miss. release.yml deliberately does pin
-      # a version instead: this job only has to catch regressions, while that
-      # one produces the artifact users install.
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      # Prebuilt pinned binary, shared by CI, docs.yml and release.yml so all
+      # three run the exact same wasm-pack version.
+      - name: Install wasm-pack (pinned)
+        run: scripts/install-wasm-pack.sh
 
       - name: Run clippy (wasm32)
         run: |
@@ -285,6 +322,7 @@ jobs:
   msrv:
     name: MSRV (1.98)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -315,6 +353,7 @@ jobs:
   ui:
     name: UI
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -348,11 +387,10 @@ jobs:
           key: ${{ runner.os }}-cargo-ui-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-ui-
 
-      # Prebuilt binary, as in the `wasm` job. release.yml pins a version
-      # instead, because that job produces the artifact users install; this one
-      # only has to catch regressions.
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      # Prebuilt pinned binary, shared with the `wasm` job, docs.yml and
+      # release.yml.
+      - name: Install wasm-pack (pinned)
+        run: scripts/install-wasm-pack.sh
 
       - name: Install dependencies
         run: npm ci
@@ -385,12 +423,20 @@ jobs:
         run: npm run build:lib
         working-directory: ui
 
+      # `build` compiles the standalone debugger app that `docs.yml` deploys
+      # as `/debugger`, catching regressions in app-only dependencies (such as
+      # `@xyflow/react`) that `build:lib` does not bundle.
+      - name: Build demo debugger app
+        run: npm run build
+        working-directory: ui
+
   # Supply-chain gate: RUSTSEC advisories, license policy, and source policy,
   # all configured in deny.toml — the single source of truth, honored by the
   # action's default `check` command and by local `cargo deny check` runs.
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7

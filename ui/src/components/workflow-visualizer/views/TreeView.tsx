@@ -39,35 +39,15 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
   // Root-level workflows (no path) - already sorted by priority in buildFolderTree
   const rootWorkflows = folderTree.workflows;
 
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
-    // Initially expand the root "Workflows" node and first-level folders
+  // Default-expanded nodes for the current folder tree and active debug step
+  const defaultExpandedNodes = useMemo(() => {
     const initial = new Set<string>([NODE_IDS.ROOT]);
-    getFirstLevelFolderIds(folderTree).forEach(id => initial.add(id));
-    return initial;
-  });
+    getFirstLevelFolderIds(folderTree).forEach((id) => initial.add(id));
 
-  // Update expanded nodes when folder tree changes (e.g., new workflows loaded)
-  // TODO(react-hooks): merges newly-loaded folders into user-controlled
-  // expansion state, so it cannot be derived during render without losing the
-  // user's manual collapses. Pre-existing behaviour.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setExpandedNodes((prev) => {
-      const next = new Set(prev);
-      next.add(NODE_IDS.ROOT);
-      // Expand first-level folders by default
-      getFirstLevelFolderIds(folderTree).forEach(id => next.add(id));
-      return next;
-    });
-  }, [folderTree]);
-
-  // Expand the first workflow when workflows change
-  // TODO(react-hooks): same shape as the effect above — augments
-  // user-controlled expansion state rather than replacing it.
-  useEffect(() => {
     const allWorkflows = [...folderTree.workflows];
-    // Also collect workflows from folders
-    function collectWorkflows(folders: Map<string, typeof folderTree.folders extends Map<string, infer T> ? T : never>) {
+    function collectWorkflows(
+      folders: Map<string, typeof folderTree.folders extends Map<string, infer T> ? T : never>
+    ) {
       for (const folder of folders.values()) {
         allWorkflows.push(...folder.workflows);
         collectWorkflows(folder.folders);
@@ -76,18 +56,51 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
     collectWorkflows(folderTree.folders);
 
     if (allWorkflows.length > 0) {
-      // Sort by priority and expand the first one
       allWorkflows.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setExpandedNodes((prev) => {
-        const next = new Set(prev);
-        next.add(NODE_IDS.workflow(allWorkflows[0].id));
-        // Also expand parent folders if needed
-        getParentFolderIds(workflowFolderPath(allWorkflows[0])).forEach(id => next.add(id));
-        return next;
-      });
+      initial.add(NODE_IDS.workflow(allWorkflows[0].id));
+      getParentFolderIds(workflowFolderPath(allWorkflows[0])).forEach((id) => initial.add(id));
     }
-  }, [folderTree]);
+
+    if (
+      debugMode &&
+      effectiveDebugContext?.currentStep &&
+      effectiveDebugContext.state.currentStepIndex >= 0
+    ) {
+      const { workflow_id, task_id } = effectiveDebugContext.currentStep;
+      const workflow = workflows.find((w) => w.id === workflow_id);
+      const folderPath = workflow && workflowFolderPath(workflow);
+      if (folderPath) {
+        getParentFolderIds(folderPath).forEach((id) => initial.add(id));
+      }
+      initial.add(NODE_IDS.workflow(workflow_id));
+      if (task_id) {
+        initial.add(NODE_IDS.task(workflow_id, task_id));
+      }
+    }
+
+    return initial;
+  }, [
+    folderTree,
+    debugMode,
+    effectiveDebugContext?.currentStep,
+    effectiveDebugContext?.state.currentStepIndex,
+    workflows,
+  ]);
+
+  // User manual toggles layered on top of default-expanded nodes
+  const [userOverrides, setUserOverrides] = useState<Map<string, boolean>>(() => new Map());
+
+  const expandedNodes = useMemo(() => {
+    const next = new Set(defaultExpandedNodes);
+    for (const [id, expanded] of userOverrides.entries()) {
+      if (expanded) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+    }
+    return next;
+  }, [defaultExpandedNodes, userOverrides]);
 
   // Track last selected step to prevent redundant selections
   const lastSelectedRef = useRef<{ workflowId: string; taskId?: string } | null>(null);
@@ -95,44 +108,32 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
   // Ref for tree container (used for auto-scroll)
   const treeContainerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-expand and select based on current debug step
+  // Auto-select and scroll based on current debug step
   useEffect(() => {
     // Don't auto-select if at step -1 (ready state) or no step
-    if (!debugMode || !effectiveDebugContext?.currentStep ||
-        effectiveDebugContext.state.currentStepIndex < 0) {
+    if (
+      !debugMode ||
+      !effectiveDebugContext?.currentStep ||
+      effectiveDebugContext.state.currentStepIndex < 0
+    ) {
       return;
     }
 
     const { workflow_id, task_id } = effectiveDebugContext.currentStep;
 
     // Check if we already selected this step
-    if (lastSelectedRef.current?.workflowId === workflow_id &&
-        lastSelectedRef.current?.taskId === task_id) {
+    if (
+      lastSelectedRef.current?.workflowId === workflow_id &&
+      lastSelectedRef.current?.taskId === task_id
+    ) {
       return;
     }
 
-    // Find the workflow to get its path
-    const workflow = workflows.find(w => w.id === workflow_id);
-
-    // Auto-expand nodes to show current step
-    setExpandedNodes((prev) => {
-      const next = new Set(prev);
-      next.add(NODE_IDS.ROOT);
-      // Expand parent folders if workflow has a path
-      const folderPath = workflow && workflowFolderPath(workflow);
-      if (folderPath) {
-        getParentFolderIds(folderPath).forEach(id => next.add(id));
-      }
-      next.add(NODE_IDS.workflow(workflow_id));
-      if (task_id) {
-        next.add(NODE_IDS.task(workflow_id, task_id));
-      }
-      return next;
-    });
+    const workflow = workflows.find((w) => w.id === workflow_id);
 
     // Auto-select the current task or workflow
     if (task_id) {
-      const task = workflow && flattenSteps(workflow.tasks).find(t => t.id === task_id);
+      const task = workflow && flattenSteps(workflow.tasks).find((t) => t.id === task_id);
       if (workflow && task) {
         lastSelectedRef.current = { workflowId: workflow_id, taskId: task_id };
         onSelect({ type: 'task', task, workflow });
@@ -143,7 +144,8 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
 
     // Auto-scroll to current step after a short delay (to allow DOM to update)
     setTimeout(() => {
-      const currentStepElement = treeContainerRef.current?.querySelector('[data-current-step="true"]');
+      const currentStepElement =
+        treeContainerRef.current?.querySelector('[data-current-step="true"]');
       if (currentStepElement) {
         currentStepElement.scrollIntoView({
           behavior: 'smooth',
@@ -151,16 +153,19 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
         });
       }
     }, PLAYBACK.AUTO_SCROLL_DELAY_MS);
-  }, [debugMode, effectiveDebugContext?.currentStep, effectiveDebugContext?.state.currentStepIndex, workflows, onSelect]);
+  }, [
+    debugMode,
+    effectiveDebugContext?.currentStep,
+    effectiveDebugContext?.state.currentStepIndex,
+    workflows,
+    onSelect,
+  ]);
 
   const toggleNode = (id: string) => {
-    setExpandedNodes((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+    setUserOverrides((prev) => {
+      const next = new Map(prev);
+      const currentlyExpanded = next.has(id) ? next.get(id)! : defaultExpandedNodes.has(id);
+      next.set(id, !currentlyExpanded);
       return next;
     });
   };

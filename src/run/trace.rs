@@ -121,17 +121,17 @@ impl Capture {
                 self.redact(change);
             }
             if let Some(max) = self.options.max_bytes {
-                let size = step
+                let mut remaining = max.saturating_sub(self.bytes);
+                let fits = step
                     .changes
                     .iter()
-                    .fold(0usize, |size, c| size.saturating_add(change_size(c)));
-                let total = self.bytes.saturating_add(size);
-                if total > max {
+                    .all(|c| charge_change(c, &mut remaining));
+                if !fits {
                     self.truncated = true;
                     step.changes.clear();
                     step.mapping_ends.clear();
                 } else {
-                    self.bytes = total;
+                    self.bytes = max - remaining;
                 }
             }
         }
@@ -284,26 +284,25 @@ fn prune(value: &mut OwnedDataValue, paths: &[&[Seg]]) {
     }
 }
 
-/// v3's `approx_owned_size`: one word per node, plus a string's length and
-/// each key's.
+/// One word per node, plus a string's length and each key's, measured by the
+/// shared [`crate::state::charge_size`] walker.
 fn approx_size(value: &OwnedDataValue) -> usize {
-    match value {
-        OwnedDataValue::Object(pairs) => {
-            NODE_SIZE
-                + pairs
-                    .iter()
-                    .map(|(key, child)| key.len() + approx_size(child))
-                    .sum::<usize>()
-        }
-        OwnedDataValue::Array(items) => NODE_SIZE + items.iter().map(approx_size).sum::<usize>(),
-        OwnedDataValue::String(s) => NODE_SIZE + s.len(),
-        _ => NODE_SIZE,
-    }
+    let mut budget = usize::MAX;
+    let mut visited = 0;
+    let _ = crate::state::charge_size(value, NODE_SIZE, &mut budget, &mut visited);
+    usize::MAX - budget
 }
 
-/// What a change costs: its path's length and both its values.
-fn change_size(change: &Change) -> usize {
-    change.path.len() + approx_size(&change.old_value) + approx_size(&change.new_value)
+/// Charges a change (its path's length and both its values) against `budget`,
+/// stopping as soon as `budget` is exceeded.
+fn charge_change(change: &Change, budget: &mut usize) -> bool {
+    if change.path.len() > *budget {
+        return false;
+    }
+    *budget -= change.path.len();
+    let mut visited = 0;
+    crate::state::charge_size(&change.old_value, NODE_SIZE, budget, &mut visited)
+        && crate::state::charge_size(&change.new_value, NODE_SIZE, budget, &mut visited)
 }
 
 #[cfg(test)]

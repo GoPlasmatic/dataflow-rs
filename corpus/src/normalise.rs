@@ -8,6 +8,30 @@ use crate::path;
 pub const TIMESTAMP: &str = "<timestamp>";
 pub const DURATION: &str = "<duration>";
 pub const ENGINE_VERSION: &str = "<engine_version>";
+pub const DEPENDENCY_MESSAGE: &str = "<dependency message>";
+
+/// Prefixes our own code writes before a dependency's error text
+/// (`quick-xml` or `datalogic-rs`). Everything after the prefix is replaced
+/// with [`DEPENDENCY_MESSAGE`] so a patch bump of the dependency cannot break
+/// golden files.
+const DEPENDENCY_PREFIXES: &[&str] = &[
+    "Failed to parse XML: ",
+    "Failed to serialize XML: ",
+    "Thrown: ",
+    "Operation budget exceeded: ",
+];
+
+/// `text` with any dependency-originated tail replaced by
+/// [`DEPENDENCY_MESSAGE`].
+pub fn dependency_text(text: &str) -> String {
+    for prefix in DEPENDENCY_PREFIXES {
+        if let Some(at) = text.find(prefix) {
+            let keep = at + prefix.len();
+            return format!("{}{DEPENDENCY_MESSAGE}", &text[..keep]);
+        }
+    }
+    text.to_owned()
+}
 
 /// A wire message: `{id, payload, context, audit_trail, errors}`.
 /// `error_context` is the engine's error-context path, when it has one.
@@ -19,8 +43,30 @@ pub fn message(m: &mut Json, error_context: Option<&str>) {
         if let Some(Json::Array(items)) = m.get_mut(list) {
             for item in items {
                 replace(item, "timestamp", TIMESTAMP);
+                normalise_error_field(item, "message");
             }
         }
+    }
+}
+
+/// A serialized `Run`: normalises dependency-originated error messages on the
+/// run and its workflow records.
+pub fn run(r: &mut Json) {
+    if let Some(err) = r.get_mut("error") {
+        normalise_error_field(err, "message");
+    }
+    if let Some(Json::Array(workflows)) = r.get_mut("workflows") {
+        for wf in workflows {
+            if let Some(err) = wf.get_mut("error") {
+                normalise_error_field(err, "message");
+            }
+        }
+    }
+}
+
+fn normalise_error_field(object: &mut Json, key: &str) {
+    if let Some(Json::String(text)) = object.get_mut(key) {
+        *text = dependency_text(text);
     }
 }
 
@@ -96,6 +142,32 @@ mod tests {
         assert_eq!(
             s.to_text(),
             r#"{"workflow_id":"w","started_at":"<timestamp>","duration_us":"<duration>","message":{"context":{"metadata":{"processed_at":"<timestamp>"}}},"mapping_contexts":[{"metadata":{"engine_version":"<engine_version>"}}]}"#
+        );
+    }
+
+    #[test]
+    fn dependency_error_details_are_normalised_after_our_prefix() {
+        let mut m = Json::from_text(
+            r#"{"errors":[{"code":"VALIDATION_ERROR","message":"Task t error: Validation error: Failed to parse XML: ill-formed","timestamp":"t"}]}"#,
+        )
+        .unwrap();
+        message(&mut m, None);
+        assert_eq!(
+            m.pointer("/errors/0/message"),
+            Some(&Json::str(
+                "Task t error: Validation error: Failed to parse XML: <dependency message>"
+            ))
+        );
+        let mut r = Json::from_text(
+            r#"{"workflows":[{"error":{"code":"BUDGET_EXCEEDED","message":"Operation budget exceeded: 42 ops"}}]}"#,
+        )
+        .unwrap();
+        run(&mut r);
+        assert_eq!(
+            r.pointer("/workflows/0/error/message"),
+            Some(&Json::str(
+                "Operation budget exceeded: <dependency message>"
+            ))
         );
     }
 }

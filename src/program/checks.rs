@@ -11,10 +11,13 @@
 //! 2. **Template keys.** `ESCAPED_TEMPLATE_KEY` at each key starting with
 //!    exactly one escape, then `DUPLICATE_TEMPLATE_KEY` at the later of two
 //!    keys of one object that emit the same name.
-//! 3. **Payload.** `PAYLOAD_VAR` at each `var` or `val` object reading a
-//!    literal path rooted at `payload`, which is not in the evaluation
-//!    context. An argument a scoping operator evaluates per element is
-//!    skipped, since there `var` reads the element.
+//! 3. **Payload.** `PAYLOAD_VAR` at the expression, for each path it reads
+//!    from the root that is rooted at `payload`, which is not in the
+//!    evaluation context. Which paths a rule reads, and whether each is a
+//!    root read, is the compiled rule's own `facts()`: a scoping operator's
+//!    per-element argument reads the element, not the root, and `missing`,
+//!    `missing_some` and `exists` are covered too, without a second `var` /
+//!    `val` parser here.
 //!
 //! The workflow lint is `UNGUARDED_VALIDATION`. A fragment has none.
 //!
@@ -25,9 +28,8 @@
 use super::fingerprint::Fingerprint;
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, StepKind};
 use crate::def::{Logic, RejectionPolicy, StepDef, TaskDef, WorkflowDef};
-use crate::expr::{ExprEngine, ExprVisitor, Operator, OperatorFamily, escaped_keys, secret_refs};
+use crate::expr::{ExprEngine, ExprVisitor, escaped_keys, secret_refs};
 use crate::function::builtins::BuiltinKind;
-use datalogic_rs::ScopedArg;
 use serde_json::Value;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
@@ -166,17 +168,26 @@ impl<'e> Checks<'e> {
         }
     }
 
-    /// Rule 3: every literal read rooted at `payload`, at its object.
+    /// Rule 3: every path rooted at `payload` the expression reads at the
+    /// root, at the expression, from the compiled rule's own `facts()`.
     fn payload_vars(&self, at: &AuthoredPath, raw: &Value, report: &mut Report<'_>) {
-        let mut found = Vec::new();
-        walk_payload(raw, &AuthoredPath::root(), self.exprs, &mut found);
-        for (object_at, path) in found {
+        // The compile walk compiled `raw` too; this asks the same engine for
+        // the one answer it needs, the rule's reads. A rule the engine cannot
+        // compile is reported elsewhere and has no reads to check.
+        let Ok(logic) = self.exprs.logic().compile(raw) else {
+            return;
+        };
+        for read in logic.facts().reads() {
+            if read.segments().first().map(String::as_str) != Some("payload") {
+                continue;
+            }
+            let path = read.to_string();
             let message = format!(
                 "reads `{path}`, but the payload is not in the evaluation context, which \
                  holds only `data`, `metadata` and `temp_data`, so this always resolves to \
                  nothing; parse the payload into `data` first"
             );
-            report(IssueCode::PayloadVar, at.extend(&object_at), message);
+            report(IssueCode::PayloadVar, at.clone(), message);
         }
     }
 }
@@ -200,7 +211,7 @@ impl Hook for Checks<'_> {
     }
 
     fn workflow(&mut self, def: &WorkflowDef, issues: &mut Vec<Issue>) {
-        unguarded_validation(def, issues);
+        unguarded_validation(self.exprs, def, issues);
     }
 }
 
@@ -255,106 +266,14 @@ fn walk_duplicates(
     }
 }
 
-/// Whether a scoping operator evaluates its argument at `index` (of `len`)
-/// once per element, with `var` reading the element.
-///
-/// For datalogic's operators this is its own `scoped_arg`: the body of
-/// `filter`, `map`, `all`, `some`, `none` and `reduce`, and the key of
-/// `group_by` and `distinct`, each at index 1, `sort`'s key at index 2, and
-/// `try`'s last argument when it has two or more (the catch arm). `reduce`'s
-/// initial value and `sort`'s direction are evaluated once, in the context.
-/// A host's operator declares no positions, so every argument after its
-/// first counts; so does a position of a kind this crate does not know,
-/// which skips an argument rather than report a false Defect.
-fn per_element(operator: &Operator, index: usize, len: usize) -> bool {
-    if operator.family == OperatorFamily::Custom {
-        return index > 0;
-    }
-    match operator.scoped {
-        Some(ScopedArg::Index(i)) => index == i,
-        Some(ScopedArg::LastOfMany) => len >= 2 && index == len - 1,
-        Some(_) => true,
-        None => false,
-    }
-}
-
-/// Every `var` or `val` object below `value` reading a literal path rooted at
-/// `payload`: the object's path and the path it reads.
-///
-/// An argument a scoping operator evaluates per element ([`per_element`]) is
-/// skipped: there `var` reads the element, which may well have a `payload`
-/// key. Which operators scope, and where, is `exprs`'s.
-fn walk_payload(
-    value: &Value,
-    at: &AuthoredPath,
-    exprs: &ExprEngine,
-    out: &mut Vec<(AuthoredPath, String)>,
-) {
-    match value {
-        Value::Object(map) => {
-            if let Some((key, arg)) = map.iter().next().filter(|_| map.len() == 1) {
-                if let Some(path) = payload_read(key, arg) {
-                    out.push((at.clone(), path));
-                }
-                if let Value::Array(args) = arg
-                    && let Some(operator) = exprs.operator(key).filter(|op| op.scoping)
-                {
-                    for (i, arg) in args.iter().enumerate() {
-                        if !per_element(operator, i, args.len()) {
-                            walk_payload(arg, &at.join(key.as_str()).join(i), exprs, out);
-                        }
-                    }
-                    return;
-                }
-            }
-            for (key, child) in map {
-                walk_payload(child, &at.join(key.as_str()), exprs, out);
-            }
-        }
-        Value::Array(items) => {
-            for (i, item) in items.iter().enumerate() {
-                walk_payload(item, &at.join(i), exprs, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The path a `{key: arg}` object reads, when it is a `var` or a `val` whose
-/// literal path is rooted at `payload`.
-///
-/// A `var` path is dotted, and its first segment must be `payload`: `"payload"`,
-/// `"payload.a"`, `["payload.a", default]`. A `val` path is a list of
-/// segments, and its first must be `"payload"`: `"payload"`, `["payload",
-/// "a"]`.
-fn payload_read(key: &str, arg: &Value) -> Option<String> {
-    let rooted = |path: &str| path.split('.').next() == Some("payload");
-    match (key, arg) {
-        ("var", Value::String(path)) if rooted(path) => Some(path.clone()),
-        ("var", Value::Array(args)) => args
-            .first()
-            .and_then(Value::as_str)
-            .filter(|path| rooted(path))
-            .map(str::to_owned),
-        ("val", Value::String(seg)) if seg == "payload" => Some(seg.clone()),
-        ("val", Value::Array(segs)) if segs.first().and_then(Value::as_str) == Some("payload") => {
-            let segs: Vec<String> = segs
-                .iter()
-                .map(|seg| match seg {
-                    Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                })
-                .collect();
-            Some(segs.join("."))
-        }
-        _ => None,
-    }
-}
-
 /// Whether a step's condition might gate what follows on a failure: it is
-/// present and not the literal `true`.
-fn gates(condition: Option<&Logic>) -> bool {
-    condition.is_some_and(|c| c.0 != Value::Bool(true))
+/// present and does not constant-fold to `true` (`Expr::is_trivially_true`).
+fn gates(exprs: &ExprEngine, condition: Option<&Logic>) -> bool {
+    condition.is_some_and(|c| {
+        exprs
+            .compile::<datavalue::OwnedDataValue>(&c.0)
+            .map_or(true, |expr| !expr.is_trivially_true())
+    })
 }
 
 /// `UNGUARDED_VALIDATION`: a `validation` task whose rejection nothing after
@@ -368,7 +287,7 @@ fn gates(condition: Option<&Logic>) -> bool {
 /// group the walk yields just before it, nested ones included.
 ///
 /// An Advisory at `<task>.on_rejection`, the key that fixes it.
-fn unguarded_validation(def: &WorkflowDef, issues: &mut Vec<Issue>) {
+fn unguarded_validation(exprs: &ExprEngine, def: &WorkflowDef, issues: &mut Vec<Issue>) {
     struct Link<'d> {
         path: AuthoredPath,
         kind: StepKind,
@@ -380,10 +299,10 @@ fn unguarded_validation(def: &WorkflowDef, issues: &mut Vec<Issue>) {
     let mut opening = false;
     for (path, kind, step) in def.walk() {
         match step {
-            StepDef::Group(group) => opening |= gates(group.condition.as_ref()),
+            StepDef::Group(group) => opening |= gates(exprs, group.condition.as_ref()),
             StepDef::Task(task) => {
                 let guarded = opening
-                    || gates(task.condition.as_ref())
+                    || gates(exprs, task.condition.as_ref())
                     || BuiltinKind::from_name(&task.function.name) == Some(BuiltinKind::Filter);
                 chain.push(Link {
                     path,
@@ -455,6 +374,7 @@ impl ExprVisitor for Below<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expr::Operator;
     use serde_json::json;
 
     fn duplicates(raw: &Value) -> Vec<String> {
@@ -495,87 +415,111 @@ mod tests {
         }
     }
 
-    /// The payload reads of `raw`, by this build's operators and a host's
-    /// scoping `host_each`.
-    fn reads(raw: &Value) -> Vec<(String, String)> {
+    /// The paths `raw` reads from the root that are rooted at `payload`, as
+    /// the compiled rule's own facts report them: this build's operators, and
+    /// a host's `host_each`.
+    fn payload_reads(raw: &Value) -> Vec<String> {
         let exprs = ExprEngine::builder()
             .operator_with(Operator::custom("host_each").scoping(true), Each)
             .build()
             .unwrap();
-        let mut out = Vec::new();
-        walk_payload(raw, &AuthoredPath::root(), &exprs, &mut out);
-        out.into_iter().map(|(at, p)| (at.to_string(), p)).collect()
+        let logic = exprs.logic().compile(raw).expect("the raw compiles");
+        logic
+            .facts()
+            .reads()
+            .iter()
+            .filter(|read| read.segments().first().map(String::as_str) == Some("payload"))
+            .map(ToString::to_string)
+            .collect()
     }
 
+    /// The lint's answer is the rule's own root reads, so `if`, `var` (a
+    /// default included) and `val` are all covered, and a data read or a
+    /// template object reports nothing.
     #[test]
-    fn a_payload_read_is_reported_at_its_object_with_the_path_it_reads() {
-        let r = |at: &str, p: &str| (at.to_owned(), p.to_owned());
+    fn the_payload_reads_are_the_compiled_rules_root_reads() {
         assert_eq!(
-            reads(&json!({"if": [{"var": ["payload.a", 1]}, {"val": ["payload", "b", 0]}, null]})),
-            [r("if[0]", "payload.a"), r("if[1]", "payload.b.0")]
+            payload_reads(
+                &json!({"if": [{"var": ["payload.a", 1]}, {"val": ["payload", "b", 0]}, null]})
+            ),
+            ["payload.a", "payload.b.0"]
         );
-        // A default is walked too.
         assert_eq!(
-            reads(&json!({"var": ["data.a", {"var": "payload"}]})),
-            [r("var[1]", "payload")]
+            payload_reads(&json!({"var": ["data.a", {"var": "payload"}]})),
+            ["payload"]
         );
-        // A scoping operator's per-element argument reads the element.
+        assert!(payload_reads(&json!({"var": "data.payload"})).is_empty());
+        // A multi-key object is a template, not an operator.
+        assert!(payload_reads(&json!({"var": "payload", "x": 1})).is_empty());
+    }
+
+    /// A scoping operator's per-element argument reads the element, not the
+    /// root, so its `payload` read is not reported; the source is.
+    #[test]
+    fn a_payload_read_inside_a_scope_is_not_a_root_read() {
         assert_eq!(
-            reads(&json!({"map": [{"val": "payload"}, {"var": "payload.x"}]})),
-            [r("map[0]", "payload")]
+            payload_reads(&json!({"map": [{"val": "payload"}, {"var": "payload.x"}]})),
+            ["payload"]
         );
-        // `reduce`'s initial value is read once, from the context.
+        // A host's operator declares no positions, so each argument is a root
+        // read here.
         let p = || json!({"var": "payload"});
         assert_eq!(
-            reads(&json!({"reduce": [p(), p(), p()]})),
-            [r("reduce[0]", "payload"), r("reduce[2]", "payload")]
+            payload_reads(&json!({"host_each": [p(), p(), p()]})),
+            ["payload"]
         );
-        // `sort`'s direction is outer; its key, the third argument, is not.
-        #[cfg(feature = "ext-array")]
-        {
-            assert_eq!(
-                reads(&json!({"sort": [p(), p(), p()]})),
-                [r("sort[0]", "payload"), r("sort[1]", "payload")]
-            );
-            assert_eq!(
-                reads(&json!({"group_by": [p(), p()]})),
-                [r("group_by[0]", "payload")]
-            );
-        }
-        // A host's scoping operator declares no positions: every argument
-        // after its first is taken as per-element.
-        assert_eq!(
-            reads(&json!({"host_each": [p(), p(), p()]})),
-            [r("host_each[0]", "payload")]
-        );
-        // A multi-key object is a template, not an operator.
-        assert!(reads(&json!({"var": "payload", "x": 1})).is_empty());
     }
 
     #[cfg(feature = "ext-array")]
     #[test]
-    fn a_payload_read_in_distincts_key_is_not_a_payload_var() {
-        let r = |at: &str, p: &str| (at.to_owned(), p.to_owned());
+    fn a_payload_read_in_distincts_key_is_not_a_root_read() {
         assert!(
-            reads(&json!({"distinct": [{"var": "data.items"}, {"var": "payload.k"}]})).is_empty()
+            payload_reads(&json!({"distinct": [{"var": "data.items"}, {"var": "payload.k"}]}))
+                .is_empty()
         );
         assert_eq!(
-            reads(&json!({"distinct": [{"var": "payload.items"}, {"var": "payload.k"}]})),
-            [r("distinct[0]", "payload.items")]
+            payload_reads(&json!({"distinct": [{"var": "payload.items"}, {"var": "payload.k"}]})),
+            ["payload.items"]
         );
     }
 
     #[cfg(feature = "error-handling")]
     #[test]
-    fn a_payload_read_in_trys_catch_arm_is_not_a_payload_var() {
-        let r = |at: &str, p: &str| (at.to_owned(), p.to_owned());
+    fn a_payload_read_in_trys_catch_arm_is_not_a_root_read() {
         assert_eq!(
-            reads(&json!({"try": [{"var": "payload.a"}, {"var": "payload.b"}]})),
-            [r("try[0]", "payload.a")]
+            payload_reads(&json!({"try": [{"var": "payload.a"}, {"var": "payload.b"}]})),
+            ["payload.a"]
+        );
+    }
+
+    /// The gap the raw walk left: `missing`, `missing_some` and `exists` read
+    /// their paths too, and the lint reports them now.
+    #[test]
+    fn a_payload_read_through_missing_is_a_root_read() {
+        assert_eq!(
+            payload_reads(&json!({"missing": "payload.x"})),
+            ["payload.x"]
         );
         assert_eq!(
-            reads(&json!({"try": [{"var": "payload.a"}]})),
-            [r("try[0]", "payload.a")]
+            payload_reads(&json!({"missing_some": [1, ["payload.x", "data.y"]]})),
+            ["payload.x"]
+        );
+    }
+
+    #[cfg(feature = "ext-control")]
+    #[test]
+    fn a_payload_read_through_exists_is_a_root_read() {
+        // `exists` takes segment names, like `val`: `"payload"` or
+        // `["payload", "x"]`. `"payload.x"` is one key with a dot in it.
+        assert_eq!(payload_reads(&json!({"exists": "payload"})), ["payload"]);
+        assert_eq!(
+            payload_reads(&json!({"exists": ["payload", "x"]})),
+            ["payload.x"]
+        );
+        assert!(payload_reads(&json!({"exists": "payload.x"})).is_empty());
+        assert_eq!(
+            payload_reads(&json!({"and": [{"var": "payload.a"}, {"exists": ["payload", "b"]}]})),
+            ["payload.a", "payload.b"]
         );
     }
 }

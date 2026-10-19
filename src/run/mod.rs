@@ -29,6 +29,7 @@ pub use error_context::ErrorContext;
 pub use interp::CHECK_EVERY;
 pub use message::{AuditEntry, AuditMode, Message};
 pub use options::RunOptions;
+pub(crate) use record::TaskIds;
 #[cfg(test)]
 pub(crate) use record::traced_work;
 #[doc(hidden)]

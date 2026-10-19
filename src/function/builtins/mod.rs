@@ -29,7 +29,7 @@ pub(crate) use validation::ValidationConfig;
 
 use crate::base::Result;
 use crate::expr::{CompileCx, ExprVisitor, FieldSpec};
-use crate::function::{FunctionConfig, FunctionSpec, Outcome, SyncCtx, SyncFunction};
+use crate::function::{FunctionConfig, FunctionSpec, Outcome, SyncCtx};
 use serde_json::Value;
 
 /// A built-in function, by name.
@@ -179,8 +179,7 @@ impl Builtin {
         }
     }
 
-    /// One call: a match over the eight configs, each through its
-    /// [`SyncFunction`].
+    /// One call: a match over the eight configs.
     pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         match self {
             Self::Map(c) => c.call(cx),

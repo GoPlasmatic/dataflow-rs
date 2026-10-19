@@ -36,6 +36,7 @@ mod ser;
 mod tests;
 mod types;
 
+pub use keys::{DefinitionKeys, definition_keys};
 pub(crate) use parse::parse_steps;
 pub(crate) use parse::parse_with_rewrites;
 pub use parse::{ParseOptions, Parsed, parse};
@@ -46,7 +47,6 @@ pub use types::{
     FailurePolicy, ForEachDef, FunctionRef, GroupDef, Logic, LoopDef, NodeHeader, RejectionPolicy,
     Status, StepDef, TaskDef, WorkflowDef, WorkflowFailurePolicy,
 };
-pub use keys::{DefinitionKeys, definition_keys};
 
 /// The deepest group nesting a definition may use.
 ///

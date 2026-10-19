@@ -1,7 +1,7 @@
 [package]
 name = "dataflow-docs-tests"
 # Deliberately not the workspace version: this crate is never published and is
-# consumed only by path, so it is not part of the three-artifact release bump.
+# consumed only by path, so it is not part of the four-artifact release bump.
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.98"

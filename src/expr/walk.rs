@@ -41,56 +41,50 @@ fn walk_escaped(value: &Value, at: &AuthoredPath, out: &mut Vec<AuthoredPath>) {
 }
 
 /// Every `{"secret": …}` reference, as the literal name (`None` when the name
-/// is computed) and where the reference sits.
+/// is computed) and where the reference sits. Lazy, so a caller that only
+/// asks whether one exists (via `next()`) stops at the first.
 ///
 /// The walk goes into the argument too, since a computed name may itself read
 /// a secret.
 pub fn secret_refs(raw: &Value) -> impl Iterator<Item = (Option<&str>, AuthoredPath)> + '_ {
-    let mut out = Vec::new();
-    walk_secrets(raw, &AuthoredPath::root(), &mut out);
-    out.into_iter()
+    // An explicit stack, not recursion: `next()` must stop the walk where the
+    // caller stops asking, so a caller that only needs the first reference
+    // does not walk the whole expression. Children are pushed in reverse, so
+    // they pop in v3's order.
+    let mut stack = vec![(raw, AuthoredPath::root())];
+    std::iter::from_fn(move || {
+        while let Some((value, at)) = stack.pop() {
+            match value {
+                Value::Object(map) => {
+                    if map.len() == 1
+                        && let Some(arg) = map.get(SECRET)
+                    {
+                        let literal = match arg {
+                            Value::String(s) => Some(s.as_str()),
+                            Value::Array(items) if items.len() == 1 => items[0].as_str(),
+                            _ => None,
+                        };
+                        stack.push((arg, at.join(SECRET)));
+                        return Some((literal, at));
+                    }
+                    for (key, child) in map.iter().rev() {
+                        stack.push((child, at.join(key.as_str())));
+                    }
+                }
+                Value::Array(items) => {
+                    for (i, child) in items.iter().enumerate().rev() {
+                        stack.push((child, at.join(i)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    })
 }
 
 /// Whether `raw` reads a secret anywhere, a computed name included: whether
-/// [`secret_refs`] finds any, walked without collecting them.
+/// [`secret_refs`] finds any.
 pub(crate) fn reads_secret(raw: &Value) -> bool {
-    match raw {
-        Value::Object(map) => {
-            (map.len() == 1 && map.contains_key(SECRET)) || map.values().any(reads_secret)
-        }
-        Value::Array(items) => items.iter().any(reads_secret),
-        _ => false,
-    }
-}
-
-fn walk_secrets<'v>(
-    value: &'v Value,
-    at: &AuthoredPath,
-    out: &mut Vec<(Option<&'v str>, AuthoredPath)>,
-) {
-    match value {
-        Value::Object(map) => {
-            if map.len() == 1
-                && let Some(arg) = map.get(SECRET)
-            {
-                let literal = match arg {
-                    Value::String(s) => Some(s.as_str()),
-                    Value::Array(items) if items.len() == 1 => items[0].as_str(),
-                    _ => None,
-                };
-                out.push((literal, at.clone()));
-                walk_secrets(arg, &at.join(SECRET), out);
-                return;
-            }
-            for (key, child) in map {
-                walk_secrets(child, &at.join(key.as_str()), out);
-            }
-        }
-        Value::Array(items) => {
-            for (i, child) in items.iter().enumerate() {
-                walk_secrets(child, &at.join(i), out);
-            }
-        }
-        _ => {}
-    }
+    secret_refs(raw).next().is_some()
 }

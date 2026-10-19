@@ -29,8 +29,8 @@ use crate::base::{
 };
 use crate::expr::{CompileCx, ExprEngine, Path};
 use crate::program::{Callee, CalleeAt, Checks, compile_callee, refused};
-use crate::run::Message;
-use crate::run::host::{Invoked, Layers, invoke};
+use crate::run::host::{Invoked, Layers, apply_writes, invoke, keep_records};
+use crate::run::{Message, TaskIds};
 use crate::state::{RunContext, Tuning};
 use chrono::Utc;
 use datavalue::OwnedDataValue;
@@ -337,29 +337,30 @@ impl<F: Function> Call<F> {
             };
             invoke(start, &*bound, layers, None, crate::run::timers_available()).await
         };
-        // The settle, as a run's: an `Ok` applies the overlay and keeps the
-        // `Change`s; an `Err` drops both. The settle takes the overlay, so
-        // `writes` is a copy of it.
-        let (writes, changes) = if result.is_ok() {
-            let writes = overlay.clone().into_writes();
-            overlay.apply(&mut rc);
-            (writes, changes)
+        // The settle, as a run's: the records the call added are stamped and
+        // pushed onto the message, and an `Ok` replays the overlay and keeps
+        // the `Change`s while an `Err` drops both. The settle takes the
+        // overlay, so `writes` is a copy of it.
+        let outcome = result.into_result();
+        let ok = outcome.is_ok();
+        let writes = if ok {
+            overlay.clone().into_writes()
         } else {
-            (Vec::new(), Vec::new())
+            Vec::new()
         };
-        rc.finish();
         let test_id: Arc<str> = Arc::from(TEST);
-        let errors: Vec<ErrorRecord> = errors
-            .into_iter()
-            .map(|mut record| {
-                record.stamp(&test_id, Some(&test_id), &now_text, None);
-                record
-            })
-            .collect();
-        parts.errors.extend(errors.iter().cloned());
+        let ids = TaskIds {
+            workflow: &test_id,
+            task: &test_id,
+        };
+        let errors_before = parts.errors.len();
+        keep_records(ids, &now_text, parts.errors, errors, None);
+        let errors = parts.errors[errors_before..].to_vec();
+        let changes = apply_writes(&mut rc, ok, overlay, changes);
+        rc.finish();
         Called {
             issues,
-            outcome: result,
+            outcome,
             writes,
             changes,
             errors,

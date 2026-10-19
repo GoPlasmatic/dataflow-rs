@@ -442,8 +442,8 @@ impl Node {
 ///
 /// Flat: every node in one vector, every key in one string. A subsumed
 /// subtree is unlinked, not freed, and the storage is reset at the
-/// checkpoint and pooled per thread when the log drops, so a warm run, and a
-/// call's overlay, allocate nothing for the log.
+/// checkpoint and pooled per thread when the log drops, so a warm run
+/// allocates nothing for the log.
 #[derive(Debug)]
 pub(crate) struct Writes {
     /// Every node, the root first.

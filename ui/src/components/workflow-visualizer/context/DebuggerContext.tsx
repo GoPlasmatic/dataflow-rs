@@ -24,7 +24,7 @@ import { PLAYBACK } from '../constants';
 /**
  * Initial debugger state
  */
-const initialState: DebuggerState = {
+export const initialState: DebuggerState = {
   isActive: false,
   trace: null,
   run: null,
@@ -43,7 +43,7 @@ const initialState: DebuggerState = {
  * Get filtered step indices based on skipFailedConditions setting.
  * Returns indices of steps that should be shown during debugging.
  */
-function getFilteredStepIndices(trace: Trace | null, skipFailedConditions: boolean): number[] {
+export function getFilteredStepIndices(trace: Trace | null, skipFailedConditions: boolean): number[] {
   if (!trace || trace.steps.length === 0) {
     return [];
   }
@@ -59,7 +59,7 @@ function getFilteredStepIndices(trace: Trace | null, skipFailedConditions: boole
 /**
  * Debugger reducer
  */
-function debuggerReducer(state: DebuggerState, action: DebuggerAction): DebuggerState {
+export function debuggerReducer(state: DebuggerState, action: DebuggerAction): DebuggerState {
   switch (action.type) {
     case 'ACTIVATE':
       return {
@@ -344,6 +344,7 @@ export function DebuggerProvider({
   const playbackTimerRef = useRef<number | null>(null);
   const engineRef = useRef<DataflowEngine | null>(null);
   const lastWorkflowsJsonRef = useRef<string | null>(null);
+  const lastEngineFactoryRef = useRef<EngineFactory | undefined>(undefined);
 
   // Determine if engine is ready for execution
   const isEngineReady = Boolean(engineFactory);
@@ -401,21 +402,27 @@ export function DebuggerProvider({
       try {
         const workflowsJson = JSON.stringify(workflows);
 
-        // Create new engine if workflows changed or no engine exists
-        if (lastWorkflowsJsonRef.current !== workflowsJson || !engineRef.current) {
+        // Create new engine if workflows or engineFactory changed or no engine exists
+        if (
+          lastWorkflowsJsonRef.current !== workflowsJson ||
+          lastEngineFactoryRef.current !== engineFactory ||
+          !engineRef.current
+        ) {
           // Dispose previous engine
           if (engineRef.current?.dispose) {
             engineRef.current.dispose();
           }
-          // Drop both refs *before* building the replacement. `engineFactory`
+          // Drop refs *before* building the replacement. `engineFactory`
           // throws for a definition that no longer loads, and the disposed
           // engine must not stay reachable: a later run that happens to match
           // `lastWorkflowsJson` would skip the rebuild and call into a freed
           // wasm handle ("null pointer passed to rust").
           engineRef.current = null;
           lastWorkflowsJsonRef.current = null;
+          lastEngineFactoryRef.current = undefined;
           engineRef.current = engineFactory(workflows);
           lastWorkflowsJsonRef.current = workflowsJson;
+          lastEngineFactoryRef.current = engineFactory;
         }
         // Ask for the trace explicitly: the wasm adapter traces by default,
         // but a host's own engine only knows what it is asked.

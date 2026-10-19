@@ -283,7 +283,11 @@ fn a_serde_field_reports_input_parse_and_reads_absent_from_null() {
             "tasks[0].function.input.level".into()
         )]
     );
-    assert!(issues[0].message.contains("unknown variant `loud`"));
+    assert!(
+        issues[0].message.contains("`loud`"),
+        "{}",
+        issues[0].message
+    );
 
     let (out, issues) = compile::<Strict>(&json!({}));
     assert!(out.is_none());

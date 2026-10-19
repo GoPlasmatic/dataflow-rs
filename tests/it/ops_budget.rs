@@ -91,11 +91,7 @@ fn exprs(budget: Option<u64>) -> ExprEngine {
 fn engine_over(workflow: &Value, budget: Option<u64>) -> Engine {
     let mut registry = Registry::new(exprs(budget));
     registry.register("sum_via_eval", SumViaEval);
-    Engine::builder()
-        .registry(registry)
-        .workflow_json(workflow)
-        .build()
-        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"))
+    crate::support::engine_with(std::slice::from_ref(workflow), |b| b.registry(registry))
 }
 
 /// An engine over `expr`, optionally bounded.
@@ -105,11 +101,7 @@ fn engine(expr: Value, budget: Option<u64>) -> Engine {
 
 /// A message whose `data` is `data`.
 fn message_with(data: Value) -> Message {
-    Message::from_parts(
-        OwnedDataValue::Null,
-        OwnedDataValue::from(&data),
-        OwnedDataValue::Null,
-    )
+    crate::support::message(data)
 }
 
 /// A message carrying [`N`] elements at `data.xs`.

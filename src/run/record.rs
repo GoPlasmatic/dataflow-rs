@@ -78,11 +78,26 @@ impl Stamp {
     }
 }
 
-/// The clock, read for an elapsed time: only when the run is timed.
+/// The run's monotonic clock, read only when a deadline or timing is active:
+/// natively Tokio's clock (so paused time governs both deadlines and elapsed
+/// timings), and on wasm the system clock.
 pub(crate) fn now() -> Instant {
     #[cfg(test)]
     tests::CLOCK_READS.with(|reads| reads.set(reads.get() + 1));
-    Instant::now()
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::time::Instant::now().into_std()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Instant::now()
+    }
+}
+
+/// How many times this thread read [`now`].
+#[cfg(test)]
+pub(crate) fn clock_reads() -> u32 {
+    tests::CLOCK_READS.with(std::cell::Cell::get)
 }
 
 /// In the lib's own tests, `result` turned into an `Err` once the call has
@@ -130,15 +145,40 @@ pub(crate) struct Completed {
     pub(crate) marked: bool,
 }
 
+impl Completed {
+    /// One completed call of `task`, in `env`'s sweep, at `element_index` in
+    /// a fan-out.
+    pub(crate) fn new(
+        env: &RunEnv<'_, '_>,
+        task: u32,
+        element_index: Option<usize>,
+        elapsed: Option<Duration>,
+        errors_before: usize,
+        marked: bool,
+    ) -> Self {
+        Self {
+            task,
+            stamp: Stamp {
+                loop_counter: env.frame.loop_counter,
+                element_index,
+            },
+            elapsed,
+            errors_before,
+            marked,
+        }
+    }
+}
+
 /// Records one completed call of `wf` under its `decision`, in this order:
 /// the audit entry, with the call's changes, taken from `env.changes`, under
-/// `capture_audit` (through `AuditMode`), the progress write, the error
-/// record, the error-context record, the trace's step, and the observers'
-/// `TaskFinished`. A `Skip` gets the last two only. The decision's flow.
+/// [`CaptureMode::audit`](super::interp::CaptureMode::audit) (through
+/// `AuditMode`), the progress write, the error record, the error-context
+/// record, the trace's step, and the observers' `TaskFinished`. A `Skip` gets
+/// the last two only. The decision's flow.
 ///
-/// A call of an unwatched run ([`RunEnv::watched`]) that marked no change
-/// has only the first three to record, through [`plain`]: the run's other
-/// outputs cost it one branch.
+/// The first three steps are [`record_core`], called by both paths. A call of
+/// an unwatched run that marked no change has only those three to record,
+/// through [`plain`]: the run's other outputs cost it one branch.
 #[inline(always)]
 pub(crate) fn record<'p>(
     rc: &mut RunContext<'_, 'p>,
@@ -154,7 +194,7 @@ pub(crate) fn record<'p>(
     } = decision;
     #[cfg(test)]
     tests::completed(env, &done, status, &flow);
-    if env.watched || done.marked {
+    if env.capture.is_watched() || done.marked {
         // The decision's flow is `Fail` or `Stop`: the trace's `Failed`.
         let failed = matches!(flow, Flow::Fail(_) | Flow::Stop(_));
         watched(rc, env, wf, done, status, record, failed);
@@ -164,10 +204,47 @@ pub(crate) fn record<'p>(
     flow
 }
 
+/// The first three recorder steps for a call with `status`, in one order for
+/// [`plain`] and [`watched`]:
+///
+/// 1. the audit entry (when `env.mode` keeps entries) with `audit_changes`;
+/// 2. the progress write (saving the old value first when `env.traces_changes()`);
+/// 3. the decision's error record onto `env.errors`.
+///
+/// Returns the `Change` of `metadata.progress` when the trace keeps changes.
+#[inline(always)]
+fn record_core<'p>(
+    rc: &mut RunContext<'_, 'p>,
+    env: &mut RunEnv<'_, 'p>,
+    ids: TaskIds<'p>,
+    stamp: Stamp,
+    status: u16,
+    record: Option<(Cow<'static, str>, String)>,
+    audit_changes: impl FnOnce(&mut RunEnv<'_, 'p>) -> Vec<Change>,
+) -> Option<Change> {
+    // A mode that keeps nothing builds no entry for `record_audit` to drop.
+    if keeps_entries(env.mode) {
+        let changes = audit_changes(env);
+        audit(env, ids, stamp, status, changes);
+    }
+    let old = env.traces_changes().then(|| rc.get_or_null(&PROGRESS));
+    write_progress(rc, ids.workflow, ids.task, status);
+    let progress_change = old.map(|old| {
+        Change::write(
+            Arc::clone(PROGRESS.dotted()),
+            old,
+            rc.get_or_null(&PROGRESS),
+        )
+    });
+    if let Some(record) = record {
+        push_record(env, ids, stamp, record);
+    }
+    progress_change
+}
+
 /// [`record`] for a call of an unwatched run that marked no change: the
 /// audit entry, with every change the call recorded, the progress write and
-/// the error record, as [`watched`] records them for such a call. A `Skip`
-/// records nothing.
+/// the error record, through [`record_core`]. A `Skip` records nothing.
 #[inline]
 fn plain<'p>(
     rc: &mut RunContext<'_, 'p>,
@@ -177,22 +254,13 @@ fn plain<'p>(
     status: Option<u16>,
     record: Option<(Cow<'static, str>, String)>,
 ) {
-    let Some(status) = status else {
-        env.changes.clear();
-        return;
-    };
-    let ids = env.ids(task);
-    // A mode that keeps nothing builds no entry for `record_audit` to drop.
-    if keeps_entries(env.mode) {
-        let changes = std::mem::take(&mut env.changes);
-        audit(env, ids, stamp, status, changes);
-    } else {
-        env.changes.clear();
+    if let Some(status) = status {
+        let ids = env.ids(task);
+        record_core(rc, env, ids, stamp, status, record, |env| {
+            std::mem::take(&mut env.changes)
+        });
     }
-    write_progress(rc, ids.workflow, ids.task, status);
-    if let Some(record) = record {
-        push_record(env, ids, stamp, record);
-    }
+    env.changes.clear();
 }
 
 /// The call's audit entry, with `changes`, through `AuditMode`'s trim.
@@ -266,10 +334,8 @@ fn watched<'p>(
     // it.
     let prelude = changes.len();
     if let Some(status) = status {
-        // A mode that keeps nothing builds no entry for `record_audit` to
-        // drop.
-        if keeps_entries(env.mode) {
-            let changes = if env.capture_audit {
+        let progress = record_core(rc, env, ids, stamp, status, record, |env| {
+            if env.capture.audit() {
                 // When the trace wants them too, the audit gets a copy.
                 let mut changes = if traced {
                     env.changes.clone()
@@ -283,21 +349,11 @@ fn watched<'p>(
                 changes
             } else {
                 Vec::new()
-            };
-            audit(env, ids, stamp, status, changes);
-        }
-        let old = traced.then(|| rc.get_or_null(&PROGRESS));
-        write_progress(rc, ids.workflow, ids.task, status);
-        if let Some(old) = old {
+            }
+        });
+        if let Some(progress) = progress {
             changes.append(&mut env.changes);
-            changes.push(Change::write(
-                Arc::clone(PROGRESS.dotted()),
-                old,
-                rc.get_or_null(&PROGRESS),
-            ));
-        }
-        if let Some(record) = record {
-            push_record(env, ids, stamp, record);
+            changes.push(progress);
         }
         // Every record the call added, its own and the recorder's.
         if let Some(ec) = env.watch.error_context

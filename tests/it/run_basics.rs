@@ -2,6 +2,7 @@
 // loops: the run's stamps, the recorder, the policies, the selection rules,
 // what a `Run` reports, and the builder's rules.
 
+use crate::support::{engine, map, message};
 use dataflow_rs::def::{ParseOptions, parse};
 use dataflow_rs::function::{FunctionConfig, FunctionSpec, Reference};
 use dataflow_rs::program::{CompileOptions, IssueCode, ResourceOracle, Severity};
@@ -12,31 +13,6 @@ use dataflow_rs::{
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-/// An engine over `workflows`, which must build.
-fn engine(workflows: &[Value]) -> Engine {
-    workflows
-        .iter()
-        .fold(Engine::builder(), |b, w| b.workflow_json(w))
-        .build()
-        .unwrap_or_else(|issues| panic!("the engine builds: {issues:?}"))
-}
-
-/// A message whose `data` is `data`.
-fn message(data: Value) -> Message {
-    Message::from_parts(
-        OwnedDataValue::Null,
-        OwnedDataValue::from(&data),
-        OwnedDataValue::Null,
-    )
-    .with_id("m")
-}
-
-/// A `map` task writing `logic` at `path`.
-fn map(id: &str, path: &str, logic: Value) -> Value {
-    json!({"id": id, "function": {"name": "map", "input": {
-        "mappings": [{"path": path, "logic": logic}]}}})
-}
 
 /// A `map` task appending `item` at `data.order`.
 fn append(id: &str, item: &str) -> Value {
@@ -71,11 +47,7 @@ fn rejects(id: &str, on_reject: &str) -> Value {
 
 /// A workflow `id` holding `tasks`, with each `(key, value)` of `extra`.
 fn workflow(id: &str, extra: &[(&str, Value)], tasks: Vec<Value>) -> Value {
-    let mut w = json!({"id": id, "tasks": tasks});
-    for (key, value) in extra {
-        w[*key] = value.clone();
-    }
-    w
+    crate::support::workflow(id, tasks, extra)
 }
 
 /// The message as JSON (keys sorted).
@@ -864,11 +836,11 @@ async fn with_program_keeps_the_config() {
     .unwrap();
     let program = compiler.link([compiler.compile_one(&def).unwrap().workflow]);
     let reloaded = e.with_program(program);
-    let config = |engine: &Engine| {
-        let debug = format!("{engine:?}");
-        debug[debug.find("config:").expect("the config is shown")..].to_owned()
-    };
-    assert_eq!(config(&reloaded), config(&e));
+    assert_eq!(
+        reloaded.config().observer.is_some(),
+        e.config().observer.is_some()
+    );
+    assert_eq!(reloaded.config().error_context, e.config().error_context);
     assert_ne!(reloaded.program().id(), e.program().id());
     // The reload runs the new program; the old engine keeps the old one.
     let order = |m: &Message| json_of(m)["context"]["data"]["order"].clone();

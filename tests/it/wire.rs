@@ -7,41 +7,13 @@
 // A message's context takes only an object at each root; a
 // trace's takes a redacted root's `null`.
 
-use dataflow_rs::function::FunctionConfig;
+use crate::support::Put;
 use dataflow_rs::observe::{StepResult, Trace, TraceOptions};
 use dataflow_rs::run::{Context, RunStatus};
-use dataflow_rs::{Ctx, Engine, Error, Expr, Function, Message, Outcome, Result, RunOptions};
+use dataflow_rs::{Engine, Message, RunOptions};
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use std::time::Duration;
-
-/// `put`'s config.
-#[derive(FunctionConfig)]
-struct PutConfig {
-    /// Written through `Ctx::set` in key order.
-    writes: BTreeMap<String, Expr>,
-    /// `"ok"`, or `"err"` for a `PARTNER_DOWN` service error.
-    outcome: Expr,
-}
-
-/// Writes, then returns what its config names.
-struct Put;
-
-impl Function for Put {
-    type Config = PutConfig;
-
-    async fn call(&self, ctx: &mut Ctx<'_>, cfg: &PutConfig) -> Result<Outcome> {
-        for (path, expr) in &cfg.writes {
-            let value = ctx.eval(expr)?.into_owned();
-            ctx.set(&path.parse()?, value)?;
-        }
-        match Value::from(&*ctx.eval(&cfg.outcome)?).as_str() {
-            Some("err") => Err(Error::service("PARTNER_DOWN", "down")),
-            _ => Ok(Outcome::Ok),
-        }
-    }
-}
 
 fn text<T: serde::Serialize + ?Sized>(v: &T) -> String {
     serde_json::to_string(v).unwrap()

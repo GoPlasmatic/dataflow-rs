@@ -1,4 +1,4 @@
-//! `SyncFunction`: how a built-in runs, and `SyncCtx`, what it sees.
+//! `SyncCtx`: what a built-in sees when it runs.
 //!
 //! A built-in reads the message through the run view and writes through the
 //! run context, so a write is spliced into the view and marked, never
@@ -8,19 +8,9 @@
 use crate::base::{Change, ErrorRecord, Result};
 use crate::expr::arena::with_arena;
 use crate::expr::{Expr, ExprEngine, FromValue, Path};
-use crate::function::Outcome;
 use crate::state::RunContext;
 use datavalue::{DataValue, OwnedDataValue};
 use std::sync::Arc;
-
-/// A built-in's call. Crate-private: hosts implement `Function`, since a
-/// second public kind of function would bring a second context type and
-/// exceptions to layers, dry runs and fan-outs.
-pub(crate) trait SyncFunction {
-    /// One call. Writes go through `cx` at once and stand even if the call
-    /// then returns `Err`.
-    fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome>;
-}
 
 /// What a built-in sees: the run context, the run's facts, and the buffers
 /// the recorder reads.
@@ -108,12 +98,7 @@ pub(crate) fn eval<'e, T: FromValue>(
     if let Some(c) = expr.constant() {
         return Ok(T::lend(c));
     }
-    rc.read(|_, root| {
-        with_arena(|arena| {
-            let view = exprs.eval_in(expr.logic(), root, arena)?;
-            expr.convert(view).map(T::give)
-        })
-    })
+    rc.read(|_, root| with_arena(|arena| exprs.eval_view(expr, root, arena)))
 }
 
 /// Tests a condition against the view, in a pooled arena, so nothing it

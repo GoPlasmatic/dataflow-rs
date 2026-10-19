@@ -223,6 +223,7 @@ impl Task {
             if error.timestamp.is_some() {
                 error.timestamp = Some(Arc::from(TIMESTAMP));
             }
+            error.message = dataflow_corpus::normalise::dependency_text(&error.message);
         }
         Observed {
             context: context_text(slot),

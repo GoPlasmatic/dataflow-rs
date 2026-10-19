@@ -3,37 +3,8 @@
 //! seed and case number.
 
 use crate::expr::Seg;
+pub use dataflow_corpus::Rng;
 use datavalue::OwnedDataValue;
-
-pub struct Rng(u64);
-
-impl Rng {
-    pub fn new(seed: u64) -> Self {
-        Self(seed.max(1))
-    }
-
-    pub fn next(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        self.0 = x;
-        x.wrapping_mul(0x2545_f491_4f6c_dd1d)
-    }
-
-    pub fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-
-    /// True with probability `num / den`.
-    pub fn chance(&mut self, num: u64, den: u64) -> bool {
-        self.next() % den < num
-    }
-
-    pub fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
-        &items[self.below(items.len())]
-    }
-}
 
 /// Object keys: plain words, keys that look like indices, a key that needs
 /// the `#` escape to be named, and the empty key that `a..b` names.
@@ -228,8 +199,28 @@ pub fn reference_merge_root(context: &mut OwnedDataValue, path: &str, new_value:
     }
 }
 
-/// Whether `DATAFLOW_V4_DEEP` is set (to anything): the model test then runs
-/// its full sequence count.
+/// `DATAFLOW_PROPTEST_SEED` (decimal or `0x`-prefixed hex) when set, or
+/// `default` when unset, so every property test reproduces from its default
+/// seed by default and can be re-seeded from the environment.
+pub fn seed(default: u64) -> u64 {
+    std::env::var("DATAFLOW_PROPTEST_SEED")
+        .ok()
+        .and_then(|raw| {
+            let trimmed = raw.trim();
+            if let Some(hex) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
+                u64::from_str_radix(hex, 16).ok()
+            } else {
+                trimmed.parse::<u64>().ok()
+            }
+        })
+        .unwrap_or(default)
+}
+
+/// Whether `DATAFLOW_DEEP` (or the legacy `DATAFLOW_V4_DEEP`) is set: the
+/// model test then runs its full sequence count.
 pub fn deep() -> bool {
-    std::env::var_os("DATAFLOW_V4_DEEP").is_some()
+    std::env::var_os("DATAFLOW_DEEP").is_some() || std::env::var_os("DATAFLOW_V4_DEEP").is_some()
 }

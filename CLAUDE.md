@@ -65,8 +65,8 @@ GoPlasmatic/Orion#385.
   walk on every small tree and path (`state::tests::splice_property`).
 - `src/function/`: `Function`, `FunctionConfig`, `Ctx` and `CallInfo`,
   `Outcome`, the overlay, `CallLayer` and `layers::Answer`, `Registry`,
-  `FunctionSpec`, `Templated`, `testing`, and `builtins/` (the eight built-ins
-  on the crate-private `SyncFunction`).
+  `FunctionSpec`, `Templated`, `testing`, and `builtins/` (the eight built-in
+  configs, invoked synchronously over the crate-private `SyncCtx`).
 - `src/program/`: `Compiler` (`check`, `check_steps`, `compile_one`, `link`),
   the checks, the lowering into six ops, fingerprints, `Program`.
 - `src/run/`: `Engine`, `EngineBuilder`, `EngineConfig`, `ErrorContext`,
@@ -167,7 +167,7 @@ cargo deny check
 
 **`cargo test` at the root must stay under a minute, rebuild included.** The
 run-context model test runs once, in the default build, at 150 sequences per
-tuning; `DATAFLOW_V4_DEEP=1 cargo test --lib state::` runs its full 2,000
+tuning; `DATAFLOW_DEEP=1 cargo test --lib state::` runs its full 2,000
 (about a minute on its own). Run it after any change under `src/state/`. Time
 the suite like for like, in a scratch worktree with its own target directory,
 and time a control commit beside the head whenever a reading crosses the
@@ -175,15 +175,15 @@ minute: the owner's Docker stack doubled a reading once (34.6 s against 1:09,
 with `main` at 1:05 minutes later). In the repository's own `target/`, macOS
 scans each newly linked test binary on its first launch, which can add minutes.
 
-### The counts
+### Test targets
 
-`cargo test --workspace --all-features` should report 1037 passing: the
-root's 887, the derive's 2, the corpus's 18 and `docs-tests`' 130 (117 page
-doctests, 11 README doctests, the derive README's one and its coverage test).
-`cargo test` at the root (the default build) should report 859, and `cargo
-test -p dataflow-docs-tests` 130. The operator families are `#[cfg]`-gated, so the
-counts legitimately differ by feature set: the root reports 869 under
-`--no-default-features --features all-operators`.
+`cargo test --workspace --all-features` runs the root library and its three
+integration binaries (`it`, `secrets_isolation`, `ts_types`), the derive crate,
+the corpus crate, and `dataflow-docs-tests` (which compiles the book's and
+READMEs' Rust blocks against a default-feature build). Because the operator
+families are `#[cfg]`-gated, the root's test count legitimately varies by
+feature set (`--all-features` vs default vs `--no-default-features --features
+all-operators`). Do not hard-code absolute test counts in docs or tests.
 
 ### Examples
 
@@ -347,7 +347,7 @@ FunctionConfig`, `spec`, `prepare`, `async fn call(&self, ctx: &mut Ctx<'_>,
 cfg: &Self::Config)`); its writes go to a per-call overlay, replayed at their
 paths in order on `Ok` and dropped whole on `Err`. The same overlay is the
 fan-out fork, so isolation costs no clone. The eight built-ins run inline on
-the crate-private `SyncFunction` and write through immediately. Layers wrap
+the crate-private `SyncCtx` and write through immediately. Layers wrap
 every host call at registry scope (`Registry::layer`, `EngineBuilder::layer`)
 and at run scope (`RunOptions::layers`); the built-ins are never wrapped.
 

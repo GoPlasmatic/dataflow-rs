@@ -2,6 +2,7 @@
 
 use super::config::ValueKind;
 use super::path::Path;
+use super::rules::Shape;
 use super::walk::reads_secret;
 use crate::base::{Error, ErrorKind};
 use datalogic_rs::Logic;
@@ -145,8 +146,10 @@ impl FromValue for u64 {
     type Out<'a> = Self;
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
-            DataValue::Number(n) => n.as_u64().ok_or_else(|| format!("{v} is not a u64")),
-            other => Err(format!("{other} is not a u64")),
+            DataValue::Number(n) => n
+                .as_u64()
+                .ok_or_else(|| "a negative or fractional number is not a u64".to_owned()),
+            other => Err(format!("{} is not a u64", Shape::of_view(other).describe())),
         }
     }
     fn lend(c: &Self) -> Self::Out<'_> {
@@ -172,8 +175,13 @@ impl FromValue for i64 {
     /// An integer in range, or a whole float that is one, as [`u64`]'s.
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
-            DataValue::Number(n) => n.as_i64().ok_or_else(|| format!("{v} is not an i64")),
-            other => Err(format!("{other} is not an i64")),
+            DataValue::Number(n) => n
+                .as_i64()
+                .ok_or_else(|| "an out-of-range or fractional number is not an i64".to_owned()),
+            other => Err(format!(
+                "{} is not an i64",
+                Shape::of_view(other).describe()
+            )),
         }
     }
     fn lend(c: &Self) -> Self::Out<'_> {
@@ -201,8 +209,11 @@ impl FromValue for f64 {
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
             DataValue::Number(n) if n.as_f64().is_finite() => Ok(n.as_f64()),
-            DataValue::Number(n) => Err(format!("{} is not a finite f64", n.as_f64())),
-            other => Err(format!("{other} is not an f64")),
+            DataValue::Number(_) => Err("a non-finite number is not a finite f64".to_owned()),
+            other => Err(format!(
+                "{} is not an f64",
+                Shape::of_view(other).describe()
+            )),
         }
     }
     fn lend(c: &Self) -> Self::Out<'_> {
@@ -229,7 +240,10 @@ impl FromValue for bool {
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
             DataValue::Bool(b) => Ok(*b),
-            other => Err(format!("{other} is not a bool")),
+            other => Err(format!(
+                "{} is not a bool",
+                Shape::of_view(other).describe()
+            )),
         }
     }
     fn lend(c: &Self) -> Self::Out<'_> {
@@ -255,7 +269,10 @@ impl FromValue for Path {
     fn from_view(v: &DataValue<'_>) -> Result<Self, String> {
         match v {
             DataValue::String(s) => Self::from_str(s).map_err(|e| e.message().to_owned()),
-            other => Err(format!("{other} is not a path")),
+            other => Err(format!(
+                "{} is not a path",
+                Shape::of_view(other).describe()
+            )),
         }
     }
     fn lend(c: &Self) -> Self::Out<'_> {
@@ -297,6 +314,27 @@ pub struct Expr<T: FromValue = OwnedDataValue> {
     pub(super) constant: Option<T>,
 }
 
+/// `raw` as compact JSON, truncated at 120 characters so arbitrarily large
+/// expressions cannot bloat error records, traces or logs.
+pub(crate) fn snippet(raw: &Value) -> String {
+    const MAX: usize = 120;
+    let text = raw.to_string();
+    if text.len() <= MAX {
+        return text;
+    }
+    let end = text.floor_char_boundary(MAX);
+    format!("{}…", &text[..end])
+}
+
+impl Expr<OwnedDataValue> {
+    /// Whether this expression folds at compile time to the literal `true`:
+    /// the one definition shared by lowering (`compile.rs`) and the
+    /// `UNGUARDED_VALIDATION` check (`checks.rs`).
+    pub(crate) fn is_trivially_true(&self) -> bool {
+        self.constant() == Some(&OwnedDataValue::Bool(true))
+    }
+}
+
 impl<T: FromValue> Expr<T> {
     /// The folded constant, if the expression reads nothing.
     pub fn constant(&self) -> Option<&T> {
@@ -314,15 +352,15 @@ impl<T: FromValue> Expr<T> {
     }
 
     /// An evaluation's result as a `T`, or the [`ErrorKind::Eval`] error
-    /// naming this expression. The reason quotes the value, so an expression
-    /// that reads a secret gives only the type it expected: the authored
-    /// expression names the secret, never its value.
+    /// naming this expression. The reason names only the value's kind, and an
+    /// expression that reads a secret gives only the type it expected.
     pub(crate) fn convert(&self, view: &DataValue<'_>) -> crate::Result<T> {
         T::from_view(view).map_err(|why| {
+            let shown = snippet(&self.raw);
             let message = if reads_secret(&self.raw) {
-                format!("`{}` did not give {}", self.raw, T::type_name())
+                format!("`{shown}` did not give {}", T::type_name())
             } else {
-                format!("`{}` did not give {}: {why}", self.raw, T::type_name())
+                format!("`{shown}` did not give {}: {why}", T::type_name())
             };
             Error::new(ErrorKind::Eval, message)
         })

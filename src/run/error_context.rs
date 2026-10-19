@@ -44,7 +44,7 @@ use std::borrow::Cow;
 /// assert_eq!(*refused.kind(), ErrorKind::Config);
 /// # Ok::<(), dataflow_rs::Error>(())
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErrorContext {
     path: Path,
     limit: usize,

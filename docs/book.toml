@@ -8,9 +8,9 @@ src = "src"
 [build]
 build-dir = "book"
 
-# `mdbook test` compiles every ```rust block in the book. Without this it
-# defaults to edition 2015, where `async fn` is not permitted and `use` paths
-# resolve differently — the crate itself is edition 2024.
+# The book's ```rust blocks are compiled by the `dataflow-docs-tests` crate
+# (`cargo test -p dataflow-docs-tests`), which links them with Cargo's full
+# dependency set; this sets the edition metadata to match the workspace.
 [rust]
 edition = "2024"
 

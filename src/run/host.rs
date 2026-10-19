@@ -20,13 +20,13 @@
 //! A fan-out's elements are host calls too: [`invoke`] is the one call, and
 //! [`fan_out`](super::fan_out::fan_out) settles and records each element.
 
-use super::cancel::Limits;
 #[cfg(not(target_arch = "wasm32"))]
 use super::cancel::race;
+use super::cancel::{Limits, Stop};
 use super::interp::RunEnv;
 use super::policy::{self, Flow};
-use super::record::{self, Completed, Stamp};
-use crate::base::{Change, ErrorRecord, Result, TaskIx};
+use super::record::{self, Completed, Stamp, TaskIds};
+use crate::base::{Change, Error, ErrorRecord, Result, TaskIx};
 use crate::expr::Path;
 use crate::function::{BoundCall, CallInfo, CallLayer, CallStart, Ctx, Next, Outcome, Overlay};
 use crate::program::{CallSite, CompiledWorkflow};
@@ -62,7 +62,7 @@ pub(crate) fn call_start<'c, 'r: 'c, 'p: 'c>(
         info: env.call_info(wf, site.task, Stamp::sweep(env)),
         deadline: env.limits.deadline,
         cancel: env.limits.cancel,
-        capture: env.capture,
+        capture: env.capture.captures(),
     };
     let layers = Layers {
         run: env.layers,
@@ -99,10 +99,36 @@ impl<'r> RunEnv<'r, '_> {
     }
 }
 
+/// How a host call ended: either the chain returned on its own, or a run
+/// limit cut the call short (or had passed when it returned `Err`).
+pub(crate) enum CallResult {
+    /// The chain returned `result` with no run limit having fired.
+    Returned(Result<Outcome>),
+    /// `stop` cut the call short (or had passed when it returned `Err`),
+    /// producing `error`.
+    CutShort(Stop, Error),
+}
+
+impl CallResult {
+    /// Whether the call returned `Ok`: only then do its writes and `Change`s
+    /// stand.
+    pub(crate) fn is_ok(&self) -> bool {
+        matches!(self, Self::Returned(Ok(_)))
+    }
+
+    /// As a `Result<Outcome>`, for callers outside a run (`testing::call`).
+    pub(crate) fn into_result(self) -> Result<Outcome> {
+        match self {
+            Self::Returned(result) => result,
+            Self::CutShort(_, error) => Err(error),
+        }
+    }
+}
+
 /// What one call left: its result, and what it wrote and recorded.
 pub(crate) struct Invoked {
-    /// What the chain returned.
-    pub(crate) result: Result<Outcome>,
+    /// How the chain ended.
+    pub(crate) result: CallResult,
     /// The call's writes, in order.
     pub(crate) overlay: Overlay,
     /// The call's `Change`s, in write order.
@@ -112,10 +138,6 @@ pub(crate) struct Invoked {
     /// What the call saw at `collect` when it returned `Ok`: a fan-out
     /// element's result.
     pub(crate) collected: Option<OwnedDataValue>,
-    /// Whether the run's deadline or token cut the call short, or had
-    /// passed when the call returned `Err`: `result` is then the `Err` that
-    /// stops the run.
-    pub(crate) cut_short: bool,
     /// How long a fan-out element's call ran, in a timed run: set by its
     /// caller, which reads the clock around the call.
     pub(crate) elapsed: Option<Duration>,
@@ -160,18 +182,18 @@ pub(crate) fn invoke<'r>(
             None if limits.is_set() => Box::pin(race(chain.run(&mut ctx), limits)).await,
             None => Ok(chain.run(&mut ctx).await),
         };
-        let (result, cut_short) = match ran {
+        let result = match ran {
             // An `Err` once the run's own limit has passed is the limit's:
             // the call returned in the wake the limit fired in, before the
             // race could cut it short, or on wasm, where nothing races. A
             // child run handed the run's limits ends that way. Only an
             // `Err` pays for the check.
             Ok(Err(e)) => match limits.stop() {
-                Some(stop) => (Err(stop.during(function)), true),
-                None => (Err(e), false),
+                Some(stop) => CallResult::CutShort(stop, stop.during(function)),
+                None => CallResult::Returned(Err(e)),
             },
-            Ok(result) => (result, false),
-            Err(stop) => (Err(stop.during(function)), true),
+            Ok(result) => CallResult::Returned(result),
+            Err(stop) => CallResult::CutShort(stop, stop.during(function)),
         };
         let collected = match collect {
             Some(path) if result.is_ok() => ctx.get(path).map(Cow::into_owned),
@@ -184,25 +206,92 @@ pub(crate) fn invoke<'r>(
             changes,
             errors,
             collected,
-            cut_short,
             elapsed: None,
         }
     }
 }
 
-/// The records a call added, onto the message, each stamped
+/// The records a call added, onto `out`, each stamped
 /// ([`ErrorRecord::stamp`]) with the task's ids, the run's timestamp and in
 /// a fan-out the element's index, where it carries none of its own.
 pub(crate) fn keep_records(
-    env: &mut RunEnv<'_, '_>,
-    task: u32,
+    ids: TaskIds<'_>,
+    now_text: &Arc<str>,
+    out: &mut Vec<ErrorRecord>,
     records: Vec<ErrorRecord>,
     element_index: Option<usize>,
 ) {
-    let ids = env.ids(task);
     for mut record in records {
-        record.stamp(ids.workflow, Some(ids.task), env.now_text, element_index);
-        env.errors.push(record);
+        record.stamp(ids.workflow, Some(ids.task), now_text, element_index);
+        out.push(record);
+    }
+}
+
+/// What [`settle`] leaves for the caller and the recorder: how the call
+/// ended, what it saw at `collect`, how long it ran, where its records
+/// begin in `env.errors`, and whether a change replaces a root.
+pub(crate) struct Settled {
+    pub(crate) result: CallResult,
+    pub(crate) collected: Option<OwnedDataValue>,
+    pub(crate) elapsed: Option<Duration>,
+    pub(crate) errors_before: usize,
+    pub(crate) marked: bool,
+}
+
+/// Applies a call's writes on `ok`: the overlay is replayed through `rc` and
+/// the call's `Change`s are kept; on `Err`, both are dropped.
+pub(crate) fn apply_writes(
+    rc: &mut RunContext<'_, '_>,
+    ok: bool,
+    overlay: Overlay,
+    changes: Vec<Change>,
+) -> Vec<Change> {
+    if ok {
+        overlay.apply(rc);
+        changes
+    } else {
+        Vec::new()
+    }
+}
+
+/// Settles one host call's [`Invoked`] into the run, in one order everywhere
+/// (`call_host` and `fan_out`):
+///
+/// 1. `errors_before` is `env.errors.len()` before any record the call added
+///    is pushed, so the error context and the trace step see the call's
+///    records and the recorder's own, in order;
+/// 2. the records the call added are stamped and pushed onto `env.errors`
+///    ([`keep_records`]);
+/// 3. on `Ok`, the overlay is replayed through `rc` and `env.changes` takes
+///    the call's `Change`s; on `Err`, both are dropped ([`apply_writes`]);
+/// 4. `marked` is whether any kept change replaces a root, so the audit's
+///    copy clears `replaced`.
+pub(crate) fn settle(
+    rc: &mut RunContext<'_, '_>,
+    env: &mut RunEnv<'_, '_>,
+    task: u32,
+    invoked: Invoked,
+    element_index: Option<usize>,
+) -> Settled {
+    let Invoked {
+        result,
+        overlay,
+        changes,
+        errors,
+        collected,
+        elapsed,
+    } = invoked;
+    let errors_before = env.errors.len();
+    let ids = env.ids(task);
+    keep_records(ids, env.now_text, env.errors, errors, element_index);
+    env.changes = apply_writes(rc, result.is_ok(), overlay, changes);
+    let marked = replaces_a_root(&env.changes);
+    Settled {
+        result,
+        collected,
+        elapsed,
+        errors_before,
+        marked,
     }
 }
 
@@ -222,45 +311,31 @@ pub(crate) async fn call_host<'p>(
     bound: &'p dyn BoundCall,
 ) -> Flow {
     let started = env.watch.timed.then(record::now);
-    let Invoked {
-        result,
-        overlay,
-        changes,
-        errors,
-        cut_short,
-        ..
-    } = {
+    let invoked = {
         let reader = rc.reader();
         let (start, layers) = call_start(env, reader, wf, site);
         invoke(start, bound, layers, None, env.limits.timers).await
     };
     let elapsed = started.map(record::since);
-    // Read after the call, so the run's future keeps neither across its
+    // Settled after the call, so the run's future keeps neither across its
     // `.await`: nothing pushes to the message's records while it runs.
-    let task_id = env.ids(site.task).task;
-    let errors_before = env.errors.len();
-    if result.is_ok() {
-        overlay.apply(rc);
-        env.changes = changes;
-    }
-    let marked = replaces_a_root(&env.changes);
-    keep_records(env, site.task, errors, None);
-    let decision = match result {
-        Err(e) if cut_short => policy::cut_short(task_id, e),
-        result => policy::decide(site.policy, task_id, result),
-    };
-    let done = Completed {
-        task: site.task,
-        stamp: Stamp::sweep(env),
-        elapsed,
+    let Settled {
+        result,
         errors_before,
         marked,
+        ..
+    } = settle(rc, env, site.task, invoked, None);
+    let task_id = env.ids(site.task).task;
+    let decision = match result {
+        CallResult::CutShort(stop, error) => policy::cut_short(task_id, stop, &error),
+        CallResult::Returned(result) => policy::decide(site.policy, task_id, result),
     };
+    let done = Completed::new(env, site.task, None, elapsed, errors_before, marked);
     record::record(rc, env, wf, done, decision)
 }
 
 /// Whether a host call's `changes` replace a root: the recorder then
 /// clears the flag on the audit's copy, which keeps v3's bytes.
-pub(crate) fn replaces_a_root(changes: &[Change]) -> bool {
+fn replaces_a_root(changes: &[Change]) -> bool {
     changes.iter().any(|c| c.replaced)
 }

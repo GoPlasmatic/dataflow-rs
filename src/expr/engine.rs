@@ -184,7 +184,11 @@ impl ExprEngine {
                         T::from_view(v).map_err(|why| {
                             Error::new(
                                 ErrorKind::Config,
-                                format!("`{raw}` must be {}: {why}", T::type_name()),
+                                format!(
+                                    "`{}` must be {}: {why}",
+                                    super::expr::snippet(raw),
+                                    T::type_name()
+                                ),
                             )
                         })
                     })
@@ -250,6 +254,22 @@ impl ExprEngine {
         })
     }
 
+    /// Evaluates `expr` against a view `root`, allocating in `arena` and
+    /// converting to `T`: the shared evaluation path for `SyncCtx`, `Ctx` and
+    /// `map`'s destination.
+    pub(crate) fn eval_view<'e, T: FromValue>(
+        &self,
+        expr: &'e Expr<T>,
+        root: &DataValue<'_>,
+        arena: &Bump,
+    ) -> Result<T::Out<'e>> {
+        if let Some(c) = expr.constant() {
+            return Ok(T::lend(c));
+        }
+        let view = self.eval_in(expr.logic(), root, arena)?;
+        expr.convert(view).map(T::give)
+    }
+
     /// Evaluates `logic` against a view root, allocating in `arena`: how a
     /// built-in reads the run view, and how `map` evaluates in the run arena
     /// so its result splices without a copy.
@@ -278,7 +298,7 @@ impl ExprEngine {
 
 /// Classifies a datalogic evaluation failure: a spent budget is its own kind.
 fn eval_error(e: datalogic_rs::Error) -> Error {
-    let kind = if e.tag() == "BudgetExceeded" {
+    let kind = if matches!(e.kind, datalogic_rs::ErrorKind::BudgetExceeded { .. }) {
         ErrorKind::Budget
     } else {
         ErrorKind::Eval
@@ -462,8 +482,8 @@ mod tests {
     fn a_missing_var_path_resolves_to_null_not_an_error() {
         // The exact mechanism behind the pitfall CLAUDE.md documents for
         // `payload.*` expressions: a `var` over a path that does not resolve
-        // is `Null`, silently, never `Err`. `Template::eval` and the built-in
-        // `*_logic` fields inherit this — there is no engine-level signal that
+        // is `Null`, silently, never `Err`. `Expr` and the built-in
+        // expression fields inherit this — there is no engine-level signal that
         // distinguishes "field absent" from "field is null".
         let e = ExprEngine::default();
         assert_eq!(
@@ -501,14 +521,12 @@ mod tests {
     #[test]
     fn an_unrecognised_operator_is_not_an_error_under_templating() {
         // The load-bearing fact behind #26's refusal of a static "known
-        // operators" table, and the reason `Template` documents itself as
-        // opt-in per field rather than a blanket JSON wrapper: under
-        // templating (which LogicCompiler and TemplateCompiler both enable),
-        // an outright typo neither fails to compile nor fails to evaluate. It
-        // echoes back as a literal structured object instead — a workflow
-        // author who mistypes an operator name gets silent pass-through, not a
-        // validation error. True under every feature combination, so this half
-        // of the tripwire is unconditional.
+        // operators" table: under JSONLogic templating (which `ExprEngine`
+        // enables), an outright typo neither fails to compile nor fails to
+        // evaluate. It echoes back as a literal structured object instead — a
+        // workflow author who mistypes an operator name gets silent
+        // pass-through, not a validation error. True under every feature
+        // combination, so this half of the tripwire is unconditional.
         let e = ExprEngine::default();
         let logic = json!({"totally_made_up_op_xyz": ["a", "b"]});
         assert_eq!(

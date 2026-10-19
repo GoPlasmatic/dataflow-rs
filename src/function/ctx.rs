@@ -415,8 +415,7 @@ impl<'r> Ctx<'r> {
         }
         with_arena(|arena| {
             let root = self.root_in(arena);
-            let view = self.start.exprs.eval_in(expr.logic(), root, arena)?;
-            expr.convert(view).map(T::give)
+            self.start.exprs.eval_view(expr, root, arena)
         })
     }
 

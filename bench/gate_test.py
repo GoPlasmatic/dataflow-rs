@@ -95,6 +95,21 @@ class Measuring(unittest.TestCase):
         finally:
             del os.environ[gate.SMOKE]
 
+    def test_ratio_and_verdict_statistics(self):
+        self.assertAlmostEqual(gate.ratio("lower", 10.0, 12.0), 1.2)
+        self.assertAlmostEqual(gate.ratio("higher", 10.0, 5.0), 2.0)
+        self.assertEqual(gate.ratio("lower", 0.0, 0.0), 1.0)
+        self.assertEqual(gate.half_iqr_pct([1.0]), 0.0)
+        self.assertAlmostEqual(gate.half_iqr_pct([1.00, 1.02, 1.04, 1.06]), 1.5)
+        self.assertAlmostEqual(gate.spread_pct([90.0, 100.0, 110.0]), 20.0)
+        self.assertEqual(gate.verdict(1.05, 3.0), "WORSE")
+        self.assertEqual(gate.verdict(0.95, 3.0), "better")
+        self.assertEqual(gate.verdict(1.01, 3.0), "not slower")
+        self.assertEqual(gate.rule("large_context_handler", "write_only_ns"), "info")
+        self.assertEqual(gate.rule("realistic_benchmark", "latency_p50"), "not slower")
+        info = gate.machine((1.0, 0.5, 0.25))
+        self.assertEqual(info["load_avg_before"], [1.0, 0.5, 0.25])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -299,7 +299,9 @@ async fn run_step(
     let plain = normalised(&message, error_context);
 
     let mut record = Json::object();
-    record.insert("run", wire(&run));
+    let mut run_wire = wire(&run);
+    normalise::run(&mut run_wire);
+    record.insert("run", run_wire);
     record.insert("message", plain.clone());
     if spec.trace {
         let traced_opts = options(spec).trace(TraceOptions::default().timings(opts.timings));

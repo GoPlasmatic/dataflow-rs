@@ -10,6 +10,7 @@
 //! under [`Policy::per_element`], which cannot halt, since `terminal` and
 //! the halting policies apply once, to the whole fan-out.
 
+use super::cancel::Stop;
 use crate::base::{Error, Result, TASK_ERROR, TASK_STATUS_ERROR};
 use crate::def::{FailurePolicy, RejectionPolicy};
 use crate::function::Outcome;
@@ -32,7 +33,7 @@ pub(crate) enum Flow {
     Fail(Error),
     /// The run ends, whatever the policies: its deadline passed or its
     /// token was cancelled.
-    Stop(Error),
+    Stop(Stop),
 }
 
 /// What one completed call records and does.
@@ -160,25 +161,15 @@ pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> 
 /// What a call the run's deadline or token cut short records and does, or
 /// one that returned `Err` once either had passed: what an `Err` from the
 /// function records, a 500 and `error`'s record, whatever the task's
-/// policies, and then the run stops.
-pub(crate) fn cut_short(task_id: &str, error: Error) -> Decision {
-    let fails = Policy {
-        on_failure: FailurePolicy::Fail,
-        on_rejection: RejectionPolicy::Continue,
-        terminal: false,
-    };
-    let Decision {
-        status,
-        record,
-        flow,
-    } = decide(fails, task_id, Err(error));
-    let Flow::Fail(error) = flow else {
-        unreachable!("an `Err` under `on_failure: fail` fails")
-    };
+/// policies, and then the run stops with `stop`.
+pub(crate) fn cut_short(task_id: &str, stop: Stop, error: &Error) -> Decision {
     Decision {
-        status,
-        record,
-        flow: Flow::Stop(error),
+        status: Some(500),
+        record: Some((
+            Cow::Owned(error.code().to_owned()),
+            format!("Task {task_id} error: {}", error.record_text()),
+        )),
+        flow: Flow::Stop(stop),
     }
 }
 

@@ -8,16 +8,10 @@
 // `DATAFLOW_GOLDEN_WRITE=1` rewrites them).
 
 use crate::support::run_helpers::{Golden, Ran, Run, build, data, run_on};
+use crate::support::{map, message, with};
 use dataflow_rs::run::{RunStatus, Selection, WorkflowExit};
-use dataflow_rs::{Message, Run as Report, RunOptions};
-use datavalue::OwnedDataValue;
+use dataflow_rs::{Run as Report, RunOptions};
 use serde_json::{Value, json};
-
-/// A `map` task writing `logic` at `path`.
-fn map(id: &str, path: &str, logic: Value) -> Value {
-    json!({"id": id, "function": {"name": "map", "input": {
-        "mappings": [{"path": path, "logic": logic}]}}})
-}
 
 /// A `map` task appending `logic` to the array at `path`.
 fn append(id: &str, path: &str, logic: Value) -> Value {
@@ -34,14 +28,6 @@ fn var(path: &str) -> Value {
     json!({"var": path})
 }
 
-/// `node` with each `(key, value)` of `extra` set on it.
-fn with(mut node: Value, extra: &[(&str, Value)]) -> Value {
-    for (key, value) in extra {
-        node[*key] = value.clone();
-    }
-    node
-}
-
 /// A workflow `id` at `priority` looping by `config` over `tasks`.
 fn looping(id: &str, priority: u32, config: Value, tasks: Vec<Value>) -> Value {
     json!({"id": id, "priority": priority, "loop": config, "tasks": tasks})
@@ -50,7 +36,7 @@ fn looping(id: &str, priority: u32, config: Value, tasks: Vec<Value>) -> Value {
 /// Builds `workflows`, runs each of `runs` over them, and holds every run to
 /// test `name`'s golden file.
 async fn golden(name: &str, workflows: &[Value], runs: &[Run]) -> Vec<Ran> {
-    let mut golden = Golden::new("run_loops", name);
+    let mut golden = Golden::new(crate::support::golden::module_dir(module_path!()), name);
     let ran = golden_runs(&mut golden, workflows, runs).await;
     golden.check();
     ran
@@ -91,20 +77,10 @@ fn ran(id: &str, sweeps: u32, exit: WorkflowExit) -> Considered {
     (id.to_owned(), "ran", sweeps, Some(exit))
 }
 
-/// A message whose `data` is `data`.
-fn message(data: Value) -> Message {
-    Message::from_parts(
-        OwnedDataValue::Null,
-        OwnedDataValue::from(&data),
-        OwnedDataValue::Null,
-    )
-    .with_id("m")
-}
-
 #[tokio::test]
 async fn counter_sequences_follow_init_increment_and_max() {
     let mut g = Golden::new(
-        "run_loops",
+        crate::support::golden::module_dir(module_path!()),
         "counter_sequences_follow_init_increment_and_max",
     );
     let mut compared = 0;
@@ -534,8 +510,8 @@ async fn an_over_that_fails_to_evaluate_records_the_evaluation_error() {
     };
     assert_eq!(record.code, "LOGIC_ERROR");
     assert_eq!(
-        record.message,
-        r#"Workflow w: loop.over failed to evaluate: Logic evaluation error: Thrown: {"type":"NaN"} (in operator: /)"#
+        dataflow_corpus::normalise::dependency_text(&record.message),
+        "Workflow w: loop.over failed to evaluate: Logic evaluation error: Thrown: <dependency message>"
     );
     assert_eq!(record.workflow_id.as_deref(), Some("w"));
     assert_eq!(record.task_id, None);
@@ -711,7 +687,7 @@ async fn a_failure_under_continue_starts_the_next_sweep() {
 #[tokio::test]
 async fn a_setup_failure_stops_unless_the_workflow_continues() {
     let mut g = Golden::new(
-        "run_loops",
+        crate::support::golden::module_dir(module_path!()),
         "a_setup_failure_stops_unless_the_workflow_continues",
     );
     for continues in [true, false] {

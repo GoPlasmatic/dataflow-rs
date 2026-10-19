@@ -108,7 +108,11 @@ export function IntegratedDebugToolbar({
   const finalErrorCount = message?.errors.length ?? 0;
 
   // Track last execution to prevent duplicates
-  const lastExecutionRef = useRef<{ workflows: string; payload: string } | null>(null);
+  const lastExecutionRef = useRef<{
+    workflows: string;
+    payload: string;
+    runExecution: typeof runExecution;
+  } | null>(null);
 
   // Execute workflows with duplicate prevention
   const handleExecute = useCallback(async () => {
@@ -117,11 +121,12 @@ export function IntegratedDebugToolbar({
     // Check if this is the same execution as last time
     const workflowsJson = JSON.stringify(workflows);
     const payloadJson = JSON.stringify(payload || {});
-    const current = { workflows: workflowsJson, payload: payloadJson };
+    const current = { workflows: workflowsJson, payload: payloadJson, runExecution };
 
     if (
       lastExecutionRef.current?.workflows === current.workflows &&
-      lastExecutionRef.current?.payload === current.payload
+      lastExecutionRef.current?.payload === current.payload &&
+      lastExecutionRef.current?.runExecution === current.runExecution
     ) {
       return; // Skip duplicate execution
     }
@@ -173,7 +178,7 @@ export function IntegratedDebugToolbar({
     }
   }, [hasTrace, filteredStepIndices, goToStep]);
 
-  // Debounced auto-execute when workflows or payload change
+  // Debounced auto-execute when workflows, payload, or engine change
   useEffect(() => {
     if (!autoExecute || !isEngineReady || workflows.length === 0) return;
 
@@ -182,7 +187,7 @@ export function IntegratedDebugToolbar({
     }, PLAYBACK.AUTO_EXECUTE_DEBOUNCE_MS);
 
     return () => clearTimeout(timeoutId);
-  }, [autoExecute, isEngineReady, workflows, payload]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [autoExecute, isEngineReady, workflows, payload, handleExecute]);
 
   // Keyboard shortcuts
   const handleKeyDown = useCallback(

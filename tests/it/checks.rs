@@ -743,23 +743,25 @@ fn payload_reads() -> [Value; 5] {
 }
 
 /// `read` inside a `cat`, in a `map` `logic` and in a task condition: the
-/// two definitions, and where the `cat`'s element sits in each.
+/// two definitions, and where each expression sits. The lint reports at the
+/// expression: which path it reads is in its message, from the compiled
+/// rule's `facts()`.
 fn in_logic_and_condition(read: &Value) -> [(Value, &'static str); 2] {
     let e = json!({"cat": [read, "x"]});
     [
         (
             wf(json!([map("t", e.clone())])),
-            "tasks[0].function.input.mappings[0].logic.cat[0]",
+            "tasks[0].function.input.mappings[0].logic",
         ),
         (
             wf(json!([with(map("t", json!(1)), "condition", e)])),
-            "tasks[0].condition.cat[0]",
+            "tasks[0].condition",
         ),
     ]
 }
 
 #[test]
-fn a_literal_var_or_val_rooted_at_payload_is_a_defect_at_the_object() {
+fn a_literal_var_or_val_rooted_at_payload_is_a_defect_at_the_expression() {
     for read in payload_reads() {
         for (json, at) in in_logic_and_condition(&read) {
             let issues = issues_of(&json, &[C::PayloadVar]);
@@ -778,6 +780,54 @@ fn a_literal_var_or_val_rooted_at_payload_is_a_defect_at_the_object() {
             assert!(compiler().compile_one(&def(&json)).is_ok());
         }
     }
+}
+
+/// The gap a raw `var` / `val` walk left: `missing` and `missing_some` read
+/// their paths too, and the lint reports those reads at the expression like
+/// any other, from the same `facts()`.
+#[test]
+fn a_payload_read_through_missing_is_a_defect() {
+    for read in [
+        json!({"missing": "payload.x"}),
+        json!({"missing_some": [1, ["payload.x", "data.y"]]}),
+    ] {
+        let e = json!({"cat": [read, "x"]});
+        let json = wf(json!([map("t", e)]));
+        assert_eq!(
+            rows_of(&json, &[C::PayloadVar]),
+            [row(
+                C::PayloadVar,
+                Severity::Defect,
+                "tasks[0].function.input.mappings[0].logic"
+            )],
+            "{read}"
+        );
+    }
+}
+
+#[cfg(feature = "ext-control")]
+#[test]
+fn a_payload_read_through_exists_is_a_defect() {
+    for read in [
+        json!({"exists": "payload"}),
+        json!({"exists": ["payload", "x"]}),
+    ] {
+        let e = json!({"cat": [read, "x"]});
+        let json = wf(json!([map("t", e)]));
+        assert_eq!(
+            rows_of(&json, &[C::PayloadVar]),
+            [row(
+                C::PayloadVar,
+                Severity::Defect,
+                "tasks[0].function.input.mappings[0].logic"
+            )],
+            "{read}"
+        );
+    }
+    // Like `val`, a single string is one key name, not a dotted path.
+    let e = json!({"cat": [{"exists": "payload.x"}, "x"]});
+    let json = wf(json!([map("t", e)]));
+    assert_eq!(issues_of(&json, &[C::PayloadVar]), []);
 }
 
 #[test]
@@ -816,14 +866,15 @@ fn a_var_not_rooted_at_payload_or_computed_is_not_reported() {
 #[test]
 fn a_var_read_per_element_by_a_scoping_operator_is_not_reported() {
     // Inside `map`'s body `var` reads the element, which may have a
-    // `payload` key; the array it walks is read from the context.
+    // `payload` key; the array it walks is read from the context, so the
+    // one read reported at the expression is that source's.
     let e = json!({"map": [{"var": "payload.items"}, {"var": "payload"}]});
     let json = wf(json!([map("t", e)]));
     let paths: Vec<String> = issues_of(&json, &[C::PayloadVar])
         .iter()
         .map(|i| i.path.to_string())
         .collect();
-    assert_eq!(paths, ["tasks[0].function.input.mappings[0].logic.map[0]"]);
+    assert_eq!(paths, ["tasks[0].function.input.mappings[0].logic"]);
 }
 
 #[test]
@@ -838,7 +889,7 @@ fn reduces_initial_value_is_read_from_the_context_and_reported() {
         [row(
             C::PayloadVar,
             Severity::Defect,
-            "tasks[0].function.input.mappings[0].logic.reduce[2]"
+            "tasks[0].function.input.mappings[0].logic"
         )]
     );
 }
@@ -979,7 +1030,7 @@ fn one_expression_reports_secrets_then_template_keys_then_payload_vars() {
                 Severity::Advisory,
                 "tasks[0].condition.and[1].$k"
             ),
-            row(C::PayloadVar, Severity::Defect, "tasks[0].condition.and[0]"),
+            row(C::PayloadVar, Severity::Defect, "tasks[0].condition"),
         ]
     );
 }
