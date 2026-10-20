@@ -1,4 +1,23 @@
-//! dataflow-rs 4, under construction on `main`.
+//! A high-performance rules engine for IFTTT-style automation and data
+//! processing pipelines in Rust.
+//!
+//! Workflows are JSON definitions whose tasks run built-in or host functions
+//! over a [`Message`]'s context, with JSONLogic conditions and expressions
+//! compiled once at build time.
+//!
+//! - [`def`]: parse and lint authored workflow JSON into a [`WorkflowDef`].
+//! - [`program`]: compile definitions against a [`Registry`] into an immutable
+//!   [`program::Program`].
+//! - [`run`]: execute a program over a [`Message`] with [`Engine::run`] or
+//!   [`Engine::run_with`], returning a [`Run`] on every outcome.
+//! - [`function`]: implement [`Function`] with a `#[derive(FunctionConfig)]`
+//!   config for typed async host actions, or wrap calls in a
+//!   [`function::CallLayer`].
+//! - [`expr`]: compiled [`Expr<T>`], [`Path`], [`expr::Output`],
+//!   [`expr::Interpolated`] documents, and [`expr::Secrets`].
+//! - [`observe`]: inline [`Observer`] events and replayable [`observe::Trace`]s.
+//! - [`compat`]: migrate 3.x definitions to the 4.0 spelling with
+//!   [`compat::migrate_v3`].
 //!
 //! # Features
 //!

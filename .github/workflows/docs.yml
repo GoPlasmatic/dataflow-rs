@@ -1,10 +1,14 @@
 name: Deploy Documentation
 
-# By hand until 4.0.0 is released, so the live docs keep describing the 3.x
-# release users install. Phase 8 restores the push trigger here:
-# `push: branches: [main]` with the paths docs/**, wasm/**, ui/**, src/** and
-# this file.
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'wasm/**'
+      - 'ui/**'
+      - 'src/**'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 permissions:

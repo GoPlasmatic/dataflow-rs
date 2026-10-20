@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] — 2026-10-20
+
 dataflow-rs 4 is a rewrite of the engine on the contract 3.x established:
 every stored 3.x definition still parses, through the compat reader; the
 message and audit JSON keep their shapes; and every error code the engine

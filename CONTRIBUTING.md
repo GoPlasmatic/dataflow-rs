@@ -62,9 +62,9 @@ cargo test
 A bare cargo command at the root selects the root package; every other member
 takes `-p`, as in `cargo test -p dataflow-corpus` or
 `cargo test -p dataflow-docs-tests`. Use the bare command for the default
-build, not `--workspace`: `wasm/` depends on the root with `all-operators`, and
-cargo unifies features across the members one invocation selects, so
-`--workspace` would turn every family back on.
+build, not `--workspace`: `wasm/` depends on the root with `wasm-web` and
+`datetime`, and cargo unifies features across the members one invocation
+selects, so `--workspace` would turn `datetime` back on.
 
 ### Running the debugger against your engine changes
 
@@ -158,8 +158,7 @@ cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
 cargo test
 cargo test -p dataflow-docs-tests
 cargo test --features ts --test ts_types
-for f in datetime ext-string ext-array ext-math ext-control ext-object \
-         error-handling all-operators tensor budget; do
+for f in datetime tensor budget; do
   cargo test --no-default-features --features "$f"
 done
 ```
@@ -168,12 +167,12 @@ The `ts` run holds
 `bindings/dataflow.d.ts`, generated from the wire types, to the committed
 file, doc comments included: a doc edit on a wire type means regenerating it
 with `DATAFLOW_TS_WRITE=1 cargo test --features ts --test ts_types`. The
-per-family loop exists because enabling an operator family is not a no-op,
-so a family must pass alone, not only under `--all-features`.
+per-feature loop exists because each cargo feature (`datetime`, `tensor`,
+`budget`) must pass alone, not only under `--all-features`.
 
 `cargo test` at the root must stay under a minute, rebuild included. The
 run-context model test runs once in the default build, at 150 sequences per
-tuning; `DATAFLOW_V4_DEEP=1 cargo test --lib state::` runs its full 2,000.
+tuning; `DATAFLOW_DEEP=1 cargo test --lib state::` runs its full 2,000.
 Run it after any change under `src/state/`.
 
 If you touched `wasm/`:
@@ -181,7 +180,7 @@ If you touched `wasm/`:
 ```bash
 cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
 cargo clippy --target wasm32-unknown-unknown --features wasm-web -- -D warnings
-cargo clippy --target wasm32-unknown-unknown --features wasm-web,all-operators -- -D warnings
+cargo clippy --target wasm32-unknown-unknown --features wasm-web,datetime -- -D warnings
 cd wasm
 wasm-pack test --node
 wasm-pack build --target web --out-dir pkg --release && node scripts/verify-wasm.mjs pkg
@@ -420,7 +419,7 @@ registration. It needs a case in the corpus, a row in `BUILTIN_FUNCTIONS`
 ## Releases
 
 Releases are tag-gated and maintainer-run. Pushing to `main` runs CI and never
-publishes; the documentation site deploys by hand until 4.0 is released. A `v*` tag triggers `.github/workflows/release.yml`,
+publishes. A `v*` tag triggers `.github/workflows/release.yml`,
 which validates that the tag matches the workspace version and runs
 `scripts/check-versions.sh` — the same agreement check CI runs on every PR —
 so `wasm/` (its inherited version and its `dataflow-rs` requirement),

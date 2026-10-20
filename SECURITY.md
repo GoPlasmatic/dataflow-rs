@@ -2,18 +2,18 @@
 
 ## Supported Versions
 
-Security fixes are issued for the latest `3.x` minor release only. Older minor
+Security fixes are issued for the latest `4.x` minor release only. Older
 releases do not receive backports; upgrade to the current release.
 
 | Version              | Supported |
 |----------------------|-----------|
-| Latest 3.x minor     | Yes       |
-| Older 3.x minors     | No        |
-| < 3.0                | No        |
+| Latest 4.x minor     | Yes       |
+| < 4.0                | No        |
 
-This policy covers all three published artifacts, which share a version number:
+This policy covers all four published artifacts, which share a version number:
 
 - [`dataflow-rs`](https://crates.io/crates/dataflow-rs) (crates.io)
+- [`dataflow-rs-derive`](https://crates.io/crates/dataflow-rs-derive) (crates.io)
 - [`@goplasmatic/dataflow-wasm`](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm) (npm)
 - [`@goplasmatic/dataflow-ui`](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) (npm)
 
@@ -67,8 +67,8 @@ Out of scope:
 - Vulnerabilities in dependencies with an existing RUSTSEC advisory. The
   `cargo-deny` job tracks these (see [`deny.toml`](deny.toml)). Open a normal
   issue if you spot one we have missed.
-- Behaviour of custom `AsyncFunctionHandler` implementations you supply. The
-  engine executes registered handlers by design; treat workflow definitions as
+- Behaviour of custom `Function` implementations you supply. The
+  engine executes registered functions by design; treat workflow definitions as
   trusted configuration.
 - Resource exhaustion from workflows you authored yourself. Workflow JSON is
   configuration, not untrusted input; if you accept workflow definitions from
@@ -80,7 +80,7 @@ Dataflow-rs treats **workflow definitions as trusted configuration** and
 **message payloads as untrusted data**. Conditions and mappings are JSONLogic
 expressions with no filesystem, network, or process access, evaluated only
 against a message's own context plus the secrets the host hands the engine
-through `with_secrets`, which expressions read with `{"secret": "name"}` and the
+through `ExprEngineBuilder::secrets` (`Secrets`), which expressions read with `{"secret": "name"}` and the
 engine never records. Reports that depend on an attacker being able
 to supply arbitrary workflow JSON fall outside this model, but we are still
 interested in hearing about them. Say so in your report and we will assess it.

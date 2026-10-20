@@ -276,6 +276,7 @@ import init, {
   parse,
   contexts,
   mapping_contexts,
+  TraceReplay,
 } from '@goplasmatic/dataflow-wasm';
 
 /** The default export: instantiate the module. Call it once, before anything else. */
@@ -291,6 +292,15 @@ engine_facts(): {
   max_group_depth: number;
   loop_defaults: { init: number; increment: number };
   for_each_defaults: { max_concurrency: number };
+  definition_keys: {
+    workflow: string[];
+    task: string[];
+    group: string[];
+    loop: string[];
+    for_each: string[];
+    rollout: string[];
+    function: string[];
+  };
 };
 
 /** A definition as the engine reads it: in the 4.0 spelling, with its issues. */
@@ -391,8 +401,8 @@ try {
 
 Forward seeks apply only intervening steps. Backward seeks replay from the
 initial context, trading seek time for bounded retained memory. Returned JS
-contexts are independent snapshots. The debugger uses this cursor; its
-`DebuggerState.replay` replaces the draft's eager `contexts` array.
+contexts are independent snapshots. The debugger uses this cursor so it
+retains one working context instead of an eager snapshot array.
 
 `trace.truncated` is `true` when `max_bytes` was crossed. From the step that
 crossed it on, every step's changes are empty, so the contexts replayed from
@@ -405,10 +415,11 @@ engine's wire types, generated from the crate: `Message`, `Context`,
 `Change`, `AuditEntry`, `ErrorRecord`, `Trace`, `TraceStep`, `StepResult`,
 `Run`, `RunStatus`, `WorkflowRecord`, `Selection`, `WorkflowExit`,
 `DataflowError`, `Issue`, `Severity`, `JsonValue`. Beside them it declares
-the package's own: `EngineOptions`, `RunOptions`, `TraceOptions`,
-`AuditMode`, `RunResult`, `EngineError`, `EngineFacts`, `ParseResult`. The
-same shapes are what a Rust host's `Message`, `Run` and `Trace` serialize
-to, so a result from a server reads with the same types.
+the package's own: `WasmEngine`, `TraceReplay`, `EngineOptions`,
+`RunOptions`, `TraceOptions`, `AuditMode`, `RunResult`, `EngineError`,
+`EngineFacts`, `ParseResult`. The same shapes are what a Rust host's
+`Message`, `Run` and `Trace` serialize to, so a result from a server reads
+with the same types.
 
 ## From 3.x
 

@@ -144,9 +144,9 @@ The visualizer header shows the debug controls (play, pause, step forward and ba
 #### What the debugger shows
 
 - The toolbar reads `run.status` and the final message's `errors`.
-- The context at a step is the trace replayed up to it: `trace.initial` before the first step, then `contexts(trace)[i]` after step `i`. There is no per-step message snapshot.
+- The context at a step is replayed on demand from the trace through a `TraceReplay` cursor (`contextAt(i)` in `useDebugger()`, or `contexts(trace)[i]` in batch): `trace.initial` before the first step, then the context after step `i`. There is no per-step message snapshot.
 - A step shows its `status` and its own `errors`; a `failed` step, and an executed step that recorded errors, render as errors. A workflow whose condition or rollout refused it renders as skipped.
-- A `map` step shows the context after each of its mappings (`mapping_contexts(trace, i)`).
+- A `map` step shows the context after each of its mappings (`mappingContextAt(i, m)` in `useDebugger()`, or `mapping_contexts(trace, i)` in batch).
 - At the end, the final message's `errors` and `audit_trail`.
 
 ### Custom Engine
@@ -267,7 +267,7 @@ The built-in function names and the loop defaults come from the engine (`engine_
 | `onExecutionError(error: string)` | `onExecutionError(error: ExecutionError)`, with `code`, `message` and `issues` |
 | `ExecutionTrace`, `ExecutionStep` | `Trace`, `TraceStep` from the wasm package |
 | `ErrorInfo`, `AuditTrail` | `ErrorRecord`, `AuditEntry` |
-| `getMessageAtStep(trace, i)` | `contextAtStep(trace, contexts, i)`: the context, replayed, not a message |
+| `getMessageAtStep(trace, i)` | `useDebugger().contextAt(i)` (or `contextAtStep(trace, contexts, i)`): the context, replayed, not a message |
 | `getChangesAtStep(trace, i)` | `trace.steps[i].changes` |
 | `traceHasSnapshots(trace)` | `traceIsReplayable(trace)` |
 | `createEmptyMessage`, `cloneMessage` | Removed |

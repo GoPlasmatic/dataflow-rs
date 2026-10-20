@@ -35,7 +35,7 @@ wasm-opt = [
 ]
 
 [dependencies]
-# The root crate, v4, at the root's version: phase 8 bumps the two together.
+# The root crate, v4, at the root's version.
 # `wasm-web` is the browser's clock and randomness, which wasm32-unknown-unknown
 # needs. `datetime` on the dependency line, not via `--features` at release
 # time, so `wasm-pack test` and any from-source build get the same operator set

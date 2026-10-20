@@ -233,25 +233,27 @@ How many workflows the engine holds; their ids, in program order, as a `string[]
 ### Module functions
 
 ```typescript
-import init, { engine_version, engine_facts, parse, contexts, mapping_contexts } from '@goplasmatic/dataflow-wasm';
+import init, { engine_version, engine_facts, parse, contexts, mapping_contexts, TraceReplay } from '@goplasmatic/dataflow-wasm';
 
 await init();              // the default export: instantiate the module, once
 
 engine_version();          // "4.0.0": the engine compiled into this module
 engine_facts();            // { version, builtin_functions, max_group_depth,
-                           //   loop_defaults: { init, increment }, for_each_defaults: { max_concurrency } }
+                           //   loop_defaults: { init, increment },
+                           //   for_each_defaults: { max_concurrency },
+                           //   definition_keys: { workflow, task, group, loop, for_each, rollout, function } }
 
 parse(definition);         // { definition, issues }: the definition in the 4.0 spelling,
                            // null when it was rejected, and every issue at its authored path
 ```
 
-`parse` reads a definition as the engine does. A 3.x spelling is rewritten (`continue_on_error: true` becomes `on_failure: "continue"`, `validate` becomes `validation`) and reported as a `V3_SPELLING` advisory at the 3.x key; a key the engine does not know is moved into the node's `ext` and reported. `engine_facts()` gives a tool the engine's built-in names and defaults so it need not keep a copy.
+`parse` reads a definition as the engine does. A 3.x spelling is rewritten (`continue_on_error: true` becomes `on_failure: "continue"`, `validate` becomes `validation`) and reported as a `V3_SPELLING` advisory at the 3.x key; a key the engine does not know is moved into the node's `ext` and reported. `engine_facts()` gives a tool the engine's built-in names, defaults and known definition keys so it need not keep a copy.
 
 Pair `engine_version()` with the version your frontend was built against. An older engine reads a key it predates as an unknown key, kept in `ext` and reported, so a workflow using a newer feature loads and does something other than what it says.
 
 ### Types
 
-The package's `dataflow_wasm.d.ts` declares the engine's wire types, generated from the crate (`Message`, `Context`, `Change`, `AuditEntry`, `ErrorRecord`, `Trace`, `TraceStep`, `StepResult`, `Run`, `RunStatus`, `WorkflowRecord`, `Selection`, `WorkflowExit`, `DataflowError`, `Issue`, `Severity`, `JsonValue`), and the package's own (`EngineOptions`, `RunOptions`, `TraceOptions`, `AuditMode`, `RunResult`, `EngineError`, `EngineFacts`, `ParseResult`). Every export is typed with them, so the result of `run` needs no cast.
+The package's `dataflow_wasm.d.ts` declares the engine's wire types, generated from the crate (`Message`, `Context`, `Change`, `AuditEntry`, `ErrorRecord`, `Trace`, `TraceStep`, `StepResult`, `Run`, `RunStatus`, `WorkflowRecord`, `Selection`, `WorkflowExit`, `DataflowError`, `Issue`, `Severity`, `JsonValue`), and the package's own (`WasmEngine`, `TraceReplay`, `EngineOptions`, `RunOptions`, `TraceOptions`, `AuditMode`, `RunResult`, `EngineError`, `EngineFacts`, `ParseResult`). Every export is typed with them, so the result of `run` needs no cast.
 
 ## From 3.x
 

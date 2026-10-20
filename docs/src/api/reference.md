@@ -4,8 +4,7 @@ dataflow-rs 4 is seven public modules and sixteen names re-exported at the
 crate root. This page is the map: what each module holds, the one-line
 purpose of each type, and the handful of calls a host makes most, with their
 signatures. The full rustdoc is on docs.rs at
-`https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/<module>/`; the crate is
-unpublished today, so those links resolve from the 4.0.0 release.
+`https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/<module>/`.
 
 A definition enters through [`def::parse`](#checking-a-definition), compiles
 through a [`program::Compiler`](#program-compiling), runs on a
@@ -47,7 +46,7 @@ only through `parse`, which is also the linter, and serializes back in the
 
 | Name | Purpose |
 |---|---|
-| `parse`, `ParseOptions`, `Parsed` | Read one definition; every problem is an `Issue`, and `Parsed::def` is `Some` exactly when none is Rejected. `ParseOptions::compat` (default `true`) runs the v3 reader first |
+| `parse`, `parse_owned`, `ParseOptions`, `Parsed` | Read one definition (`parse_owned` rewrites in place); every problem is an `Issue`, and `Parsed::def` is `Some` exactly when none is Rejected. `ParseOptions::compat` (default `true`) runs the v3 reader first |
 | `WorkflowDef` | Id, header, priority, condition, steps, `on_failure`, channel, status, version, rollout, loop, tags, timestamps; `walk()` visits every step with its authored path |
 | `StepDef` | One element of a step list: `Task` or `Group`. A closed enum |
 | `TaskDef` | One function call with its `on_failure`, `on_rejection`, `terminal` and `for_each` |
@@ -136,6 +135,7 @@ Executing a program over a message. [docs.rs](https://docs.rs/dataflow-rs/4.0.0/
 | `ErrorRecord` | One recorded error, on v3's wire shape |
 | `CancelToken` | A cancellation flag; a `child()` is cancelled with its parent |
 | `Instant` | The clock a deadline is read on: `std::time::Instant` natively, a browser clock on wasm32 |
+| `CHECK_EVERY` | The op interval (`64`) between two limit checks |
 
 ## `observe`: observers and traces
 
@@ -147,7 +147,8 @@ on its `Run`. [docs.rs](https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/observe/)
 | `Observer`, `Interest` | `interest()` (read once per run) and `on(&Event)` (inline, synchronous); `WORKFLOWS`, `TASKS`, `TIMINGS` decide which events arrive and whether a clock is read |
 | `Event` | `RunStarted`, `WorkflowStarted`, `TaskFinished`, `WorkflowFinished`, `RunFinished`; every variant is `#[non_exhaustive]`, so match with `..` |
 | `TraceOptions` | `timings`, `changes`, `redact`, `max_bytes` |
-| `Trace`, `TraceStep`, `StepResult` | The initial context plus one step per call, skip, failure and engine write; `contexts()` replays them; `executed`, `skipped` or `failed` |
+| `Trace`, `TraceStep`, `StepResult` | The initial context plus one step per call, skip, failure and engine write; `contexts()` and `mapping_contexts()` replay them, `validate()` checks a deserialized trace; `executed`, `skipped` or `failed` |
+| `Replay` | On-demand trace cursor keeping one working context (`context_at`, `mapping_context_at`) |
 
 ## `compat`: 3.x definitions
 
@@ -182,8 +183,8 @@ let engine: Engine = builder
 
 `EngineBuilder` chains `register(name, function)`, `layer(l)`,
 `registry(r)`, `options(CompileOptions)`, `config(EngineConfig)`,
-`workflow(WorkflowDef)` and `workflow_json(&Value)`, then
-`build() -> Result<Engine, Vec<Issue>>`. A host that quarantines compiles
+`workflow(WorkflowDef)`, `workflow_json(&Value)` and
+`workflow_json_owned(Value)`, then `build() -> Result<Engine, Vec<Issue>>`. A host that quarantines compiles
 each workflow on its own instead:
 
 ```rust

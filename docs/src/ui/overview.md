@@ -201,19 +201,20 @@ threw on the way.
 A dataflow-rs 4.0 trace holds `initial`, the context before any workflow,
 and one step per call, skip, failure and engine write, each with its
 changes. There is no per-step message snapshot: the context at a step is
-rebuilt by replaying the changes, which the engine does (`contexts(trace)`
-from the wasm package), so the UI and the engine never disagree on the rules.
+rebuilt by replaying the changes on demand through a `TraceReplay` cursor
+from the wasm package, so the UI and the engine never disagree on the rules
+and only one working context is retained in memory.
 
 - **The toolbar** reads `run.status` and the final message's `errors`.
-- **The context at step `i`** is `contexts[i]`, and before the first step
-  `trace.initial`. The state panel shows it beside the step's `status` and
-  `errors`.
+- **The context at step `i`** is `contextAt(i)`, and before the first step
+  (`-1`) `trace.initial`. The state panel shows it beside the step's `status`
+  and `errors`.
 - **A failing step** (`result: "failed"`) renders as an error, and so does an
   executed step that recorded errors, such as a `validation` whose rules
   failed. A workflow whose condition or rollout refused it renders as skipped.
   The engine's own steps (a loop sweep entered) belong to no task.
 - **A `map` step** shows the context after each of its mappings
-  (`mapping_contexts(trace, i)`).
+  (`mappingContextAt(i, m)`).
 - **At the end**, the final message's `errors` and `audit_trail`.
 
 A trace whose byte budget was crossed (`trace.truncated`) is not replayed: the
@@ -332,30 +333,38 @@ import { DebuggerControls } from '@goplasmatic/dataflow-ui';
 
 ### useDebugger Hook
 
-Access debugger state programmatically. The state is the engine's result and
-the replay of its trace:
+Access debugger state programmatically. The state holds the engine's result
+and an on-demand replay cursor over its trace:
 
 ```tsx
-import { useDebugger, contextAtStep } from '@goplasmatic/dataflow-ui';
+import { useDebugger } from '@goplasmatic/dataflow-ui';
 
 function MyComponent() {
-  const { state, stepForward, stepBackward, goToStep, play, pause, reset } = useDebugger();
+  const {
+    state,
+    currentStep,
+    currentContext,
+    contextAt,
+    mappingContextAt,
+    stepForward,
+    stepBackward,
+    goToStep,
+    play,
+    pause,
+    reset,
+  } = useDebugger();
 
   // state: DebuggerState
   //   trace: Trace | null           the trace of the last run
   //   run: Run | null               how it ended and what each workflow did
   //   message: Message | null       the message after the run
-  //   contexts: Context[]           the context after each step, replayed once per run
+  //   replay: TraceReplay | null    the on-demand engine replay cursor
   //   currentStepIndex: number      -1 before the first step
   //   executionError: ExecutionError | null
   //   isExecuting, playbackState, playbackSpeed, inputPayload, skipFailedConditions
 
-  const step = state.trace && state.currentStepIndex >= 0
-    ? state.trace.steps[state.currentStepIndex]
-    : null;
-  const context = state.trace
-    ? contextAtStep(state.trace, state.contexts, state.currentStepIndex)
-    : null;
+  const step = currentStep;
+  const context = currentContext; // or contextAt(i) for any step (-1 is initial)
 
   // ...
 }
@@ -507,7 +516,7 @@ Exported alongside the types, for code that walks definitions or traces:
 | `onExecutionError(error: string)` | `onExecutionError(error: ExecutionError)`, with `code`, `message` and `issues` |
 | `ExecutionTrace`, `ExecutionStep` | `Trace`, `TraceStep` from the wasm package |
 | `ErrorInfo`, `AuditTrail` | `ErrorRecord`, `AuditEntry` |
-| `getMessageAtStep(trace, i)` | `contextAtStep(trace, contexts, i)`: the context, replayed, not a message |
+| `getMessageAtStep(trace, i)` | `useDebugger().contextAt(i)` (or `contextAtStep(trace, contexts, i)`): the context, replayed, not a message |
 | `getChangesAtStep(trace, i)` | `trace.steps[i].changes` |
 | `traceHasSnapshots(trace)` | `traceIsReplayable(trace)` |
 | `createEmptyMessage`, `cloneMessage` | Removed |

@@ -11,12 +11,11 @@ JSONLogic conditions and expressions compiled once at build.
 
 This is a **Cargo workspace with four published artifacts**, version-locked to
 the engine's version — authored once in `[workspace.package] version` and
-inherited by the published Rust crates; all four read `4.0.0-dev` until phase
-8 sets 4.0.0 from one tag:
+inherited by the published Rust crates:
 
 | Path | Artifact | Registry |
 |---|---|---|
-| `.` | `dataflow-rs`: the engine (nothing publishes from `main` until phase 8) | crates.io |
+| `.` | `dataflow-rs`: the engine | crates.io |
 | `derive/` | `dataflow-rs-derive`: `#[derive(FunctionConfig)]`, published first | crates.io |
 | `wasm/` | `@goplasmatic/dataflow-wasm`: the root crate on `wasm32-unknown-unknown` with `wasm-web`, `datetime` and `ExprEngineBuilder::all_operators` | npm |
 | `ui/` | `@goplasmatic/dataflow-ui`: the React debugger, on the wasm package's generated types | npm |
@@ -31,11 +30,11 @@ the README's doctests, against the root) and `corpus/` (the workflow cases the
 engine's tests load, and independent models of its path and replay rules). See
 "The corpus" below.
 
-**`main` is 4.0**, under construction until 4.0.0, and holds only v4: 3.x
+**`main` is 4.x**, and holds only v4: 3.x
 survives as the published crates and the `v3.*` tags, and nothing on `main`
 builds or tests against it. Design questions are decided for Orion, the main
 host, in priority order: performance, then developer experience, then a
-compact engine. The 4.0 port of Orion (phase 7c) is tracked in
+compact engine. The 4.0 port of Orion is tracked in
 GoPlasmatic/Orion#385.
 
 ## Layout
@@ -581,8 +580,8 @@ which runs the real compile, overlay and layers with no engine assembled, and
 
 ## Release Process
 
-Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI; it
-never publishes, and `docs.yml` runs only by hand until phase 8.
+Releases are **tag-gated**, not branch-gated. Pushing to `main` runs CI and
+`docs.yml`; it never publishes crates or npm packages.
 `.github/workflows/release.yml` fires only on a `v*` tag, validates that the
 tag matches the workspace version and runs `scripts/check-versions.sh` (the
 same agreement check CI runs on every PR), then publishes the derive, the crate,
@@ -594,12 +593,10 @@ that failed between the two resumes at the root. A crate's first release
 needs the `CRATES_IO_TOKEN` secret to carry the `publish-new` scope. `wasm/`
 is `publish = false`: it ships through npm only.
 
-**No tag may be cut from `main` before phase 8.** The root, the derive,
-`wasm/` and `ui/` read `4.0.0-dev`; `scripts/check-versions.sh` — CI on every
-PR, `release.yml` against the tag — checks that the workspace version, the
-internal crates' pins, `ui/`'s versions and the install snippets' minor all
-agree, and (outside a `-dev` version) that `CHANGELOG.md` has the version's
-section.
+`scripts/check-versions.sh` — CI on every PR, `release.yml` against the tag —
+checks that the workspace version, the internal crates' pins, `ui/`'s versions
+and the install snippets' minor all agree, and (outside a `-dev` version) that
+`CHANGELOG.md` has the version's section.
 
 ## The machine
 
