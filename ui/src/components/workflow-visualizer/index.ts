@@ -2,6 +2,8 @@ export { WorkflowVisualizer } from './WorkflowVisualizer';
 export type {
   WorkflowVisualizerProps,
   TreeSelectionType,
+  VisualizerSelection,
+  InitialVisualizerSelection,
 } from './WorkflowVisualizer';
 export { ThemeProvider, useTheme, DebuggerProvider, useDebugger, useDebuggerOptional } from './context';
 export type { Theme } from './context';

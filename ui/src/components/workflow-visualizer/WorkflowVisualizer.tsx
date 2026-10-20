@@ -1,5 +1,6 @@
-import { useState, useRef } from 'react';
-import type { Workflow, Task, JsonLogicValue, Message, MappingItem, ValidationRule } from '../../types';
+import { useState, useMemo, useRef } from 'react';
+import type { Workflow, Task, TaskGroup, Step, JsonLogicValue, Message, MappingItem, ValidationRule } from '../../types';
+import { groupMembers, isTaskGroup, workflowTasks } from '../../types';
 import type { DebugConfig } from '../../types/debugConfig';
 import { ThemeProvider, useTheme, useDebuggerOptional, DebuggerProvider } from './context';
 import { TreeView, DetailsPanel, ResultPanel } from './views';
@@ -23,10 +24,105 @@ export type TreeSelectionType =
   | { type: 'mapping'; task: Task; workflow: Workflow; mapping: MappingItem; mappingIndex: number }
   | { type: 'validation-rule'; task: Task; workflow: Workflow; rule: ValidationRule; ruleIndex: number };
 
+/**
+ * Host-driven selection for {@link WorkflowVisualizer}, by workflow, task or
+ * group id.
+ */
+export type VisualizerSelection =
+  | { kind: 'workflow'; workflowId: string }
+  | { kind: 'task'; workflowId: string; taskId: string }
+  | { kind: 'group'; workflowId: string; groupId: string };
+
+/**
+ * Shorthand or explicit initial selection on mount.
+ * `"first-workflow"` opens the first workflow's flow view when `workflows` is non-empty.
+ */
+export type InitialVisualizerSelection = VisualizerSelection | 'first-workflow';
+
+function findGroup(steps: Step[], groupId: string): TaskGroup | undefined {
+  for (const step of steps) {
+    if (isTaskGroup(step)) {
+      if (step.id === groupId) return step;
+      const nested = findGroup(groupMembers(step), groupId);
+      if (nested) return nested;
+    }
+  }
+  return undefined;
+}
+
+function findWorkflowGroup(workflow: Workflow, groupId: string): TaskGroup | undefined {
+  return (
+    findGroup(workflow.loop?.setup ?? [], groupId) ??
+    findGroup(workflow.tasks ?? [], groupId)
+  );
+}
+
+/**
+ * Resolve a host's {@link InitialVisualizerSelection} into the visualizer's
+ * internal {@link TreeSelectionType}.
+ */
+export function resolveVisualizerSelection(
+  workflows: Workflow[],
+  target: InitialVisualizerSelection | null | undefined,
+): TreeSelectionType {
+  if (!target) return { type: 'none' };
+  if (target === 'first-workflow') {
+    if (workflows.length === 0) return { type: 'none' };
+    const sorted = [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+    return { type: 'workflow', workflow: sorted[0] };
+  }
+  const workflow = workflows.find((w) => w.id === target.workflowId);
+  if (!workflow) return { type: 'none' };
+  if (target.kind === 'workflow') {
+    return { type: 'workflow', workflow };
+  }
+  if (target.kind === 'task') {
+    const task = workflowTasks(workflow).find((t) => t.id === target.taskId);
+    return task ? { type: 'task', task, workflow } : { type: 'none' };
+  }
+  if (target.kind === 'group') {
+    const group = findWorkflowGroup(workflow, target.groupId);
+    if (!group) return { type: 'none' };
+    const firstTask = workflowTasks({ ...workflow, loop: undefined, tasks: groupMembers(group) })[0];
+    return firstTask
+      ? { type: 'task', task: firstTask, workflow }
+      : { type: 'workflow', workflow };
+  }
+  return { type: 'none' };
+}
+
+/**
+ * Convert an internal {@link TreeSelectionType} back to a host-facing
+ * {@link VisualizerSelection}, or `null` when nothing (or a folder) is selected.
+ */
+export function toVisualizerSelection(selection: TreeSelectionType): VisualizerSelection | null {
+  switch (selection.type) {
+    case 'workflow':
+    case 'workflow-condition':
+      return { kind: 'workflow', workflowId: selection.workflow.id };
+    case 'task':
+    case 'task-condition':
+    case 'mapping':
+    case 'validation-rule':
+      return {
+        kind: 'task',
+        workflowId: selection.workflow.id,
+        taskId: selection.task.id,
+      };
+    default:
+      return null;
+  }
+}
 
 export interface WorkflowVisualizerProps {
   /** Array of workflow definitions to display */
   workflows: Workflow[];
+  /** What is selected on mount in uncontrolled mode. Default: nothing. */
+  initialSelection?: InitialVisualizerSelection;
+  /** Controlled selection; when set (including `null`), the visualizer renders this and reports changes via `onSelectionChange`. */
+  selection?: VisualizerSelection | null;
+  /** Called whenever the user or debugger changes the selection. */
+  onSelectionChange?: (selection: VisualizerSelection | null) => void;
   /** Callback when a workflow is selected */
   onWorkflowSelect?: (workflow: Workflow) => void;
   /** Callback when a task is selected */
@@ -94,6 +190,9 @@ function getSelectionInfo(selection: TreeSelectionType): { title: string; subtit
 
 interface VisualizerInnerProps {
   workflows: Workflow[];
+  initialSelection?: InitialVisualizerSelection;
+  controlledSelection?: VisualizerSelection | null;
+  onSelectionChange?: (selection: VisualizerSelection | null) => void;
   onTaskSelect?: (task: Task, workflow: Workflow) => void;
   onWorkflowSelect?: (workflow: Workflow) => void;
   executionResult?: Message | null;
@@ -105,6 +204,9 @@ interface VisualizerInnerProps {
 
 function VisualizerInner({
   workflows,
+  initialSelection,
+  controlledSelection,
+  onSelectionChange,
   onTaskSelect,
   onWorkflowSelect,
   executionResult,
@@ -117,7 +219,13 @@ function VisualizerInner({
   // Use optional hook that returns null if no provider exists
   const debuggerContext = useDebuggerOptional();
   const effectiveDebugContext = debugMode ? debuggerContext : null;
-  const [selection, setSelection] = useState<TreeSelectionType>({ type: 'none' });
+  const [uncontrolledSelection, setUncontrolledSelection] = useState<TreeSelectionType>(() =>
+    resolveVisualizerSelection(workflows, initialSelection),
+  );
+  const selection = useMemo<TreeSelectionType>(() => {
+    if (controlledSelection === undefined) return uncontrolledSelection;
+    return resolveVisualizerSelection(workflows, controlledSelection);
+  }, [controlledSelection, uncontrolledSelection, workflows]);
   const containerRef = useRef<HTMLDivElement>(null);
   const leftPanelRef = useRef<HTMLDivElement>(null);
 
@@ -146,7 +254,10 @@ function VisualizerInner({
   });
 
   const handleSelection = (newSelection: TreeSelectionType) => {
-    setSelection(newSelection);
+    if (controlledSelection === undefined) {
+      setUncontrolledSelection(newSelection);
+    }
+    onSelectionChange?.(toVisualizerSelection(newSelection));
 
     // Fire callbacks for external consumers
     if (newSelection.type === 'workflow') {
@@ -286,6 +397,9 @@ function VisualizerInner({
 
 export function WorkflowVisualizer({
   workflows,
+  initialSelection,
+  selection,
+  onSelectionChange,
   onWorkflowSelect,
   onTaskSelect,
   theme = 'system',
@@ -306,6 +420,9 @@ export function WorkflowVisualizer({
           <div className={`df-root ${className}`}>
             <VisualizerInner
               workflows={workflows}
+              initialSelection={initialSelection}
+              controlledSelection={selection}
+              onSelectionChange={onSelectionChange}
               onTaskSelect={onTaskSelect}
               onWorkflowSelect={onWorkflowSelect}
               executionResult={executionResult}
@@ -324,6 +441,9 @@ export function WorkflowVisualizer({
       <div className={`df-root ${className}`}>
         <VisualizerInner
           workflows={workflows}
+          initialSelection={initialSelection}
+          controlledSelection={selection}
+          onSelectionChange={onSelectionChange}
           onTaskSelect={onTaskSelect}
           onWorkflowSelect={onWorkflowSelect}
           executionResult={executionResult}

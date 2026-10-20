@@ -85,6 +85,9 @@ The main component for displaying workflows.
 ```tsx
 interface WorkflowVisualizerProps {
   workflows: Workflow[];
+  initialSelection?: InitialVisualizerSelection;
+  selection?: VisualizerSelection | null;
+  onSelectionChange?: (selection: VisualizerSelection | null) => void;
   onWorkflowSelect?: (workflow: Workflow) => void;
   onTaskSelect?: (task: Task, workflow: Workflow) => void;
   theme?: 'light' | 'dark' | 'system';
@@ -256,7 +259,7 @@ The built-in function names and the loop defaults come from the engine (`engine_
 ### Types
 - Definitions: `Workflow`, `Task`, `TaskGroup`, `Step`, `FunctionConfig`, `JsonLogicValue`, `MapMapping`, `MappingItem`, `MapFunctionInput`, `ValidationRule`, `ValidationFunctionInput`, `BuiltinFunctionType`, `LoopConfig`, `ForEach`, `WorkflowStatus`, `Rollout`
 - The engine's wire types, re-exported from `@goplasmatic/dataflow-wasm`: `Message`, `Context`, `Change`, `AuditEntry`, `ErrorRecord`, `Trace`, `TraceStep`, `StepResult`, `Run`, `RunStatus`, `WorkflowRecord`, `Selection`, `WorkflowExit`, `DataflowError`, `Issue`, `JsonValue`, `RunOptions`, `TraceOptions`, `AuditMode`, `RunResult`, `EngineError`, `EngineFacts`, `ParseResult`
-- Debugger: `DebugConfig`, `DebuggerState`, `DebuggerAction`, `DebugNodeState`, `PlaybackState`, `ExecutionError`, `Theme`, `TreeNodeDebugState`, `WorkflowVisualizerProps`, `TreeSelectionType`
+- Debugger: `DebugConfig`, `DebuggerState`, `DebuggerAction`, `DebugNodeState`, `PlaybackState`, `ExecutionError`, `Theme`, `TreeNodeDebugState`, `WorkflowVisualizerProps`, `TreeSelectionType`, `VisualizerSelection`, `InitialVisualizerSelection`
 
 ## From 3.x
 

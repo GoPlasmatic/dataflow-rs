@@ -147,8 +147,9 @@ section says how to run the benchmarks.
   (`REJECTED`, `INVALID_ARGUMENT`, `INVALID_TRACE`); the wire types embedded
   in the package's `.d.ts`. **`@goplasmatic/dataflow-ui` 4.0** imports those
   types, replays each step's context from the trace, shows the failing step
-  and each step's errors, and reads the engine's facts in place of hand-kept
-  mirrors.
+  and each step's errors, supports `initialSelection`, `selection` and
+  `onSelectionChange` on `WorkflowVisualizer` (#70), and reads the engine's
+  facts in place of hand-kept mirrors.
 - **`Registry::try_register`**, the fallible `register`: a name taken from
   data, or a function the host builds at run time, is refused with a
   `CONFIG` error instead of a panic. `ConfigField::IS_OUTPUT` and

@@ -3,6 +3,8 @@ export { WorkflowVisualizer } from './components/workflow-visualizer';
 export type {
   WorkflowVisualizerProps,
   TreeSelectionType,
+  VisualizerSelection,
+  InitialVisualizerSelection,
 } from './components/workflow-visualizer';
 
 // Sub-components (for advanced usage)

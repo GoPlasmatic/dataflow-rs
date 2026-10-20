@@ -72,6 +72,12 @@ The main component for displaying workflows in an interactive tree view.
 interface WorkflowVisualizerProps {
   /** Array of workflow definitions to display */
   workflows: Workflow[];
+  /** What is selected on mount in uncontrolled mode. Default: nothing. */
+  initialSelection?: InitialVisualizerSelection;
+  /** Controlled selection; when set, the visualizer renders this and reports changes */
+  selection?: VisualizerSelection | null;
+  /** Callback when the selection changes */
+  onSelectionChange?: (selection: VisualizerSelection | null) => void;
   /** Callback when a workflow is selected */
   onWorkflowSelect?: (workflow: Workflow) => void;
   /** Callback when a task is selected */
@@ -505,7 +511,8 @@ Exported alongside the types, for code that walks definitions or traces:
   `EngineFacts`, `ParseResult`
 - **Debugger:** `DebugConfig`, `DebuggerState`, `DebuggerAction`,
   `DebugNodeState`, `PlaybackState`, `ExecutionError`, `Theme`,
-  `TreeNodeDebugState`, `WorkflowVisualizerProps`, `TreeSelectionType`
+  `TreeNodeDebugState`, `WorkflowVisualizerProps`, `TreeSelectionType`,
+  `VisualizerSelection`, `InitialVisualizerSelection`
 
 ## From 3.x
 

@@ -61,6 +61,18 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
       getParentFolderIds(workflowFolderPath(allWorkflows[0])).forEach((id) => initial.add(id));
     }
 
+    if (selection.type !== 'none' && selection.type !== 'folder') {
+      const { workflow } = selection;
+      initial.add(NODE_IDS.workflow(workflow.id));
+      const folderPath = workflowFolderPath(workflow);
+      if (folderPath) {
+        getParentFolderIds(folderPath).forEach((id) => initial.add(id));
+      }
+      if ('task' in selection) {
+        initial.add(NODE_IDS.task(workflow.id, selection.task.id));
+      }
+    }
+
     if (
       debugMode &&
       effectiveDebugContext?.currentStep &&
@@ -81,6 +93,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
     return initial;
   }, [
     folderTree,
+    selection,
     debugMode,
     effectiveDebugContext?.currentStep,
     effectiveDebugContext?.state.currentStepIndex,
