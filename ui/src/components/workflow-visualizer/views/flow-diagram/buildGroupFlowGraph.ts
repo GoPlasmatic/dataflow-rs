@@ -1,5 +1,4 @@
-import dagre from '@dagrejs/dagre';
-import { assignBranchSides } from './assignBranchSides';
+import { layoutFlowGraph } from './assignBranchSides';
 import type { Node, Edge } from '@xyflow/react';
 import { countLeafSteps, hasCondition, type Workflow } from '../../../../types';
 
@@ -175,32 +174,8 @@ export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edg
     sourceHandle: prevSourceHandle,
   });
 
-  // Apply dagre layout
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80, marginx: 20, marginy: 20 });
-
-  for (const node of nodes) {
-    g.setNode(node.id, { width: NODE_WIDTH, height: nodeHeight(node.type) });
-  }
-
-  for (const edge of edges) {
-    g.setEdge(edge.source, edge.target);
-  }
-
-  dagre.layout(g);
-
-  for (const node of nodes) {
-    const pos = g.node(node.id);
-    const height = nodeHeight(node.type);
-    node.position = {
-      x: pos.x - NODE_WIDTH / 2,
-      y: pos.y - height / 2,
-    };
-  }
-
-  // Handle sides follow the layout dagre just produced, not a fixed CSS rule.
-  assignBranchSides(nodes, edges);
+  // Apply dagre layout and assign branch sides
+  layoutFlowGraph(nodes, edges, NODE_WIDTH, nodeHeight);
 
   return { nodes, edges };
 }

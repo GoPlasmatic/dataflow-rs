@@ -139,6 +139,17 @@ export function getFirstLevelFolderIds(tree: FolderTree): string[] {
 }
 
 /**
+ * Collects all workflows in a folder and its nested folders, sorted by priority.
+ */
+export function collectFolderWorkflows(folder: FolderTreeNode): Workflow[] {
+  const workflows = [...folder.workflows];
+  for (const child of folder.folders.values()) {
+    workflows.push(...collectFolderWorkflows(child));
+  }
+  return workflows.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+}
+
+/**
  * Gets all parent folder IDs for a given path
  */
 export function getParentFolderIds(path: string | undefined): string[] {

@@ -336,33 +336,6 @@ body {
   margin: 0 var(--sp-2);
 }
 
-/* Action buttons (Format, etc.) */
-.header-action {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 11px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.header-action:hover {
-  color: var(--ink);
-  background: var(--surface-2);
-}
-
-.header-action:active {
-  background: var(--hairline-2);
-}
-
-.header-action:focus-visible,
 .header-link:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -380,7 +353,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 7px 11px;
+  padding: 6px 11px;
   font-size: 12px;
   color: var(--ink-2);
   background: var(--surface);
@@ -388,7 +361,8 @@ body {
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: border-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
+    color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .examples-dropdown-trigger:hover {
@@ -403,7 +377,7 @@ body {
 
 .examples-dropdown-label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--muted);
 }
 
@@ -429,7 +403,7 @@ body {
   top: 100%;
   right: 0;
   margin-top: var(--sp-1);
-  min-width: 220px;
+  min-width: 230px;
   background: var(--chip);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
@@ -440,10 +414,13 @@ body {
 }
 
 .examples-dropdown-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
   width: 100%;
-  padding: 9px 12px;
-  font-size: 13px;
+  padding: 8px 10px;
+  font-size: 12.5px;
   text-align: left;
   color: var(--ink);
   background: transparent;
@@ -551,6 +528,37 @@ body {
   padding: 0;
 }
 
+.editor-panel-rail {
+  display: none;
+}
+
+.editor-panel.collapsed .editor-panel-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: var(--sp-4);
+  flex: 1;
+  background: var(--app-bg);
+  cursor: pointer;
+  user-select: none;
+}
+
+.editor-panel-rail-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.editor-panel.collapsed .editor-panel-rail:hover .editor-panel-rail-label {
+  color: var(--ink);
+}
+
 .editor-panel-title {
   font-family: var(--font-mono);
   font-size: 10.5px;
@@ -629,23 +637,49 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--app-bg);
+  gap: var(--sp-2);
+  height: 34px;
+  padding: 0 12px;
+  background: var(--surface-2);
   border-bottom: 1px solid var(--app-border);
+  flex-shrink: 0;
+}
+
+.editor-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .editor-header h3 {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.1em;
   color: var(--app-text-secondary);
 }
 
+.editor-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--hairline-2);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
 .editor-error {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
   color: var(--app-error);
-  max-width: 200px;
+  background: var(--app-error-bg);
+  padding: 1px 8px;
+  border-radius: 999px;
+  max-width: 220px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -657,12 +691,6 @@ body {
   background: var(--app-editor-bg);
 }
 
-/* Monaco Editor Wrapper */
-.df-monaco-editor-wrapper {
-  height: 100%;
-  min-height: 100%;
-}
-
 /* ============================================
    Divider
    ============================================ */
@@ -671,7 +699,8 @@ body {
   width: 1px;
   background: var(--app-border);
   cursor: col-resize;
-  transition: all var(--motion-fast);
+  transition: background var(--motion-fast) var(--ease-out),
+    width var(--motion-fast) var(--ease-out);
   flex-shrink: 0;
   position: relative;
 }
@@ -680,8 +709,8 @@ body {
   content: '';
   position: absolute;
   top: 0;
-  left: -2px;
-  right: -2px;
+  left: -3px;
+  right: -3px;
   bottom: 0;
   background: transparent;
 }
@@ -692,31 +721,46 @@ body {
   width: 2px;
 }
 
-/* ============================================
-   Visual Panel Header
-   ============================================ */
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 16px;
-  background: var(--app-bg);
-  border-bottom: 1px solid var(--app-border);
-}
-
-.panel-header h2 {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--app-text-secondary);
-}
-
 .panel-content {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* ============================================
+   Engine Loading & Error State
+   ============================================ */
+
+.app-state-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  background-color: var(--board);
+  background-image: radial-gradient(var(--board-grid) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.app-state-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 28px 36px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  max-width: 440px;
+  text-align: center;
+}
+
+.app-state-card-error {
+  border-color: var(--sig-bool-false);
+  color: var(--sig-bool-false);
 }
 
 /* ============================================
@@ -781,264 +825,21 @@ body {
   color: var(--sig-bool-true);
 }
 
-/* ============================================
-   Selected Task Info
-   ============================================ */
-
-.selected-task-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-  color: var(--app-text-secondary);
-}
-
-.selected-task-info button {
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--app-text-secondary);
-  background: transparent;
-  border: 1px solid var(--app-border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--motion-fast);
-}
-
-.selected-task-info button:hover {
-  background: var(--app-bg);
-  border-color: var(--app-text-muted);
-}
-
-/* ============================================
-   Keyboard Shortcut Hints
-   ============================================ */
-
 .shortcut-hint {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  margin-left: 8px;
-  font-size: 10px;
-  opacity: 0.6;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--muted);
 }
 
 .shortcut-hint kbd {
-  padding: 1px 5px;
+  padding: 0 5px;
   background: var(--surface-2);
-  border: 1px solid var(--hairline-2);
+  border: 1px solid var(--hairline);
   border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--muted);
-}
-
-/* ============================================
-   Mode Toggle
-   ============================================ */
-
-/* Segmented control: a recessed surface track with a raised active chip.
-   Radii are concentric — 10px track, 7px chip inside a 2px inset. */
-.mode-toggle {
-  display: flex;
-  align-items: center;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  padding: 2px;
-  gap: 2px;
-}
-
-.mode-toggle-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background var(--motion-base) var(--ease-out),
-    color var(--motion-base) var(--ease-out);
-}
-
-.mode-toggle-btn:hover {
-  color: var(--ink);
-}
-
-.mode-toggle-btn.active {
-  color: var(--accent);
-  background: var(--chip);
-  box-shadow: var(--shadow-sm);
-}
-
-.mode-toggle-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.mode-toggle-btn svg {
-  flex-shrink: 0;
-}
-
-/* ============================================
-   Inline Debug Controls (in panel header)
-   ============================================ */
-
-.debug-controls-inline {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.execution-status {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.execution-status.success {
-  color: var(--app-success);
-}
-
-.execution-status.error {
-  color: var(--app-error);
-}
-
-.debug-btn-run {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--on-signal);
-  background: var(--app-success);
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background var(--motion-base) var(--ease-out),
-    opacity var(--motion-base) var(--ease-out);
-}
-
-.debug-btn-run:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--app-success) 82%, var(--ink));
-}
-
-.debug-btn-run:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.debug-btn-run:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.debug-btn-reset {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--app-text-secondary);
-  background: transparent;
-  border: 1px solid var(--app-border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--motion-fast);
-}
-
-.debug-btn-reset:hover {
-  color: var(--app-text);
-  background: var(--app-bg);
-  border-color: var(--app-text-muted);
-}
-
-/* ============================================
-   Step-by-Step Debug Controls
-   ============================================ */
-
-.step-counter {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--app-text-secondary);
-  white-space: nowrap;
-}
-
-.step-controls {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  background: var(--app-bg);
-  border: 1px solid var(--app-border);
-  border-radius: var(--radius-md);
-  padding: 2px;
-}
-
-.step-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--app-text-secondary);
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.step-btn:hover:not(:disabled) {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.step-btn:active:not(:disabled) {
-  background: var(--app-accent);
-  color: var(--on-signal);
-}
-
-.step-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.step-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-/* Result panel changes indicator */
-.df-visualizer-result-changes {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--app-success);
-  background: var(--app-success-bg);
-  padding: 2px 6px;
-  border-radius: 999px;
-  margin-left: 8px;
-}
-
-/* Monaco editor highlighted lines — the executing step reads as a live "true"
-   signal, so it carries --sig-bool-true and a rail matching the node chips.
-   Both themes resolve through the tokens, so there is no second rule: the
-   previous `:root .df-highlighted-line` light override outranked the bare
-   selector and left the dark variant dead. */
-.df-highlighted-line {
-  background-color: var(--sig-bool-true-bg) !important;
-  border-left: 3px solid var(--sig-bool-true) !important;
-}
-
-.df-highlighted-glyph {
-  background-color: var(--sig-bool-true);
-  width: 4px !important;
-  margin-left: 3px;
-  border-radius: 3px;
+  line-height: 1.5;
+  color: var(--ink-2);
 }

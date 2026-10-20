@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, X, Clock, AlertCircle, SkipForward } from 'lucide-react';
+import { Check, X, AlertCircle } from 'lucide-react';
 import type { TraceStep, DebugNodeState } from '../../../types';
 import { isEngineStep, isWorkflowStep, stepErrors, stepState } from '../../../types';
+import { DebugStateIcon } from '../components/DebugStateIcon';
 
 interface DebugInfoBubbleProps {
   /** The trace step to display */
@@ -96,7 +97,7 @@ export function DebugInfoBubble({
       }}
     >
       <div className="df-debug-bubble-header">
-        <StateIcon state={displayState} />
+        <DebugStateIcon state={displayState} size={16} />
         <span className="df-debug-bubble-title">{stepTitle(step)}</span>
         {onClose && (
           <button className="df-debug-bubble-close" onClick={onClose}>
@@ -164,22 +165,6 @@ export function DebugInfoBubble({
   );
 }
 
-function StateIcon({ state }: { state: DebugNodeState }) {
-  switch (state) {
-    case 'executed':
-      return <Check size={16} className="df-debug-icon-executed" />;
-    case 'skipped':
-      return <SkipForward size={16} className="df-debug-icon-skipped" />;
-    case 'error':
-      return <AlertCircle size={16} className="df-debug-icon-error" />;
-    case 'current':
-      return <Clock size={16} className="df-debug-icon-current" />;
-    case 'pending':
-    default:
-      return <Clock size={16} className="df-debug-icon-pending" />;
-  }
-}
-
 /**
  * Small badge showing debug state on tree nodes
  */
@@ -198,7 +183,7 @@ export function DebugStateBadge({
 
   return (
     <span className={`df-debug-badge df-debug-badge-${state} df-debug-badge-${size}`}>
-      <StateIcon state={state} />
+      <DebugStateIcon state={state} size={16} />
       {conditionResult !== undefined && (
         <span className={`df-debug-badge-condition ${conditionResult ? 'df-debug-badge-condition-pass' : 'df-debug-badge-condition-fail'}`}>
           {conditionResult ? <Check size={iconSize} /> : <X size={iconSize} />}

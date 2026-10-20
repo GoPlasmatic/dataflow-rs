@@ -1,5 +1,4 @@
-import dagre from '@dagrejs/dagre';
-import { assignBranchSides } from './assignBranchSides';
+import { layoutFlowGraph } from './assignBranchSides';
 import type { Node, Edge } from '@xyflow/react';
 import type { Workflow, Task, Step, TaskGroup } from '../../../../types';
 import {
@@ -103,6 +102,7 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
     const taskCondId = addNode('condition', {
       label: `${task.name}\nCondition`,
       conditionType: 'task',
+      taskId: task.id,
     });
     connect(taskCondId);
 
@@ -285,32 +285,9 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
   }
 
   // ---- Layout ----
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80, marginx: 20, marginy: 20 });
-
-  for (const node of nodes) {
-    g.setNode(node.id, { width: NODE_WIDTH, height: nodeHeight(node.type) });
-  }
-  for (const edge of edges) {
-    g.setEdge(edge.source, edge.target);
-  }
-
-  dagre.layout(g);
-
-  for (const node of nodes) {
-    const pos = g.node(node.id);
-    node.position = {
-      x: pos.x - NODE_WIDTH / 2,
-      y: pos.y - nodeHeight(node.type) / 2,
-    };
-  }
-
-  // Handle sides follow the layout dagre just produced, not a fixed CSS rule.
-  // Runs before the loop back-edge is pushed: that edge is not a true/false
-  // branch, so it cannot affect the sides, and keeping it out keeps the scan
-  // over branch edges only.
-  assignBranchSides(nodes, edges);
+  // Runs before the loop back-edge is pushed: dagre requires a DAG, and the
+  // back-edge is not a true/false branch so assignBranchSides does not read it.
+  layoutFlowGraph(nodes, edges, NODE_WIDTH, nodeHeight);
 
   // ---- Loop back-edge ----
   // Deliberately added after dagre has run: dagre requires a DAG, and feeding

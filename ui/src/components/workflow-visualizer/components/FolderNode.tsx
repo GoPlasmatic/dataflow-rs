@@ -1,19 +1,10 @@
 import { Folder } from 'lucide-react';
-import type { Workflow } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
-import type { FolderTreeNode } from '../utils/folderTree';
+import { collectFolderWorkflows, type FolderTreeNode } from '../utils/folderTree';
 import { TreeNode } from './TreeNode';
 import { WorkflowNode } from './WorkflowNode';
 import { TREE_COLORS } from './colors';
 import { NODE_IDS } from '../constants';
-
-function collectAllWorkflows(folder: FolderTreeNode): Workflow[] {
-  const workflows = [...folder.workflows];
-  for (const child of folder.folders.values()) {
-    workflows.push(...collectAllWorkflows(child));
-  }
-  return workflows.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
-}
 
 interface FolderNodeProps {
   folder: FolderTreeNode;
@@ -56,7 +47,7 @@ export function FolderNode({
       level={level}
       onToggle={() => toggleNode(folderId)}
       onClick={() => {
-        onSelect({ type: 'folder', workflows: collectAllWorkflows(folder), name: folder.name });
+        onSelect({ type: 'folder', workflows: collectFolderWorkflows(folder), name: folder.name });
         if (!isExpanded) toggleNode(folderId);
       }}
     >

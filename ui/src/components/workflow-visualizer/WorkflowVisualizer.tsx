@@ -92,6 +92,62 @@ export function resolveVisualizerSelection(
 }
 
 /**
+ * Reconcile an uncontrolled {@link TreeSelectionType} against an updated
+ * `workflows` list so live edits refresh the selected node's data without
+ * dropping the selection.
+ */
+function reconcileSelection(selection: TreeSelectionType, workflows: Workflow[]): TreeSelectionType {
+  if (selection.type === 'none') return selection;
+  if (selection.type === 'folder') {
+    if (selection.name === 'Workflows') {
+      return workflows.length > 0 ? { type: 'folder', workflows, name: 'Workflows' } : { type: 'none' };
+    }
+    const matching = workflows.filter((w) =>
+      selection.workflows.some((prev) => prev.id === w.id),
+    );
+    return matching.length > 0
+      ? { type: 'folder', workflows: matching, name: selection.name }
+      : { type: 'none' };
+  }
+  const workflow = workflows.find((w) => w.id === selection.workflow.id);
+  if (!workflow) return { type: 'none' };
+  if (selection.type === 'workflow') {
+    return { type: 'workflow', workflow };
+  }
+  if (selection.type === 'workflow-condition') {
+    return workflow.condition !== undefined
+      ? { type: 'workflow-condition', workflow, condition: workflow.condition }
+      : { type: 'workflow', workflow };
+  }
+  const task = workflowTasks(workflow).find((t) => t.id === selection.task.id);
+  if (!task) return { type: 'workflow', workflow };
+  if (selection.type === 'task') {
+    return { type: 'task', task, workflow };
+  }
+  if (selection.type === 'task-condition') {
+    return task.condition !== undefined
+      ? { type: 'task-condition', task, workflow, condition: task.condition }
+      : { type: 'task', task, workflow };
+  }
+  const input = task.function.input as Record<string, unknown> | undefined;
+  if (selection.type === 'mapping') {
+    const mappings = (input?.mappings as MappingItem[] | undefined) ?? [];
+    const mapping = mappings[selection.mappingIndex];
+    return mapping
+      ? { type: 'mapping', task, workflow, mapping, mappingIndex: selection.mappingIndex }
+      : { type: 'task', task, workflow };
+  }
+  if (selection.type === 'validation-rule') {
+    const rules = (input?.rules as ValidationRule[] | undefined) ?? [];
+    const rule = rules[selection.ruleIndex];
+    return rule
+      ? { type: 'validation-rule', task, workflow, rule, ruleIndex: selection.ruleIndex }
+      : { type: 'task', task, workflow };
+  }
+  return { type: 'none' };
+}
+
+/**
  * Convert an internal {@link TreeSelectionType} back to a host-facing
  * {@link VisualizerSelection}, or `null` when nothing (or a folder) is selected.
  */
@@ -223,7 +279,9 @@ function VisualizerInner({
     resolveVisualizerSelection(workflows, initialSelection),
   );
   const selection = useMemo<TreeSelectionType>(() => {
-    if (controlledSelection === undefined) return uncontrolledSelection;
+    if (controlledSelection === undefined) {
+      return reconcileSelection(uncontrolledSelection, workflows);
+    }
     return resolveVisualizerSelection(workflows, controlledSelection);
   }, [controlledSelection, uncontrolledSelection, workflows]);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -329,6 +387,9 @@ function VisualizerInner({
             >
               <div className="df-visualizer-left-header">
                 <span className="df-visualizer-left-title">Explorer</span>
+                {workflows.length > 0 && (
+                  <span className="df-visualizer-left-count">{workflows.length}</span>
+                )}
               </div>
             <div className="df-visualizer-left-content">
               {workflows.length === 0 ? (
@@ -408,47 +469,35 @@ export function WorkflowVisualizer({
   debugConfig,
   debugPayload,
 }: WorkflowVisualizerProps) {
-  // When debugConfig.enabled is true, wrap internally with DebuggerProvider
-  if (debugConfig?.enabled) {
-    return (
-      <ThemeProvider defaultTheme={theme}>
+  const content = (
+    <div className={`df-root ${className}`}>
+      <VisualizerInner
+        workflows={workflows}
+        initialSelection={initialSelection}
+        controlledSelection={selection}
+        onSelectionChange={onSelectionChange}
+        onTaskSelect={onTaskSelect}
+        onWorkflowSelect={onWorkflowSelect}
+        executionResult={executionResult}
+        debugConfig={debugConfig}
+        debugPayload={debugPayload}
+      />
+    </div>
+  );
+
+  return (
+    <ThemeProvider defaultTheme={theme}>
+      {debugConfig?.enabled ? (
         <DebuggerProvider
           engineFactory={debugConfig.engineFactory}
           autoActivate={true}
           initialPayload={debugPayload ?? debugConfig.initialPayload}
         >
-          <div className={`df-root ${className}`}>
-            <VisualizerInner
-              workflows={workflows}
-              initialSelection={initialSelection}
-              controlledSelection={selection}
-              onSelectionChange={onSelectionChange}
-              onTaskSelect={onTaskSelect}
-              onWorkflowSelect={onWorkflowSelect}
-              executionResult={executionResult}
-              debugConfig={debugConfig}
-              debugPayload={debugPayload}
-            />
-          </div>
+          {content}
         </DebuggerProvider>
-      </ThemeProvider>
-    );
-  }
-
-  // Non-debug mode: render without DebuggerProvider
-  return (
-    <ThemeProvider defaultTheme={theme}>
-      <div className={`df-root ${className}`}>
-        <VisualizerInner
-          workflows={workflows}
-          initialSelection={initialSelection}
-          controlledSelection={selection}
-          onSelectionChange={onSelectionChange}
-          onTaskSelect={onTaskSelect}
-          onWorkflowSelect={onWorkflowSelect}
-          executionResult={executionResult}
-        />
-      </div>
+      ) : (
+        content
+      )}
     </ThemeProvider>
   );
 }

@@ -1,4 +1,41 @@
+import dagre from '@dagrejs/dagre';
 import type { Node, Edge } from '@xyflow/react';
+
+/**
+ * Run a top-to-bottom Dagre layout over `nodes` and `edges`, convert Dagre's
+ * center coordinates to React Flow top-left positions, and assign branch
+ * handle sides from the resulting geometry.
+ */
+export function layoutFlowGraph(
+  nodes: Node[],
+  edges: Edge[],
+  nodeWidth: number,
+  getNodeHeight: (type: string | undefined) => number,
+): void {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 80, marginx: 20, marginy: 20 });
+
+  for (const node of nodes) {
+    g.setNode(node.id, { width: nodeWidth, height: getNodeHeight(node.type) });
+  }
+  for (const edge of edges) {
+    g.setEdge(edge.source, edge.target);
+  }
+
+  dagre.layout(g);
+
+  for (const node of nodes) {
+    const pos = g.node(node.id);
+    const height = getNodeHeight(node.type);
+    node.position = {
+      x: pos.x - nodeWidth / 2,
+      y: pos.y - height / 2,
+    };
+  }
+
+  assignBranchSides(nodes, edges);
+}
 
 /**
  * Record which side each branching node's `true` edge actually landed on.

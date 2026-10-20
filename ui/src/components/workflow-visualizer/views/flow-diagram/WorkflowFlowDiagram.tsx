@@ -42,10 +42,13 @@ export function WorkflowFlowDiagram({ workflow, onSelect }: WorkflowFlowDiagramP
           condition: workflow.condition as JsonLogicValue,
         });
       } else if (conditionType === 'task') {
-        // Find the task by matching the label
+        const taskId = node.data.taskId as string | undefined;
         const label = (node.data.label as string) ?? '';
         const taskName = label.replace('\nCondition', '');
-        const task = workflowTasks(workflow).find((t: Task) => t.name === taskName);
+        const tasks = workflowTasks(workflow);
+        const task =
+          (taskId ? tasks.find((t: Task) => t.id === taskId) : undefined) ??
+          tasks.find((t: Task) => t.name === taskName);
         if (task?.condition) {
           onSelect({
             type: 'task-condition',

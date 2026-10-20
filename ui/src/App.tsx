@@ -1,5 +1,16 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { Sun, Moon, BookOpen, ChevronDown, PanelLeftClose, PanelLeft, Braces } from 'lucide-react';
+import {
+  Sun,
+  Moon,
+  BookOpen,
+  ChevronDown,
+  PanelLeftClose,
+  PanelLeft,
+  Braces,
+  Check,
+  Loader2,
+  AlertTriangle,
+} from 'lucide-react';
 
 const GithubIcon = ({ size = 16 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -124,16 +135,26 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
     }
   }, []);
 
-  // Close dropdown on outside click
+  // Close dropdown on outside click or Escape key
   useEffect(() => {
+    if (!dropdownOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false);
       }
     };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDropdownOpen(false);
+      }
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [dropdownOpen]);
 
   // Toggle panel
   const togglePanel = useCallback(() => {
@@ -169,171 +190,254 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
 
   const debugPayload = useMemo(() => {
     try {
-      return JSON.parse(payloadText);
+      const parsed = JSON.parse(payloadText);
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
     } catch {
       return {};
     }
   }, [payloadText]);
 
+  const payloadKeyCount = useMemo(() => Object.keys(debugPayload).length, [debugPayload]);
+
   return (
-    <>
-      <div className="app" data-theme={resolvedTheme}>
-        <header className="app-header">
-          <div className="header-title">
-            <div className="brand-mark" aria-hidden="true" />
-            <div className="brand-text">
-              <h1>Dataflow Visualizer</h1>
-              <span className="header-subtitle">Workflow Engine Debugger</span>
-            </div>
+    <div className="app" data-theme={resolvedTheme}>
+      <header className="app-header">
+        <div className="header-title">
+          <div className="brand-mark" aria-hidden="true" />
+          <div className="brand-text">
+            <h1>Dataflow Visualizer</h1>
+            <span className="header-subtitle">Workflow Engine Debugger</span>
           </div>
-          <div className="header-controls">
-            <a
-              href="https://github.com/GoPlasmatic/dataflow-rs"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="header-link"
+        </div>
+        <div className="header-controls">
+          <a
+            href="https://github.com/GoPlasmatic/dataflow-rs"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="header-link"
+          >
+            <GithubIcon size={16} />
+            <span>GitHub</span>
+          </a>
+          <a
+            href="https://goplasmatic.github.io/dataflow-rs/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="header-link"
+          >
+            <BookOpen size={16} />
+            <span>Docs</span>
+          </a>
+          <div className="header-divider" />
+          <div className="examples-dropdown" ref={dropdownRef}>
+            <button
+              className="examples-dropdown-trigger"
+              onClick={() => setDropdownOpen((open) => !open)}
+              aria-haspopup="listbox"
+              aria-expanded={dropdownOpen}
             >
-              <GithubIcon size={16} />
-              <span>GitHub</span>
-            </a>
-            <a
-              href="https://goplasmatic.github.io/dataflow-rs/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="header-link"
-            >
-              <BookOpen size={16} />
-              <span>Docs</span>
-            </a>
-            <div className="header-divider" />
-            <div className="examples-dropdown" ref={dropdownRef}>
-              <button
-                className="examples-dropdown-trigger"
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-              >
-                <span className="examples-dropdown-label">Examples</span>
-                <span className="examples-dropdown-value">{selectedExample}</span>
-                <ChevronDown size={14} className={`dropdown-icon ${dropdownOpen ? 'open' : ''}`} />
-              </button>
-              {dropdownOpen && (
-                <div className="examples-dropdown-menu">
-                  {Object.keys(SAMPLE_WORKFLOWS).map((name) => (
+              <span className="examples-dropdown-label">Examples</span>
+              <span className="examples-dropdown-value">{selectedExample}</span>
+              <ChevronDown size={14} className={`dropdown-icon ${dropdownOpen ? 'open' : ''}`} />
+            </button>
+            {dropdownOpen && (
+              <div className="examples-dropdown-menu" role="listbox">
+                {Object.keys(SAMPLE_WORKFLOWS).map((name) => {
+                  const isSelected = name === selectedExample;
+                  return (
                     <button
                       key={name}
-                      className={`examples-dropdown-item ${name === selectedExample ? 'selected' : ''}`}
+                      role="option"
+                      aria-selected={isSelected}
+                      className={`examples-dropdown-item ${isSelected ? 'selected' : ''}`}
                       onClick={() => loadSample(name)}
                     >
-                      {name}
+                      <span>{name}</span>
+                      {isSelected && <Check size={14} />}
                     </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <button className="theme-toggle" onClick={toggleTheme} title="Toggle Theme">
-              {resolvedTheme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-            </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </header>
-
-        <main className="app-main" ref={containerRef}>
-          {/* Left Panel - JSON Editors */}
-          <div
-            className={`panel editor-panel ${isPanelCollapsed ? 'collapsed' : ''}`}
-            style={isPanelCollapsed ? undefined : { width: panelWidth }}
+          <button
+            className="theme-toggle"
+            onClick={toggleTheme}
+            title={`Switch to ${resolvedTheme === 'light' ? 'dark' : 'light'} theme`}
+            aria-label="Toggle theme"
           >
-            {/* Panel-wide toolbar sitting above both editors. Collapsed, the
-                panel narrows to a rail and this keeps the expand button
-                reachable — Ctrl+B alone would be the only way back. */}
-            <div className="editor-panel-header">
-              {!isPanelCollapsed && <span className="editor-panel-title">Input</span>}
-              <div className="editor-panel-actions">
-                {!isPanelCollapsed && (
-                  <button
-                    className="editor-panel-action"
-                    onClick={formatJson}
-                    title="Format JSON (Ctrl+Shift+F)"
-                  >
-                    <Braces size={14} />
-                    <span>Format</span>
-                  </button>
-                )}
-                <button
-                  className="editor-panel-action editor-panel-action-icon"
-                  onClick={togglePanel}
-                  title={isPanelCollapsed ? 'Show Editor (Ctrl+B)' : 'Hide Editor (Ctrl+B)'}
-                  aria-label={isPanelCollapsed ? 'Show editor' : 'Hide editor'}
-                  aria-expanded={!isPanelCollapsed}
-                >
-                  {isPanelCollapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
-                </button>
-              </div>
-            </div>
+            {resolvedTheme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+          </button>
+        </div>
+      </header>
 
-            <div className="editor-section">
-              <div className="editor-header">
-                <h3>Workflows</h3>
-                {workflowsError && <span className="editor-error">{workflowsError}</span>}
-              </div>
-              <div className="editor-content">
-                <JsonEditor
-                  value={workflowsText}
-                  onChange={handleWorkflowsChange}
-                  theme={resolvedTheme}
-                  onCursorChange={handleCursorChange}
-                />
-              </div>
-            </div>
-            <div className="editor-section">
-              <div className="editor-header">
-                <h3>Payload</h3>
-                {payloadError && <span className="editor-error">{payloadError}</span>}
-              </div>
-              <div className="editor-content">
-                <JsonEditor
-                  value={payloadText}
-                  onChange={handlePayloadChange}
-                  theme={resolvedTheme}
-                  onCursorChange={handleCursorChange}
-                />
-              </div>
+      <main className="app-main" ref={containerRef}>
+        {/* Left Panel - JSON Editors */}
+        <div
+          className={`panel editor-panel ${isPanelCollapsed ? 'collapsed' : ''}`}
+          style={isPanelCollapsed ? undefined : { width: panelWidth }}
+        >
+          {/* Panel-wide toolbar sitting above both editors. Collapsed, the
+              panel narrows to a rail and this keeps the expand button
+              reachable — Ctrl+B alone would be the only way back. */}
+          <div className="editor-panel-header">
+            {!isPanelCollapsed && <span className="editor-panel-title">Input</span>}
+            <div className="editor-panel-actions">
+              {!isPanelCollapsed && (
+                <button
+                  className="editor-panel-action"
+                  onClick={formatJson}
+                  title="Format JSON (Ctrl+Shift+F)"
+                >
+                  <Braces size={14} />
+                  <span>Format</span>
+                </button>
+              )}
+              <button
+                className="editor-panel-action editor-panel-action-icon"
+                onClick={togglePanel}
+                title={isPanelCollapsed ? 'Show Editor (Ctrl+B)' : 'Hide Editor (Ctrl+B)'}
+                aria-label={isPanelCollapsed ? 'Show editor' : 'Hide editor'}
+                aria-expanded={!isPanelCollapsed}
+              >
+                {isPanelCollapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
+              </button>
             </div>
           </div>
 
-          {/* Divider */}
-          {!isPanelCollapsed && (
+          {isPanelCollapsed && (
             <div
-              className={`divider ${isDragging ? 'dragging' : ''}`}
-              onMouseDown={handleMouseDown}
-            />
+              className="editor-panel-rail"
+              onClick={togglePanel}
+              title="Show Editor (Ctrl+B)"
+            >
+              <span className="editor-panel-rail-label">Input · JSON</span>
+            </div>
           )}
 
-          {/* Right Panel - Visualizer */}
-          <div className="panel visual-panel">
-            <div className="panel-content">
-              <WorkflowVisualizer
-                key={workflowsText}
-                workflows={workflows}
+          <div className="editor-section">
+            <div className="editor-header">
+              <div className="editor-header-title">
+                <h3>Workflows</h3>
+                {!workflowsError && (
+                  <span className="editor-badge">{workflows.length}</span>
+                )}
+              </div>
+              {workflowsError && (
+                <span className="editor-error" title={workflowsError}>
+                  {workflowsError}
+                </span>
+              )}
+            </div>
+            <div className="editor-content">
+              <JsonEditor
+                value={workflowsText}
+                onChange={handleWorkflowsChange}
                 theme={resolvedTheme}
-                debugConfig={{
-                  enabled: true,
-                  engineFactory,
-                  autoExecute: true,
-                }}
-                debugPayload={debugPayload}
+                onCursorChange={handleCursorChange}
               />
             </div>
           </div>
-        </main>
+          <div className="editor-section">
+            <div className="editor-header">
+              <div className="editor-header-title">
+                <h3>Payload</h3>
+                {!payloadError && (
+                  <span className="editor-badge">
+                    {payloadKeyCount} {payloadKeyCount === 1 ? 'key' : 'keys'}
+                  </span>
+                )}
+              </div>
+              {payloadError && (
+                <span className="editor-error" title={payloadError}>
+                  {payloadError}
+                </span>
+              )}
+            </div>
+            <div className="editor-content">
+              <JsonEditor
+                value={payloadText}
+                onChange={handlePayloadChange}
+                theme={resolvedTheme}
+                onCursorChange={handleCursorChange}
+              />
+            </div>
+          </div>
+        </div>
 
-        {/* Status Bar */}
-        <StatusBar
-          workflows={workflows}
-          workflowsError={workflowsError}
-          messageError={payloadError}
-          cursorPosition={cursorPosition}
-        />
-      </div>
-    </>
+        {/* Divider */}
+        {!isPanelCollapsed && (
+          <div
+            className={`divider ${isDragging ? 'dragging' : ''}`}
+            onMouseDown={handleMouseDown}
+          />
+        )}
+
+        {/* Right Panel - Visualizer */}
+        <div className="panel visual-panel">
+          <div className="panel-content">
+            <WorkflowVisualizer
+              key={selectedExample}
+              workflows={workflows}
+              initialSelection="first-workflow"
+              theme={resolvedTheme}
+              debugConfig={{
+                enabled: true,
+                engineFactory,
+                autoExecute: true,
+              }}
+              debugPayload={debugPayload}
+            />
+          </div>
+        </div>
+      </main>
+
+      {/* Status Bar */}
+      <StatusBar
+        workflows={workflows}
+        workflowsError={workflowsError}
+        messageError={payloadError}
+        cursorPosition={cursorPosition}
+      />
+    </div>
+  );
+}
+
+function AppStateView({
+  status,
+  error,
+}: {
+  status: 'loading' | 'failed';
+  error?: string;
+}) {
+  const { resolvedTheme } = useTheme();
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', resolvedTheme);
+  }, [resolvedTheme]);
+
+  return (
+    <div className="app" data-theme={resolvedTheme}>
+      <main className="app-main">
+        <div className="app-state-screen">
+          <div className={`app-state-card ${status === 'failed' ? 'app-state-card-error' : ''}`}>
+            {status === 'failed' ? (
+              <>
+                <AlertTriangle size={22} />
+                <span>Failed to initialize the engine: {error}</span>
+              </>
+            ) : (
+              <>
+                <Loader2 size={22} className="df-debug-spin" />
+                <span>Loading the engine…</span>
+              </>
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
   );
 }
 
@@ -349,7 +453,6 @@ function App() {
     initWasm()
       .then(() => {
         setWasmState({ status: 'ready' });
-        console.log('WASM module initialized');
       })
       .catch((err) => {
         console.error('Failed to initialize WASM:', err);
@@ -357,23 +460,16 @@ function App() {
       });
   }, []);
 
-  if (wasmState.status !== 'ready') {
-    return (
-      <ThemeProvider defaultTheme="system">
-        <div className="app">
-          <main className="app-main">
-            {wasmState.status === 'failed'
-              ? `Failed to initialize the engine: ${wasmState.error}`
-              : 'Loading the engine…'}
-          </main>
-        </div>
-      </ThemeProvider>
-    );
-  }
-
   return (
     <ThemeProvider defaultTheme="system">
-      <AppContent engineFactory={defaultEngineFactory} />
+      {wasmState.status === 'ready' ? (
+        <AppContent engineFactory={defaultEngineFactory} />
+      ) : (
+        <AppStateView
+          status={wasmState.status}
+          error={wasmState.status === 'failed' ? wasmState.error : undefined}
+        />
+      )}
     </ThemeProvider>
   );
 }

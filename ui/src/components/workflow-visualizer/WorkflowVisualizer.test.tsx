@@ -158,4 +158,25 @@ describe('WorkflowVisualizer selection props', () => {
       container.querySelector('.df-details-empty')?.textContent,
     ).toContain('Select an item from the explorer to view its details and logic visualization');
   });
+
+  it('reconciles uncontrolled selection when workflows prop is updated', () => {
+    const { container, rerender } = render(
+      <WorkflowVisualizer
+        workflows={WORKFLOWS}
+        initialSelection={{ kind: 'task', workflowId: 'w2', taskId: 't2' }}
+      />,
+    );
+    expect(container.querySelector('.df-details-header-title')?.textContent).toBe('Bill Order');
+
+    const updated = WORKFLOWS.map((w) =>
+      w.id === 'w2'
+        ? {
+            ...w,
+            tasks: [{ id: 't2', name: 'Renamed Bill Task', function: { name: 'log', input: { message: 'billed' } } }],
+          }
+        : w,
+    );
+    rerender(<WorkflowVisualizer workflows={updated} />);
+    expect(container.querySelector('.df-details-header-title')?.textContent).toBe('Renamed Bill Task');
+  });
 });

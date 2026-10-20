@@ -142,28 +142,30 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 80px;
-  height: 80px;
+  width: 84px;
+  height: 84px;
   position: relative;
 }
 
 .df-flow-diamond {
-  width: 64px;
-  height: 64px;
+  width: 68px;
+  height: 68px;
   background: var(--chip);
   border: 2px solid var(--sig-bool-rest);
   transform: rotate(45deg);
-  border-radius: 3px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--motion-base) var(--ease-out);
+  transition: box-shadow var(--motion-base) var(--ease-out),
+    border-color var(--motion-base) var(--ease-out);
 }
 
 .df-flow-diamond:hover {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sig-bool-rest) 25%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent), var(--shadow-md);
 }
 
 .df-flow-diamond-content {
@@ -182,7 +184,7 @@
   text-align: center;
   line-height: 1.2;
   white-space: pre-line;
-  max-width: 56px;
+  max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
 }

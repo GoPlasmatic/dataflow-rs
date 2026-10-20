@@ -39,24 +39,17 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
   // Root-level workflows (no path) - already sorted by priority in buildFolderTree
   const rootWorkflows = folderTree.workflows;
 
+  const currentStep = effectiveDebugContext?.currentStep;
+  const currentStepIndex = effectiveDebugContext?.state.currentStepIndex ?? -1;
+
   // Default-expanded nodes for the current folder tree and active debug step
   const defaultExpandedNodes = useMemo(() => {
     const initial = new Set<string>([NODE_IDS.ROOT]);
     getFirstLevelFolderIds(folderTree).forEach((id) => initial.add(id));
 
-    const allWorkflows = [...folderTree.workflows];
-    function collectWorkflows(
-      folders: Map<string, typeof folderTree.folders extends Map<string, infer T> ? T : never>
-    ) {
-      for (const folder of folders.values()) {
-        allWorkflows.push(...folder.workflows);
-        collectWorkflows(folder.folders);
-      }
-    }
-    collectWorkflows(folderTree.folders);
+    const allWorkflows = [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
 
     if (allWorkflows.length > 0) {
-      allWorkflows.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
       initial.add(NODE_IDS.workflow(allWorkflows[0].id));
       getParentFolderIds(workflowFolderPath(allWorkflows[0])).forEach((id) => initial.add(id));
     }
@@ -73,12 +66,8 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
       }
     }
 
-    if (
-      debugMode &&
-      effectiveDebugContext?.currentStep &&
-      effectiveDebugContext.state.currentStepIndex >= 0
-    ) {
-      const { workflow_id, task_id } = effectiveDebugContext.currentStep;
+    if (debugMode && currentStep && currentStepIndex >= 0) {
+      const { workflow_id, task_id } = currentStep;
       const workflow = workflows.find((w) => w.id === workflow_id);
       const folderPath = workflow && workflowFolderPath(workflow);
       if (folderPath) {
@@ -95,8 +84,8 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
     folderTree,
     selection,
     debugMode,
-    effectiveDebugContext?.currentStep,
-    effectiveDebugContext?.state.currentStepIndex,
+    currentStep,
+    currentStepIndex,
     workflows,
   ]);
 
