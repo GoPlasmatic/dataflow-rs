@@ -20,7 +20,7 @@ case "${OS}-${ARCH}" in
 esac
 
 ARCHIVE="wasm-pack-${VERSION}-${TARGET}"
-URL="https://github.com/drager/wasm-pack/releases/download/${VERSION}/${ARCHIVE}.tar.gz"
+URL="https://github.com/wasm-bindgen/wasm-pack/releases/download/${VERSION}/${ARCHIVE}.tar.gz"
 DEST="${CARGO_HOME:-$HOME/.cargo}/bin"
 mkdir -p "$DEST"
 
