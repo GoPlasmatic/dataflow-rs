@@ -3,6 +3,19 @@ import { fireEvent, render, waitFor } from '@testing-library/react';
 import { WorkflowVisualizer, type VisualizerSelection } from './WorkflowVisualizer';
 import type { Workflow } from '../../types';
 
+// The details panel loads its logic editor through `React.lazy`, so the first
+// task it shows suspends. Awaiting that load keeps React's retry inside the
+// test: a retry still queued when the file ends runs after jsdom is torn down,
+// where React's scheduler reads `window.event` and throws "window is not
+// defined", which vitest reports as an unhandled error even though every test
+// passed.
+async function waitForLogicEditor(container: HTMLElement) {
+  await waitFor(
+    () => expect(container.querySelector('.df-datalogic-viewer')).not.toBeNull(),
+    { timeout: 10_000 },
+  );
+}
+
 const WORKFLOWS: Workflow[] = [
   {
     id: 'w1',
@@ -80,7 +93,7 @@ describe('WorkflowVisualizer selection props', () => {
     await waitFor(() => expect(container.querySelector('.react-flow')).not.toBeNull());
   });
 
-  it('opens a task inside a group and inside loop.setup via initialSelection={{ kind: "task", ... }}', () => {
+  it('opens a task inside a group and inside loop.setup via initialSelection={{ kind: "task", ... }}', async () => {
     const { container, unmount } = render(
       <WorkflowVisualizer
         workflows={WORKFLOWS}
@@ -89,6 +102,7 @@ describe('WorkflowVisualizer selection props', () => {
     );
     expect(container.querySelector('.df-details-header-title')?.textContent).toBe('Grouped Task');
     expect(container.querySelector('.df-details-header-subtitle')?.textContent).toBe('Order Intake / map');
+    await waitForLogicEditor(container);
     unmount();
 
     const { container: setupContainer } = render(
@@ -99,9 +113,10 @@ describe('WorkflowVisualizer selection props', () => {
     );
     expect(setupContainer.querySelector('.df-details-header-title')?.textContent).toBe('Setup Task');
     expect(setupContainer.querySelector('.df-details-header-subtitle')?.textContent).toBe('Order Intake / log');
+    await waitForLogicEditor(setupContainer);
   });
 
-  it('supports group selection by opening its first leaf task', () => {
+  it('supports group selection by opening its first leaf task', async () => {
     const { container } = render(
       <WorkflowVisualizer
         workflows={WORKFLOWS}
@@ -109,9 +124,10 @@ describe('WorkflowVisualizer selection props', () => {
       />,
     );
     expect(container.querySelector('.df-details-header-title')?.textContent).toBe('Grouped Task');
+    await waitForLogicEditor(container);
   });
 
-  it('keeps explorer and detail panel in sync in controlled mode and reports changes via onSelectionChange', () => {
+  it('keeps explorer and detail panel in sync in controlled mode and reports changes via onSelectionChange', async () => {
     const changes: Array<VisualizerSelection | null> = [];
     const { container, rerender } = render(
       <WorkflowVisualizer
@@ -123,6 +139,7 @@ describe('WorkflowVisualizer selection props', () => {
 
     // Controlled selection opens w2 / t2 and expands its parent folders
     expect(container.querySelector('.df-details-header-title')?.textContent).toBe('Bill Order');
+    await waitForLogicEditor(container);
     const selectedLabels = Array.from(
       container.querySelectorAll('.df-tree-node-selected > .df-tree-label'),
     ).map((n) => n.textContent);
@@ -159,7 +176,7 @@ describe('WorkflowVisualizer selection props', () => {
     ).toContain('Select an item from the explorer to view its details and logic visualization');
   });
 
-  it('reconciles uncontrolled selection when workflows prop is updated', () => {
+  it('reconciles uncontrolled selection when workflows prop is updated', async () => {
     const { container, rerender } = render(
       <WorkflowVisualizer
         workflows={WORKFLOWS}
@@ -167,6 +184,7 @@ describe('WorkflowVisualizer selection props', () => {
       />,
     );
     expect(container.querySelector('.df-details-header-title')?.textContent).toBe('Bill Order');
+    await waitForLogicEditor(container);
 
     const updated = WORKFLOWS.map((w) =>
       w.id === 'w2'
